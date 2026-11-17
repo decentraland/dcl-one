@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { isDestination, isGenesisParcel, parseGotoTarget, randomParcel, worldName } from '../features/lobby/goto'
 
 describe('lobby go to', () => {
-  it.each(['3,-5', '3, -5', 'mana.dcl.eth/3,-5', 'eax', '3', 'random', 'crowd', 'crowd.dcl.eth', 'name.eth', 'my-world.eth', 'a-b-c.eth', 'mana.dcl.eth/140,0', 'mana.dcl.eth/-150,150'])('accepts %s', (text) => {
+  it.each(['3,-5', '3, -5', 'mana.dcl.eth/3,-5', 'eax', '3', 'random', 'crowd', 'crowd.dcl.eth', 'name.eth', 'my-world.eth', 'a-b-c.eth', 'mana.dcl.eth/140,0', 'mana.dcl.eth/-150,150', 'Name.DCL.ETH', 'My-World.ETH'])('accepts %s', (text) => {
     expect(isDestination(text)).toBe(true)
   })
 
@@ -39,6 +39,8 @@ describe('lobby go to', () => {
     expect(worldName('mana')).toBe('mana.dcl.eth')
     expect(worldName('mana.dcl.eth')).toBe('mana.dcl.eth')
     expect(worldName('name.eth')).toBe('name.eth')
+    expect(worldName('Name.DCL.ETH')).toBe('name.dcl.eth')
+    expect(worldName('Mana')).toBe('mana.dcl.eth')
   })
 
   it('picks random parcels inside the square city', () => {

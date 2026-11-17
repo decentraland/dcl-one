@@ -509,6 +509,7 @@ export interface EventCommunity {
 export interface EventsState {
   open: boolean
   toggle: (source?: EventsOpenSource) => void
+  close: () => void
   data: EventsData
   memberOf: EventCommunity[]
 }
@@ -3077,6 +3078,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     },
     [exclusive]
   )
+  const closeEvents = useCallback(() => setEventsOpen(false), [])
   const clearEvents = eventsData.clear
   const resetEvents = eventsData.resetAll
   useEffect(() => {
@@ -5030,7 +5032,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     map: mapSlice,
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces, close: closePlaces, readSigned: readSignedPlace },
-    events: { open: eventsOpen, toggle: toggleEvents, data: eventsData, memberOf: eventCommunities },
+    events: { open: eventsOpen, toggle: toggleEvents, close: closeEvents, data: eventsData, memberOf: eventCommunities },
     shop: { open: shopOpen, toggle: toggleShop },
     create: { open: createOpen, toggle: toggleCreate, show: showCreate },
     photoMode: {

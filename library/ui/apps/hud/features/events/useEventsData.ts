@@ -39,9 +39,10 @@ export function useEventsData(driverRef: React.RefObject<LoginDriver | null>, on
   const storeRef = useRef(store)
   storeRef.current = store
   const waiting = useRef<Partial<Record<EventsQuery, Pending>>>({})
-  const reminderTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
+  // a reminder in flight outlives the page that sent it, which can drop its event from the store
+  const reminderTimers = useRef(new Map<string, { timer: ReturnType<typeof setTimeout>; event: EventData }>())
   // reminders that ran out of time: the service may still confirm them
-  const reminderLate = useRef(new Set<string>())
+  const reminderLate = useRef(new Map<string, EventData>())
   const onReminderSetRef = useRef(onReminderSet)
   onReminderSetRef.current = onReminderSet
 
@@ -91,29 +92,34 @@ export function useEventsData(driverRef: React.RefObject<LoginDriver | null>, on
   const loadLobby = useCallback((): void => read('lobby', {}), [read])
 
   const settleReminder = useCallback((eventId: string, attending: boolean, failed: boolean, timedOut = false): void => {
-    const timer = reminderTimers.current.get(eventId)
-    if (timer == null) {
+    const sent = reminderTimers.current.get(eventId)
+    let event: EventData
+    if (sent == null) {
       // the answer to a reminder that timed out: its error has shown, a success still applies
-      if (!reminderLate.current.delete(eventId) || failed) return
+      const late = reminderLate.current.get(eventId)
+      reminderLate.current.delete(eventId)
+      if (late == null || failed) return
+      event = late
     } else {
-      clearTimeout(timer)
+      clearTimeout(sent.timer)
       reminderTimers.current.delete(eventId)
-      if (timedOut) reminderLate.current.add(eventId)
+      if (timedOut) reminderLate.current.set(eventId, sent.event)
+      event = sent.event
     }
-    const before = storeRef.current.byId[eventId]
+    const before = storeRef.current.byId[eventId] ?? event
     dispatch({ type: 'attendingDone', eventId, attending, failed })
     if (failed) showToast(REMINDER_ERROR, { tone: 'error' })
-    else if (before != null) onReminderSetRef.current?.({ ...before, attending })
+    else onReminderSetRef.current?.({ ...before, attending })
   }, [])
 
   const setAttending = useCallback(
     (event: EventData, attending: boolean): void => {
       if (reminderTimers.current.has(event.id)) return
       reminderLate.current.delete(event.id)
-      reminderTimers.current.set(
-        event.id,
-        setTimeout(() => settleReminder(event.id, attending, true, true), EVENTS_REPLY_TIMEOUT_MS)
-      )
+      reminderTimers.current.set(event.id, {
+        timer: setTimeout(() => settleReminder(event.id, attending, true, true), EVENTS_REPLY_TIMEOUT_MS),
+        event
+      })
       dispatch({ type: 'attendingSent', eventId: event.id })
       driverRef.current?.send({ kind: 'setEventAttending', eventId: event.id, attending })
     },
@@ -122,18 +128,11 @@ export function useEventsData(driverRef: React.RefObject<LoginDriver | null>, on
 
   const clear = useCallback((): void => {
     for (const query of Object.keys(waiting.current) as EventsQuery[]) if (query !== 'lobby') stop(query)
-    const lobby = new Set(storeRef.current.queries.lobby.ids)
-    reminderTimers.current.forEach((timer, id) => {
-      if (lobby.has(id)) return
-      clearTimeout(timer)
-      reminderTimers.current.delete(id)
-    })
-    for (const id of reminderLate.current) if (!lobby.has(id)) reminderLate.current.delete(id)
     dispatch({ type: 'reset' })
   }, [stop])
   const dispose = useCallback((): void => {
     for (const query of Object.keys(waiting.current) as EventsQuery[]) stop(query)
-    reminderTimers.current.forEach((timer) => clearTimeout(timer))
+    reminderTimers.current.forEach(({ timer }) => clearTimeout(timer))
     reminderTimers.current.clear()
     reminderLate.current.clear()
   }, [stop])

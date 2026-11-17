@@ -231,6 +231,29 @@ describe('place detail', () => {
     expect(await screen.findByText('YOU ARE INVITED')).toBeInTheDocument()
   })
 
+  it('keeps Jump in while the access is judged again for the communities', async () => {
+    const session = fakeSession()
+    session.lobbyData.communitiesLoaded = false
+    let answer: (access: 'denied') => void = () => undefined
+    vi.mocked(fetchWorldAccess)
+      .mockResolvedValueOnce('failed')
+      .mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
+    const view = (s: EngineSession): React.JSX.Element => (
+      <SessionProvider value={s}>
+        <PopupHost />
+      </SessionProvider>
+    )
+    const { rerender } = render(view(session))
+    act(() => openPlaceDetail({ place: WORLD, onJumpIn: () => true }))
+    expect(await screen.findByRole('button', { name: 'Jump in to Party World' })).toBeInTheDocument()
+    rerender(view({ ...session, lobbyData: { ...session.lobbyData, communitiesLoaded: true } }))
+    await waitFor(() => expect(fetchWorldAccess).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('button', { name: 'Jump in to Party World' })).toBeInTheDocument()
+    await act(async () => answer('denied'))
+    expect(screen.getByText('INVITE ONLY')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Jump in to Party World' })).toBeNull()
+  })
+
   it("holds a world's Jump in until its access is known, then follows it", async () => {
     let answer: (access: 'denied') => void = () => undefined
     vi.mocked(fetchWorldAccess).mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))

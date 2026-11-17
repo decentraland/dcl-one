@@ -1,9 +1,9 @@
 // The engine draws the stage and the avatar behind this transparent page.
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import closeIcon from '../../assets/lobby/close-icn-thin.png'
+import closeIcon from '../../assets/map/panel/close-thin.png'
 import cursorRotate from '../../assets/lobby/cursor-rotate.png'
-import arrowLeft from '../../assets/lobby/arrow-left.png'
+import arrowLeft from '../../assets/map/panel/arrow-left.png'
 import editIcon from '../../assets/lobby/edit-icn.png'
 import eventsIcon from '../../assets/lobby/events-off.png'
 import logo from '../../assets/lobby/decentraland-logo.png'
@@ -19,10 +19,11 @@ import { clickButton } from '@explorer-core/lib/analytics'
 import { userColor } from '@explorer-core/lib/identity'
 import { holeClip } from '@explorer-core/lib/holeClip'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
+import { realmCheckMessage } from '@explorer-core/lib/realmCheck'
 import { lobbyStagePreset } from '@explorer-core/engine/lobbyStage'
 import { eventDestination } from '@explorer-core/features/events/eventsApi'
 import { placeTeleport } from '@explorer-core/features/places/placesApi'
-import { LobbyLayout, widgetSpan } from '@explorer-core/features/lobby/layout'
+import { LobbyLayout, familyTitle, widgetFamily, widgetSpan } from '@explorer-core/features/lobby/layout'
 import { loadLayout, saveLayout } from '@explorer-core/features/lobby/layoutStorage'
 import { fetchCrowd, worldReachable, type LobbyPlace } from '@explorer-core/features/lobby/lobbyApi'
 import { splitEvents } from '@explorer-core/features/lobby/lobbyEvents'
@@ -120,7 +121,7 @@ function WidgetBoard({ layout, ctx, canvas, editing }: { layout: LobbyLayout; ct
             key={p.widget}
             className={cx(styles.widget, editing && styles.widgetEditing)}
             style={{ left: r.x, top: r.y, width: r.width, height: r.height }}
-            aria-label={p.widget}
+            aria-label={familyTitle(widgetFamily(p.widget))}
             inert={editing || undefined}
           >
             <LobbyWidget widget={p.widget} ctx={editing ? { ...ctx, editing } : ctx} />
@@ -249,7 +250,7 @@ export function LobbyHome({
   const onlineByAddress = useMemo(() => new Map(online.map((f) => [f.address.toLowerCase(), f])), [online])
 
   const busy = session.login.busy
-  // moves on with every pick, every modal opened over the lobby and on unmount: a lookup
+  // moves on with every pick, lookup, modal opened over the lobby and on unmount: a lookup
   // answering later neither travels nor reports a failure
   const travels = useRef(0)
   const moveOn = (): void => void travels.current++
@@ -265,7 +266,7 @@ export function LobbyHome({
     [onPick, busy]
   )
   const afterLookup = <T,>(lookup: Promise<T>): Promise<T | typeof STALE> => {
-    const seq = travels.current
+    const seq = ++travels.current
     return lookup.then(
       (value) => (seq === travels.current ? value : STALE),
       (error: unknown) => {
@@ -340,9 +341,9 @@ export function LobbyHome({
       if (landing.place != null) openPlace(landing.place, 'landing')
     },
     jumpLanding: () => {
+      if (!pick(null)) return
       if (landing.place) lobbyAnalytics.placeJumpedIn(landing.place, 'landing')
       clickButton('JUMP_IN', 'LOBBY', { kind: 'landing', place_id: landing.place?.id ?? '' })
-      pick(null)
     },
     openPlace,
     jumpPlace: (p: LobbyPlace, origin) => {
@@ -380,11 +381,9 @@ export function LobbyHome({
         .then((where) => {
           if (where === STALE) return
           if (where.kind === 'genesis') {
-            lobbyAnalytics.friendJoined(f.address, where.parcel)
-            pick({ kind: 'parcel', x: where.parcel.x, y: where.parcel.y })
+            if (pick({ kind: 'parcel', x: where.parcel.x, y: where.parcel.y })) lobbyAnalytics.friendJoined(f.address, where.parcel)
           } else if (where.kind === 'world') {
-            lobbyAnalytics.friendJoined(f.address, where.parcel ?? { x: 0, y: 0 })
-            pick({ kind: 'world', realm: where.world })
+            if (pick({ kind: 'world', realm: where.world })) lobbyAnalytics.friendJoined(f.address, where.parcel ?? { x: 0, y: 0 })
           } else showToast(FRIEND_UNKNOWN)
         })
         .catch(() => showToast(FRIEND_UNKNOWN))
@@ -403,7 +402,11 @@ export function LobbyHome({
         const world = worldName(target.world)
         const reachable = await afterLookup(worldReachable(world))
         if (reachable === STALE) return null
-        if (!reachable) return false
+        if (reachable === 'not-found') return false
+        if (reachable === 'unreachable') {
+          showToast(realmCheckMessage(world, 'unreachable'))
+          return null
+        }
         return pick({ kind: 'world', realm: world, position: target.parcel ? `${target.parcel.x},${target.parcel.y}` : undefined }) || null
       }
       if (target.random) {
@@ -507,6 +510,7 @@ export function LobbyHome({
     }
     clickButton('CUSTOMIZE', 'LOBBY')
     setAvatarTip(false)
+    moveOn()
     session.backpack.toggle()
   }
 
@@ -551,7 +555,15 @@ export function LobbyHome({
             <span className={styles.backKey}>[Esc]</span>
           </button>
         ) : (
-          <button type="button" className={cx(styles.barButton, styles.roundButton, styles.editButton)} aria-label="Customize lobby layout" onClick={() => setEditing(true)}>
+          <button
+            type="button"
+            className={cx(styles.barButton, styles.roundButton, styles.editButton)}
+            aria-label="Customize lobby layout"
+            onClick={() => {
+              moveOn()
+              setEditing(true)
+            }}
+          >
             <img src={editIcon} alt="" width={24} height={24} />
           </button>
         )}
@@ -577,6 +589,7 @@ export function LobbyHome({
           aria-expanded={session.notifications.open}
           onClick={() => {
             clickButton('NOTIFICATIONS', 'LOBBY')
+            moveOn()
             session.notifications.toggle()
           }}
         >

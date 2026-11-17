@@ -232,7 +232,7 @@ export function fakeSession(): EngineSession {
     map: { x: 0, y: 0, open: false, toggle: vi.fn(), teleport: vi.fn(() => true), changeRealm: vi.fn(() => true), teleportToPlace: vi.fn(() => true), home: null, setHome: vi.fn() },
     minimap: { pose: { current: { x: 0, z: 0, yaw: 0, camYaw: 0 } }, satelliteView: GENESIS_SATELLITE_VIEW, sceneTitle: '', restrictions: [], donatePlace: null, setConfig: vi.fn() },
     places: { open: false, toggle: vi.fn(), close: vi.fn(), readSigned: vi.fn(async () => null) },
-    events: { open: false, toggle: vi.fn(), data: { store: emptyEventsStore(), loadCalendar: vi.fn(), loadDay: vi.fn(), loadLobby: vi.fn(), setAttending: vi.fn(), clear: vi.fn(), resetAll: vi.fn() }, memberOf: [] },
+    events: { open: false, toggle: vi.fn(), close: vi.fn(), data: { store: emptyEventsStore(), loadCalendar: vi.fn(), loadDay: vi.fn(), loadLobby: vi.fn(), setAttending: vi.fn(), clear: vi.fn(), resetAll: vi.fn() }, memberOf: [] },
     shop: { open: false, toggle: vi.fn() },
     gallery: { open: false, toggle: vi.fn(), fetchPage: vi.fn(async () => ({ ok: true, photos: [], total: 0, max: 0 })), metas: {}, loadPhoto: vi.fn(), setPublic: vi.fn(async () => ({ ok: true })), remove: vi.fn(async () => ({ ok: true })) },
     photoMode: { snapshot: null, active: false, capture: null, set: vi.fn(), take: vi.fn() },

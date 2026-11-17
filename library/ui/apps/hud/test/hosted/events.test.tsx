@@ -32,7 +32,7 @@ interface Hud {
   open: () => void
 }
 
-function renderHud(options: { compact?: { onTravel: () => void }; refused?: boolean } = {}): Hud {
+function renderHud(options: { compact?: { onTravel: () => void }; refused?: boolean; pickedFromLobby?: boolean } = {}): Hud {
   const driver = new FakeDriver()
   let current!: EngineSession
   let showModal: () => void = () => undefined
@@ -41,7 +41,15 @@ function renderHud(options: { compact?: { onTravel: () => void }; refused?: bool
     // mounted after the session is up: the modal reads on mount
     const [inModal, setInModal] = useState(false)
     showModal = () => setInModal(true)
-    const session = options.refused ? { ...engine, map: { ...engine.map, changeRealm: () => false, teleportToPlace: () => false } } : engine
+    const picked = (): boolean => {
+      engine.closeAllPanels()
+      return true
+    }
+    const session = options.refused
+      ? { ...engine, map: { ...engine.map, changeRealm: () => false, teleportToPlace: () => false } }
+      : options.pickedFromLobby
+        ? { ...engine, map: { ...engine.map, changeRealm: picked, teleportToPlace: picked } }
+        : engine
     current = session
     return (
       <SessionProvider value={session}>
@@ -347,6 +355,30 @@ describe('events: the reminder', () => {
     hud.driver.emit({ kind: 'eventAttending', eventId: 'a', attending: false })
     expect(remind()).toHaveAttribute('aria-pressed', 'true')
     expect(sentEvents(['event_set_as_interested'])).toHaveLength(1)
+  })
+
+  it('settles a reminder answered after the page closed: its analytics, or its error', async () => {
+    const hud = openWith([eventAt('a', at(1, 18), { name: 'Evening set' }), eventAt('b', at(1, 20), { name: 'Late set' })])
+    await userEvent.click(within(card('Evening set')).getByRole('button', { name: 'Remind me' }))
+    await userEvent.click(within(card('Late set')).getByRole('button', { name: 'Remind me' }))
+    act(() => hud.session().events.toggle())
+    expect(hud.session().events.open).toBe(false)
+    expect(hud.session().events.data.store.pending).toEqual(['a', 'b'])
+    act(() => hud.driver.emit({ kind: 'eventAttending', eventId: 'a', attending: true }))
+    expect(sentEvents(['event_set_as_interested'])).toHaveLength(1)
+    const error = 'There was an error changing your interest on the event. Please try again.'
+    const shown = screen.queryAllByText(error).length
+    act(() => hud.driver.emit({ kind: 'eventAttending', eventId: 'b', attending: true, failed: true }))
+    expect(screen.getAllByText(error)).toHaveLength(shown + 1)
+    expect(hud.session().events.data.store.pending).toEqual([])
+  })
+})
+
+describe('events: jump in', () => {
+  it('closes the page without reopening it after the startup lobby took the pick', async () => {
+    const hud = openWith([eventAt('l', at(0, 11), { name: 'Live set', live: true, x: 1, y: 2 })], {}, { pickedFromLobby: true })
+    await userEvent.click(within(card('Live set')).getByRole('button', { name: /jump in/i }))
+    expect(hud.session().events.open).toBe(false)
   })
 })
 

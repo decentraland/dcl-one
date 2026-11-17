@@ -1678,14 +1678,6 @@
           "kind": "regular"
         },
         {
-          "name": "arrow-left.png",
-          "kind": "regular"
-        },
-        {
-          "name": "arrow-right.png",
-          "kind": "regular"
-        },
-        {
           "name": "bug-icon.png",
           "kind": "regular"
         },
@@ -1702,10 +1694,6 @@
           "kind": "regular"
         },
         {
-          "name": "close-icn-thin.png",
-          "kind": "regular"
-        },
-        {
           "name": "communities-banner-img.png",
           "kind": "regular"
         },
@@ -1719,10 +1707,6 @@
         },
         {
           "name": "decentraland-logo.png",
-          "kind": "regular"
-        },
-        {
-          "name": "default-image-place.png",
           "kind": "regular"
         },
         {
@@ -1790,19 +1774,11 @@
           "kind": "regular"
         },
         {
-          "name": "jump-in-outline.png",
-          "kind": "regular"
-        },
-        {
           "name": "jump-in-rounded.png",
           "kind": "regular"
         },
         {
           "name": "leave-icon.png",
-          "kind": "regular"
-        },
-        {
-          "name": "live-icn.png",
           "kind": "regular"
         },
         {
@@ -1834,10 +1810,6 @@
           "kind": "regular"
         },
         {
-          "name": "players-icn.png",
-          "kind": "regular"
-        },
-        {
           "name": "private-icn.png",
           "kind": "regular"
         },
@@ -1850,19 +1822,7 @@
           "kind": "regular"
         },
         {
-          "name": "reminder-off.png",
-          "kind": "regular"
-        },
-        {
-          "name": "reminder-on.png",
-          "kind": "regular"
-        },
-        {
           "name": "settings-icn.png",
-          "kind": "regular"
-        },
-        {
-          "name": "share-icn.png",
           "kind": "regular"
         },
         {
@@ -1879,10 +1839,6 @@
         },
         {
           "name": "time-icn.png",
-          "kind": "regular"
-        },
-        {
-          "name": "warning-icn.png",
           "kind": "regular"
         }
       ]
@@ -2289,10 +2245,6 @@
       "entries": [
         {
           "name": "dislike-solid.png",
-          "kind": "regular"
-        },
-        {
-          "name": "featured.png",
           "kind": "regular"
         },
         {
@@ -5037,6 +4989,10 @@
           "kind": "regular"
         },
         {
+          "name": "lobbyPick.session.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "lobbyStageTab.test.tsx",
           "kind": "regular"
         },
@@ -5760,7 +5716,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/lobbySession.test.tsx",
-      "sha256": "362cd15c284ac04b196d6f986156acad09d1db7110edf4751cc5c5b48f15da97"
+      "sha256": "c4f420ab330a859aa1dfe7089d3bc8aea6793669d5390ff383f94c56a42bbab6"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/localGuest.test.ts",
@@ -6142,7 +6098,7 @@
     },
     {
       "path": "library/explorer-core/features/lobby/goto.ts",
-      "sha256": "2d967192516545cc2f25d503e71fa9abcd2ba0d05135c30cd165b17a54b98be9"
+      "sha256": "73c010d1fd3c82b072d71f5cab0a4412820d712476af4aa0d5fcaf063daf96d3"
     },
     {
       "path": "library/explorer-core/features/lobby/layout.ts",
@@ -6158,7 +6114,7 @@
     },
     {
       "path": "library/explorer-core/features/lobby/lobbyApi.ts",
-      "sha256": "46165240a67709e62dc99141bd610b618076108a07d4b863d1a67312ae3f4648"
+      "sha256": "68f99e5f538fed4b55615e0e6ba9f0625221cf7a7d4a3f6318c0bd2d9f5bf303"
     },
     {
       "path": "library/explorer-core/features/lobby/lobbyEvents.ts",
@@ -6466,7 +6422,7 @@
     },
     {
       "path": "library/explorer-core/test/lobbyGoto.test.ts",
-      "sha256": "510c61a8c1d0f3a7f7fa6d047692b4668a9d2acc03329f11323bf69078af796d"
+      "sha256": "67cd0379c181f064e4beabed6dffb23c8822b01074ece3d957684fea931ed9c4"
     },
     {
       "path": "library/explorer-core/test/lobbyLayout.test.ts",
@@ -6506,7 +6462,7 @@
     },
     {
       "path": "library/explorer-core/test/serverReadErrors.test.ts",
-      "sha256": "272b51a9fc7635d9a2a6ab260f321523b896db7fed87e6d3ef37c335ba9d99de"
+      "sha256": "7bac706f82f37bb9b0b45d3fc31e38130358db3147d2531b27fa22c028161375"
     },
     {
       "path": "library/explorer-core/test/shellSign.test.ts",
@@ -7069,14 +7025,6 @@
       "sha256": "dc3ae2cf7dc691cd1e98c43bdaaf74f7269ab0bac7ee2a6e1bf791bcb655b570"
     },
     {
-      "path": "library/ui/apps/hud/assets/lobby/arrow-left.png",
-      "sha256": "5bc5d8b5af16fa41bdf488257e76586fc252b03bcb5c088fe39bfecaf491f1c3"
-    },
-    {
-      "path": "library/ui/apps/hud/assets/lobby/arrow-right.png",
-      "sha256": "9e24b3ea64adf6ffcaaa002d0aba7ccbfe851571c2289217b26df374a7fa87b7"
-    },
-    {
       "path": "library/ui/apps/hud/assets/lobby/bug-icon.png",
       "sha256": "2d086b3594bf46c171a0e1924dd9851013708285e3d6e890f777d677809a0c14"
     },
@@ -7093,10 +7041,6 @@
       "sha256": "4ecd47c95358666fca6d13f148a071340137bca02836fbdfa0707c8bd9a8552c"
     },
     {
-      "path": "library/ui/apps/hud/assets/lobby/close-icn-thin.png",
-      "sha256": "9d751af8ec2813679a81ed185aff4ab3e13ba046b9537a3a35c3aad948016fae"
-    },
-    {
       "path": "library/ui/apps/hud/assets/lobby/communities-banner-img.png",
       "sha256": "503d0ab7a49d83585f5edb12acca988e3a3e6d1ab07fa8dfbd394885a4e421d2"
     },
@@ -7111,10 +7055,6 @@
     {
       "path": "library/ui/apps/hud/assets/lobby/decentraland-logo.png",
       "sha256": "c424ec18a8061fff44af92fe138f282b60350201d30032a754af258c10430d15"
-    },
-    {
-      "path": "library/ui/apps/hud/assets/lobby/default-image-place.png",
-      "sha256": "23c578b4b6b0699e9337c3ce80084187899ac220081e9efdcdd9b2bef542ceab"
     },
     {
       "path": "library/ui/apps/hud/assets/lobby/default-profile-thumbnail.png",
@@ -7181,20 +7121,12 @@
       "sha256": "c66756aad349f86fc8245ddaad6cd7b76ffa49d755bb52ddc4bc8e0a3627cdeb"
     },
     {
-      "path": "library/ui/apps/hud/assets/lobby/jump-in-outline.png",
-      "sha256": "232f2560d4d0cb473412e58f62aa177cb719772e841fe2364051a756c32f35db"
-    },
-    {
       "path": "library/ui/apps/hud/assets/lobby/jump-in-rounded.png",
       "sha256": "ac7f9bb6b3a0632c625ecc2ef708b9e00b2bc7cadf0487f23a92d05d7bd9b37d"
     },
     {
       "path": "library/ui/apps/hud/assets/lobby/leave-icon.png",
       "sha256": "d7a4fa5e9dace998cdae36bdaaf5eb3b9321cb14ea863d5d6af6da2238aa5168"
-    },
-    {
-      "path": "library/ui/apps/hud/assets/lobby/live-icn.png",
-      "sha256": "6c96a18bab96a62a444f44d759ea55d3680923ddafd0bbb2086dbc98def0f286"
     },
     {
       "path": "library/ui/apps/hud/assets/lobby/live-icon.png",
@@ -7221,10 +7153,6 @@
       "sha256": "13b774bb637f28f320609b926fc5baeb5d4b0fcf7be4c36f328c261e037a89e3"
     },
     {
-      "path": "library/ui/apps/hud/assets/lobby/players-icn.png",
-      "sha256": "00c5a1f61d3768694ddc9bbd37a789409916c81dc7c01e21e4682adde8b2b0fb"
-    },
-    {
       "path": "library/ui/apps/hud/assets/lobby/private-icn.png",
       "sha256": "a6eb4e74a5e6bd4b77df0cf66dd054e792077b0e61d7459885d4fda3312be2ac"
     },
@@ -7237,20 +7165,8 @@
       "sha256": "f258178cfbe79a9317f8c2c52f37c0dfdf638ddaf4c006ba2487b7f928d15210"
     },
     {
-      "path": "library/ui/apps/hud/assets/lobby/reminder-off.png",
-      "sha256": "51328f1c15626845ebd536b5b69bb13f652b475fbd8a74b058cc908db54716e0"
-    },
-    {
-      "path": "library/ui/apps/hud/assets/lobby/reminder-on.png",
-      "sha256": "2c172ade73ff24222d73f0c532e355b004383e2ef5b905ae44ca95cdf30f3b79"
-    },
-    {
       "path": "library/ui/apps/hud/assets/lobby/settings-icn.png",
       "sha256": "10025d9429880aea82e002b4f97a77b9d612042870ed6ee441b9a2a34d2c18c0"
-    },
-    {
-      "path": "library/ui/apps/hud/assets/lobby/share-icn.png",
-      "sha256": "8aaf1360e7f0e3bab57b4ecb6bcea6b133cc93bde2d708fc97be59edb949925f"
     },
     {
       "path": "library/ui/apps/hud/assets/lobby/sign-out-icn.png",
@@ -7271,10 +7187,6 @@
     {
       "path": "library/ui/apps/hud/assets/lobby/time-icn.png",
       "sha256": "cd9ca9f811aeec21454a42bc87e8cba089a133186e82360a00adedafbcb22d3f"
-    },
-    {
-      "path": "library/ui/apps/hud/assets/lobby/warning-icn.png",
-      "sha256": "395767c56689382561d30ce09ddf74018edac2a12d95a6bca1da29fa94f1f93c"
     },
     {
       "path": "library/ui/apps/hud/assets/map/categories/all.png",
@@ -7603,10 +7515,6 @@
     {
       "path": "library/ui/apps/hud/assets/places/dislike-solid.png",
       "sha256": "bb8cfbce462c125b747a09e33f63732bc239b5aed11c1f48f2c47265cfbc13d4"
-    },
-    {
-      "path": "library/ui/apps/hud/assets/places/featured.png",
-      "sha256": "265afb53de8d35edc75873c1a41938c8b8a533a8879a6c58f41dc662bbb4e9bb"
     },
     {
       "path": "library/ui/apps/hud/assets/places/like-rate.png",
@@ -8802,15 +8710,15 @@
     },
     {
       "path": "library/ui/apps/hud/features/events/eventsStore.ts",
-      "sha256": "11679ab712582d5cf76ef3fca17e84610bd4fc1beb6a7a32d0bcff67c2208167"
+      "sha256": "2b8957f03c699b76021b19172f7c2cb42f04a8fbb75354a2b82c99734bdfc92a"
     },
     {
       "path": "library/ui/apps/hud/features/events/useEventActions.ts",
-      "sha256": "ec714155df4f42c4ce72d80cf04a8d32dcc575a5c3fe04a798e692cd5fe97217"
+      "sha256": "3f2cb78fdb4b48e07c9b9cc9e4c091684e8e2ba606771eaf0088581d64a95d8c"
     },
     {
       "path": "library/ui/apps/hud/features/events/useEventsData.ts",
-      "sha256": "de8a97af46d82d8c82e085ee203d0c0b313d096c9b038b529a69af89dd6e2e9e"
+      "sha256": "952f3dcf2bbac84b91bb79a572f2b513e424343ce29076b28cecde99c5ab5f64"
     },
     {
       "path": "library/ui/apps/hud/features/events/useLiveEventCount.ts",
@@ -8950,7 +8858,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "sha256": "db65c863aaabff93bb2181411721bde87511f5e6e5e800c0097a15461615cef6"
+      "sha256": "7253e463ccda861ed34700aaabbaf1f4abab6cd4c0088a6b0aa0e7222451a981"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyEditor.module.css",
@@ -8958,7 +8866,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyEditor.tsx",
-      "sha256": "8bb3f2274f8033a0cd321097f2340ea37de2b03a9d2090887fd7bd4f3d75d99a"
+      "sha256": "c3ae1d68aeb5474db62c0914458d9629b1c66d0b41b5dc35772e2dbdab36fb80"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.module.css",
@@ -8966,7 +8874,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "sha256": "c9c64dd8b5efbe1e756410ae2d21629947b068f6645ab06c4b1b6e47a14eec76"
+      "sha256": "2f4b787f71215a3c861265da1eb50f1fcf22c30a5cc6605b38e6d1e59fb63803"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.module.css",
@@ -8974,7 +8882,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
-      "sha256": "afc1c61993019a589d4f6cf03668290bc4e2e5fe293fa1db442f30d1c24be08d"
+      "sha256": "e7f52ae6da7525b9cd6bb936f55ed291d9aed375dbfcf88cfc8a88f3fb4c9328"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyRail.module.css",
@@ -8982,7 +8890,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyRail.tsx",
-      "sha256": "6f0488e1e949ddebd7169d68f23d6278145884e52edbaa08dc99f17977a8ed09"
+      "sha256": "f2af85f3e09eb32c91bff24658150ea941d80913dc67ab77c11a5cf667049320"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyWidgets.module.css",
@@ -8990,7 +8898,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyWidgets.tsx",
-      "sha256": "3fd3aeb314e9757743c0f3379ccb7e1c787a8dfff206f0d73e5ebbff97e5000c"
+      "sha256": "ab69347327d5b442ba951322a389af640aa341305a5797c60002fd7ce8b3087b"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/grid.ts",
@@ -9214,7 +9122,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "sha256": "fba29782fd60764b0449a27d32b4b637be461aad69b343051f3a1cba6d58b282"
+      "sha256": "aa670e11f0f761071b83bed2cf9e183a4a9102749a6ea37955dbdf8f940c76dd"
     },
     {
       "path": "library/ui/apps/hud/features/places/PlacesBrowser.tsx",
@@ -9346,7 +9254,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "d5bfd6d149e11f2e0e43a2420e278a9a3331a5d73f59e794deb95dc625b452e4"
+      "sha256": "1744dc82998d9335ddc58265e54f40fc0f726ea68ad1f4d60ed47f893e17cc49"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -9630,7 +9538,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "b9031b752b0040d34a9ae3f65c5ee3f3d8856a6e7ce3c81f28acd7e0b00f21b6"
+      "sha256": "ea70ba5a10934e19d908893dd83fb364be5fa82c0dd79f5e3ee61151d33ada22"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -9790,7 +9698,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/events.test.tsx",
-      "sha256": "fdd99796983c95136789cddd68d865ed423e7e1237cf6459e098b75dbf2508e3"
+      "sha256": "4addf32c21647f120f2f870c65877d47ca05dc8fdd5e7514d5a59d4ef76afa0d"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/eventsStore.test.ts",
@@ -9834,11 +9742,15 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
-      "sha256": "92feece6338f2ae7d81d3185aaeacf244b35dfc0d1c009e53149ae310036b481"
+      "sha256": "468ce295b77c8392d7ce6c1e9dadacb6569f0894d6783d2b4a0a0cfb29944265"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobbyFriendLocations.test.tsx",
       "sha256": "bb93af46507a44ed2bbbcf8559ce4a28f73678b8ad1a31dd53024aceec7587bb"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/lobbyPick.session.test.tsx",
+      "sha256": "17bd773839664237ea646c14aeb2561f962051068e48666334959929f626e5db"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobbyStageTab.test.tsx",
@@ -9914,7 +9826,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/placeDetail.test.tsx",
-      "sha256": "b388aec66a993700c2df545bdeaebe753b8529f1e783e4cd9bfa41ebbb1edb52"
+      "sha256": "2ed6e6210f76efb94ef97ac93c6b180dcc3b23f7e623c2035283a617c823197e"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/placesDiscovery.test.tsx",
@@ -23101,21 +23013,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/default-image-place.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/default-image-place.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/default-image-place.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
       "to": "library/ui/apps/hud/assets/lobby/default-profile-thumbnail.png",
       "kind": "native:runtime"
     },
@@ -23161,36 +23058,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/jump-in-outline.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/jump-in-outline.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/jump-in-outline.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/live-icn.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/live-icn.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/live-icn.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
       "to": "library/ui/apps/hud/assets/lobby/location-icn.png",
       "kind": "native:runtime"
     },
@@ -23202,21 +23069,6 @@
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
       "to": "library/ui/apps/hud/assets/lobby/location-icn.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/players-icn.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/players-icn.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/players-icn.png",
       "kind": "test:runtime"
     },
     {
@@ -23251,51 +23103,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/reminder-off.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/reminder-off.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/reminder-off.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/reminder-on.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/reminder-on.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/reminder-on.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/share-icn.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/share-icn.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/share-icn.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
       "to": "library/ui/apps/hud/assets/lobby/thumbnail-default.png",
       "kind": "native:runtime"
     },
@@ -23322,6 +23129,111 @@
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
       "to": "library/ui/apps/hud/assets/lobby/time-icn.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/default-place.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/default-place.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/default-place.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/jump-in.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/jump-in.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/jump-in.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/live.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/live.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/live.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/players.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/players.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/players.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/reminder-off.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/reminder-off.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/reminder-off.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/reminder-on.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/reminder-on.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/reminder-on.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/share.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/share.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/share.png",
       "kind": "test:runtime"
     },
     {
@@ -23397,21 +23309,6 @@
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyEditor.tsx",
       "to": "library/ui/apps/hud/assets/lobby/checkmark-icn-thick.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyEditor.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/close-icn-thin.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyEditor.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/close-icn-thin.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyEditor.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/close-icn-thin.png",
       "kind": "test:runtime"
     },
     {
@@ -23562,6 +23459,21 @@
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyEditor.tsx",
       "to": "library/ui/apps/hud/assets/lobby/recommended-icon.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyEditor.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/close-thin.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyEditor.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/close-thin.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyEditor.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/close-thin.png",
       "kind": "test:runtime"
     },
     {
@@ -23836,32 +23748,17 @@
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/arrow-left.png",
+      "to": "library/explorer-core/lib/realmCheck.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/arrow-left.png",
+      "to": "library/explorer-core/lib/realmCheck.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/arrow-left.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/close-icn-thin.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/close-icn-thin.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/close-icn-thin.png",
+      "to": "library/explorer-core/lib/realmCheck.ts",
       "kind": "test:runtime"
     },
     {
@@ -23997,6 +23894,36 @@
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
       "to": "library/ui/apps/hud/assets/lobby/places-off.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/arrow-left.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/arrow-left.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/arrow-left.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/close-thin.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/close-thin.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/close-thin.png",
       "kind": "test:runtime"
     },
     {
@@ -24466,21 +24393,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/players-icn.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/players-icn.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/players-icn.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
       "to": "library/ui/apps/hud/assets/lobby/settings-icn.png",
       "kind": "native:runtime"
     },
@@ -24507,6 +24419,21 @@
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
       "to": "library/ui/apps/hud/assets/lobby/sign-out-icn.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/players.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/players.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/players.png",
       "kind": "test:runtime"
     },
     {
@@ -24571,32 +24498,32 @@
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyRail.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/arrow-left.png",
+      "to": "library/ui/apps/hud/assets/map/panel/arrow-left.png",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyRail.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/arrow-left.png",
+      "to": "library/ui/apps/hud/assets/map/panel/arrow-left.png",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyRail.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/arrow-left.png",
+      "to": "library/ui/apps/hud/assets/map/panel/arrow-left.png",
       "kind": "test:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyRail.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/arrow-right.png",
+      "to": "library/ui/apps/hud/assets/map/panel/arrow-right.png",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyRail.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/arrow-right.png",
+      "to": "library/ui/apps/hud/assets/map/panel/arrow-right.png",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyRail.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/arrow-right.png",
+      "to": "library/ui/apps/hud/assets/map/panel/arrow-right.png",
       "kind": "test:runtime"
     },
     {
@@ -24736,21 +24663,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyWidgets.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/arrow-right.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyWidgets.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/arrow-right.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyWidgets.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/arrow-right.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/lobby/LobbyWidgets.tsx",
       "to": "library/ui/apps/hud/assets/lobby/communities-banner-img.png",
       "kind": "native:runtime"
     },
@@ -24856,17 +24768,32 @@
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyWidgets.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/warning-icn.png",
+      "to": "library/ui/apps/hud/assets/map/panel/arrow-right.png",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyWidgets.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/warning-icn.png",
+      "to": "library/ui/apps/hud/assets/map/panel/arrow-right.png",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyWidgets.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/warning-icn.png",
+      "to": "library/ui/apps/hud/assets/map/panel/arrow-right.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyWidgets.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/warning.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyWidgets.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/warning.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyWidgets.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/warning.png",
       "kind": "test:runtime"
     },
     {
@@ -28621,17 +28548,32 @@
     },
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/default-image-place.png",
+      "to": "library/ui/apps/hud/assets/map/icons/layer-poi.png",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/default-image-place.png",
+      "to": "library/ui/apps/hud/assets/map/icons/layer-poi.png",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/lobby/default-image-place.png",
+      "to": "library/ui/apps/hud/assets/map/icons/layer-poi.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/default-place.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/default-place.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/default-place.png",
       "kind": "test:runtime"
     },
     {
@@ -28782,21 +28724,6 @@
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "to": "library/ui/apps/hud/assets/places/dislike-solid.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/places/featured.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/places/featured.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/places/featured.png",
       "kind": "test:runtime"
     },
     {
@@ -37062,6 +36989,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/lobbyFriendLocations.test.tsx",
       "to": "library/ui/apps/hud/features/lobby/useLobbyData.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobbyPick.session.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobbyPick.session.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobbyPick.session.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
       "kind": "test:runtime"
     },
     {
@@ -43056,6 +42998,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/lobbyPick.session.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/lobbyStageTab.test.tsx",
       "kind": "type"
     },
@@ -45521,36 +45468,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/arrow-left.png",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/arrow-left.png",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/arrow-left.png",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/arrow-right.png",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/arrow-right.png",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/arrow-right.png",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/lobby/bug-icon.png",
       "kind": "native:asset"
     },
@@ -45611,21 +45528,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/close-icn-thin.png",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/close-icn-thin.png",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/close-icn-thin.png",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/lobby/communities-banner-img.png",
       "kind": "native:asset"
     },
@@ -45682,21 +45584,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/lobby/decentraland-logo.png",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/default-image-place.png",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/default-image-place.png",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/default-image-place.png",
       "kind": "test:asset"
     },
     {
@@ -45941,21 +45828,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/jump-in-outline.png",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/jump-in-outline.png",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/jump-in-outline.png",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/lobby/jump-in-rounded.png",
       "kind": "native:asset"
     },
@@ -45982,21 +45854,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/lobby/leave-icon.png",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/live-icn.png",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/live-icn.png",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/live-icn.png",
       "kind": "test:asset"
     },
     {
@@ -46091,21 +45948,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/players-icn.png",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/players-icn.png",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/players-icn.png",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/lobby/private-icn.png",
       "kind": "native:asset"
     },
@@ -46151,36 +45993,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/reminder-off.png",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/reminder-off.png",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/reminder-off.png",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/reminder-on.png",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/reminder-on.png",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/reminder-on.png",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/lobby/settings-icn.png",
       "kind": "native:asset"
     },
@@ -46192,21 +46004,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/lobby/settings-icn.png",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/share-icn.png",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/share-icn.png",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/share-icn.png",
       "kind": "test:asset"
     },
     {
@@ -46282,21 +46079,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/lobby/time-icn.png",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/warning-icn.png",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/warning-icn.png",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/lobby/warning-icn.png",
       "kind": "test:asset"
     },
     {
@@ -47527,21 +47309,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/places/dislike-solid.png",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/places/featured.png",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/places/featured.png",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/places/featured.png",
       "kind": "test:asset"
     },
     {

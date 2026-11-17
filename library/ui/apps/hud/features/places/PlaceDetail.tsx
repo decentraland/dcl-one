@@ -6,7 +6,7 @@ import { Button, ContextMenu, MaskIcon, openPopup, showToast } from '../../desig
 import closeIcon from '../../assets/events/close-icn-thin.png'
 import linkIcon from '../../assets/events/link-icn.png'
 import xIcon from '../../assets/events/x-icn.png'
-import defaultPlace from '../../assets/lobby/default-image-place.png'
+import defaultPlace from '../../assets/map/panel/default-place.png'
 import dislikeOutline from '../../assets/map/panel/dislike-outline.png'
 import favouriteOutline from '../../assets/map/panel/favourite-outline.png'
 import favouriteSolid from '../../assets/map/panel/favourite-solid.png'
@@ -17,7 +17,7 @@ import parcelsIcon from '../../assets/map/panel/parcels.png'
 import playersIcon from '../../assets/map/panel/players.png'
 import shareIcon from '../../assets/map/panel/share.png'
 import dislikeSolid from '../../assets/places/dislike-solid.png'
-import featuredIcon from '../../assets/places/featured.png'
+import featuredIcon from '../../assets/map/icons/layer-poi.png'
 import likeRateIcon from '../../assets/places/like-rate.png'
 import locationIcon from '../../assets/places/location.png'
 import visitsIcon from '../../assets/places/visits.png'
@@ -175,9 +175,15 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
 
   const worldName = place.world_name ?? ''
   const communityKey = communityIds.join(',')
+  // a re-check for the communities keeps the verdict until it answers
+  const checkedFor = useRef<string | null>(null)
   useEffect(() => {
     if (!world) return
-    setAccess('checking')
+    const target = `${worldName}|${wallet ?? ''}`
+    if (checkedFor.current !== target) {
+      checkedFor.current = target
+      setAccess('checking')
+    }
     const ctrl = new AbortController()
     const communities = !communitiesLoaded ? null : communityKey === '' ? [] : communityKey.split(',')
     fetchWorldAccess(worldName, wallet, communities, ctrl.signal).then(setAccess, () => undefined)

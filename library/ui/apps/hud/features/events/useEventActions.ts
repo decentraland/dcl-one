@@ -27,7 +27,7 @@ const openUrl = (url: string): void => {
 
 export function useEventActions(): EventActions {
   const session = useSession()
-  const { data, open, toggle } = session.events
+  const { data, close } = session.events
   const { changeRealm, teleportToPlace } = session.map
   const referrer = session.profile.data?.address ?? null
   const pending = data.store.pending
@@ -50,7 +50,8 @@ export function useEventActions(): EventActions {
         const travelling = dest.kind === 'world' ? changeRealm(dest.realm) : teleportToPlace(dest.x, dest.y)
         if (!travelling) return false
         track('event_jumped_in', eventAnalytics(event))
-        if (open) toggle()
+        // a pick from the startup lobby has already closed every page: a toggle would reopen this one
+        close()
         return true
       },
       shareOnX: (event) => {
@@ -70,6 +71,6 @@ export function useEventActions(): EventActions {
         track('event_creation_opened', { from_header_button: fromHeader })
       }
     }),
-    [data, pending, referrer, changeRealm, teleportToPlace, open, toggle]
+    [data, pending, referrer, changeRealm, teleportToPlace, close]
   )
 }

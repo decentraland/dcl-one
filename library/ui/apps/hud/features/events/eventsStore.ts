@@ -85,7 +85,7 @@ export function eventsReducer(store: EventsStore, action: EventsAction): EventsS
 function keepLobby(store: EventsStore): EventsStore {
   const lobby = store.queries.lobby
   const empty = emptyEventsStore()
-  if (lobby.status === 'idle') return empty
+  if (lobby.status === 'idle') return { ...empty, pending: store.pending }
   const kept = new Set(lobby.ids)
   const byId: Record<string, EventData> = {}
   for (const id of lobby.ids) if (store.byId[id] != null) byId[id] = store.byId[id]
@@ -96,7 +96,8 @@ function keepLobby(store: EventsStore): EventsStore {
     queries: { ...empty.queries, lobby },
     places,
     remindedWhenRead: store.remindedWhenRead.filter((id) => kept.has(id)),
-    pending: store.pending.filter((id) => kept.has(id))
+    // a reminder in flight settles after the page closes
+    pending: store.pending
   }
 }
 

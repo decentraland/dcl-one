@@ -2,7 +2,7 @@
 // changes.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import closeIcon from '../../assets/lobby/close-icn-thin.png'
+import closeIcon from '../../assets/map/panel/close-thin.png'
 import checkmark from '../../assets/lobby/checkmark-icn-thick.png'
 import communitiesIcon from '../../assets/lobby/communities-icon.png'
 import dragIcon from '../../assets/lobby/drag-icon.png'

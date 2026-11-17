@@ -9,7 +9,7 @@ import { LobbyHome } from '../../features/lobby/LobbyHome'
 import type { EventData } from '@explorer-core/engine/protocol'
 import type { QueryStatus } from '../../features/events/eventsStore'
 import { eventAt } from './eventFixtures'
-import { fetchCrowd, fetchLandingPlace, fetchRecents, fetchWhereabouts, worldReachable, type LobbyPlace } from '@explorer-core/features/lobby/lobbyApi'
+import { fetchCrowd, fetchLandingPlace, fetchRecents, fetchWhereabouts, worldReachable, type FriendWhere, type LobbyPlace } from '@explorer-core/features/lobby/lobbyApi'
 import { getPref, PREF, setPref } from '@explorer-core/lib/prefs'
 import * as analytics from '@explorer-core/lib/analytics'
 import { receiveProfile, resetProfileStore, setProfileRequester } from '../../features/session/profileStore'
@@ -33,7 +33,9 @@ vi.mock('@explorer-core/features/lobby/lobbyApi', async (importOriginal) => ({
   fetchHighlighted: vi.fn(async () => []),
   fetchWhereabouts: vi.fn(async () => new Map()),
   fetchCrowd: vi.fn(async () => ({ x: 5, y: 6 })),
-  worldReachable: vi.fn(async () => true)
+  worldReachable: vi.fn(async () => 'ok' as const),
+  // a friend's location title would otherwise read the live places service
+  whereTitle: vi.fn(async (where: FriendWhere) => (where.kind === 'genesis' ? `${where.parcel.x},${where.parcel.y}` : where.kind === 'world' ? where.world : 'Lobby'))
 }))
 
 const lobby = (session: EngineSession, onClose?: () => void): React.JSX.Element => (
@@ -538,9 +540,32 @@ describe('lobby go to', () => {
     await waitFor(() => expect(session.pickDestination).toHaveBeenCalledWith({ kind: 'parcel', x: 3, y: -5 }))
     goTo('mana')
     await waitFor(() => expect(session.pickDestination).toHaveBeenCalledWith({ kind: 'world', realm: 'mana.dcl.eth', position: undefined }))
-    vi.mocked(worldReachable).mockResolvedValueOnce(false)
+    vi.mocked(worldReachable).mockResolvedValueOnce('not-found')
     goTo('ghost')
     expect(await screen.findByRole('alert')).toBeInTheDocument()
+  })
+
+  it('goes to a world named in capitals, lowercased', async () => {
+    const session = withGoTo()
+    render(lobby(session))
+    goTo('Mana.DCL.ETH')
+    await waitFor(() => expect(session.pickDestination).toHaveBeenCalledWith({ kind: 'world', realm: 'mana.dcl.eth', position: undefined }))
+  })
+
+  it('does not flag a world the worlds server cannot check, and says so', async () => {
+    const session = withGoTo()
+    vi.mocked(worldReachable).mockResolvedValueOnce('unreachable')
+    render(
+      <>
+        {lobby(session)}
+        <ToastHost />
+      </>
+    )
+    goTo('mana')
+    expect(await screen.findByText('The world "mana.dcl.eth" isn\'t reachable right now.')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByRole('textbox', { name: 'Go to a coordinate or a World' })).toHaveValue('mana')
+    expect(session.pickDestination).not.toHaveBeenCalled()
   })
 
   it('keeps the text, unflagged, when the pick is refused', async () => {
@@ -584,6 +609,63 @@ describe('lobby go to', () => {
     await act(async () => answer({ x: 9, y: 9 }))
     expect(session.pickDestination).toHaveBeenCalledOnce()
     expect(session.pickDestination).toHaveBeenCalledWith({ kind: 'parcel', x: 1, y: 2 })
+  })
+
+  it('travels to the friend when JOIN follows a crowd lookup that answers first', async () => {
+    setPref(PREF.lobbyLayout, '{"Version":1,"Entries":[{"Corner":"TopLeft","Widget":"GoTo4By1","X":0,"Y":0},{"Corner":"TopRight","Widget":"FriendsOnline4By2","X":0,"Y":0}]}')
+    const session = fakeSession()
+    session.friends.loading = false
+    session.friends.list = [{ address: '0xf1', name: 'Mojito', status: 'online' }]
+    let crowd: (p: { x: number; y: number }) => void = () => undefined
+    let join: (found: Map<string, { kind: 'genesis'; parcel: { x: number; y: number } }>) => void = () => undefined
+    vi.mocked(fetchCrowd).mockReturnValueOnce(new Promise((resolve) => (crowd = resolve)))
+    vi.mocked(fetchWhereabouts)
+      .mockResolvedValueOnce(new Map([['0xf1', { kind: 'genesis', parcel: { x: 4, y: 5 } }]]))
+      .mockReturnValueOnce(new Promise((resolve) => (join = resolve)))
+    render(lobby(session))
+    goTo('crowd')
+    await waitFor(() => expect(fetchCrowd).toHaveBeenCalledOnce())
+    fireEvent.click(await screen.findByRole('button', { name: 'Join Mojito' }))
+    await act(async () => crowd({ x: 9, y: 9 }))
+    expect(session.pickDestination).not.toHaveBeenCalled()
+    await act(async () => join(new Map([['0xf1', { kind: 'genesis', parcel: { x: 4, y: 5 } }]])))
+    expect(session.pickDestination).toHaveBeenCalledOnce()
+    expect(session.pickDestination).toHaveBeenCalledWith({ kind: 'parcel', x: 4, y: 5 })
+  })
+
+  it('does not travel to a friend whose location answers after the layout editor opened', async () => {
+    const session = fakeSession()
+    session.friends.loading = false
+    session.friends.list = [{ address: '0xf1', name: 'Mojito', status: 'online' }]
+    let join: (found: Map<string, { kind: 'genesis'; parcel: { x: number; y: number } }>) => void = () => undefined
+    vi.mocked(fetchWhereabouts)
+      .mockResolvedValueOnce(new Map([['0xf1', { kind: 'genesis', parcel: { x: 4, y: 5 } }]]))
+      .mockReturnValueOnce(new Promise((resolve) => (join = resolve)))
+    render(lobby(session))
+    fireEvent.click(await screen.findByRole('button', { name: 'Join Mojito' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Customize lobby layout' }))
+    await act(async () => join(new Map([['0xf1', { kind: 'genesis', parcel: { x: 4, y: 5 } }]])))
+    expect(session.pickDestination).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'Customize Lobby' })).toBeInTheDocument()
+  })
+
+  it('records a JOIN or the landing Jump in only once the pick is taken', async () => {
+    const track = vi.spyOn(analytics, 'track')
+    const session = fakeSession()
+    session.friends.loading = false
+    session.friends.list = [{ address: '0xf1', name: 'Mojito', status: 'online' }]
+    session.homeScene = () => ({ realm: null, parcel: '1,1' })
+    vi.mocked(session.pickDestination).mockReturnValue(false)
+    vi.mocked(fetchWhereabouts).mockResolvedValue(new Map([['0xf1', { kind: 'genesis', parcel: { x: 4, y: 5 } }]]))
+    render(lobby(session))
+    fireEvent.click(await screen.findByRole('button', { name: 'Join Mojito' }))
+    await waitFor(() => expect(session.pickDestination).toHaveBeenCalledOnce())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Jump In' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Jump In' }))
+    expect(session.pickDestination).toHaveBeenCalledTimes(2)
+    const sent = track.mock.calls.map(([name, props]) => [name, (props as { button_text?: string } | undefined)?.button_text])
+    expect(sent).not.toContainEqual(['jump_to_friend_clicked', undefined])
+    expect(sent).not.toContainEqual(['Click Button', 'JUMP_IN'])
   })
 })
 

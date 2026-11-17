@@ -47,7 +47,7 @@ export function parseGotoTarget(text: string): GotoTarget {
 
 export const WORLD_SUFFIX = '.dcl.eth'
 // name.dcl.eth (a NAME: letters and digits) or an ENS name.eth, the names worldName keeps
-const WORLD = /^(?:[A-Za-z0-9]+\.dcl|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)\.eth$/
+const WORLD = /^(?:[A-Za-z0-9]+\.dcl|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)\.eth$/i
 const WORLD_SHORT_NAME = /^[A-Za-z0-9]+$/
 
 /** Genesis City's parcels: the square city and its two extensions, as `[minX, minY, maxX, maxY)`. */
@@ -76,8 +76,10 @@ export function isDestination(text: string): boolean {
   return t.world != null || t.parcel != null
 }
 
+/** Lowercased: world names, like ENS names, are case-insensitive. */
 export function worldName(name: string): string {
-  return name.toLowerCase().endsWith('.eth') ? name : name + WORLD_SUFFIX
+  const lower = name.toLowerCase()
+  return lower.endsWith('.eth') ? lower : lower + WORLD_SUFFIX
 }
 
 export function randomParcel(random: () => number = Math.random): { x: number; y: number } {

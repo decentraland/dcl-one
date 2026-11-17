@@ -3,12 +3,15 @@
 import { serviceUrl } from '@hud-host'
 import type { DiscoverPlace } from '../places/placesApi'
 import { getPref, PREF, setPref } from '../../lib/prefs'
+import type { RealmCheck } from '../../lib/realmCheck'
 
 const PLACES_API = `${serviceUrl('places')}/api`
 const RECENTS_MAX = 20
 const CACHE_TTL = 60_000
 const WHERE_LOOKUPS = 4
 const TIMEOUT_MS = 5_000
+// 100 wallets keep the peers URL near 5 KB, under common proxy limits
+const PEERS_PER_READ = 100
 
 export type LobbyPlace = DiscoverPlace & { connected_addresses?: string[] | null }
 
@@ -16,9 +19,11 @@ export type LobbyPlace = DiscoverPlace & { connected_addresses?: string[] | null
 const cache = new Map<string, { at: number; promise: Promise<unknown> }>()
 function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
   const hit = cache.get(key)
-  if (hit && Date.now() - hit.at < CACHE_TTL) return hit.promise as Promise<T>
+  const now = Date.now()
+  if (hit && now - hit.at < CACHE_TTL) return hit.promise as Promise<T>
+  for (const [k, entry] of cache) if (now - entry.at >= CACHE_TTL) cache.delete(k)
   const promise = load()
-  cache.set(key, { at: Date.now(), promise })
+  cache.set(key, { at: now, promise })
   promise.catch(() => {
     if (cache.get(key)?.promise === promise) cache.delete(key)
   })
@@ -104,8 +109,14 @@ export type FriendWhere = { kind: 'genesis'; parcel: { x: number; y: number } } 
 
 type Peer = { id?: string; address?: string; parcel?: [number, number] }
 
-/** None when comms cannot answer, so the worlds are still asked. */
+/** None for a batch comms cannot answer, so its worlds are still asked. */
 async function fetchPeers(wallets: string[]): Promise<Peer[]> {
+  const batches: string[][] = []
+  for (let i = 0; i < wallets.length; i += PEERS_PER_READ) batches.push(wallets.slice(i, i + PEERS_PER_READ))
+  return (await Promise.all(batches.map(fetchPeerBatch))).flat()
+}
+
+async function fetchPeerBatch(wallets: string[]): Promise<Peer[]> {
   const query = wallets.map((w) => `id=${encodeURIComponent(w)}`).join('&')
   const res = await fetch(`${serviceUrl('archipelagoStats')}/comms/peers?${query}`, { signal: AbortSignal.timeout(TIMEOUT_MS) }).catch(() => null)
   if (res == null) return []
@@ -167,7 +178,10 @@ export async function fetchCrowd(): Promise<{ x: number; y: number }> {
 }
 
 /** Probes the realm as a realm change does before going. */
-export async function worldReachable(world: string): Promise<boolean> {
+export async function worldReachable(world: string): Promise<RealmCheck> {
   const r = await fetch(`${serviceUrl('worldsServer')}/world/${encodeURIComponent(world)}/about`, { method: 'HEAD', signal: AbortSignal.timeout(TIMEOUT_MS) }).catch(() => null)
-  return r != null && r.ok
+  if (r == null) return 'unreachable'
+  if (r.ok) return 'ok'
+  await r.body?.cancel().catch(() => undefined)
+  return r.status === 404 ? 'not-found' : 'unreachable'
 }

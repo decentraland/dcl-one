@@ -77,6 +77,35 @@ describe('refused server reads', () => {
     expect(where.size).toBe(10)
   })
 
+  it('reads the comms peers in batches of 100 wallets', async () => {
+    const asked: string[][] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const ids = new URL(url).searchParams.getAll('id')
+        asked.push(ids)
+        return ok({ peers: ids.map((id) => ({ id, parcel: [1, 2] })) })
+      })
+    )
+    const wallets = Array.from({ length: 250 }, (_, i) => `0x${i}`)
+    const where = await fetchWhereabouts(wallets)
+    expect(asked.map((ids) => ids.length)).toEqual([100, 100, 50])
+    expect(where.get('0x249')).toEqual({ kind: 'genesis', parcel: { x: 1, y: 2 } })
+  })
+
+  it('tells a world that does not exist from a worlds server that cannot answer', async () => {
+    const missing = refused(404)
+    vi.stubGlobal('fetch', vi.fn(async () => missing.response))
+    await expect(worldReachable('ghost.dcl.eth')).resolves.toBe('not-found')
+    expect(missing.cancel).toHaveBeenCalledOnce()
+    const down = refused(503)
+    vi.stubGlobal('fetch', vi.fn(async () => down.response))
+    await expect(worldReachable('party.dcl.eth')).resolves.toBe('unreachable')
+    expect(down.cancel).toHaveBeenCalledOnce()
+    vi.stubGlobal('fetch', vi.fn(async () => ok({})))
+    await expect(worldReachable('party.dcl.eth')).resolves.toBe('ok')
+  })
+
   it('reads the most crowded scene from the archipelago stats, and releases a refused read', async () => {
     const read = vi.fn(async () => ok([{ baseCoords: [12, -3] }]))
     vi.stubGlobal('fetch', read)
@@ -98,7 +127,7 @@ describe('refused server reads', () => {
     expect(stalled).toHaveBeenCalledTimes(3)
     expect(asked).toHaveBeenCalledTimes(3)
     timeout.abort()
-    await expect(Promise.all(reads)).resolves.toEqual(['failed', 'failed', false])
+    await expect(Promise.all(reads)).resolves.toEqual(['failed', 'failed', 'unreachable'])
     asked.mockRestore()
   })
 })
