@@ -278,9 +278,22 @@ export class ConsoleError extends Error {
   }
 }
 
-/** A line as the transports send it: one leading `/`, single spaces between arguments. */
+/** A line as the transports send it: one leading `/`, single spaces between arguments, and a
+ *  double-quoted run (one argument to the engine, `\"` and `\\` escaping inside it) as written. */
 export function normalizeLine(line: string): string {
-  const trimmed = line.trim().replace(/\s+/g, ' ')
+  let trimmed = ''
+  let quoted = false
+  for (let i = 0; i < line.length; i++) {
+    const c = line.charAt(i)
+    if (quoted && c === '\\' && i + 1 < line.length) trimmed += c + line.charAt(++i)
+    else if (c === '"') {
+      quoted = !quoted
+      trimmed += c
+    } else if (!quoted && /\s/.test(c)) {
+      if (!trimmed.endsWith(' ')) trimmed += ' '
+    } else trimmed += c
+  }
+  trimmed = trimmed.trim()
   if (trimmed === '') throw new Error('empty console command')
   return trimmed.startsWith('/') ? trimmed : `/${trimmed}`
 }

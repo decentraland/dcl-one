@@ -298,7 +298,9 @@ State, in every build:
   through the social service and answer once it has; `/ban_block_refresh` re-checks the
   platform ban now.
 - `/entity_screen_position <entity> [--bounds]`: where a scene entity is on screen, in the
-  coordinates `/click_at` takes, `null` behind the camera. The scene is the one `/set_scene`
+  coordinates `/click_at` takes, `null` behind the camera, with the same point `normalized` (0 to
+  1 of the window, as `/click_at --normalized` takes it) and the window's `screen` (`width`,
+  `height` in logical pixels, `scale`). The scene is the one `/set_scene`
   picked, else the player's; the entity is as `/scene_entities` lists it. `--bounds` aims at the
   centre of its visible meshes instead of its origin.
 - `/photo_mode [on|off] [button|shortcut|console]`: the camera reel's in-world camera as JSON:
@@ -371,7 +373,9 @@ The HUD and input:
   the engine still holds keeps the next one waiting (`a sign-in is still finishing`) until the
   engine answers it; one it never answers needs a page reload.
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and
-  `/click_at <x> <y> [--button left|right|middle]`.
+  `/click_at <x> <y> [--button left|right|middle] [--normalized]`: logical pixels from the top
+  left, or 0 to 1 of the window with `--normalized`. It replies JSON: `x` and `y` in pixels,
+  `normalized`, `button`, `screen` and, on the web, `input` (`trusted` or `synthetic`).
 - `/hover_entity <entity> [--bounds] [--frames N] [--timeout-frames N]`, `/hover_entity --clear`
   and `/click_entity <entity> [--bounds] [--button pointer|primary|secondary] [--event
   click|down|up] [--timeout-frames N]`: hover or click a scene entity of the active scene by id
@@ -399,8 +403,12 @@ always `trusted`, and `/press_key` and `/click_at` feed the engine the window's 
 they get real input when a DevTools client has installed `window.__dclTrustedInput` (the web driver
 does, see below); elsewhere (the DevTools console, a page script) they fall back to DOM events,
 which prove the HUD's handlers but not the browser's input path, and give a page script nothing it
-lacks. `/hud_click` and `/hud_fill` say which in `"input"`: `trusted` or `synthetic`. Arguments
-are split on whitespace, so runs of spaces in a name or a text collapse to one. The preview-only
+lacks. `/hud_click`, `/hud_fill` and `/click_at` say which in `"input"`: `trusted` or `synthetic`.
+Arguments are split on whitespace, and a double-quoted run is one argument, with `\"` and `\\`
+escaping inside it (`/chat nearby "two  words"`). A command that takes JSON (the HUD commands,
+`/set_component`) takes the rest of the line as sent, so natively runs of spaces inside the JSON
+collapse to one. The [conventions ADR](../../../../docs/adr/2026-11-17-console-command-conventions.md)
+has the rules every automation command follows. The preview-only
 commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
 
 On the web, `/hover_entity`, `/click_entity`, `/raycast_stats` and `/raycast_budget` go to the engine

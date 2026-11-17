@@ -359,6 +359,28 @@ export interface ScreenPosition {
   depth: number
   distance: number
   viewport: { x: number; y: number; width: number; height: number }
+  /** `x`/`y` as 0 to 1 of the window from the top left, as `clickAt(..., { normalized: true })` takes them */
+  normalized: { x: number; y: number } | null
+  screen: Screen
+}
+
+/** The window a coordinate is read against, in the logical pixels the commands use; `scale` is
+ *  the device pixel ratio, so a screenshot's pixels are `scale` times as many. */
+export interface Screen {
+  width: number
+  height: number
+  scale: number
+}
+
+/** Where `/click_at` clicked, in pixels and normalized, and on what window. The web page adds how
+ *  (`input`: `trusted` from the test runner, else `synthetic`). */
+export interface ClickAtReply {
+  x: number
+  y: number
+  normalized: { x: number; y: number }
+  button: MouseButton
+  screen: Screen
+  input?: 'trusted' | 'synthetic'
 }
 
 export interface Position {
@@ -506,6 +528,12 @@ export const PROFILE_DEPLOY_BURST = { count: 5, spanMs: 61_000 }
 export const KEYBOARD_TIMEOUT_MS = 10_000
 
 export type MouseButton = 'left' | 'right' | 'middle'
+
+/** A console word the engine splits back into the same argument (`crates/console/src/line.rs`):
+ *  quoted when it is empty or holds whitespace or a double quote. */
+export function quoteWord(word: string): string {
+  return word === '' || /[\s"]/.test(word) ? `"${word.replace(/[\\"]/g, '\\$&')}"` : word
+}
 
 /** Why a client whose `/world_state` has no `keyboardClaimed` cannot run the scenarios. */
 export const OLDER_CLIENT =
@@ -804,7 +832,14 @@ export class Explorer {
     return this.json<ChatHistory>(`/chat_history ${count}`)
   }
 
-  /** A direct message; `/dm` takes several words, `/chat` does not. Not a delivery confirmation. */
+  /** A chat message on a channel (`Nearby`), quoted so it arrives as written, runs of spaces
+   *  included. Not a delivery confirmation: `chatHistory` records it. */
+  async chat(channel: string, message: string): Promise<void> {
+    await this.run(`/chat ${quoteWord(channel)} ${quoteWord(message)}`)
+  }
+
+  /** A direct message; `/dm` takes the rest of the line, so runs of spaces collapse to one. Not a
+   *  delivery confirmation. */
   async dm(address: string, message: string): Promise<void> {
     await this.run(`/dm ${address} ${message}`)
   }
@@ -940,9 +975,11 @@ export class Explorer {
     await until(() => this.worldState(), (state) => done(state.keyboardClaimed ?? null), { timeoutMs, intervalMs: 50, what })
   }
 
-  /** A click at window pixels (as `/entity_screen_position` and `/hud_read` report them). */
-  async clickAt(x: number, y: number, button: MouseButton = 'left'): Promise<void> {
-    await this.run(button === 'left' ? `/click_at ${x} ${y}` : `/click_at ${x} ${y} --button ${button}`)
+  /** A click at window pixels (as `/entity_screen_position` and `/hud_read` report them), or, with
+   *  `normalized`, at 0 to 1 of the window from the top left. */
+  async clickAt(x: number, y: number, button: MouseButton = 'left', options: { normalized?: boolean } = {}): Promise<ClickAtReply> {
+    const flags = `${button === 'left' ? '' : ` --button ${button}`}${options.normalized ? ' --normalized' : ''}`
+    return this.json<ClickAtReply>(`/click_at ${x} ${y}${flags}`)
   }
 
   // --- scenes -------------------------------------------------------------------------------

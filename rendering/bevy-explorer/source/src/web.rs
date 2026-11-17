@@ -668,28 +668,18 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
 }
 
 /// Send a console command to the engine from JavaScript.
-/// `command_line` is the full command string, e.g. `"/teleport 10 20"`.
+/// `command_line` is the full command string, e.g. `"/teleport 10 20"`, split as
+/// `console::line` says (`"two words"` is one argument).
 /// Returns a Promise that resolves with the command output or rejects with an error message.
 #[wasm_bindgen]
 pub async fn engine_console_command(command_line: String) -> Result<JsValue, JsValue> {
-    let mut parts = command_line.split_whitespace();
-    let Some(cmd) = parts.next() else {
-        return Err(JsValue::from_str("empty command"));
-    };
-    let cmd = if cmd.starts_with('/') {
-        cmd.to_string()
-    } else {
-        format!("/{cmd}")
-    };
-    let args: Vec<String> = parts.map(String::from).collect();
-
     let Some(sender) = CONSOLE_BRIDGE_SENDER.get() else {
         return Err(JsValue::from_str("engine not initialized"));
     };
 
     let (sx, rx) = RpcResultSender::channel();
     sender
-        .send(SystemApi::ConsoleCommand(cmd, args, sx))
+        .send(SystemApi::ConsoleLine(command_line, sx))
         .map_err(|_| JsValue::from_str("engine channel closed"))?;
 
     rx.await

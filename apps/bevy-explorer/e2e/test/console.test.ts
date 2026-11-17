@@ -14,6 +14,12 @@ describe('normalizeLine', () => {
     assert.throws(() => normalizeLine('   '), /empty console command/)
   })
 
+  test('keeps a double-quoted run as written, escapes included', () => {
+    assert.equal(normalizeLine('chat  Nearby  "two   words"  '), '/chat Nearby "two   words"')
+    assert.equal(normalizeLine('chat Nearby "a \\"  b\\" c"   x'), '/chat Nearby "a \\"  b\\" c" x')
+    assert.equal(normalizeLine('hud_read {"name": "Two  Words"}'), '/hud_read {"name": "Two  Words"}')
+  })
+
   test('commandOf is the name without the slash', () => {
     assert.equal(commandOf('/hud_click Backpack'), 'hud_click')
     assert.equal(commandOf('world_state'), 'world_state')

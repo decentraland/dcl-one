@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { ConsoleError, FakeConsole, commandOf, redactLine } from '../driver/console.ts'
-import { type CommandRecord, Explorer, parseLiveScenes, parsePortables, parseSmartWearables, type WorldState } from '../driver/explorer.ts'
+import { type CommandRecord, Explorer, parseLiveScenes, parsePortables, parseSmartWearables, quoteWord, type WorldState } from '../driver/explorer.ts'
 import { enterWorld } from '../driver/session.ts'
 
 function world(overrides: Partial<WorldState> = {}): string {
@@ -397,20 +397,39 @@ describe('Explorer', () => {
   })
 
   test('hud.hover clicks the control centre once it takes a click', async () => {
-    const fake = new FakeConsole({ hud_wait: control(), hud_read: control(), click_at: 'clicked at (30, 35)' })
+    const fake = new FakeConsole({ hud_wait: control(), hud_read: control(), click_at: '{"x":30,"y":35,"normalized":{"x":0.02,"y":0.04},"button":"left","screen":{"width":1600,"height":900,"scale":2}}' })
     await new Explorer(fake).hud.hover('Backpack')
     assert.deepEqual(fake.sent('click_at'), ['/click_at 30 35'])
   })
 
+  test('chat quotes its message so the engine splits it back whole', async () => {
+    const fake = new FakeConsole({ chat: '[Nearby] ok' })
+    const explorer = new Explorer(fake)
+    await explorer.chat('Nearby', 'one')
+    await explorer.chat('Nearby', 'two  words')
+    await explorer.chat('Nearby', 'say "hi" \\o/')
+    assert.deepEqual(fake.lines, ['/chat Nearby one', '/chat Nearby "two  words"', '/chat Nearby "say \\"hi\\" \\\\o/"'])
+    assert.equal(quoteWord(''), '""')
+  })
+
   test('key, escape and clickAt compose the lines', async () => {
-    const fake = new FakeConsole({ press_key: 'pressed', click_at: 'clicked' })
+    const fake = new FakeConsole({ press_key: 'pressed', click_at: '{"x":30,"y":35,"normalized":{"x":0.02,"y":0.04},"button":"left","screen":{"width":1600,"height":900,"scale":2}}' })
     const explorer = new Explorer(fake)
     await explorer.key('KeyB')
     await explorer.key('ShiftLeft', 'down')
     await explorer.escape()
     await explorer.clickAt(1, 2)
     await explorer.clickAt(1, 2, 'right')
-    assert.deepEqual(fake.lines, ['/press_key KeyB', '/press_key ShiftLeft --state down', '/press_key Escape', '/click_at 1 2', '/click_at 1 2 --button right'])
+    const reply = await explorer.clickAt(0.5, 0.25, 'left', { normalized: true })
+    assert.deepEqual(reply.screen, { width: 1600, height: 900, scale: 2 })
+    assert.deepEqual(fake.lines, [
+      '/press_key KeyB',
+      '/press_key ShiftLeft --state down',
+      '/press_key Escape',
+      '/click_at 1 2',
+      '/click_at 1 2 --button right',
+      '/click_at 0.5 0.25 --normalized'
+    ])
   })
 
   test('hoverEntity, clickEntity, raycast and scene log commands compose the lines', async () => {

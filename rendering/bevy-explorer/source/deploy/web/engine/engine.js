@@ -374,6 +374,11 @@ export function start(options = {}) {
     return new Promise((resolve) => resolve(page.command.run(page.rest)));
   };
 
+  // A word the engine splits back into the same argument (crates/console/src/line.rs): quoted
+  // when it is empty or holds whitespace or a double quote.
+  const quoteWord = (word) =>
+    word === "" || /[\s"]/.test(word) ? `"${word.replace(/[\\"]/g, "\\$&")}"` : word;
+
   // Callback invoked by Rust once console command metadata is available.
   window._buildEngineApi = (json) => {
     try {
@@ -395,11 +400,11 @@ export function start(options = {}) {
           `for (var i = 0; i < defs.length; i++) {`,
           `  var val = arguments[i];`,
           `  if (val === undefined) { if (!defs[i].optional) throw new Error(${JSON.stringify(jsName)} + ": missing arg '" + defs[i].name + "'"); break; }`,
-          `  parts.push(defs[i].kind === 'json' ? JSON.stringify(val) : String(val));`,
+          `  parts.push(defs[i].kind === 'json' ? JSON.stringify(val) : quoteWord(String(val)));`,
           `}`,
           `return window.engine_console_command(parts.join(' ')).then(function(r) { try { return JSON.parse(r); } catch(e) { return r; } });`,
         ].join('\n');
-        const fn = new Function(...paramNames, body);
+        const fn = new Function('quoteWord', `return function (${paramNames.join(', ')}) {\n${body}\n};`)(quoteWord);
         const sig = cmd.args.map(a => {
           const name = a.kind === 'json' ? `${a.name}: object` : a.name;
           return a.optional ? `[${name}]` : `<${name}>`;

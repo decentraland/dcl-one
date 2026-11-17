@@ -70,6 +70,9 @@ pub struct NewAccountPick {
 #[derive(Event, Clone, Debug, Serialize, Deserialize)]
 pub enum SystemApi {
     ConsoleCommand(String, Vec<String>, RpcResultSender<Result<String, String>>),
+    /// A whole console line from outside the process (the page's console RPC, the loopback
+    /// server, the CEF HUD's page), split as `console::line` says once its command is known.
+    ConsoleLine(String, RpcResultSender<Result<String, String>>),
     CheckForUpdate(RpcResultSender<Option<(String, String)>>),
     MOTD(RpcResultSender<String>),
     GetPreviousLogin(RpcResultSender<Option<String>>),
@@ -278,10 +281,30 @@ pub fn post_events(
     console_config: Res<ConsoleConfiguration>,
 ) {
     while let Ok(ev) = bridge.receiver.try_recv() {
-        let SystemApi::ConsoleCommand(cmd, args, sender) = ev else {
-            debug!("system bridge: {ev:?}");
-            writer.write(ev);
-            continue;
+        let (cmd, args, sender) = match ev {
+            SystemApi::ConsoleCommand(cmd, args, sender) => (cmd, args, sender),
+            SystemApi::ConsoleLine(line, sender) => {
+                let Some((cmd, rest)) = console::line::split_name(&line) else {
+                    sender.send(Err("empty command".to_owned()));
+                    continue;
+                };
+                let takes_rest = console_config
+                    .commands
+                    .get(cmd.as_str())
+                    .is_some_and(console::line::takes_rest);
+                match console::line::split_arguments(rest, takes_rest) {
+                    Ok(args) => (cmd, args, sender),
+                    Err(e) => {
+                        sender.send(Err(format!("{cmd}: {e}")));
+                        continue;
+                    }
+                }
+            }
+            ev => {
+                debug!("system bridge: {ev:?}");
+                writer.write(ev);
+                continue;
+            }
         };
 
         debug!("system bridge (cc): {cmd} {args:?}");
