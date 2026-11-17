@@ -23,7 +23,7 @@ import { PARCEL_METERS, atlasPx, chunksInRect, isGenesisSatelliteView, parcelTil
 import { MARKER_ART, pinForCategories } from '../map/mapArt'
 import { homeOf } from '@explorer-core/features/map/home'
 import { fetchPlaceAt } from '@explorer-core/features/map/mapApi'
-import { minimapJumpLink } from '@explorer-core/features/map/shareLinks'
+import { jumpInLink } from '@explorer-core/features/map/shareLinks'
 import { isStandingInHome, minimapHomeTarget } from '@explorer-core/features/minimap/minimapHome'
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import { BASE_PX_PER_PARCEL, ParcelTiles, SatelliteTiles } from './MinimapTiles'
@@ -48,7 +48,7 @@ import { SceneRestrictions } from './SceneRestrictions'
 import type { MapState, MinimapState } from '../session/useEngineSession'
 import type { EngineViewportRegion, MinimapStyle } from '@explorer-core/engine/protocol'
 import { hudInsetRef } from '../../lib/hudInset'
-import { isCancelKey } from '../../lib/bindingLabels'
+import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import styles from './Minimap.module.css'
 
 /** Side of the square map, before --ui-scale: the panel's inner width (--minimap-map in the module). */
@@ -231,18 +231,13 @@ export const Minimap = memo(function Minimap({
     const onDown = (e: PointerEvent): void => {
       if (!settingsRef.current?.contains(e.target as Node)) setSettingsOpen(false)
     }
-    // The Cancel key closes the menu first, and nothing else.
-    const onKey = (e: KeyboardEvent): void => {
-      if (!isCancelKey(e)) return
-      e.stopPropagation()
-      setSettingsOpen(false)
-    }
     // Capture: the map underneath opens the full-screen map on click, so this has to win.
     document.addEventListener('pointerdown', onDown, true)
-    document.addEventListener('keydown', onKey, true)
+    // Cancel (keyboard or gamepad) closes the menu first, through the session's layered dispatch.
+    const unregister = registerCancelLayer(() => setSettingsOpen(false))
     return () => {
       document.removeEventListener('pointerdown', onDown, true)
-      document.removeEventListener('keydown', onKey, true)
+      unregister()
     }
   }, [settingsOpen])
 
@@ -278,8 +273,8 @@ export const Minimap = memo(function Minimap({
     const failed = (): void => showToast('Could not copy the link', { tone: 'error' })
     // no clipboard outside a secure context, or in a host that withholds it
     if (navigator.clipboard == null) return failed()
-    navigator.clipboard.writeText(minimapJumpLink(linkRealm, inWorld, map.x, map.y, referrer)).then(() => showToast('Link copied'), failed)
-  }, [inWorld, linkRealm, map.x, map.y, referrer])
+    navigator.clipboard.writeText(jumpInLink(map.x, map.y, referrer, linkRealm)).then(() => showToast('Link copied'), failed)
+  }, [linkRealm, map.x, map.y, referrer])
   const { changeRealm, setHome } = map
   const { reloadScene } = minimap
 

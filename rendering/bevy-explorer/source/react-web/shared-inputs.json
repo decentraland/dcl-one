@@ -6312,7 +6312,7 @@
     },
     {
       "path": "library/explorer-core/features/map/shareLinks.ts",
-      "sha256": "2808c25d7d80a2fd50dd6f540aa171da82f4fb49a4d636b61c590a1bd6bf8033"
+      "sha256": "0d2bf68165e3b346fe2c854b196f697ae163febf8ad3ff5615e4f6ef2dd1c6c4"
     },
     {
       "path": "library/explorer-core/features/minimap/minimapHome.ts",
@@ -6596,7 +6596,7 @@
     },
     {
       "path": "library/explorer-core/test/minimap.test.ts",
-      "sha256": "22af178ed3b97479e7ea4e4e4ea4bfc48374315a5e1592e74c801b577ddb745e"
+      "sha256": "2340568156a47cadc3afc889c7c62e6c55da74a6b9271698495c4d8a8022a1fc"
     },
     {
       "path": "library/explorer-core/test/navmap.test.ts",
@@ -9148,7 +9148,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "sha256": "6b10ef725855fb36b1425e3a1cad854be89af62aeb5fc1cda3fc650f88a4e480"
+      "sha256": "1283fc99ba0df763fd3b8e686d86e75a71a42433676c633a440d66a969a02136"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.module.css",
@@ -9156,7 +9156,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
-      "sha256": "125da6008b8ff16226225e538b5fc916301ca92e86044e31fdcb6cbce15c3c3d"
+      "sha256": "f2bfae4f44312a8589aa93a336236cbd42d8e31dad0930e82f52d2a3ab163d9f"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapTiles.tsx",
@@ -9924,7 +9924,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
-      "sha256": "c26bb5a62104a310287c00dfbcaa1f8580f17cb26d8f48844a971b1335cfa0d5"
+      "sha256": "5cea4d9f3fa1b5bfeba71b253e4ae4d9540d717c5356dda6226a28b734ade2af"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nameEdit.test.tsx",
@@ -27473,6 +27473,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
       "to": "library/ui/apps/hud/assets/donate/tip.png",
       "kind": "native:runtime"
     },
@@ -27619,21 +27634,6 @@
     {
       "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
       "to": "library/ui/apps/hud/features/minimap/icons.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "to": "library/ui/apps/hud/lib/bindingLabels.ts",
       "kind": "test:runtime"
     },
     {
@@ -37999,6 +37999,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/mePanel.test.tsx",
       "to": "library/ui/apps/hud/features/sidebar/panels/MePanel.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "test:runtime"
     },
     {
