@@ -1,18 +1,33 @@
 //! The route guard each domain crate runs as a unit test: CI runs no clippy
 //! over `services/catalyst`, so this scan keeps production routes on
-//! [`crate::routing`]. Items under `#[cfg(test)]`, files named `*test*` and
-//! `tests/` folders are test code and exempt.
+//! [`crate::routing`]. Items under a test-only `#[cfg(..)]`, test files and
+//! `tests/` folders are exempt. It reads tokens, not types: chained
+//! `MethodRouter` methods (`.post(..)`) stay a review rule.
 
 use std::path::Path;
 
-const METHODS: [&str; 6] = ["any", "delete", "get", "patch", "post", "put"];
+const METHODS: [&str; 7] = ["any", "delete", "get", "on", "patch", "post", "put"];
+
+/// `#[cfg(..)]` forms that compile only into tests or test support.
+const TEST_CFGS: [&str; 3] = [
+    "#[cfg(test)]",
+    "#[cfg(feature = \"test-support\")]",
+    "#[cfg(any(test, feature = \"test-support\"))]",
+];
 
 /// `file:line` of every production line under `src` that names one of axum's
-/// method routers (`axum::routing::get`, or `routing::get` inside `use axum::{..}`).
+/// method routers or imports `axum::routing` as a module.
 pub fn direct_axum_routes(src: &Path) -> Vec<String> {
     let mut found = Vec::new();
     visit(src, &mut found);
     found
+}
+
+fn is_test_file(name: &str) -> bool {
+    name == "tests.rs"
+        || name == "testkit.rs"
+        || name.ends_with("_tests.rs")
+        || name.starts_with("test_")
 }
 
 fn visit(dir: &Path, found: &mut Vec<String>) {
@@ -25,7 +40,7 @@ fn visit(dir: &Path, found: &mut Vec<String>) {
             }
             continue;
         }
-        if !name.ends_with(".rs") || name.contains("test") {
+        if !name.ends_with(".rs") || is_test_file(&name) {
             continue;
         }
         let text = std::fs::read_to_string(&path).unwrap();
@@ -35,15 +50,125 @@ fn visit(dir: &Path, found: &mut Vec<String>) {
     }
 }
 
-/// 1-based numbers of the production lines in `text` that name an axum method router.
+/// Whether an `r` after `before` starts a raw string (`r"`, `br"`), not an identifier.
+fn raw_prefix(before: &[char]) -> bool {
+    let ident = |c: &char| c.is_alphanumeric() || *c == '_';
+    match before {
+        [.., p, 'b'] => !ident(p),
+        [.., p] => !ident(p),
+        [] => true,
+    }
+}
+
+/// `text` with comments and string and char literals blanked, newlines kept.
+fn code_only(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let blank = |c: char| if c == '\n' { '\n' } else { ' ' };
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        if c == '/' && next == Some('/') {
+            while i < chars.len() && chars[i] != '\n' {
+                out.push(' ');
+                i += 1;
+            }
+        } else if c == '/' && next == Some('*') {
+            let mut depth = 0;
+            while i < chars.len() {
+                if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                    depth += 1;
+                    out.push_str("  ");
+                    i += 2;
+                } else if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                    depth -= 1;
+                    out.push_str("  ");
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    out.push(blank(chars[i]));
+                    i += 1;
+                }
+            }
+        } else if c == 'r' && (next == Some('"') || next == Some('#')) && raw_prefix(&chars[..i]) {
+            let hashes = chars[i + 1..].iter().take_while(|&&h| h == '#').count();
+            if chars.get(i + 1 + hashes) != Some(&'"') {
+                out.push(c);
+                i += 1;
+                continue;
+            }
+            let start = i;
+            i += 2 + hashes;
+            let closes = |at: usize| {
+                chars[at] == '"'
+                    && chars[at + 1..]
+                        .iter()
+                        .take(hashes)
+                        .filter(|&&h| h == '#')
+                        .count()
+                        == hashes
+            };
+            while i < chars.len() && !closes(i) {
+                i += 1;
+            }
+            i = (i + 1 + hashes).min(chars.len());
+            out.extend(chars[start..i].iter().map(|&c| blank(c)));
+        } else if c == '"' {
+            out.push(' ');
+            i += 1;
+            while i < chars.len() && chars[i] != '"' {
+                let step = if chars[i] == '\\' { 2 } else { 1 };
+                for k in 0..step {
+                    if let Some(&c) = chars.get(i + k) {
+                        out.push(blank(c));
+                    }
+                }
+                i += step;
+            }
+            out.push(' ');
+            i += 1;
+        } else if c == '\'' {
+            // A char literal closes within a few chars; otherwise it is a lifetime.
+            let end = if next == Some('\\') {
+                chars[i + 2..]
+                    .iter()
+                    .position(|&c| c == '\'')
+                    .map(|p| i + 2 + p)
+            } else {
+                (chars.get(i + 2) == Some(&'\'')).then_some(i + 2)
+            };
+            match end {
+                Some(end) => {
+                    out.extend(chars[i..=end].iter().map(|&c| blank(c)));
+                    i = end + 1;
+                }
+                None => {
+                    out.push(c);
+                    i += 1;
+                }
+            }
+        } else {
+            out.push(c);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// 1-based numbers of the production lines in `text` that name an axum method
+/// router or import `axum::routing` as a module.
 fn direct_lines(text: &str) -> Vec<usize> {
+    let code = code_only(text);
     let mut found = Vec::new();
     // Brace depth, the depth a skipped test item closes at, and whether
-    // a `#[cfg(test)]` item has not reached its `;` or `{` yet.
+    // a test-only item has not reached its `;` or `{` yet.
     let (mut depth, mut skip_until, mut pending) = (0i64, None, false);
-    // Inside `use axum::{ .. }`, `routing::get` names axum's own.
-    let mut axum_group = false;
-    for (number, line) in text.lines().enumerate() {
+    // Inside a multi-line `use axum::{ .. }` or `use axum::routing::{ .. }`.
+    let (mut axum_group, mut routing_group) = (false, false);
+    for (number, (line, original)) in code.lines().zip(text.lines()).enumerate() {
         let trimmed = line.trim();
         let delta = line.matches('{').count() as i64 - line.matches('}').count() as i64;
         if let Some(end) = skip_until {
@@ -65,12 +190,17 @@ fn direct_lines(text: &str) -> Vec<usize> {
             depth += delta;
             continue;
         }
-        if trimmed == "#[cfg(test)]" {
+        // Attributes are matched before literals are blanked.
+        if TEST_CFGS.contains(&original.trim()) || trimmed.starts_with("#[cfg(all(test") {
             pending = true;
             continue;
         }
-        if trimmed.starts_with("use axum::{") && !trimmed.ends_with(';') {
+        let opens_group = !trimmed.ends_with(';');
+        if trimmed.starts_with("use axum::{") && opens_group {
             axum_group = true;
+        }
+        if trimmed.starts_with("use axum::routing::{") && opens_group {
+            routing_group = true;
         }
         let direct = line
             .split_once("axum::routing::")
@@ -79,11 +209,22 @@ fn direct_lines(text: &str) -> Vec<usize> {
             && trimmed
                 .split_once("routing::")
                 .is_some_and(|(_, after)| names_a_method(after));
-        if direct || grouped {
+        let in_routing_group = routing_group
+            && !trimmed.starts_with("use ")
+            && trimmed
+                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .any(|name| METHODS.contains(&name));
+        let module = trimmed == "use axum::routing;"
+            || ((axum_group || trimmed.starts_with("use axum::{"))
+                && trimmed
+                    .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
+                    .any(|name| name == "routing"));
+        if direct || grouped || in_routing_group || module {
             found.push(number + 1);
         }
-        if axum_group && trimmed.ends_with("};") {
+        if trimmed.ends_with("};") {
             axum_group = false;
+            routing_group = false;
         }
         depth += delta;
     }
@@ -141,5 +282,43 @@ fn helper() {
 fn after() { axum::routing::patch(h); }
 "#;
         assert_eq!(direct_lines(text), [1, 5, 7, 14, 28]);
+    }
+
+    #[test]
+    fn literals_cfg_forms_groups_and_module_imports() {
+        let text = r##"#[cfg(test)]
+mod unbalanced {
+    const OPEN: &str = "{";
+    const BRACE: char = '{';
+    // }
+}
+fn prod<'a>() { axum::routing::on(f, h); }
+const DOC: &str = "axum::routing::get";
+/* axum::routing::post */
+const RAW: &str = r#"axum::routing::put {"#;
+const BYTES: &[u8] = br#"{"#;
+#[cfg(any(test, feature = "test-support"))]
+fn support() { axum::routing::get(h); }
+#[cfg(any(windows, test))]
+fn platform() { axum::routing::get(h); }
+use axum::routing::{
+    MethodRouter,
+    post,
+};
+use axum::routing;
+use axum::{Json, routing};
+use axum::routing::MethodRouter;
+"##;
+        assert_eq!(direct_lines(text), [7, 15, 18, 20, 21]);
+    }
+
+    #[test]
+    fn test_files_are_named_explicitly() {
+        for name in ["tests.rs", "http_tests.rs", "test_db.rs", "testkit.rs"] {
+            assert!(super::is_test_file(name), "{name}");
+        }
+        for name in ["latest.rs", "attestation.rs", "contest.rs"] {
+            assert!(!super::is_test_file(name), "{name}");
+        }
     }
 }
