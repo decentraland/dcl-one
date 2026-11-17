@@ -714,6 +714,14 @@ export function Showcase(): React.JSX.Element {
         </div>
       </Section>
 
+      <Section title="WearableCard pick (gift picker)">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, 136px)', gap: 10 }}>
+          <WearableCard pick rarity="epic" count={3} />
+          <WearableCard pick rarity="rare" selected />
+          <WearableCard pick rarity="common" coverNote="Equipped" />
+        </div>
+      </Section>
+
       <Section title="EquippedItemCard (passport)">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 108px)', gap: 12 }}>
           {(['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'unique', 'exotic', 'base'] as Rarity[]).map((r, i) => (

@@ -12,6 +12,7 @@ import { openPassport } from '../profile/Passport'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
 import { peekProfile } from '../session/profileStore'
 import { showToast } from '../../design'
+import { GIFT_ON_ITS_WAY, giftOf, openGiftReceived } from '../gifting/GiftReceivedPopup'
 import { inCommunityStream, streamAct, streamLive } from '../voiceChat/callGate'
 
 function humanize(s: string): string {
@@ -68,7 +69,7 @@ function tipAmount(m: Record<string, unknown>): string {
   return Number.isFinite(n) && n > 0 ? `a ${Math.round(n * 100) / 100} MANA` : 'a MANA'
 }
 
-/** The tipper as the HUD knows them: their profile name when already loaded, else their short address. The
+/** The tipper (or a gift's sender) as the HUD knows them: their profile name when already loaded, else their short address. The
  *  notification carries the address only. */
 function tipSender(m: Record<string, unknown>): string {
   const address = str(m, 'senderAddress')
@@ -81,6 +82,7 @@ function tipSender(m: Record<string, unknown>): string {
 // readable copy unity-explorer uses (a header + a line composed from the metadata fields).
 const TEMPLATES: Record<string, (m: Record<string, unknown>) => { title: string; body?: string }> = {
   tip_received: (m) => ({ title: 'New Tip received!', body: `${tipSender(m)} sent you ${tipAmount(m)} tip for one of your scenes!` }),
+  transfer_received: (m) => ({ title: 'Gift received', body: `${tipSender(m)} sent you something! ${GIFT_ON_ITS_WAY}` }),
   community_post_added: (m) => ({ title: 'New Community Announcement', body: `A new announcement was posted in ${cname(m)}.` }),
   community_invite_received: (m) => ({ title: 'Community Invite Received', body: `You've been invited to join ${cname(m)}.` }),
   community_voice_chat_started: (m) => ({ title: 'Community Voice Stream Started', body: `${cname(m)} is streaming — click to join.` }),
@@ -138,6 +140,12 @@ export function tipTarget(n: AppNotification): (() => void) | undefined {
   if (n.type !== 'tip_received') return undefined
   const address = str(n.metadata, 'senderAddress')
   return address == null ? undefined : () => openPassport(address)
+}
+
+/** A gift's notification opens the gift-received popup. */
+export function giftTarget(n: AppNotification): (() => void) | undefined {
+  const gift = giftOf(n)
+  return gift == null ? undefined : () => openGiftReceived(gift)
 }
 
 /** A community stream notification joins the stream if it is still live (an old one would hang up the
