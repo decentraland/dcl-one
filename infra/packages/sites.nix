@@ -60,6 +60,8 @@ let
       (root + /library/catalyst-api) (root + /library/shop)
       (root + /library/ui/index.ts)
       (root + /library/ui/css-modules.d.ts)
+      (root + /library/ui/content.helpers.ts)
+      (root + /library/ui/link.helpers.ts)
       (root + /library/ui/components)
       (lib.fileset.maybeMissing (root + /library/ui/package.json))
       (lib.fileset.maybeMissing (root + /library/ui/tsconfig.json))

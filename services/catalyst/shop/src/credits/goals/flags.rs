@@ -82,7 +82,7 @@ impl Flags {
                 crate::http::is_safe_http_url(&url),
                 "Credits feature flags URL refused by SSRF guard"
             );
-            crate::explore::api::feature_flags::fetch_document(
+            crate::shared::feature_flags::fetch_document(
                 &self.http,
                 reqwest::Url::parse(&url)?,
                 &self.source.origin,

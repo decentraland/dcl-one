@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Keep unchanged engine, vendored and protocol inputs fresh across CI checkouts.
+"""Keep unchanged engine, in-tree crate and protocol inputs fresh across CI checkouts.
 
 Cargo decides whether a path dependency is fresh by file times, and a fresh checkout gives
 every file the current time, so path dependencies in a CI cache would be rebuilt by every job
-of every run, changed or not. Crates from git or crates.io are judged by version instead.
+of every run, changed or not. Crates from git or crates.io are judged by version instead: Bevy
+and the forked crates are git dependencies; the one path copy is the Bevy tree of the Bevy crate tests.
 
   record <target-dir>   after the build: each build input's git blob id and mtime, floored
                         to whole seconds, into every profile's .fingerprint directory, so the
@@ -12,17 +13,14 @@ of every run, changed or not. Crates from git or crates.io are judged by version
                         whose blob id still matches gets its recorded mtime back; a changed or
                         new file keeps the checkout's time, so Cargo rebuilds what depends on it
 
-A tracked file's blob id comes from the index. The trees `tooling/patched-sources.py` writes are not
-tracked, so their blob ids are those of the bytes on disk, stamp included. The Explorer's build guard
-names each patch series as a directory, and Cargo then reads the directory's own time: a series is
-an input too, and its id is that of the names it holds.
+A tracked file's blob id comes from the index. The Bevy tree that `tooling/patched-sources.py` writes for
+the Bevy crate tests is not tracked, so its blob ids are those of the bytes on disk, stamp included.
 
 To Cargo this is a checkout that never moved. Floored times stay valid when a cache archive
 keeps whole seconds only; in CI the tree is only ever written at checkout, before any build.
 Without a manifest (a cold cache) restore changes nothing.
 """
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -31,12 +29,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 TREE = 'rendering/bevy-explorer/bevy'
-FORKS = 'rendering/bevy-explorer/forks'
-PATCHES = 'rendering/bevy-explorer/patches'
-TREES = (TREE, FORKS, PATCHES, 'rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet',
-         'rendering/bevy-explorer/source', 'library/protocol/proto')
-# Written by tooling/patched-sources.py: the repository does not track them.
-MATERIALISED = (TREE, FORKS)
+TREES = (TREE, 'rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet', 'rendering/bevy-explorer/source', 'library/protocol/proto')
 # tooling/bevy-target-cache.py prunes the .fingerprint entries of workspace crates, <crate>-<hash>;
 # `bevy` is no workspace crate, so the manifest survives its pruning.
 MANIFEST = 'bevy-mtimes.json'
@@ -44,26 +37,14 @@ SECOND = 10**9
 
 
 def blobs(root):
-    """{path: id} for every input under TREES: a file's blob id from the index, or from the bytes of a tree git does
-    not track, and the id of each patch series."""
+    """{path: id} for every input under TREES: a file's blob id from the index, or from the bytes of the tree git does
+    not track."""
     out = subprocess.check_output(['git', 'ls-files', '--stage', '-z', '--', *TREES], cwd=root)
     result = {}
     for record in filter(None, out.split(b'\0')):
         meta, path = record.split(b'\t', 1)
         result[path.decode('utf-8')] = meta.split()[1].decode('ascii')
-    for tree in MATERIALISED:
-        result.update(hashed(root, tree))
-    result.update(listed(root))
-    return result
-
-
-def listed(root):
-    """{directory/: id of the names it holds} for every patch series: its time changes when a name does."""
-    result = {}
-    for series in sorted((Path(root) / PATCHES).glob('*/series')):
-        if series.is_dir():
-            names = '\0'.join(sorted(os.listdir(series)))
-            result[series.relative_to(root).as_posix() + '/'] = hashlib.sha1(names.encode('utf-8')).hexdigest()
+    result.update(hashed(root, TREE))
     return result
 
 

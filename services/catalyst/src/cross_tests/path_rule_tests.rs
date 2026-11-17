@@ -197,17 +197,17 @@ async fn every_signed_route_family_signs_the_same_path() {
             .is_err()
     );
     assert!(
-        comms::require_signer(&prefixed, "post", &p, None)
+        comms::verify_server_signed_fetch(&prefixed, "post", &p, None)
             .await
             .is_ok()
     );
     assert!(
-        comms::require_signer(&local_alone, "post", &p, None)
+        comms::verify_server_signed_fetch(&local_alone, "post", &p, None)
             .await
             .is_err()
     );
     assert!(
-        comms::require_signer(&local_behind_proxy, "post", &p, None)
+        comms::verify_server_signed_fetch(&local_behind_proxy, "post", &p, None)
             .await
             .is_ok()
     );

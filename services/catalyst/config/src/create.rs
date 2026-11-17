@@ -8,8 +8,8 @@ pub struct CreateConfig {
     // create: the creator plane (builder and camera_reel, the old
     // catalyrst-create bundle). Like the social writes, drafts, uploads,
     // curation, publication state and photos are local authority peer sync
-    // does not back up, so every creator write answers 503 until a backup
-    // restore has been demonstrated (DATABASE.md, "Bootstrap, schema versions and local writes").
+    // does not back up, so every creator write answers 503 until the operator
+    // opens it (DATABASE.md, "Bootstrap, schema versions and local writes").
     #[arg(long, env = "CREATE_WRITES_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub create_writes_enabled: bool,
 
@@ -109,10 +109,7 @@ mod tests {
     fn create_defaults_are_the_old_bundles_values_and_writes_are_off() {
         let cli = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
         let c = cli;
-        assert!(
-            !c.create.create_writes_enabled,
-            "creator writes are opt-in; a restore must be demonstrated first"
-        );
+        assert!(!c.create.create_writes_enabled, "creator writes are opt-in");
         assert!(
             c.create.builder_content_bucket_url.is_none()
                 && c.create.builder_asset_packs_bucket_url.is_none()

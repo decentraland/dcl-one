@@ -13,7 +13,8 @@
 //! Signed fetch goes through the shared verifier under the camera-reel
 //! profiles (`shared::signed_fetch::VerificationProfile::camera_reel_read` and
 //! `camera_reel_write`: upstream's dcl-crypto-middleware-rs rules, a signature
-//! at most 60 s old and never too new, mandatory raw metadata, the 6.x payload
+//! at most 60 s old and at most 60 s ahead (upstream accepts any future
+//! timestamp), mandatory raw metadata, the 6.x payload
 //! followed by the unguarded legacy one) with the process's EIP-1654
 //! validator; every chain link must carry a signature string, as the source's
 //! parser requires. A write whose metadata names the scene signer

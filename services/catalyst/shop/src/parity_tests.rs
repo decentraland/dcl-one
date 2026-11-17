@@ -997,7 +997,7 @@ async fn with_the_marketplace_rollout_off_lists_bids_and_resale_orders_are_refus
 
 #[tokio::test]
 async fn the_marketplace_flag_reads_this_nodes_overrides_and_never_writes_the_shared_dapps_row() {
-    use crate::explore::api::feature_flags;
+    use crate::shared::feature_flags;
     let Some(state) = matic_state(None).await else {
         return;
     };

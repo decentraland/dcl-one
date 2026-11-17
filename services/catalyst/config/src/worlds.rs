@@ -80,9 +80,9 @@ pub struct WorldsConfig {
     // surface, catalyrst-world-storage, catalyrst-scene-state, archipelago's
     // ws-connector and the worlds federation mirror). A world publish, a
     // permission or settings edit and a storage value are local authority
-    // peer sync does not back up, so every worlds write answers 503 until a
-    // backup restore has been demonstrated (DATABASE.md, "Bootstrap, schema versions and
-    // local writes"); the reads, the admission mints and the sockets serve.
+    // peer sync does not back up, so every worlds write answers 503 until it
+    // is turned on; back up first (DATABASE.md, "Bootstrap, schema versions
+    // and local writes"); the reads, the admission mints and the sockets serve.
     #[arg(long, env = "WORLDS_WRITES_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub worlds_writes_enabled: bool,
 
@@ -911,10 +911,7 @@ mod tests {
     fn worlds_defaults_are_the_old_binaries_values_and_writes_are_off() {
         let cli = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
         let c = cli;
-        assert!(
-            !c.worlds.worlds_writes_enabled,
-            "worlds writes are opt-in; a restore must be demonstrated first"
-        );
+        assert!(!c.worlds.worlds_writes_enabled, "worlds writes are opt-in");
         assert!(
             c.worlds.worlds_forward_upstream_url.is_none(),
             "nothing is forwarded until an operator names an upstream"
