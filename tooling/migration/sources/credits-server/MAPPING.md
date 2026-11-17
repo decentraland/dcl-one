@@ -81,7 +81,9 @@ creates any other wallet with `has_started_program = false`, as the node does.
 `dcl_migration.credit_wallet_loaded` records the flag each wallet was given; a
 wallet whose flag no longer matches started the program on the node and keeps
 it. A wallet with no record only goes from `false` to `true` (the node never
-sets `false`).
+sets `false`). The record moves only for wallets the import still owns, so a
+node start that upstream later matches stays the node's even if upstream then
+goes back to `false`.
 `is_blocked_for_claiming` is the node operator's block (it refuses spends too)
 and is never imported.
 
@@ -93,7 +95,9 @@ operator unflags it. `captcha` flags are short-lived throttles and are not
 imported. Each run drops imported flags that upstream no longer holds and
 never re-adds one an operator lifted (`user.unflag`/`user.unblock` audited
 after its `flagged_at`); flags raised on the node are left alone. An empty
-upstream set while imported flags exist aborts the batch (wrong source database?).
+upstream set while imported flags exist aborts the batch (wrong source database?);
+when every upstream flag really has expired or been lifted, rerun with
+`--allow-empty credits-server/wallet_flag`.
 
 `purchases` are not overwritten when the node row's `updated_at` is newer
 (the node refunded or abandoned it).

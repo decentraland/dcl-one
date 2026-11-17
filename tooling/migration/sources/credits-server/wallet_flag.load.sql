@@ -4,8 +4,9 @@
 DO $empty$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM stage)
+     AND current_setting('dcl_migration.allow_empty', true) IS DISTINCT FROM 'on'
      AND EXISTS (SELECT 1 FROM credits.wallet_flags WHERE source = 'credits-server:multi-account') THEN
-    RAISE EXCEPTION 'credits-server/wallet_flag: upstream lists no flags but imported ones exist; refusing to delete them all (wrong source database?)';
+    RAISE EXCEPTION 'credits-server/wallet_flag: upstream lists no flags but imported ones exist; refusing to delete them all (wrong source database? if upstream is really empty, rerun with --allow-empty credits-server/wallet_flag)';
   END IF;
 END $empty$;
 

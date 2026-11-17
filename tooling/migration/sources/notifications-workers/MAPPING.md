@@ -41,9 +41,18 @@ The load also converts former per-wallet copies, preserving their reads before r
 only copies whose broadcast key and deterministic ID both match that loader's output.
 No notification deliveries are created.
 
-The broadcast cursor is now `(updated_at, id)`. After upgrading an earlier import, run
-`run notifications-workers --step broadcast --restart` to convert all historical copies,
-then `run notifications-workers --step broadcast_read --restart` to import every read receipt.
+The broadcast cursor is now `(updated_at, id)`, and governance and reward rows now take the
+ingest id (below). After upgrading an earlier import, run these once, in this order, before
+governance or rewards post to the node:
+
+```sh
+python3 tooling/migration/migrate.py run notifications-workers --step notification --restart
+python3 tooling/migration/migrate.py run notifications-workers --step broadcast --restart
+python3 tooling/migration/migrate.py run notifications-workers --step broadcast_read --restart
+```
+
+The `broadcast` restart converts every historical per-wallet copy, and each restart moves the
+rows it re-reads from the upstream id to the ingest id.
 
 ## Deletions
 
@@ -63,7 +72,7 @@ target row still holds the recorded value:
 A row written natively after cutover is never recorded, so it is never
 deleted. A reconcile whose upstream set is empty while recorded rows exist
 fails instead of deleting them all (a wrong source database looks like
-that). Subscriptions and notifications are never deleted upstream and are not
+that), unless `--allow-empty` names the step. Subscriptions and notifications are never deleted upstream and are not
 reconciled.
 
 ## Cutover and duplicate events
@@ -84,9 +93,12 @@ and on a repeat updates the row without emailing. The import gives every
 updates it instead of adding a second row and email. Other types keep the
 upstream id. Upstream rows that collapse onto one id (addresses differing
 only in case, or a repeated broadcast) keep the newest payload and the
-earliest read. Rows an earlier import stored under the upstream id are
-moved to the ingest id with their read state. Whichever system receives a
-post first, later passes merge onto one row; an event posted to both before
+earliest read. A row an earlier import stored under the upstream id moves to
+the ingest id, with its read state, when a step reads it again; an incremental
+run reads only rows near its watermark, so an import made before ingest ids
+needs the upgrade restarts above. Until then an old-id row and a re-post of
+its event are two rows. Whichever
+system receives a post first, later passes merge onto one row; an event posted to both before
 the final pass is still emailed by each.
 
 ### Node producers

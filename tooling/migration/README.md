@@ -147,6 +147,7 @@ Options of `run`:
 | `--since last` | `--since` the last completed walk of each step, minus `--overlap` (what a plain `run` does too). An interrupted walk is resumed instead. |
 | `--overlap DURATION` | How far back a catch-up re-reads (default `10m`). Set it above the longest source transaction plus the worst clock lag of any app that stamps a watermark. |
 | `--restart` | Ignores the stored checkpoint and starts the step over. |
+| `--allow-empty SOURCE/STEP` | Lets that step apply an empty upstream set (repeatable). A step that deletes the rows upstream no longer holds refuses an empty set while it has imported rows, since a wrong source database looks the same; pass this only after confirming upstream really holds none. |
 | `--batch-size N` | Rows per batch (default 5000). |
 | `--lock-timeout DURATION` | Gives up waiting for a lock after this long, on the source and the target (default `1m`, `0s` never). |
 | `--statement-timeout DURATION` | Cancels a target statement after this long (default `30m`, `0s` never). The source extract stays open for the whole walk, so it runs with no statement, idle-in-transaction or transaction timeout, whatever the role or database sets. |

@@ -59,7 +59,7 @@ set and deletes a recorded row whose key upstream no longer holds, when:
 A row the import never recorded (written on the node, or kept because it was
 newer than upstream) is never deleted, and neither is a retired scope's row
 upstream still holds. The reconcile refuses to run when upstream lists no
-keys but imported ones are recorded. Its key set must fit one transaction.
+keys but imported ones are recorded, unless `--allow-empty` names it. Its key set must fit one transaction.
 
 Limits: when the newest of several upstream keys collapsed onto one target
 row is deleted and an older one remains, the row keeps the deleted value

@@ -48,6 +48,8 @@ URL_PARAMS = {
     'options': 'PGOPTIONS',
 }
 
+# Idempotent and lock-free once applied: a dry run replays it inside its open transaction, so a
+# column or index that already exists must not take a table lock held until the rollback.
 CHECKPOINT_DDL = """
 SET client_min_messages = warning;
 CREATE SCHEMA IF NOT EXISTS dcl_migration;
@@ -75,7 +77,12 @@ CREATE TABLE IF NOT EXISTS dcl_migration.blob_inventory (
     content_type text,
     PRIMARY KEY (source, object_key)
 );
-ALTER TABLE dcl_migration.blob_inventory ADD COLUMN IF NOT EXISTS content_type text;
+DO $ddl$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'dcl_migration'
+                 AND table_name = 'blob_inventory' AND column_name = 'content_type') THEN
+    ALTER TABLE dcl_migration.blob_inventory ADD COLUMN content_type text;
+  END IF;
+END $ddl$;
 -- Objects the blob copy could not store: absent upstream, bytes that do not hash to the key, or a
 -- key that is no content id. The node serves them as missing, as upstream did.
 CREATE TABLE IF NOT EXISTS dcl_migration.blob_missing (
@@ -115,8 +122,11 @@ CREATE TABLE IF NOT EXISTS dcl_migration.wss_world_storage_loaded (
     updated_at timestamp NOT NULL,
     PRIMARY KEY (world_name, place_id, key)
 );
-CREATE INDEX IF NOT EXISTS wss_world_storage_loaded_target
-    ON dcl_migration.wss_world_storage_loaded (realm, scene_namespace, key);
+DO $ddl$ BEGIN
+  IF to_regclass('dcl_migration.wss_world_storage_loaded_target') IS NULL THEN
+    CREATE INDEX wss_world_storage_loaded_target ON dcl_migration.wss_world_storage_loaded (realm, scene_namespace, key);
+  END IF;
+END $ddl$;
 CREATE TABLE IF NOT EXISTS dcl_migration.wss_player_storage_loaded (
     world_name text NOT NULL,
     place_id uuid NOT NULL,
@@ -128,8 +138,11 @@ CREATE TABLE IF NOT EXISTS dcl_migration.wss_player_storage_loaded (
     updated_at timestamp NOT NULL,
     PRIMARY KEY (world_name, place_id, player_address, key)
 );
-CREATE INDEX IF NOT EXISTS wss_player_storage_loaded_target
-    ON dcl_migration.wss_player_storage_loaded (realm, scene_namespace, player, key);
+DO $ddl$ BEGIN
+  IF to_regclass('dcl_migration.wss_player_storage_loaded_target') IS NULL THEN
+    CREATE INDEX wss_player_storage_loaded_target ON dcl_migration.wss_player_storage_loaded (realm, scene_namespace, player, key);
+  END IF;
+END $ddl$;
 CREATE TABLE IF NOT EXISTS dcl_migration.wss_env_variable_loaded (
     world_name text NOT NULL,
     place_id uuid NOT NULL,
@@ -139,8 +152,11 @@ CREATE TABLE IF NOT EXISTS dcl_migration.wss_env_variable_loaded (
     updated_at timestamp NOT NULL,
     PRIMARY KEY (world_name, place_id, key)
 );
-CREATE INDEX IF NOT EXISTS wss_env_variable_loaded_target
-    ON dcl_migration.wss_env_variable_loaded (realm, scene_namespace, key);
+DO $ddl$ BEGIN
+  IF to_regclass('dcl_migration.wss_env_variable_loaded_target') IS NULL THEN
+    CREATE INDEX wss_env_variable_loaded_target ON dcl_migration.wss_env_variable_loaded (realm, scene_namespace, key);
+  END IF;
+END $ddl$;
 -- The camera_reel.images.is_public each image import last wrote; a row that no longer matches was
 -- toggled on the node and keeps its value.
 CREATE TABLE IF NOT EXISTS dcl_migration.camera_reel_image_loaded (
@@ -164,7 +180,12 @@ CREATE TABLE IF NOT EXISTS dcl_migration.world_permission_loaded (
     parcels text[],
     PRIMARY KEY (world_name, permission, address)
 );
-ALTER TABLE dcl_migration.world_permission_loaded ADD COLUMN IF NOT EXISTS parcels text[];
+DO $ddl$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'dcl_migration'
+                 AND table_name = 'world_permission_loaded' AND column_name = 'parcels') THEN
+    ALTER TABLE dcl_migration.world_permission_loaded ADD COLUMN parcels text[];
+  END IF;
+END $ddl$;
 -- What the social-service-ea loads last wrote per key: a target row that no longer matches was
 -- changed on the node and is kept, a recorded row the node removed is not re-added, and the
 -- reconcile loads delete only recorded rows upstream no longer holds.
@@ -201,7 +222,12 @@ CREATE TABLE IF NOT EXISTS dcl_migration.social_community_ban_loaded (
     banned_at timestamp,
     PRIMARY KEY (community_id, banned_address)
 );
-ALTER TABLE dcl_migration.social_community_ban_loaded ADD COLUMN IF NOT EXISTS banned_at timestamp;
+DO $ddl$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'dcl_migration'
+                 AND table_name = 'social_community_ban_loaded' AND column_name = 'banned_at') THEN
+    ALTER TABLE dcl_migration.social_community_ban_loaded ADD COLUMN banned_at timestamp;
+  END IF;
+END $ddl$;
 CREATE TABLE IF NOT EXISTS dcl_migration.social_community_post_loaded (
     id uuid PRIMARY KEY,
     content text NOT NULL
@@ -234,6 +260,7 @@ class Step:
     columns: list  # [(name, type)]
     notes: str = ''
     whole: bool = False  # one batch holding the whole extract, so the load sees the full upstream set
+    allow_empty: bool = False  # --allow-empty: an empty upstream set may delete every imported row
 
     @property
     def cursor(self):
@@ -996,7 +1023,10 @@ def camera_publication(store, inventory):
 
 def step_vars(step, dry_run):
     variables = [f'\\set source {literal(step.source)}', f'\\set step {literal(step.name)}',
-                 f"\\set dry_run {'true' if dry_run else 'false'}"]
+                 f"\\set dry_run {'true' if dry_run else 'false'}",
+                 # Read by the empty-upstream guards; DO blocks cannot see psql variables.
+                 f"SELECT set_config('dcl_migration.allow_empty', '{'on' if step.allow_empty else 'off'}', false)"
+                 ' \\g /dev/null']
     if step.source == CAMERA:
         variables.append(f'\\set camera_api_url {literal(camera_api_url())}')
     return variables
@@ -1315,8 +1345,22 @@ def completed(source, checkpoints):
         for step in source.steps)
 
 
+def allow_empty_steps(selected, names):
+    """Marks the named `source/step`s so their empty-upstream guard lets an empty set through."""
+    wanted = set(names or [])
+    known = {f'{step.source}/{step.name}' for src in selected for step in src.steps}
+    unknown = wanted - known
+    if unknown:
+        raise MigrationError(f'--allow-empty names no selected step: {", ".join(sorted(unknown))}'
+                             ' (use <source>/<step>)')
+    return [dataclasses.replace(src, steps=[dataclasses.replace(step, allow_empty=True)
+                                            if f'{step.source}/{step.name}' in wanted else step
+                                            for step in src.steps])
+            for src in selected]
+
+
 def cmd_run(args, sources):
-    selected = run_sources(sources, args.sources, args.step)
+    selected = allow_empty_steps(run_sources(sources, args.sources, args.step), args.allow_empty)
     if args.sources == ['all']:
         print('run all: excluding credits-server, shop-server and both marketplace sources; explicitly name the source at cutover',
               flush=True)
@@ -1985,6 +2029,9 @@ def parser():
     run.add_argument('--overlap', type=parse_duration, default=datetime.timedelta(minutes=10),
                      help="margin subtracted for --since last (default 10m)")
     run.add_argument('--restart', action='store_true', help='ignore stored checkpoints')
+    run.add_argument('--allow-empty', action='append', metavar='SOURCE/STEP',
+                     help='let this step apply an empty upstream set, deleting every row it imported'
+                          ' (repeatable; only when upstream really is empty)')
     run.add_argument('--batch-size', type=int, default=5000)
     run.add_argument('--lock-timeout', type=parse_duration, default=datetime.timedelta(minutes=1),
                      help='give up waiting for a lock after this long, on both sides (default 1m; 0s: never)')

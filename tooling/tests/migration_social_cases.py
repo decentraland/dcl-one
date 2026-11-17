@@ -172,6 +172,35 @@ class SocialMigrationCases:
                                        ' ORDER BY 1;').split(), [self.wallet('1'), self.wallet('2')])
         self.assertEqual(self.count(tgt, 'social.notification_deliveries'), 0)
 
+    def test_when_an_earlier_import_kept_upstream_ids_it_should_rekey_them_only_after_the_documented_restart(self):
+        from tooling.tests import migration_harness as harness
+        src, tgt = self.notifications_dbs()
+        code, out = self.migrate('run', 'notifications-workers', sources_dir=harness.migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        # Rows an earlier import stored under the upstream ids, older than the completed walks' overlap.
+        t, gov, ann = 1748736000000, '00000000-0000-4000-8000-0000000000a2', '00000000-0000-4000-8000-0000000000b2'
+        self.sql(src, f"""INSERT INTO notifications VALUES
+              ('{gov}', 'prop-1', 'governance_proposal_enacted', '{self.wallet('b')}', '{{}}', {t}, NULL, {t}, {t}),
+              ('{ann}', 'ann-1', 'governance_announcement', NULL, '{{}}', {t}, NULL, {t}, {t});""")
+        self.sql(tgt, f"""INSERT INTO social.notifications (id, address, type, metadata, occurred_at)
+              VALUES ('{gov}', '{self.wallet('b')}', 'governance_proposal_enacted', '{{}}', '2026-01-01');
+            INSERT INTO social.broadcast_notifications (id, type, occurred_at) VALUES ('{ann}', 'governance_announcement', '2026-01-01');
+            INSERT INTO social.broadcast_reads VALUES ('{ann}', '{self.wallet('2')}', '2026-01-01 00:00:02');""")
+        ids = 'SELECT id FROM social.notifications UNION ALL SELECT id FROM social.broadcast_notifications ORDER BY 1;'
+        code, out = self.migrate('run', 'notifications-workers', sources_dir=harness.migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertIn(gov, self.sql(tgt, ids).split())
+        for step in ('notification', 'broadcast', 'broadcast_read'):
+            code, out = self.migrate('run', 'notifications-workers', '--step', step, '--restart',
+                                     sources_dir=harness.migrate.SOURCES)
+            self.assertEqual(code, 0, out)
+        ann_id = ingest_id('governance_announcement', None, 'ann-1')
+        self.assertEqual(self.sql(tgt, ids).split(), sorted(['00000000-0000-4000-8000-0000000000a1', self.BROADCAST,
+                                                             ingest_id('governance_proposal_enacted', self.wallet('b'),
+                                                                       'prop-1'), ann_id]))
+        self.assertEqual(self.sql(tgt, f"SELECT address FROM social.broadcast_reads WHERE broadcast_id = '{ann_id}';")
+                         .strip(), self.wallet('2'))
+
     # ── social-service-ea: node writes survive re-runs, upstream deletions reach the node ──
 
     SOCIAL_EA_SCHEMA = """
@@ -255,6 +284,21 @@ class SocialMigrationCases:
                          .strip().splitlines(), [f'{banned}\tf', f'{rebanned}\tt'])
         self.assertEqual(self.sql(tgt, f"SELECT count(*) FROM social.community_members WHERE member_address = '{banned}';")
                          .strip(), '1')
+
+    def test_when_upstream_lifts_an_imported_ban_and_the_wallet_rejoins_it_should_import_the_member_in_one_run(self):
+        src, tgt = self.social_ea_dbs()
+        owner, banned = self.wallet('a'), self.wallet('b')
+        self.social_ea_community(src, owner)
+        self.sql(src, f"""INSERT INTO community_members VALUES ('{self.SOCIAL_COMMUNITY}', '{owner}', 'owner', '2026-01-01');
+            INSERT INTO community_bans VALUES
+            ('{self.SOCIAL_COMMUNITY}', '{banned}', '{owner}', '2026-01-02', NULL, true, NULL, NULL);""")
+        steps = ('communities', 'community_members', 'community_bans')
+        self.social_ea_run(*steps)
+        self.sql(src, f"""UPDATE community_bans SET active = false, unbanned_by = '{owner}', unbanned_at = '2026-01-03';
+            INSERT INTO community_members VALUES ('{self.SOCIAL_COMMUNITY}', '{banned}', 'member', '2026-01-04');""")
+        self.social_ea_run(*steps)
+        self.assertEqual(self.sql(tgt, f"SELECT role FROM social.community_members WHERE member_address = '{banned}';")
+                         .strip(), 'member')
 
     def test_when_upstream_lifts_a_ban_the_node_reapplied_it_should_keep_the_node_ban(self):
         src, tgt = self.social_ea_dbs()

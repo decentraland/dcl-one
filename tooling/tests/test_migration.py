@@ -237,6 +237,18 @@ class CutoverSelection(unittest.TestCase):
                 selected = migrate.run_sources(self.sources, [source], [step])
                 self.assertEqual([s.name for s in selected[0].steps], [guard, step])
 
+    def test_when_allowing_an_empty_upstream_it_should_mark_only_the_named_step(self):
+        selected = migrate.allow_empty_steps(migrate.run_sources(self.sources, ['credits-server']),
+                                             ['credits-server/wallet_flag'])
+        self.assertEqual([s.name for s in selected[0].steps if s.allow_empty], ['wallet_flag'])
+        self.assertIn("set_config('dcl_migration.allow_empty', 'on', false)",
+                      '\n'.join(migrate.step_vars(next(s for s in selected[0].steps if s.allow_empty), False)))
+
+    def test_when_allowing_an_empty_upstream_for_an_unselected_step_it_should_refuse(self):
+        with self.assertRaisesRegex(migrate.MigrationError, '--allow-empty names no selected step'):
+            migrate.allow_empty_steps(migrate.run_sources(self.sources, ['credits-server']),
+                                      ['social-service-ea/community_members'])
+
     def test_when_explicitly_running_a_source_it_should_retain_all_steps_and_checks_should_still_cover_all(self):
         for source in ('credits-server', 'shop-server'):
             with self.subTest(source=source):
@@ -1453,6 +1465,16 @@ class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigration
         images = self.sql(tgt, "SELECT id, raw->>'image' FROM explore.place ORDER BY 1;\n").splitlines()
         self.assertEqual(images, [f'copied.dcl.eth\t{base}{cid}', f'pending.dcl.eth\t{base}{unknown}',
                                   f'scene.dcl.eth\t{base}bafkreiexample'])
+
+    def test_when_the_bookkeeping_ddl_is_replayed_in_a_transaction_it_should_hold_no_blocking_table_lock(self):
+        db = self.fresh_db('bookkeeping_ddl_locks')
+        self.sql(db, migrate.CHECKPOINT_DDL)
+        held = self.sql(db, 'BEGIN;\n' + migrate.CHECKPOINT_DDL
+                        + "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation "
+                          "JOIN pg_namespace n ON n.oid = c.relnamespace WHERE l.pid = pg_backend_pid() "
+                          "AND n.nspname = 'dcl_migration' AND l.mode IN ('ShareLock', 'AccessExclusiveLock');\n"
+                          "ROLLBACK;\n")
+        self.assertEqual(held.splitlines()[-2], '0')
 
     def test_when_unbanning_quota_blocks_it_should_delete_only_the_former_steps_rows(self):
         src, tgt = self.wcs()

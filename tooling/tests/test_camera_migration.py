@@ -462,6 +462,7 @@ FROM images CROSS JOIN (SELECT '00000000-0000-0000-0000-' || lpad(g::text, 12, '
         self.assertEqual(self.sql('SELECT count(*) FROM camera_reel.images;').strip(), '101')
         self.assertEqual(self.sql('SELECT walk_rows FROM dcl_migration.checkpoint;').strip(), '101')
         self.assertEqual(self.sql('SELECT DISTINCT image_content_type FROM camera_reel.images;').strip(), 'image/png')
+        self.assertEqual(self.imported_marks(), '101')
 
     def test_cli_copy_and_run(self):
         self.sql('DELETE FROM dcl_migration.blob_inventory;')
@@ -594,6 +595,21 @@ FROM images CROSS JOIN (SELECT '00000000-0000-0000-0000-' || lpad(g::text, 12, '
         self.sql('DELETE FROM camera_reel.imported_images; DELETE FROM dcl_migration.camera_reel_image_loaded;')
         self.run_import()
         self.assertEqual(self.imported_marks(), '0')
+
+    def test_when_importing_a_photo_it_should_count_it_once_in_the_batch_summary(self):
+        _, summary = self.run_import()
+        self.assertEqual(summary, 'inserted or upserted 1, updated 0')
+
+    def test_when_a_dry_run_imports_a_photo_it_should_leave_no_mark(self):
+        self.run_import(dry=True)
+        self.assertEqual(self.imported_marks(), '0')
+
+    def test_when_the_owner_changed_visibility_on_the_node_it_should_keep_the_photo_marked(self):
+        self.run_import()
+        self.sql('UPDATE camera_reel.images SET is_public=true; DELETE FROM camera_reel.imported_images;')
+        self.run_import()
+        self.assertEqual(self.sql('SELECT is_public FROM camera_reel.images;').strip(), 't')
+        self.assertEqual(self.imported_marks(), '1')
 
     def test_when_the_imported_images_relation_is_missing_it_should_stop_before_publishing(self):
         self.sql('DROP TABLE camera_reel.imported_images;')

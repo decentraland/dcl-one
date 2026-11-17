@@ -1,5 +1,6 @@
 """Financial cutover guards, flags, purchases, rentals and favorites lists."""
 import contextlib
+import dataclasses
 import io
 import os
 import unittest.mock
@@ -86,11 +87,12 @@ class FinancialMigrationCases:
 
     # ── credits-server: flags, wallets, purchases ──
 
-    def credits_load(self, db, step_name, rows):
+    def credits_load(self, db, step_name, rows, allow_empty=False):
         step = self.financial_step('credits-server', step_name)
+        step = dataclasses.replace(step, allow_empty=allow_empty)
         inserts = ''.join(f'INSERT INTO stage VALUES ({row});\n' for row in rows)
-        self.sql(db, migrate.CHECKPOINT_DDL + 'BEGIN;\n' + self.financial_stage(step) + inserts + step.load.read_text()
-                 + '\nCOMMIT;\n')
+        self.sql(db, migrate.CHECKPOINT_DDL + '\n'.join(migrate.step_vars(step, False)) + '\nBEGIN;\n'
+                 + self.financial_stage(step) + inserts + step.load.read_text() + '\nCOMMIT;\n')
 
     def test_when_upstream_flags_a_wallet_it_should_import_only_live_multi_account_flags(self):
         db = self.fresh_db('credits_flag_extract')
@@ -149,12 +151,30 @@ class FinancialMigrationCases:
         self.assertEqual(self.sql(db, 'SELECT address, has_started_program FROM credits.wallets ORDER BY 1;\n')
                          .strip().splitlines(), [f'{started}\tt', f'{opted}\tf'])
 
+    def test_when_upstream_matches_a_node_start_and_later_reverts_it_should_keep_the_node_start(self):
+        db = self.catalyst_db('credits_wallet_node_matched')
+        address = '0x' + 'd' * 40
+        self.credits_load(db, 'wallet', [f"'{address}', false, '2025-01-01', '2026-01-01'"])
+        self.sql(db, f"UPDATE credits.wallets SET has_started_program = true WHERE address = '{address}';\n")
+        # Upstream starts too, with an older created_at so the upsert rewrites the row.
+        self.credits_load(db, 'wallet', [f"'{address}', true, '2024-01-01', '2026-02-01'"])
+        self.credits_load(db, 'wallet', [f"'{address}', false, '2024-01-01', '2026-03-01'"])
+        self.assertEqual(self.sql(db, 'SELECT has_started_program FROM credits.wallets;\n').strip(), 't')
+
     def test_when_a_wallet_started_on_the_node_before_any_import_it_should_keep_it(self):
         db = self.catalyst_db('credits_wallet_node_first')
         address = '0x' + 'c' * 40
         self.sql(db, f"INSERT INTO credits.wallets (address, has_started_program) VALUES ('{address}', true);\n")
         self.credits_load(db, 'wallet', [f"'{address}', false, '2025-01-01', '2026-01-01'"])
         self.assertEqual(self.sql(db, 'SELECT has_started_program FROM credits.wallets;\n').strip(), 't')
+
+    def test_when_upstream_really_lists_no_flags_and_the_operator_allows_it_it_should_delete_the_imported_ones(self):
+        db = self.catalyst_db('credits_wallet_flags_allowed_empty')
+        imported, node = '0x' + 'a' * 40, '0x' + 'b' * 40
+        self.sql(db, f"INSERT INTO credits.wallet_flags (address, source) VALUES ('{node}', 'admin');\n")
+        self.credits_load(db, 'wallet_flag', [f"'{imported}', '203.0.113.1', ARRAY['{imported}'], '2026-01-01'"])
+        self.credits_load(db, 'wallet_flag', [], allow_empty=True)
+        self.assertEqual(self.sql(db, 'SELECT address FROM credits.wallet_flags;\n').strip(), node)
 
     def test_when_upstream_lists_no_flags_it_should_refuse_to_delete_every_imported_one(self):
         db = self.catalyst_db('credits_wallet_flags_empty')

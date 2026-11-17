@@ -16,8 +16,8 @@ wins. Upstream `timestamp` columns hold UTC; referral timestamps are epoch milli
 | user_mutes | user_mutes | social.user_mutes | muted_at |
 | user_mutes_reconcile | user_mutes (pairs) | deletes from social.user_mutes | whole set |
 | communities | communities | social.communities (+ deletes social.community_mirror rows) | updated_at |
-| community_members | community_members (+ owner from communities) | social.community_members (+ deletes removed members) | whole set |
 | community_bans | community_bans | social.community_bans (+ deletes banned member rows) | key (full re-scan) |
+| community_members | community_members (+ owner from communities) | social.community_members (+ deletes removed members) | whole set |
 | community_requests | community_requests | social.community_requests | updated_at |
 | community_places | community_places (id → place_id) | social.community_places | added_at |
 | community_posts | community_posts | social.community_posts | created_at |
@@ -42,13 +42,14 @@ kick, an unblock, a deleted post) is not re-added, unless upstream's row is newe
 join, block or mute). Blocks and mutes keep the newer timestamp. Rows imported before these
 records existed are recorded on the next run. A ban record includes `banned_at`, which a node
 re-ban refreshes; a ban with no record is the node's unless it already equals upstream's. A
-wallet the node actively bans is never added as a member, and an imported owner the load
+wallet the node actively bans is never added as a member. `community_bans` runs first, so a ban
+upstream lifted in the same run no longer blocks the rejoined member. An imported owner the load
 demotes after an upstream transfer is removed when upstream no longer lists it.
 
 Upstream deletes rows on unblock, unmute, kick, leave and post deletion. `community_members`
 and the `*_reconcile` steps read the whole upstream set and delete the imported rows it no
 longer holds, unless the node changed them since. A run whose upstream set is empty while
-imported rows are recorded stops instead of deleting them all.
+imported rows are recorded stops instead of deleting them all, unless `--allow-empty` names the step.
 
 ## Friendships
 

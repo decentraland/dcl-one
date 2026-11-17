@@ -76,11 +76,16 @@ SELECT id, is_public FROM inserted
 ON CONFLICT (id) DO NOTHING;
 
 -- Mark every row this import owns as imported, so `catalyst camera-reel import` may refresh and
--- prune it; rows that predate the importer stay unmarked.
-INSERT INTO camera_reel.imported_images (id)
-SELECT l.id FROM camera_import s
-JOIN dcl_migration.camera_reel_image_loaded l USING (id)
-ON CONFLICT (id) DO NOTHING;
+-- prune it; rows that predate the importer stay unmarked. Run as a SELECT so its tag is not an
+-- INSERT the batch summary would count as photos.
+WITH marked AS (
+    INSERT INTO camera_reel.imported_images (id)
+    SELECT l.id FROM camera_import s
+    JOIN dcl_migration.camera_reel_image_loaded l USING (id)
+    ON CONFLICT (id) DO NOTHING
+    RETURNING id
+)
+SELECT count(*) FROM marked \g /dev/null
 
 -- Check after INSERT so a concurrent insert is also compared. Moderation is
 -- deliberately omitted: a node's existing rejection/flag must remain intact.
@@ -104,9 +109,11 @@ END $conflict$;
 -- Rows that predate the importer are never adopted as importer-owned rows.
 UPDATE camera_reel.images i SET is_public = s.is_public
 FROM camera_import s, dcl_migration.camera_reel_image_loaded l
-WHERE i.id = s.id AND l.id = i.id AND i.is_public = l.is_public;
+WHERE i.id = s.id AND l.id = i.id AND i.is_public = l.is_public
+  AND i.is_public IS DISTINCT FROM s.is_public;
 
 UPDATE dcl_migration.camera_reel_image_loaded l SET is_public = s.is_public
 FROM camera_import s JOIN camera_reel.images i USING (id)
-WHERE l.id = s.id AND i.is_public = s.is_public;
+WHERE l.id = s.id AND i.is_public = s.is_public
+  AND l.is_public IS DISTINCT FROM s.is_public;
 DROP TABLE camera_import;

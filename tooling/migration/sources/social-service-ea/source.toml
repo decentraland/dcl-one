@@ -138,20 +138,6 @@ columns = [
 ]
 
 [[step]]
-name = "community_members"
-targets = ["social.community_members"]
-extract = "community_members.extract.sql"
-load = "community_members.load.sql"
-key = ["community_id", "member_address"]
-whole = true
-columns = [
-  { name = "community_id", type = "uuid" },
-  { name = "member_address", type = "text" },
-  { name = "role", type = "text" },
-  { name = "joined_at", type = "timestamptz" },
-]
-
-[[step]]
 name = "community_bans"
 targets = ["social.community_bans", "social.community_members"]
 extract = "community_bans.extract.sql"
@@ -166,6 +152,20 @@ columns = [
   { name = "active", type = "boolean" },
   { name = "unbanned_by", type = "text" },
   { name = "unbanned_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "community_members"
+targets = ["social.community_members"]
+extract = "community_members.extract.sql"
+load = "community_members.load.sql"
+key = ["community_id", "member_address"]
+whole = true
+columns = [
+  { name = "community_id", type = "uuid" },
+  { name = "member_address", type = "text" },
+  { name = "role", type = "text" },
+  { name = "joined_at", type = "timestamptz" },
 ]
 
 [[step]]

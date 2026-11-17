@@ -8,8 +8,9 @@ END $$;
 
 DO $empty$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM stage) AND EXISTS (SELECT 1 FROM dcl_migration.world_permission_loaded) THEN
-    RAISE EXCEPTION 'worlds-content-server/world_permission: upstream lists no grants but imported ones are recorded; refusing to delete them all (wrong source database?)';
+  IF NOT EXISTS (SELECT 1 FROM stage)
+     AND current_setting('dcl_migration.allow_empty', true) IS DISTINCT FROM 'on' AND EXISTS (SELECT 1 FROM dcl_migration.world_permission_loaded) THEN
+    RAISE EXCEPTION 'worlds-content-server/world_permission: upstream lists no grants but imported ones are recorded; refusing to delete them all (wrong source database? if upstream is really empty, rerun with --allow-empty worlds-content-server/world_permission)';
   END IF;
 END $empty$;
 

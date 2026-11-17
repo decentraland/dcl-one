@@ -91,6 +91,7 @@ class ContentMigrationCases:
         self.assertEqual(self.sql(db, f"SELECT user_address, image_hash, thumbnail_hash, is_public, review_status "
                                       f"FROM camera_reel.images WHERE id = '{PHOTO}';\n").strip(),
                          f'{OWNER}\tbafkreiimage\tbafkreithumb\tf\tok')
+        self.assertEqual(self.sql(db, 'SELECT id FROM camera_reel.imported_images;\n').strip(), PHOTO)
         self.content_load(db, 'camera-reel-service', 'image', self.camera_rows('true'))
         self.assertEqual(self.is_public(db), 't')
 

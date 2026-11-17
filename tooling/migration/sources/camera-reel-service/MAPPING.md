@@ -116,7 +116,14 @@ edits remain intact. Existing UUIDs without an import marker require exact facts
 and visibility and are never silently adopted or overwritten. Every row the importer
 tracks also gets a `camera_reel.imported_images` row in the same batch, so
 `catalyst camera-reel import` treats it as imported (refresh and `--prune`); untracked
-rows stay unmarked. The target must have that relation. Existing moderation
+rows stay unmarked. The target must have that relation.
+
+Run this import before `catalyst camera-reel import`, never after it. Once a row is
+marked, the node command's refresh copies the source's visibility and metadata
+over it: a visibility change the owner made on the node, which this import keeps,
+is reverted. In the other order this import stops with `camera UUID conflicts`,
+because the node command stores `image_content_type` as NULL and this import
+requires the exported MIME. Existing moderation
 remains untouched, including when source visibility changes. Historical rows explicitly set
 `ranking_published=true`, without new photo events, ranking increments or rewards.
 A failed batch rolls back its rows and checkpoint together.
