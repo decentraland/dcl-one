@@ -99,10 +99,10 @@ describe("top bar links hand same-document hrefs to the chrome navigator", () =>
     const navigate = vi.fn<ChromeNavigate>((href) => href !== "/places");
     mountBar(navigate);
     fireEvent.mouseEnter(document.querySelectorAll(".dtb__dd")[0]!);
-    const places = document.querySelector<HTMLAnchorElement>(".dtb__dditem[href=\"/places\"]")!;
+    const places = document.querySelector<HTMLAnchorElement>("[role=\"menuitem\"][href=\"/places\"]")!;
     expect(fireEvent.click(places)).toBe(true);
     expect(navigate).toHaveBeenCalledWith("/places");
-    const events = document.querySelector<HTMLAnchorElement>(".dtb__dditem[href=\"/events\"]")!;
+    const events = document.querySelector<HTMLAnchorElement>("[role=\"menuitem\"][href=\"/events\"]")!;
     expect(fireEvent.click(events)).toBe(false);
   });
 
