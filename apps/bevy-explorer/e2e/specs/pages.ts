@@ -97,11 +97,11 @@ export async function switchTab(explorer: Explorer, page: PageName): Promise<voi
  *  page. The top bar's Close button closes a page the Escape did not, and one whose field keeps
  *  the keys through a press (the map's search spends its first Escape clearing itself). Closing
  *  the Backpack deploys the look it changed, so it waits out the catalyst's window since the last
- *  deployment first. */
+ *  deployment first. A page already closed takes no Escape: the engine reports the presses of one
+ *  frame in an order of its own, not the order pressed, so an Escape that shares a frame with the
+ *  next key (an open) can arrive after it and close the page that key opened. */
 export async function closePage(explorer: Explorer, page: PageName): Promise<void> {
   const { marker } = PAGES[page]
-  // Restores also run after a successful body already closed the page. An extra Escape
-  // reaches the world instead, and can consume the key used to reopen the page next.
   if (!(await explorer.hud.isVisible(marker))) return
   if (page === 'backpack') await explorer.profileDeployWindow()
   try {

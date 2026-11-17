@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import cx from 'classnames';
-import { Popper } from 'decentraland-ui2';
+import { cx } from '/@/lib/cx';
+import Popover from '@ui/atoms/Popover';
 import { misc } from '#preload';
 import { t } from '/@/modules/store/translation/utils';
 import './styles.css';
@@ -74,16 +74,18 @@ const CopyToClipboard: React.FC<Props> = React.memo(
             {children}
           </div>
         )}
-        <Popper
+        <Popover
           role="status"
           className={cx('CopyToClipboardPopup', { FadeOut: fadeOut })}
           onTransitionEnd={handleTransitionEnd}
           open={hasCopiedText}
           placement="right"
-          anchorEl={anchorRef.current}
+          offset={0}
+          returnFocus={false}
+          anchor={anchorRef.current}
         >
           {t('popup.copied_to_clipboard')}
-        </Popper>
+        </Popover>
       </>
     );
   },

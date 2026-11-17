@@ -385,7 +385,7 @@ export function Sidebar({
           />
         </div>
       </nav>
-      {mapVisible && <MapPanel minimap={session.minimap} map={session.map} setEngineViewport={session.setEngineViewport} />}
+      {mapVisible && <MapPanel minimap={session.minimap} map={session.map} referrer={profile?.address} setEngineViewport={session.setEngineViewport} />}
       {panel != null && (
         <PanelHost key={panel.id} anchor={panel.anchor} rise={PANEL_RISE[panel.id]} onClose={closePanel}>
           {panel.id === 'me' && (

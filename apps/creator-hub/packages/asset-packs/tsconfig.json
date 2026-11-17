@@ -1,12 +1,32 @@
 {
   "compilerOptions": {
-    "allowJs": true,
-    "strict": true,
-    "inlineSources": false,
+    "target": "es2020",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "pretty": true,
+    "forceConsistentCasingInFileNames": true,
+    "allowSyntheticDefaultImports": true,
+    "experimentalDecorators": true,
+    "exactOptionalPropertyTypes": false,
+    "inlineSourceMap": true,
     "sourceMap": false,
-    "resolveJsonModule": true
+    "removeComments": true,
+    "inlineSources": false,
+    "useDefineForClassFields": false,
+    "preserveConstEnums": true,
+    "allowJs": true,
+    "jsx": "react",
+    "jsxFactory": "ReactEcs.createElement",
+    "alwaysStrict": true,
+    "strict": true,
+    "strictNullChecks": true,
+    "strictBindCallApply": true,
+    "strictFunctionTypes": true,
+    "strictPropertyInitialization": true,
+    "resolveJsonModule": true,
+    "lib": ["ES2020"],
+    "types": ["@dcl/js-runtime"]
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],
-  "exclude": ["**/*.spec.ts", "**/*.test.ts"],
-  "extends": "@dcl/sdk/types/tsconfig.ecs7.json"
+  "exclude": ["**/*.spec.ts", "**/*.test.ts"]
 }

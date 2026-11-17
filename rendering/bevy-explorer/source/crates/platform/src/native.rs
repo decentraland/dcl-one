@@ -1,12 +1,9 @@
+use crate::{default_color_grading, scatter_bloom};
 use async_tungstenite::{async_std::ConnectStream, WebSocketStream};
 use bevy::{
-    core_pipeline::{
-        bloom::Bloom,
-        tonemapping::{DebandDither, Tonemapping},
-    },
+    core_pipeline::tonemapping::{DebandDither, Tonemapping},
     ecs::bundle::Bundle,
     pbr::ShadowFilteringMethod,
-    render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection},
 };
 use futures_util::{
     sink::SinkExt,
@@ -217,31 +214,8 @@ pub fn default_camera_components() -> impl Bundle {
     (
         Tonemapping::AcesFitted,
         DebandDither::Enabled,
-        ColorGrading {
-            // ACES tonemapping with slightly deepened midtones; tune live with
-            // /tonemap /exposure /gamma /saturation
-            global: ColorGradingGlobal {
-                exposure: 0.0,
-                ..Default::default()
-            },
-            shadows: ColorGradingSection {
-                gamma: 0.9,
-                ..Default::default()
-            },
-            midtones: ColorGradingSection {
-                gamma: 0.9,
-                ..Default::default()
-            },
-            highlights: ColorGradingSection {
-                gamma: 0.9,
-                ..Default::default()
-            },
-        },
-        Bloom {
-            // tune live with /bloom
-            intensity: 0.15,
-            ..Bloom::OLD_SCHOOL
-        },
+        default_color_grading(),
+        scatter_bloom(),
         ShadowFilteringMethod::Gaussian,
     )
 }

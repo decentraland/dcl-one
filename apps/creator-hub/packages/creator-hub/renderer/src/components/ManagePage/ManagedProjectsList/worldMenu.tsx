@@ -11,7 +11,7 @@ import {
   LinkGlyph,
   StorageGlyph,
   UnpublishGlyph,
-} from '../cardMenuGlyphs.styled';
+} from '../cardMenuGlyphs';
 import { getStorageUrl } from './utils';
 
 type Actions = {

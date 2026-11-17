@@ -11,16 +11,38 @@
   color: var(--danger);
 }
 
-.ConnectionStatusIndicator .MuiIconButton-root {
+.ConnectionStatusIndicator .connection-status-offline {
   padding: 8px;
   cursor: pointer;
 }
 
-.ConnectionStatusIndicator .MuiIconButton-root:hover {
+.ConnectionStatusIndicator .connection-status-offline:hover {
   opacity: 0.8;
+}
+
+/* The round hover fill shows only for a pointer that can hover. */
+@media (hover: none) {
+  .ConnectionStatusIndicator .connection-status-offline.connection-status-offline:hover {
+    background: transparent;
+  }
 }
 
 .ConnectionStatusIndicator .offline-icon,
 .ConnectionStatusIndicator .slow-icon {
   font-size: 20px;
+}
+
+/* This tip uses a font list that does not start with Inter, and its own line height. */
+.ConnectionStatusTip.tt__tip {
+  font-family: Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+}
+
+/*
+ * The ui3 tip opens 12px below its anchor and stops 8px from the window edge. This tip is 14px below.
+ * It always meets the window edge, and its place is 2px from it.
+ */
+.ConnectionStatusTip.tt__tip--bottom {
+  margin-top: 2px;
+  margin-left: 6px;
 }

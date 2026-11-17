@@ -73,5 +73,5 @@ export async function getAppVersion() {
 }
 
 export async function copyToClipboard(text: string) {
-  clipboard.writeText(text);
+  await clipboard.writeText(text);
 }

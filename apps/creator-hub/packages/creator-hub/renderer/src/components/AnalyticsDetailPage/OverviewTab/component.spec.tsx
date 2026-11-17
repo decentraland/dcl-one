@@ -1,5 +1,5 @@
 import { cleanup, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import type { PlaceOverviewMetrics } from '/shared/types/place-analytics';

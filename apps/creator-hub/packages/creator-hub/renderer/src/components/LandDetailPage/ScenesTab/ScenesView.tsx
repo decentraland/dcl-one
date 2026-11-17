@@ -9,7 +9,7 @@ import { SortBy } from '/shared/types/manage';
 import type { SceneExportResult, SceneSource } from '/shared/types/scene-export';
 
 import { SelectCheckbox } from '../SelectCheckbox';
-import { Button } from '../../Button';
+import Button from '@ui/atoms/Button';
 import { ArrowDownIcon } from '../../Icons';
 import { EmptyState } from '../../ManagePage/EmptyState';
 import { SearchField, SelectField, SORT_OPTIONS } from '../../ManagePage/ViewBar';
@@ -185,9 +185,8 @@ export function ScenesView({
           <Bulk role="status">
             {t('land_detail.scenes.selected', { count: selectedScenes.length })}
             <Button
-              variant="contained"
-              color="secondary"
-              size="small"
+              size="sm"
+              className="hub-button hub-button--secondary"
               onClick={() =>
                 setUnpublish(
                   selectedScenes.length === 1

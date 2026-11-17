@@ -246,10 +246,6 @@ html.still *, html.still *::before, html.still *::after {
 }
 .u-wallet:hover { background: rgba(255, 255, 255, .38); }
 
-.u-progress { display: block; width: 100%; height: 8px; border-radius: var(--r-pill); background: var(--fill-4); overflow: hidden; }
-.u-progress > span { display: block; height: 100%; border-radius: var(--r-pill); background: var(--brand); }
-.u-progress > span.is-danger { background: var(--error); }
-
 .u-skel { display: inline-flex; flex-direction: column; gap: 8px; }
 .u-skel__line {
   height: 12px; border-radius: 6px;

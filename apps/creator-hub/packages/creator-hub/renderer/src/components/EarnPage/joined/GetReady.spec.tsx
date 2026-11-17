@@ -1,8 +1,7 @@
 import { Provider } from 'react-redux';
 import { act, cleanup, render, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import type { Cycle } from '/shared/types/creator-fund';
 
@@ -11,6 +10,7 @@ import { setCurrentLocale } from '/@/modules/store/translation/utils';
 import { actions } from '/@/modules/store/creatorFund';
 import * as api from '/@/lib/creatorFundApi';
 
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 import { createTestStore } from '../../../../tests/utils/testStore';
 import { ok } from './fixtures';
 import { GetReady } from './GetReady';
@@ -33,9 +33,9 @@ async function renderGetReady(cycles: Cycle[]) {
   });
   const { container } = render(
     <Provider store={store}>
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <GetReady />
-      </ThemeProvider>
+      </TestProviders>
     </Provider>,
   );
   return within(container);

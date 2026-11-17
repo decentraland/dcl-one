@@ -1,13 +1,7 @@
-import { ChainId } from '@dcl/schemas/dist/dapps/chain-id';
 import { env } from '#preload';
 import type { FeedbackContact } from '/shared/types/feedback';
 import { config } from '/@/config';
 
-export function isDev(chainId: ChainId): boolean {
-  return chainId === ChainId.ETHEREUM_SEPOLIA;
-}
-
-export const FEEDBACK_URL = config.get('FEEDBACK_URL');
 export const HELP_FAQ_URL = config.get('HELP_FAQ_URL');
 export const CONTACT_SUPPORT_URL = config.get('CONTACT_SUPPORT_URL');
 export const DISCORD_URL = config.get('DISCORD_URL');
