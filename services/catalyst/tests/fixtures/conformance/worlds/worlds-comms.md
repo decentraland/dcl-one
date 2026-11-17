@@ -585,7 +585,7 @@ Both trees advertise
     - Upstream: `POST /livekit-webhook` at the root.
     - dcl-one: `serve` merges `webhook_router` at the root, under `/worlds-content-server` and under
       `/comms-gatekeeper` (`src/serve.rs:1400-1420`), behind the social writes guard, which keeps
-      `/livekit-webhook` open (`social/src/writes.rs:39-48`). The gateway alias
+      `/livekit-webhook` open (`social/src/writes.rs:38-47`). The gateway alias
       `= /livekit-webhook` → `/comms-gatekeeper$uri` (`infra/gateway/root-aliases.nix:102-108`)
       reaches the same handler. No test builds the whole `serve` router.
     - Severity: none (closed).

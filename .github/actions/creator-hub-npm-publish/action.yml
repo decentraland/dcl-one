@@ -64,6 +64,11 @@ runs:
         node-version: ${{ inputs.node-version }}
         registry-url: ${{ inputs.registry }}
 
+    # The pnpm the Creator Hub pins, which corepack finds from the package's directory.
+    - name: Enable corepack
+      shell: bash
+      run: corepack enable
+
     - name: Get package info
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -90,13 +95,14 @@ runs:
     - name: Verify npm authentication
       if: inputs.npm-token != ''
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
         NODE_AUTH_TOKEN: ${{ inputs.npm-token }}
       run: |
         if [ "${{ inputs.dry-run }}" != "true" ]; then
           echo "🔐 Verifying npm authentication..."
-          if npm whoami > /dev/null 2>&1; then
-            echo "✅ npm authentication verified as: $(npm whoami)"
+          if pnpm whoami > /dev/null 2>&1; then
+            echo "✅ npm authentication verified as: $(pnpm whoami)"
           else
             echo "❌ Error: npm authentication failed"
             echo "Registry: ${{ inputs.registry }}"
@@ -127,8 +133,8 @@ runs:
         # tagging; the next run computes the same version, and npm refuses to publish it twice. A
         # re-run of that same commit skips the publish and goes on to tag it. Any other commit
         # stops here, naming the commit to tag by hand.
-        if [ "${{ inputs.dry-run }}" != "true" ] && [ -n "$(npm view "$PACKAGE_NAME@$VERSION" version 2>/dev/null)" ]; then
-          PUBLISHED_FROM=$(npm view "$PACKAGE_NAME@$VERSION" gitHead 2>/dev/null)
+        if [ "${{ inputs.dry-run }}" != "true" ] && [ -n "$(pnpm view "$PACKAGE_NAME@$VERSION" version 2>/dev/null)" ]; then
+          PUBLISHED_FROM=$(pnpm view "$PACKAGE_NAME@$VERSION" gitHead 2>/dev/null)
           if [ -n "$PUBLISHED_FROM" ] && [ "$PUBLISHED_FROM" = "$GITHUB_SHA" ]; then
             echo "$PACKAGE_NAME@$VERSION is already published from this commit; skipping the publish"
             exit 0
@@ -137,8 +143,11 @@ runs:
           exit 1
         fi
 
-        # Prepare publish command
-        PUBLISH_CMD="npm publish --provenance --access ${{ inputs.access }} --tag $INITIAL_TAG"
+        # npm recorded the commit as gitHead on its own; pnpm does not, and the check above reads it back.
+        node -e 'const f = "./package.json", p = require(f); p.gitHead = process.env.GITHUB_SHA; require("fs").writeFileSync(f, JSON.stringify(p, null, 2) + "\n")'
+
+        # The version step leaves package.json changed, which pnpm's git checks refuse.
+        PUBLISH_CMD="pnpm publish --provenance --access ${{ inputs.access }} --tag $INITIAL_TAG --no-git-checks"
 
         if [ "${{ inputs.dry-run }}" = "true" ]; then
           PUBLISH_CMD="$PUBLISH_CMD --dry-run"
@@ -183,7 +192,7 @@ runs:
 
           if [ -n "$tag" ]; then
             echo "🏷️  Adding dist-tag '$tag' to $PACKAGE_NAME@$VERSION..."
-            npm dist-tag add "$PACKAGE_NAME@$VERSION" "$tag"
+            pnpm dist-tag add "$PACKAGE_NAME@$VERSION" "$tag"
 
             if [ "$?" -eq 0 ]; then
               echo "✅ Added dist-tag '$tag'"
@@ -217,14 +226,14 @@ runs:
           else
             echo "  🌐 URL: ${{ steps.publish.outputs.npm-url }}"
             echo ""
-            echo "Install commands:"
-            echo "  npm install $PACKAGE_NAME@${{ inputs.initial-tag }}"
+            echo "Published as:"
+            echo "  $PACKAGE_NAME@${{ inputs.initial-tag }}"
             if [ -n "${{ inputs.additional-tags }}" ]; then
               IFS=',' read -ra TAGS <<< "${{ inputs.additional-tags }}"
               for tag in "${TAGS[@]}"; do
                 tag=$(echo "$tag" | xargs)
                 if [ -n "$tag" ]; then
-                  echo "  npm install $PACKAGE_NAME@$tag"
+                  echo "  $PACKAGE_NAME@$tag"
                 fi
               done
             fi

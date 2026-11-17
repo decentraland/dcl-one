@@ -23,8 +23,6 @@ fn expanded(posture: Posture, pairs: &[(&str, &str)]) -> HashMap<&'static str, S
 fn parsed(pairs: &[(&str, &str)]) -> Config {
     let map = env(pairs);
     let mut all = map.clone();
-    // `check` reads the stamp directory from the environment itself.
-    all.remove(RESTORE_STAMP_DIR);
     if let Some((_, vars)) = resolve(&lookup(&map)).unwrap() {
         for (k, v) in vars {
             all.insert(k.to_string(), v);
@@ -406,6 +404,27 @@ fn island_sets_every_upstream_empty_and_every_follower_switch_off() {
     );
 }
 
+/// Only a mirror fetches the disposable email list or names SendGrid; an island's empty
+/// SendGrid URL leaves email unconfigured.
+#[test]
+fn only_the_mirror_fetches_the_disposable_list_and_names_sendgrid() {
+    let bare = Config::parse_env_for_tests([("DATABASE_URL", "postgres:///catalyst")]).unwrap();
+    assert_eq!(bare.social.disposable_email_domains_url, "");
+    for posture in ["island", "journey"] {
+        let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, posture)]);
+        assert_eq!(c.social.disposable_email_domains_url, "", "{posture}");
+        assert_eq!(c.social.sendgrid_api_url, "", "{posture}");
+    }
+    let mirror = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
+    assert!(
+        mirror
+            .social
+            .disposable_email_domains_url
+            .starts_with("https://raw.githubusercontent.com/disposable-email-domains/")
+    );
+    assert_eq!(mirror.social.sendgrid_api_url, "https://api.sendgrid.com");
+}
+
 /// Every URL the mirror row names is one the binary leaves empty by
 /// default: a bare `serve` and an island name no Decentraland host.
 #[test]
@@ -484,7 +503,8 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
     assert!(c.content.sync_source.contains("peer.decentraland.org"));
     assert!(c.explore.explorer_mirrors_enabled && c.social.communities_mirror_upstream);
     assert!(c.marketplace.marketplace_nft_index_enabled && c.land_authz.land_authz_index_enabled);
-    assert!(c.shop.credits_usage_index_enabled && c.shop.shop_rentals_index_enabled);
+    assert!(c.shop.credits_usage_index_enabled);
+    assert_eq!(c.shop.shop_rentals_index_enabled, Some(true));
     assert_eq!(
         c.shop.credits_manager_contract.as_deref(),
         Some(CREDITS_MANAGER_MAINNET)
@@ -531,7 +551,10 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
         c.map_urls().satellite_base.as_deref(),
         Some("https://genesis.city/map/latest")
     );
-    assert!(!c.content.content_history_prune_enabled);
+    assert!(
+        c.content.content_history_prune_enabled,
+        "content writes leave the prune default alone"
+    );
 
     // The preset leaves the chain endpoints to the binary's default; off
     // mainnet it knows no contract.
@@ -566,7 +589,7 @@ fn the_presence_collector_follows_the_data_write_switch() {
 }
 
 #[test]
-fn journey_opens_all_six_write_domains_without_a_stamp() {
+fn journey_opens_all_six_write_domains() {
     let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "journey")]);
     assert!(c.writes.content_writes_enabled && c.create.create_writes_enabled);
     assert!(c.writes.data_writes_enabled && c.writes.social_writes_enabled);
@@ -596,33 +619,19 @@ fn startup_refuses_the_contradictions() {
         ("WORLDS_FORWARD_UPSTREAM_URL", "https://worlds.example.org"),
     ]);
     assert!(err.contains("WORLDS_FORWARD_UPSTREAM_URL"), "{err}");
-    let err = refused(&[db, (ENV, "island"), ("SOCIAL_WRITES_ENABLED", "true")]);
-    assert!(
-        err.contains("SOCIAL_WRITES_ENABLED is on with no WRITES_RESTORE_STAMP_DIR"),
-        "{err}"
-    );
-    let err = refused(&[
-        db,
-        (ENV, "mirror"),
-        ("CONTENT_WRITES_ENABLED", "true"),
-        ("OPS_WRITES_ENABLED", "true"),
-    ]);
-    assert!(
-        err.contains("CONTENT_WRITES_ENABLED, OPS_WRITES_ENABLED are on"),
-        "{err}"
-    );
 
-    // The stamp directory opens them; a forward URL is a mirror's choice.
+    // A write switch alone opens its plane; a forward URL is a mirror's choice.
     let ok = |pairs: &[(&str, &str)]| {
         let c = parsed(pairs);
         let map = env(pairs);
         check(&c, &lookup(&map))
     };
+    ok(&[db, (ENV, "island"), ("SOCIAL_WRITES_ENABLED", "true")]).unwrap();
     ok(&[
         db,
-        (ENV, "island"),
-        ("SOCIAL_WRITES_ENABLED", "true"),
-        (RESTORE_STAMP_DIR, "/var/lib/catalyst/stamps"),
+        (ENV, "mirror"),
+        ("CONTENT_WRITES_ENABLED", "true"),
+        ("OPS_WRITES_ENABLED", "true"),
     ])
     .unwrap();
     ok(&[

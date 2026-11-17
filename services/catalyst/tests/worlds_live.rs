@@ -9,7 +9,7 @@
 //!
 //! ```sh
 //! CATALYST_WORLDS_LIVE=1 WORLDS_LIVE_SOURCE=<source> CATALYST_TEST_DATABASE_URL="$DATABASE_URL" \
-//!   cargo test --test worlds_live -- --nocapture
+//!   cargo test --test node_2 -- worlds_live:: --nocapture
 //! ```
 
 use std::sync::Arc;

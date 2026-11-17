@@ -353,6 +353,11 @@ module.exports.sendChat = async function(message, channel) {
     Deno.core.ops.op_send_chat(message, channel ?? "Nearby")
 }
 
+// replace the text of the chat bubble still showing a message (its translation, or the original back)
+module.exports.setChatBubbleText = function(messageId, message) {
+    Deno.core.ops.op_set_chat_bubble_text(messageId, message)
+}
+
 // get reactions to chat messages (the local user's included) as a stream
 // type ChatReaction = {
 //   channel: string, // "Nearby" or the DM partner's wallet
@@ -824,9 +829,10 @@ module.exports.social = {
     return streamGenerator();
   },
 
-  // the community channels the local user listens to (community ids); replaces the previous set
-  setCommunityChannels: function(ids) {
-    Deno.core.ops.op_set_community_channels(ids);
+  // the communities whose chat channels the local user listens to ({ id, name });
+  // replaces the previous set
+  setCommunityChannels: function(communities) {
+    Deno.core.ops.op_set_community_channels(communities);
   }
 }
 

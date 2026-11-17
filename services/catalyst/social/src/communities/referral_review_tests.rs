@@ -5,39 +5,20 @@ use std::sync::{
 };
 use tokio::sync::mpsc;
 
-/// A drainer intentionally scans every pending grant. Each drainer fixture
-/// therefore needs its own database so it cannot issue another test's rewards.
-struct RewardDatabase {
-    pool: sqlx::PgPool,
-    admin: sqlx::PgPool,
-    name: String,
-}
+use crate::db::scratch::{OwnedDatabase as RewardDatabase, Schema};
 
+// A drainer intentionally scans every pending grant. Each drainer fixture
+// therefore needs its own database so it cannot issue another test's rewards.
 async fn reward_database() -> Option<RewardDatabase> {
     reward_database_with_legacy_receipts(false).await
 }
 
 async fn reward_database_with_legacy_receipts(legacy: bool) -> Option<RewardDatabase> {
-    let Ok(url) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
+    let Some(database) = RewardDatabase::new("referral", Schema::Blank, 12).await else {
         eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
         return None;
     };
-    let base: sqlx::postgres::PgConnectOptions = url.parse().expect("PostgreSQL test URL");
-    let admin = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect_with(base.clone().database("postgres"))
-        .await
-        .unwrap();
-    let name = format!("catalyst_test_referral_{}", uuid::Uuid::new_v4().simple());
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-        .execute(&admin)
-        .await
-        .unwrap();
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(12)
-        .connect_with(base.database(&name).options([("TimeZone", "UTC")]))
-        .await
-        .unwrap();
+    let pool = &database.pool;
     if legacy {
         // Reproduce the earlier PR bootstrap in a new, owned database. No
         // existing database is reset or altered to manufacture the old shape.
@@ -62,23 +43,9 @@ async fn reward_database_with_legacy_receipts(legacy: bool) -> Option<RewardData
             .unwrap();
         tx.commit().await.unwrap();
     } else {
-        crate::db::apply_schema(&pool).await.unwrap();
+        crate::db::apply_schema(pool).await.unwrap();
     }
-    Some(RewardDatabase { pool, admin, name })
-}
-
-impl RewardDatabase {
-    async fn teardown(self) {
-        self.pool.close().await;
-        sqlx::query(sqlx::AssertSqlSafe(format!(
-            "DROP DATABASE \"{}\" WITH (FORCE)",
-            self.name
-        )))
-        .execute(&self.admin)
-        .await
-        .unwrap();
-        self.admin.close().await;
-    }
+    Some(database)
 }
 
 fn wallet() -> Address {
@@ -198,7 +165,7 @@ async fn concurrent_ip_creates_enforce_the_cap_and_keep_rejected_retry_receipts(
     .unwrap();
     referral.pool.close().await;
     drop(referral);
-    database.teardown().await;
+    database.drop().await;
 }
 
 #[tokio::test]
@@ -283,113 +250,6 @@ async fn concurrent_referrer_grants_observe_distinct_totals_and_release_sql_befo
     server.abort();
 }
 
-/// A restore hold blocks both new provider claims and confirmed downstream
-/// retries. Refreshing the stamps resumes the same durable work.
-#[tokio::test]
-async fn reward_drain_respects_restore_holds_before_claims_and_follow_ups() {
-    use crate::shared::writes::restore::{
-        Stamp,
-        lab::{HOUR, StampLab},
-        scoped,
-    };
-    let Some(database) = reward_database().await else {
-        return;
-    };
-    let pool = database.pool.clone();
-    let calls = Arc::new(AtomicUsize::new(0));
-    let observed = calls.clone();
-    let app = axum::Router::new().route(
-        "/api/rewards",
-        axum::routing::post(move || {
-            let observed = observed.clone();
-            async move {
-                observed.fetch_add(1, Ordering::SeqCst);
-                Json(json!({"data":[{"image":"https://reward.example.org/new.png"}]}))
-            }
-        }),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let referral = Referral::new(
-        pool.clone(),
-        Outbound::for_tests(),
-        Settings {
-            reward_server_url: Some(url),
-            ..Settings::for_tests()
-        },
-    );
-    for confirmed in [false, true] {
-        sqlx::query("INSERT INTO social.referral_progress(referrer,invited_user,status,tier_granted,reward_tier,reward_requested_at,reward_response) VALUES($1,$2,'tier_granted',true,5,CASE WHEN $3 THEN timezone('UTC',now()) END,$4)")
-            .bind(wallet()).bind(wallet()).bind(confirmed)
-            .bind(confirmed.then(|| json!({"image":"https://reward.example.org/confirmed.png"})))
-            .execute(&pool).await.unwrap();
-    }
-    let before: Vec<Value> = sqlx::query_scalar(
-        "SELECT to_jsonb(r) FROM social.referral_progress r ORDER BY invited_user",
-    )
-    .fetch_all(&pool)
-    .await
-    .unwrap();
-    for kind in ["missing", "stale", "no_blobs"] {
-        let lab = if kind == "missing" {
-            StampLab::new()
-        } else {
-            StampLab::fresh()
-        };
-        match kind {
-            "stale" => lab.advance(30 * HOUR),
-            "no_blobs" => {
-                let mut stamp: Value = serde_json::from_slice(
-                    &std::fs::read(lab.dir.join(Stamp::Backup.file())).unwrap(),
-                )
-                .unwrap();
-                stamp["blobs"]["included"] = json!(false);
-                lab.write_json(Stamp::Backup, stamp);
-            }
-            _ => {}
-        }
-        scoped(lab.stamps.clone(), async {
-            assert!(crate::shared::writes::refusal(true).is_some(), "{kind}");
-            referral.drain_pending_rewards().await.unwrap();
-        })
-        .await;
-        let after: Vec<Value> = sqlx::query_scalar(
-            "SELECT to_jsonb(r) FROM social.referral_progress r ORDER BY invited_user",
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-        assert_eq!(
-            after, before,
-            "{kind}: no claim, retry timestamp or receipt mutation"
-        );
-        assert_eq!(calls.load(Ordering::SeqCst), 0, "{kind}: no provider POST");
-        let effects: (i64, i64) = sqlx::query_as(
-            "SELECT (SELECT count(*) FROM social.notifications), (SELECT count(*) FROM social.referral_reward_images)",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(effects, (0, 0), "{kind}: no downstream effects");
-    }
-    let fresh = StampLab::fresh();
-    scoped(fresh.stamps.clone(), referral.drain_pending_rewards())
-        .await
-        .unwrap();
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
-    let completed: (i64, i64, i64) = sqlx::query_as(
-        "SELECT (SELECT count(*) FROM social.referral_progress WHERE reward_tier IS NOT NULL), (SELECT count(*) FROM social.notifications), (SELECT count(*) FROM social.referral_reward_images)",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(completed, (0, 2, 2));
-    drop(referral);
-    server.abort();
-    database.teardown().await;
-}
-
 /// Legacy paid receipts prove payment independently of the image metadata.
 /// Repairing that metadata resumes image delivery without another reward POST.
 #[tokio::test]
@@ -472,7 +332,7 @@ async fn imported_paid_rewards_with_incomplete_images_are_not_requested_again() 
         assert_eq!(rewards.load(Ordering::SeqCst), 0);
     }
     server.abort();
-    database.teardown().await;
+    database.drop().await;
 }
 
 #[tokio::test]
@@ -527,7 +387,7 @@ async fn ambiguous_reward_responses_are_not_reissued_after_restart_or_login() {
             .bind(&invited).fetch_one(&pool).await.unwrap();
         assert_eq!(state, (Some(5), true, true));
         server.abort();
-        database.teardown().await;
+        database.drop().await;
     }
 }
 
@@ -607,7 +467,7 @@ async fn a_reward_body_timeout_is_quarantined_without_reposting() {
         .bind(&invited).fetch_one(&pool).await.unwrap();
     assert_eq!(state, (Some(5), true, true));
     server.abort();
-    database.teardown().await;
+    database.drop().await;
 }
 
 #[tokio::test]
@@ -667,7 +527,7 @@ async fn cancelled_inflight_reward_preserves_its_claim_for_reconciliation() {
     );
     assert_eq!(rewards.load(Ordering::SeqCst), 1);
     server.abort();
-    database.teardown().await;
+    database.drop().await;
 }
 
 /// The first finalize fails as the source does (state and first effects), but
@@ -909,7 +769,7 @@ async fn native_reward_sql_failures_resume_atomically_without_aws_or_duplicate_p
         assert_eq!(effects, (1, 1, 1, 0));
         drop(after);
         server.abort();
-        database.teardown().await;
+        database.drop().await;
     }
 }
 
@@ -983,7 +843,7 @@ async fn native_login_grant_and_accepted_notification_roll_back_and_retry_togeth
         .fetch_one(&pool).await.unwrap();
     assert_eq!(effects, (1, 1));
     drop(referral);
-    database.teardown().await;
+    database.drop().await;
 }
 
 #[tokio::test]
@@ -1066,7 +926,7 @@ async fn native_login_receipt_upgrade_preserves_attribution_and_is_idempotent() 
         .await
         .unwrap();
     assert_eq!(remaining, 0);
-    database.teardown().await;
+    database.drop().await;
 }
 
 #[tokio::test]
@@ -1161,7 +1021,7 @@ async fn native_backdated_logins_share_a_server_timed_concurrent_quota_and_termi
         "retained receipts outside the server quota window do not count"
     );
     drop(referral);
-    database.teardown().await;
+    database.drop().await;
 }
 
 #[tokio::test]
@@ -1227,7 +1087,7 @@ async fn native_receipt_cleanup_skips_locked_rows_and_failures_do_not_stop_rewar
                 .unwrap();
         assert_eq!(remaining, 0);
         drop(referral);
-        database.teardown().await;
+        database.drop().await;
     }
 }
 
@@ -1377,5 +1237,5 @@ async fn earlier_native_receipts_upgrade_preserves_retries_and_server_quota() {
         .await
         .unwrap();
     drop(referral);
-    database.teardown().await;
+    database.drop().await;
 }

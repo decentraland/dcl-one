@@ -31,7 +31,7 @@ By participating in this project, you agree to maintain a respectful and inclusi
 Before contributing, ensure you have:
 
 - **Node.js** 22.x or higher
-- **npm** (comes with Node.js)
+- **pnpm**, at the version `package.json` pins (`corepack enable` provides it)
 - **Git** installed and configured
 - **Docker** (optional, for asset-packs development)
 - Familiarity with TypeScript, React, and Electron (depending on the package)
@@ -96,7 +96,7 @@ Before contributing, ensure you have:
 5. **Fix any issues**:
    \`\`\`bash
    make lint-fix       # Auto-fix linting issues
-   npm run format:fix  # Auto-format code
+   pnpm run format:fix  # Auto-format code
    \`\`\`
 
 6. **Commit your changes** (see [commit guidelines](#commit-message-guidelines))
@@ -113,25 +113,25 @@ Before contributing, ensure you have:
 #### Asset Packs
 \`\`\`bash
 cd packages/asset-packs
-npm run start          # Start dev server
-npm run validate       # Validate assets
-npm run build          # Build package
+pnpm run start          # Start dev server
+pnpm run validate       # Validate assets
+pnpm run build          # Build package
 \`\`\`
 
 #### Inspector
 \`\`\`bash
 cd packages/inspector
-npm start              # Start dev server (port 8000)
-npm run test           # Run tests
-npm run build          # Build package
+pnpm start              # Start dev server (port 8000)
+pnpm run test           # Run tests
+pnpm run build          # Build package
 \`\`\`
 
 #### Creator Hub
 \`\`\`bash
 cd packages/creator-hub
-npm start              # Start in watch mode
-npm run test           # Run all tests
-npm run compile        # Compile distributable
+pnpm start              # Start in watch mode
+pnpm run test           # Run all tests
+pnpm run compile        # Compile distributable
 \`\`\`
 
 ## Pull Request Process
@@ -314,10 +314,10 @@ make test
 
 # Specific package
 cd packages/inspector
-npm run test
+pnpm run test
 
 # Watch mode
-npm run test -- --watch
+pnpm run test --watch
 
 # E2E tests
 make test-e2e

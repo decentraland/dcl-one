@@ -2,11 +2,13 @@ import { Fragment, lazy, Suspense, useEffect, useMemo, useRef, useState, type Co
 import { EngineRpc } from '@explorer-core/engine/engineRpc'
 import { EngineHost } from './features/engine/EngineHost'
 import type { LoginDriver } from '@explorer-core/engine/driver'
-import { startMockBridge } from '@explorer-core/engine/mockBridge'
+import { mockPublicReelPage, startMockBridge } from '@explorer-core/engine/mockBridge'
+import { setPublicReelFetcher } from './features/gallery/publicReels'
 // Dev-only (?showcase=1) design gallery — lazy so it never ships in the prod HUD path.
 const Showcase = lazy(() => import('./design/Showcase').then((m) => ({ default: m.Showcase })))
 import { Chat } from './features/chat/Chat'
 import { FriendsPanel } from './features/friends/FriendsPanel'
+import { jumpToFriend } from './features/friends/jumpToFriend'
 import { SettingsPanel } from './features/settings/SettingsPanel'
 import { ProfilePanel } from './features/profile/ProfilePanel'
 import { NotificationsPanel } from './features/notifications/NotificationsPanel'
@@ -23,7 +25,7 @@ import { LobbyHome } from './features/lobby/LobbyHome'
 import { VoiceChatPanel } from './features/voiceChat/VoiceChatPanel'
 import { SceneVoiceChatBanner } from './features/voiceChat/SceneVoiceChatBanner'
 import { VoiceChatToasts } from './features/voiceChat/voiceChatToasts'
-import { WelcomePage } from './features/welcome/WelcomePage'
+import { NearbyVoiceRefusals } from './features/voice/NearbyVoiceRefusals'
 import { GalleryPage } from './features/gallery/GalleryPage'
 import { Sidebar } from './features/sidebar/Sidebar'
 import { Minimap } from './features/minimap/Minimap'
@@ -37,9 +39,10 @@ import { PopupHost, ToastHost, showDialog } from './design'
 import { SessionProvider } from './features/session/SessionContext'
 import { bootMode, hostEntryParams, isNativeHud, unrecognisedEntryParams, untrustedLaunchParams } from '@hud-host'
 import { FpsMeter } from './features/debug/FpsMeter'
+import { DebugPanelHost } from './features/debug/DebugPanel'
 import { BootProgress } from './features/engine/BootProgress'
-import { LoadingAndLogin } from './features/login/LoadingAndLogin'
-import { GuestStartPage } from './features/login/GuestStartPage'
+import { StartupFlow } from './features/startup/StartupFlow'
+import { useBeforeWorld, useLoginMusic } from './features/startup/useLoginMusic'
 import { SceneLoadingOverlay } from './features/session/SceneLoadingOverlay'
 import { openTravelError } from './features/session/TravelError'
 import { useEngineSession, type EngineSession } from './features/session/useEngineSession'
@@ -230,6 +233,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   } => {
     if (MODE === 'mock') {
       startMockBridge()
+      setPublicReelFetcher(mockPublicReelPage)
       return { rpc: null, createDriver: () => host.createBridgeClient() }
     }
     if (MODE === 'native') {
@@ -398,6 +402,8 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   // Tell the engine how much of the screen the persistent HUD occupies. A full-screen page is
   // transient, so the last in-world value stands while one is open.
   useHudInsetReport(session.setInteractableArea, session.phase === 'world' && !session.menuOpen && !pageOpen)
+  // the sign-in music, from the first screen until the player is first in the world
+  const loginMusic = useLoginMusic(useBeforeWorld(session.phase) && !HIDE_HUD)
 
   // Embedded mode: mount only the engine (+ the error surfaces so a crash isn't silently blank).
   // No sidebar / chat / pointer / panels / sign-in UI. PopupHost renders nothing while the stack is
@@ -418,13 +424,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
     <SessionProvider value={session}>
       {rpc && <EngineHost rpc={rpc} />}
       {MODE === 'engine' && <BootProgress flow={session.login} />}
-      {session.phase === 'login' &&
-        (session.login.status === 'sign-in-or-guest' && !session.login.authPending ? (
-          <GuestStartPage flow={session.login} />
-        ) : (
-          <LoadingAndLogin flow={session.login} />
-        ))}
-      {session.phase === 'welcome' && <WelcomePage setEngineViewport={session.setEngineViewport} />}
+      {(session.phase === 'login' || session.phase === 'welcome') && <StartupFlow flow={session.login} music={loginMusic} />}
       {session.phase === 'picking' && <PlacesPicker account={discoveryAccount} onPick={session.pickDestination} />}
       {session.phase === 'lobby' && (
         <>
@@ -451,6 +451,8 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             <PhotoModeOverlay photoMode={session.photoMode} onOpenGallery={session.gallery.toggle} />
           )}
           {chrome && <Sidebar session={session} onViewProfile={viewMyProfile} />}
+          {/* Not gated by `chrome`: mounted while a menu page, photo mode or the editor is open. */}
+          <DebugPanelHost session={session} underPage={pageOpen} />
           {chrome && <VoiceChatPanel />}
           {chrome && <SceneVoiceChatBanner />}
           {chrome && (
@@ -478,7 +480,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             onOpenSettings={session.settings.toggle}
           />
           <SurfaceBoundary name="Friends" open={session.friends.open} onCrash={session.closeAllPanels}>
-            <FriendsPanel friends={session.friends} onMessage={session.chat.openConversation} />
+            <FriendsPanel friends={session.friends} onMessage={session.chat.openConversation} onJump={(address) => jumpToFriend(session.map, address)} />
           </SurfaceBoundary>
           <SurfaceBoundary name="Settings" open={session.settings.open} onCrash={session.closeAllPanels}>
             <SettingsPanel settings={session.settings} bindings={session.bindings} profile={session.profile} onNavigate={goToMenuPage} />
@@ -513,7 +515,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             />
           </SurfaceBoundary>
           <SurfaceBoundary name="Map" open={session.map.open} onCrash={session.closeAllPanels}>
-            <MapPage map={session.map} profile={session.profile} onNavigate={goToMenuPage} />
+            <MapPage map={session.map} minimap={session.minimap} profile={session.profile} gallery={session.gallery} onNavigate={goToMenuPage} />
           </SurfaceBoundary>
           <SurfaceBoundary name="Places" open={session.places.open} onCrash={session.closeAllPanels}>
             <PlacesPage
@@ -570,6 +572,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
       <ConnectivityFeedback state={session.connectivity.state} retry={session.connectivity.retry} exit={session.logout} />
       <NotificationToastHost notifications={session.notifications} friends={session.friends} voiceChat={session.voiceChat} chat={session.chat} />
       <VoiceChatToasts />
+      <NearbyVoiceRefusals />
       {/* Crash surface (boot panic / runtime crash / react render crash) — last, so it renders above
           the popup layer. A world-not-found is not a crash and opens as a popup instead (see above). */}
       {crash && <CrashModal error={crash} onReload={session.reload} onDismiss={crash.source === 'runtime' ? session.dismissFatal : undefined} />}

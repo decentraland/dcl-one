@@ -1,0 +1,71 @@
+name = "badges"
+repository = "github.com/decentraland/badges"
+revision = "ad8aa13d30f77e454ff4ad3d0e2caf6b820adb00"
+database_env = "BADGES_DATABASE_URL"
+after = []
+notes = """See MAPPING.md. The catalog step makes upstream's catalog the
+node's: it upserts every badge (published or not, archived or not) and its
+tiers over the seed, replaces the tiers of each imported badge (deletes the
+seed's other tiers of it, and tier rows whose position moved, re-inserted)
+and deletes the seed placeholders decentraland_citizen and walkabout when no
+player holds them. Every step needs the badge catalog schema (publication
+columns, criteria_steps, the progress document, social.presence_badges) and
+stops on a non-empty batch without it. Not migrated: presence_visits,
+presence_applied_events, presence_pending_leaves, presence_absence_facts
+(in-flight visit tracking and event dedupe), pgmigrations. Left to the node:
+badge_admin_audit (no upstream grant log). Art: `migrate.py blobs badges`."""
+
+[[step]]
+name = "catalog"
+targets = ["social.badge_definitions", "social.badge_tiers"]
+extract = "catalog.extract.sql"
+load = "catalog.load.sql"
+key = ["id"]
+columns = [
+  { name = "id", type = "text" },
+  { name = "name", type = "text" },
+  { name = "category", type = "text" },
+  { name = "description", type = "text" },
+  { name = "published_at", type = "timestamptz" },
+  { name = "archived_at", type = "timestamptz" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "presence", type = "boolean" },
+  { name = "presence_steps", type = "integer" },
+  { name = "tiers", type = "jsonb" },
+]
+
+[[step]]
+name = "presence_badge"
+targets = ["social.presence_badges"]
+extract = "presence_badge.extract.sql"
+load = "presence_badge.load.sql"
+key = ["badge_id"]
+columns = [
+  { name = "badge_id", type = "text" },
+  { name = "location_kind", type = "text" },
+  { name = "parcel", type = "text" },
+  { name = "world_name", type = "text" },
+  { name = "window_start", type = "timestamptz" },
+  { name = "window_end", type = "timestamptz" },
+  { name = "mode", type = "text" },
+  { name = "required_seconds", type = "integer" },
+  { name = "created_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "user_progress"
+targets = ["social.user_badge_progress", "social.user_achieved_tiers"]
+extract = "user_progress.extract.sql"
+load = "user_progress.load.sql"
+key = ["source_address", "badge_id"]
+watermark = "updated_at"
+columns = [
+  { name = "source_address", type = "text" },
+  { name = "address", type = "text" },
+  { name = "badge_id", type = "text" },
+  { name = "progress", type = "jsonb" },
+  { name = "steps", type = "bigint" },
+  { name = "achieved_tiers", type = "jsonb" },
+  { name = "completed_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]

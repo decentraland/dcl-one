@@ -1,6 +1,6 @@
 # Travel telemetry
 
-Place detail and world-scene Visit links share the `jump-in` story:
+Place detail, world-scene Visit links and the Jump In controls on a profile's Places cards share the `jump-in` story:
 
 - `jump_in_started`: the visitor activates a travel control.
 - `jump_in_completed`: a valid launch URL is handed to browser navigation.

@@ -63,11 +63,11 @@ export async function getJson<T>(url: string): Promise<T | undefined> {
   return JSON.parse(r.body) as T
 }
 
-export async function signed<T>(
-  url: string,
-  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' = 'GET',
-  body?: object
-): Promise<T | undefined> {
+type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+
+/** A JSON request the engine signs as the player; the whole parsed body, for answers that carry
+ *  more than `data` (a page's `total`). */
+export async function signedBody<T>(url: string, method: Method = 'GET', body?: object): Promise<T | undefined> {
   const result = await BevyApi.kernelFetch({
     url,
     init: {
@@ -79,7 +79,13 @@ export async function signed<T>(
   })
   if (!result.ok) throw new HttpError(result.status, result.body, result.statusText)
   if (!result.body) return undefined
-  const parsed = JSON.parse(result.body) as { data?: T } & T
+  return JSON.parse(result.body) as T
+}
+
+/** A signed JSON request; the answer's `data` when it has one, else the whole body. */
+export async function signed<T>(url: string, method: Method = 'GET', body?: object): Promise<T | undefined> {
+  const parsed = await signedBody<{ data?: T } & T>(url, method, body)
+  if (parsed == null) return undefined
   return parsed.data ?? parsed
 }
 

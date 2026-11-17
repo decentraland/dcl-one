@@ -57,20 +57,14 @@ function useEventAccess(identity: AuthIdentity | null, version: number) {
 export function EventNavigation({ profile = null, canManageUsers = false }: { profile?: EventProfile | null; canManageUsers?: boolean }) {
   return (
     <nav className={styles.navigation} aria-label="Hangout navigation">
-      <Link className={styles.link} to="/whats-on">All hangouts</Link>
-      <Link className={styles.link} to="/whats-on?tab=my">My Hangouts</Link>
+      <Link className={styles.link} to="/events">All hangouts</Link>
+      <Link className={styles.link} to="/events?tab=my">My Hangouts</Link>
       <Link className={styles.link} to="/events/new-event">Create a Hangout</Link>
       {canModerate(profile) && <Link className={styles.link} to="/events/admin/pending-events">Moderation</Link>}
       {canManageUsers && <Link className={styles.link} to="/events/admin/users">User permissions</Link>}
       {has(profile, "edit_any_schedule") && <Link className={styles.link} to="/landings/event-schedule">Schedules</Link>}
     </nav>
   );
-}
-
-// Public discovery needs no private profile lookup. Management loads access
-// after the user follows My Hangouts.
-export function EventDiscoveryNavigation() {
-  return <div className={styles.discoveryNavigation}><EventNavigation /></div>;
 }
 
 export default function EventManagement({ mode }: { mode: Mode }) {
@@ -225,7 +219,7 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
                             <p>{event.start_at ? new Date(event.start_at).toLocaleString() : "Date not published"} · {event.world ? event.server || "World location not published" : `${event.x},${event.y}`}</p>
                             <p>{event.rejected ? "Rejected" : event.approved ? "Approved" : "Pending review"}{event.rejection_reason ? `: ${event.rejection_reason}` : ""}</p>
                             {(mode === "mine" || has(access.profile, "edit_any_event")) && <Link className={styles.link} to={`/events/edit-event/${encodeURIComponent(event.id)}`}>Edit hangout</Link>}
-                            {event.approved && <Link className={styles.link} to={`/whats-on/${encodeURIComponent(event.id)}`}>View hangout</Link>}
+                            {event.approved && <Link className={styles.link} to={`/events?id=${encodeURIComponent(event.id)}`}>View hangout</Link>}
                             {mayApprove && (
                               <div>
                                 <button className={styles.button} disabled={busy} onClick={() => { void applyModeration(event.id, "approve"); }}>Approve {event.name}</button>

@@ -185,6 +185,15 @@ describe("legalDocToMarkdown", () => {
     expect(md).toContain("[the DAO](https://dao.decentraland.org)");
     expect(md).not.toMatch(NO_HTML);
   });
+
+  it("numbers an ordered list by position, skipping empty items", () => {
+    const md = legalDocToMarkdown({
+      title: "Creator Fund",
+      sections: [{ heading: "3. Eligibility", body: [{ type: "ol", items: ["be 18", " ", "own the LAND"] }] }],
+    });
+    expect(md).toContain("1. be 18\n3. own the LAND");
+    expect(md).not.toContain("- be 18");
+  });
 });
 
 function makePlace(overrides: Partial<Place>): Place {
@@ -396,16 +405,15 @@ describe("whatsOnToMarkdown", () => {
         x: 0, y: 0, scene_name: "Gallery", recurrent: true, recurrent_frequency: "weekly",
       },
     ] as unknown as Parameters<typeof whatsOnToMarkdown>[0]["upcoming"];
-    const md = whatsOnToMarkdown({ live, upcoming, filter: "week" });
+    const md = whatsOnToMarkdown({ live, upcoming });
     expect(md.startsWith("# What's On in Decentraland")).toBe(true);
     expect(md).toContain("1 live now, 1 upcoming.");
-    expect(md).toContain("(filter: week)");
     expect(md).toContain("## Live now");
-    expect(md).toContain("[DJ Night](/whats-on/e1)");
+    expect(md).toContain("[DJ Night](/events?id=e1)");
     expect(md).toContain("LIVE");
     expect(md).toContain("42 attending");
     expect(md).toContain("## Upcoming");
-    expect(md).toContain("[Art Expo](/whats-on/e2)");
+    expect(md).toContain("[Art Expo](/events?id=e2)");
     expect(md).toContain("(0,0)");
     expect(md).toContain("weekly");
     expect(md).not.toMatch(NO_HTML);

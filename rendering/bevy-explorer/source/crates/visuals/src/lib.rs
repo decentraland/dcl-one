@@ -2,6 +2,7 @@ mod atmosphere_params;
 mod coast;
 mod day_night;
 mod debug_panel;
+mod environment;
 mod nishita_cloud;
 mod props;
 pub mod shell_texturing;
@@ -10,6 +11,7 @@ mod solids;
 mod stars;
 pub mod terrain;
 mod trees;
+pub mod upscale;
 
 use bevy::{
     core_pipeline::dof::{DepthOfField, DepthOfFieldMode},
@@ -55,7 +57,7 @@ pub struct VisualsPlugin {
 
 impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
-        debug_panel::register(app);
+        app.add_plugins(debug_panel::VisualsDebugPanelPlugin);
         app.insert_resource(DirectionalLightShadowMap { size: 4096 })
             .init_resource::<SceneGlobalLight>()
             .insert_resource(CloudCover {
@@ -75,7 +77,11 @@ impl Plugin for VisualsPlugin {
             .add_plugins(TerrainPlugin)
             .add_plugins(CoastPlugin)
             .add_plugins((TreesPlugin, PropsPlugin, SolidsPlugin))
-            .add_systems(Update, apply_global_light)
+            .add_systems(
+                Update,
+                apply_global_light
+                    .before(scene_runner::update_world::lights::update_directional_light),
+            )
             .add_systems(Update, update_dof)
             .add_systems(Startup, setup.in_set(SetupSets::Main));
 
@@ -89,8 +95,10 @@ impl Plugin for VisualsPlugin {
         })
         .insert_resource(AtmosphereModel::new(NishitaCloud::default()))
         .add_plugins(AtmospherePlugin)
+        .add_plugins(environment::SceneEnvironmentPlugin)
         .add_plugins(SkyEnvmapPlugin)
-        .add_plugins(stars::StarsPlugin);
+        .add_plugins(stars::StarsPlugin)
+        .add_plugins(upscale::UpscalePlugin);
 
         app.add_console_command::<ShadowConsoleCommand, _>(shadow_console_command);
         app.init_resource::<ShadowBiasOverride>();
@@ -114,7 +122,6 @@ impl Plugin for VisualsPlugin {
     }
 
     fn finish(&self, app: &mut App) {
-        debug_panel::register_gpu(app);
         let snapshots_only = app
             .world()
             .resource::<scene_runner::initialize_scene::TestingData>()
@@ -185,14 +192,15 @@ fn apply_global_light(
     time: Res<Time>,
     mut cameras: Query<(Option<&PrimaryCamera>, Option<&mut DistanceFog>), With<Camera3d>>,
     scene_distance: Res<SceneLoadDistance>,
-    scene_global_light: Res<SceneGlobalLight>,
+    scene_light: (Res<SceneGlobalLight>, Res<environment::SceneEnvironment>),
     time_of_day: Res<TimeOfDay>,
-    envmap_settings: Res<SkyEnvmapSettings>,
+    mut envmap_settings: ResMut<SkyEnvmapSettings>,
     shadow_bias: Res<ShadowBiasOverride>,
     mut prev: Local<(f32, SceneGlobalLight)>,
     mut cloud_dt: Local<f32>,
     mut last_primary_distance: Local<f32>,
 ) {
+    let (scene_global_light, environment) = scene_light;
     // the transition has settled once the previous output exactly matches the target
     let settled = prev.0 >= TRANSITION_TIME && prev.1 == *scene_global_light;
 
@@ -228,6 +236,7 @@ fn apply_global_light(
                 .into(),
             ambient_brightness: scene_global_light.ambient_brightness * new_amount
                 + prev.1.ambient_brightness * old_amount,
+            sun_hidden: scene_global_light.sun_hidden,
             layers: scene_global_light.layers.clone(),
         }
     };
@@ -249,6 +258,25 @@ fn apply_global_light(
     atmosphere.dir_light_intensity = next_light.sun_illuminance;
     atmosphere.sun_color = next_light.dir_color.to_srgba().to_vec3();
     atmosphere.tick += 1;
+    let band = |color: Option<Vec3>| color.map(|c| c.extend(1.0)).unwrap_or(Vec4::ZERO);
+    atmosphere.scene_zenith = band(environment.zenith);
+    atmosphere.scene_horizon = band(environment.horizon);
+    atmosphere.scene_nadir = band(environment.nadir);
+    atmosphere.scene_rim = band(environment.rim);
+    let procedural_clouds = environment.texture.is_none();
+    atmosphere.scene_cloud_color = band(environment.cloud_color.filter(|_| procedural_clouds));
+    atmosphere.scene_cloud_opacity = environment
+        .cloud_opacity
+        .filter(|_| procedural_clouds)
+        .unwrap_or(1.0);
+    atmosphere.scene_sun_visible = if next_light.sun_hidden { 0.0 } else { 1.0 };
+    if let Some(speed) = environment.cloud_speed.filter(|_| procedural_clouds) {
+        atmosphere.scene_cloud_rotation = (atmosphere.scene_cloud_rotation as f64
+            + speed as f64 * time.delta_secs_f64())
+        .rem_euclid(std::f64::consts::TAU) as f32;
+    } else {
+        atmosphere.scene_cloud_rotation = 0.0;
+    }
 
     if atmosphere.cloudy != cloud.cover {
         *cloud_dt = (*cloud_dt + time.delta_secs() * 20.0)
@@ -263,7 +291,10 @@ fn apply_global_light(
         *cloud_dt = f32::max(*cloud_dt - time.delta_secs(), cloud.speed);
     }
 
-    atmosphere.time += time.delta_secs() * *cloud_dt;
+    // An explicit angular speed controls the authored cloud layer, including a static zero.
+    if environment.cloud_speed.is_none() || !procedural_clouds {
+        atmosphere.time += time.delta_secs() * *cloud_dt;
+    }
 
     // cloud look (live-tunable, baked later)
     atmosphere.cloud_density_cap = cloud.density_cap;
@@ -280,6 +311,12 @@ fn apply_global_light(
         .iter()
         .find_map(|(maybe_primary, _)| maybe_primary.map(|camera| camera.distance))
         .unwrap_or(0.0);
+    // an authored nadir: the envmap generates the lower hemisphere, and the pbr lookups stop
+    // mirroring it (flagged in the ambient alpha below)
+    let authored_lower = environment.nadir.is_some();
+    if envmap_settings.authored_lower_hemisphere != authored_lower {
+        envmap_settings.authored_lower_hemisphere = authored_lower;
+    }
     // a (re)inserted DistanceFog fires `is_added` and must be written even when the light has
     // settled. reading the tick through the existing `&mut` access avoids the query conflict an
     // `Added<DistanceFog>` filter would have with `cameras`; `is_added` (not `is_changed`) is used
@@ -289,6 +326,7 @@ fn apply_global_light(
         .iter_mut()
         .any(|(_, fog)| fog.is_some_and(|fog| fog.is_added()));
     let skip_writes = settled
+        && !environment.is_changed()
         && !setting.is_changed()
         && !envmap_settings.is_changed()
         && !shadow_bias.is_changed()
@@ -394,14 +432,23 @@ fn apply_global_light(
                     fog.directional_light_color = next_light.dir_color;
                 }
             }
+            if !matches!(setting.graphics.fog, FogSetting::Off) {
+                if let Some(color) = environment.fog_color {
+                    fog.color = Color::linear_rgb(color.x, color.y, color.z);
+                    fog.directional_light_color = fog.color;
+                }
+                if let Some(density) = environment.fog_density {
+                    fog.falloff = FogFalloff::Exponential { density };
+                }
+            }
         }
     }
 
     // the sky envmap is the only ambient light. the pbr shaders zero the flat ambient where an
     // envmap is bound and level the envmap towards it instead: the setting's brightness, scaled
     // and tinted by a scene's ambient override, the envmap already following the time of day.
-    // the compression rides in the alpha, negated (see sky_envmap_lookup.wgsl); the uniform
-    // holds alpha * brightness. the brightness is kept above zero so the compression survives a
+    // The compression rides in alpha, negated; a further -2 flags an authored lower sky
+    // (see sky_envmap_lookup.wgsl). The uniform holds alpha * brightness. the brightness is kept above zero so the compression survives a
     // zero setting, levelling the envmap to ~nothing
     const MIN_AMBIENT_BRIGHTNESS: f32 = 0.01;
     ambient.brightness = (setting.graphics.ambient_brightness as f32
@@ -409,9 +456,10 @@ fn apply_global_light(
         * envmap_settings.floor
         * next_light.ambient_brightness)
         .max(MIN_AMBIENT_BRIGHTNESS);
-    ambient.color = next_light
-        .ambient_color
-        .with_alpha(-envmap_settings.compression / ambient.brightness);
+    ambient.color = next_light.ambient_color.with_alpha(
+        -(envmap_settings.compression + if authored_lower { 2.0 } else { 0.0 })
+            / ambient.brightness,
+    );
 
     if prev.1.source == scene_global_light.source {
         prev.0 += time.delta_secs()
@@ -636,9 +684,7 @@ fn cloud_console_command(
     mut cloud: ResMut<CloudCover>,
 ) {
     if let Some(Ok(command)) = input.take() {
-        // the shader's cover goes from no cloud at ~0.2 to solid at ~0.7 with the
-        // default sharpening; map the user's 0..1 onto that
-        cloud.cover = 0.2 + command.cover * 0.5;
+        cloud.cover = shader_cover(command.cover);
 
         if let Some(speed) = command.speed {
             cloud.speed = speed;
@@ -648,6 +694,26 @@ fn cloud_console_command(
             "cloud cover {}, speed {}",
             command.cover, cloud.speed
         ));
+    }
+}
+
+/// The shader's cover for the user's 0..1. The shader shows wisps from ~0.2 and solid cloud at
+/// ~0.7 with the default sharpening, so 0..1 maps onto that; 0 is the shader's 0, a sky with no
+/// cloud at all, which neither the day's noise seed nor the drift changes.
+pub(crate) fn shader_cover(cover: f32) -> f32 {
+    if cover <= 0.0 {
+        0.0
+    } else {
+        0.2 + cover * 0.5
+    }
+}
+
+/// The user's 0..1 for the shader's cover (`shader_cover`'s inverse).
+pub(crate) fn user_cover(cover: f32) -> f32 {
+    if cover <= 0.0 {
+        0.0
+    } else {
+        (cover - 0.2) / 0.5
     }
 }
 
@@ -903,7 +969,17 @@ fn bloom_console_command(
 
 #[cfg(test)]
 mod tests {
-    use super::next_shadow_bias;
+    use super::{next_shadow_bias, shader_cover, user_cover};
+
+    #[test]
+    fn cloud_cover_zero_is_a_cloudless_shader_cover() {
+        assert_eq!(shader_cover(0.0), 0.0);
+        assert_eq!(user_cover(0.0), 0.0);
+        // the default look, 0.35, keeps its shader value and reads back
+        assert!((shader_cover(0.35) - 0.375).abs() < 1e-6);
+        assert!((user_cover(0.375) - 0.35).abs() < 1e-6);
+        assert!((shader_cover(1.0) - 0.7).abs() < 1e-6);
+    }
 
     #[test]
     fn shadow_bias_flags_change_one_bias_at_a_time() {

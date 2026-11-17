@@ -1,0 +1,88 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+/* 46px tall, radius 12; the ring sits 6px outside it */
+.field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 46px;
+  padding: 0 7px 0 12px;
+  gap: 8px;
+  border-radius: var(--r-md);
+  background: var(--text);
+  transition: background-color var(--dur-fast) ease;
+}
+.field:hover,
+.field:focus-within {
+  background: var(--signin-field-focus);
+}
+.field:focus-within::after,
+.invalid::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border: 2.67px solid var(--white-30);
+  border-radius: var(--r-lg);
+  pointer-events: none;
+}
+.invalid::after {
+  border-color: var(--signin-error-ring);
+}
+.icon {
+  flex: none;
+  color: var(--silver);
+}
+.input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--panel);
+  font: inherit;
+  font-size: var(--type-18);
+  font-weight: var(--fw-semibold);
+  outline: none;
+}
+.input::placeholder {
+  color: var(--silver);
+  font-weight: var(--fw-regular);
+}
+.submit {
+  flex: none;
+  width: 58px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--r-button);
+  background: var(--brand);
+  color: var(--white);
+  font: inherit;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) ease;
+}
+.submit:hover:not(:disabled) {
+  background: var(--brand-pressed);
+}
+.submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.busy {
+  display: flex;
+  width: 58px;
+  justify-content: center;
+}
+.error {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: var(--type-14);
+  color: var(--signin-error-text);
+}

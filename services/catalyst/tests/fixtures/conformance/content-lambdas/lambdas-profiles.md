@@ -268,7 +268,7 @@ Captured on the production peer: `GET /about` answers lamb2's body below; `GET /
 | `configurations.map.minimapEnabled`, `sizes` | `true`; `[{-150,150,150,-150},{62,158,162,151},{151,150,163,59}]` | same `about.rs:125-146` | MATCH |
 | `configurations.map.satelliteView` | always `{version:"v1",baseUrl:"https://genesis.city/map/latest",suffixUrl:".jpg",topLeftOffset:{x:-2,y:-6}}` `:103-108` | present with `MAP_SATELLITE_BASE_URL`, using that value `about.rs:159-167`; the mirror posture sets it to `https://genesis.city/map/latest` (`services/catalyst/config/src/posture.rs:456-460`); island and journey omit the view | MATCH (mirror) |
 | `configurations.map.parcelView` | always `{version:"v1",imageUrl:"https://api.decentraland.org/v1/minimap.png"}` `:109-112` | `MAP_PARCEL_VIEW_URL` `about.rs:168-171`; the mirror posture sets `https://api.decentraland.org/v1/minimap.png` (`services/catalyst/config/src/posture.rs:462-468`); island and journey advertise their own minimap | MATCH (mirror) |
-| `comms` | present only with `ARCHIPELAGO_URL`: `{healthy, protocol:"v3", version, commitHash, usersCount, adapter:"archipelago:archipelago:wss://<host>/archipelago/ws"}`. `version`/`commitHash` come from archipelago `/status` `:77-93`. The production peer sends **no** `comms` key (`captures/lambdas-profiles/LP-14-about.json`) | present only with `COMMS_FIXED_ADAPTER`: `{healthy, protocol (COMMS_PROTOCOL, default "v3"), version?, commitHash?, usersCount, adapter:"fixed-adapter:<x>", fixedAdapter:"<x>"}`. `"offline:offline"` when the SFU probe fails `services/catalyst/content/src/about_comms.rs:22-37,92-105,202-227` | MATCH with production when `COMMS_FIXED_ADAPTER` is unset (no key); DIVERGENT when it is set: adapter scheme and extra `fixedAdapter` key |
+| `comms` | present only with `ARCHIPELAGO_URL`: `{healthy, protocol:"v3", version, commitHash, usersCount, adapter:"archipelago:archipelago:wss://<host>/archipelago/ws"}`. `version`/`commitHash` come from archipelago `/status` `:77-93`. The production peer sends **no** `comms` key (`captures/lambdas-profiles/LP-14-about.json`) | present only with `COMMS_FIXED_ADAPTER`: `{healthy, protocol (COMMS_PROTOCOL, default "v3"), version?, commitHash?, usersCount, adapter}`. An `archipelago:<ws url>` adapter is advertised as `adapter:"archipelago:archipelago:<ws url>"`, lamb2's form; any other adapter, and `offline:offline` while the SFU probe fails, as `adapter:"fixed-adapter:<x>"` plus `fixedAdapter:"<x>"` (`services/catalyst/content/src/about_comms.rs`, `build_comms_config`) | MATCH with production when `COMMS_FIXED_ADAPTER` is unset (no key); MATCH with pinned lamb2 for an archipelago adapter (LP-14); a non-archipelago adapter has no lamb2 form |
 | `bff` | `{healthy:true,protocolVersion:"1.0_0",userCount:0,publicUrl:"/bff"}` | same `about.rs:213-218` | MATCH |
 
 Example (upstream, no archipelago):
@@ -432,11 +432,12 @@ LP-13. **/about: map views.**
 - Severity: none (closed).
 
 LP-14. **/about: comms block.**
-- Gap: `adapter` is `fixed-adapter:<x>` with an extra `fixedAdapter` key (or `offline:offline`), driven by `COMMS_FIXED_ADAPTER`.
+- Status: MATCH, no work, for an archipelago adapter (contract chosen: lamb2's).
 - Expected (pinned lamb2): `{healthy, protocol:"v3", version, commitHash, usersCount, adapter:"archipelago:archipelago:wss://<host>/archipelago/ws"}`, present when an archipelago URL is configured. `decentraland/lamb2:src/controllers/handlers/about-handler.ts:77-93`.
 - Capture: the production peer's `/about` has no `comms` key at all (`captures/lambdas-profiles/LP-14-about.json`, 2026-11-04). dcl-one sends none when `COMMS_FIXED_ADAPTER` is unset.
-- Place: `services/catalyst/content/src/about_comms.rs:202-227`. Choose the contract explicitly.
-- Severity: P1.
+- dcl-one: with `COMMS_FIXED_ADAPTER=archipelago:<ws url>` (the deploy tree's value) the block is lamb2's, `adapter:"archipelago:archipelago:<ws url>"` and no `fixedAdapter` key. The URL path is the operator's. `services/catalyst/content/src/about_comms.rs` (`build_comms_config`); pinned by `no_fixed_adapter_no_block_and_the_defaults` and the `/about` test in `services/catalyst/content/src/tests.rs`.
+- Kept: a `livekit:`, `ws-room:` or `signed-login:` adapter, and `offline:offline` while the SFU probe fails, keep `adapter:"fixed-adapter:<x>"` plus `fixedAdapter:"<x>"`. Pinned lamb2 can only advertise archipelago; the explorers read both forms (`rendering/bevy-explorer/source/crates/comms/src/adapter.rs`).
+- Severity: none (closed).
 
 LP-15. **Profiles: wearable dedup.**
 - Status: MATCH, no work.

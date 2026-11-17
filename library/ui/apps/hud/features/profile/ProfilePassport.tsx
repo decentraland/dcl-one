@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Avatar, BlockUserIcon, Button, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, Pencil, ReportFlag, Spinner, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem } from '../../design'
+import jumpInIcon from '../../assets/friends/jump-in.png'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { fetchCreations, marketplaceUrl, type CreationItem, type Creations } from '@explorer-core/features/shop/shopApi'
 import { nativeProfileImage } from '@hud-host'
@@ -18,6 +19,7 @@ import type { Badge, Emote, Profile, ProfileEdit, Wearable } from '@explorer-cor
 import { PROFILE_FIELDS } from '@explorer-core/features/profile/profileFields'
 import { ProfileEditForm } from './ProfileEditForm'
 import type { Relationship } from '../chat/ProfileCardPresentation'
+import { PassportPhotos, type PassportPhotoActions } from '../gallery/PassportPhotos'
 import { inviteSubmenuItem } from '../communities/InviteToCommunity'
 import styles from './ProfilePassport.module.css'
 
@@ -321,9 +323,11 @@ export function ProfilePassport({
   onUnblock,
   onBlock,
   onReport,
+  onJump,
   inviteItems = [],
   onClose,
-  onDirtyChange
+  onDirtyChange,
+  photoActions
 }: {
   profile: Profile
   /** Relationship of the local user to this profile — drives the header friendship button. */
@@ -346,11 +350,16 @@ export function ProfilePassport({
   onUnblock?: (address: string) => void
   onBlock?: (address: string) => void
   onReport?: (address: string) => void
+  /** Travel to where this friend is; set only for a friend who is not offline (unity-explorer's
+   *  Jump to Location, in the header and first in the options menu). */
+  onJump?: (address: string) => void
   /** The Invite to Community submenu's communities; the option shows only when there are some. */
   inviteItems?: ContextMenuItem[]
   onClose: () => void
   /** Announce unsaved edits, so the popup layer can refuse to close on a stray backdrop click. */
   onDirtyChange?: (dirty: boolean) => void
+  /** The Photos tab's writes and viewer (signed through the session); without them it only lists. */
+  photoActions?: PassportPhotoActions
 }): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('overview')
   // The Badges tab's selection: a badge id and, for tiered badges, a tier id. Both fall back —
@@ -370,6 +379,9 @@ export function ProfilePassport({
   const pick = (fn: (address: string) => void) => (): void => {
     setMenuOpen(false)
     fn(profile.address)
+  }
+  if (!isSelf && onJump != null) {
+    options.push({ label: 'Jump to Location', icon: <img src={jumpInIcon} alt="" width={16} height={16} />, onClick: pick(onJump) })
   }
   if (!isSelf && relationship !== 'blocked' && onBlock != null) {
     options.push({ label: 'Block', icon: <BlockUserIcon />, danger: true, onClick: pick(onBlock) })
@@ -484,6 +496,13 @@ export function ProfilePassport({
             )}
           </div>
           <div className={styles.headActions}>
+            {!isSelf && onJump != null && (
+              <Tooltip label="Jump to Location" side="bottom">
+                <button type="button" className={`${styles.headBtn} ${styles.headIconBtn}`} aria-label="Jump to Location" onClick={() => onJump(profile.address)}>
+                  <img src={jumpInIcon} alt="" width={24} height={24} />
+                </button>
+              </Tooltip>
+            )}
             {!isSelf && relationship !== 'blocked' && !theyBlockedYou && onMessage != null && (
               <button type="button" className={styles.headBtn} onClick={() => onMessage(profile.address)}>
                 CHAT
@@ -678,19 +697,7 @@ export function ProfilePassport({
               </section>
             )}
 
-            {tab === 'photos' && (
-              <section className={styles.card}>
-                {profile.photos && profile.photos.length > 0 ? (
-                  <div className={styles.photoGrid}>
-                    {profile.photos.map((src, i) => (
-                      <a key={i} href={src} target="_blank" rel="noreferrer"><img src={src} alt="" /></a>
-                    ))}
-                  </div>
-                ) : (
-                  <div className={styles.empty}>No photos shared yet.</div>
-                )}
-              </section>
-            )}
+            {tab === 'photos' && <PassportPhotos key={profile.address.toLowerCase()} address={profile.address} isSelf={isSelf} actions={photoActions} />}
 
             {/* Keyed on the lowercased address: the passport opens with the address it was given, then
                 switches to the stored profile's lowercase one, which is the same creator. */}

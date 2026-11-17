@@ -99,6 +99,8 @@ pub async fn build_state(
     let statistics_subscription = statistics.subscribe(gatekeeper.bus.as_ref());
     let observations = observations::Observations::new(gatekeeper.bus.clone(), jobs);
     let state = Arc::new(AppStateInner {
+        #[cfg(feature = "test-support")]
+        ws_ping_gate: Default::default(),
         statistics,
         _statistics_subscription: statistics_subscription,
         observations,
@@ -111,7 +113,17 @@ pub async fn build_state(
         handlers: Arc::new(tokio::sync::Semaphore::new(
             settings.server.max_sockets as usize,
         )),
+        pending_handshakes: state::PendingHandshakes::new(
+            settings
+                .server
+                .max_pending_handshakes
+                .clamp(1, settings.server.max_sockets) as usize,
+        ),
         restart: tokio_util::sync::CancellationToken::new(),
+        pending_handshakes_per_ip: state::IpSlots::new(
+            settings.server.max_pending_handshakes_per_ip,
+        ),
+        sockets_per_ip: state::IpSlots::new(settings.server.max_sockets_per_ip),
         settings,
         enforcement,
         registry,

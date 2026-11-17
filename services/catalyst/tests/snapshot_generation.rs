@@ -432,13 +432,37 @@ async fn a_pass_reuses_regenerates_prunes_and_rekeys() {
         "a reused window keeps its row, generation time included"
     );
 
-    // A late arrival in the week window: active, stamped after the pass.
+    // A late arrival in the week window: active, stamped after the week row's
+    // (backdated) generation time. Both stamps are fixed, an hour apart, so
+    // the outdated probe never compares a pass horizon with a wall-clock
+    // `local_timestamp`; that comparison is left out on purpose, because any
+    // open transaction moves the horizon back. A transaction held open across
+    // the next pass (an autovacuum worker does the same) moves the
+    // regenerated row's generation time back to its start, which is still
+    // years after the late arrival's stamp.
     let week = golden[2].range;
+    sqlx::query(
+        "UPDATE content.snapshots SET generation_time = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'
+         WHERE hash = $2",
+    )
+    .bind((end - 2 * 3_600_000) as f64)
+    .bind(&golden[2].hash)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let mut held = db.pool.begin().await.unwrap();
+    let held_start: i64 = sqlx::query_scalar(
+        "SELECT ceil(EXTRACT(EPOCH FROM xact_start) * 1000)::int8
+         FROM pg_stat_activity WHERE pid = pg_backend_pid()",
+    )
+    .fetch_one(&mut *held)
+    .await
+    .unwrap();
     insert_deployment(
         &db.pool,
         "bafkreilatearrival",
         week.init_timestamp + DAY,
-        chrono::Utc::now().timestamp_millis(),
+        end - 3_600_000,
         None,
     )
     .await;
@@ -446,6 +470,10 @@ async fn a_pass_reuses_regenerates_prunes_and_rekeys() {
     assert_eq!((summary.generated, summary.reused), (1, 3));
     assert_ne!(rows[2].hash, golden[2].hash);
     assert_eq!(rows[2].number_of_entities, 4);
+    assert!(
+        rows[2].generation_timestamp <= held_start,
+        "the held transaction bounds the regenerated row's generation time"
+    );
     assert_eq!(
         rows[2].replaced_snapshot_hashes.as_deref(),
         Some(&[golden[2].hash.clone()][..])
@@ -457,6 +485,7 @@ async fn a_pass_reuses_regenerates_prunes_and_rekeys() {
     for i in [0, 1, 3] {
         assert_eq!(rows[i], first[i]);
     }
+    held.rollback().await.unwrap();
 
     // A row no division produces (a window from another genesis) is pruned.
     sqlx::query(
@@ -1017,10 +1046,10 @@ async fn a_second_node_syncs_from_the_first_nodes_snapshots_and_pointer_changes(
     let gen_a = SnapshotGenerator::new(node_a.clone(), true, settings(100));
     gen_a.spawn_job(&jobs_a);
     let old_local = seed_old_local_scene(&node_a, now).await;
-    let deployer = WriteDeployer::new(
+    let deployer = WriteDeployer::with_partial_validation_for_tests(
         db_a.pool.clone(),
         node_a.storage.clone(),
-        Arc::new(catalyst::auth::PeerValidated),
+        Some(Arc::new(catalyst::auth::PeerValidated)),
     );
     let asset = b"a texture".to_vec();
     let asset_hash = catalyst::auth::hash_bytes_v1(&asset);
@@ -1252,6 +1281,10 @@ async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
         return;
     };
     let now = chrono::Utc::now().timestamp_millis();
+    // Every pass ends just before the newer scenes' stamps (a minute and half a
+    // minute before `now`), so the last whole day closes before them and they
+    // stay in the remainder, also in the first minute after midnight UTC.
+    let end = now - 61_000;
     let (root_a, root_b) = (temp_dir("unpub-a"), temp_dir("unpub-b"));
     let node_a = content_state(&db_a.pool, &root_a).await;
     let node_b = content_state(&db_b.pool, &root_b).await;
@@ -1259,10 +1292,10 @@ async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
 
     // A: an old local scene on 7,7, overwritten by a newer local deploy there.
     let old_local = seed_old_local_scene(&node_a, now).await;
-    let deployer = WriteDeployer::new(
+    let deployer = WriteDeployer::with_partial_validation_for_tests(
         db_a.pool.clone(),
         node_a.storage.clone(),
-        Arc::new(catalyst::auth::PeerValidated),
+        Some(Arc::new(catalyst::auth::PeerValidated)),
     );
     let asset = b"a newer scene".to_vec();
     let asset_hash = catalyst::auth::hash_bytes_v1(&asset);
@@ -1283,14 +1316,11 @@ async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
         .await
         .unwrap_or_else(|e| panic!("local deploy on A: {:?}", e.errors()));
     let generator = SnapshotGenerator::new(node_a.clone(), false, settings(100));
-    let (before, _) = generator
-        .generate(chrono::Utc::now().timestamp_millis())
-        .await
-        .unwrap();
+    let (before, _) = generator.generate(end).await.unwrap();
     let in_files: u64 = before.iter().map(|r| r.number_of_entities).sum();
     assert_eq!(
         in_files, 0,
-        "the old scene is overwritten, the newer one is in today's remainder"
+        "the old scene is overwritten, the newer one is in the remainder"
     );
 
     // The owner unpublishes 7,7: A's parcel is left empty.
@@ -1308,10 +1338,7 @@ async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
     assert_eq!(a_pointer, None);
 
     // The unpublish outdates the windows it touched: the old scene's is regenerated.
-    let (_, summary) = generator
-        .generate(chrono::Utc::now().timestamp_millis())
-        .await
-        .unwrap();
+    let (_, summary) = generator.generate(end).await.unwrap();
     assert!(summary.generated >= 1, "{summary:?}");
 
     // A scene on 8,8 B waits for: once it lands, B has replayed A.
@@ -1335,10 +1362,7 @@ async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
         .unwrap_or_else(|e| panic!("local deploy on A: {:?}", e.errors()));
 
     // The next pass holds neither scene of 7,7.
-    let (after, _) = generator
-        .generate(chrono::Utc::now().timestamp_millis())
-        .await
-        .unwrap();
+    let (after, _) = generator.generate(end).await.unwrap();
     let in_files: u64 = after.iter().map(|r| r.number_of_entities).sum();
     assert_eq!(in_files, 0, "the old scene stays superseded");
     let (url_a, _, serve_a) = serve_node(node_a.clone()).await;
@@ -1436,10 +1460,10 @@ async fn restored_scene_database(
     node.sync.set_state(SyncState::Syncing);
 
     let old_local = seed_old_local_scene(&node, now).await;
-    let deployer = WriteDeployer::new(
+    let deployer = WriteDeployer::with_partial_validation_for_tests(
         db_a.pool.clone(),
         node.storage.clone(),
-        Arc::new(catalyst::auth::PeerValidated),
+        Some(Arc::new(catalyst::auth::PeerValidated)),
     );
     let asset = b"a newer scene".to_vec();
     let asset_hash = catalyst::auth::hash_bytes_v1(&asset);

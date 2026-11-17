@@ -16,6 +16,7 @@ import { hexToColor3 } from '@explorer-core/lib/color'
 import { confirmBlock, confirmUnblock, confirmUnfriend, reportUser } from '../friends/friendDialogs'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
 import { startCallWith } from '../voiceChat/callGate'
+import { canJumpToFriend, jumpToFriend } from '../friends/jumpToFriend'
 
 export function Passport({
   userId,
@@ -31,7 +32,7 @@ export function Passport({
 }): React.JSX.Element {
   const session = useSession()
   const { requestOwnedNames } = session.profile
-  // Fetch the rich profile (badges/photos/about) on open; render identity-only until it lands.
+  // Fetch the rich profile (badges/about) on open; render identity-only until it lands.
   useEffect(() => {
     requestPassport(userId)
   }, [userId])
@@ -113,8 +114,24 @@ export function Passport({
       onUnblock={() => void confirmUnblock(splitName(friendUser.name).base).then((ok) => ok && session.friends.act('unblock', userId))}
       onBlock={() => void confirmBlock(splitName(friendUser.name).base).then((ok) => ok && session.friends.act('block', userId))}
       onReport={() => void reportUser(session.profile.data?.address, userId)}
+      onJump={
+        !isSelf && canJumpToFriend(session.friends, userId)
+          ? (a) => void jumpToFriend(session.map, a).then((to) => to != null && onClose())
+          : undefined
+      }
       inviteItems={inviteItems}
       onClose={onClose}
+      photoActions={{
+        setPublic: session.gallery.setPublic,
+        remove: session.gallery.remove,
+        metas: session.gallery.metas,
+        loadPhoto: session.gallery.loadPhoto,
+        onTeleport: (x, y) => {
+          onClose()
+          session.map.teleport(x, y)
+        },
+        onViewPerson: (u) => openPassport(u.address)
+      }}
     />
   )
 }

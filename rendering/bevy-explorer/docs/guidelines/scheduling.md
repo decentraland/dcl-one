@@ -130,6 +130,8 @@ well, or its writes land a frame late. `crates/avatar/src/point_at_marker.rs` is
 - **`First`**: pumps for the comms and social tokio runtimes, sysinfo counters.
 - **`PreUpdate`**: `UiActionSet` (system-UI actions; interact sounds before it, text links
   after), the web livekit page-event dispatch, media source serving, the headless supervisor.
+  The input manager's readers (bindings, the system-action stream, native input) run after
+  bevy's `InputSystem`, so each reads the frame's input once.
 - **`SpawnScene`** (bevy's, between `Update` and `PostUpdate`), in order:
   - `slice_scene_spawning` sets this frame's instantiation slice: a quarter of the target frame
     (`SceneUpdates::frame_target`, 60 fps when uncapped) from when it runs, less what
@@ -154,7 +156,10 @@ The render app is bevy's. We add a few `RenderSet::Prepare*` systems for custom 
 uniforms, and two render-graph nodes in `Core3d`, in this order between `DepthOfField` and
 `Tonemapping`: the hover glow (`crates/scene_material/src/highlight`, whose mask phase also adds
 queue and sort systems in `RenderSet::QueueMeshes` and `RenderSet::PhaseSort`) and the stars pass
-(`crates/visuals/src/stars.rs`). Render-world ordering follows bevy's conventions, not ours.
+(`crates/visuals/src/stars.rs`). Below render scale 1 the world camera renders to an image that a
+`Core2d` compositor camera (`crates/visuals/src/upscale.rs`, order 1) draws onto the window, and
+that camera carries the UI; at scale 1 the compositor is inactive. Render-world ordering follows
+bevy's conventions, not ours.
 
 ## Headless
 

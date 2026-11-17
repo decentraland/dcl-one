@@ -259,7 +259,7 @@ function ScheduleWizardInner({
               onEdit={(patch) => send({ type: "EDIT", patch })}
             />
             <div className="event-schedule__nav">
-              {value === "basics" ? <Link className="event-schedule__btn" to="/whats-on">Back</Link> : <button
+              {value === "basics" ? <Link className="event-schedule__btn" to="/events">Back</Link> : <button
                 type="button"
                 className="event-schedule__btn"
                 onClick={() => send({ type: "BACK" })}

@@ -1,6 +1,8 @@
 /* The dimmed, DPI-scaled scrim is drawn by the popup layer now (openPassport → PopupHost `.dim`);
    the panel is centered inside it on the reference canvas. */
 .panel {
+  /* The Photos tab's viewer covers the panel. */
+  position: relative;
   width: min(1180px, 96%);
   height: min(760px, 92%);
   display: flex;
@@ -98,6 +100,14 @@
 }
 .headBtn:hover {
   background: var(--brand, #ff2d55);
+}
+/* Jump to Location: the icon alone, as unity-explorer's passport shows it */
+.headIconBtn {
+  padding: 0.45rem;
+}
+/* the icon is a brand-red tile: the brand hover would hide it */
+.headIconBtn:hover {
+  background: rgba(0, 0, 0, 0.7);
 }
 /* FRIEND reads as a state until hovered, when it offers REMOVE FRIEND. */
 .headBtnSwap .hover,
@@ -419,18 +429,6 @@
 }
 .link:hover {
   background: rgba(255, 255, 255, 0.14);
-}
-
-.photoGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 0.6rem;
-}
-.photoGrid img {
-  width: 100%;
-  aspect-ratio: 1;
-  object-fit: cover;
-  border-radius: 10px;
 }
 
 .empty {

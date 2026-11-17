@@ -11,8 +11,10 @@
   Verify the readings and actions through the running HUD.
 - `source/react-web/`: the web explorer's HUD (React). Read `source/react-web/AGENTS.md`
   before changing it.
-- `source/` is the engine's own Cargo workspace; build and run from there. `README.md` here
-  covers how the rest of dcl-one consumes the build.
+- `source/` is the engine's own Cargo workspace; build and run from there. Cargo fetches Bevy
+  and the forked crates as pinned commits of this repository; to change one, follow the
+  [commands](docs/guidelines/bevy-fork.md#changing-bevy). `README.md` here covers how the rest
+  of dcl-one consumes the build.
 - Validate a built Explorer through the [E2E driver](../../apps/bevy-explorer/e2e/README.md)
   without requiring user input. For desktop builds, use the authenticated loopback console
   to drive the client, query `/world_state`, and capture a rendered frame with `/screenshot`.

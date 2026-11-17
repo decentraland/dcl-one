@@ -3,12 +3,13 @@
 //! `/users/{address}/badges`, `/users/{address}/preview`), the bearer-gated
 //! admin read, grant, revoke and [`backfill`] (grant and revoke with an
 //! audit row), the bearer-gated catalog writes ([`catalog`]: `PUT` and
-//! `PATCH /badges/{id}`), and badge art mirrored into `BADGES_ASSETS_DIR` at
-//! `/assets/{path}`. Revoke answers 200 with a body in every environment;
+//! `PATCH /badges/{id}`), and badge art in `BADGES_ASSETS_DIR` at
+//! `/assets/{path}` (mirrored, or uploaded by the bearer-gated `PUT` of a
+//! path the catalog names). Revoke answers 200 with a body in every environment;
 //! upstream registers it in dev and test only, with a bare 204. A missing,
-//! wrong or unconfigured bearer is 403 on every admin route (the shared
-//! `RequireAdmin`); upstream answers backfill 401 and does not register it
-//! without a token. Tables: `social.badge_definitions`, `badge_tiers`
+//! wrong or unconfigured bearer is 401 with upstream's `@dcl/http-commons`
+//! body on every admin route; upstream does not register them without a
+//! token. Tables: `social.badge_definitions`, `badge_tiers`
 //! (upstream's catalog, seeded by the schema), `user_badge_progress`,
 //! `user_achieved_tiers`, `badge_admin_audit`, `badge_catalog_audit`,
 //! `presence_badges`, `badge_cursors`. Every progress write goes through
@@ -39,18 +40,29 @@ pub mod types;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::DefaultBodyLimit;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use axum::{Json, Router};
+use serde_json::json;
 use sqlx::PgPool;
 
+use crate::identity::AuthorityNotEstablished;
 use crate::notifications::admin::AdminSecretSource;
 
 pub use progress::{Applied, ApplyOptions, Progress, ProgressChange, apply_progress};
 pub use store::{BadgesStore, DEFAULT_ASSET_BASE_URL};
 
-/// Request bodies of every route; the catalog's are far below it.
+/// Request bodies of every route but the backfill; the catalog's are far below it.
 pub const MAX_BODY_BYTES: usize = 1024 * 1024;
+/// The backfill's request body: upstream read it whole with no limit, so this
+/// only guards memory against a runaway import.
+pub const MAX_BACKFILL_BODY_BYTES: usize = 64 * 1024 * 1024;
+/// One uploaded art file (`PUT /assets/{path}`); the gateway applies it too.
+pub const MAX_ASSET_BODY_BYTES: usize = 16 * 1024 * 1024;
+/// Upstream's CORS `maxAge`, in seconds.
+pub const CORS_MAX_AGE_SECS: u64 = 86_400;
 
 pub const ADMIN_TOKEN_ENV: &str = "CATALYRST_BADGES_ADMIN_TOKEN";
 
@@ -104,10 +116,26 @@ impl State {
 
 impl AdminSecretSource for SharedState {
     const ENVIRONMENT_VARIABLE: &'static str = ADMIN_TOKEN_ENV;
-    const UNSET_MESSAGE: &'static str = "admin token not configured";
-    const MISMATCH_MESSAGE: &'static str = "missing or invalid bearer token";
+    const UNSET_MESSAGE: &'static str = "Invalid authorization header";
+    const MISMATCH_MESSAGE: &'static str = "Invalid authorization header";
     fn admin_token(&self) -> Option<&str> {
         self.settings.admin_token.as_deref()
+    }
+    /// Upstream's `bearerTokenMiddleware`: 401 with the `@dcl/http-commons`
+    /// body; an unset token refuses like a wrong one.
+    fn refuse(refusal: AuthorityNotEstablished) -> Response {
+        tracing::warn!(refusal = %refusal, "badges admin bearer refused");
+        let message = match refusal {
+            AuthorityNotEstablished::AuthenticationMissingOrInvalid { .. } => {
+                "Authorization header is missing"
+            }
+            _ => Self::MISMATCH_MESSAGE,
+        };
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "Not Authorized", "message": message })),
+        )
+            .into_response()
     }
 }
 
@@ -125,7 +153,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/badges/{badge_id}/tiers", get(handlers::get_badge_tiers))
         .route(
             "/badges/{badge_id}/backfill",
-            post(backfill::backfill_badge),
+            post(backfill::backfill_badge).layer(DefaultBodyLimit::max(MAX_BACKFILL_BODY_BYTES)),
         )
         .route("/categories", get(handlers::get_categories))
         .route("/status", get(handlers::get_status))
@@ -137,9 +165,17 @@ pub fn router(state: SharedState) -> Router {
                 .post(handlers::grant_user_badge)
                 .delete(handlers::revoke_user_badge),
         )
-        .route("/assets/{*path}", get(handlers::get_asset))
+        .route(
+            "/assets/{*path}",
+            get(handlers::get_asset)
+                .put(handlers::put_asset)
+                .layer(DefaultBodyLimit::max(MAX_ASSET_BODY_BYTES)),
+        )
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
-        .layer(tower_http::cors::CorsLayer::permissive())
+        .layer(
+            tower_http::cors::CorsLayer::permissive()
+                .max_age(std::time::Duration::from_secs(CORS_MAX_AGE_SECS)),
+        )
         .layer(axum::middleware::map_response(preflight_no_content))
         .with_state(state)
 }

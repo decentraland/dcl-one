@@ -18,7 +18,8 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
     FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, OutfitThumbnailData, OutfitsData,
+    FriendshipEventUpdate, HomeScene, HoverEvent, ListenedCommunity, LiveSceneInfo, OutfitThumbnailData,
+    OutfitsData,
     PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PortableInfo,
     ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
     SetPermanentPermission, SetSinglePermission, SystemApi, VoiceChatAction, VoiceChatState,
@@ -624,6 +625,21 @@ pub fn op_send_chat(state: Rc<RefCell<impl State>>, message: String, channel: St
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
         .send(SystemApi::SendChat(message, channel))
+        .unwrap();
+}
+
+pub fn op_set_chat_bubble_text(
+    state: Rc<RefCell<impl State>>,
+    message_id: String,
+    message: String,
+) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::SetChatBubbleText {
+            message_id,
+            message,
+        })
         .unwrap();
 }
 
@@ -1598,11 +1614,14 @@ pub async fn op_read_community_connectivity_stream(
     Ok(read_stream(state, rid).await)
 }
 
-pub fn op_set_community_channels(state: Rc<RefCell<impl State>>, ids: Vec<String>) {
+pub fn op_set_community_channels(
+    state: Rc<RefCell<impl State>>,
+    communities: Vec<ListenedCommunity>,
+) {
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::SetCommunityChannels(ids))
+        .send(SystemApi::SetCommunityChannels(communities))
         .unwrap();
 }
 
