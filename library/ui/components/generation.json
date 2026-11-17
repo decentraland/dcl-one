@@ -21,13 +21,13 @@
     "dependencies": [
       {
         "path": "library/ui/package.json",
-        "sha256": "78fe4a7f4b89da83e358db8697c80a0eacf0f90e3a232052385b7e5e338555c9",
-        "indexBlobSha": "24f8187360f51c049680618a78e81f3e4136e418"
+        "sha256": "fe47d4b95a6c3ca134c3220fffa448966c7cb58b200b29115aab21e36651088b",
+        "indexBlobSha": "126595e6cb7677c9f17301daff22d7a75440d970"
       },
       {
         "path": "library/ui/pnpm-lock.yaml",
-        "sha256": "1ab51d5615eb43620e7084ba62429a1a7b0128096d6bfc899da2702f826927d3",
-        "indexBlobSha": "8a4f3c95998e3a67eb93d7da3e6640689f395437"
+        "sha256": "3a6ff824e14465229e9523d734a261b60a3bae83d76fe1ca0bc4aec18ffd5b89",
+        "indexBlobSha": "fb60fce20cb1a7c8468f96548a606e6069ca5956"
       },
       {
         "path": "library/ui/tsconfig.json",
@@ -168,8 +168,8 @@
     },
     {
       "path": "library/ui/figma/src/generators/svg-to-jsx.ts",
-      "sha256": "c80b8175eab95535cd80ceac232b5eac3beda505ac4235c5b0b25543b2be75eb",
-      "indexBlobSha": "4c55b0766bd0202317a05fe41e5a0789c0091bb1"
+      "sha256": "832761fbdacd4dd2e36284829ae78943721ee79a10457e2f466cdd0f0cc95f22",
+      "indexBlobSha": "1b17e353bcae7d4b5a05cbdf00ab9466f5e8b005"
     },
     {
       "path": "library/ui/figma/src/generators/tokens.ts",

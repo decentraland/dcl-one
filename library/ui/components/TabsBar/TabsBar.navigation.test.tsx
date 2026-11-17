@@ -166,6 +166,11 @@ describe('when sections are routes', () => {
       'TabsBar item IDs must be unique non-empty strings'
     )
   })
+  it.each([null, undefined])('should reject a %s route from remote configuration with its configuration error', (entry) => {
+    expect(() =>
+      render(<TabsBar mode="navigation" items={[entry as never]} activeId="unknown" />)
+    ).toThrow('TabsBar item IDs must be unique non-empty strings')
+  })
 })
 
 describe('when a server-rendered parent hydrates with caller-owned controls', () => {

@@ -13,7 +13,7 @@ Written here, ignored by git: the patched tree, called the dest, at rendering/be
   divergence  [NAME...]                    files and lines changed against the base, by crate
   repin       NAME...                      base_tree, tree and rev are written again, and the rev in the two Cargo files
   pins                                     the Explorer names the rev of every source; exit 1 if not
-  publish     [NAME...] [--remote URL] [--check]  push the commit of each source that the remote lacks
+  publish     [NAME...] [--remote URL] [--check [--fetchable]]  push the commit of each source that the remote lacks
   edit        NAME [--stop]                the Explorer builds one source from its dest; --stop ends that
 
 `--root DIR` before the verb works on the checkout DIR instead of the one that holds this tool, so one
@@ -32,10 +32,14 @@ per source. `--base-dir DIR` reads an exported base from DIR/<name>/ and needs n
 
 A dest holds plain files only. A link in the tree is written as a copy of the file it names, or as
 its target text when it names no file of the tree. Each `[[submodule]]` path is filled from its url
-and commit. `.git` and `target` at the top of a dest are never read, written or removed.
+and commit, and the tree must hold a gitlink to that commit at the path. `.git` and `target` at the
+top of a dest are never read, written or removed.
 
 materialise writes a dest only when base_tree and tree of source.toml reproduce and, when it has a
 rev, the files to write make the commit with that id.
+
+A tree that holds a file under .github/workflows/ fails every command that builds it: GitHub refuses
+the push of such a commit from a workflow's token. A source excludes `.github`.
 
 materialise keeps an edited dest. While the series is the one the dest was written from, it says
 `edited, kept` and writes nothing. When the series changed, it rebuilds the new tree and merges the
@@ -51,8 +55,10 @@ follows from the base and the series alone. publish lists the refs of the remote
 whose ref is there with no rebuild, builds the commit of each other source in the cache repository and
 pushes it to refs/patched-sources/<name>/<rev>. It never deletes and never forces. It talks to the
 remote with the git configuration of the caller, so the caller's credentials apply. `--check` pushes
-nothing and lists what the remote lacks. `--remote URL` names another repository than MIRROR, for a
-trial push: Cargo reads the commits from MIRROR only.
+nothing and lists what the remote lacks. `--fetchable` with `--check` also passes a source whose ref
+the remote lacks when the remote serves its rev by id: GitHub serves through a repository the commits
+of each of its forks, so a contributor's `publish --remote <fork>` lets Cargo fetch the rev from MIRROR
+before the merge. `--remote URL` names another repository than MIRROR: a fork, or a trial push.
 
 pins reads the two Cargo files and no repository: every entry and package that names MIRROR names the
 rev of a source, every rev is in both files, and no entry reads a dest by path. Every other git URL
@@ -137,6 +143,8 @@ URL_SCHEMES = ("https://",)
 FETCH_SECONDS = 300
 FETCH_ATTEMPTS = 3
 FETCH_PAUSE = 5
+# The fetch of one commit without its tree that `publish --check --fetchable` makes for each source without a ref.
+PROBE_SECONDS = 60
 PUSH_SECONDS = 1200
 LOCK_SECONDS = 1200
 
@@ -499,6 +507,11 @@ def is_license(text):
     return len(tokens) <= 64 and expression(0) == len(tokens)
 
 
+def is_ref(value):
+    """A tag or branch name. A commit id or a name under refs/ or pull/ is on no branch that upstream owns."""
+    return bool(REF.fullmatch(value)) and ".." not in value and not OID.fullmatch(value) and not value.startswith(("refs/", "pull/"))
+
+
 def is_url(value):
     return value.startswith(URL_SCHEMES) and not re.search(r"[\s\\\x00-\x1f\x7f]", value)
 
@@ -534,7 +547,7 @@ class Source:
         check(data.get("name") == name, f"name is {data.get('name')!r}")
         self.upstream = text(data, "upstream", is_url, url)
         self.commit = text(data, "commit", OID.fullmatch, "a full commit id")
-        text(data, "ref", lambda value: REF.fullmatch(value) and ".." not in value, "a tag or branch name")
+        text(data, "ref", is_ref, "a tag or branch name")
         text(data, "origin", is_url, url)
         text(data, "origin_rev", OID.fullmatch, "a full commit id")
         text(data, "license", is_license, "an SPDX licence expression")
@@ -646,6 +659,11 @@ def build(source, repo, index, offline=False, base_dir=None):
             repo.git("apply", "--cached", "--whitespace=nowarn", "-", index=index, stdin=diff_of(patch.read_bytes()))
         except Failure as error:
             raise Failure(f"{source.name}: series/{patch.name} does not apply: {error}") from error
+    # GitHub refuses a push of a commit with a workflow file from the token of a workflow, and from a token without the
+    # workflow scope, so neither the CI job nor every contributor could publish the rev.
+    workflows = repo.rows(index, ":(top).github/workflows")
+    require(not workflows, f"{source.name}: the tree holds {workflows[0][2] if workflows else ''}: "
+                           "add \".github\" to exclude in source.toml")
     return base_tree, repo.write_tree(index)
 
 
@@ -692,9 +710,8 @@ def layout(source, repo, index, offline=False, base_dir=None):
     groups = [("", rows)]
     for submodule in source.submodules:
         path = submodule["path"]
-        require(rows.get(path, ("160000", submodule["commit"])) == ("160000", submodule["commit"])
-                and not any(name.startswith(path + "/") for name in rows),
-                f"{source.name}: the tree has {rows.get(path, ('', 'files'))[1]} at {path}, "
+        require(rows.get(path) == ("160000", submodule["commit"]),
+                f"{source.name}: the tree has {rows.get(path, ('', 'no gitlink'))[1]} at {path}, "
                 f"[[submodule]] has {submodule['commit']}")
         groups.append((path + "/", {name: (mode, oid) for mode, oid, name in
                                     submodule_rows(source, repo, submodule, offline, base_dir)}))
@@ -1512,7 +1529,30 @@ def pins(root, _options):
     return 1 if wrong else 0
 
 
+def served(remote, shown, rev):
+    """Whether the remote serves the commit rev by id, with or without a ref: Cargo fetches a rev that way.
+
+    Only the answer `not our ref` means that it does not: any other failure is no answer, and fails the run.
+    """
+    with tempfile.TemporaryDirectory(prefix="patched-sources-") as directory:
+        repo = Repo(directory)
+        # The commit alone, without its tree.
+        fetch = repo.command(["fetch", "-q", "--no-tags", "--depth", "1", "--filter=tree:0", "--end-of-options", remote, rev])
+        try:
+            result = Repo.run(fetch, environment=remote_environment(), timeout=PROBE_SECONDS, ok=None)
+        except Failure as error:
+            raise Failure(f"publish: {shown}: cannot check {rev}: {error}") from error
+        if result.returncode == 0:
+            return repo.has(rev, "commit")
+        error = result.stderr.decode("utf-8", "replace")
+        if "not our ref" in error:
+            return False
+        lines = [line for line in error.replace(remote, shown).strip().splitlines() if not line.startswith(("hint:", "warning:"))]
+        raise Failure(f"publish: {shown}: cannot check {rev}: {'; '.join(lines[-3:]) or f'git exit {result.returncode}'}")
+
+
 def publish(root, options):
+    require(options.check or not options.fetchable, "publish: --fetchable needs --check")
     sources = [Source(root, name) for name in names(root, options.names)]
     for source in sources:
         require(source.rev, f"{source.name}: source.toml has no rev: verify prints it")
@@ -1535,6 +1575,9 @@ def publish(root, options):
     missing = 0
     for source in sources:
         name, present = source.name, source.ref in there
+        if not present and options.fetchable and served(remote, shown, source.rev):
+            print(f"{name}: fetchable, no ref")
+            continue
         missing += not present
         if present or options.check:
             print(f"{name}: {'published' if present else 'missing ' + source.ref}")
@@ -1610,6 +1653,8 @@ def main(arguments=None, root=ROOT):
     command.add_argument("--remote", default=MIRROR, metavar="URL",
                          help=f"another repository to push to, for a trial; {MIRROR} when not given")
     command.add_argument("--check", action="store_true", help="push nothing: list what the remote lacks, exit 1 if anything")
+    command.add_argument("--fetchable", action="store_true",
+                         help="with --check: a rev that the remote serves by id, without a ref, is not lacking")
     command.set_defaults(run=publish)
     command = commands.add_parser("edit", help="make the Explorer build one source from its dest")
     command.add_argument("name", metavar="NAME")

@@ -10,6 +10,8 @@ overrides:
   "scheduler@^0.23.0": "0.23.0"
   "@dcl/asset-packs": "2.17.2"
   '@dcl/hashing': workspace:*
+  # sdk-commands loads only the quests client's validators; its published SDK would shadow this one.
+  '@dcl/quests-client>@dcl/sdk': '-'
   "protobufjs": "7.6.6"
   "semver@<7.5.2": "^7.5.4"
   "minimatch@<3.1.4": "^3.1.4"

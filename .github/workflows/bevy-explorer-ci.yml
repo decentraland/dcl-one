@@ -197,12 +197,15 @@ jobs:
       # and Cargo.lock must be the one a source.toml records.
       - name: Check the pinned revisions of the patched sources
         run: python3 tooling/patched-sources.py pins
-      # Read-only. Cargo fetches each `rev` from this repository: without its ref every build fails
-      # at the fetch. A maintainer publishes the refs by hand; no workflow writes them.
-      - name: Check that this repository has a ref for each pinned revision
+      # Read-only. Cargo fetches each `rev` from this repository by id: without it every build fails at the
+      # fetch. GitHub serves through this repository the commits of each of its forks, so a `rev` that a
+      # contributor pushed to their fork passes without a ref. The publish-sources workflow pushes the ref after
+      # the merge; the daily drift run fails when a ref is still missing. A fetch with no answer fails with
+      # `cannot check`: a rerun, not a push, is the remedy for that.
+      - name: Check that this repository serves each pinned revision
         run: |
-          python3 tooling/patched-sources.py publish --check || {
-            echo '::error::A pinned revision has no ref in this repository. A maintainer with push rights runs `python3 tooling/patched-sources.py publish`.'
+          python3 tooling/patched-sources.py publish --check --fetchable || {
+            echo '::error::A revision listed as missing is in neither this repository nor its forks. Push it to your fork: `python3 tooling/patched-sources.py publish --remote https://github.com/<you>/dcl-one`.'
             exit 1
           }
       - name: Select engine builds from their inputs
@@ -995,9 +998,9 @@ jobs:
         env:
           pnpm_config_store_dir: ${{ runner.temp }}/pnpm-store
         run: |
-          corepack pnpm@11.28.12 --dir react-web install --frozen-lockfile --ignore-scripts
-          corepack pnpm@11.28.12 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
-          corepack pnpm@11.28.12 --dir react-web/bridge-scene --filter @dcl/hashing build
+          corepack pnpm@12.21.0 --dir react-web install --frozen-lockfile --ignore-scripts
+          corepack pnpm@12.21.0 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
+          corepack pnpm@12.21.0 --dir react-web/bridge-scene --filter @dcl/hashing build
       - name: Save the pnpm store from main
         if: github.ref == 'refs/heads/main' && steps.pnpm-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -1034,11 +1037,11 @@ jobs:
       - name: Export the compiled bridge scene for the CDN
         # The web job linted and tested the scene; its compiled bin/ is not part of the artifact.
         run: |
-          corepack pnpm@11.28.12 exec sdk-commands build --production
+          corepack pnpm@12.21.0 exec sdk-commands build --production
           SCENE_BASE_URL="$(node -p "require('../../deploy/web/package.json').homepage || ''")/bridge-scene/static/"
           export SCENE_BASE_URL
           echo "SCENE_BASE_URL=$SCENE_BASE_URL"
-          corepack pnpm@11.28.12 run export-web
+          corepack pnpm@12.21.0 run export-web
         working-directory: rendering/bevy-explorer/source/react-web/bridge-scene
       - name: Upload the stamped package for publication
         if: needs.build-deploy-web.outputs.publish == 'true'

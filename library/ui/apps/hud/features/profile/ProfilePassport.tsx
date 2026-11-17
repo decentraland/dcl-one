@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Avatar, BlockUserIcon, Button, Close, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, Pencil, ReportFlag, ScrollThumb, Search, Spinner, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem, NameSeal } from '../../design'
+import jumpInIcon from '../../assets/friends/jump-in.png'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { fetchCreations, marketplaceUrl, type CreationItem, type Creations } from '@explorer-core/features/shop/shopApi'
 import { nativeProfileImage } from '@hud-host'
@@ -347,6 +348,7 @@ export function ProfilePassport({
   onUnblock,
   onBlock,
   onReport,
+  onJump,
   inviteItems = [],
   onClose,
   onDirtyChange,
@@ -374,6 +376,9 @@ export function ProfilePassport({
   onUnblock?: (address: string) => void
   onBlock?: (address: string) => void
   onReport?: (address: string) => void
+  /** Travel to where this friend is; set only for a friend who is not offline (unity-explorer's
+   *  Jump to Location, in the header and first in the options menu). */
+  onJump?: (address: string) => void
   /** The Invite to Community submenu's communities; the option shows only when there are some. */
   inviteItems?: ContextMenuItem[]
   onClose: () => void
@@ -406,6 +411,9 @@ export function ProfilePassport({
   const pick = (fn: (address: string) => void) => (): void => {
     setMenuOpen(false)
     fn(profile.address)
+  }
+  if (!isSelf && onJump != null) {
+    options.push({ label: 'Jump to Location', icon: <img src={jumpInIcon} alt="" width={16} height={16} />, onClick: pick(onJump) })
   }
   if (!isSelf && relationship !== 'blocked' && onBlock != null) {
     options.push({ label: 'Block', icon: <BlockUserIcon />, danger: true, onClick: pick(onBlock) })
@@ -546,6 +554,13 @@ export function ProfilePassport({
             )}
           </div>
           <div className={styles.headActions}>
+            {!isSelf && onJump != null && (
+              <Tooltip label="Jump to Location" side="bottom">
+                <button type="button" className={`${styles.headBtn} ${styles.headIconBtn}`} aria-label="Jump to Location" onClick={() => onJump(profile.address)}>
+                  <img src={jumpInIcon} alt="" width={24} height={24} />
+                </button>
+              </Tooltip>
+            )}
             {!isSelf && relationship !== 'blocked' && !theyBlockedYou && onMessage != null && (
               <button type="button" className={styles.headBtn} onClick={() => onMessage(profile.address)}>
                 CHAT

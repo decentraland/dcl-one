@@ -275,7 +275,7 @@ impl Default for RawSettings {
             trial_mode: false,
             trial_buyers: None,
             shop_base_url: crate::subscriptions::DEFAULT_SHOP_BASE_URL.to_string(),
-            notifications_cdn_url: catalyst_social::notifications::DEFAULT_CDN_URL.to_string(),
+            notifications_cdn_url: crate::shared::notifications::DEFAULT_CDN_URL.to_string(),
         }
     }
 }
@@ -589,7 +589,7 @@ impl Settings {
                 .trim_end_matches('/')
                 .to_string(),
             notifications_cdn_url: non_empty(Some(raw.notifications_cdn_url))
-                .unwrap_or_else(|| catalyst_social::notifications::DEFAULT_CDN_URL.to_string()),
+                .unwrap_or_else(|| crate::shared::notifications::DEFAULT_CDN_URL.to_string()),
         })
     }
 

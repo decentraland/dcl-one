@@ -81,10 +81,10 @@ pinned Rust, protoc, CEF and platform libraries, including `CEF_PATH`. With thos
 
 ```sh
 sh scripts/gen-ts-bindings.sh
-corepack pnpm@11.28.12 --dir react-web install --frozen-lockfile --ignore-scripts
-corepack pnpm@11.28.12 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
-corepack pnpm@11.28.12 --dir react-web/bridge-scene --filter @dcl/hashing build
-corepack pnpm@11.28.12 --dir react-web run bundle:native
+corepack pnpm@12.21.0 --dir react-web install --frozen-lockfile --ignore-scripts
+corepack pnpm@12.21.0 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
+corepack pnpm@12.21.0 --dir react-web/bridge-scene --filter @dcl/hashing build
+corepack pnpm@12.21.0 --dir react-web run bundle:native
 cargo build --release --locked --package dcl_deno_ipc
 cargo build --release --locked
 ```
@@ -234,13 +234,15 @@ State, in every build:
 - `/voice_state`: the mic (`available`, `enabled`, and `sceneBlocked` while the scene the player
   stands in turns nearby voice off) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
-- `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown` and
-  `hidden` (the players' tags that show, and those that don't), `atlas` (the glyph atlas' distance-field and colour page sizes, in
+- `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown`,
+  `sceneAvatars` (of those shown, the tags over a scene's avatars) and `hidden` (the tags that
+  don't show), `atlas` (the glyph atlas' distance-field and colour page sizes, in
   pixels), `bubbles` (the chat bubble setting) and `tags`, one per shown tag: `player` (an
-  address, `local`, or null for an avatar with no wallet), `name`, `suffix`, `verified`,
+  address, `local`, or null for an avatar with no wallet), `sceneAvatar` (the tag is over an
+  avatar a scene made with `AvatarShape`), `name`, `suffix`, `verified`,
   `official`, `voice` (`off`, `idle`, `speaking`, `hushed`), `distance` from the camera in metres,
-  `opacity`, `scale` (metres per tag unit), `position` (all four as the shader works them out), `headOffset` (metres over the head bone;
-  null until the avatar is built) and `bubble` (null, or its `kind`,
+  `opacity`, `scale` (metres per tag unit), `position` (all four as the shader works them out), `headOffset` (metres over the head bone for
+  an avatar at a scale of one; null until the avatar is built) and `bubble` (null, or its `kind`,
   `mention` and message `length`; never the message).
   `/nametag_bubble <local|all|address> <nearby|community|dm> <message>` shows a message in a chat
   bubble over the nametags it names, locally only; `/chat_bubble_text <message id> <message>`

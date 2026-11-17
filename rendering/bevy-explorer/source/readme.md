@@ -116,9 +116,9 @@ Doing it by hand instead of via `just`:
 
 ```bash
 ./scripts/gen-ts-bindings.sh                     # TS types for the system API (library/ui/apps/hud, tracked)
-cd react-web && corepack pnpm@11.28.12 install --frozen-lockfile --ignore-scripts
-(cd bridge-scene && corepack pnpm@11.28.12 install --frozen-lockfile --ignore-scripts && corepack pnpm@11.28.12 --filter @dcl/hashing build)
-corepack pnpm@11.28.12 run bundle:native && cd ..
+cd react-web && corepack pnpm@12.21.0 install --frozen-lockfile --ignore-scripts
+(cd bridge-scene && corepack pnpm@12.21.0 install --frozen-lockfile --ignore-scripts && corepack pnpm@12.21.0 --filter @dcl/hashing build)
+corepack pnpm@12.21.0 run bundle:native && cd ..
 cargo build --release --package dcl_deno_ipc     # scene runtime sidecar
 cargo build --release                            # decentra-bevy + decentra-bevy-cef
 cargo run --release
@@ -223,8 +223,8 @@ Console commands:
 
 ```bash
 cargo test --all                      # engine
-corepack pnpm@11.28.12 --dir react-web test          # HUD, deterministic (vitest, no engine)
-corepack pnpm@11.28.12 --dir react-web run test:e2e  # HUD against a real engine (playwright, needs a GPU)
+corepack pnpm@12.21.0 --dir react-web test          # HUD, deterministic (vitest, no engine)
+corepack pnpm@12.21.0 --dir react-web run test:e2e  # HUD against a real engine (playwright, needs a GPU)
 ```
 
 CI's Test Suite builds the engine tests with the `ci-test` profile. The `dcl_deno_ipc` integration
@@ -250,8 +250,8 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   `/avatar_state [all|<address>]`, `/chat_history [count]`
   (Nearby only, as received: blocks and scene bans are not applied), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),
-  `/nametag_state` (the nametags: `visible`, `shown` and `hidden` counts, the glyph `atlas` page
-  sizes, the chat `bubbles` setting, and each shown tag's `player`, `name`, `suffix`, `verified`,
+  `/nametag_state` (the nametags: `visible`, `shown`, `sceneAvatars` and `hidden` counts, the glyph `atlas` page
+  sizes, the chat `bubbles` setting, and each shown tag's `player`, `sceneAvatar`, `name`, `suffix`, `verified`,
   `official`, `voice`, `distance`, `opacity`, `scale`, `position`, `headOffset` and `bubble`, which is its
   `kind`, `mention` and `length`, never the message),
   `/nametag_bubble <local|all|address> <nearby|community|dm> <message>` (shows a message in a chat

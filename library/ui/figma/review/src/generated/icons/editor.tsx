@@ -780,12 +780,12 @@ export const EditorNodeTypeFullScreen = ({ size, ...props }: IconProps) => {
       xmlns="http://www.w3.org/2000/svg"
       {...props}
     >
-      <g fill="#fcfcfc" clipPath={`url(#${svgId}-a)`}>
+      <g fill="currentColor" clipPath={`url(#${svgId}-a)`}>
         <path d="M0 1.333C0 .597.623 0 1.392 0h3.25v.889h-3.25a.455.455 0 0 0-.464.444v3.111H0zm0 13.334C0 15.403.623 16 1.392 16h3.25v-.889h-3.25a.455.455 0 0 1-.464-.444v-3.111H0zM16 1.333C16 .597 15.377 0 14.608 0h-3.25v.889h3.25c.256 0 .464.199.464.444v3.111H16zm0 13.334c0 .736-.623 1.333-1.392 1.333h-3.25v-.889h3.25a.455.455 0 0 0 .464-.444v-3.111H16z" />
       </g>
       <defs>
         <clipPath id={`${svgId}-a`}>
-          <path fill="#fff" d="M0 0h16v16H0z" />
+          <path fill="currentColor" d="M0 0h16v16H0z" />
         </clipPath>
       </defs>
     </svg>

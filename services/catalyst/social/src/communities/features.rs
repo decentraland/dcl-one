@@ -90,7 +90,7 @@ impl super::State {
     }
 
     pub async fn load_flags(&self) -> sqlx::Result<()> {
-        self.flags.reload(&self.pool, "dapps").await
+        crate::explore::api::feature_flags::reload(&self.flags, &self.pool, "dapps").await
     }
 
     pub async fn refresh_flags(&self, api: &crate::explore::api::Shared) -> anyhow::Result<()> {

@@ -13,13 +13,16 @@ SKIP_DIRS = {'.git', 'node_modules', 'target', 'dist', '.cache', '.agent-work'}
 LOCKFILES = {'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock'}
 # Test scenes that install as a creator's project does, with npm.
 CREATOR_SCENES = ('library/js-sdk-toolchain/test/snapshots/package-lock.json',)
-# pnpm 11 reads only registry, auth and network keys from .npmrc; every other setting lives in pnpm-workspace.yaml.
+# pnpm 11 and 12 read only registry, auth and network keys from .npmrc; every other setting lives in pnpm-workspace.yaml.
 NPMRC_READ = {'ca', 'cafile', 'cert', 'key', 'registry', '_auth', '_authToken', '_password', 'email', 'username',
               'https-proxy', 'proxy', 'no-proxy', 'http-proxy', 'local-address', 'strict-ssl'}
 NPMRC_KEY = re.compile(r'^\s*([^#;\s=][^=]*?)\s*=', re.M)
 WORKFLOWS = ('.github/workflows/', '.github/actions/')
 # The pnpm every project pins in packageManager and every workflow fetches.
-PNPM_VERSION = '11.28.12'
+PNPM_VERSION = '12.21.0'
+# The registry's sha512 for that release, which corepack checks a pin's integrity against.
+PNPM_SHA512 = ('66fd8278ee28935ce951792d34367ff3af5c432a2756445823029533835b8da5'
+               '29bbe0be5130afd56ed0713fb8789e47bad82d93bd5ae2fe54b15562d6276ef0')
 PNPM_NAMED = re.compile(r'\bpnpm@(\d+\.\d+\.\d+)')
 # Copies of projects the service test installs with the pnpm its machine carries.
 UNPINNED = ('infra/dev/service-test/fixture/',)
@@ -55,8 +58,12 @@ def offenders(root):
         elif name == 'pnpm-lock.yaml' and not rel.startswith(UNPINNED):
             manifest = root / rel.rsplit('/', 1)[0] / 'package.json' if '/' in rel else root / 'package.json'
             pinned = json.loads(manifest.read_text(encoding='utf-8')).get('packageManager', '') if manifest.is_file() else ''
-            if pinned.split('+', 1)[0] != f'pnpm@{PNPM_VERSION}':
+            version, _, integrity = pinned.partition('+')
+            if version != f'pnpm@{PNPM_VERSION}':
                 found.append(f'{manifest.relative_to(root).as_posix()}: pins `{pinned or "nothing"}`; set packageManager to pnpm@{PNPM_VERSION}')
+            elif integrity not in ('', f'sha512.{PNPM_SHA512}'):
+                found.append(f'{manifest.relative_to(root).as_posix()}: pins pnpm {PNPM_VERSION} with another integrity; '
+                             f'use sha512.{PNPM_SHA512}')
         elif name == '.npmrc':
             for match in NPMRC_KEY.finditer((root / rel).read_text(encoding='utf-8', errors='replace')):
                 key = match.group(1)

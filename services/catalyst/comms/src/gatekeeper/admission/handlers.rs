@@ -356,32 +356,27 @@ pub async fn participants(
     Ok(addresses)
 }
 
-/// The destinations feed's connected wallets (`explore::places::live`): the
-/// same room resolution as `/scene-participants` (a Genesis scene by its
-/// pointer in realm `main`, a world by its room), `None` without LiveKit or
-/// when no scene stands at the pointer (the old route's 400/404, which the
-/// places client read as unknown).
-impl crate::explore::places::live::Participants for CommsState {
-    fn participants<'a>(
-        &'a self,
-        world: bool,
-        key: &'a str,
-    ) -> futures::future::BoxFuture<'a, Option<Vec<String>>> {
-        Box::pin(async move {
-            if !self.livekit.configured {
-                return None;
-            }
-            participants(
-                self,
-                ParticipantsQuery {
-                    pointer: (!world).then(|| key.to_string()),
-                    realm_name: Some(if world { key } else { "main" }.to_string()),
-                    room: None,
-                },
-            )
-            .await
-            .ok()
-        })
+impl CommsState {
+    /// The destinations feed's connected wallets (`serve` hands them to
+    /// Explore's live counts): the same room resolution as
+    /// `/scene-participants` (a Genesis scene by its pointer in realm `main`,
+    /// a world by its room), `None` without LiveKit or when no scene stands at
+    /// the pointer (the old route's 400/404, which the places client read as
+    /// unknown).
+    pub async fn live_participants(&self, world: bool, key: &str) -> Option<Vec<String>> {
+        if !self.livekit.configured {
+            return None;
+        }
+        participants(
+            self,
+            ParticipantsQuery {
+                pointer: (!world).then(|| key.to_string()),
+                realm_name: Some(if world { key } else { "main" }.to_string()),
+                room: None,
+            },
+        )
+        .await
+        .ok()
     }
 }
 

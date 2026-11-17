@@ -19,6 +19,7 @@ export { Button } from './components/Button/Button'
 export type { ButtonProps } from './components/Button/Button'
 
 export * from './components/CardActionButton/CardActionButton'
+export * from './components/EventCard/EventCard'
 export * from './components/JumpInCTA/JumpInCTA'
 export * from './components/NavCreditsBalance/NavCreditsBalance'
 export * from './components/NavMenuItem/NavMenuItem'
@@ -35,3 +36,10 @@ export { textClasses } from './text-styles'
 
 export { InputExplorerNames } from './components/InputExplorerNames/InputExplorerNames'
 export type { InputExplorerNamesProps } from './components/InputExplorerNames/InputExplorerNames'
+
+export { TitleBar } from './components/TitleBar/TitleBar'
+export type {
+  TitleBarProps,
+  TitleBarSection,
+  TitleBarLinkProps
+} from './components/TitleBar/TitleBar'
