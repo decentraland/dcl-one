@@ -36,7 +36,7 @@ beforeAll(async () => {
     response.end(
       await server.transformIndexHtml(
         '/',
-        '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;background:#21102f}main{margin:0 auto;padding:0 32px;max-width:1280px}[data-day]{width:300px}</style><div id="root"></div><script type="module" src="/test/consumer/events-cards-browser.tsx"></script>'
+        '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;background:#21102f}main{margin:0 auto;padding:0 32px;max-width:1280px}[data-day],[data-live-small]{width:300px}</style><div id="root"></div><script type="module" src="/test/consumer/events-cards-browser.tsx"></script>'
       )
     )
   })
@@ -68,7 +68,7 @@ beforeEach(async () => {
   })
   await session.navigate(server.resolvedUrls!.local[0]!)
   await evaluate(
-    `(async()=>{for(let n=0;n<100 && (document.querySelectorAll('article').length!==3||document.querySelectorAll('[class*="liveCard"]').length!==2);n++)await new Promise(r=>setTimeout(r,100));await document.fonts.ready})()`
+    `(async()=>{for(let n=0;n<100 && (document.querySelectorAll('article').length!==4||document.querySelectorAll('[class*="liveCard"]').length!==2);n++)await new Promise(r=>setTimeout(r,100));await document.fonts.ready})()`
   )
   await evaluate(`document.activeElement?.blur();scrollTo(0,0)`)
   await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
@@ -98,6 +98,8 @@ const hover = async (selector: string) => {
   })
   await evaluate(`new Promise(r=>setTimeout(r,350))`)
 }
+const UPCOMING = 'article[class*="small"]:not([class*="isLive"])'
+
 describe('when Events cards reveal their controls', () => {
   it.each([390, 1440])(
     'should keep Live Now and the next section stable at %ipx',
@@ -121,41 +123,79 @@ describe('when Events cards reveal their controls', () => {
       expect(sectionAfter.y - after.y).toBeCloseTo(sectionBefore.y - before.y, 1)
     }
   )
-  it.each(['compact', 'day'])(
-    'should swap time for controls without resizing the %s on hover and focus',
-    async (variant) => {
-      await session.send('Emulation.setDeviceMetricsOverride', {
-        width: 1440,
-        height: 1000,
-        deviceScaleFactor: 1,
-        mobile: false
-      })
-      await evaluate(`document.activeElement?.blur()`)
-      expect(await evaluate(`matchMedia('(hover: hover)').matches`)).toBe(true)
-      await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
-      const selector = `article[class*="${variant}"]`
-      const before = await rect(selector)
-      await hover(selector)
-      const after = await rect(selector)
-      expect(after.width).toBeCloseTo(before.width, 1)
-      expect(after.height).toBeCloseTo(before.height, 1)
-      const state = await evaluate<{ opacity: string; time: string; buttons: number }>(
-        `(()=>{const card=document.querySelector(${JSON.stringify(selector)});return {opacity:getComputedStyle(card.querySelector('[class*="actions"]')).opacity,time:getComputedStyle(card.querySelector('[class*="time"]')).opacity,buttons:card.querySelectorAll('button,a[aria-label*="calendar"]').length}})()`
-      )
-      expect(state).toEqual({ opacity: '1', time: '0', buttons: 3 })
-      await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
+  it('should swap time for controls without resizing the day card on hover and focus', async () => {
+    const variant = 'day'
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 1440,
+      height: 1000,
+      deviceScaleFactor: 1,
+      mobile: false
+    })
+    await evaluate(`document.activeElement?.blur()`)
+    expect(await evaluate(`matchMedia('(hover: hover)').matches`)).toBe(true)
+    await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
+    const selector = `article[class*="${variant}"]`
+    const before = await rect(selector)
+    await hover(selector)
+    const after = await rect(selector)
+    expect(after.width).toBeCloseTo(before.width, 1)
+    expect(after.height).toBeCloseTo(before.height, 1)
+    const state = await evaluate<{ opacity: string; time: string; buttons: number }>(
+      `(()=>{const card=document.querySelector(${JSON.stringify(selector)});return {opacity:getComputedStyle(card.querySelector('[class*="actions"]')).opacity,time:getComputedStyle(card.querySelector('[class*="time"]')).opacity,buttons:card.querySelectorAll('button,a[aria-label*="calendar"]').length}})()`
+    )
+    expect(state).toEqual({ opacity: '1', time: '0', buttons: 3 })
+    await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
+    await evaluate(
+      `document.querySelector(${JSON.stringify(selector)}).querySelector('h3 a').focus()`
+    )
+    // Leaving the card starts the fade-out; focus reverses it from wherever it is, so read it once it ends.
+    expect(
       await evaluate(
-        `document.querySelector(${JSON.stringify(selector)}).querySelector('h3 a').focus()`
+        `(async()=>{const actions=document.querySelector(${JSON.stringify(selector)}).querySelector('[class*="actions"]');await Promise.all(actions.getAnimations().map(a=>a.finished));return getComputedStyle(actions).opacity})()`
       )
-      // Leaving the card starts the fade-out; focus reverses it from wherever it is, so read it once it ends.
-      expect(
-        await evaluate(
-          `(async()=>{const actions=document.querySelector(${JSON.stringify(selector)}).querySelector('[class*="actions"]');await Promise.all(actions.getAnimations().map(a=>a.finished));return getComputedStyle(actions).opacity})()`
-        )
-      ).toBe('1')
-      expect((await rect(selector)).height).toBeCloseTo(before.height, 1)
-    }
-  )
+    ).toBe('1')
+    expect((await rect(selector)).height).toBeCloseTo(before.height, 1)
+  })
+  it('should fold the host and open the small card controls under the time without resizing it', async () => {
+    await evaluate(`document.activeElement?.blur()`)
+    expect(await evaluate(`matchMedia('(hover: hover)').matches`)).toBe(true)
+    const selector = UPCOMING
+    const before = await rect(selector)
+    await hover(selector)
+    const after = await rect(selector)
+    expect(after.width).toBeCloseTo(before.width, 1)
+    expect(after.height).toBeCloseTo(before.height, 1)
+    const state = await evaluate<{ actions: string; host: string; time: string; buttons: number }>(
+      `(()=>{const card=document.querySelector(${JSON.stringify(selector)});return {actions:getComputedStyle(card.querySelector('[class*="showOnHover"]')).opacity,host:getComputedStyle(card.querySelector('[class*="hideOnHover"]')).opacity,time:getComputedStyle(card.querySelector('[class*="smallTime"]').closest('[class*="reveal"]')).opacity,buttons:card.querySelectorAll('button,a[aria-label*="calendar"]').length}})()`
+    )
+    expect(state).toEqual({ actions: '1', host: '0', time: '1', buttons: 3 })
+    await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
+    await evaluate(
+      `document.querySelector(${JSON.stringify(selector)}).querySelector('h3 a').focus()`
+    )
+    expect(
+      await evaluate(
+        `(async()=>{const row=document.querySelector(${JSON.stringify(selector)}).querySelector('[class*="showOnHover"]');await Promise.all(row.getAnimations().map(a=>a.finished));return getComputedStyle(row).opacity})()`
+      )
+    ).toBe('1')
+    expect((await rect(selector)).height).toBeCloseTo(before.height, 1)
+  })
+  it('should swap a live small card host and time for JUMP IN and share on hover', async () => {
+    const selector = '[data-live-small] article'
+    const before = await rect(selector)
+    await hover(selector)
+    const after = await rect(selector)
+    expect(after.height).toBeCloseTo(before.height, 1)
+    const state = await evaluate<{
+      folded: string[]
+      jump: boolean
+      share: boolean
+      inside: boolean
+    }>(
+      `(()=>{const card=document.querySelector(${JSON.stringify(selector)}),r=card.getBoundingClientRect(),jump=card.querySelector('a[aria-label^="Jump in"]'),b=jump.getBoundingClientRect();return {folded:[...card.querySelectorAll('[class*="hideOnHover"]')].map(el=>getComputedStyle(el).opacity),jump:getComputedStyle(jump.closest('[class*="showOnHover"]')).opacity==='1',share:Boolean(card.querySelector('button[aria-label^="Copy link"]')),inside:b.left>=r.left&&b.right<=r.right&&b.top>=r.top&&b.bottom<=r.bottom}})()`
+    )
+    expect(state).toEqual({ folded: ['0', '0'], jump: true, share: true, inside: true })
+  })
   it.each([390, 768, 1024, 1440])(
     'should retain two complete title lines with and without a creator at %ipx',
     async (width) => {
@@ -173,7 +213,7 @@ describe('when Events cards reveal their controls', () => {
       const titles = await evaluate<
         { height: number; lineHeight: number; footerInside: boolean; clamp: string }[]
       >(
-        `(()=>[...document.querySelectorAll('article[class*="compact"]')].map(card=>{const title=card.querySelector('h3'),style=getComputedStyle(title),footer=card.querySelector('[class*="footer"]');return {height:title.getBoundingClientRect().height,lineHeight:parseFloat(style.lineHeight),clamp:style.webkitLineClamp,footerInside:footer.getBoundingClientRect().bottom<=card.getBoundingClientRect().bottom}}))()`
+        `(()=>[...document.querySelectorAll(${JSON.stringify(UPCOMING)})].map(card=>{const title=card.querySelector('h3'),style=getComputedStyle(title),footer=card.querySelector('[class*="actionsRow"]');return {height:title.getBoundingClientRect().height,lineHeight:parseFloat(style.lineHeight),clamp:style.webkitLineClamp,footerInside:footer.getBoundingClientRect().bottom<=card.getBoundingClientRect().bottom}}))()`
       )
       expect(titles).toHaveLength(2)
       for (const title of titles) {
@@ -204,7 +244,7 @@ describe('when Events cards reveal their controls', () => {
       )
     ).toBe(true)
     await evaluate(
-      `document.querySelectorAll('article[class*="compact"]')[1].querySelector('h3 a').focus()`
+      `document.querySelectorAll(${JSON.stringify(UPCOMING)})[1].querySelector('h3 a').focus()`
     )
     await session.send('Input.dispatchKeyEvent', {
       type: 'keyDown',
@@ -219,34 +259,34 @@ describe('when Events cards reveal their controls', () => {
       modifiers: 8
     })
     const focused = await evaluate<{ label: string; first: boolean; opacity: string }>(
-      `(()=>{const card=document.querySelector('article[class*="compact"]');return {label:document.activeElement.getAttribute('aria-label'),first:card.contains(document.activeElement),opacity:getComputedStyle(card.querySelector('[class*="actions"]')).opacity}})()`
+      `(()=>{const card=document.querySelector(${JSON.stringify(UPCOMING)});return {label:document.activeElement.getAttribute('aria-label'),first:card.contains(document.activeElement),opacity:getComputedStyle(card.querySelector('[class*="showOnHover"]')).opacity}})()`
     )
     expect(focused.label).toContain('Copy link:')
     expect(focused.first).toBe(true)
     await evaluate(`new Promise(r=>setTimeout(r,250))`)
     expect(
       await evaluate(
-        `getComputedStyle(document.querySelector('article[class*="compact"] [class*="actions"]')).opacity`
+        `getComputedStyle(document.querySelector(${JSON.stringify(UPCOMING)}).querySelector('[class*="showOnHover"]')).opacity`
       )
     ).toBe('1')
   })
-  it('should let uncovered footer space open the card instead of intercepting the pointer', async () => {
-    await hover('article[class*="compact"]')
+  it('should let uncovered action row space open the card instead of intercepting the pointer', async () => {
+    await hover(UPCOMING)
     const hit = await evaluate<boolean>(
-      `(()=>{const card=document.querySelector('article[class*="compact"]'),footer=card.querySelector('[class*="footer"]').getBoundingClientRect(),target=document.elementFromPoint(footer.right-1,footer.top+footer.height/2);return target?.closest('a')===card.querySelector('h3 a')})()`
+      `(()=>{const card=document.querySelector(${JSON.stringify(UPCOMING)}),footer=card.querySelector('[class*="actionsRow"]').getBoundingClientRect(),target=document.elementFromPoint(footer.right-1,footer.top+footer.height/2);return target?.closest('a')===card.querySelector('h3 a')})()`
     )
     expect(hit).toBe(true)
   })
-  it('should keep every compact action inside its card at tablet width', async () => {
+  it('should keep every small card action inside its card at tablet width', async () => {
     await session.send('Emulation.setDeviceMetricsOverride', {
       width: 1024,
       height: 1000,
       deviceScaleFactor: 1,
       mobile: false
     })
-    await hover('article[class*="compact"]')
+    await hover(UPCOMING)
     const contained = await evaluate<boolean>(
-      `(()=>{const card=document.querySelector('article[class*="compact"]'),r=card.getBoundingClientRect();return [...card.querySelectorAll('button,a[aria-label*="calendar"]')].every(el=>{const b=el.getBoundingClientRect();return b.left>=r.left&&b.right<=r.right&&b.top>=r.top&&b.bottom<=r.bottom})})()`
+      `(()=>{const card=document.querySelector(${JSON.stringify(UPCOMING)}),r=card.getBoundingClientRect();return [...card.querySelectorAll('button,a[aria-label*="calendar"]')].every(el=>{const b=el.getBoundingClientRect();return b.left>=r.left&&b.right<=r.right&&b.top>=r.top&&b.bottom<=r.bottom})})()`
     )
     expect(contained).toBe(true)
   })
@@ -260,14 +300,14 @@ describe('when Events cards reveal their controls', () => {
     await session.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
     await evaluate(`document.activeElement?.blur()`)
     const state = await evaluate<{ hover: boolean; visible: string; sizes: number[] }>(
-      `(()=>{const card=document.querySelector('article[class*="compact"]');return {hover:matchMedia('(hover: hover)').matches,visible:getComputedStyle(card.querySelector('[class*="actions"]')).visibility,sizes:[...card.querySelectorAll('button,a[aria-label*="calendar"]')].map(el=>el.getBoundingClientRect().height)}})()`
+      `(()=>{const card=document.querySelector(${JSON.stringify(UPCOMING)});return {hover:matchMedia('(hover: hover)').matches,visible:getComputedStyle(card.querySelector('[class*="showOnHover"]')).visibility,sizes:[...card.querySelectorAll('button,a[aria-label*="calendar"]')].map(el=>el.getBoundingClientRect().height)}})()`
     )
     expect(state.hover).toBe(false)
     expect(state.visible).toBe('visible')
     expect(state.sizes).toEqual([44, 44, 44])
     expect(
       await evaluate(
-        `getComputedStyle(document.querySelector('article[class*="compact"] [class*="time"]')).opacity`
+        `getComputedStyle(document.querySelector(${JSON.stringify(UPCOMING)}).querySelector('[class*="smallTime"]')).opacity`
       )
     ).toBe('1')
   })

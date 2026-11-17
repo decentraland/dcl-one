@@ -297,6 +297,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
         },
         remind: occurrence.live ? undefined : remindControl(reminders.get(event.id)),
         calendarHref: calendarHref(event, eventPageShareUrl(origin, event), occurrence),
+        jumpIn: occurrence.live ? jumpIn(eventTarget(event)) : undefined,
       };
     }),
   }));

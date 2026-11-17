@@ -5,12 +5,21 @@ import {
   EventCardActionLink,
   type EventCardCreator as PublicCreator
 } from '../../../components/EventCard/EventCard'
+import { JumpInCTA } from '../../../components/JumpInCTA/JumpInCTA'
 import { PlaceCard } from '../../../components/PlaceCard/PlaceCard'
-import { GeneralAddToCalendar, GeneralBell, GeneralCopy } from '../../../foundations/icons'
+import {
+  GeneralAddToCalendar,
+  GeneralBell,
+  GeneralCopy,
+  GeneralReminderOff,
+  GeneralReminderOn,
+  MenusShare
+} from '../../../foundations/icons'
 import dclLogo from '../assets/dcl-logo.svg'
 import type {
   EventCardCreator,
   ExperienceCardProps,
+  JumpIn,
   LiveEventCardProps,
   RemindControl,
   UpcomingEventCardProps
@@ -118,7 +127,69 @@ function EventActions({
   )
 }
 
-/** Upcoming, and the phone's single-day list: the public EventCard's compact variant. */
+/**
+ * A small card's icon-only actions. Live: JUMP IN (when the event has somewhere to go) and Copy link.
+ * Otherwise: Remind me, Add to calendar and Copy link.
+ */
+function SmallActions({
+  title,
+  live,
+  jumpIn,
+  remind,
+  calendarHref,
+  onCopy
+}: Omit<ActionProps, 'href'> & { live: boolean; jumpIn?: JumpIn; onCopy: () => void }) {
+  const share = (
+    <EventCardAction
+      aria-label={`Copy link: ${title}`}
+      icon={<MenusShare size={24} aria-hidden="true" />}
+      onClick={onCopy}
+    />
+  )
+  if (live)
+    return (
+      <>
+        {jumpIn ? (
+          <JumpInCTA
+            size="sm"
+            href={jumpIn.href}
+            onClick={jumpIn.onJumpIn}
+            aria-label={`Jump in: ${title}`}
+          />
+        ) : null}
+        {share}
+      </>
+    )
+  const Reminder = remind?.active ? GeneralReminderOn : GeneralReminderOff
+  return (
+    <>
+      {remind ? (
+        <EventCardAction
+          aria-label={`Remind me: ${title}`}
+          aria-pressed={remind.active}
+          disabled={remind.pending}
+          icon={<Reminder size={24} aria-hidden="true" />}
+          onClick={remind.onToggle}
+        />
+      ) : null}
+      {calendarHref ? (
+        <EventCardActionLink
+          aria-label={`Add to calendar: ${title}`}
+          href={calendarHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          icon={<GeneralAddToCalendar size={24} aria-hidden="true" />}
+        />
+      ) : null}
+      {share}
+    </>
+  )
+}
+
+/**
+ * Upcoming, and the phone's single-day list: the public EventCard's small variant. A live event (the
+ * phone list) shows its badges and JUMP IN instead of Remind me.
+ */
 function UpcomingCard({
   title,
   image,
@@ -127,21 +198,30 @@ function UpcomingCard({
   creator,
   time,
   remind,
-  calendarHref
-}: UpcomingEventCardProps) {
+  calendarHref,
+  live = false,
+  users,
+  usersLabel,
+  jumpIn
+}: UpcomingEventCardProps & { live?: boolean; jumpIn?: JumpIn }) {
   const { status, copy } = useCopyLink(href)
   return (
     <EventCard
-      variant="compact"
+      variant="small"
       title={title}
       href={href}
       onOpen={onOpen}
       image={image}
       creator={creatorOf(creator)}
       time={time}
+      live={live}
+      players={live ? users : undefined}
+      playersLabel={live ? usersLabel : undefined}
       actions={
-        <EventActions
+        <SmallActions
           title={title}
+          live={live}
+          jumpIn={jumpIn}
           remind={remind}
           calendarHref={calendarHref}
           onCopy={() => void copy()}
