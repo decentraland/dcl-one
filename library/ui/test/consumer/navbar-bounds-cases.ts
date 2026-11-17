@@ -28,7 +28,7 @@ export const nativeNavBarCases: NativeNavBarCase[] = [
     id: `${signedIn ? 'in' : 'out'}-composition`,
     signedIn,
     surface: 'solid' as const,
-    balances: balances[2],
+    // As Sites fills the bar: the app's credits chip in the balance slot, never NavBar's own balances beside it.
     composition: true
   }))
 ]

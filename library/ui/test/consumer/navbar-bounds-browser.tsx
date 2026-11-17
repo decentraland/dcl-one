@@ -1,5 +1,11 @@
 import { createRoot } from 'react-dom/client'
-import { Button, NavBar, NavCreditsBalance } from '@dcl/one-ui'
+import {
+  Button,
+  NavBar,
+  NavCreditsBalance,
+  NavMenuItem,
+  decentralandNavSections
+} from '@dcl/one-ui'
 import '../../foundations/foundations.css'
 import { nativeNavBarCases } from './navbar-bounds-cases'
 const requested = new URLSearchParams(location.search).get('case')
@@ -33,28 +39,11 @@ const authentication = example.signedIn
 root.render(
   <NavBar
     {...authentication}
-    sections={[
-      {
-        label: 'Discover',
-        items: [
-          { label: 'Places', href: '/places' },
-          { label: 'Events', href: '/events' }
-        ]
-      },
-      { label: 'Shop', href: '/shop' },
-      { label: 'Create', href: '/create' },
-      {
-        label: 'Learn',
-        items: [
-          { label: 'Documentation', href: '/docs' },
-          { label: 'Blog', href: '/blog' }
-        ]
-      }
-    ]}
+    sections={decentralandNavSections('', '/')}
     balances={example.balances}
     surface={example.surface}
     balanceAction={
-      example.composition ? (
+      example.composition && example.signedIn ? (
         <NavCreditsBalance
           id="balance-slot"
           href="/shop/credits"
@@ -74,12 +63,19 @@ root.render(
       example.composition
         ? ({ closeDrawer }) => (
             <nav aria-label="Profile tabs">
-              <a href="/profile/photos" onClick={closeDrawer}>
-                Photos
-              </a>
-              <a href="/profile/places" onClick={closeDrawer}>
-                Places
-              </a>
+              <NavMenuItem
+                href="/profile/photos"
+                role={undefined}
+                aria-current="page"
+                label="Photos"
+                onClick={closeDrawer}
+              />
+              <NavMenuItem
+                href="/profile/places"
+                role={undefined}
+                label="Places"
+                onClick={closeDrawer}
+              />
             </nav>
           )
         : undefined
