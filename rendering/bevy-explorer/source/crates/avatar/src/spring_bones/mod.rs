@@ -261,7 +261,7 @@ fn simulate_spring_bones(
             Entity,
             &SpringChains,
             &ChildOf,
-            &Visibility,
+            &InheritedVisibility,
             Option<&mut SpringSimulation>,
         ),
         With<AvatarProcessed>,
@@ -282,7 +282,8 @@ fn simulate_spring_bones(
     ranked.clear();
     if config.graphics.spring_bones {
         for (entity, chains, owner, visibility, _) in avatars.iter() {
-            if chains.0.is_empty() || *visibility == Visibility::Hidden {
+            // as last propagated, so a hide on the avatar's owner or scene entity counts too
+            if chains.0.is_empty() || !visibility.get() {
                 continue;
             }
             let Ok((position, is_player, is_preview)) = owners.get(owner.parent()) else {
@@ -297,8 +298,11 @@ fn simulate_spring_bones(
                 }
             }
         }
-        ranked.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
-        ranked.truncate(MAX_SIMULATED_AVATARS);
+        // selection is a membership test: partition instead of sorting
+        if ranked.len() > MAX_SIMULATED_AVATARS {
+            ranked.select_nth_unstable_by(MAX_SIMULATED_AVATARS, |a, b| a.0.total_cmp(&b.0));
+            ranked.truncate(MAX_SIMULATED_AVATARS);
+        }
     }
 
     let plan = stepper.0.advance(time.delta_secs());
@@ -373,9 +377,8 @@ fn simulate_spring_bones(
             };
             for (joint_ix, joint) in chain.joints.iter().enumerate() {
                 let parent_rotation = match simulated.parents[joint_ix] {
-                    JointParent::Anchor => {
-                        anchor_pose(&helper, chain.anchor, None).map(|anchor| anchor.rotation)
-                    }
+                    // a body bone, whose pose this frame was read above
+                    JointParent::Anchor => Some(simulated.anchor.rotation),
                     JointParent::Joint(chain_ix, joint_ix) => simulation
                         .chains
                         .get(chain_ix)
@@ -642,6 +645,7 @@ mod tests {
                     Transform::IDENTITY,
                     AvatarProcessed,
                     Visibility::Inherited,
+                    InheritedVisibility::VISIBLE,
                 ))
                 .id();
             let anchor = world
@@ -782,9 +786,10 @@ mod tests {
             let behind = spawn_avatar(&mut app, Vec3::Z);
             let hidden = spawn_avatar(&mut app, Vec3::NEG_Z * 2.0);
             let ahead = spawn_avatar(&mut app, Vec3::NEG_Z * 5.0);
+            // as propagation leaves a model hidden itself or through an ancestor
             app.world_mut()
                 .entity_mut(hidden.model)
-                .insert(Visibility::Hidden);
+                .insert(InheritedVisibility::HIDDEN);
 
             tick(&mut app, FRAME);
 
