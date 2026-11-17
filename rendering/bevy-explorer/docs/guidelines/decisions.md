@@ -458,8 +458,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     point gives up.
   - *Pause.* unity-explorer reopens a failed source whether or not it plays; here a pause cancels a
     scheduled reopen and detaches a loading one; a failure while paused counts and schedules
-    none. The next play reports `VsLoading` and reopens after the current delay, so toggling
-    playback never reopens faster than the schedule, and a pause keeps the count. A live stream
+    none. The next play reports `VsLoading` and reopens once the current delay has passed since
+    the last failure or reopen, so toggling playback never reopens faster than the schedule, and
+    a pause keeps the count. A pause during a loading reopen is not a failure: a source that
+    fails more slowly than playback toggles never gives up, but is requested at most once per
+    delay, and a slow but healthy source is never given up for being paused. A live stream
     resumes at its live edge, not at a saved position.
   - *The screen.* unity-explorer renders black whenever a player is in `VsError` or `VsNone`; here
     the image turns black when the source gives up or a non-looping source ends, and keeps the

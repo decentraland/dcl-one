@@ -194,8 +194,12 @@ struct Source {
     last_error: Cell<Option<&'static str>>,
     /// Failed and not playable since: the element's own states are not reported.
     failed: Cell<bool>,
-    /// A reopen a pause cancelled or a failure while paused, done on the next play.
+    /// A reopen a pause cancelled or a failure while paused: the next play schedules it after
+    /// the rest of the current delay, and the flag stays set until that reopen runs.
     reopen_on_play: Cell<bool>,
+    /// The last counted failure or reopen (`Date.now()`, ms): the next reopen waits the current
+    /// delay from it.
+    last_attempt_at: Cell<f64>,
     /// Where a reopened source that is not live resumes.
     resume_at: Cell<Option<f64>>,
     /// The position at the last `timeupdate`.
@@ -274,8 +278,8 @@ impl Source {
     }
 
     /// A failure of the attached source: schedules its reopen, or gives up. Failures while a
-    /// reopen is scheduled or waits for play, or after giving up, are ignored; one while paused
-    /// counts, reports `VsError` and leaves the reopen to the next play.
+    /// reopen is scheduled (by a failure or by a play) or waits for play, or after giving up, are
+    /// ignored; one while paused counts, reports `VsError` and leaves the reopen to the next play.
     fn fail(self: &Rc<Self>, error: &'static str) {
         if self.url.is_none() {
             self.send_state(VideoState::VsError);
@@ -291,6 +295,7 @@ impl Source {
         self.failed.set(true);
         self.last_error.set(Some(error));
         self.failures.set(self.failures.get() + 1);
+        self.last_attempt_at.set(js_sys::Date::now());
         let step = retry.fail(first_reopen_delay());
         self.retry.set(retry);
         match step {
@@ -397,6 +402,7 @@ impl Source {
     fn reopen(self: &Rc<Self>) {
         debug!("media {}: reopening", self.id);
         self.reopen_on_play.set(false);
+        self.last_attempt_at.set(js_sys::Date::now());
         self.suspend();
         self.open();
     }
@@ -480,6 +486,7 @@ impl HostMedia {
             last_error: Cell::new(None),
             failed: Cell::new(false),
             reopen_on_play: Cell::new(false),
+            last_attempt_at: Cell::new(0.0),
             resume_at: Cell::new(None),
             last_time: Cell::new(0.0),
             timeout: Cell::new(None),
@@ -582,10 +589,13 @@ impl HostMedia {
                 self.source.wants_play.set(true);
                 self.source.paused.set(false);
                 if self.source.reopen_on_play.get() && self.source.timeout.get().is_none() {
-                    // the scene last saw VsError; the reopen waits out the current delay, so
-                    // toggling playback cannot reopen faster than the schedule
+                    // the scene last saw VsError; the reopen waits out the rest of the current
+                    // delay since the last failure or reopen, so toggling playback cannot reopen
+                    // faster than the schedule
+                    let elapsed = js_sys::Date::now() - self.source.last_attempt_at.get();
                     let delay =
-                        reopen_delay(first_reopen_delay(), self.source.retry.get().attempts());
+                        reopen_delay(first_reopen_delay(), self.source.retry.get().attempts())
+                            .saturating_sub(Duration::from_secs_f64(elapsed.max(0.0) / 1000.0));
                     self.source.send_state(VideoState::VsLoading);
                     self.source.schedule_reopen(delay);
                     self.source.send_retry(Some(delay));
