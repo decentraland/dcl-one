@@ -47,6 +47,7 @@ pub mod messaging;
 mod mls;
 pub mod notifications;
 pub mod profile_images;
+pub mod routing;
 pub mod rpc;
 pub mod segment_webhooks;
 #[cfg(any(test, feature = "test-support"))]
