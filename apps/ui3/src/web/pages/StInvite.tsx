@@ -16,8 +16,9 @@ const ENVELOPE_SRC = asset("assets/invite/referral-envelope.webp");
 const CLIP_SRC = asset("assets/invite/referral.webm");
 const CLIP_POSTER = asset("assets/invite/referral-poster.webp");
 
-// The clip loads only once it is in view on a desktop-wide screen (foundations breakpoints.desktop) and motion is
-// welcome; until then, and on phones, the poster stands in for it.
+// The clip loads once it is in view on a desktop-wide screen (foundations breakpoints.desktop) and motion is
+// welcome; until then, and on phones, the poster stands in for it. Width and motion stay live: when either stops
+// allowing it, the clip stops and the poster returns, and it comes back only while it is in view.
 const CLIP_WIDE = "(min-width: 1024px)";
 const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
 
@@ -29,7 +30,7 @@ function useClipAllowed(target: { current: Element | null }): boolean {
     const wide = window.matchMedia(CLIP_WIDE);
     const reduced = window.matchMedia(REDUCED_MOTION);
     let inView = false;
-    const update = () => setAllowed((was) => was || (inView && wide.matches && !reduced.matches));
+    const update = () => setAllowed((was) => wide.matches && !reduced.matches && (was || inView));
     // A box that only touches the viewport edge counts as intersecting with a zero ratio: it is not in view yet,
     // and the second threshold reports the moment it enters.
     const observer = new IntersectionObserver(
@@ -158,6 +159,16 @@ function InviteHero({ title, subtitle, buttonLabel, referrer, secondary, loading
   const Title = secondary ? "h2" : "h1";
   const clipRef = useRef<HTMLVideoElement>(null);
   const clipAllowed = useClipAllowed(clipRef);
+  // The src attribute alone neither stops a playing clip nor starts one set after mount: drive the element.
+  useEffect(() => {
+    const video = clipRef.current;
+    if (!video) return;
+    if (clipAllowed) void video.play?.()?.catch(() => {});
+    else if (video.currentSrc) {
+      video.pause();
+      video.load();
+    }
+  }, [clipAllowed]);
   const address = referrer?.ethAddress.toLowerCase() ?? "";
   return (
     <section className="stinvite__hero">
