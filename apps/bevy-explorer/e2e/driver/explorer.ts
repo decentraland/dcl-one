@@ -135,9 +135,12 @@ export interface AvatarReport {
   kind: 'player' | 'otherPlayer' | 'sceneAvatar' | 'preview' | 'other'
   address: string | null
   selected: { bodyShape: string | null; wearables: string[]; emotes: string[]; forceRender: string[]; fromScene: boolean }
-  rendered: { processed: boolean; failed: boolean; bodyShape: string; wearables: RenderedWearable[]; hidden: string[] } | null
+  rendered: { processed: boolean; bodyShape: string; wearables: RenderedWearable[]; hidden: string[] } | null
   emote: EmoteState | null
   upperBodyEmote: EmoteState | null
+  /** The files the avatar could not be built from; `noBody` when neither its body nor the default
+   *  body could be. Absent from builds before it was reported. */
+  loadFailures?: { bodies: string[]; wearables: string[]; noBody: boolean }
 }
 
 export interface ChatMessage {
@@ -151,6 +154,41 @@ export interface ChatMessage {
 export interface ChatHistory {
   total: number
   messages: ChatMessage[]
+}
+
+/** A nametag on show (`/nametag_state` `tags`). `bubble` never carries the message. */
+export interface NametagTag {
+  /** An address, `local`, or null for an avatar with no wallet. */
+  player: string | null
+  /** The tag is over an avatar a scene made (`AvatarShape`): its suffix is the end of the avatar's id. */
+  sceneAvatar: boolean
+  name: string
+  suffix: string
+  verified: boolean
+  official: boolean
+  voice: 'off' | 'idle' | 'speaking' | 'hushed'
+  /** Metres from the camera; null until the tag is first placed. */
+  distance: number | null
+  opacity: number
+  /** Metres per tag unit. */
+  scale: number
+  position: [number, number, number]
+  /** Metres over the head bone for an avatar at a scale of one; null until the avatar is built. */
+  headOffset: number | null
+  bubble: { kind: 'nearby' | 'community' | 'dm'; mention: boolean; length: number } | null
+}
+
+export interface NametagState {
+  visible: boolean
+  shown: number
+  /** Of those shown, the tags over a scene's avatars. */
+  sceneAvatars: number
+  /** Tags whose names don't show: out of range, blocked, or hidden by the scene or a setting. */
+  hidden: number
+  /** The glyph atlas' distance-field and colour page sizes, in pixels. */
+  atlas: [number, number]
+  bubbles: 'All' | 'NearbyOnly' | 'None'
+  tags: NametagTag[]
 }
 
 /** A participant of the voice call or community stream the player is in (`/voice_state` `call`). */
@@ -748,6 +786,17 @@ export class Explorer {
 
   voiceState(): Promise<VoiceState> {
     return this.json<VoiceState>('/voice_state')
+  }
+
+  nametags(): Promise<NametagState> {
+    return this.json<NametagState>('/nametag_state')
+  }
+
+  /** Shows `message` in a chat bubble over the named nametags, on this client only; how many
+   *  bubbles were asked for. */
+  async nametagBubble(target: 'local' | 'all' | string, kind: 'nearby' | 'community' | 'dm', message: string): Promise<number> {
+    const reply = await this.json<{ bubbles: number }>(`/nametag_bubble ${target} ${kind} ${message}`)
+    return reply.bubbles
   }
 
   connectivity(): Promise<ConnectivityState> {

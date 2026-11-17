@@ -76,7 +76,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   nearest parcel (not its corner); a scene behind the rendering camera counts four times
   farther in the tick queue (no once-a-second cap, no frozen far scenes). Request slots go to
   the head of the best-ranked queue (one per scene, wearable or emote hash, and one for requests
-  with no hash): the player's scenes, then avatars' wearables and the emotes they play, then the
+  with no hash): the player's own wearables and the emotes they play, then the player's scenes,
+  then the other avatars' wearables and emotes, then the
   other scenes, the last two by parcel ring, in front before behind, then raw distance; then
   requests no scene or avatar owns (no hash, or a hash nobody holds), oldest first; last, the
   downloads of a scene that has left.
@@ -437,8 +438,40 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **The creator is the scene's deployer.** The places service's `creator_address`, which the tip
   goes to, is the deployer of the place's scene here.
 - **Donate's buttons.** The minimap's uses unity-explorer's tip icon, beside the collapse button;
-  the map's place panel has a DONATE text button under JUMP IN, whose art is not ported. The fourth
+  the map's place panel has it in its row of actions, between Home and Share, as there. The fourth
   amount choice reads OTHER, and the minimum reads "Tips must be ≥ 1 MANA".
+- **The map's markers are HUD elements, not a rendered scene.** unity-explorer draws its map and
+  markers with a camera into a texture; here the atlas and every marker are elements of the HUD
+  page, placed from the map camera's position and zoom. The seven zoom levels, the marker sizes at
+  each, the clustering grid, the draw order and the hover and appear timings are the same. Culling
+  and pooling have no counterpart, and a click goes to the topmost marker under the pointer.
+  The sea around the city is one image, rendered once from unity-explorer's sea shader and placed
+  under the satellite map like its tiles; its water stands still, where unity-explorer animates
+  it every frame. Nothing on the map is drawn per frame.
+- **The map's layers are on the full map only.** unity-explorer draws live events, points of
+  interest, players, scene pins and the home pin on the minimap too, and the Layers panel switches
+  both. Here the minimap keeps its own place markers and settings, so the Layers panel changes the
+  full map alone, and a route shows no pin on the minimap's edge.
+- **The map draws no scene map pins.** unity-explorer shows the `MapPin`s of every portable
+  experience, among them the quests' global one (`globalpx.dcl.eth`, loaded at startup from
+  `alfa-global-portable-experiences`), and of any scene under `alfa-map-pins`, with a Quest
+  Mini-Games layer to hide them. This explorer loads no global portable experience, so the map
+  reads no `MapPin` and has no such layer.
+- **Home can be set, not cleared, and is one for the install.** unity-explorer's Set as Home also
+  takes the home back, and it keeps one home per wallet. Here the engine keeps one home in its
+  config, parcel 0,0 of the default realm until one is set, and the place panel's button only
+  sets it.
+- **Home is set from the map's place panel only.** unity-explorer also sets it from the minimap's
+  menu and from Places cards; neither has that control here.
+- **The map fixes what the upstream panel leaves broken.** Search results carry their LIVE badge
+  (upstream keys the lookup by a malformed parcel, so none shows); "remind me" on an event row
+  starts from the player's saved interest and keeps working after the list is rebuilt; a like or
+  a dislike refreshes the rating shown; a like, a favourite or an interest the service refuses
+  goes back to what it was; a place without photos says so; closing the map forgets the whole
+  back history; "Link copied!" is a toast of its own instead of replacing the worlds warning's
+  text; and the text of a post on X and of a calendar entry is url-encoded.
+- **Escape in the map's search field clears it first.** The next press leaves the field and the
+  one after closes the map, as on the HUD's other pages.
 - **Events page: JUMP IN closes the page and the event detail.** unity-explorer leaves both open
   while the player travels. Here a jump reconnects the realm under the loading screen, and every
   other page closes on a jump, so Events does too.
@@ -476,9 +509,37 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   show seams between the slices, so here they are radii, borders and gradients with the sprites'
   colours. The canvas scales by the smaller of width and height, as every menu page does, where
   unity-explorer's scales by width.
+- **Jump to Location closes the passport.** unity-explorer's passport does not close itself
+  when its Jump to Location runs; here the passport closes once the friend's parcel or World is
+  known, as it already does for a photo's teleport. A friend found nowhere leaves it open, and
+  nothing is shown, as there. The profile card offers the jump after View Profile, since its rows
+  already follow a different order from unity-explorer's user menu.
+- **The hills follow the Landscape Distance.** The distance is the config's `landscape_distance`
+  (default 1000 m), read at startup and held to 500 to 7000 m.
+  Unity displaces its whole terrain and its Landscape Distance setting does not drive it. Here the
+  ground's rings are displaced out to the Landscape Distance from the player, never less than the
+  832 m the parcel-sized rings cover, and the hills flatten over a further tenth of it, so
+  the rest of the 13 km ground costs the vertex shader nothing and walking moves no vertex abruptly.
+  Each ring coarser than a parcel snaps to its own cell size, so its vertices stay on the same
+  terrain points and the far hills do not swim.
+- **Cliffs reach 768 m at most.** Unity culls each cliff prefab whose bounds are beyond the
+  Landscape Distance from the camera. Bevy's cliffs are procedural chunks built around the
+  player's parcel out to the nearer of 768 m and the Landscape Distance: building them out to
+  7 km would mean hundreds of chunks with their invisible walls.
+- **The sea is always drawn.** Unity culls its water chunks one by one beyond the Landscape
+  Distance. Bevy has one sea plane, a single opaque quad that casts no shadows, so hiding it would
+  save almost nothing, and the water material draws without fog, so nothing would soften it
+  appearing and disappearing.
 
 ## Deliberate choices that look like mistakes
 
+- **The map carries over upstream's marker rules as they are**, so the two clients' maps match.
+  A place of several parcels is marked on the parcel a walk over them stops at, which depends on
+  their order and is not always the middle one; a cluster stands half a parcel south-west of the
+  average of its markers; the clustering grid is coarser at zoom level 2 (27 parcels) than at
+  level 1 (25); the other players are read when the People layer comes on and after a teleport,
+  not on a timer; a route keeps its destination across a teleport; and an empty search says "No results
+  founds".
 - **`UnapprovedPathMode::Allow`** in the asset server: bevy's check only admits paths under
   the executable's assets directory and the IPFS cache lives elsewhere. Containment is done
   in `ipfs_path.rs` instead. See the security page.

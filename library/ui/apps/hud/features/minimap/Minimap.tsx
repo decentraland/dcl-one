@@ -38,7 +38,7 @@ import {
 import { MinimapSettings } from './MinimapSettings'
 import { SceneRestrictions } from './SceneRestrictions'
 import type { MapState, MinimapState } from '../session/useEngineSession'
-import type { MinimapStyle } from '@explorer-core/engine/protocol'
+import type { EngineViewportRegion, MinimapStyle } from '@explorer-core/engine/protocol'
 import { hudInsetRef } from '../../lib/hudInset'
 import styles from './Minimap.module.css'
 
@@ -59,7 +59,7 @@ export const Minimap = memo(function Minimap({
   minimap: MinimapState
   map: MapState
   sceneTitle: string
-  setEngineViewport: (region: 'map' | 'avatarPreview' | 'lobby', rect: { x: number; y: number; width: number; height: number } | null) => void
+  setEngineViewport: (region: EngineViewportRegion, rect: { x: number; y: number; width: number; height: number } | null) => void
 }): React.JSX.Element {
   // Only Genesis City advertises this satellite map, so it is what tells it from a World or a
   // local scene.

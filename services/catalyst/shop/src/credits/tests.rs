@@ -574,12 +574,11 @@ async fn ledger(pool: &PgPool, addr: &str, kind: &str) -> Vec<(String, String)> 
 }
 
 /// The settlement pass writes money (it retires stale pack orders and sends
-/// revocations): held by the restore stamps it writes nothing, and resumes
-/// once they vouch for the node.
+/// revocations): with the switch off it writes nothing, and resumes once
+/// the switch is on.
 #[tokio::test]
-async fn the_settlement_pass_skips_while_the_restore_stamps_hold() {
+async fn the_settlement_pass_skips_while_the_switch_is_off() {
     use crate::shared::writes::PassGate;
-    use crate::shared::writes::restore::{lab::StampLab, scoped};
     let Some(own) = OwnDatabase::create("settle_hold").await else {
         return;
     };
@@ -601,23 +600,15 @@ async fn the_settlement_pass_skips_while_the_restore_stamps_hold() {
         .unwrap()
     };
     let credits = Credits::new(own.pool.clone());
-    let gate = PassGate::new("credits-settlement", crate::shared::writes::ops_refusal);
-    let held = StampLab::new();
-    let ran = scoped(
-        held.stamps.clone(),
-        super::settlement::settlement_pass(&credits, None, &gate, true, None),
-    )
-    .await
-    .unwrap();
+    let gate = PassGate::new("credits-settlement");
+    let ran = super::settlement::settlement_pass(&credits, None, &gate, false, None)
+        .await
+        .unwrap();
     assert!(!ran);
-    assert_eq!(status().await, "pending", "held: nothing retired");
-    let fresh = StampLab::fresh();
-    let ran = scoped(
-        fresh.stamps.clone(),
-        super::settlement::settlement_pass(&credits, None, &gate, true, None),
-    )
-    .await
-    .unwrap();
+    assert_eq!(status().await, "pending", "off: nothing retired");
+    let ran = super::settlement::settlement_pass(&credits, None, &gate, true, None)
+        .await
+        .unwrap();
     assert!(ran);
     assert_eq!(status().await, "abandoned");
     own.drop().await;
@@ -7045,14 +7036,10 @@ async fn packs_are_served_from_a_memo_until_an_admin_write() {
         .unwrap();
 }
 
-/// `GET /captcha` writes a challenge: off or held it answers the credits
-/// 503 and writes nothing.
+/// `GET /captcha` writes a challenge: off it answers the credits 503 and
+/// writes nothing.
 #[tokio::test]
-async fn captcha_generate_waits_for_the_credits_switch_and_the_restore_stamps() {
-    use crate::shared::writes::restore::{
-        lab::{HOUR, StampLab},
-        scoped,
-    };
+async fn captcha_generate_waits_for_the_credits_switch() {
     let Some(db) = OwnDatabase::create("captcha_write_guards").await else {
         return;
     };
@@ -7091,17 +7078,8 @@ async fn captcha_generate_waits_for_the_credits_switch_and_the_restore_stamps() 
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     let v: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["message"], crate::shared::writes::WRITES_DISABLED_MESSAGE);
-    let on = app(test_state(pool.clone(), StateCfg::default()));
-    let lab = StampLab::fresh();
-    lab.advance(30 * HOUR);
-    let (status, body) = scoped(lab.stamps.clone(), get(on.clone())).await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    let v: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(
-        v["message"],
-        "operator-plane writes are held on this node: the last complete backup (backup.json) is 31 h old, past WRITES_BACKUP_MAX_AGE_HOURS=26"
-    );
     assert_eq!(challenges().await, 0);
+    let on = app(test_state(pool.clone(), StateCfg::default()));
     let (status, _) = get(on).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(challenges().await, 1);
@@ -9185,14 +9163,13 @@ async fn a_processing_order_nothing_moves_is_reported_daily_and_left_as_it_is() 
 }
 
 /// The daily report only reads: a settlement pass that fails still runs it,
-/// and one the restore stamps hold skips it, as it skips every write.
+/// and one with the switch off skips it, as it skips every write.
 #[tokio::test]
-async fn the_stale_processing_report_survives_a_failed_pass_and_waits_for_the_stamps() {
+async fn the_stale_processing_report_survives_a_failed_pass_and_waits_for_the_switch() {
     use super::settlement::{
         REPORT_STALE_PROCESSING_EVERY, StaleProcessingReport, settlement_job_pass,
     };
     use crate::shared::writes::PassGate;
-    use crate::shared::writes::restore::{lab::StampLab, scoped};
     let Some(own) = OwnDatabase::create("stale_report_pass").await else {
         return;
     };
@@ -9206,22 +9183,18 @@ async fn the_stale_processing_report_survives_a_failed_pass_and_waits_for_the_st
     .await
     .unwrap();
     let credits = Credits::new(own.pool.clone());
-    let gate = PassGate::new("credits-settlement", crate::shared::writes::ops_refusal);
+    let gate = PassGate::new("credits-settlement");
     let every = REPORT_STALE_PROCESSING_EVERY;
 
-    // Held by the restore stamps: no pass, and no report yet.
-    let held = StampLab::new();
+    // The switch off: no pass, and no report yet.
     let report = StaleProcessingReport::default();
-    let ran = scoped(
-        held.stamps.clone(),
-        settlement_job_pass(&credits, None, &gate, true, None, &report),
-    )
-    .await
-    .unwrap();
+    let ran = settlement_job_pass(&credits, None, &gate, false, None, &report)
+        .await
+        .unwrap();
     assert!(!ran);
     assert!(
         report.run(&credits, every).await.is_some(),
-        "the held pass reported"
+        "the skipped pass did not report"
     );
 
     // A pass whose sweep fails has still reported.
@@ -9232,13 +9205,8 @@ async fn the_stale_processing_report_survives_a_failed_pass_and_waits_for_the_st
     .execute(&own.pool)
     .await
     .unwrap();
-    let fresh = StampLab::fresh();
     let report = StaleProcessingReport::default();
-    let failed = scoped(
-        fresh.stamps.clone(),
-        settlement_job_pass(&credits, None, &gate, true, None, &report),
-    )
-    .await;
+    let failed = settlement_job_pass(&credits, None, &gate, true, None, &report).await;
     assert!(failed.is_err(), "{failed:?}");
     assert_eq!(
         report.run(&credits, every).await,

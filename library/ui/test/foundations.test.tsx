@@ -83,6 +83,21 @@ describe('when a consumer loads shared foundations', () => {
     })
   })
 
+  describe.each(['Tabs', 'TabsBar'])('and %s CSS is imported before foundations', (name) => {
+    it('should establish the shared cascade before registering component styles', async () => {
+      const source = await readFile(
+        path.resolve(import.meta.dirname, `../components/${name}/${name}.module.css`),
+        'utf8'
+      )
+      expect(
+        source
+          .replace(/\/\*[\s\S]*?\*\//g, '')
+          .trimStart()
+          .startsWith(layerOrder)
+      ).toBe(true)
+    })
+  })
+
   describe('and a theme references the loaded CSS variables', () => {
     let declarations: Set<string>
     let references: string[]
