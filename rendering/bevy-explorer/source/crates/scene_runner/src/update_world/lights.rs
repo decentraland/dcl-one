@@ -225,8 +225,8 @@ impl LightSource {
 
 impl From<PbLightSource> for LightSource {
     fn from(value: PbLightSource) -> Self {
-        // rescale colors > 1 to 1, and multiply intensity by pow(max^2.2)
-        // to match unity
+        // the colour is sRGB. a colour above 1 is rescaled to 1 and multiplies the intensity by
+        // max^2.2, the gain decoding it as sRGB would give
         let color_scale = value
             .color
             .map(|c| c.r.max(c.g).max(c.b).max(1.0))
@@ -237,9 +237,9 @@ impl From<PbLightSource> for LightSource {
             intensity: value.intensity,
             intensity_gain: color_scale.powf(2.2),
             shadow: value.shadow,
-            color: value.color.map(|c| {
-                Color::linear_rgb(c.r / color_scale, c.g / color_scale, c.b / color_scale)
-            }),
+            color: value
+                .color
+                .map(|c| Color::srgb(c.r / color_scale, c.g / color_scale, c.b / color_scale)),
             range: value.range,
             spotlight_angles: if let Some(pb_light_source::Type::Spot(spot)) = value.r#type {
                 Some((
@@ -1103,7 +1103,10 @@ mod tests {
             ..Default::default()
         });
         assert!((lamp.lamp_intensity() - 100.0 * 2f32.powf(2.2)).abs() < 1e-3);
-        assert_eq!(lamp.color, Some(Color::linear_rgb(1.0, 0.5, 0.25)));
+        assert_eq!(lamp.color, Some(Color::srgb(1.0, 0.5, 0.25)));
+        // the colour is sRGB: a warm lamp stays saturated rather than washing out
+        let linear = lamp.color.unwrap().to_linear();
+        assert!(linear.green < 0.22 && linear.blue < 0.06, "{linear:?}");
     }
 
     #[test]
@@ -1130,7 +1133,7 @@ mod tests {
         });
         assert_eq!(tinted.dir_illuminance, NOON_ILLUMINANCE);
         assert_eq!(tinted.sun_illuminance, SKY_SUN_ILLUMINANCE);
-        assert_eq!(tinted.dir_color, Color::linear_rgb(1.0, 0.5, 0.5));
+        assert_eq!(tinted.dir_color, Color::srgb(1.0, 0.5, 0.5));
         // an intensity is lux as given, for the light and the sky's sun
         let set = apply(PbLightSource {
             intensity: Some(5000.0),
