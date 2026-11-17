@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Button } from "@dcl/one-ui";
 import SitesChrome from "../frames/SitesChrome";
 import AnimatedBackground from "../../shop/discovery/components/animated-background/AnimatedBackground";
@@ -14,6 +14,43 @@ type Referrer = { name: string; ethAddress: string };
 // The envelope picture and the second hero's clip of decentraland.org's invite page.
 const ENVELOPE_SRC = asset("assets/invite/referral-envelope.webp");
 const CLIP_SRC = asset("assets/invite/referral.webm");
+const CLIP_POSTER = asset("assets/invite/referral-poster.webp");
+
+// The clip loads once it is in view on a desktop-wide screen (foundations breakpoints.desktop) and motion is
+// welcome; until then, and on phones, the poster stands in for it. Width and motion stay live: when either stops
+// allowing it, the clip stops and the poster returns, and it comes back only while it is in view.
+const CLIP_WIDE = "(min-width: 1024px)";
+const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
+
+function useClipAllowed(target: { current: Element | null }): boolean {
+  const [allowed, setAllowed] = useState(false);
+  useEffect(() => {
+    const el = target.current;
+    if (!el || typeof window.matchMedia !== "function" || typeof IntersectionObserver === "undefined") return;
+    const wide = window.matchMedia(CLIP_WIDE);
+    const reduced = window.matchMedia(REDUCED_MOTION);
+    let inView = false;
+    const update = () => setAllowed((was) => wide.matches && !reduced.matches && (was || inView));
+    // A box that only touches the viewport edge counts as intersecting with a zero ratio: it is not in view yet,
+    // and the second threshold reports the moment it enters.
+    const observer = new IntersectionObserver(
+      (entries) => {
+        inView = entries.some((entry) => entry.isIntersecting && entry.intersectionRatio > 0);
+        update();
+      },
+      { threshold: [0, 0.01] },
+    );
+    observer.observe(el);
+    wide.addEventListener("change", update);
+    reduced.addEventListener("change", update);
+    return () => {
+      observer.disconnect();
+      wide.removeEventListener("change", update);
+      reduced.removeEventListener("change", update);
+    };
+  }, [target]);
+  return allowed;
+}
 
 /** decentraland.org's sign-in link for an invite (sites hooks/useReferralUrl.ts): the referrer rides on the sign-in and on its redirect to the download. */
 export function referralUrl(referrer: string): string {
@@ -120,6 +157,18 @@ function InviteHero({ title, subtitle, buttonLabel, referrer, secondary, loading
   const [client, setClient] = useState(false);
   useEffect(() => setClient(true), []);
   const Title = secondary ? "h2" : "h1";
+  const clipRef = useRef<HTMLVideoElement>(null);
+  const clipAllowed = useClipAllowed(clipRef);
+  // The src attribute alone neither stops a playing clip nor starts one set after mount: drive the element.
+  useEffect(() => {
+    const video = clipRef.current;
+    if (!video) return;
+    if (clipAllowed) void video.play?.()?.catch(() => {});
+    else if (video.currentSrc) {
+      video.pause();
+      video.load();
+    }
+  }, [clipAllowed]);
   const address = referrer?.ethAddress.toLowerCase() ?? "";
   return (
     <section className="stinvite__hero">
@@ -146,7 +195,20 @@ function InviteHero({ title, subtitle, buttonLabel, referrer, secondary, loading
         <div className="stinvite__media">
           <AnimatedBackground />
           {secondary && <div className="stinvite__overlay" aria-hidden="true" />}
-          {secondary && <video className="stinvite__video" src={CLIP_SRC} loop muted autoPlay playsInline />}
+          {secondary && (
+            <video
+              ref={clipRef}
+              className="stinvite__video"
+              poster={CLIP_POSTER}
+              src={clipAllowed ? CLIP_SRC : undefined}
+              preload="none"
+              loop
+              muted
+              autoPlay={clipAllowed}
+              playsInline
+              aria-hidden="true"
+            />
+          )}
           <div className="stinvite__avatar">
             {!secondary && (
               <div className="stinvite__mobile">

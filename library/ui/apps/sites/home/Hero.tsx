@@ -27,8 +27,11 @@ type HeroProps = {
 }
 
 const REDUCED_MOTION = '(prefers-reduced-motion: reduce)'
-// decentraland.org's home page has its wide layout from 991px; the ambient video only plays there.
+// decentraland.org's home page has its wide layout from 991px.
 const WIDE = '(min-width: 991px)'
+// breakpoints.desktop in foundations/layout: the ambient video only plays from there, so tablets in landscape
+// skip its download.
+const VIDEO_WIDE = '(min-width: 1024px)'
 // The video waits for an idle moment so it never competes with the hero image (the LCP).
 const VIDEO_IDLE_TIMEOUT_MS = 4000
 
@@ -40,7 +43,7 @@ function Hero({ title, imageAlt, actions, mobile, children }: HeroProps) {
   // a pending start and removes a playing video; turning back schedules the video again.
   useEffect(() => {
     const reduced = window.matchMedia(REDUCED_MOTION)
-    const wide = window.matchMedia(WIDE)
+    const wide = window.matchMedia(VIDEO_WIDE)
     let cancel = () => {}
     const schedule = () => {
       cancel()

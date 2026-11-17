@@ -22,7 +22,7 @@ import {
 } from "@/data/lib/catalyst/landings/report";
 import { openSignIn } from "../../components/auth/signin-store";
 
-import DclLogo from "../../components/DclLogo";
+import { GeneralDecentralandColor } from "@dcl/one-ui/foundations/icons";
 import styles from "./ReportForm.module.css";
 
 const REASONS: { value: ReportReason; label: string }[] = [
@@ -278,7 +278,7 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
         <div className={styles.content}>
           <div className={styles.card}>
             <div className={styles.logoWrap}>
-              <DclLogo className={styles.logo} />
+              <GeneralDecentralandColor className={styles.logo} aria-hidden="true" />
               <h3 className={styles.title}>Report User</h3>
             </div>
 

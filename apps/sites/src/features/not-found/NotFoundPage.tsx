@@ -7,7 +7,7 @@ import { Button } from "@dcl/one-ui";
 import { asset } from "@ui/asset";
 import AnimatedBackground from "@ui/shop/discovery/components/animated-background/AnimatedBackground";
 
-import DclLogo from "../components/DclLogo";
+import { GeneralDecentralandColor } from "@dcl/one-ui/foundations/icons";
 import styles from "./NotFoundPage.module.css";
 
 export default function NotFoundPage() {
@@ -17,7 +17,7 @@ export default function NotFoundPage() {
         <AnimatedBackground />
       </div>
       <Link className={styles.home} to="/" aria-label="Decentraland Home">
-        <DclLogo className={styles.logo} />
+        <GeneralDecentralandColor className={styles.logo} aria-hidden="true" />
       </Link>
       <div className={styles.content}>
         <div className={styles.text}>

@@ -87,10 +87,6 @@
     "primitives": 19,
     "tokens": 0
   },
-  "apps/ui3/src/web/events/EventDetailDialog.module.css": {
-    "primitives": 0,
-    "tokens": 94
-  },
   "apps/ui3/src/web/frames/accountmenu.css": {
     "primitives": 8,
     "tokens": 11
@@ -122,10 +118,6 @@
   "apps/ui3/src/web/pages/StCreatorHubDownload.module.css": {
     "primitives": 0,
     "tokens": 18
-  },
-  "apps/ui3/src/web/pages/StCreatorHubDownloadSuccess.module.css": {
-    "primitives": 0,
-    "tokens": 38
   },
   "apps/ui3/src/web/pages/siteshome.css": {
     "primitives": 22,

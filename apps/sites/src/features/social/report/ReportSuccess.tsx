@@ -7,7 +7,7 @@ import { useLocation, useNavigate } from "react-router";
 import AnimatedBackground from "@ui/shop/discovery/components/animated-background/AnimatedBackground";
 import SitesChrome from "@ui/web/frames/SitesChrome";
 
-import DclLogo from "../../components/DclLogo";
+import { GeneralDecentralandColor } from "@dcl/one-ui/foundations/icons";
 import styles from "./ReportSuccess.module.css";
 
 export default function ReportSuccess() {
@@ -29,7 +29,7 @@ export default function ReportSuccess() {
           <div className={styles.content}>
             <div className={styles.card}>
               <div className={styles.logoWrap}>
-                <DclLogo className={styles.logo} />
+                <GeneralDecentralandColor className={styles.logo} aria-hidden="true" />
                 <h3 className={styles.title}>Report Submitted</h3>
               </div>
               <div className={styles.text}>

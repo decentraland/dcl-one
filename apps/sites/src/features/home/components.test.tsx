@@ -119,3 +119,43 @@ describe("home sections", () => {
     expect(html).not.toContain("Infinity");
   });
 });
+
+describe("the home hero's ambient video", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  // A window of `width` px: every min-width query up to it matches.
+  const at = (width: number, reduced = false) => {
+    vi.stubGlobal("matchMedia", (query: string) => {
+      const min = /min-width:\s*(\d+)px/.exec(query);
+      const matches = query.includes("reduce") ? reduced : min ? width >= Number(min[1]) : false;
+      return { matches, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn() };
+    });
+    vi.stubGlobal("requestIdleCallback", (start: () => void) => {
+      start();
+      return 1;
+    });
+    vi.stubGlobal("cancelIdleCallback", vi.fn());
+  };
+  const video = () => {
+    const { container } = render(<Hero title="Come Hang Out" imageAlt="Decentraland" />);
+    return container.querySelector("video");
+  };
+
+  it("should play from the foundations' 1024px desktop breakpoint", () => {
+    at(1024);
+    expect(video()).not.toBeNull();
+  });
+
+  it("should not load at 1000px, where the wide layout already applies", () => {
+    at(1000);
+    expect(video()).toBeNull();
+  });
+
+  it("should not load for a visitor who prefers reduced motion", () => {
+    at(1440, true);
+    expect(video()).toBeNull();
+  });
+});

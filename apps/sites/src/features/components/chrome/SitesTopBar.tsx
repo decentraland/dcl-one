@@ -18,7 +18,7 @@ import {
 } from "@ui/data/catalyst/notificationsView";
 import SitesNotificationsDialog from "@dcl/one-ui/apps/sites/chrome/SitesNotificationsDialog";
 import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
-import wordmark from "@ui/atoms/assets/decentraland-wordmark.svg?url";
+import wordmark from "@dcl/one-ui/apps/sites/assets/dcl_name.svg?url";
 import { useChromeNotifications } from "./useChromeNotifications";
 import styles from "./SitesTopBar.module.css";
 

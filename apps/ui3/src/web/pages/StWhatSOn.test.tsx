@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import StWhatSOn from "./StWhatSOn";
+import StWhatSOn, { type WoUpcomingCard } from "./StWhatSOn";
 
 const upcoming = Array.from({ length: 6 }, (_, i) => ({ id: `e${i}`, name: `Event ${i}`, creator: "Ada", time: "Today 6:00 PM", hue: 0 }));
 
@@ -28,5 +28,55 @@ describe("StWhatSOn, the Upcoming rail below the desktop grid", () => {
     fireEvent.scroll(track);
 
     expect(active()).toEqual([false, true]);
+  });
+});
+
+describe("StWhatSOn, the Upcoming card's hover actions", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const renderUpcoming = (event: Partial<WoUpcomingCard>) => {
+    vi.stubGlobal("matchMedia", (media: string) => ({ matches: false, media, addEventListener() {}, removeEventListener() {} }));
+    const card: WoUpcomingCard = { id: "e0", name: "Event 0", creator: "Ada", time: "Today 6:00 PM", hue: 0, ...event };
+    const { container } = render(<StWhatSOn chrome={false} upcoming={[card]} />);
+    return container.querySelector<HTMLElement>(".wo-up__grid .wo-sm__actions")!;
+  };
+
+  it("should offer Remind me and Copy link, as the Figma card-hover does, and no Jump in to world", () => {
+    const actions = renderUpcoming({ id: "e 1", jumpUrl: "https://example.com/play/?position=1,1" });
+    expect(actions.textContent).not.toMatch(/jump in/i);
+    expect(actions.querySelector('a[href="https://example.com/play/?position=1,1"]')).toBeNull();
+    const remind = [...actions.querySelectorAll("a")].find((link) => link.textContent?.trim() === "Remind me");
+    expect(remind?.getAttribute("href")).toBe("/whats-on/e%201");
+    expect(actions.querySelector('button[aria-label="Copy link"]')).not.toBeNull();
+  });
+
+  it("should keep Remind me for an event the player already attends", () => {
+    const actions = renderUpcoming({ attending: true });
+    expect(actions.textContent?.trim()).toBe("Remind me");
+  });
+
+  it("should open a schedule's own destination and offer no event actions for it", () => {
+    vi.stubGlobal("matchMedia", (media: string) => ({ matches: false, media, addEventListener() {}, removeEventListener() {} }));
+    const card: WoUpcomingCard = { id: "s1", name: "Weekly program", creator: "Draft", time: "Mon", hue: 0, href: "?mode=edit&id=s1", actions: false };
+    const { container } = render(<StWhatSOn chrome={false} signedIn upcoming={[card]} />);
+    const upcomingCard = container.querySelector<HTMLElement>(".wo-up__grid .wo-sm")!;
+    expect(upcomingCard.querySelector(".wo-card__overlay")).toHaveAttribute("href", "?mode=edit&id=s1");
+    expect(upcomingCard.querySelector(".wo-sm__actions")).toBeNull();
+    expect(upcomingCard.querySelector(".wo-sm__mobileaction")).toBeNull();
+    expect(upcomingCard.querySelector('a[href^="/whats-on/"]')).toBeNull();
+  });
+
+  it("should not throw when the clipboard is missing", () => {
+    vi.stubGlobal("navigator", {});
+    const actions = renderUpcoming({});
+    expect(() => fireEvent.click(actions.querySelector('button[aria-label="Copy link"]')!)).not.toThrow();
+  });
+
+  it("should open the event page from the icon form of Remind me", () => {
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign });
+    const actions = renderUpcoming({ id: "e 1" });
+    fireEvent.click(actions.querySelector('button[aria-label="Remind me"]')!);
+    expect(assign).toHaveBeenCalledWith("/whats-on/e%201");
   });
 });
