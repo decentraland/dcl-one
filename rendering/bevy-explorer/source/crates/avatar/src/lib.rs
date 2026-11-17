@@ -554,6 +554,15 @@ impl AvatarLoadFailures {
     }
 }
 
+/// The body an avatar shape asks for: its own, else the default body.
+fn requested_body(shape: &PbAvatarShape) -> WearableUrn {
+    shape
+        .body_shape
+        .as_ref()
+        .and_then(|b| WearableUrn::new(b).ok())
+        .unwrap_or(base_wearables::default_bodyshape_urn())
+}
+
 /// Drops the build `build` of the avatar on `avatar` and has the avatar rebuilt without the
 /// failed files. The avatar shown before stays until the rebuild replaces it.
 fn abandon_build(
@@ -664,13 +673,7 @@ fn update_render_avatar(
         debug!("updating render avatar");
 
         // get body shape, falling back to the default body when the requested one failed
-        let requested_body = selection
-            .shape
-            .0
-            .body_shape
-            .as_ref()
-            .and_then(|b| WearableUrn::new(b).ok())
-            .unwrap_or(base_wearables::default_bodyshape_urn());
+        let requested_body = requested_body(&selection.shape.0);
         let Some(body_urn) = AvatarLoadFailures::body(maybe_failures, requested_body.clone())
         else {
             warn!("no body to build {requested_body} with: it and the default body failed");
@@ -1391,46 +1394,6 @@ fn process_avatar(
         let mut armature_node = None;
         let mut target_armature_entities = HashMap::new();
 
-        // a fresh graph gets its lower-body mask group once the bone targets are known below
-        let mut new_graph = None;
-        if previous_animator.get(root_player_entity.parent()).is_err() {
-            let mut player = AnimationPlayer::default();
-            let mut graph = AnimationGraph::new();
-            let mut clips = Clips::default();
-            let mut transitions = AnimationTransitions::default();
-            // play default idle anim to avoid t-posing
-            if let Some(clip) = emote_loader
-                .get_representation(EmoteUrn::new("Idle_Male").unwrap(), &def.body_shape)
-                .ok()
-                .and_then(|rep| rep.avatar_animation(&gltfs).ok())
-                .flatten()
-            {
-                let ix = graph.add_clip(clip, 1.0, graph.root);
-                clips.named.insert("Idle_Male".into(), (ix, 0.0));
-                transitions.play(&mut player, ix, Duration::from_secs_f32(0.2));
-            }
-            let graph = graphs.add(graph);
-            new_graph = Some(graph.clone());
-            commands.entity(root_player_entity.parent()).try_insert((
-                player,
-                transitions,
-                clips,
-                AnimationGraphHandle(graph),
-            ));
-        }
-
-        if let Some(emote) = emote {
-            debug!("set emote -> {emote:?}");
-            commands
-                .entity(root_player_entity.parent())
-                .try_insert(emote.clone());
-        }
-
-        // record the node with the animator
-        commands
-            .entity(root_player_entity.parent())
-            .try_insert(AvatarAnimPlayer(root_player_entity.parent()));
-
         // hide and colour the base model
         for scene_ent in scene_spawner.iter_instance_entities(loaded_avatar.body_instance) {
             let Ok((mut vis, parent, gt, maybe_h_mat, maybe_h_mesh, maybe_player)) =
@@ -1668,6 +1631,48 @@ fn process_avatar(
             );
             continue;
         };
+
+        // the animator goes on only once the body is known to be animatable: a graph made for a
+        // build that is abandoned would keep the player without its lower-body mask, which only a
+        // fresh graph gets once the bone targets are known below
+        let mut new_graph = None;
+        if previous_animator.get(root_player_entity.parent()).is_err() {
+            let mut player = AnimationPlayer::default();
+            let mut graph = AnimationGraph::new();
+            let mut clips = Clips::default();
+            let mut transitions = AnimationTransitions::default();
+            // play default idle anim to avoid t-posing
+            if let Some(clip) = emote_loader
+                .get_representation(EmoteUrn::new("Idle_Male").unwrap(), &def.body_shape)
+                .ok()
+                .and_then(|rep| rep.avatar_animation(&gltfs).ok())
+                .flatten()
+            {
+                let ix = graph.add_clip(clip, 1.0, graph.root);
+                clips.named.insert("Idle_Male".into(), (ix, 0.0));
+                transitions.play(&mut player, ix, Duration::from_secs_f32(0.2));
+            }
+            let graph = graphs.add(graph);
+            new_graph = Some(graph.clone());
+            commands.entity(root_player_entity.parent()).try_insert((
+                player,
+                transitions,
+                clips,
+                AnimationGraphHandle(graph),
+            ));
+        }
+
+        if let Some(emote) = emote {
+            debug!("set emote -> {emote:?}");
+            commands
+                .entity(root_player_entity.parent())
+                .try_insert(emote.clone());
+        }
+
+        // record the node with the animator
+        commands
+            .entity(root_player_entity.parent())
+            .try_insert(AvatarAnimPlayer(root_player_entity.parent()));
 
         {
             // reparent hands
