@@ -30,7 +30,7 @@ use super::cluster::subscriber::{ClusterGateway, island_token_not_before};
 use crate::Address;
 use crate::auth::auth_chain::{AuthLink, AuthLinkType, parse_ephemeral_payload};
 use crate::gatekeeper::SharedState;
-use crate::gatekeeper::auth::{device_identifier, verify_signed_fetch};
+use crate::gatekeeper::auth::{device_identifier, verify_wallet_signed_fetch};
 use crate::shared::signed_fetch::SignedPath;
 
 pub const ISLAND_REFRESH_PATH: &str = "/island-refresh";
@@ -99,7 +99,7 @@ async fn refresh_bounded(
 ) -> Result<Response, IslandRefreshError> {
     let chain = crate::shared::signed_fetch::extract_auth_chain(headers)
         .map_err(|_| IslandRefreshError(StatusCode::BAD_REQUEST))?;
-    let signed = verify_signed_fetch(headers, "post", path, &[], state.eip1654())
+    let signed = verify_wallet_signed_fetch(headers, "post", path, state.eip1654())
         .await
         .map_err(|error| {
             IslandRefreshError(
@@ -330,6 +330,51 @@ mod tests {
             Err(()),
             "two delegations are ambiguous"
         );
+    }
+
+    struct UnreadAssignments;
+    #[async_trait::async_trait]
+    impl RealmAssignmentReader for UnreadAssignments {
+        async fn current_realm_assignment(
+            &self,
+            _wallet: &str,
+            _session: &str,
+        ) -> Result<RealmAssignmentSnapshot, FenceError> {
+            panic!("a refused request never reads the assignment");
+        }
+    }
+
+    #[tokio::test]
+    async fn scene_signer_is_refused_before_any_assignment_read() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
+        let state: SharedState = Arc::new(CommsState::new(
+            pool,
+            Outbound::for_tests(),
+            Settings::for_tests(),
+            None,
+            None,
+            Arc::new(StubPolicy::default()),
+            Arc::new(StubScenes::default()),
+            Arc::new(crate::presence::Presence::new()),
+            Arc::new(crate::interfaces::test_support::StubDirectory::default()),
+        ));
+        let owner = Delegate::new();
+        let uri = ISLAND_REFRESH_PATH.parse().unwrap();
+        for metadata in [
+            json!({ "signer": crate::gatekeeper::auth::SCENE_SIGNER }),
+            json!({ "Signer": crate::gatekeeper::auth::SCENE_SIGNER }),
+        ] {
+            let headers = owner.headers(&metadata.to_string()).await;
+            let refused = refresh_bounded(
+                &state,
+                &UnreadAssignments,
+                &headers,
+                &SignedPath::at(&uri, ISLAND_REFRESH_PATH),
+            )
+            .await
+            .expect_err("refused");
+            assert_eq!(refused.0, StatusCode::BAD_REQUEST, "{metadata}");
+        }
     }
 
     const AUDIENCE: &str = "island-refresh-test";
