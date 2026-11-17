@@ -21,6 +21,20 @@ use crate::{
     vec3_to_parcel, ContainerEntity, ContainingScene,
 };
 
+/// Native scene WebSocket counters; browser scene workers use the browser's sockets.
+#[cfg(not(target_arch = "wasm32"))]
+const WEBSOCKET_FIELDS: &[(&str, &str)] = &[
+    (
+        "Sockets held (connecting, open or closing)",
+        "worker.ws_open",
+    ),
+    ("Sockets opened", "worker.ws_opened"),
+    ("Sockets refused by policy", "worker.ws_refused"),
+    ("Sockets failed to connect", "worker.ws_failed"),
+    ("Messages received / sent", "worker.ws_messages"),
+    ("Bytes received / sent", "worker.ws_bytes"),
+];
+
 pub(super) struct SceneDebugPanelPlugin;
 
 impl Plugin for SceneDebugPanelPlugin {
@@ -177,6 +191,14 @@ impl Plugin for SceneDebugPanelPlugin {
                 actions: &[],
                 inputs: &[],
             });
+        #[cfg(not(target_arch = "wasm32"))]
+        app.add_debug_section(DebugSection {
+            title: "Scene WebSockets",
+            query: "/current_scene_state",
+            fields: WEBSOCKET_FIELDS,
+            actions: &[],
+            inputs: &[],
+        });
     }
 }
 
@@ -365,6 +387,12 @@ fn scene_state(
             report["worker"]["fetch_completed"] = c.fetch_completed.into();
             report["worker"]["fetch_failed"] = c.fetch_failed.into();
             report["worker"]["fetch_bytes_down"] = c.fetch_bytes_down.into();
+            report["worker"]["ws_open"] = c.ws_open.into();
+            report["worker"]["ws_opened"] = c.ws_opened.into();
+            report["worker"]["ws_refused"] = c.ws_refused.into();
+            report["worker"]["ws_failed"] = c.ws_failed.into();
+            report["worker"]["ws_messages"] = json!([c.ws_msgs_in, c.ws_msgs_out]);
+            report["worker"]["ws_bytes"] = json!([c.ws_bytes_in, c.ws_bytes_out]);
             report["heap"] = c.heap_used.into();
             report["heapLimit"] = c.heap_limit.into();
             report["externalMemory"] = c.external_memory.into();

@@ -26,4 +26,4 @@ alloy-rpc-client = { workspace = true, features = ["ws-ring"] }
 anyhow = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-deno_core = { version = "0.307" }
+deno_core = { workspace = true }
