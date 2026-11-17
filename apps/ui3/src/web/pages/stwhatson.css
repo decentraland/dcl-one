@@ -400,8 +400,9 @@
   .wo-sm__remind { display: inline-flex; }
   .wo-sm__remindicon { display: none; }
 }
-.wo-sm:hover [data-role="time-pill"],
-.wo-sm:focus-within [data-role="time-pill"] { opacity: 0; }
+/* The time gives way to the actions, when the card has them. */
+.wo-sm:has(.wo-sm__actions):hover [data-role="time-pill"],
+.wo-sm:has(.wo-sm__actions):focus-within [data-role="time-pill"] { opacity: 0; }
 
 /* The All Events card's hover actions are Button (secondary, sm) and CardActionButton from @dcl/one-ui, at the
    reference's size. The Upcoming card's Remind me is the library Button as is: Figma card-hover uses button sm. */
@@ -728,8 +729,8 @@ h2.wo-all__title {
   .wo-sm { min-width: 0; }
   .wo-sm__actions { display: none; }
   /* The actions are hidden here, so the time they replace on hover or focus stays. */
-  .wo-sm:hover [data-role="time-pill"],
-  .wo-sm:focus-within [data-role="time-pill"] { opacity: 1; }
+  .wo-sm:has(.wo-sm__actions):hover [data-role="time-pill"],
+  .wo-sm:has(.wo-sm__actions):focus-within [data-role="time-pill"] { opacity: 1; }
   .wo-sm__mobileaction { display: flex; }
   .wo-all { --wo-cols: 2; margin-left: calc(-1 * var(--dcl-space-24)); margin-right: calc(-1 * var(--dcl-space-24)); padding: var(--dcl-space-48) var(--dcl-space-24); }
   .wo-all__date:nth-of-type(n+3), .wo-col:nth-child(n+3) { display: none; }

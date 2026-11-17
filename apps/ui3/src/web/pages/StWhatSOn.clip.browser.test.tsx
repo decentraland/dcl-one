@@ -36,9 +36,9 @@ async function evaluate<T>(expression: string): Promise<T> {
   return response.result.value;
 }
 
-async function load(width: number) {
+async function load(width: number, items: WoUpcomingCard[] = upcoming) {
   await session.send("Emulation.setDeviceMetricsOverride", { width, height: 1000, deviceScaleFactor: 1, mobile: false });
-  const markup = renderToStaticMarkup(<StWhatSOn chrome={false} liveNow={liveNow} upcoming={upcoming} allDays={allDays} dayLabels={["Today", "Tue", "Wed", "Thu", "Fri"]} />);
+  const markup = renderToStaticMarkup(<StWhatSOn chrome={false} liveNow={liveNow} upcoming={items} allDays={allDays} dayLabels={["Today", "Tue", "Wed", "Thu", "Fri"]} />);
   const html = `<!doctype html><style>body{margin:0}${css}*,*::before,*::after{transition:none!important}</style>${markup}`;
   await session.navigate(`data:text/html,${encodeURIComponent(html)}`);
 }
@@ -121,6 +121,13 @@ describe.each([390, 768, 1440])("when What's On renders at %ipx", (width) => {
     expect(await cardCentre(selector)).not.toBeNull();
     await evaluate(`document.querySelector("[data-probe] a").focus()`);
     expect((await evaluate<Clip>(clipped)).out).toEqual([]);
+  });
+
+  it("should keep the time on an Upcoming card that has no actions (an event schedule)", async () => {
+    await load(width, upcoming.map((item) => ({ ...item, href: `?mode=edit&id=${item.id}`, actions: false })));
+    const point = await cardCentre(".wo-up .wo-sm");
+    await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point!.x, y: point!.y });
+    expect(await evaluate<string>(`getComputedStyle(document.querySelector('[data-probe] [data-role="time-pill"]')).opacity`)).toBe("1");
   });
 
   it("should neither lift nor glow the Upcoming and All Events cards, as in Figma", async () => {

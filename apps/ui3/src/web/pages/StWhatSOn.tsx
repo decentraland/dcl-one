@@ -55,6 +55,10 @@ export type WoUpcomingCard = WoFace & {
   image?: string | null;
   jumpUrl?: string;
   attending?: boolean;
+  /** Where the card leads; an event's detail page when not given. */
+  href?: string;
+  /** False for an item that is not an event (an event schedule): no reminder, calendar or share actions. */
+  actions?: boolean;
 };
 
 export type WoDayEvent = WoFace & {
@@ -224,13 +228,13 @@ function LiveNow({ cards }: { cards: WoLiveCard[] }) {
 function SmallCard({ event, priority, signedIn = false }: { event: WoUpcomingCard; priority: boolean; signedIn?: boolean }) {
   return (
     <div className="wo-sm">
-      <a className="wo-card__overlay" href={eventHref(event.id)} aria-label={event.name} />
+      <a className="wo-card__overlay" href={event.href ?? eventHref(event.id)} aria-label={event.name} />
       <Poster className="wo-sm__thumbwrap" hue={event.hue} image={event.image} label={event.name} priority={priority} />
       <div className="wo-sm__text">
         <div className="wo-sm__top">
           <div className="wo-sm__titlerow">
             <h3 className="wo-sm__title">{event.name}</h3>
-            {signedIn
+            {event.actions === false ? null : signedIn
               ? <a className="wo-sm__mobileaction" href={eventHref(event.id)} aria-label="Remind me"><RemindIcon active={!!event.attending} /></a>
               : <a className="wo-sm__mobileaction" href={eventHref(event.id)} aria-label="Add to calendar"><CalendarIcon /></a>}
           </div>
@@ -243,7 +247,7 @@ function SmallCard({ event, priority, signedIn = false }: { event: WoUpcomingCar
           <AccessTimeIcon />
           <span className="wo-sm__time">{event.time}</span>
         </div>
-        <div className="wo-sm__actions" data-role="hover-actions">
+        {event.actions === false ? null : <div className="wo-sm__actions" data-role="hover-actions">
           {/* Figma Events > card-hover, state=hover, live=false: Remind me and Share; Jump In belongs to a live card only. */}
           <Button variant="secondary" size="sm" className="wo-sm__remind" href={eventHref(event.id)} leadingIcon={event.attending ? <GeneralReminderOn size={16} /> : <GeneralReminderOff size={16} />}>
             Remind me
@@ -256,7 +260,7 @@ function SmallCard({ event, priority, signedIn = false }: { event: WoUpcomingCar
             onClick={() => window.location.assign(eventHref(event.id))}
           />
           <CardActionButton className="wo-sm__iconbtn" aria-label="Copy link" icon={<MenusShare size={24} />} onClick={() => copyEventLink(event.id)} />
-        </div>
+        </div>}
       </div>
     </div>
   );

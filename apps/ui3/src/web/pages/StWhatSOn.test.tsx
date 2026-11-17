@@ -55,6 +55,17 @@ describe("StWhatSOn, the Upcoming card's hover actions", () => {
     expect(actions.textContent?.trim()).toBe("Remind me");
   });
 
+  it("should open a schedule's own destination and offer no event actions for it", () => {
+    vi.stubGlobal("matchMedia", (media: string) => ({ matches: false, media, addEventListener() {}, removeEventListener() {} }));
+    const card: WoUpcomingCard = { id: "s1", name: "Weekly program", creator: "Draft", time: "Mon", hue: 0, href: "?mode=edit&id=s1", actions: false };
+    const { container } = render(<StWhatSOn chrome={false} signedIn upcoming={[card]} />);
+    const upcomingCard = container.querySelector<HTMLElement>(".wo-up__grid .wo-sm")!;
+    expect(upcomingCard.querySelector(".wo-card__overlay")).toHaveAttribute("href", "?mode=edit&id=s1");
+    expect(upcomingCard.querySelector(".wo-sm__actions")).toBeNull();
+    expect(upcomingCard.querySelector(".wo-sm__mobileaction")).toBeNull();
+    expect(upcomingCard.querySelector('a[href^="/whats-on/"]')).toBeNull();
+  });
+
   it("should not throw when the clipboard is missing", () => {
     vi.stubGlobal("navigator", {});
     const actions = renderUpcoming({});
