@@ -88,7 +88,7 @@ describe('when a captured application toolbar is composed', () => {
     expect(fireEvent.click(link)).toBe(true)
     expect(select).toHaveBeenCalledExactlyOnceWith('route')
   })
-  it('should preserve a supplied Places popup without clipping or wrapping it in an interactive control', () => {
+  it('should preserve a supplied Places popup outside any interactive control', () => {
     render(
       <TitleBar
         variant="places"
@@ -236,6 +236,7 @@ describe('when a section is supplied by the app router', () => {
     )
     const link = screen.getByRole('link', { name: 'Route' })
     expect(link).toHaveAttribute('data-active', 'true')
+    expect(link).toHaveAttribute('aria-current', 'page')
     expect(fireEvent.click(link)).toBe(false)
     expect(select).not.toHaveBeenCalled()
   })
@@ -331,5 +332,89 @@ describe('when a heading level configuration is invalid', () => {
         />
       )
     ).toThrow('TitleBar heading level must be an integer from 1 to 6')
+  })
+})
+
+describe('when sections are page routes', () => {
+  const routes = [
+    { id: 'one', label: 'One', icon: null, href: '/one' },
+    { id: 'two', label: 'Two', icon: null, href: '#two' }
+  ]
+  it('should mark only the current native anchor as the page inside a named navigation landmark', () => {
+    render(<TitleBar variant="shop" sections={routes} activeId="two" controls={{ filters: null, sort: null, search: null, cart: null }} />)
+    const nav = screen.getByRole('navigation', { name: 'Shop sections' })
+    expect(nav).toContainElement(screen.getByRole('link', { name: 'Two' }))
+    expect(screen.getByRole('link', { name: 'Two' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('link', { name: 'One' })).not.toHaveAttribute('aria-current')
+  })
+  it('should keep button-only sections in a group instead of a navigation landmark', () => {
+    render(<TitleBar variant="settings" sections={sections} activeId="one" onSelect={() => {}} />)
+    expect(screen.queryByRole('navigation')).toBeNull()
+    expect(screen.getByRole('group', { name: 'Settings sections' })).toBeInTheDocument()
+  })
+  it('should follow a plain route click without a selection callback', () => {
+    render(<TitleBar variant="settings" sections={routes} activeId="one" />)
+    expect(fireEvent.click(screen.getByRole('link', { name: 'Two' }))).toBe(true)
+  })
+  it('should require a selection callback once any section is a view button', () => {
+    expect(() =>
+      render(
+        <TitleBar
+          variant="settings"
+          sections={[...routes, { id: 'view', label: 'View', icon: null }]}
+          activeId="one"
+        />
+      )
+    ).toThrow('TitleBar requires a controlled section callback')
+  })
+  it('should reject a selection callback that is not a function', () => {
+    expect(() =>
+      render(
+        <TitleBar variant="settings" sections={routes} activeId="one" onSelect={'select' as never} />
+      )
+    ).toThrow('TitleBar requires a controlled section callback')
+  })
+  it.each(['javascript:alert(1)', 'data:text/html,hi', 'ftp://example.org', 'https://user:pass@example.org', ' '])(
+    'should reject the unsafe destination %j before rendering a link',
+    (href) => {
+      expect(() =>
+        render(
+          <TitleBar
+            variant="settings"
+            sections={[{ id: 'route', label: 'Route', icon: null, href }]}
+            activeId="route"
+          />
+        )
+      ).toThrow('TitleBar sections require a non-empty label and destination')
+    }
+  )
+  it.each([null, undefined, 5])('should reject a %s section entry with the configuration error', (entry) => {
+    expect(() =>
+      render(
+        <TitleBar variant="settings" sections={[entry as never]} activeId="none" onSelect={() => {}} />
+      )
+    ).toThrow('TitleBar section IDs must be unique non-empty strings')
+  })
+})
+
+describe('when the bar is named without a caller label', () => {
+  it('should name Settings by its title alone, since it has no controls region', () => {
+    render(<TitleBar variant="settings" sections={sections} activeId="one" onSelect={() => {}} />)
+    expect(screen.getByRole('group', { name: 'Settings' })).toHaveAttribute('data-variant', 'settings')
+  })
+  it('should name a variant with controls after them', () => {
+    render(
+      <TitleBar
+        variant="backpack"
+        sections={sections}
+        activeId="one"
+        onSelect={() => {}}
+        controls={{ filters: null, search: null }}
+      />
+    )
+    expect(screen.getByRole('group', { name: 'Backpack controls' })).toHaveAttribute(
+      'data-variant',
+      'backpack'
+    )
   })
 })

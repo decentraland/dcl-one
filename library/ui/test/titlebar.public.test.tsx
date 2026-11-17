@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { renderToString } from 'react-dom/server'
 import { describe, it, expect } from 'vitest'
 import { TitleBar, type TitleBarProps } from '@dcl/one-ui'

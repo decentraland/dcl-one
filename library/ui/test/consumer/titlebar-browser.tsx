@@ -1,6 +1,6 @@
 import { createRoot } from 'react-dom/client'
 import { useEffect, useRef, useState } from 'react'
-import { Button, TitleBar, type TitleBarSection } from '@dcl/one-ui'
+import { Button, TitleBar, type TitleBarLinkProps, type TitleBarSection } from '@dcl/one-ui'
 import {
   GeneralGraphics,
   GeneralAudio,
@@ -62,11 +62,20 @@ const definitions: Record<typeof variant, readonly [string, string, React.ReactN
     ['names', 'Names', <GeneralName size={20} />]
   ]
 }
+// `routes=1` turns every section into a route rendered through an adapter that forwards aria-current only.
+const routes = new URLSearchParams(location.search).has('routes')
 const sections: readonly TitleBarSection[] = definitions[variant].map(([id, label, icon]) => ({
   id,
   label,
-  icon
+  icon,
+  ...(routes ? { href: '#' + id } : {})
 }))
+function RouteLink(props: TitleBarLinkProps) {
+  const anchor = { ...props }
+  delete anchor['data-active']
+  delete anchor.prefetch
+  return <a {...anchor} />
+}
 type Disclosure = ReturnType<typeof useDisclosure>
 /** One custom panel pattern for every fixture popup: the trigger toggles it, Escape closes it and returns
  * focus to the trigger, and tabbing or pressing outside both closes it. */
@@ -237,7 +246,12 @@ function App() {
       {compatibleView}
     </div>
   ) : null
-  const common = { sections, activeId, onSelect: setActiveId }
+  const common = {
+    sections,
+    activeId,
+    onSelect: setActiveId,
+    LinkComponent: routes ? RouteLink : undefined
+  }
   return (
     <main className={styles.canvas}>
       <p>

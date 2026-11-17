@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { productionBrowser } from './production-browser.helpers'
 const browser = productionBrowser('test/consumer/titlebar-browser.tsx')
-async function navigate(variant: string, width = 1920, closed = false) {
+async function navigate(variant: string, width = 1920, closed = false, routes = false) {
   await browser.session.send('Emulation.setDeviceMetricsOverride', {
     width,
     height: 900,
@@ -10,11 +10,18 @@ async function navigate(variant: string, width = 1920, closed = false) {
     mobile: false
   })
   await browser.session.navigate(
-    browser.origin + '?variant=' + variant + (closed ? '&closed=1' : '')
+    browser.origin +
+      '?variant=' +
+      variant +
+      (closed ? '&closed=1' : '') +
+      (routes ? '&routes=1' : '')
   )
-  await browser.evaluate(
-    '(async()=>{for(let n=0;n<100&&!document.querySelector("[data-variant]");n++)await new Promise(r=>setTimeout(r,20));await document.fonts.ready})()'
-  )
+  expect(
+    await browser.evaluate(
+      '(async()=>{for(let n=0;n<100&&!document.querySelector("[data-variant]");n++)await new Promise(r=>setTimeout(r,20));await document.fonts.ready;return !!document.querySelector("[data-variant]")})()'
+    ),
+    'the ' + variant + ' fixture should mount'
+  ).toBe(true)
 }
 for (const variant of ['backpack', 'settings', 'events', 'places', 'shop'])
   describe('when rendering the native ' + variant + ' toolbar', () => {
@@ -408,6 +415,11 @@ describe('when forced colors replace selected text and backgrounds', () => {
           features: [{ name: 'forced-colors', value: 'active' }]
         })
         try {
+          expect(
+            await browser.evaluate(
+              `[...document.querySelectorAll('[data-region=primary] [role=group] > :not([data-active])')].map(e=>{const s=getComputedStyle(e);return s.borderTopStyle+' '+s.borderTopWidth+' '+(s.borderTopColor==='rgba(0, 0, 0, 0)')})`
+            )
+          ).toEqual(Array(4).fill('solid 1px false'))
           await tab()
           const after = await browser.evaluate<{
             rect: { x: number; y: number; width: number; height: number }
@@ -437,6 +449,57 @@ describe('when forced colors replace selected text and backgrounds', () => {
       }
     )
 })
+
+const sectionBoxes = `[...document.querySelector('[data-region=primary] h2').nextElementSibling.children].map(e=>{const r=e.getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height}})`
+for (const variant of ['settings', 'shop'])
+  describe(
+    'when the ' + variant + ' sections are routes from an adapter that forwards only aria-current',
+    () => {
+      for (const width of [390, 1920])
+        it(
+          'should expose a navigation landmark and keep the button geometry and selected paint at ' +
+            width,
+          async () => {
+            await navigate(variant, width, true)
+            const buttons = await browser.evaluate<{ height: number }[]>(sectionBoxes)
+            await navigate(variant, width, true, true)
+            const route = await browser.evaluate<{
+              landmark: string | null
+              links: number
+              current: string[]
+              dataActive: number
+              selected: string
+            }>(
+              `(()=>{const n=document.querySelector('[data-region=primary] nav'),c=n&&n.querySelector('[aria-current=page]');return{landmark:n&&n.getAttribute('aria-label'),links:n?n.querySelectorAll('a[href]').length:0,current:[...document.querySelectorAll('[aria-current=page]')].map(e=>e.textContent),dataActive:document.querySelectorAll('[data-active]').length,selected:c&&getComputedStyle(c).backgroundColor}})()`
+            )
+            expect(route).toEqual({
+              landmark: (variant === 'settings' ? 'Settings' : 'Shop') + ' sections',
+              links: buttons.length,
+              current: [variant === 'settings' ? 'Graphics' : 'All'],
+              dataActive: 0,
+              selected: 'rgb(255, 116, 57)'
+            })
+            expect(await browser.evaluate(sectionBoxes)).toEqual(buttons)
+            for (const box of buttons) expect(box.height).toBe(44)
+          }
+        )
+      it('should keep the route boundary and selected cue under forced colors', async () => {
+        await navigate(variant, 1920, true, true)
+        await browser.session.send('Emulation.setEmulatedMedia', {
+          features: [{ name: 'forced-colors', value: 'active' }]
+        })
+        try {
+          expect(
+            await browser.evaluate(
+              `(()=>{const c=document.querySelector('[aria-current=page]'),o=document.querySelector('nav a:not([aria-current])'),p=getComputedStyle(c,'::after'),b=getComputedStyle(o);return{cue:p.borderTopStyle+' '+p.borderTopWidth,boundary:b.borderTopStyle+' '+b.borderTopWidth+' '+(b.borderTopColor==='rgba(0, 0, 0, 0)')}})()`
+            )
+          ).toEqual({ cue: 'solid 2px', boundary: 'solid 1px false' })
+        } finally {
+          await browser.session.send('Emulation.setEmulatedMedia', { features: [] })
+        }
+      })
+    }
+  )
 
 async function press(key: string, code: string, windowsVirtualKeyCode: number) {
   for (const type of ['keyDown', 'keyUp'])

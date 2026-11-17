@@ -21,12 +21,11 @@
     min-width: 0;
     max-width: 100%;
   }
+  /* explorer/title (36px/600) at the 44px line box of the Figma frame. */
   .title {
-    composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+    composes: text6578706c6f7265722f7469746c65 from '../../foundations/typography/text-styles.module.css';
     flex: none;
     margin: 0;
-    font-size: 36px;
-    font-weight: 600;
     line-height: 44px;
     overflow-wrap: anywhere;
     max-width: 100%;
@@ -44,10 +43,11 @@
     gap: 10px;
   }
   /* Figma title-bar (16959:168) toggle-icon-text-button, explorer product: body/md-strong label, 20px icon,
-     8px gap, 16px inline padding. The 44px minimum keeps the native target (Figma draws 42px). */
+     8px gap, 16px inline padding (15px inside a 1px transparent border that forced colors draw as the target
+     boundary). The 44px minimum keeps the native target (Figma draws 42px). */
   .section {
-    position: relative;
     composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+    position: relative;
     box-sizing: border-box;
     display: inline-flex;
     align-items: center;
@@ -56,9 +56,9 @@
     gap: var(--dcl-space-8);
     min-height: 44px;
     max-width: 100%;
-    border: 0;
+    border: 1px solid transparent;
     border-radius: var(--dcl-radius-md);
-    padding: 0 var(--dcl-space-16);
+    padding: 0 calc(var(--dcl-space-16) - 1px);
     background: var(--dcl-transparencies-white-10);
     color: var(--dcl-neutrals-snow);
     text-align: start;
@@ -66,7 +66,8 @@
     overflow-wrap: anywhere;
     cursor: pointer;
   }
-  .section[data-active] {
+  /* aria-current also covers route adapters that forward it but not data-active. */
+  .section:is([data-active], [aria-current='page']) {
     background: var(--dcl-primary-alt-primary-alt);
     color: var(--dcl-neutrals-snow);
   }
@@ -108,7 +109,7 @@
   .filterMenu {
     position: absolute;
     top: calc(100% + var(--dcl-space-12));
-    left: 0;
+    inset-inline-start: 0;
     z-index: 1;
     width: 240px;
     max-width: calc(100vw - 40px);
@@ -117,10 +118,13 @@
 
 @layer dcl.components {
   @media (forced-colors: active) {
-    .section[data-active]::after {
+    .section {
+      border-color: CanvasText;
+    }
+    .section:is([data-active], [aria-current='page'])::after {
       content: '';
       position: absolute;
-      inset: 2px;
+      inset: 1px;
       border: 2px solid CanvasText;
       border-radius: inherit;
       pointer-events: none;
