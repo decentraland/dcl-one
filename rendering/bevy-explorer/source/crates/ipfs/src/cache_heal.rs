@@ -15,7 +15,7 @@ mod tests;
 use std::{
     collections::{HashMap, HashSet},
     path::Path,
-    sync::Mutex,
+    sync::{Mutex, PoisonError},
 };
 
 use bevy::{
@@ -73,7 +73,7 @@ impl CacheHeals {
     /// Claims the one check `name` gets this session: false when it had it, or when the session
     /// is past [`MAX_CACHE_HEALS`].
     fn begin(&self, name: &str) -> bool {
-        let mut checked = self.0.lock().unwrap();
+        let mut checked = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         if checked.contains_key(name) || checked.len() >= MAX_CACHE_HEALS {
             return false;
         }
@@ -83,18 +83,27 @@ impl CacheHeals {
 
     /// Records what the check of `name` found.
     fn finish(&self, name: &str, dropped: bool) {
-        if let Some(check) = self.0.lock().unwrap().get_mut(name) {
+        if let Some(check) = self
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_mut(name)
+        {
             *check = if dropped { Check::Dropped } else { Check::Kept };
         }
     }
 
     fn state(&self, name: &str) -> Option<Check> {
-        self.0.lock().unwrap().get(name).copied()
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(name)
+            .copied()
     }
 
     /// (entries checked, entries dropped) this session.
     pub(crate) fn counts(&self) -> (usize, usize) {
-        let checked = self.0.lock().unwrap();
+        let checked = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         (
             checked.len(),
             checked.values().filter(|c| **c == Check::Dropped).count(),
