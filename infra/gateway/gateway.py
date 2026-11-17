@@ -102,14 +102,22 @@ def upstream(value):
     return f"{host}:{int(port)}"
 
 
+ESCAPE_LITERAL = str.maketrans({".": "\0", "_": "\1", "$": "\2"})
+RESTORE_LITERAL = str.maketrans({"\0": ".", "\1": "_", "\2": "$"})
+
+
 def site_prefixes(files):
     prefixes = set()
     for name in files:
-        parts = re.sub(r"\.tsx?$", "", name).split(".")
+        # A bracketed segment is literal (robots[.]txt.ts serves /robots.txt): its ".", "_" and "$"
+        # neither split segments nor end the prefix.
+        stem = re.sub(r"\[([^\]]*)\]", lambda m: m.group(1).translate(ESCAPE_LITERAL),
+                      re.sub(r"\.tsx?$", "", name))
+        parts = stem.split(".")
         if parts[0].startswith(("$", "_")):
             continue
         parts = parts[:2] if parts[0] == "api" else parts[:1]
-        parts = [re.split(r"[_$]", part)[0] for part in parts]
+        parts = [re.split(r"[_$]", part)[0].translate(RESTORE_LITERAL) for part in parts]
         if all(parts):
             prefixes.add("/" + "/".join(parts))
     return sorted(prefixes)
@@ -319,11 +327,19 @@ def render(table, cfg, mime):
     for prefix in prefixes:
         if prefix in ("/admin", "/server"):
             continue
-        # The Cast not-found page is the exact /cast; /cast/ stays the gatekeeper's (root-aliases.nix).
-        locations += location("= /cast", proxy("sites")) if prefix == "/cast" else pair(prefix, "sites")
+        # The Cast pages are the exact /cast and the stream and watch links (/cast/s/, /cast/w/,
+        # longer than the gatekeeper's ^~ /cast/); the rest of /cast/ stays the gatekeeper's
+        # (root-aliases.nix).
+        if prefix == "/cast":
+            locations += location("= /cast", proxy("sites"))
+            for page in ("/cast/s/", "/cast/w/"):
+                locations += location("^~ " + page, proxy("sites"))
+        else:
+            locations += pair(prefix, "sites")
     for path in ("/", "/favicon.ico", "/dcl-sdk-types.json", "/docs/index.md", "/_root.data",
                  "/terms", "/privacy", "/content-policy", "/ethics", "/rewards", "/rewards-terms",
-                 "/referral", "/referral-terms", "/credits-terms", "/security", "/brand"):
+                 "/creator-fund-terms", "/referral", "/referral-terms", "/credits-terms", "/security",
+                 "/brand"):
         locations += location("= " + path, proxy("sites"))
     # The Content Policy page on the apex host; on every other host (peer., worlds., content.)
     # /content stays the content server's.

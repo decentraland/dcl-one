@@ -24,7 +24,7 @@ export function meta() {
 }
 
 const INVALID = "/jump/events/invalid";
-const EVENTS_HREF = "/whats-on";
+const EVENTS_HREF = "/events";
 
 /** An unknown id, a malformed position or no event at the target lands on the invalid page; a failed read is a 503. */
 export async function loader({ request }: Route.LoaderArgs) {

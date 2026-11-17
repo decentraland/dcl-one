@@ -252,10 +252,11 @@ export async function fetchPlacePhotos(placeId: string, offset: number): Promise
   return { images, total }
 }
 
-let fixedPublicReads: { pois: Vec2[]; peers: Peer[] } | null = null
+/** `worlds`: the World each wallet (lowercase) is connected to; a wallet not in it is in none. */
+let fixedPublicReads: { pois: Vec2[]; peers: Peer[]; worlds?: Record<string, string> } | null = null
 
 /** Answer the unsigned reads from fixed data instead of the network (the HUD's mock mode). */
-export function fixMapPublicReads(data: { pois: Vec2[]; peers: Peer[] } | null): void {
+export function fixMapPublicReads(data: { pois: Vec2[]; peers: Peer[]; worlds?: Record<string, string> } | null): void {
   fixedPublicReads = data
 }
 
@@ -285,9 +286,15 @@ export interface Peer {
   z: number
 }
 
-export async function fetchPeers(signal?: AbortSignal): Promise<Peer[]> {
-  if (fixedPublicReads != null) return fixedPublicReads.peers
-  const res = await fetch(`${serviceUrl('archipelagoStats')}/comms/peers`, { signal })
+/** The connected players, or with `id` only that wallet's entry. The stats service matches `id`
+ *  exactly, and its addresses are lowercase, so the id is sent lowercased. */
+export async function fetchPeers(signal?: AbortSignal, id?: string): Promise<Peer[]> {
+  const wanted = id?.toLowerCase()
+  if (fixedPublicReads != null) {
+    return wanted == null ? fixedPublicReads.peers : fixedPublicReads.peers.filter((p) => p.address.toLowerCase() === wanted)
+  }
+  const query = wanted == null ? '' : `?id=${encodeURIComponent(wanted)}`
+  const res = await fetch(`${serviceUrl('archipelagoStats')}/comms/peers${query}`, { signal })
   if (!res.ok) {
     await res.body?.cancel()
     throw new Error(`The connected players list returned ${res.status}`)
@@ -302,4 +309,18 @@ export async function fetchPeers(signal?: AbortSignal): Promise<Peer[]> {
     if (Number.isFinite(x) && Number.isFinite(z)) out.push({ address, x, z })
   }
   return out
+}
+
+/** The World a wallet is connected to (the worlds server's `/wallet/{wallet}/connected-world`),
+ *  or null when it is in none. */
+export async function fetchConnectedWorld(address: string, signal?: AbortSignal): Promise<string | null> {
+  if (fixedPublicReads != null) return fixedPublicReads.worlds?.[address.toLowerCase()] ?? null
+  const res = await fetch(`${serviceUrl('worldsServer')}/wallet/${encodeURIComponent(address)}/connected-world`, { signal })
+  if (!res.ok) {
+    await res.body?.cancel()
+    if (res.status === 404) return null
+    throw new Error(`The connected world read returned ${res.status}`)
+  }
+  const { world } = (await res.json()) as { world?: unknown }
+  return typeof world === 'string' && world !== '' ? world : null
 }

@@ -16,6 +16,7 @@ export type {
 export type LegalKey =
   | "brand"
   | "content"
+  | "creatorFund"
   | "ethics"
   | "rewards"
   | "credits"

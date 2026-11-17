@@ -138,6 +138,36 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('bash tooling/dev-smoke.sh', smoke)
         self.assertIn('bash tooling/dev-test.sh e2e', smoke)
 
+    def test_header_geometry_control_requires_the_original_missing_port_evidence(self):
+        web = jobs()['web']
+        original = re.search(r'(?ms)^      - name: Run Sites unit tests\n(.*?)(?=^      - |\Z)', web).group(1)
+        self.assertIn('id: sites-tests', original)
+        self.assertIn('run: nix develop --command pnpm --dir apps/sites test\n', original)
+        self.assertNotIn('continue-on-error', original)
+        control = re.findall(r'(?ms)^      - name: Diagnose isolated header geometry startup\n(.*?)(?=^      - |\Z)', web)
+        self.assertEqual(len(control), 1)
+        control = control[0]
+        self.assertIn('timeout-minutes: 4', control)
+        self.assertNotIn('continue-on-error', control)
+        self.assertNotIn('|', control)
+        self.assertIn('run: nix develop --command pnpm --dir apps/sites test src/features/components/chrome/header-geometry.test.ts\n', control)
+        self.assertLess(web.index('name: Run Sites unit tests'), web.index('name: Diagnose isolated header geometry startup'))
+        expression = re.search(r'^        if: \$\{\{ (.*?) \}\}$', control, re.M).group(1)
+        expression = expression.replace('&&', 'and')
+        expression = expression.replace('steps.sites-tests.outcome', 'outcome')
+        expression = expression.replace('steps.sites-tests.outputs.capture-missing-port', 'evidence')
+        for failed, outcome, evidence, expected in (
+            (True, 'failure', 'true', True),
+            (True, 'failure', '', False),
+            (True, 'success', 'true', False),
+            (False, 'cancelled', 'true', False),
+            (False, 'success', '', False),
+        ):
+            with self.subTest(failed=failed, outcome=outcome, evidence=evidence):
+                self.assertEqual(bool(eval(expression, {'__builtins__': {}}, {
+                    'failure': lambda: failed, 'outcome': outcome, 'evidence': evidence,
+                })), expected)
+
     def test_no_privileged_job_takes_its_runner_from_a_variable(self):
         # The RUNNER_* variables can name a fork's own runners. A job with a write permission, an
         # environment or a secret names its hosted label instead, so its token and its secrets
@@ -294,6 +324,11 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             {'id': 17, 'ref': 'refs/pull/11/merge', 'key': bevy + 'old'},
             {'id': 18, 'ref': 'refs/pull/11/merge', 'key': bevy + 'new'},
             {'id': 19, 'ref': 'refs/heads/main', 'key': 'v0-rust-e2e-scene-cli-scene-cli-Windows_NT-x64-only'},
+            {'id': 20, 'ref': 'refs/heads/main', 'key': 'bevy-web-unopt-v1-main-' + 'a' * 64 + '-' + '1' * 64},
+            {'id': 21, 'ref': 'refs/heads/main', 'key': 'bevy-web-unopt-v1-main-' + 'b' * 64 + '-' + '2' * 64},
+            {'id': 22, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
+            {'id': 23, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'c' * 64},
+            {'id': 24, 'ref': 'refs/pull/10/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
         ]
         def api(args, **kwargs):
             if any(arg.endswith('/actions/caches') for arg in args):
@@ -316,6 +351,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             'repos/decentraland/dcl-one/actions/caches/12',
             'repos/decentraland/dcl-one/actions/caches/15',
             'repos/decentraland/dcl-one/actions/caches/17',
+            'repos/decentraland/dcl-one/actions/caches/20',
+            'repos/decentraland/dcl-one/actions/caches/22',
+            'repos/decentraland/dcl-one/actions/caches/24',
         ])
         self.assertEqual(listing.call_count, 3, 'one state lookup per PR, regardless of cache count')
 

@@ -1,4 +1,5 @@
-import type { ComponentType, CSSProperties, ReactNode } from 'react'
+import type { ComponentType, CSSProperties, MouseEvent, ReactNode } from 'react'
+import { preload } from 'react-dom'
 import { Skeleton } from '../Skeleton/Skeleton'
 import styles from './PlaceCard.module.css'
 
@@ -6,7 +7,7 @@ import styles from './PlaceCard.module.css'
 export type PlaceCardLinkProps = {
   to: string
   className?: string
-  onClick?: () => void
+  onClick?: (event: MouseEvent<HTMLAnchorElement>) => void
   children?: ReactNode
 }
 export type PlaceCardLink = ComponentType<PlaceCardLinkProps>
@@ -36,9 +37,13 @@ export type PlaceCardProps = {
   /** Where JUMP IN goes. Without it the card has no JUMP IN and keeps its details on hover. */
   jumpHref?: string
   image?: string
+  /** Fetches the cover early and at high priority, for the card that is the page's largest paint. */
+  priority?: boolean
   players?: number
   /** Show the presence count; by default only when someone is in the place. */
   showPlayers?: boolean
+  /** Names the presence count for assistive technology, e.g. "12 online"; the bare number without it. */
+  playersLabel?: string
   live?: boolean
   /** The LIVE badge's text. */
   liveLabel?: string
@@ -53,7 +58,10 @@ export type PlaceCardProps = {
   byLabel?: string
   jumpLabel?: string
   Link?: PlaceCardLink
-  onOpen?: () => void
+  /** Runs on a click of the title link, before `href` is followed, e.g. to open the place in place. */
+  onOpen?: (event: MouseEvent<HTMLAnchorElement>) => void
+  /** Runs on a click of JUMP IN, before `jumpHref` is followed, e.g. to launch a native app instead. */
+  onJumpIn?: (event: MouseEvent<HTMLAnchorElement>) => void
 }
 
 function Anchor({ to, className, onClick, children }: PlaceCardLinkProps) {
@@ -86,8 +94,10 @@ export function PlaceCard({
   href,
   jumpHref,
   image,
+  priority = false,
   players = 0,
   showPlayers = players > 0,
+  playersLabel,
   live = false,
   liveLabel = 'LIVE',
   liveEventName,
@@ -98,8 +108,11 @@ export function PlaceCard({
   byLabel = 'By',
   jumpLabel = 'Jump in',
   Link = Anchor,
-  onOpen
+  onOpen,
+  onJumpIn
 }: PlaceCardProps) {
+  // The cover is a CSS background, so it has no <img> to mark eager; a high-priority preload stands in.
+  if (priority && image && !loading) preload(image, { as: 'image', fetchPriority: 'high' })
   if (loading) {
     return (
       <div className={styles.container} role="progressbar" aria-label={loadingLabel} aria-busy="true">
@@ -109,7 +122,7 @@ export function PlaceCard({
       </div>
     )
   }
-  const badges = { players, showPlayers, live, liveLabel, liveEventName, featured, featuredLabel }
+  const badges = { players, showPlayers, playersLabel, live, liveLabel, liveEventName, featured, featuredLabel }
   const cover = image ? coverStyle(image) : undefined
   const heading = { title, href, Link, onOpen }
   if (variant === 'live') {
@@ -134,6 +147,7 @@ export function PlaceCard({
                 <Jump
                   href={jumpHref}
                   label={jumpLabel}
+                  onClick={onJumpIn}
                   className={styles.liveJump}
                   glyphClassName={styles.liveJumpGlyph}
                 />
@@ -170,6 +184,7 @@ export function PlaceCard({
               <Jump
                 href={jumpHref}
                 label={jumpLabel}
+                onClick={onJumpIn}
                 className={styles.jump}
                 glyphClassName={styles.jumpGlyph}
               />
@@ -192,7 +207,7 @@ function Title({
   title: string
   href: string | undefined
   Link: PlaceCardLink
-  onOpen: (() => void) | undefined
+  onOpen: ((event: MouseEvent<HTMLAnchorElement>) => void) | undefined
   className: string | undefined
 }) {
   return (
@@ -215,16 +230,18 @@ function Title({
 function Jump({
   href,
   label,
+  onClick,
   className,
   glyphClassName
 }: {
   href: string
   label: string
+  onClick: ((event: MouseEvent<HTMLAnchorElement>) => void) | undefined
   className: string | undefined
   glyphClassName: string | undefined
 }) {
   return (
-    <a className={className} href={href}>
+    <a className={className} href={href} onClick={onClick}>
       {label}
       <JumpInGlyph className={glyphClassName} />
     </a>
@@ -234,6 +251,7 @@ function Jump({
 function Badges({
   players,
   showPlayers,
+  playersLabel,
   live,
   liveLabel,
   liveEventName,
@@ -244,6 +262,7 @@ function Badges({
   Required<PlaceCardProps>,
   'players' | 'showPlayers' | 'live' | 'liveLabel' | 'featured' | 'featuredLabel'
 > & {
+  playersLabel?: string
   liveEventName?: string
   medalClassName: string | undefined
 }) {
@@ -260,7 +279,14 @@ function Badges({
           <div className={styles.count}>
             <div className={styles.dot} />
             <Icon d={PERSON} name="PermIdentityRoundedIcon" />
-            {players}
+            {playersLabel ? (
+              <>
+                <span aria-hidden="true">{players}</span>
+                <span className={styles.visuallyHidden}>{playersLabel}</span>
+              </>
+            ) : (
+              players
+            )}
           </div>
         )}
       </div>

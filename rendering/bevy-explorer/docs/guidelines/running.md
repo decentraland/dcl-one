@@ -81,10 +81,10 @@ pinned Rust, protoc, CEF and platform libraries, including `CEF_PATH`. With thos
 
 ```sh
 sh scripts/gen-ts-bindings.sh
-corepack pnpm@11.27.0 --dir react-web install --frozen-lockfile --ignore-scripts
-corepack pnpm@11.27.0 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
-corepack pnpm@11.27.0 --dir react-web/bridge-scene --filter @dcl/hashing build
-corepack pnpm@11.27.0 --dir react-web run bundle:native
+corepack pnpm@12.21.0 --dir react-web install --frozen-lockfile --ignore-scripts
+corepack pnpm@12.21.0 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
+corepack pnpm@12.21.0 --dir react-web/bridge-scene --filter @dcl/hashing build
+corepack pnpm@12.21.0 --dir react-web run bundle:native
 cargo build --release --locked --package dcl_deno_ipc
 cargo build --release --locked
 ```
@@ -222,25 +222,34 @@ State, in every build:
   waits for it to turn true after filling a field and false after leaving one (null where the
   client takes no input).
 - `/avatar_state [all|<address>]`: avatars as selected (body shape, wearables, emotes, forced
-  slots), as rendered (built or not, wearables by category, hidden categories) and the emote
+  slots), as rendered (built or not, wearables by category, hidden categories), the files it
+  could not be built from (`loadFailures`: bodies and wearables its builds leave out, `noBody`
+  when neither its body nor the default body could be built) and the emote
   each plays (with `idle`: whether a triggered emote may take over, which a scene's non-idle
   movement animation does not let it), as a JSON array; the player's by default. The HUD's preview avatars are tagged
   `preview`. Rendered URNs are normalised (lowercase, default wearables included); selected ones
   are as written. The HUD uses `/avatar_state --panel` for a single local-player report.
   It shows the completed model while a replacement loads and explains missing readings.
+- `/spring_bones`: the spring chains of the player's built avatar: `chains`, `joints` (spring
+  bones in them) and `longest_chain`, each `null` with a reason in `unavailable` until the avatar
+  is built. A wearable's own bones (hair, tails, capes) form the chains, each running from parent
+  to child off a body bone, or off the bone it forks from. The Spring bones debug section reads
+  it.
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
 - `/voice_state`: the mic (`available`, `enabled`, and `sceneBlocked` while the scene the player
   stands in turns nearby voice off) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
-- `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown` and
-  `hidden` (the players' tags that show, and those that don't), `atlas` (the glyph atlas' distance-field and colour page sizes, in
+- `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown`,
+  `sceneAvatars` (of those shown, the tags over a scene's avatars) and `hidden` (the tags that
+  don't show), `atlas` (the glyph atlas' distance-field and colour page sizes, in
   pixels), `bubbles` (the chat bubble setting) and `tags`, one per shown tag: `player` (an
-  address, `local`, or null for an avatar with no wallet), `name`, `suffix`, `verified`,
+  address, `local`, or null for an avatar with no wallet), `sceneAvatar` (the tag is over an
+  avatar a scene made with `AvatarShape`), `name`, `suffix`, `verified`,
   `official`, `voice` (`off`, `idle`, `speaking`, `hushed`), `distance` from the camera in metres,
-  `opacity`, `scale` (metres per tag unit), `position` (all four as the shader works them out), `headOffset` (metres over the head bone;
-  null until the avatar is built) and `bubble` (null, or its `kind`,
+  `opacity`, `scale` (metres per tag unit), `position` (all four as the shader works them out), `headOffset` (metres over the head bone for
+  an avatar at a scale of one; null until the avatar is built) and `bubble` (null, or its `kind`,
   `mention` and message `length`; never the message).
   `/nametag_bubble <local|all|address> <nearby|community|dm> <message>` shows a message in a chat
   bubble over the nametags it names, locally only; `/chat_bubble_text <message id> <message>`
@@ -339,7 +348,9 @@ The HUD and input:
 - `/hud_logout` (web, under a test runner as `/hud_login` is): sign out through the HUD's own
   flow, the engine included, back to the HUD's start page, where `/hud_login` takes a sign-in
   again; a `/hud_login` still waiting for its answer fails with `signed out`. The engine's
-  `/logout` never reaches the HUD, which stays signed in and refuses a new `/hud_login`. A sign-in
+  `/logout` never reaches the HUD, which stays signed in and refuses a new `/hud_login`.
+  `/logout --forget` also drops the sign-in the engine keeps, so the next start opens on sign-in;
+  the HUD's Sign Out sends it, and a cancelled sign-in sends `/logout` alone. A sign-in
   the engine still holds keeps the next one waiting (`a sign-in is still finishing`) until the
   engine answers it; one it never answers needs a page reload.
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and

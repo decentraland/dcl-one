@@ -38,8 +38,8 @@ use super::chain_walk::{self, ChainNet, INDEXER_NFT, INDEXER_SALES, INDEXER_TRAD
 use super::notice_cursor;
 use super::trade_events::{self, AssetMeta, StoredTrade};
 use crate::shared::identity::Address;
-use crate::social::notifications::templates::format_mana;
-use crate::social::notifications::{NewNotification, insert_notifications};
+use crate::shared::notifications::format_mana;
+use crate::shared::notifications::{NewNotification, insert_notifications};
 use crate::types::{
     ASSET_TYPE_COLLECTION_ITEM, ASSET_TYPE_ERC20, ASSET_TYPE_ERC721, ASSET_TYPE_USD_PEGGED_MANA,
 };

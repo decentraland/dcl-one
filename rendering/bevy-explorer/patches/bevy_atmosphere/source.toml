@@ -6,8 +6,8 @@ origin     = "https://github.com/robtfm/bevy_atmosphere"
 origin_rev = "d18523c8fdecb1847b4f6f82a597752207373cc2"
 license    = "MIT OR Apache-2.0"
 paths      = ["."]
-exclude    = []
-base_tree  = "8b15945c44f8cc4fa8bd15c2222c5bcad445ba36"
-tree       = "1454878c38d8236cbf33ea8eb08bd653422ef1b6"
-rev        = "79e3d19b1a128dd8f9983771930c29ea71580387"
+exclude    = [".github"]
+base_tree  = "3b2cc014d3d367980dc4c24cb1024d452fc9c52e"
+tree       = "68206e52bed0829544bb3439d8345708e0013ee6"
+rev        = "2983bf4300c7b0fcfeaef445d19665cd93fb1353"
 nix_hash   = "sha256-ODATsWOBC5qfcYCYCZgp/Nc2sgBQplY1rdbVVqbe+DY="
