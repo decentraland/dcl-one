@@ -475,7 +475,7 @@ export default function StWhatSOn({
   notice = null,
 }: StWhatSOnProps) {
   return (
-    <SitesChromeMaybe chrome={chrome} active="play" overlayNav>
+    <SitesChromeMaybe chrome={chrome} active="whatson" overlayNav>
       <div className="wo">
         <picture>
           <source media="(min-width: 600px)" srcSet={asset("assets/whatson-top.webp")} />

@@ -813,7 +813,7 @@ export function NavBar({
                 <path d="M3 6h18M3 12h18M3 18h18" />
               </svg>
             )}
-            {drawerOpen ? <GeneralClose size={24} aria-hidden="true" /> : null}
+            {drawerOpen ? <GeneralClose size={30} aria-hidden="true" /> : null}
           </button>
         </div>
         {drawerOpen ? (
@@ -829,7 +829,7 @@ export function NavBar({
           >
             <ul className={styles.drawerSections}>
               {sections.map((section, index) => (
-                <li key={index}>
+                <li key={index} className={styles.drawerSection}>
                   {section.items ? (
                     <>
                       <p className={styles.drawerGroup}>{section.label}</p>
@@ -838,7 +838,7 @@ export function NavBar({
                           <li key={itemIndex}>
                             {renderLink({
                               href: item.href,
-                              className: styles.drawerLink,
+                              className: styles.drawerItemLink,
                               'aria-current': item.active ? 'page' : undefined,
                               onClick: closeDrawer,
                               children: item.label
