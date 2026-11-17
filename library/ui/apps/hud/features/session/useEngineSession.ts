@@ -9,7 +9,7 @@ import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
 import { recordVisit } from '@explorer-core/features/lobby/lobbyApi'
 import type { PortableInfo, PortableState, SatelliteView } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
-import type { EngineViewportRegion, PhotoModeSnapshot, PhotoModeSource, PreviewFocus } from '@explorer-core/engine/protocol'
+import type { EngineViewportRegion, GiftingPageMessage, GiftingQueryRequest, PhotoModeSnapshot, PhotoModeSource, PreviewFocus } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
 import { useStoredProfile } from '../login/useStoredProfile'
 import { inShell, postToShell } from '@explorer-core/lib/shell'
@@ -194,6 +194,9 @@ function parseTimeReply(reply: string): { hours: number; speed: number } | null 
 
 // Unity's wording (BackpackEquipStatusController's in-world warning) when a profile deploy fails.
 export const SAVE_FAILED_MESSAGE = 'There was an error updating your avatar profile. Please try again.'
+
+/** A gift picker page request, without the id the session adds. */
+export type GiftingQuery = Omit<GiftingQueryRequest, 'kind' | 'requestId'>
 
 /** A server-side catalog page request (backpack grid). Filters/sort are applied by the catalyst. */
 export interface CatalogQuery {
@@ -931,7 +934,7 @@ export const BRIDGE_CALL_TIMEOUT_MS = 30_000
 // camera-reel-service deletes the photo and its thumbnail from S3 in turn, up to 15 s each.
 export const GALLERY_DELETE_TIMEOUT_MS = 60_000
 
-type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage
+type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage | GiftingPageMessage
 
 export type LoginStatus =
   | 'loading'
@@ -1113,6 +1116,9 @@ export interface EngineSession {
   skybox: SkyboxState
   emotes: EmotesState
   backpack: BackpackState
+  /** One page of the player's owned on-chain wearables or emotes for the gift picker; answers a failed page when
+   *  the engine is gone. */
+  queryGifting: (q: GiftingQuery) => Promise<GiftingPageMessage>
   communities: CommunitiesState
   map: MapState
   minimap: MinimapState
@@ -2534,7 +2540,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'gallery':
         case 'galleryWrite':
-        case 'externalUrlOpened': {
+        case 'externalUrlOpened':
+        case 'giftingPage': {
           const resolve = bridgePendingRef.current.get(msg.requestId)
           bridgePendingRef.current.delete(msg.requestId)
           resolve?.(msg)
@@ -3805,6 +3812,20 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setCatalogLoading(true)
     driverRef.current?.send({ kind: 'catalogQuery', catalog: 'wearables', requestId: catalogReqId.current, ...q })
   }, [])
+  // A page the bridge never answers (or no engine) reads as a failed one.
+  const queryGifting = useCallback(
+    async (q: GiftingQuery): Promise<GiftingPageMessage> =>
+      (await bridgeCall('giftingPage', (requestId) => ({ kind: 'giftingQuery', requestId, ...q }))) ?? {
+        kind: 'giftingPage',
+        catalog: q.catalog,
+        items: [],
+        total: 0,
+        equipped: [],
+        failed: true,
+        requestId: 0
+      },
+    [bridgeCall]
+  )
   const saveOutfit = useCallback((slot: number) => {
     driverRef.current?.send({ kind: 'saveOutfit', slot })
   }, [])
@@ -5035,6 +5056,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       markAllRead: markNotificationsRead
     },
     emotes: { list: emotes, open: emotesOpen, toggle: toggleEmotes, play: playEmote, equip: equipEmote },
+    queryGifting,
     backpack: {
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
       equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, stage: stagePreview, emote: emotePreview, rotate: rotatePreview, zoom: zoomPreview, forceRender, setForceRender,

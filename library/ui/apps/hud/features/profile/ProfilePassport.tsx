@@ -8,7 +8,8 @@
 // (badges/info/mutuals) by address; the 2D picture is the fallback meanwhile.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, Button, Close, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, Pencil, ReportFlag, ScrollThumb, Search, Spinner, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem, NameSeal } from '../../design'
+import { Avatar, BlockUserIcon, Button, Close, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, MaskIcon, Pencil, ReportFlag, ScrollThumb, Search, Spinner, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem, NameSeal } from '../../design'
+import giftIcon from '../../assets/gifting/gift.png'
 import jumpInIcon from '../../assets/friends/jump-in.png'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { fetchCreations, marketplaceUrl, type CreationItem, type Creations } from '@explorer-core/features/shop/shopApi'
@@ -349,6 +350,7 @@ export function ProfilePassport({
   onBlock,
   onReport,
   onJump,
+  onGift,
   inviteItems = [],
   onClose,
   onDirtyChange,
@@ -379,6 +381,8 @@ export function ProfilePassport({
   /** Travel to where this friend is; set only for a friend who is not offline (unity-explorer's
    *  Jump to Location, in the header and first in the options menu). */
   onJump?: (address: string) => void
+  /** Open the gift picker for this user; absent where this session can't gift. */
+  onGift?: (address: string) => void
   /** The Invite to Community submenu's communities; the option shows only when there are some. */
   inviteItems?: ContextMenuItem[]
   onClose: () => void
@@ -415,6 +419,8 @@ export function ProfilePassport({
   if (!isSelf && onJump != null) {
     options.push({ label: 'Jump to Location', icon: <img src={jumpInIcon} alt="" width={16} height={16} />, onClick: pick(onJump) })
   }
+  // before Block, as the reference client's menu
+  if (!isSelf && onGift != null) options.push({ label: 'Gift', icon: <MaskIcon src={giftIcon} size={16} />, onClick: pick(onGift) })
   if (!isSelf && relationship !== 'blocked' && onBlock != null) {
     options.push({ label: 'Block', icon: <BlockUserIcon />, danger: true, onClick: pick(onBlock) })
   }

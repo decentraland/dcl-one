@@ -294,8 +294,25 @@ fn environment_command(
     let Some(Ok(_)) = command.take() else { return };
     let sun_scene = light.source.filter(|scene| suns.contains(*scene));
     let sun = sun_scene.and_then(|scene| suns.get(scene).ok());
-    let mut report = serde_json::json!({
-        "scene": state.skybox.or(state.fog).or(sun_scene).map(|e| e.to_bits().to_string()),
+    command.reply_ok(environment_reading(&state, &light, sun_scene, sun).to_string());
+}
+
+/// The scene overrides in force. A field the scenes leave unset reads null, explained by the one
+/// default entry under `unavailable`.
+fn environment_reading(
+    state: &SceneEnvironment,
+    light: &SceneGlobalLight,
+    sun_scene: Option<Entity>,
+    sun: Option<&Sun>,
+) -> serde_json::Value {
+    let scene = state.skybox.or(state.fog).or(sun_scene);
+    let reason = if scene.is_some() {
+        "No override for this field; using renderer defaults."
+    } else {
+        "No active scene environment overrides."
+    };
+    serde_json::json!({
+        "scene": scene.map(|e| e.to_bits().to_string()),
         "textureState": if state.texture_state.is_empty() { "unset" } else { state.texture_state },
         "sunVisible": sun.and_then(|sun| sun.visible).unwrap_or(true),
         "sunIntensity": sun.and_then(|sun| sun.intensity).unwrap_or(1.0),
@@ -311,34 +328,8 @@ fn environment_command(
         "cloudSpeed": state.cloud_speed,
         "cloudOpacity": state.cloud_opacity,
         "starsBrightness": state.star_brightness,
-    });
-    explain_unset(&mut report);
-    command.reply_ok(report.to_string());
-}
-
-/// A null reading means no scene the player is in sets it: says so under `unavailable`, which
-/// the debug panel shows in its place.
-fn explain_unset(report: &mut serde_json::Value) {
-    let Some(fields) = report.as_object() else {
-        return;
-    };
-    let unavailable: serde_json::Map<String, serde_json::Value> = fields
-        .iter()
-        .filter(|(_, value)| value.is_null())
-        .map(|(field, _)| (field.clone(), unset_reason(field).into()))
-        .collect();
-    if !unavailable.is_empty() {
-        report["unavailable"] = serde_json::Value::Object(unavailable);
-    }
-}
-
-fn unset_reason(field: &str) -> &'static str {
-    match field {
-        "scene" => "No scene here sets a skybox, fog or sun.",
-        "sunDirection" | "sunColor" => "No scene here sets the sun; the day cycle's applies.",
-        "fogDensity" | "fogColor" => "No scene here sets fog; the graphics setting's applies.",
-        _ => "No scene here sets it; the procedural sky's applies.",
-    }
+        "unavailable": { "": reason },
+    })
 }
 
 #[cfg(test)]
@@ -348,6 +339,36 @@ mod tests {
         common::{Color4, ColorKey},
         sdk::components::pb_skybox,
     };
+
+    #[test]
+    fn environment_reading_explains_its_nulls_with_one_default_entry() {
+        let light = SceneGlobalLight::default();
+        let reading = environment_reading(&SceneEnvironment::default(), &light, None, None);
+        assert!(reading["scene"].is_null());
+        assert_eq!(reading["textureState"], "unset");
+        assert_eq!(reading["sunVisible"], true);
+        assert_eq!(
+            reading["unavailable"],
+            serde_json::json!({"": "No active scene environment overrides."})
+        );
+
+        let scene = Entity::PLACEHOLDER;
+        let state = SceneEnvironment {
+            fog: Some(scene),
+            fog_density: Some(0.0),
+            zenith: Some(Vec3::Z),
+            ..default()
+        };
+        let reading = environment_reading(&state, &light, None, None);
+        assert_eq!(reading["scene"], scene.to_bits().to_string());
+        assert_eq!(reading["fogDensity"], 0.0);
+        assert_eq!(reading["zenith"], serde_json::json!([0.0, 0.0, 1.0]));
+        assert!(reading["horizon"].is_null());
+        assert_eq!(
+            reading["unavailable"],
+            serde_json::json!({"": "No override for this field; using renderer defaults."})
+        );
+    }
 
     fn gradient(keys: &[(f32, f32)]) -> ColorGradient {
         ColorGradient {
@@ -364,32 +385,6 @@ mod tests {
                 })
                 .collect(),
         }
-    }
-
-    #[test]
-    fn every_unset_reading_is_explained() {
-        let mut report = serde_json::json!({
-            "scene": null,
-            "textureState": "unset",
-            "sunDirection": null,
-            "fogDensity": null,
-            "zenith": null,
-            "sunVisible": true,
-        });
-        explain_unset(&mut report);
-        let unavailable = report["unavailable"].as_object().unwrap();
-        for field in ["scene", "sunDirection", "fogDensity", "zenith"] {
-            assert!(
-                unavailable[field].as_str().is_some_and(|s| !s.is_empty()),
-                "{field}"
-            );
-        }
-        assert!(!unavailable.contains_key("textureState"));
-        assert!(!unavailable.contains_key("sunVisible"));
-
-        let mut set = serde_json::json!({ "scene": "1", "textureState": "ready" });
-        explain_unset(&mut set);
-        assert!(set.get("unavailable").is_none());
     }
 
     #[test]

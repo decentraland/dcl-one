@@ -489,3 +489,25 @@ web shell; null here, so this HUD shows no Donate). The shared HUD names a place
 - Tests: `library/ui/apps/hud/test/donate.test.tsx` (gating, open, emote, notification),
   `library/explorer-core/test/donatePlace.test.ts`; the shell's side in `apps/ui3/src/play/test/donateShell.test.ts`
   and `donateGuard.test.ts`. No visual baseline: the panel is drawn by the `/play` shell, not by `?mock=1`.
+
+## Gifting
+
+Sending an owned wearable or emote to another player, where the host can sign the transfer (`@hud-host`'s
+`gifting`: the Sites `/play` web shell; null here outside `?mock=1`, whose fake host sends nothing). The shared HUD
+draws the picker and names a token and a recipient (`features/gifting`); the shell checks both, asks the player to
+confirm them in its own overlay, draws the transfer and signs (`apps/ui3/src/play/shell/gift`, [ADR](../../../../docs/adr/2026-11-16-play-shell-signs-gifts.md)).
+Expectations:
+
+- **Where it shows:** the profile card of chat names, nametags and the friend row (after View Profile), the
+  community card's member menu (after Call; greyed for a blocked member, either way), and another player's
+  passport options (before Block). Not in the voice-stream panel's menu, not on your own card, not for a guest sender or a guest recipient.
+  Whether the session may gift is asked as each of those surfaces opens, as Donate's host is asked (`useGiftingAvailable`); nothing is cached.
+- **The picker** reads 16 owned on-chain items a page through the bridge's `giftingQuery`, newest first, with the
+  search on the server. A pending gift doesn't count as a copy; an equipped single copy is covered and can't be
+  picked; SEND GIFT sends the newest-transferred copy neither worn nor pending, and refuses an item that isn't a
+  Polygon collection item with a toast.
+- **A `transfer_received` notification** opens the gift-received popup (`features/gifting/GiftReceivedPopup.tsx`),
+  on every host: the item comes from the notification's token URI.
+- Tests: `library/ui/apps/hud/test/hosted/gift*.test.tsx`, `library/explorer-core/test/gift*.test.ts`,
+  `src/test/bridgeGifting.test.ts`; the shell's side in `apps/ui3/src/play/test/giftShell.test.ts`, `giftGuard.test.ts`
+  and `giftProtocol.test.ts`. The picker shows in `?mock=1`; the transfer panels are drawn by the `/play` shell.
