@@ -686,9 +686,7 @@ fn cloud_console_command(
     mut cloud: ResMut<CloudCover>,
 ) {
     if let Some(Ok(command)) = input.take() {
-        // the shader's cover goes from no cloud at ~0.2 to solid at ~0.7 with the
-        // default sharpening; map the user's 0..1 onto that
-        cloud.cover = 0.2 + command.cover * 0.5;
+        cloud.cover = shader_cover(command.cover);
 
         if let Some(speed) = command.speed {
             cloud.speed = speed;
@@ -698,6 +696,26 @@ fn cloud_console_command(
             "cloud cover {}, speed {}",
             command.cover, cloud.speed
         ));
+    }
+}
+
+/// The shader's cover for the user's 0..1. The shader shows wisps from ~0.2 and solid cloud at
+/// ~0.7 with the default sharpening, so 0..1 maps onto that; 0 is the shader's 0, a sky with no
+/// cloud at all, which neither the day's noise seed nor the drift changes.
+pub(crate) fn shader_cover(cover: f32) -> f32 {
+    if cover <= 0.0 {
+        0.0
+    } else {
+        0.2 + cover * 0.5
+    }
+}
+
+/// The user's 0..1 for the shader's cover (`shader_cover`'s inverse).
+pub(crate) fn user_cover(cover: f32) -> f32 {
+    if cover <= 0.0 {
+        0.0
+    } else {
+        (cover - 0.2) / 0.5
     }
 }
 
@@ -953,7 +971,17 @@ fn bloom_console_command(
 
 #[cfg(test)]
 mod tests {
-    use super::next_shadow_bias;
+    use super::{next_shadow_bias, shader_cover, user_cover};
+
+    #[test]
+    fn cloud_cover_zero_is_a_cloudless_shader_cover() {
+        assert_eq!(shader_cover(0.0), 0.0);
+        assert_eq!(user_cover(0.0), 0.0);
+        // the default look, 0.35, keeps its shader value and reads back
+        assert!((shader_cover(0.35) - 0.375).abs() < 1e-6);
+        assert!((user_cover(0.375) - 0.35).abs() < 1e-6);
+        assert!((shader_cover(1.0) - 0.7).abs() < 1e-6);
+    }
 
     #[test]
     fn shadow_bias_flags_change_one_bias_at_a_time() {

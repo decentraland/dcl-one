@@ -162,6 +162,14 @@ Components need visible focus, keyboard interaction, labels, sufficient
 contrast and reduced-motion support. Do not override reduced-motion rules
 from a component module.
 
+A component that cannot meet one of these rules records a named exception
+here, with its measurement, reason, scope and the change that removes it.
+Each exception covers only its stated scope.
+
+| Exception                    | Measurement                                                                                                                                                                                                                                       | Reason                                                                                                                                           | Scope                                                                                                                                              | Removed by                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `titlebar-selected-contrast` | Snow (#fcfcfc, Figma `neutrals/snow`) label and icon on #ff7439 (Figma `color/action-secondary`, `--dcl-primary-alt-primary-alt` here; `--dcl-action-secondary` names the same value): 2.62:1 at 16px/600, below 4.5:1 (AA) and 3:1 (large text). | The design system's Explorer selected-state pair from Figma title bar 16959:168 ("explorer (orange when selected)"), chosen by the design owner. | The selected TitleBar section, Explorer variant only. On web pages, the Figma web variant (white when selected, dark label) is the compliant path. | A Figma palette change for that state. |
+
 ### Migrating existing styles
 
 A migration covers one bounded component and its consumers, and is scheduled

@@ -611,8 +611,8 @@ importers:
         specifier: 8.7.0
         version: 8.7.0(@babylonjs/core@8.7.0)(babylonjs-gltf2interface@8.7.0)
       '@dcl-regenesislabs/bevy-explorer-web':
-        specifier: 0.1.0-34847389052.commit-7546497
-        version: 0.1.0-34847389052.commit-7546497
+        specifier: 0.1.0-43959247338.commit-0e22732
+        version: 0.1.0-43959247338.commit-0e22732
       '@dcl/ecs-math':
         specifier: 2.1.0
         version: 2.1.0
@@ -1148,8 +1148,8 @@ packages:
   '@date-fns/upgrade@1.0.3':
     resolution: {integrity: sha512-0BLzKmXwWw3Zh3cZzW4xScmwGijXCAulaFdikqNiSnK8PAgYYSWWxOP/kuJFpKaoIT5KzstVGyHsjA7t/QXi1Q==}
 
-  '@dcl-regenesislabs/bevy-explorer-web@0.1.0-34847389052.commit-7546497':
-    resolution: {integrity: sha512-uKzIx+JQONFH8iJPhc6/3L7dLwqM4dhjz8Faw5s6JHL3YzKZXmfmwI8fSBqijxCcVGSY4OxjzuxWf7dc9pTwJg==}
+  '@dcl-regenesislabs/bevy-explorer-web@0.1.0-43959247338.commit-0e22732':
+    resolution: {integrity: sha512-kcihVWzI6064FmUv1k668xQxM6mSxXEPxOi1hDNLv7oOlN35TjUQAS2F8T8omhsUM8UpoEk0XkTiZzAIHNv7dQ==}
 
   '@dcl/asset-packs@2.21.0':
     resolution: {integrity: sha512-Gt22ZKWyJra9YUCPTwiiCVLcNArw9m3Y/oPnVo1XNHhw8aCNfN3l7JEmsNnt9jFRy3ukXnK7qNzBG9xi5foEzA==}
@@ -8902,7 +8902,7 @@ snapshots:
     dependencies:
       date-fns: 2.30.0
 
-  '@dcl-regenesislabs/bevy-explorer-web@0.1.0-34847389052.commit-7546497': {}
+  '@dcl-regenesislabs/bevy-explorer-web@0.1.0-43959247338.commit-0e22732': {}
 
   '@dcl/asset-packs@2.21.0(@dcl/ecs@7.29.0)':
     dependencies:
