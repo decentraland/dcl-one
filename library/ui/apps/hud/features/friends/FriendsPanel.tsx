@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Avatar, BlockedUser, Button, ControlButton, Envelope, Kebab, Spinner, Tabs, Tooltip, VerifiedBadge, hasOpenPopup, type TabItem } from '../../design'
 import { shortAddr, splitName, userColor } from '@explorer-core/lib/identity'
 import type { BlockedUser as Blocked, Friend, FriendRequest } from '@explorer-core/engine/protocol'
+import type { FriendLocation } from '@explorer-core/features/friends/friendLocation'
 import type { FriendsState } from '../session/useEngineSession'
 import type { MenuContext } from '../chat/ProfileCardPresentation'
 import { openProfileCard } from '../profileCard/ProfileCard'
@@ -16,6 +17,7 @@ import { openFriendRequest } from './FriendRequestPopup'
 import { useProfile } from '../session/profileStore'
 import { hudInsetRef } from '../../lib/hudInset'
 import { looksClaimed } from '@explorer-core/engine/mention'
+import jumpInIcon from '../../assets/friends/jump-in.png'
 import styles from './FriendsPanel.module.css'
 
 type Tab = 'friends' | 'requests' | 'blocked'
@@ -165,7 +167,13 @@ interface RowProps {
 }
 const isPending = (pending: ReadonlySet<string>, op: string, address: string): boolean => pending.has(`${op}:${address.toLowerCase()}`)
 
-function FriendRow({ friend, menuOpen, onMenu, onMessage }: { friend: Friend; onMessage: (address: string) => void } & Omit<RowProps, 'pending'>): React.JSX.Element {
+function FriendRow({
+  friend,
+  menuOpen,
+  onMenu,
+  onMessage,
+  onJump
+}: { friend: Friend; onMessage: (address: string) => void; onJump?: (address: string) => void } & Omit<RowProps, 'pending'>): React.JSX.Element {
   const { name, picture } = useRowIdentity(friend)
   return (
     <Row
@@ -180,6 +188,22 @@ function FriendRow({ friend, menuOpen, onMenu, onMessage }: { friend: Friend; on
         <span className={styles.status}>{STATUS_LABEL[friend.status]}</span>
       </div>
       <div className={styles.hoverActions}>
+        {/* unity-explorer's row offers it to a friend who is not offline */}
+        {onJump != null && friend.status !== 'offline' && (
+          <Tooltip label="Jump to Location" side="top" variant="rail">
+            <button
+              type="button"
+              className={styles.menuBtn}
+              aria-label={`Jump to ${label(name, friend.address)}'s location`}
+              onClick={(e) => {
+                e.stopPropagation()
+                onJump(friend.address)
+              }}
+            >
+              <img src={jumpInIcon} alt="" width={20} height={20} />
+            </button>
+          </Tooltip>
+        )}
         <Tooltip label="Chat" side="top" variant="rail">
           <button
             type="button"
@@ -302,11 +326,15 @@ function BlockedRow({ user, menuOpen, onMenu, pending, onUnblock }: { user: Bloc
 
 export function FriendsPanel({
   friends,
-  onMessage
+  onMessage,
+  onJump
 }: {
   friends: FriendsState
   /** Open a DM with a friend (the row's envelope). */
   onMessage: (address: string) => void
+  /** Travel to where a friend is (the row's Jump to Location, for a friend who is not offline);
+   *  resolves to where it went, or null when it did not. */
+  onJump?: (address: string) => Promise<FriendLocation | null>
 }): React.JSX.Element | null {
   const [tab, setTab] = useState<Tab>('friends')
   // Kept above the closed early-return so folded sections stay folded across reopen.
@@ -325,6 +353,17 @@ export function FriendsPanel({
   useEffect(() => {
     if (friends.open) setTab('friends')
   }, [friends.open])
+
+  // unity-explorer closes the panel once the friend's parcel is known (not for a World)
+  const openRef = useRef(friends.open)
+  openRef.current = friends.open
+  const jump = onJump == null
+    ? undefined
+    : (address: string): void => {
+        void onJump(address).then((to) => {
+          if (to?.kind === 'parcel' && openRef.current) friends.toggle()
+        })
+      }
 
   // Clicking anywhere outside (except the rail's own toggle and popups opened from here) closes it.
   const toggle = friends.toggle
@@ -408,7 +447,7 @@ export function FriendsPanel({
             <>
               <Collapsible title="Online" {...fold('online')} count={online.length} emptyLabel="No Friends">
                 {online.map((f) => (
-                  <FriendRow key={f.address} friend={f} onMessage={onMessage} {...rowProps(f.address)} />
+                  <FriendRow key={f.address} friend={f} onMessage={onMessage} onJump={jump} {...rowProps(f.address)} />
                 ))}
               </Collapsible>
               <Collapsible title="Offline" {...fold('offline')} count={offline.length} emptyLabel="No Friends">

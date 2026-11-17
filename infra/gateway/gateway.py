@@ -319,8 +319,15 @@ def render(table, cfg, mime):
     for prefix in prefixes:
         if prefix in ("/admin", "/server"):
             continue
-        # The Cast not-found page is the exact /cast; /cast/ stays the gatekeeper's (root-aliases.nix).
-        locations += location("= /cast", proxy("sites")) if prefix == "/cast" else pair(prefix, "sites")
+        # The Cast pages are the exact /cast and the stream and watch links (/cast/s/, /cast/w/,
+        # longer than the gatekeeper's ^~ /cast/); the rest of /cast/ stays the gatekeeper's
+        # (root-aliases.nix).
+        if prefix == "/cast":
+            locations += location("= /cast", proxy("sites"))
+            for page in ("/cast/s/", "/cast/w/"):
+                locations += location("^~ " + page, proxy("sites"))
+        else:
+            locations += pair(prefix, "sites")
     for path in ("/", "/favicon.ico", "/dcl-sdk-types.json", "/docs/index.md", "/_root.data",
                  "/terms", "/privacy", "/content-policy", "/ethics", "/rewards", "/rewards-terms",
                  "/referral", "/referral-terms", "/credits-terms", "/security", "/brand"):

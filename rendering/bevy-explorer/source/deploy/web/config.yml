@@ -1,0 +1,2 @@
+# The CDN compresses per request; uploaded gzip/brotli copies are never requested.
+variants: [uncompressed]

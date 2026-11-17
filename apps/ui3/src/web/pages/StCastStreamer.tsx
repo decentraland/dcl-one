@@ -116,6 +116,10 @@ type StCastStreamerProps = {
   onLeave?: () => void;
   retryLabel?: string;
   leaveLabel?: string;
+  /** Live media (local camera or screen share); without it the live view shows the avatar. */
+  stage?: ReactNode;
+  /** Makes the onboarding name field controlled. */
+  onNameChange?: (name: string) => void;
 };
 
 export default function StCastStreamer({
@@ -133,6 +137,8 @@ export default function StCastStreamer({
   onLeave = () => {},
   retryLabel = "Reconnect",
   leaveLabel = "Leave",
+  stage,
+  onNameChange,
 }: StCastStreamerProps) {
   return (
     <SitesChromeMaybe chrome={chrome} active="legal">
@@ -153,7 +159,11 @@ export default function StCastStreamer({
                 className="stcast__name"
                 type="text"
                 placeholder="Insert Your Name (Optional)"
-                defaultValue={displayName}
+                aria-label="Your name"
+                maxLength={64}
+                {...(onNameChange
+                  ? { value: displayName, onChange: (e) => onNameChange(e.target.value) }
+                  : { defaultValue: displayName })}
               />
 
               <div className="stcast__devices">
@@ -190,12 +200,16 @@ export default function StCastStreamer({
                     LIVE
                   </div>
 
-                  <div className="stcast__empty">
-                    <div className="stcast__avatarpulse">
-                      <CastAvatar name={displayName || "Streamer"} size={100} />
+                  {stage ? (
+                    <div className="stcast__stage">{stage}</div>
+                  ) : (
+                    <div className="stcast__empty">
+                      <div className="stcast__avatarpulse">
+                        <CastAvatar name={displayName || "Streamer"} size={100} />
+                      </div>
+                      <div className="stcast__namepill">{displayName || "Streamer"}</div>
                     </div>
-                    <div className="stcast__namepill">{displayName || "Streamer"}</div>
-                  </div>
+                  )}
                 </div>
               </div>
 

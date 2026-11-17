@@ -47,6 +47,16 @@ export type Event = {
   total_attendees: number | null;
   place_id: string | null;
   connected_addresses?: string[];
+  /** The fields below come with every record; optional so hand-built events stay valid. */
+  world?: boolean;
+  server?: string | null;
+  user?: string | null;
+  recurrent_interval?: number;
+  recurrent_dates?: string[];
+  approved?: boolean;
+  rejected?: boolean;
+  deleted_by_user?: boolean;
+  deleted_by_admin?: boolean;
 };
 
 export type EventCategory = {
@@ -86,10 +96,8 @@ function toEventCategory(c: z.infer<typeof EventCategoryRecordSchema>): EventCat
   };
 }
 
-export const EVENT_CALENDAR_LIMIT = 500;
-
 type FetchEventsParams = {
-  list?: "live" | "active" | "highlight" | "trending";
+  list?: "live" | "active" | "upcoming" | "highlight" | "trending";
   search?: string;
   category?: string;
   from?: string;
@@ -172,20 +180,6 @@ export async function fetchEvents(
   return { data: rows.filter((event) => event !== null), total, received: rows.length, invalidCount: rows.filter((event) => event === null).length, copy };
 }
 
-/** Slice server slots before discarding malformed records so lookahead never leaks into this page. */
-export async function fetchEventPage(
-  params: FetchEventsParams & { limit: number },
-  opts: GetOptions = {},
-): Promise<{ data: Event[]; hasMore: boolean; invalidCount?: number; copy?: CopyStamp | null }> {
-  const { rows, copy } = await fetchEventRows({ ...params, limit: params.limit + 1 }, opts);
-  return {
-    data: rows.slice(0, params.limit).filter((event) => event !== null),
-    hasMore: rows.length > params.limit,
-    invalidCount: rows.slice(0, params.limit).filter((event) => event === null).length,
-    copy,
-  };
-}
-
 export async function fetchEvent(id: string, opts: GetOptions = {}): Promise<Event> {
   const raw = await getJSON<unknown>(
     eventsApiPath("get", "/api/events/{event_id}", { event_id: id }),
@@ -265,16 +259,6 @@ export type LiveNowCard = {
   jumpUrl?: string;
 };
 
-type UpcomingCard = {
-  id: string;
-  name: string;
-  creator: string;
-  time: string;
-  hue: number;
-  image?: string;
-  jumpUrl?: string;
-};
-
 export function effectiveStartAt(e: Event): string | null {
   return eventOccurrence(e).start ?? null;
 }
@@ -332,18 +316,6 @@ export function toLiveNowCard(e: Event): LiveNowCard {
     users: e.connected_addresses ? new Set(e.connected_addresses.map((address) => address.toLowerCase())).size : null,
     isEvent: true,
     creator: e.user_name ?? e.scene_name ?? "Decentraland",
-    hue: hueFor(e.id),
-    image: e.image ?? undefined,
-    jumpUrl: eventJumpUrl(e) ?? undefined,
-  };
-}
-
-export function toUpcomingCard(e: Event): UpcomingCard {
-  return {
-    id: e.id,
-    name: e.name ?? "Untitled event",
-    creator: e.user_name ?? e.scene_name ?? "Decentraland",
-    time: formatEventTime(effectiveStartAt(e)),
     hue: hueFor(e.id),
     image: e.image ?? undefined,
     jumpUrl: eventJumpUrl(e) ?? undefined,

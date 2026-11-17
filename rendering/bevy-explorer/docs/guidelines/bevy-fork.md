@@ -255,18 +255,26 @@ repository root.
 - **`repin bevy`** rebuilds the source from its upstream commit and series, records the tree ids
   and `rev`, and names that `rev` in both Cargo files. Use it after a change of `commit`, after a
   change of the series by hand, and after an `export` that stopped before its last write.
+- **No workflow files.** A tree must hold nothing under `.github/workflows/`: GitHub refuses
+  the push of such a commit from the CI job's token. A source whose upstream has a `.github`
+  directory lists it in `exclude`; the tool fails a tree that still holds a workflow file.
 - **Upgrade.** Set `commit` and `ref` in `source.toml` to the new upstream commit and run
   `repin bevy`. It stops at the first patch that does not apply: correct that patch and run it
   again until it passes. Then record `nix_hash` as the Nix entry below says.
-- **`publish`** pushes each `rev` that this repository lacks. It needs push rights, so a
-  maintainer runs it, and the Cargo jobs of the PR fail until then. The maintainer runs the tool
-  of `main` on a checkout of the PR: `python3 tooling/patched-sources.py --root <PR checkout>
-  publish`, after `verify` passes there. Never delete a ref: older revisions build from it.
+- **`publish --remote https://github.com/<you>/dcl-one`** pushes each new `rev` to your fork.
+  GitHub serves a fork's commits through this repository by id, so Cargo fetches the `rev` from
+  this repository's URL before the merge, in CI and locally. After the merge the
+  `bevy-explorer-publish-sources` workflow runs `publish` on `main`: it rebuilds each `rev` that
+  this repository lacks and pushes its ref ([ADR](../../../../docs/adr/2026-11-17-explorer-patched-sources-published-by-ci.md)).
+  A manual run of that workflow repairs a failed run. Never delete a ref: older revisions build
+  from it.
 - **Checks.** `pins` works offline, in the CI job that every build job needs. It fails when a
   `rev` in a Cargo file is not the one in `source.toml`, when a Cargo file names a git source
   that is not this repository or one in `OTHER_GIT` of the tool, and while a source is in edit
   mode. A new git dependency needs an entry there, with its commit.
-  `publish --check` runs in the same job and proves that each `rev` has a ref. `verify` rebuilds
+  `publish --check --fetchable` runs in the same job and proves that this repository serves each
+  `rev`, with a ref or from a fork; the daily drift workflow runs `publish --check`, which needs
+  the ref. `verify` rebuilds
   a source from upstream and proves the tree ids and `rev`: CI runs it on each source that a PR
   or a push to `main` changes, and the daily drift workflow runs it on all of them. `materialise`
   fails when the tree it wrote is not `rev`.
@@ -295,7 +303,7 @@ repository root.
 - CI reuses cached engine builds until their inputs change: Cargo would otherwise rebuild a path
   dependency after every checkout, since a checkout makes every file new.
   `tooling/bevy-mtimes.py` records the engine, in-tree crate and protocol files' blob ids and
-  times with the cache and gives unchanged files their times back; every job that caches the
-  explorer's target runs it.
+  times with the cache and gives unchanged files, and directories that hold the same names, their
+  times back; every job that caches the explorer's target runs it.
 - The lockfile is edited by hand, never with `cargo update`: see the dependencies section of
   [contributing](contributing.md).
