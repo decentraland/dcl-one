@@ -2,14 +2,14 @@
 // dropdown. The page as these scenarios drive it: the tabs are Explore, Recent, Favorites and My
 // Places; there is no results counter and no search clear button; the categories are chips, named
 // in lowercase and pressed while chosen; Filter & Sort opens the sort list. A card opens the
-// destination card. Cards are buttons named by their whole text, which carries the rating ("97%");
+// place's detail. Cards are buttons named by their whole text, which carries the rating ("97%");
 // the scenarios compare their names without the people count, and none clicks a card. The page
 // forgets its state when it closes, so each scenario starts from Explore, all and Most active.
 //
 // | explorer-automation test      | Here                                                                  | Class   |
 // | TestSwitchPlacesTabs          | Explore, Favorites, My Places: the cards change instead of a "(N)" counter | Partial |
 // | TestSearchPlaces              | the query is a word of the first card read, not "Genesis Plaza"; an emptied field stands in for the clear button | Partial |
-// | TestOpenPlaceDetail           | not written yet: a card opens the destination card                     | Gap     |
+// | TestOpenPlaceDetail           | not written yet: a card opens the place's detail                      | Gap     |
 // | TestFilterPlacesByCategory    | the art chip, not chip 3; the card list differs, not the first card     | Partial |
 // | TestOpenPlacesFilterDropdown  | the Filter & Sort list (Most active, Most liked, Newest, Name), not Trending, Most Active and Compatible Only | Partial |
 import assert from 'node:assert/strict'
@@ -105,7 +105,7 @@ scenario('searching places filters the cards and emptying the field restores the
 })
 
 scenario('a place detail opens from a card', async () => {}, {
-  todo: 'not written yet: a place card opens the destination card'
+  todo: 'not written yet: a place card opens the place's detail'
 })
 
 scenario('choosing a category reloads the cards and all restores them', async ({ explorer }) => {

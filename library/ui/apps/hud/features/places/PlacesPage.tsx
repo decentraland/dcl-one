@@ -1,11 +1,10 @@
 // React Places — a full-screen page inside MainMenuShell (mirrors CommunitiesPage): browse
 // Decentraland Places / Worlds and teleport to one. The browser body (tabs, search, categories,
-// grid) is shared with the post-jump-in picker via PlacesBrowser; here a card click teleports
-// (parcel) or visits (world) and closes the page.
+// grid) is shared with the post-jump-in picker via PlacesBrowser; here a card opens the place's
+// detail, whose Jump In teleports (parcel) or visits (world) and closes the page.
 
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { MenuBackdrop } from '../menu/MenuBackdrop'
-import { openDestinationCard, placeInfo } from './DestinationCard'
 import { PlacesBrowser } from './PlacesBrowser'
 import { openPlaceDetail } from './PlaceDetail'
 import { placeTeleport, type DiscoverPlace } from '@explorer-core/features/places/placesApi'
@@ -46,27 +45,17 @@ export function PlacesPage({
     return t.kind === 'world' ? onVisitWorld(t.realm) : onTeleport(t.x, t.y)
   }
 
-  if (compact != null) {
-    const { onTravel } = compact
-    const open = (place: DiscoverPlace): void =>
-      openPlaceDetail({
-        place,
-        onJumpIn: (picked) => {
-          if (travel(picked) === 'refused') return false
-          onTravel()
-          return true
-        }
-      })
-    return <PlacesBrowser account={account} columns={COMPACT_PLACES_COLUMNS} onPick={open} />
-  }
-
   // the startup lobby's pick closes every page itself: a toggle would reopen this one
-  const visit = (place: DiscoverPlace): void => {
-    if (placeTeleport(place) == null) return
-    openDestinationCard(placeInfo(place), () => {
-      if (travel(place) === 'sent') places.close()
-    })
+  const jumpIn = (picked: DiscoverPlace): boolean => {
+    const outcome = travel(picked)
+    if (outcome === 'refused') return false
+    if (compact != null) compact.onTravel()
+    else if (outcome === 'sent') places.close()
+    return true
   }
+  const open = (place: DiscoverPlace): void => openPlaceDetail({ place, onJumpIn: jumpIn })
+
+  if (compact != null) return <PlacesBrowser account={account} columns={COMPACT_PLACES_COLUMNS} onPick={open} />
 
   const p = profile.data
   return (
@@ -82,7 +71,7 @@ export function PlacesPage({
     >
       <div className={styles.page}>
         <MenuBackdrop />
-        <PlacesBrowser account={account} onPick={visit} />
+        <PlacesBrowser account={account} onPick={open} />
       </div>
     </MainMenuShell>
   )

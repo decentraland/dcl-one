@@ -4345,14 +4345,6 @@
       "path": "library/ui/apps/hud/features/places",
       "entries": [
         {
-          "name": "DestinationCard.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "DestinationCard.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "PlaceCard.module.css",
           "kind": "regular"
         },
@@ -6378,7 +6370,7 @@
     },
     {
       "path": "library/explorer-core/features/events/eventsApi.ts",
-      "sha256": "6b3ffbc2810c5ccc23dde17dc50840ef365e5129a11eeb17fee4f5508c393664"
+      "sha256": "122e3f0d66c8df2c868fbce2940daaa285e091b34788a7a8f07b2cf8f11dc6ef"
     },
     {
       "path": "library/explorer-core/features/friends/friendEvents.ts",
@@ -9557,14 +9549,6 @@
       "sha256": "a00a8ea4080c8fa8da77b02e390f0f2baf2587a2e6bd766a20401c8a0d7f9a9f"
     },
     {
-      "path": "library/ui/apps/hud/features/places/DestinationCard.module.css",
-      "sha256": "6a6a576cfd4daed6345cd680944c41612d1f53bef09158551f19f5c6848349c5"
-    },
-    {
-      "path": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "sha256": "a618be4d67032f4d397ee3abf7dffff9a8b802069028f18a60196482c3301132"
-    },
-    {
       "path": "library/ui/apps/hud/features/places/PlaceCard.module.css",
       "sha256": "955d0a076ffc8353c1fddf063269f23138b5b95a4c3e0f07f6ed164fb8e50f10"
     },
@@ -9590,7 +9574,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/places/PlacesPage.tsx",
-      "sha256": "0be0341fac626261dc952e6f1ed277802088fb3ba0439a83cf72314fe141a173"
+      "sha256": "c781d57c3aa1c5738404293ef53786d4c95723f118199014e05d304527e13e4d"
     },
     {
       "path": "library/ui/apps/hud/features/places/PlacesPicker.module.css",
@@ -10190,7 +10174,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/eventFormat.test.ts",
-      "sha256": "68dc92dc95b2da836e889320fc281637c9bcdd80840e2d055ecb37776cb43d56"
+      "sha256": "b23d4a1f673a3c6be53831d2459f9e652ada0bdeb1ae2ca0f076ee9885e48cfa"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/events.test.tsx",
@@ -10258,7 +10242,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobbyTravel.test.tsx",
-      "sha256": "4504a6895b025e1f4d45d2976d14f047b5e5e45ef6d0739c6b2fbe3b3d860835"
+      "sha256": "62dee78c3e3d1c11c7d6157d27cf73a922c3cecdd5eb31c6b52f1c223670096c"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/login.clicks.test.tsx",
@@ -29506,111 +29490,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/explorer-core/features/events/eventsApi.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/explorer-core/features/events/eventsApi.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/explorer-core/features/events/eventsApi.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/explorer-core/features/places/placesApi.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/explorer-core/features/places/placesApi.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/explorer-core/features/places/placesApi.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/ui/apps/hud/design/Glyphs.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/ui/apps/hud/design/Glyphs.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/ui/apps/hud/design/Glyphs.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/ui/apps/hud/design/index.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/ui/apps/hud/design/index.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/ui/apps/hud/design/index.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/ui/apps/hud/features/places/DestinationCard.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/ui/apps/hud/features/places/DestinationCard.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/ui/apps/hud/features/places/DestinationCard.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/ui/apps/hud/features/places/useCreatorName.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/ui/apps/hud/features/places/useCreatorName.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/ui/apps/hud/features/places/useCreatorName.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/ui/foundations/icons/general.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/ui/foundations/icons/general.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "to": "library/ui/foundations/icons/general.tsx",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/hud/features/places/PlaceCard.tsx",
       "to": "library/explorer-core/features/places/placesApi.ts",
       "kind": "native:runtime"
@@ -30283,21 +30162,6 @@
     {
       "from": "library/ui/apps/hud/features/places/PlacesPage.tsx",
       "to": "library/ui/apps/hud/features/menu/MenuBackdrop.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlacesPage.tsx",
-      "to": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlacesPage.tsx",
-      "to": "library/ui/apps/hud/features/places/DestinationCard.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlacesPage.tsx",
-      "to": "library/ui/apps/hud/features/places/DestinationCard.tsx",
       "kind": "test:runtime"
     },
     {
@@ -45043,11 +44907,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/photoMode/PhotoModeOverlay.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/features/places/DestinationCard.tsx",
       "kind": "type"
     },
     {
