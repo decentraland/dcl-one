@@ -52,7 +52,8 @@ export function MinimapSettings({
     <div className={styles.menu} role="menu" aria-label="Minimap settings">
       {home != null && (
         <>
-          <label className={`${styles.entry} ${styles.toggleEntry}`} role="menuitemcheckbox" aria-checked={home.on} aria-label="Set as Home">
+          {/* the switch is the one control; the row's label only gives it a bigger target */}
+          <label className={`${styles.entry} ${styles.toggleEntry}`}>
             Set as Home
             <Toggle size="sm" checked={home.on} onChange={(on) => on && home.onSet()} aria-label="Set as Home" />
           </label>

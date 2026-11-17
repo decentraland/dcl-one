@@ -518,8 +518,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   can't be turned off.
 - **Home is set from the map's place panel and the minimap's menu.** unity-explorer also sets it
   from Places cards, which have no such control here. The minimap's menu is unity-explorer's: Set
-  as Home, Copy Link and Reload Scene, then this HUD's own Minimap settings. A World's copied link
-  names the World and the parcel and carries the sharer's address, as unity-explorer's.
+  as Home, Copy Link and Reload Scene, then this HUD's own Minimap settings. As unity-explorer's,
+  the minimap saves the parcel the player stands on, where the place panel saves the place's base
+  parcel (a road's, the picked one), and it compares a World's name without case where the place
+  panel compares it exactly. A World's copied link names the World and the parcel and carries the
+  sharer's address, as unity-explorer's.
 - **The map fixes what the upstream panel leaves broken.** Search results carry their LIVE badge
   (upstream keys the lookup by a malformed parcel, so none shows); "remind me" on an event row
   starts from the player's saved interest and keeps working after the list is rebuilt; a like or

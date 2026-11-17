@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
+import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { DEFAULT_REALM } from '@hud-host'
 import { Minimap } from '../../features/minimap/Minimap'
 import { fakeSession, renderSettled } from '../harness'
@@ -93,7 +94,7 @@ describe('minimap menu', () => {
   it('lists the scene options first: Set as Home, Copy Link, Reload Scene', async () => {
     await openMenu(DEFAULT_REALM)
     const menu = screen.getByRole('menu', { name: 'Minimap settings' })
-    const names = [...menu.querySelectorAll('[role^="menuitem"]')].map((el) => el.getAttribute('aria-label') ?? el.textContent)
+    const names = [...menu.querySelectorAll('[role^="menuitem"], [role="switch"]')].map((el) => el.getAttribute('aria-label') ?? el.textContent)
     expect(names.slice(0, 3)).toEqual(['Set as Home', 'Copy Link', 'Reload Scene'])
   })
 
@@ -133,6 +134,14 @@ describe('minimap menu', () => {
     expect(screen.queryByRole('switch', { name: 'Set as Home' })).toBeNull()
   })
 
+  it("copies a Genesis City parcel's link with the player's address", async () => {
+    const writeText = vi.fn(async () => {})
+    Object.assign(navigator, { clipboard: { writeText } })
+    await openMenu(DEFAULT_REALM, { at: { x: 3, y: 4 }, referrer: '0xabc' })
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy Link' }))
+    expect(writeText).toHaveBeenCalledWith(expect.stringMatching(/\/jump\/\?position=3,4&referrer=0xabc$/))
+  })
+
   it("copies a World's link with its parcel and the player's address", async () => {
     const writeText = vi.fn(async () => {})
     Object.assign(navigator, { clipboard: { writeText } })
@@ -143,12 +152,15 @@ describe('minimap menu', () => {
 })
 
 describe('minimap menu, closing', () => {
-  it('closes on Escape', async () => {
+  it('closes on Cancel, as the topmost layer', async () => {
     const session = fakeSession()
     await renderSettled(<Minimap minimap={{ ...session.minimap, linkRealm: DEFAULT_REALM }} map={session.map} sceneTitle="" setEngineViewport={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: 'Minimap settings' }))
-    fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' })
+    act(() => {
+      expect(dispatchCancelLayer()).toBe(true)
+    })
     expect(screen.queryByRole('menu', { name: 'Minimap settings' })).toBeNull()
+    expect(dispatchCancelLayer()).toBe(false)
   })
 })
 

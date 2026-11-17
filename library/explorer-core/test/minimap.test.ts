@@ -15,7 +15,7 @@ import {
   saveZoom
 } from '../features/minimap/minimapPrefs'
 import { isStandingInHome, minimapHomeTarget } from '../features/minimap/minimapHome'
-import { minimapJumpLink } from '../features/map/shareLinks'
+import { jumpInLink } from '../features/map/shareLinks'
 import { DEFAULT_REALM } from '@hud-host'
 import { destinationOnEdge, edgePoint, mapUnitsToMeters } from '../features/minimap/minimapLayers'
 import { parcelCenter, playerMarkerPosition } from '../features/map/mapCoords'
@@ -122,8 +122,8 @@ describe('minimap Set as Home', () => {
 
 describe('minimap jump link', () => {
   it("names a Genesis City parcel, or a World and its parcel, with the sharer's address", () => {
-    expect(minimapJumpLink(DEFAULT_REALM, false, 3, 4, '0xabc')).toMatch(/\/jump\/\?position=3,4&referrer=0xabc$/)
-    expect(minimapJumpLink('boedo.dcl.eth', true, 3, 4, undefined)).toMatch(/\/jump\/\?realm=boedo\.dcl\.eth&position=3,4$/)
+    expect(jumpInLink(3, 4, '0xabc', DEFAULT_REALM)).toMatch(/\/jump\/\?position=3,4&referrer=0xabc$/)
+    expect(jumpInLink(3, 4, undefined, 'boedo.dcl.eth')).toMatch(/\/jump\/\?realm=boedo\.dcl\.eth&position=3,4$/)
   })
 })
 
