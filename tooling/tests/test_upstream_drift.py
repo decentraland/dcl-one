@@ -2,8 +2,12 @@
 and the site's markdown rendering. Nothing here reaches the network."""
 import base64
 import importlib.util
+import json
+import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import tempfile
 import textwrap
 import unittest
@@ -543,6 +547,59 @@ class SiteTests(unittest.TestCase):
 
     def test_slug(self):
         self.assertEqual(site.slug('https://github.com/robtfm/bevy_kira_audio'), 'robtfm-bevy-kira-audio')
+
+    # The advisories view is JavaScript inside the page, so these run its `esc`, `advisoryTable`
+    # and `advisories` under Node with a stand-in for the collected data.
+    def render_advisories(self, advisories, q=''):
+        node = shutil.which('node')
+        if not node:
+            if os.environ.get('CI'):
+                self.fail('node is needed to render the advisories view')
+            self.skipTest('node is not installed')
+        esc = re.search(r'^const esc = .*$', site.PAGE, re.M).group(0)
+        functions = [re.search(rf'^function {name}\(.*?^\}}$', site.PAGE, re.M | re.S).group(0)
+                     for name in ('advisoryTable', 'advisories')]
+        script = '\n'.join([f'const D = {{advisories: {json.dumps(advisories)}}};',
+                            f'const state = {{q: {json.dumps(q)}}};', esc, *functions,
+                            'process.stdout.write(advisories());'])
+        return subprocess.run([node, '-'], input=script, capture_output=True, text=True, check=True).stdout
+
+    FINDINGS = [
+        {'crate': 'ring', 'version': '0.17.8', 'id': 'RUSTSEC-2025-0009', 'title': 'AES panic',
+         'date': '2025-03-06', 'patched': ['>= 0.17.12'], 'affected': True, 'rustsec_url': 'https://rustsec.org/a'},
+        {'crate': 'paste', 'version': '1.0.15', 'id': 'RUSTSEC-2024-0436', 'title': 'unmaintained',
+         'date': '2024-10-07', 'patched': [], 'affected': False, 'rustsec_url': 'https://rustsec.org/b'},
+    ]
+
+    def test_advisories_view_reports_withdrawn_and_unreadable_entries(self):
+        html = self.render_advisories({
+            'crates_with_entries': ['ring', 'paste'], 'findings': self.FINDINGS,
+            'withdrawn': ['RUSTSEC-2025-0002', 'RUSTSEC-2025-0003'],
+            'unreadable': [{'crate': 'ring', 'sha': 'b3', 'reason': 'blob not found'},
+                           {'crate': '<img src=x>', 'sha': 'b4', 'reason': 'a & "b"'}],
+        })
+        self.assertIn(' 2 withdrawn entries skipped.', html)
+        self.assertIn('<span class="badge b-security">2 entries could not be read</span>: '
+                      'ring (blob not found), &lt;img src=x&gt; (a &amp; &quot;b&quot;).', html)
+        self.assertNotIn('<img', html)
+
+    def test_advisories_view_without_withdrawn_or_unreadable_entries(self):
+        # Data collected before these fields existed has neither key.
+        for extra in ({}, {'withdrawn': [], 'unreadable': []}):
+            with self.subTest(extra=extra):
+                html = self.render_advisories({'crates_with_entries': ['ring', 'paste'], 'findings': self.FINDINGS, **extra})
+                self.assertIn('2 crates in the lock have advisory-db entries; 1 entries affect the pinned versions', html)
+                self.assertNotIn('withdrawn', html)
+                self.assertNotIn('could not be read', html)
+                self.assertIn('<tr class="aff">', html)
+                self.assertLess(html.index('RUSTSEC-2025-0009'), html.index('RUSTSEC-2024-0436'))
+
+    def test_advisories_view_filters_the_table(self):
+        html = self.render_advisories({'crates_with_entries': ['ring', 'paste'], 'findings': self.FINDINGS,
+                                       'withdrawn': ['RUSTSEC-2025-0002']}, q='paste')
+        self.assertIn('RUSTSEC-2024-0436', html)
+        self.assertNotIn('RUSTSEC-2025-0009', html)
+        self.assertIn(' 1 withdrawn entries skipped.', html)
 
 
 if __name__ == '__main__':
