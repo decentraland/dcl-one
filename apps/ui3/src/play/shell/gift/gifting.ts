@@ -130,7 +130,7 @@ const LIVE: ShellGiftServices = {
     const avatar = await fetchProfile(address).catch(() => null)
     if (!avatar) return { address }
     const p = mapProfile(avatar, address)
-    return safeRecipient({ address, name: p.name, nameColor: p.nameColor, face: profileFaceUrl(avatar) ?? undefined })
+    return safeRecipient({ address, name: p.name, claimed: p.hasClaimedName, nameColor: p.nameColor, face: profileFaceUrl(avatar) ?? undefined })
   },
   async ownerOf(chainId, contract, tokenId) {
     // Decoded by the ABI: an empty or malformed answer throws instead of reading as some owner.
@@ -159,7 +159,7 @@ const LIVE: ShellGiftServices = {
 /** The recipient as the panel may draw them (../safeDisplay); just the address when the profile has nothing safe. */
 function safeRecipient(r: Partial<GiftTransferRecipient> & { address: string }): GiftTransferRecipient {
   const c = safeCreator(r)
-  return c ? { address: c.address, ...(c.name ? { name: c.name } : {}), ...(c.nameColor ? { nameColor: c.nameColor } : {}), ...(c.face ? { face: c.face } : {}) } : { address: r.address }
+  return c ? { address: c.address, ...(c.name ? { name: c.name } : {}), ...(c.claimed ? { claimed: true } : {}), ...(c.nameColor ? { nameColor: c.nameColor } : {}), ...(c.face ? { face: c.face } : {}) } : { address: r.address }
 }
 
 /** The item as the panel may draw it: an `https:` picture only. */

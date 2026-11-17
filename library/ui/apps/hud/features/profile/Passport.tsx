@@ -45,7 +45,8 @@ export function Passport({
   const a = userId.toLowerCase()
   const isSelf = !!session.profile.data && session.profile.data.address.toLowerCase() === a
   const known = useProfile(userId)
-  const canGift = useGiftingAvailable() && !isSelf
+  // a guest's account is a throwaway key on one device: an item sent there would be lost with it
+  const canGift = useGiftingAvailable() && !isSelf && known?.isGuest !== true
   const stored: Profile =
     known ??
     (isSelf && session.profile.data

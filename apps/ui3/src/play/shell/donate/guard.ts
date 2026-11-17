@@ -51,7 +51,8 @@ function checkTransfer(data: unknown, intent: DonationIntent): void {
 export function guardedDonationProvider(provider: Eip1193Provider, intent: DonationIntent): Eip1193Provider {
   return guardedMetaTxProvider(provider, { from: intent.from, chainId: intent.chainId, contract: intent.token, nonce: intent.nonce, current: intent.current }, {
     feature: 'Donate',
-    only: ONLY,
+    only: 'Donate only signs the tip you confirmed.',
+    changed: 'Your sign-in changed meanwhile. Open Donate again to tip.',
     checkCall: (data) => checkTransfer(data, intent)
   })
 }

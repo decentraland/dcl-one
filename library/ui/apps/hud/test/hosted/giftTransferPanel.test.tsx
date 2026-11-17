@@ -32,6 +32,13 @@ describe('the gift transfer panel', () => {
     expect(h.onActivity).toHaveBeenCalled()
   })
 
+  it("marks a claimed name as verified, and shows another name's #tag", () => {
+    const { container, rerender } = render(<GiftTransferPanel view={{ step: 'confirm', recipient: { ...RECIPIENT, claimed: true }, item: { name: 'Cool Hat', rarity: 'epic' } }} handlers={handlers()} />)
+    expect(container.textContent).not.toContain('#bbbb')
+    rerender(<GiftTransferPanel view={{ step: 'confirm', recipient: RECIPIENT, item: { name: 'Cool Hat', rarity: 'epic' } }} handlers={handlers()} />)
+    expect(screen.getByText('#bbbb')).toBeTruthy()
+  })
+
   it('says the gift was sent, and OK closes it', () => {
     const h = handlers()
     render(<GiftTransferPanel view={{ step: 'sent', recipient: RECIPIENT }} handlers={h} />)

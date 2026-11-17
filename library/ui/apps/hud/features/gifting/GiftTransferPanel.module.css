@@ -28,6 +28,10 @@
   font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
+.tag {
+  color: var(--text-dim);
+  font-weight: var(--fw-regular);
+}
 .itemName {
   font-size: var(--fs-md);
   font-weight: var(--fw-semibold);

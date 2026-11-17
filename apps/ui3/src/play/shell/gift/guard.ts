@@ -43,7 +43,8 @@ function checkTransfer(data: unknown, intent: GiftIntent): void {
 export function guardedGiftProvider(provider: Eip1193Provider, intent: GiftIntent): Eip1193Provider {
   return guardedMetaTxProvider(provider, { from: intent.from, chainId: intent.chainId, contract: intent.collection, nonce: intent.nonce, current: intent.current }, {
     feature: 'Gift',
-    only: ONLY,
+    only: 'Gift only signs the item you confirmed.',
+    changed: 'Your sign-in changed, or the gift was closed, meanwhile. Open Gift again to send it.',
     checkCall: (data) => checkTransfer(data, intent)
   })
 }

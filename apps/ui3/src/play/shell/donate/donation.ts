@@ -62,7 +62,6 @@ const WATCH_EVERY_MS = 10_000
 const FORWARD_TIMEOUT_MS = 10_000
 
 export type { DonateCreator, DonateHandlers, DonateView }
-export { safeCreator }
 
 /** Draws the panel over the app, or takes it away. */
 export interface ShellDonateUi {

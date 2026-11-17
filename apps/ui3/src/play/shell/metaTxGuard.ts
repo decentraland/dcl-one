@@ -32,10 +32,12 @@ export interface MetaTxIntent {
 export interface MetaTxGuard {
   /** What the refusals name: "Donate", "Gift". */
   feature: string
-  /** What the guard refuses everything else with ("Donate only sends the tip you confirmed."). */
+  /** What it refuses typed data other than the one meta-transaction with ("Donate only signs the tip you confirmed."). */
   only: string
-  /** Throws (through `refuse`) unless `functionSignature` is exactly the call the intent allows. */
-  checkCall(functionSignature: unknown, refuse: (why: string) => never): void
+  /** What it refuses with once the sign-in changed or the operation was given up. */
+  changed: string
+  /** Throws (a WalletRefusal, through `refuse`) unless `functionSignature` is exactly the call the intent allows. */
+  checkCall(functionSignature: unknown): void
 }
 
 const DOMAIN_FIELDS = [
@@ -85,12 +87,12 @@ function checkMetaTransaction(from: unknown, data: unknown, intent: MetaTxIntent
     (intent.nonce === undefined || BigInt(String(message.nonce)) === intent.nonce) &&
     lower(message.from) === intent.from
   if (!ok) refuse(guard.only)
-  guard.checkCall(message.functionSignature, refuse)
+  guard.checkCall(message.functionSignature)
   return typed
 }
 
 export function guardedMetaTxProvider(provider: Eip1193Provider, intent: MetaTxIntent, guard: MetaTxGuard): Eip1193Provider {
-  const changed = `Your sign-in changed meanwhile. Open ${guard.feature} again.`
+  const changed = guard.changed
   const ready = async (): Promise<void> => {
     if (!intent.current()) refuse(changed)
     await assertWalletAccount(provider, intent.from)

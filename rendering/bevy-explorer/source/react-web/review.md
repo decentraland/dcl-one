@@ -477,8 +477,8 @@ Expectations:
 
 - **Where it shows:** the profile card of chat names, nametags and the friend row (after View Profile), the
   community card's member menu (after Call; greyed for a blocked member, either way), and another player's
-  passport options (before Block). Not in the voice-stream panel's menu, not on your own card, not for a guest.
-  Whether the session may gift is asked once per sign-in.
+  passport options (before Block). Not in the voice-stream panel's menu, not on your own card, not for a guest sender or a guest recipient.
+  Whether the session may gift is asked as each of those surfaces opens, as Donate's host is asked (`useGiftingAvailable`); nothing is cached.
 - **The picker** reads 16 owned on-chain items a page through the bridge's `giftingQuery`, newest first, with the
   search on the server. A pending gift doesn't count as a copy; an equipped single copy is covered and can't be
   picked; SEND GIFT sends the newest-transferred copy neither worn nor pending, and refuses an item that isn't a

@@ -1,5 +1,5 @@
-// What a money dialog drawn by the shell may show of a profile or an item read from a service: a name, a `#rgb`-style
-// colour and an `https:` picture only, so nothing a profile or an index holds can make the page that holds the wallet
+// What a money dialog drawn by the shell may show of a profile or an item read from a service: a name, an opaque
+// `#rgb` or `#rrggbb` colour and an `https:` picture only, so nothing a profile or an index holds can make the page that holds the wallet
 // load anything else. Donate and Gift both draw through it.
 
 import type { DonateCreator } from '@hud/features/donate/types'
@@ -14,7 +14,8 @@ export function safeCreator(c: Partial<DonateCreator> | null | undefined): Donat
     address: c.address,
     ...(typeof c.name === 'string' ? { name: c.name } : {}),
     ...(c.claimed === true ? { claimed: true } : {}),
-    ...(typeof c.nameColor === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(c.nameColor) ? { nameColor: c.nameColor } : {}),
+    // Opaque only: a colour with an alpha channel could draw the name invisible.
+    ...(typeof c.nameColor === 'string' && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(c.nameColor) ? { nameColor: c.nameColor } : {}),
     ...(isSafeImageUrl(c.face) ? { face: c.face } : {})
   }
 }

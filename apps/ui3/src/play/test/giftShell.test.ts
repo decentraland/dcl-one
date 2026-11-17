@@ -231,6 +231,14 @@ describe('the confirm step', () => {
     expect(t.views.at(-1)).toMatchObject({ step: 'sent' })
   })
 
+  it('marks a claimed recipient, and draws only an opaque name colour', async () => {
+    const t = setup({ recipient: async (address) => ({ address, name: 'Bob', claimed: true, nameColor: '#ff000000' }) }, { confirm: false })
+    await t.gift.request('gift.open', OPEN)
+    await t.settled()
+    expect(t.views.at(-1)).toMatchObject({ step: 'confirm', recipient: { address: RECIPIENT, name: 'Bob', claimed: true } })
+    expect((t.views.at(-1) as { recipient: { nameColor?: string } }).recipient.nameColor).toBeUndefined()
+  })
+
   it('CANCEL on the confirm step sends nothing and closes', async () => {
     const t = setup({}, { confirm: false })
     await t.gift.request('gift.open', OPEN)

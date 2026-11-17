@@ -194,10 +194,10 @@ function parseTimeReply(reply: string): { hours: number; speed: number } | null 
 // Unity's wording (BackpackEquipStatusController's in-world warning) when a profile deploy fails.
 export const SAVE_FAILED_MESSAGE = 'There was an error updating your avatar profile. Please try again.'
 
-/** A server-side catalog page request (backpack grid). Filters/sort are applied by the catalyst. */
 /** A gift picker page request, without the id the session adds. */
 export type GiftingQuery = Omit<GiftingQueryRequest, 'kind' | 'requestId'>
 
+/** A server-side catalog page request (backpack grid). Filters/sort are applied by the catalyst. */
 export interface CatalogQuery {
   page: number
   pageSize: number

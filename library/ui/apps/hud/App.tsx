@@ -368,14 +368,16 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
     if (!session.backpack.open) setBackpackTab('wearables')
   }, [session.backpack.open])
   // A gift-received popup's GO TO BACKPACK opens the Backpack on the gift's tab.
-  const backpack = session.backpack
+  // Read through a ref: the session's backpack is a new object each render, and the opener is set once.
+  const backpackRef = useRef(session.backpack)
+  backpackRef.current = session.backpack
   useEffect(() => {
     setGiftBackpackOpener((tab) => {
       setBackpackTab(tab)
-      if (!backpack.open) backpack.toggle()
+      if (!backpackRef.current.open) backpackRef.current.toggle()
     })
     return () => setGiftBackpackOpener(null)
-  }, [backpack])
+  }, [])
   // Open MY OWN passport (Sidebar profile icon + the menu's "View Profile") — same popup the profile
   // card opens for others.
   const viewMyProfile = (tab?: PassportTab): void => {

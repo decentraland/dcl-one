@@ -27,7 +27,7 @@ const TABS: TabItem<CatalogKind>[] = [
   { id: 'emotes', label: 'EMOTES' }
 ]
 
-export interface GiftRecipient {
+interface GiftRecipient {
   address: string
   name: string
 }

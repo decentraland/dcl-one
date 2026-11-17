@@ -38,7 +38,7 @@ function tokensOf(el: Element): GiftableToken[] {
 }
 
 /** One page of owned on-chain items as the picker lists them. */
-export function giftableItems(base: string, elements: readonly Element[]): GiftableItem[] {
+function giftableItems(base: string, elements: readonly Element[]): GiftableItem[] {
   return elements.map((el) => {
     const file = el.entity?.metadata?.thumbnail
     const hash = el.entity?.content?.find((c) => c.file === file)?.hash
@@ -55,7 +55,7 @@ export function giftableItems(base: string, elements: readonly Element[]): Gifta
   })
 }
 
-export async function fetchGiftingPage(
+async function fetchGiftingPage(
   address: string,
   q: { catalog: CatalogKind; page: number; pageSize: number; search?: string }
 ): Promise<{ items: GiftableItem[]; total: number; failed: boolean }> {

@@ -4,14 +4,16 @@
 // the activity page), then "Gift Sent to <name>!" with rays and OK, or "Something went wrong" with TRY AGAIN and
 // Contact Support. The host resolves the recipient and the item itself.
 
-import { Avatar, Button, Modal, ModalActions, ModalTitle, Spinner } from '../../design'
+import { Avatar, Button, Modal, ModalActions, ModalTitle, Spinner, VerifiedBadge } from '../../design'
 import { ItemTile, RaysPopup } from '../rewards/RewardPopup'
 import styles from './GiftTransferPanel.module.css'
 
 export interface GiftTransferRecipient {
   address: string
   name?: string
-  /** `#rgb`-style; drawn only as a colour. */
+  /** A claimed NAME: drawn with the verified mark; any other name shows its `#tag`. */
+  claimed?: boolean
+  /** `#rgb` or `#rrggbb`; drawn only as a colour. */
   nameColor?: string
   /** An https face snapshot. */
   face?: string
@@ -48,6 +50,12 @@ export const GIFT_STATUS_MANAGED = 'Processing...'
 const shortAddress = (a: string): string => `${a.slice(0, 6)}…${a.slice(-4)}`
 const nameOf = (r: GiftTransferRecipient): string => r.name || shortAddress(r.address)
 
+/** A claimed NAME is verified; any other name is the account's to set, so its #tag says whose it is. */
+function Mark({ recipient }: { recipient: GiftTransferRecipient }): React.JSX.Element | null {
+  if (recipient.claimed) return <VerifiedBadge size={14} />
+  return recipient.name ? <span className={styles.tag}>#{recipient.address.slice(-4)}</span> : null
+}
+
 function Recipient({ recipient, size }: { recipient: GiftTransferRecipient; size: number }): React.JSX.Element {
   return <Avatar src={recipient.face} name={nameOf(recipient)} color={recipient.nameColor} size={size} />
 }
@@ -72,6 +80,7 @@ export function GiftTransferPanel({ view, handlers }: { view: GiftTransferView; 
               <span className={styles.name} style={view.recipient.nameColor ? { color: view.recipient.nameColor } : undefined}>
                 {nameOf(view.recipient)}
               </span>
+              <Mark recipient={view.recipient} />
             </div>
             <span className={styles.address}>{view.recipient.address}</span>
             <ItemTile rarity={view.item.rarity} image={view.item.image} category={view.item.category} />
@@ -96,6 +105,7 @@ export function GiftTransferPanel({ view, handlers }: { view: GiftTransferView; 
               <span className={styles.name} style={view.recipient.nameColor ? { color: view.recipient.nameColor } : undefined}>
                 {nameOf(view.recipient)}
               </span>
+              <Mark recipient={view.recipient} />
             </div>
             <ItemTile rarity={view.item.rarity} image={view.item.image} category={view.item.category} />
             <span className={styles.itemName}>{view.item.name}</span>
