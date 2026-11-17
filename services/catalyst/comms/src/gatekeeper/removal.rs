@@ -1648,14 +1648,11 @@ mod tests {
         state.island_safety.elapse_quarantine_for_test(initial, 123);
         fixture.lock().unwrap().failures = 1;
         connection(&pool, &voice, &other).await.unwrap();
-        // Two passes of the `comms-livekit-ban-removal` job body. Each must
-        // succeed despite the uncertain island RPC (a failed pass fails the
-        // whole job). The bound only ends a hang: each contended lock gives up
-        // at its own timeout.
+        // Two passes of the primary job. Each must succeed despite the
+        // uncertain island RPC (a failed pass fails the whole job).
         for _ in 0..2 {
-            tokio::time::timeout(Duration::from_secs(60), run_batch(&state))
+            pass(&state)
                 .await
-                .expect("a maintenance pass ends")
                 .expect("island RPC uncertainty must not fail the whole job");
         }
         assert!(
