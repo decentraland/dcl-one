@@ -70,7 +70,7 @@ function LiveNowCard({
   )
 }
 
-type ActionProps = { title: string; href: string; remind?: RemindControl; calendarHref?: string }
+type ActionProps = { title: string; remind?: RemindControl; calendarHref?: string }
 
 /**
  * Copy link's outcome, for the card to announce. The card renders the status region whenever the
@@ -103,7 +103,7 @@ function EventActions({
   remind,
   calendarHref,
   onCopy
-}: Omit<ActionProps, 'href'> & {
+}: ActionProps & {
   size: 'small' | 'day'
   live?: boolean
   jumpIn?: JumpIn

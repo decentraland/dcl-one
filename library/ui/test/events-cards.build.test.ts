@@ -299,11 +299,11 @@ describe('when Events cards reveal their controls', () => {
     })
     await session.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
     await evaluate(`document.activeElement?.blur()`)
-    const state = await evaluate<{ hover: boolean; visible: string; sizes: number[] }>(
-      `(()=>{const card=document.querySelector(${JSON.stringify(UPCOMING)});return {hover:matchMedia('(hover: hover)').matches,visible:getComputedStyle(card.querySelector('[class*="showOnHover"]')).visibility,sizes:[...card.querySelectorAll('button,a[aria-label*="calendar"]')].map(el=>el.getBoundingClientRect().height)}})()`
+    const state = await evaluate<{ hover: boolean; visible: boolean; sizes: number[] }>(
+      `(()=>{const card=document.querySelector(${JSON.stringify(UPCOMING)});return {hover:matchMedia('(hover: hover)').matches,visible:card.querySelector('[class*="showOnHover"]').getBoundingClientRect().height>0&&getComputedStyle(card.querySelector('[class*="showOnHover"]')).opacity==='1',sizes:[...card.querySelectorAll('button,a[aria-label*="calendar"]')].map(el=>el.getBoundingClientRect().height)}})()`
     )
     expect(state.hover).toBe(false)
-    expect(state.visible).toBe('visible')
+    expect(state.visible).toBe(true)
     expect(state.sizes).toEqual([44, 44, 44])
     const layout = await evaluate<{
       cover: number[]
@@ -316,6 +316,10 @@ describe('when Events cards reveal their controls', () => {
     expect(layout.cover).toEqual([135, 135])
     expect(layout.card).toBeGreaterThan(135)
     expect(layout).toMatchObject({ host: '1', hostShown: true })
+    const live = await evaluate<{ jump: boolean; share: boolean; time: boolean }>(
+      `(()=>{const card=document.querySelector('[data-live-small] article');return {jump:Boolean(card.querySelector('a[aria-label^="Jump in"]')?.getBoundingClientRect().height),share:Boolean(card.querySelector('button[aria-label^="Copy link"]')?.getBoundingClientRect().height),time:Boolean(card.querySelector('time')?.getBoundingClientRect().height)}})()`
+    )
+    expect(live).toEqual({ jump: true, share: true, time: true })
     expect(
       await evaluate(
         `getComputedStyle(document.querySelector(${JSON.stringify(UPCOMING)}).querySelector('[class*="smallTime"]')).opacity`

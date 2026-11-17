@@ -64,6 +64,7 @@ type ExperienceCardProps = EventCardData & {
   time: EventCardTime
   remind?: RemindControl
   calendarHref?: string
+  /** Read only by the phone's day list (a small card); a day column shows no JUMP IN. */
   jumpIn?: JumpIn
 }
 

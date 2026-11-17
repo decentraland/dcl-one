@@ -297,7 +297,8 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
         },
         remind: occurrence.live ? undefined : remindControl(reminders.get(event.id)),
         calendarHref: calendarHref(event, eventPageShareUrl(origin, event), occurrence),
-        jumpIn: occurrence.live ? jumpIn(eventTarget(event)) : undefined,
+        // Only the phone's day list shows JUMP IN on a card; a day column does not.
+        jumpIn: occurrence.live && columns === 1 ? jumpIn(eventTarget(event)) : undefined,
       };
     }),
   }));

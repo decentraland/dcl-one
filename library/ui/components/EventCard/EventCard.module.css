@@ -200,7 +200,8 @@
   }
 
   /* Live: the design's Event Live surface (#680d4a) under two Event Live glows (#e00061) rising from
-     below the card, and a 5px live bar on the leading edge. Neither colour has a foundations token. */
+     below the card, and a 5px live bar on the leading edge. Neither colour has a foundations token
+     (the HUD keeps the surface as its own --events-card-live, outside the shared foundations). */
   .small.isLive {
     background:
       radial-gradient(33% 54% at 50% 150%, rgb(224 0 97 / 0.35), rgb(224 0 97 / 0.105) 60%, transparent),
@@ -506,7 +507,7 @@
     .day.hasActions:focus-within .action {
       pointer-events: auto;
     }
-  
+
     /* A small card folds the host away (and a live one its time) and opens the 32px actions row under
        the time, each row's height and opacity changing together over 200ms; the actions also rise 8px.
        A folded row clips its content; focus inside the host keeps it open. */
@@ -559,7 +560,6 @@
       opacity: 0;
     }
   }
-
 
   /* Under reduced motion every state changes at once, in place. */
   @media (prefers-reduced-motion: reduce) {

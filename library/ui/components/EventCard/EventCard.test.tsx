@@ -364,7 +364,10 @@ describe('EventCard motion', () => {
     expect(blockOf(css, '.small .media')).toMatch(/width: 135px;\s*height: 135px/)
     // The small card's folding rows exist only for a device that hovers.
     expect(blockOf(css, '.small .body')).not.toMatch(/grid-template-rows/)
-    expect(css.indexOf('.showOnHover {')).toBeGreaterThan(css.indexOf('@media (hover: hover)'))
+    const outsideHover = css
+      .replace(mediaOf('(hover: hover) and (min-width: 768px)'), '')
+      .replace(mediaOf('(prefers-reduced-motion: reduce)'), '')
+    expect(outsideHover).not.toMatch(/\n\s*\.(showOnHover|reveal) \{/)
   })
 
   it("folds a small card's host and opens its 32px actions row together over 200ms", () => {
