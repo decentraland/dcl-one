@@ -13,6 +13,8 @@
   box-sizing: border-box;
   height: 40px;
   padding: 10.5px 22.5px;
+  min-width: 64px;
+  vertical-align: middle;
 }
 
 .Header.Navbar > .user > .SignInButton:hover {
@@ -20,22 +22,33 @@
   border-color: var(--text);
 }
 
-.Header.Navbar > .user > .AvatarButton {
-  min-width: 0;
-  padding: 0;
+/* The ui3 Tooltip puts a span around the avatar button. */
+.Header.Navbar > .user > .tt__wrap {
+  vertical-align: middle;
 }
 
-.Header.Navbar > .user > .AvatarButton:hover {
-  background-color: transparent;
+.Header.Navbar > .user .AvatarButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
 }
 
 .Header.Navbar > .user > .SignInButton:focus-visible,
-.Header.Navbar > .user > .AvatarButton:focus-visible {
+.Header.Navbar > .user .AvatarButton:focus-visible {
   outline: 2px solid var(--palette-info-light);
   outline-offset: 2px;
 }
 
-.Header.Navbar > .user > .AvatarButton .MuiAvatar-root {
+/* The face of the ui3 AvatarFace: the atom gives it a hashed class only. */
+.Header.Navbar > .user .AvatarButton [data-size] > span {
   width: 40px;
   height: 40px;
   outline: 2px solid transparent;
@@ -43,7 +56,7 @@
   transition: outline-color 150ms ease;
 }
 
-.Header.Navbar > .user > .AvatarButton:hover .MuiAvatar-root {
+.Header.Navbar > .user .AvatarButton:hover [data-size] > span {
   outline-color: #ffffff;
 }
 
@@ -54,6 +67,30 @@
   font-weight: 600 !important;
 }
 
-.MuiTooltip-popper[data-popper-placement*="bottom"] .AccountTooltip {
-  margin-top: 10px !important;
+/* This tip uses a font list that does not start with Inter, and its own line height. */
+.AccountTooltip.tt__tip {
+  font-family: Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+}
+
+/* The ui3 tip opens 12px below its anchor; this tip is 10px below. */
+.AccountTooltip.tt__tip--bottom {
+  margin-top: -2px;
+}
+
+/*
+ * The ui3 Menu stops 8px from the window edge. This menu always meets that edge, and its place is
+ * 16px from it.
+ */
+.UserMenu {
+  margin-left: -8px;
+}
+
+/* The menu has no least width. */
+#UserMenu {
+  min-width: 0;
+}
+
+#UserMenu [role="menuitem"] {
+  letter-spacing: 0.00938em;
 }

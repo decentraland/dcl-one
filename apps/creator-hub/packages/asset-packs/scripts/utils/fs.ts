@@ -1,69 +1,43 @@
 import fs from 'fs';
 import { resolve, dirname } from 'path';
-import future from 'fp-future';
 
-export function exists(path: string) {
-  const promise = future<boolean>();
-  fs.stat(path, err => {
-    if (err == null) {
-      promise.resolve(true);
-    } else if (err.code === 'ENOENT') {
-      promise.resolve(false);
-    } else {
-      promise.reject(new Error(err.code));
-    }
-  });
-  return promise;
+export async function exists(path: string) {
+  try {
+    await fs.promises.stat(path);
+    return true;
+  } catch (error) {
+    const { code } = error as NodeJS.ErrnoException;
+    if (code === 'ENOENT') return false;
+    throw new Error(code);
+  }
 }
 
 export async function createDirectory(path: string) {
   if (await exists(path)) {
     return;
   }
-  const promise = future<void>();
-  fs.mkdir(path, { recursive: true }, err => (err ? promise.reject(err) : promise.resolve()));
-  return promise;
+  await fs.promises.mkdir(path, { recursive: true });
 }
 
 export async function writeFile(path: string, data: string | Buffer) {
-  const promise = future<void>();
-  const dir = dirname(path);
-  await createDirectory(dir);
-  fs.writeFile(path, data, 'utf8', err => (err ? promise.reject(err) : promise.resolve()));
-  return promise;
+  await createDirectory(dirname(path));
+  await fs.promises.writeFile(path, data, 'utf8');
 }
 
 export async function readJson(path: string) {
-  const promise = future<string>();
-  fs.readFile(path, 'utf8', (err, data) => (err ? promise.reject(err) : promise.resolve(data)));
-  const data = await promise;
-  return JSON.parse(data);
+  return JSON.parse(await fs.promises.readFile(path, 'utf8'));
 }
 
 export function readBuffer(path: string) {
-  const promise = future<Buffer>();
-  fs.readFile(path, (err, data) => (err ? promise.reject(err) : promise.resolve(data)));
-  return promise;
+  return fs.promises.readFile(path);
 }
 
-export function isDirectory(path: string) {
-  const promise = future<boolean>();
-  fs.lstat(path, (err, stats) =>
-    err ? promise.reject(err) : promise.resolve(stats.isDirectory()),
-  );
-  return promise;
+export async function isDirectory(path: string) {
+  return (await fs.promises.lstat(path)).isDirectory();
 }
 
 export function list(path: string) {
-  const promise = future<string[]>();
-  fs.readdir(path, async (err, files) => {
-    if (err) {
-      promise.reject(err);
-    } else {
-      promise.resolve(files);
-    }
-  });
-  return promise;
+  return fs.promises.readdir(path);
 }
 
 export async function getSubfolders(path: string) {
@@ -104,7 +78,5 @@ export async function getFiles(path: string) {
 }
 
 export function move(from: string, to: string) {
-  const promise = future<void>();
-  fs.rename(from, to, err => (err ? promise.reject(err) : promise.resolve()));
-  return promise;
+  return fs.promises.rename(from, to);
 }

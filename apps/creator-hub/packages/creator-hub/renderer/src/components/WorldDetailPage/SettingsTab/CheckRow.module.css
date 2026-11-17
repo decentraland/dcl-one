@@ -1,0 +1,9 @@
+.checkRow {
+  display: flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 10px;
+  color: var(--palette-neutral-softWhite);
+  font-size: 1rem;
+  cursor: pointer;
+}

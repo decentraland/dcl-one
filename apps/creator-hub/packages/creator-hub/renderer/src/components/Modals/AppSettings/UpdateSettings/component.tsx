@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Box, Typography, Button, type ButtonProps } from 'decentraland-ui2';
-import { InfoOutlined } from '@mui/icons-material';
+import Button from '@ui/atoms/Button';
+import Text from '@ui/atoms/Text';
+import { InfoOutlinedIcon as InfoOutlined } from '@ui/atoms/icons-material';
 import { t } from '/@/modules/store/translation/utils';
 import { useDispatch, useSelector } from '#store';
 import { checkForUpdates, downloadUpdate, installUpdate } from '/@/modules/store/settings/slice';
@@ -14,7 +15,8 @@ interface UpdateButtonProps {
   action: () => void;
   text: string;
   disabled?: boolean;
-  color: ButtonProps['color'];
+  /** `progress` is the disabled button that shows the download. */
+  look: 'primary' | 'neutral' | 'progress';
 }
 
 export const UpdateSettings: React.FC<{ className?: string; autoCheck?: boolean }> = ({
@@ -73,7 +75,7 @@ export const UpdateSettings: React.FC<{ className?: string; autoCheck?: boolean 
         action: () => {},
         text: t('editor.loading.title'),
         disabled: true,
-        color: 'secondary',
+        look: 'neutral',
       };
     }
 
@@ -82,7 +84,7 @@ export const UpdateSettings: React.FC<{ className?: string; autoCheck?: boolean 
         action: () => {},
         text: t('modal.app_settings.update.downloading', { progress }),
         disabled: true,
-        color: 'inherit',
+        look: 'progress',
       };
     }
 
@@ -90,7 +92,7 @@ export const UpdateSettings: React.FC<{ className?: string; autoCheck?: boolean 
       return {
         action: handleCheckForUpdates,
         text: t('modal.app_settings.update.check'),
-        color: 'secondary',
+        look: 'neutral',
       };
     }
 
@@ -102,14 +104,14 @@ export const UpdateSettings: React.FC<{ className?: string; autoCheck?: boolean 
       return {
         action: updateInfo.isDownloaded ? handleInstallUpdate : handleDownloadUpdate,
         text: buttonText,
-        color: 'primary',
+        look: 'primary',
       };
     }
 
     return {
       action: handleCheckForUpdates,
       text: t('modal.app_settings.update.check'),
-      color: 'secondary',
+      look: 'neutral',
     };
   }, [
     checkForUpdatesStatus,
@@ -133,21 +135,21 @@ export const UpdateSettings: React.FC<{ className?: string; autoCheck?: boolean 
   const renderStatusMessage = () => {
     if (shouldShowUpdateAvailable && releaseNotes) {
       return (
-        <Typography
+        <Text
           variant="h6"
           className="update-settings__release-notes-header"
         >
           {t('modal.app_settings.update.update_available')}: v{releaseNotes.version}
-        </Typography>
+        </Text>
       );
     }
 
     if (progress > 0 && !finished) {
       return (
-        <Box className="update-settings__progress-container">
-          <Typography variant="body2">{t('modal.app_settings.update.applying')}</Typography>
-          <Typography variant="body2">{t('modal.app_settings.update.dont_close')}</Typography>
-        </Box>
+        <div className="update-settings__progress-container">
+          <Text variant="body2">{t('modal.app_settings.update.applying')}</Text>
+          <Text variant="body2">{t('modal.app_settings.update.dont_close')}</Text>
+        </div>
       );
     }
 
@@ -157,12 +159,12 @@ export const UpdateSettings: React.FC<{ className?: string; autoCheck?: boolean 
       checkForUpdatesStatus === 'succeeded'
     ) {
       return (
-        <Typography
+        <Text
           variant="subtitle1"
           className="update-settings__up-to-date-message"
         >
           {t('modal.app_settings.version.up_to_date')}
-        </Typography>
+        </Text>
       );
     }
 
@@ -175,28 +177,29 @@ export const UpdateSettings: React.FC<{ className?: string; autoCheck?: boolean 
     }
 
     return (
-      <Box className="update-settings__release-notes">
-        <Box className="update-settings__release-notes-content">
+      <div className="update-settings__release-notes">
+        <div className="update-settings__release-notes-content">
           {releaseNotes.content.length > 0 && (
-            <Box className="update-settings__release-notes-section">
+            <div className="update-settings__release-notes-section">
               <MarkdownRenderer content={releaseNotes.content} />
-            </Box>
+            </div>
           )}
-        </Box>
-      </Box>
+        </div>
+      </div>
     );
   };
 
   return (
     <Column className={`update-settings ${className}`}>
-      <Box className="update-settings__status-area">
+      <div className="update-settings__status-area">
         {renderStatusMessage()}
         {renderReleaseNotes()}
-      </Box>
-      <Box className="update-settings__button-area">
+      </div>
+      <div className="update-settings__button-area">
         <Button
-          variant="contained"
-          color={buttonProps.color}
+          variant="primary"
+          tone={buttonProps.look === 'primary' ? undefined : 'neutral'}
+          className={buttonProps.look === 'progress' ? 'update-settings__progress' : undefined}
           onClick={buttonProps.action}
           disabled={buttonProps.disabled}
           fullWidth
@@ -206,10 +209,10 @@ export const UpdateSettings: React.FC<{ className?: string; autoCheck?: boolean 
         {canInstallNewVersion && (
           <Row className="update-settings__message-container">
             <InfoOutlined />
-            <Typography variant="body2">{t('modal.app_settings.update.auto_restart')}</Typography>
+            <Text variant="body2">{t('modal.app_settings.update.auto_restart')}</Text>
           </Row>
         )}
-      </Box>
+      </div>
     </Column>
   );
 };

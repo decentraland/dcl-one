@@ -24,6 +24,8 @@ const TWENTY_FOUR_HOURS: f32 = 24. * ONE_HOUR;
 /// How many hours per second are advanced during a [`TimeSkip`]
 const HOURS_PER_SECOND: f32 = 12. * ONE_HOUR;
 
+pub use common::sky_preset::day_fraction;
+
 #[derive(Component)]
 struct TimeKeeper;
 

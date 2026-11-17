@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import ClearAllIcon from '@mui/icons-material/ClearAll';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import { ClearAllIcon, OpenInNewIcon } from '@ui/atoms/icons-material';
 import { AnsiLine } from '@dcl/inspector/dist/ansi-entrypoint';
-import { Tooltip } from 'decentraland-ui2';
+import IconButton from '@ui/atoms/IconButton';
+import Tooltip from '@ui/atoms/Tooltip';
 
 import { consoleWindow as consolePreload, editor } from '#preload';
 import { useDispatch } from '#store';
@@ -10,7 +10,7 @@ import { actions as translationActions } from '/@/modules/store/translation';
 import { locales, t } from '/@/modules/store/translation/utils';
 import type { Locale } from '/shared/types/translation';
 
-import { Header, HeaderButton, Logs, Placeholder, Root } from './component.styled';
+import styles from './component.module.css';
 
 type LogEntry = { id: number; text: string };
 
@@ -122,29 +122,40 @@ export function ConsoleWindow() {
   }, []);
 
   return (
-    <Root>
-      <Header>
-        <Tooltip title={t('editor.console.clear')}>
-          <HeaderButton
+    <div className={styles.root}>
+      <div className={styles.header}>
+        <Tooltip
+          label={t('editor.console.clear')}
+          side="bottom"
+          portal
+        >
+          <IconButton
+            className={styles.headerButton}
             size="small"
             onClick={clearEntries}
             aria-label={t('editor.console.clear')}
           >
             <ClearAllIcon fontSize="small" />
-          </HeaderButton>
+          </IconButton>
         </Tooltip>
-        <Tooltip title={t('editor.console.dock')}>
-          <HeaderButton
+        <Tooltip
+          label={t('editor.console.dock')}
+          side="bottom"
+          portal
+        >
+          <IconButton
+            className={styles.headerButton}
             size="small"
             onClick={onDock}
             aria-label={t('editor.console.dock')}
           >
             <OpenInNewIcon fontSize="small" />
-          </HeaderButton>
+          </IconButton>
         </Tooltip>
-      </Header>
+      </div>
       {entries.length > 0 ? (
-        <Logs
+        <div
+          className={styles.logs}
           ref={logsRef}
           onScroll={handleScroll}
         >
@@ -154,10 +165,10 @@ export function ConsoleWindow() {
               text={entry.text}
             />
           ))}
-        </Logs>
+        </div>
       ) : (
-        <Placeholder>{t('editor.console.empty')}</Placeholder>
+        <div className={styles.placeholder}>{t('editor.console.empty')}</div>
       )}
-    </Root>
+    </div>
   );
 }

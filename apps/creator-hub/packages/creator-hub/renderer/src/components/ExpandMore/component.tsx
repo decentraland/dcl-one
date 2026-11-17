@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import { Collapse, IconButton, Typography, Box } from '@mui/material';
+import Collapse from '@ui/atoms/Collapse';
+import IconButton from '@ui/atoms/IconButton';
+import Text from '@ui/atoms/Text';
+import { ExpandMoreIcon } from '@ui/atoms/icons-material';
 
 import type { Props } from './types';
 
@@ -14,46 +16,27 @@ export function ExpandMore({ title, text }: Props) {
   };
 
   return (
-    <Box className="ExpandMore">
-      <Box
-        display="flex"
-        alignItems="center"
-      >
+    <div className="ExpandMore">
+      <div className="header">
         <IconButton
+          className="ExpandMoreToggle"
           onClick={handleToggle}
           aria-expanded={expanded}
           aria-label={title || 'show more'}
-          sx={{
-            transform: !expanded ? 'rotate(-90deg)' : 'rotate(0deg)',
-            transition: theme =>
-              theme.transitions.create('transform', {
-                duration: theme.transitions.duration.shortest,
-              }),
-          }}
         >
           <ExpandMoreIcon />
         </IconButton>
         {title && (
-          <Typography
+          <Text
             className="title"
             variant="subtitle1"
+            as="h6"
           >
             {title}
-          </Typography>
+          </Text>
         )}
-      </Box>
-      <Collapse
-        in={expanded}
-        timeout="auto"
-        unmountOnExit
-      >
-        <Typography
-          variant="body2"
-          sx={{ mt: 1 }}
-        >
-          {text}
-        </Typography>
-      </Collapse>
-    </Box>
+      </div>
+      <Collapse open={expanded}>{expanded && <Text variant="body2">{text}</Text>}</Collapse>
+    </div>
   );
 }

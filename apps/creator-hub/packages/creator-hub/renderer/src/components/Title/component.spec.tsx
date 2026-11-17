@@ -1,11 +1,11 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { Title } from '.';
 
 describe('Title', () => {
@@ -19,12 +19,12 @@ describe('Title', () => {
     it('should be the page heading with a Back button', () => {
       const onBack = vi.fn();
       render(
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <Title
             value="Manage - Land Name"
             onBack={onBack}
           />
-        </ThemeProvider>,
+        </TestProviders>,
       );
 
       expect(screen.getByRole('heading', { level: 1, name: 'Manage - Land Name' })).toBeTruthy();

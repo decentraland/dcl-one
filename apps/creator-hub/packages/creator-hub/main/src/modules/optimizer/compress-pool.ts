@@ -54,7 +54,12 @@ export function defaultPoolSize(): number {
 // Buffers handed to a thread are copied out of their (possibly shared) backing store, so the
 // transfer neither detaches memory the caller still uses nor drags an 8 MB pool slab along.
 function toTransferable(buffer: Buffer): ArrayBuffer {
-  return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+  // By its type, `Buffer.buffer` can be a `SharedArrayBuffer`.
+  // The transfer list takes an `ArrayBuffer` only.
+  return buffer.buffer.slice(
+    buffer.byteOffset,
+    buffer.byteOffset + buffer.byteLength,
+  ) as ArrayBuffer;
 }
 
 export async function handleCompressRequest(request: CompressRequest): Promise<CompressReply> {
