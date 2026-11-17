@@ -1,3 +1,5 @@
+import { MAX_RECORDING_MS, RECORDING_RETENTION_DAYS } from '/shared/types/recording';
+
 import { t } from '/@/modules/store/translation/utils';
 import { DefaultModal } from '../Modals/DefaultModal';
 import styles from './RecordingConsentModal.module.css';
@@ -28,7 +30,12 @@ export function RecordingConsentModal({ open, downloadMb, onAccept, onCancel }: 
     >
       <ul className={styles.consentList}>
         <li>{t('editor.recording.consent.what')}</li>
-        <li>{t('editor.recording.consent.local')}</li>
+        <li>
+          {t('editor.recording.consent.local', {
+            minutes: MAX_RECORDING_MS / 60_000,
+            days: RECORDING_RETENTION_DAYS,
+          })}
+        </li>
         {downloadMb > 0 && <li>{t('editor.recording.consent.download', { size: downloadMb })}</li>}
         <li>{t('editor.recording.consent.sent')}</li>
         <li>{t('editor.recording.consent.microphone')}</li>

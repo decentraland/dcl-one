@@ -57,7 +57,7 @@ describe('when sending while main is still running a turn', () => {
   });
 
   it('should put the text back in the composer instead of dropping it', () => {
-    expect(dispatched).toContainEqual(actions.setDraftPrompt('hello'));
+    expect(dispatched).toContainEqual(actions.setDraftPrompt({ text: 'hello', mode: 'replace' }));
   });
 
   it('should not add the message to the transcript', () => {
@@ -225,7 +225,11 @@ describe('when sending with a pending session recording and no typed text', () =
       return action;
     });
     const getState = () => ({ editor: { project: { path: '/scene' } }, ai, workspace: {} });
-    await send({ text: '' })(dispatch as never, getState as never, undefined);
+    await send({ text: '', recordingLabel: 'Grabación de sesión 1:05' })(
+      dispatch as never,
+      getState as never,
+      undefined,
+    );
   });
 
   it('should send the turn with the timeline after the selection context', () => {
@@ -236,9 +240,9 @@ describe('when sending with a pending session recording and no typed text', () =
     );
   });
 
-  it('should show the recording as a chip on the sent message', () => {
+  it('should show the recording as a chip labelled by the caller', () => {
     const sent = ai.messages.find(m => m.role === 'user');
-    expect(sent?.attachments).toEqual([{ name: 'Session recording 1:05', kind: 'audio' }]);
+    expect(sent?.attachments).toEqual([{ name: 'Grabación de sesión 1:05', kind: 'audio' }]);
   });
 
   it('should use the recording for this message only', () => {
@@ -559,5 +563,23 @@ describe('when discarding with no recording pending', () => {
     });
     await discardRecording()(vi.fn() as never, getState as never, undefined);
     expect(preloadRecording.discard).not.toHaveBeenCalled();
+  });
+});
+
+describe('when a draft prompt is seeded into the composer', () => {
+  it('should carry the mode its caller asked for', () => {
+    const state = reducer(undefined, actions.setDraftPrompt({ text: 'hi', mode: 'append' }));
+
+    expect(state.draftPrompt).toEqual({ text: 'hi', nonce: 1, mode: 'append' });
+  });
+
+  it('should never reuse a nonce the composer already applied', () => {
+    let state = reducer(undefined, actions.setDraftPrompt({ text: 'first', mode: 'replace' }));
+    const first = state.draftPrompt?.nonce ?? 0;
+    state = reducer(state, actions.consumeDraftPrompt());
+
+    state = reducer(state, actions.setDraftPrompt({ text: 'second', mode: 'replace' }));
+
+    expect(state.draftPrompt?.nonce).toBeGreaterThan(first);
   });
 });

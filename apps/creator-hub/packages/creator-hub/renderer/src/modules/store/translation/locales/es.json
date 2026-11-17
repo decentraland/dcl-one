@@ -181,7 +181,8 @@
       "recording": {
         "chip": "Grabación de sesión · {duration} · {actions} acciones",
         "chip_no_speech": "Grabación de sesión · {duration} · {actions} acciones (sin voz)",
-        "remove": "Descartar grabación"
+        "remove": "Descartar grabación",
+        "attachment": "Grabación de sesión {duration}"
       }
     },
     "publish": {
@@ -216,13 +217,15 @@
         "title": "Graba una sesión para el asistente de IA",
         "intro": "Habla mientras trabajas y luego detén la grabación: el asistente recibe lo que dijiste junto con lo que estabas haciendo, así \"borra este\" significa la entidad que estabas señalando.",
         "what": "Esto graba tu voz y cada acción que hagas en el editor: clics, dónde está el mouse, qué señalas y seleccionas, menús que abres, paneles que desplazas, búsquedas, ediciones, y lo que señalas y clickeas mientras juegas tu escena.",
-        "local": "Solo se graba mientras el botón Grabar está activo, y la grabación se detiene sola a los {minutes} minutos. Cerrar el proyecto o la app termina la grabación de inmediato. El audio y el registro quedan en tu computadora, y tu voz también se transcribe en tu computadora; descartar una grabación los elimina.",
+        "local": "Solo se graba mientras el botón Grabar está activo, y la grabación se detiene sola a los {minutes} minutos. Cerrar el proyecto o la app termina la grabación de inmediato. Tu voz se transcribe en tu computadora y el audio se elimina en cuanto termina la grabación; el registro de acciones y la transcripción quedan en tu computadora y se eliminan a los {days} días. Descartar una grabación los elimina de inmediato.",
         "download": "La primera vez, Creator Hub descarga un modelo de voz a texto (unos {size} MB).",
         "sent": "Al detener, la grabación se adjunta a tu próximo mensaje. Al enviarlo, la transcripción y la lista de acciones (no el audio) se comparten con tu proveedor de IA.",
         "microphone": "Usa el micrófono predeterminado del sistema. Para usar otro, cambia el dispositivo de entrada en la configuración de sonido del sistema antes de empezar.",
         "cancel": "Cancelar",
         "accept": "Empezar a grabar"
-      }
+      },
+      "send_without_transcript": "Enviar sin transcripción",
+      "microphone_lost": "La grabación se detuvo porque se desconectó tu micrófono. Se envía con tu próximo mensaje."
     }
   },
   "scene_list": {

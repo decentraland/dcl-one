@@ -4,6 +4,7 @@ import type { AiAssetMention, AiAttachment, AiProvider } from '/shared/types/ai'
 
 import { useDispatch, useSelector } from '#store';
 import { actions as aiActions } from '/@/modules/store/ai';
+import { recordingAttachmentLabel } from '/@/modules/store/ai/labels';
 
 import { ChatView } from './ChatView';
 
@@ -20,6 +21,8 @@ interface Props {
   onToggleRecording: () => void;
   // Discard the running recording.
   onCancelRecording: () => void;
+  /** Send the stopping recording without waiting for its transcript. */
+  onSkipTranscription: () => void;
 }
 
 // The inline chat panel: a thin container that wires the redux store + thunks to the shared
@@ -32,6 +35,7 @@ export function AiChatPanel({
   width,
   onToggleRecording,
   onCancelRecording,
+  onSkipTranscription,
 }: Props) {
   const dispatch = useDispatch();
   const {
@@ -51,8 +55,15 @@ export function AiChatPanel({
   } = useSelector(state => state.ai);
 
   const onSend = useCallback(
-    (text: string, attachments?: AiAttachment[]) => dispatch(aiActions.send({ text, attachments })),
-    [dispatch],
+    (text: string, attachments?: AiAttachment[]) =>
+      dispatch(
+        aiActions.send({
+          text,
+          attachments,
+          recordingLabel: recording === null ? undefined : recordingAttachmentLabel(recording),
+        }),
+      ),
+    [dispatch, recording],
   );
   const onStop = useCallback(() => dispatch(aiActions.stop()), [dispatch]);
   const onNewChat = useCallback(() => dispatch(aiActions.newChat()), [dispatch]);
@@ -103,6 +114,7 @@ export function AiChatPanel({
       recorder={recorder}
       onToggleRecording={onToggleRecording}
       onCancelRecording={onCancelRecording}
+      onSkipTranscription={onSkipTranscription}
       billingDismissed={billingDismissed}
       sessions={sessions}
       currentSessionId={currentSessionId}

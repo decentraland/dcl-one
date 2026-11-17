@@ -3,9 +3,19 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ai as aiPreload } from '#preload';
 import { useDispatch, useSelector } from '#store';
 import { actions as aiActions } from '/@/modules/store/ai';
+import { recordingAttachmentLabel } from '/@/modules/store/ai/labels';
 
 // Coalesce mirror pushes to the detached window to at most one per this interval (P2-1).
 const MIRROR_THROTTLE_MS = 60;
+
+/** What the editor lends the session; the detached window reaches them as remote commands. */
+export type AiSessionHandlers = {
+  onClearSelection?: () => void;
+  onCloseAssistant?: () => void;
+  onToggleRecording?: () => void;
+  onCancelRecording?: () => void;
+  onSkipTranscription?: () => void;
+};
 
 // The AI session engine, mounted once in the editor (main window) whenever the assistant
 // is enabled — independent of whether the chat is shown inline or popped out (#1504). It
@@ -16,41 +26,15 @@ const MIRROR_THROTTLE_MS = 60;
 export function useAiSession(
   enabled: boolean,
   projectPath: string | undefined,
-  // Deselect all entities in the editor. Only the caller (EditorPage) holds the inspector
-  // iframe RPC, so it supplies this; the detached window triggers it via a remote command.
-  onClearSelection?: () => void,
-  // Close the assistant entirely (EditorPage owns the inline `aiOpen` flag). The detached
-  // window's close button triggers it via a remote command, so close is consistent everywhere.
-  onCloseAssistant?: () => void,
-  // Press the Record button. The recorder runs here, in the editor window; the detached
-  // window's button triggers it via a remote command.
-  onToggleRecording?: () => void,
-  // Discard the running recording, pressed in the detached window.
-  onCancelRecording?: () => void,
+  handlers: AiSessionHandlers = {},
 ) {
   const dispatch = useDispatch();
   const aiState = useSelector(state => state.ai);
   const projectTitle = useSelector(state => state.editor.project?.title);
   const locale = useSelector(state => state.translation.locale);
   const [detachedOpen, setDetachedOpen] = useState(false);
-  // Latest snapshot + clear callback, read by the (stable) remote-command listener so it
-  // doesn't need to re-subscribe on every streamed token / callback identity change.
-  const latest = useRef({
-    aiState,
-    projectTitle,
-    onClearSelection,
-    onCloseAssistant,
-    onToggleRecording,
-    onCancelRecording,
-  });
-  latest.current = {
-    aiState,
-    projectTitle,
-    onClearSelection,
-    onCloseAssistant,
-    onToggleRecording,
-    onCancelRecording,
-  };
+  const latest = useRef({ aiState, projectTitle, handlers });
+  latest.current = { aiState, projectTitle, handlers };
 
   // Provider detection + the turn event stream (fold events into the store, persist on done).
   useEffect(() => {
@@ -127,9 +111,17 @@ export function useAiSession(
     if (!enabled) return;
     const { cleanup } = aiPreload.onAiRemoteCommand(command => {
       switch (command.type) {
-        case 'send':
-          dispatch(aiActions.send({ text: command.text, attachments: command.attachments }));
+        case 'send': {
+          const pending = latest.current.aiState.recording;
+          dispatch(
+            aiActions.send({
+              text: command.text,
+              attachments: command.attachments,
+              recordingLabel: pending === null ? undefined : recordingAttachmentLabel(pending),
+            }),
+          );
           break;
+        }
         case 'stop':
           dispatch(aiActions.stop());
           break;
@@ -158,7 +150,7 @@ export function useAiSession(
           dispatch(aiActions.deleteSession(command.id));
           break;
         case 'clearSelection':
-          latest.current.onClearSelection?.();
+          latest.current.handlers.onClearSelection?.();
           break;
         case 'removeAssetMention':
           dispatch(aiActions.removeAssetMention(command.mention));
@@ -167,14 +159,20 @@ export function useAiSession(
           void dispatch(aiActions.discardRecording());
           break;
         case 'toggleRecording':
-          latest.current.onToggleRecording?.();
+          latest.current.handlers.onToggleRecording?.();
           break;
         case 'cancelRecording':
-          latest.current.onCancelRecording?.();
+          latest.current.handlers.onCancelRecording?.();
+          break;
+        case 'skipTranscription':
+          latest.current.handlers.onSkipTranscription?.();
+          break;
+        case 'consumeDraftPrompt':
+          dispatch(aiActions.consumeDraftPrompt());
           break;
         case 'closeAssistant':
           void aiPreload.closeAiWindow();
-          latest.current.onCloseAssistant?.();
+          latest.current.handlers.onCloseAssistant?.();
           break;
         case 'sync':
           aiPreload.pushAiMirrorState({

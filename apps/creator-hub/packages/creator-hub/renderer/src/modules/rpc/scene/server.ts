@@ -92,6 +92,11 @@ export type SceneRpcServerCallbacks = {
   onReady?: () => void;
 };
 
+/** Whether an entry of an inspector `record_events` batch is shaped like an event at all. */
+function isRecordedEvent(event: unknown): event is RecordedEvent {
+  return typeof event === 'object' && event !== null && !Array.isArray(event);
+}
+
 /** Identifies a layout regardless of the order its parcels are listed in. */
 const layoutKey = (scene: { base: string; parcels: string[] } | undefined) =>
   scene ? `${scene.base}|${[...scene.parcels].sort().join(';')}` : undefined;
@@ -104,10 +109,8 @@ export class SceneRpcServer extends RPC<Method, Params, Result> {
       callbacks.onReady?.();
     });
 
-    // The inspector's half of the session recorder. Dropped unless a recording is running (the
-    // inspector only captures between set_recording on/off, but it can't be trusted to).
     this.handle('record_events', async ({ events }) => {
-      if (Array.isArray(events)) forwardRecordedEvents(events);
+      if (Array.isArray(events)) forwardRecordedEvents(events.filter(isRecordedEvent));
     });
 
     // The layout the editor reported last, seeded with the one it opened with. A notice
@@ -220,7 +223,7 @@ export class SceneRpcServer extends RPC<Method, Params, Result> {
         );
         return;
       }
-      store.dispatch(aiActions.setDraftPrompt(text));
+      store.dispatch(aiActions.setDraftPrompt({ text, mode: 'replace' }));
     });
 
     // A double-click on a Local Assets entry. Only lands while the chat is visible (the reducer

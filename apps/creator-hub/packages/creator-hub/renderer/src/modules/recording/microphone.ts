@@ -39,8 +39,14 @@ export type Microphone = {
   stop: () => void;
 };
 
+/**
+ * Opens the default input device and streams 16 kHz mono PCM to `onChunk`.
+ *
+ * @param onEnded Called when the device itself ends the track (unplugged, taken by the OS).
+ */
 export async function startMicrophone(
   onChunk: (pcm: Uint8Array, firstSampleAt?: number) => void,
+  onEnded?: () => void,
 ): Promise<Microphone> {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
@@ -95,11 +101,17 @@ export async function startMicrophone(
     source.connect(node);
 
     let stopped = false;
+    const track = stream.getAudioTracks()[0];
+    const handleEnded = () => {
+      if (!stopped) onEnded?.();
+    };
+    track?.addEventListener('ended', handleEnded);
     return {
-      label: stream.getAudioTracks()[0]?.label ?? '',
+      label: track?.label ?? '',
       stop: () => {
         if (stopped) return;
         stopped = true;
+        track?.removeEventListener('ended', handleEnded);
         node.port.onmessage = null;
         source.disconnect();
         node.disconnect();

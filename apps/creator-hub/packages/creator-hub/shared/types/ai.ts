@@ -11,7 +11,7 @@
 // sits behind this contract so it can be swapped (e.g. for ACP) without touching the
 // panel or the IPC surface.
 
-import type { RecordingToolsStatus } from './recording';
+import type { RecordingResult, RecordingToolsStatus } from './recording';
 
 export type AiProvider = 'claude' | 'codex' | 'cursor' | 'gemini';
 
@@ -236,15 +236,11 @@ export function assetMentionKey(mention: AiAssetMention): string {
   return 'path' in mention ? `path:${mention.path}` : `emote:${mention.builtInEmote}`;
 }
 
-// A finished session recording (the editor's Record button) waiting to go out with the next
-// message: `context` is the condensed said-and-done timeline prepended to that turn.
-export interface AiPendingRecording {
-  durationMs: number;
-  actionCount: number;
-  dir: string;
-  context: string;
-  transcriptionError?: string;
-}
+/** A finished session recording waiting to go out with the next message. */
+export type AiPendingRecording = Pick<
+  RecordingResult,
+  'dir' | 'durationMs' | 'actionCount' | 'context' | 'transcriptionError'
+>;
 
 // What the Record button shows. The recorder runs in the editor window; the assistant panel and
 // the detached window render it from here and send presses back (`toggleRecording`).
@@ -272,6 +268,7 @@ export interface AiMirrorState {
   assetMentions: AiAssetMention[];
   recording: AiPendingRecording | null;
   recorder?: AiRecorderState;
+  draftPrompt?: { text: string; nonce: number; mode: 'append' | 'replace' } | null;
   billingDismissed: boolean;
   sessions: { id: string; title: string; updatedAt: number }[];
   currentSessionId: string;
@@ -297,7 +294,7 @@ export type AiRemoteCommand =
   | { type: 'removeRecording' }
   | { type: 'toggleRecording' }
   | { type: 'cancelRecording' }
-  // The detached window's close button: shut the assistant entirely (close the window AND the
-  // inline panel), instead of just docking back — so close is consistent whether detached or not.
+  | { type: 'skipTranscription' }
+  | { type: 'consumeDraftPrompt' }
   | { type: 'closeAssistant' }
   | { type: 'sync' };

@@ -181,7 +181,8 @@
       "recording": {
         "chip": "Session recording · {duration} · {actions} actions",
         "chip_no_speech": "Session recording · {duration} · {actions} actions (no speech)",
-        "remove": "Discard recording"
+        "remove": "Discard recording",
+        "attachment": "Session recording {duration}"
       }
     },
     "publish": {
@@ -216,13 +217,15 @@
         "title": "Record a session for the AI assistant",
         "intro": "Talk while you work, then stop: the assistant gets what you said lined up with what you were doing, so \"delete this one\" means the entity you were pointing at.",
         "what": "This records your voice and every action you take in the editor: clicks, where your mouse is, what you hover and select, menus you open, panels you scroll, searches, edits, and what you point at and click while playing your scene.",
-        "local": "Recording only happens while the Record button is on, and stops by itself after {minutes} minutes. Closing the project or the app ends it immediately. The audio and the log stay on your computer, and your speech is transcribed on your computer too; discarding a recording deletes them.",
+        "local": "Recording only happens while the Record button is on, and stops by itself after {minutes} minutes. Closing the project or the app ends it immediately. Your speech is transcribed on your computer and the audio is deleted as soon as the recording ends; the action log and the transcript stay on your computer and are removed after {days} days. Discarding a recording deletes them right away.",
         "download": "The first time, Creator Hub downloads a speech-to-text model (about {size} MB).",
         "sent": "When you stop, the recording is attached to your next message. Sending that message shares the transcript and the list of actions (not the audio) with your AI provider.",
         "microphone": "It uses your system's default microphone. To use a different one, change the input device in your system's sound settings before you start.",
         "cancel": "Cancel",
         "accept": "Start recording"
-      }
+      },
+      "send_without_transcript": "Send without transcript",
+      "microphone_lost": "The recording stopped because your microphone was disconnected. It goes out with your next message."
     }
   },
   "scene_list": {

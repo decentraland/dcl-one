@@ -87,6 +87,14 @@ export function AiChatWindow() {
     () => aiPreload.sendAiRemoteCommand({ type: 'removeRecording' }),
     [],
   );
+  const onSkipTranscription = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'skipTranscription' }),
+    [],
+  );
+  const onDraftConsumed = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'consumeDraftPrompt' }),
+    [],
+  );
   // The close button shuts the assistant entirely (window + inline panel), consistent with the
   // inline close — not a dock-back. The main window handles it (it owns the inline open flag).
   const onClose = useCallback(() => aiPreload.sendAiRemoteCommand({ type: 'closeAssistant' }), []);
@@ -126,6 +134,9 @@ export function AiChatWindow() {
       recorder={mirror.recorder}
       onToggleRecording={onToggleRecording}
       onCancelRecording={onCancelRecording}
+      onSkipTranscription={onSkipTranscription}
+      draftPrompt={mirror.draftPrompt}
+      onDraftConsumed={onDraftConsumed}
       billingDismissed={mirror.billingDismissed}
       sessions={mirror.sessions}
       currentSessionId={mirror.currentSessionId}

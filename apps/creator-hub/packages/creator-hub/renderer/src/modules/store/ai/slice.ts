@@ -23,7 +23,7 @@ import {
   writeSessionIndex,
   writeSessionMessages,
 } from './persistence';
-import type { AiMessage, AiPromptData, AiSessionMeta, AiState } from './types';
+import type { AiMessage, AiPromptData, AiSessionMeta, AiState, DraftPromptMode } from './types';
 
 const initialState: AiState = {
   providers: [],
@@ -42,6 +42,7 @@ const initialState: AiState = {
   sessions: [],
   currentSessionId: '',
   draftPrompt: null,
+  draftNonce: 0,
 };
 
 // A session's title is its first user prompt (trimmed/clipped); empty until it has one, so
@@ -79,58 +80,54 @@ export const recheckAfterTurn = createAsyncThunk(
 // state; the assistant bubble is created when the `started` event arrives on the stream
 // (the panel subscribes to it). The turn streams asynchronously — this resolves as soon
 // as main has spawned the child.
-export const send = createAsyncThunk<void, { text: string; attachments?: AiAttachment[] }>(
-  'ai/send',
-  async ({ text, attachments }, { getState, dispatch }) => {
-    const state = getState();
-    const path = state.editor.project?.path;
-    if (path === undefined || path === '')
-      throw new Error('Open a scene before using the assistant.');
-    const { provider, model, busy, selection, assetMentions, recording } = state.ai;
-    if (busy) return;
-    const trimmed = text.trim();
-    const files = attachments ?? [];
-    if (trimmed === '' && files.length === 0 && recording === null) return;
-    dispatch(actions.setBusy(true));
-    if (await ai.isBusy()) {
-      dispatch(actions.setDraftPrompt(trimmed));
-      return;
-    }
-    // Every turn belongs to a session (its transcript + the CLI resume id are keyed by it).
-    // One should already exist from loadConversation; create one defensively if not.
-    let sessionId = state.ai.currentSessionId;
-    if (sessionId === '') {
-      sessionId = crypto.randomUUID();
-      dispatch(
-        actions.setSessionState({
-          sessions: [{ id: sessionId, title: '', updatedAt: Date.now() }],
-          currentSessionId: sessionId,
-          messages: [],
-        }),
-      );
-    }
-    const attachmentMeta: AiAttachmentMeta[] = files.map(f => ({ name: f.name, kind: f.kind }));
-    if (recording) attachmentMeta.unshift(recordingAttachmentMeta(recording));
-    dispatch(actions.pushUserMessage({ text: trimmed, attachments: attachmentMeta }));
-    // Attach the current editor selection, mentioned assets and a finished recording as context
-    // so the assistant can resolve "this" without the user spelling out ids or paths. Not shown
-    // in the chat bubble (main prepends it). Mentions and the recording belong to this prompt
-    // only; the selection is live state.
-    const context = editorContext(selection, assetMentions, recording);
-    dispatch(actions.clearAssetMentions());
-    dispatch(actions.setRecording(null));
-    const apiKeyFromEnv = state.workspace.settings?.useApiKeyFromEnv ?? false;
-    await ai.send(path, {
-      provider,
-      model,
-      text: trimmed,
-      context,
-      attachments: files,
-      apiKeyFromEnv,
-      sessionId,
-    });
-  },
-);
+export const send = createAsyncThunk<
+  void,
+  { text: string; attachments?: AiAttachment[]; recordingLabel?: string }
+>('ai/send', async ({ text, attachments, recordingLabel }, { getState, dispatch }) => {
+  const state = getState();
+  const path = state.editor.project?.path;
+  if (path === undefined || path === '')
+    throw new Error('Open a scene before using the assistant.');
+  const { provider, model, busy, selection, assetMentions, recording } = state.ai;
+  if (busy) return;
+  const trimmed = text.trim();
+  const files = attachments ?? [];
+  if (trimmed === '' && files.length === 0 && recording === null) return;
+  dispatch(actions.setBusy(true));
+  if (await ai.isBusy()) {
+    dispatch(actions.setDraftPrompt({ text: trimmed, mode: 'replace' }));
+    return;
+  }
+  let sessionId = state.ai.currentSessionId;
+  if (sessionId === '') {
+    sessionId = crypto.randomUUID();
+    dispatch(
+      actions.setSessionState({
+        sessions: [{ id: sessionId, title: '', updatedAt: Date.now() }],
+        currentSessionId: sessionId,
+        messages: [],
+      }),
+    );
+  }
+  const attachmentMeta: AiAttachmentMeta[] = files.map(f => ({ name: f.name, kind: f.kind }));
+  if (recording && recordingLabel !== undefined) {
+    attachmentMeta.unshift({ name: recordingLabel, kind: 'audio' });
+  }
+  dispatch(actions.pushUserMessage({ text: trimmed, attachments: attachmentMeta }));
+  const context = editorContext(selection, assetMentions, recording);
+  dispatch(actions.clearAssetMentions());
+  dispatch(actions.setRecording(null));
+  const apiKeyFromEnv = state.workspace.settings?.useApiKeyFromEnv ?? false;
+  await ai.send(path, {
+    provider,
+    model,
+    text: trimmed,
+    context,
+    attachments: files,
+    apiKeyFromEnv,
+    sessionId,
+  });
+});
 
 // One line naming what the user has selected, or undefined when nothing is. Kept terse —
 // the assistant can call get_selection / scene_state for the full picture. Exported for tests.
@@ -171,14 +168,6 @@ function editorContext(
     (block): block is string => block !== undefined,
   );
   return blocks.length > 0 ? blocks.join('\n\n') : undefined;
-}
-
-// The chip on the sent message. Display only: the timeline travels as context, not a file.
-// Exported for tests.
-export function recordingAttachmentMeta(recording: AiPendingRecording): AiAttachmentMeta {
-  const seconds = Math.round(recording.durationMs / 1000);
-  const duration = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-  return { name: `Session recording ${duration}`, kind: 'audio' };
 }
 
 // Kill the in-flight turn. Main suppresses the `done` event on an intentional stop, so
@@ -413,8 +402,12 @@ const slice = createSlice({
     // Seed the composer from elsewhere in the editor (the Trigger Area "describe a reaction"
     // buttons). Bumps a nonce so clicking the same button twice re-seeds. EditorPage opens the
     // panel on this; ChatView copies `text` into the composer and calls consumeDraftPrompt.
-    setDraftPrompt: (state, { payload }: PayloadAction<string>) => {
-      state.draftPrompt = { text: payload, nonce: (state.draftPrompt?.nonce ?? 0) + 1 };
+    setDraftPrompt: (
+      state,
+      { payload }: PayloadAction<{ text: string; mode: DraftPromptMode }>,
+    ) => {
+      state.draftNonce += 1;
+      state.draftPrompt = { text: payload.text, mode: payload.mode, nonce: state.draftNonce };
     },
     consumeDraftPrompt: state => {
       state.draftPrompt = null;

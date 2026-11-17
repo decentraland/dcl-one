@@ -39,6 +39,11 @@ export function forwardRecordedEvents(events: RecordedEvent[]): void {
 
 const MAX_LABEL = 60;
 
+/** A label as a JSON string literal, so its own quotes cannot end the quotation. */
+function quote(text: string): string {
+  return JSON.stringify(text);
+}
+
 function collapse(text: string | null | undefined): string {
   return (text ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_LABEL);
 }
@@ -70,7 +75,7 @@ function testIdLabel(target: Element): string {
 
 export function hubArea(target: Element): string {
   const tagged = target.closest('[data-recording-area]');
-  if (tagged) return tagged.getAttribute('data-recording-area') ?? 'Creator Hub';
+  if (tagged) return collapse(tagged.getAttribute('data-recording-area')) || 'Creator Hub';
   if (target.closest('.Header')) return 'Editor header';
   if (target.closest('[role="dialog"]')) return 'Dialog';
   if (target.closest('[role="menu"], [role="listbox"]')) return 'Menu';
@@ -102,7 +107,7 @@ export function startHubDomRecorder(doc: Document = document): () => void {
       {
         t: Date.now(),
         kind: 'click',
-        text: `Clicked "${describeHubElement(e.target)}" in the ${hubArea(e.target)}`,
+        text: `Clicked ${quote(describeHubElement(e.target))} in the ${hubArea(e.target)}`,
         area: hubArea(e.target),
         x: e.clientX,
         y: e.clientY,

@@ -1,20 +1,22 @@
 import { useEffect, useState } from 'react';
 
 import type { RecorderStatus } from '/shared/types/ai';
-import { MAX_RECORDING_MS, type RecordingToolsStatus } from '/shared/types/recording';
+import {
+  MAX_RECORDING_MS,
+  formatRecordingDuration,
+  type RecordingToolsStatus,
+} from '/shared/types/recording';
 
 import { t } from '/@/modules/store/translation/utils';
 
-export function clock(ms: number): string {
-  const seconds = Math.max(0, Math.floor(ms / 1000));
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-}
-
+/** How long a recording that began at `startedAt` has been running, capped at the limit. */
 export function elapsed(startedAt: number | null, now: number): string {
-  return clock(startedAt === null ? 0 : Math.min(MAX_RECORDING_MS, now - startedAt));
+  return formatRecordingDuration(
+    startedAt === null ? 0 : Math.min(MAX_RECORDING_MS, now - startedAt),
+  );
 }
 
-export const LIMIT = clock(MAX_RECORDING_MS);
+export const LIMIT = formatRecordingDuration(MAX_RECORDING_MS);
 
 // The current time, refreshed twice a second while `live`, for the recording timer.
 export function useNow(live: boolean): number {

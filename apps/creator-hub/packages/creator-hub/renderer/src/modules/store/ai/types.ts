@@ -40,6 +40,9 @@ export interface AiSessionMeta {
   updatedAt: number; // epoch ms; the list is sorted newest first
 }
 
+/** How a seeded draft meets what the composer already holds. */
+export type DraftPromptMode = 'append' | 'replace';
+
 export interface AiState {
   // Backends reported by main (Claude/Codex), with availability + reason.
   providers: AiProviderInfo[];
@@ -83,5 +86,7 @@ export interface AiState {
   // "describe a reaction" buttons (inspector→host `prompt_assistant` RPC). EditorPage opens
   // the panel on it and the composer seeds its input from `text`, then clears it. `nonce`
   // makes the same text fire again (a second click on the same button).
-  draftPrompt: { text: string; nonce: number } | null;
+  draftPrompt: { text: string; nonce: number; mode: DraftPromptMode } | null;
+  /** Only ever counts up, so a composer can tell a draft it already applied from a new one. */
+  draftNonce: number;
 }

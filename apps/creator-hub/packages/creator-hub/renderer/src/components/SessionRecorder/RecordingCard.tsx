@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useLayoutEffect, useEffect, useRef, useState } from 'react';
 import { Tooltip } from 'decentraland-ui2';
 
 import { MAX_RECORDING_MS } from '/shared/types/recording';
@@ -46,16 +46,39 @@ type Props = {
   onStop: () => void;
   // Throws the running recording away, after the user confirms. Without it there is no Discard.
   onDiscard?: () => void;
+  /** Take the keyboard: the recording started just now, so the Record button has gone. */
+  focusStopOnMount?: boolean;
+  /** Called when the card leaves while it still holds the keyboard. */
+  onFocusRelease?: () => void;
 };
 
 // The running recording, shown above the composer: timer, waveform, what was captured so far,
 // and the two ways to end it.
-export function RecordingCard({ startedAt, micLabel, actionCount, onStop, onDiscard }: Props) {
+export function RecordingCard({
+  startedAt,
+  micLabel,
+  actionCount,
+  onStop,
+  onDiscard,
+  focusStopOnMount = false,
+  onFocusRelease,
+}: Props) {
   const now = useNow(true);
   const [confirming, setConfirming] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const stopRef = useRef<HTMLButtonElement>(null);
+  const release = useRef(onFocusRelease);
+  release.current = onFocusRelease;
+  useLayoutEffect(() => {
+    if (focusStopOnMount) stopRef.current?.focus();
+    return () => {
+      if (cardRef.current?.contains(document.activeElement)) release.current?.();
+    };
+  }, []);
 
   return (
     <div
+      ref={cardRef}
       className={styles.card}
       role="group"
       aria-label={t('editor.recording.live')}
@@ -95,6 +118,7 @@ export function RecordingCard({ startedAt, micLabel, actionCount, onStop, onDisc
           </button>
         )}
         <button
+          ref={stopRef}
           className={styles.stop}
           type="button"
           onClick={onStop}

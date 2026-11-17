@@ -42,7 +42,7 @@ import { ConnectionStatus } from '/@/lib/connection';
 
 import EditorPng from '/assets/images/editor.png';
 
-import { ai, analytics, misc, recording as recordingPreload } from '#preload';
+import { ai, analytics } from '#preload';
 import { useDispatch, useSelector } from '#store';
 import { useFeatureFlags } from '/@/hooks/useFeatureFlags';
 import { useAiSession } from '/@/hooks/useAiSession';
@@ -160,7 +160,6 @@ export function EditorPage() {
   );
 
   const userId = useSelector(state => state.analytics.userId);
-  const locale = useSelector(state => state.translation.locale);
   const { detectCustomCode, isLoading: isDetectingCustomCode } = useSceneCustomCode(project);
   const { status } = useConnectionStatus();
   const iframeRef = useRef<ReturnType<typeof initRpc>>();
@@ -175,22 +174,25 @@ export function EditorPage() {
   // on, independent of whether the chat is shown inline or popped out. It also relays the
   // detached window's "clear selection" back to the inspector here.
   const [aiOpen, setAiOpen] = useState(false);
-  // The detached window's Record button lands here; the handler is defined further down,
-  // with the recorder it drives.
-  const recordClickRef = useRef<() => void>(() => undefined);
-  const recordDiscardRef = useRef<() => void>(() => undefined);
+  const [inspectorReadyNonce, setInspectorReadyNonce] = useState(0);
+  const recorder = useSessionRecorder({
+    enabled: aiChatEnabled,
+    project,
+    rpcRef: iframeRef,
+    inspectorReadyNonce,
+    onFinished: () => setAiOpen(true),
+  });
   const {
     detachedOpen: aiDetached,
     openDetached: openAiWindow,
     closeDetached: closeAiWindow,
-  } = useAiSession(
-    aiChatEnabled,
-    project?.path,
-    handleClearAiSelection,
-    () => setAiOpen(false),
-    () => recordClickRef.current(),
-    () => recordDiscardRef.current(),
-  );
+  } = useAiSession(aiChatEnabled, project?.path, {
+    onClearSelection: handleClearAiSelection,
+    onCloseAssistant: () => setAiOpen(false),
+    onToggleRecording: recorder.press,
+    onCancelRecording: recorder.cancel,
+    onSkipTranscription: recorder.skip,
+  });
   // A prompt seeded from the inspector (Trigger Area "describe a reaction"). Open the inline
   // panel on it; ChatView copies the text into the composer and clears the draft.
   const aiDraftPrompt = useSelector(state => state.ai.draftPrompt);
@@ -216,10 +218,6 @@ export function EditorPage() {
   // screen can offer Back + Open code + the error message (#1380).
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadTimedOut, setLoadTimedOut] = useState(false);
-  // Counts the inspector's "scene RPC ready" reports. The iframe ref is stable across
-  // "Reload scene from disk", so the hooks that push state into the inspector key on this
-  // to re-apply it to the fresh iframe.
-  const [inspectorReadyNonce, setInspectorReadyNonce] = useState(0);
   // A "Reload scene from disk" or a renderer switch reloads the inspector iframe in place.
   // The iframe paints black until its content boots (a long wait under Bevy, #1652), so we
   // cover it with the loader until the inspector reports its scene RPC server ready again.
@@ -266,40 +264,6 @@ export function EditorPage() {
   });
   useProjectAssetWatch(iframeRef, project?.path);
   useSceneMcpDiscovery(project?.path);
-
-  // The Record button: speech + everything the creator does, handed to the assistant on stop.
-  // Only offered with the assistant on (that's where the recording goes).
-  const recorder = useSessionRecorder({
-    enabled: aiChatEnabled,
-    project,
-    rpcRef: iframeRef,
-    inspectorReadyNonce,
-    onFinished: () => setAiOpen(true),
-  });
-  const [recordingConsent, setRecordingConsent] = useState<{ downloadMb: number } | null>(null);
-  const handleRecordClick = useCallback(async () => {
-    if (recorder.status === 'recording') {
-      void recorder.stop();
-      return;
-    }
-    if (settings.recordingConsentAcknowledged) {
-      void recorder.start();
-      return;
-    }
-    const tools = await recordingPreload
-      .toolsStatus(locale)
-      .catch(() => ({ state: 'missing' as const, downloadMb: 0 }));
-    setRecordingConsent({ downloadMb: tools.state === 'missing' ? tools.downloadMb : 0 });
-    // The press may have come from the popped-out chat, which is in front of this window.
-    void misc.focusWindow().catch(() => undefined);
-  }, [recorder, settings.recordingConsentAcknowledged, locale]);
-  recordClickRef.current = () => void handleRecordClick();
-  recordDiscardRef.current = recorder.discard;
-  const handleRecordingConsentAccept = useCallback(() => {
-    setRecordingConsent(null);
-    updateAppSettings({ ...settings, recordingConsentAcknowledged: true });
-    void recorder.start();
-  }, [settings, updateAppSettings, recorder]);
 
   const handleIframeRef = useCallback(
     (e: React.SyntheticEvent<HTMLIFrameElement, Event>) => {
@@ -856,7 +820,7 @@ export function EditorPage() {
                   startedAt={recorder.startedAt}
                   micLabel={recorder.micLabel}
                   tools={recorder.tools}
-                  onClick={handleRecordClick}
+                  onClick={recorder.press}
                 />
               )}
               {aiChatEnabled && (
@@ -1041,8 +1005,8 @@ export function EditorPage() {
                   <DetachedPlaceholder
                     onDock={closeAiWindow}
                     width={aiPanelWidth}
-                    onToggleRecording={handleRecordClick}
-                    onCancelRecording={recorder.discard}
+                    onToggleRecording={recorder.press}
+                    onCancelRecording={recorder.cancel}
                   />
                 ) : (
                   <AiChatPanel
@@ -1050,8 +1014,9 @@ export function EditorPage() {
                     onPopOut={openAiWindow}
                     onClearSelection={handleClearAiSelection}
                     width={aiPanelWidth}
-                    onToggleRecording={handleRecordClick}
-                    onCancelRecording={recorder.discard}
+                    onToggleRecording={recorder.press}
+                    onCancelRecording={recorder.cancel}
+                    onSkipTranscription={recorder.skip}
                   />
                 )}
               </>
@@ -1065,10 +1030,10 @@ export function EditorPage() {
           />
           <OptimizeModal project={project} />
           <RecordingConsentModal
-            open={recordingConsent !== null}
-            downloadMb={recordingConsent?.downloadMb ?? 0}
-            onAccept={handleRecordingConsentAccept}
-            onCancel={() => setRecordingConsent(null)}
+            open={recorder.consent !== null}
+            downloadMb={recorder.consent?.downloadMb ?? 0}
+            onAccept={recorder.acceptConsent}
+            onCancel={recorder.dismissConsent}
           />
           {mobileQRData && (
             <MobileQRCode

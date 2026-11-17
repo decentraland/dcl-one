@@ -7,7 +7,15 @@ function fakeAudio({
   addModuleFails = false,
   workletNodeFails = false,
 }: { addModuleFails?: boolean; workletNodeFails?: boolean } = {}) {
-  const track = { stop: vi.fn(), label: 'USB mic' };
+  const trackListeners = new Map<string, () => void>();
+  const track = {
+    stop: vi.fn(),
+    label: 'USB mic',
+    addEventListener: vi.fn((type: string, listener: () => void) =>
+      trackListeners.set(type, listener),
+    ),
+    removeEventListener: vi.fn((type: string) => trackListeners.delete(type)),
+  };
   const stream = { getTracks: () => [track], getAudioTracks: () => [track] };
   const close = vi.fn(async () => {});
   const source = { connect: vi.fn(), disconnect: vi.fn() };
@@ -36,7 +44,7 @@ function fakeAudio({
     revokeObjectURL: vi.fn(),
   });
   vi.stubGlobal('Blob', class {});
-  return { track, close, source };
+  return { track, close, source, unplug: () => trackListeners.get('ended')?.() };
 }
 
 describe('startMicrophone', () => {
@@ -62,6 +70,29 @@ describe('startMicrophone', () => {
       expect(audio.track.stop).toHaveBeenCalledTimes(1);
       expect(audio.close).toHaveBeenCalledTimes(1);
       expect(audio.source.disconnect).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('when the device goes away mid-recording', () => {
+    it('should report that the input ended', async () => {
+      const audio = fakeAudio();
+      const ended = vi.fn();
+      await startMicrophone(() => {}, ended);
+
+      audio.unplug();
+
+      expect(ended).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not report it after the recording stopped on its own', async () => {
+      const audio = fakeAudio();
+      const ended = vi.fn();
+      const microphone = await startMicrophone(() => {}, ended);
+
+      microphone.stop();
+      audio.unplug();
+
+      expect(ended).not.toHaveBeenCalled();
     });
   });
 
