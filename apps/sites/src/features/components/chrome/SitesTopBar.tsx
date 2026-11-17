@@ -1,15 +1,14 @@
-import {
-  sitesNavigationLinks,
-  sitesNavigationOrder,
-} from "@dcl/one-ui/apps/sites/chrome/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router";
-import { NavBar, type NavBarLinkProps, type NavBarSection } from "@dcl/one-ui";
+import {
+  decentralandNavSections,
+  NavBar,
+  type NavBarLinkProps,
+} from "@dcl/one-ui";
 import type { DclTopBarProps } from "@ui/web/frames/DclTopBar";
 import { useChromeAuth } from "@ui/web/frames/chrome-auth";
 import ChromeLink from "@ui/web/frames/ChromeLink";
 import { useSiteLayout } from "@ui/web/frames/SiteLayout";
-import { docsUrl } from "@ui/data/docs";
 import {
   notificationBody,
   notificationLink,
@@ -18,34 +17,6 @@ import {
 } from "@ui/data/catalyst/notificationsView";
 import SitesNotificationsDialog from "@dcl/one-ui/apps/sites/chrome/SitesNotificationsDialog";
 import { useChromeNotifications } from "./useChromeNotifications";
-
-export function sitesNavSections(
-  active: DclTopBarProps["active"],
-  pathname: string,
-): NavBarSection[] {
-  const playActive =
-    active === "whatson" || active === "events" || active === "explore";
-  const links = sitesNavigationLinks(docsUrl());
-  return sitesNavigationOrder.map((id) => {
-    const link = links[id];
-    const selected = id === "whatson" ? playActive : active === id;
-    if (!("menu" in link)) {
-      return { label: link.label, href: link.href, active: selected };
-    }
-    return {
-      label: link.label,
-      active: selected,
-      items: link.menu.map((item, index) => ({
-        ...item,
-        active:
-          id === "whatson"
-            ? pathname === item.href.replace(/\/$/, "") ||
-              pathname.startsWith(`${item.href.replace(/\/$/, "")}/`)
-            : selected && pathname.startsWith(index === 0 ? "/docs" : "/blog"),
-      })),
-    };
-  });
-}
 
 /** The Sites host adapts real chrome state; the shared component owns navigation UI. */
 export default function SitesTopBar({
@@ -121,7 +92,7 @@ export default function SitesTopBar({
     <>
       <header aria-label="Decentraland">
         <NavBar
-          sections={sitesNavSections(active, pathname)}
+          sections={decentralandNavSections(active, pathname)}
           surface={transparent ? "overlay" : "solid"}
           linkComponent={NavigationLink}
           {...(identity

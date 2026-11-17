@@ -427,7 +427,7 @@ export default function StWhatSOn({
   const deferred = useMemo(() => loading, [loading]);
 
   return (
-    <SitesChromeMaybe chrome={chrome} active="play" overlayNav>
+    <SitesChromeMaybe chrome={chrome} active="whatson" overlayNav>
       <div className="wo">
         <picture>
           <source media="(min-width: 601px)" srcSet={asset("assets/whatson-top.webp")} />
