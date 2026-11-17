@@ -1,8 +1,73 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { featureFlagsUrl, featureFlagsUserId, fetchFeatureFlags, parseFeatureFlags } from './featureFlags'
+import {
+  featureFlag,
+  featureFlagOverride,
+  featureFlagsSettled,
+  featureFlagsUrl,
+  featureFlagsUserId,
+  featureFlagVariant,
+  fetchFeatureFlags,
+  loadFeatureFlags,
+  parseFeatureFlags,
+  parseFlagOverrides,
+  primeFeatureFlags,
+  setFlagOverrides,
+  type Flag
+} from './featureFlags'
 import { getPref, PREF } from './prefs'
 
-afterEach(() => vi.unstubAllGlobals())
+const NO_OVERRIDES = parseFlagOverrides('')
+// FLAG names no flag yet; these tests read made-up names.
+const flag = (name: string) => name as Flag
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  setFlagOverrides(NO_OVERRIDES)
+  primeFeatureFlags(null)
+})
+
+describe('parseFlagOverrides', () => {
+  it('reads names forced on, -names forced off and -* to ignore the service', () => {
+    const o = parseFlagOverrides('?ff=photo-mode,-voice&ff=-*')
+    expect([...o.on]).toEqual(['photo-mode'])
+    expect([...o.off]).toEqual(['voice'])
+    expect(o.ignoreAll).toBe(true)
+  })
+
+  it('lets the last mention of a name win, and skips empty items', () => {
+    const o = parseFlagOverrides('?ff=a,-a,,-,b&ff=-b,b')
+    expect([...o.on]).toEqual(['b'])
+    expect([...o.off]).toEqual(['a'])
+    expect(o.ignoreAll).toBe(false)
+  })
+})
+
+describe('overrides', () => {
+  it('force a flag over the answer, either way, and drop a forced-off flag’s variant', () => {
+    primeFeatureFlags({ flags: { a: false, b: true }, variants: { b: { name: 'v', enabled: true, payload: null } } })
+    setFlagOverrides(parseFlagOverrides('?ff=a,-b'))
+    expect(featureFlag(flag('a'))).toBe(true)
+    expect(featureFlag(flag('b'))).toBe(false)
+    expect(featureFlagVariant(flag('b'))).toBeNull()
+  })
+
+  it('with -* leave every flag off but the forced ones, and ask the service nothing', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    setFlagOverrides(parseFlagOverrides('?ff=-*,a'))
+    await loadFeatureFlags()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(featureFlagsSettled()).toBe(true)
+    expect(featureFlag(flag('a'))).toBe(true)
+    expect(featureFlag(flag('b'))).toBe(false)
+    expect(featureFlagOverride(flag('b'))).toBe(false)
+  })
+
+  it('leave an unnamed flag to the service', () => {
+    setFlagOverrides(parseFlagOverrides('?ff=a'))
+    expect(featureFlagOverride(flag('b'))).toBeUndefined()
+  })
+})
 
 describe('parseFeatureFlags', () => {
   it('keeps only explorer-bevy- flags and variants, the prefix dropped', () => {

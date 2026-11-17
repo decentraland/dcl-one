@@ -46,6 +46,8 @@ const INTERNAL_PARAMS = [
   'nogate',
   // forces the integrated-GPU guide (features/gate/IntegratedGpuGuide.tsx) for a look at it
   'gpuGuide',
+  // forces rollout flags on or off, or ignores the service (@explorer-core/lib/featureFlags)
+  'ff',
   'bundled',
   'simerror',
   'simhover',

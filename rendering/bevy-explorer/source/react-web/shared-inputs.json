@@ -5283,7 +5283,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
-      "sha256": "b62b10d0d020c97d082aef9e69f682c095461b029794568da99e209aea7b2f2e"
+      "sha256": "4db858cb753410a375f44b6e361bcf152676d596a6629b0271a55ddcf5491dc2"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/launchGate.ts",
@@ -5969,11 +5969,11 @@
     },
     {
       "path": "library/explorer-core/lib/featureFlags.test.ts",
-      "sha256": "70747631fd216df6aa1b2701bf45843a418927208a0dc2fcdaa208fed89541ed"
+      "sha256": "242d5aff090e10ae1a2ff0e6c2efd0d0dbb94a5fef808a5d0e2a81e331cea914"
     },
     {
       "path": "library/explorer-core/lib/featureFlags.ts",
-      "sha256": "73614cb230fcffd8f0a706ca63e602994a1f8cb40b4dda7e2401702d33f559f6"
+      "sha256": "5bbaf677a7aa7790a7f6e5eaf8a84a5d018d6f71cc972b1eba7c8d77a3fc597c"
     },
     {
       "path": "library/explorer-core/lib/gpu.test.ts",
@@ -8953,7 +8953,7 @@
     },
     {
       "path": "library/ui/apps/hud/lib/useFeatureFlag.ts",
-      "sha256": "867e019570104250d69d0da90e49fdae6a485bff026e6f353f82bbe3bab4aa60"
+      "sha256": "08bc017b462e8a3e12da8579e1a19859370bf423072fa125963cb533e839240d"
     },
     {
       "path": "library/ui/apps/hud/lib/useFocusTrap.ts",
