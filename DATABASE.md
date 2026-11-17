@@ -827,6 +827,19 @@ database.
 Peer sync is not a backup of local state: a node taking local writes holds the only copy of that data. Before turning a write switch on, the operator backs up the database, the blob store (`STORAGE_ROOT_FOLDER`) and the credentials (`ENCRYPTION_KEY` among them) and tests a restore; the application does not enforce this. Development and commit builds sharing a database must agree on its schema; do not reset or silently migrate shared state to fit a working tree.
 
 
+## Notification writer
+
+`shared::notifications` (`services/catalyst/shared/src/notifications.rs`) is the
+one writer of `social.notifications` and its `social.notification_deliveries`
+email row, for every producer: Social's own and Shop's sale, royalty, transfer,
+rental, tip, favorite-discount, credits and goal notices. Each batch is one statement on the
+producer's executor, so the notice commits with the producer's transaction: an
+upsert by `id` (or by `(address, broadcast_key)` for keyed notices) and, for new
+rows only, a `pending` delivery row, or `skipped` with the reason when the type has
+no template or the recipient cannot receive it. Social owns both tables, reads
+them and delivers the email; `with_emailable_kinds!` is the one list of templated
+types the writer and Social's templates share.
+
 ## Social realtime notification workload
 
 Social keeps each notification scope, generation UUID and 24-hour expiry in
@@ -1543,7 +1556,9 @@ guarded by `review_status = 'ok'` and the provenance row. No
 community photo counts and the ranking repair never see an imported photo.
 
 `camera_reel.imported_images` is the import's provenance: which local photos
-the source may change or `--prune` may delete. It is a separate relation and
+the source may change or `--prune` may delete. The `tooling/migration`
+camera-reel step writes it too, for each row it tracks in
+`dcl_migration.camera_reel_image_loaded`, in the batch that loads the row. It is a separate relation and
 not a column of `images`: it is a fact about the copy, read only by the
 import by primary key, and the gallery rows stay as they are. Its foreign key
 cascades from `images` (same schema, same lifecycle), so a delete of the
@@ -1612,8 +1627,14 @@ default, and social writes are), each a reader of tables other areas own, with o
   The values are the client's claim, as upstream took them, within bounds:
   a `walked-distance` event counts at most 10,000 steps (the explorer
   reports on thresholds far below it), a `vertical-height-reached` height
-  above 5,000 m is passed (no scene is that tall) and a `passport-opened`
-  receiver must be a wallet address;
+  above 5,000 m is passed (no scene is that tall; one without a height, as
+  the Unity explorer sends it, counts as reached) and a `passport-opened`
+  receiver must be a wallet address. Times are Segment's `received_at`, as
+  upstream stamped arrival, so a client cannot backdate or space its events.
+  Segment stamps a whole batch with one `received_at`, so emotes or scene
+  stays a client delivers late in one batch (after a retry or offline)
+  collapse into one minute or one moment: a deliberate trade against
+  client-set times;
 - `content.deployments` by `id` (rarity badges, profile pro, land architect,
   the store half of open for business), a wearable's rarity from its active
   entity or `shop.items`;
@@ -1624,9 +1645,11 @@ default, and social writes are), each a reader of tables other areas own, with o
   indexed before `nft_event.tx_hash` was recorded counted by its chain
   position until a re-index fills the hash). An off-chain good counts for
   its `beneficiary` in `trade_event.assets`; a legacy order bought by a fiat
-  or cross-chain relay counts for the token's last `transfer` recipient after
-  the order in the same block, and for nobody while a relay holds it (one
-  `nft_event_token_idx` probe per such order). Step
+  or cross-chain relay, a fee-taking order router or a CreditsManager counts
+  for the recipient of the relay's own first `transfer` of the token after
+  the order in the same block (transfer rows keep no transaction hash), and
+  for nobody while a relay holds it (one `nft_event_token_idx` probe per
+  such order). Step
   `0040_shop_nft_event_tx_hash` adds `tx_hash` as a nullable column without
   a default (catalog only, no row rewritten); it takes ACCESS EXCLUSIVE on
   `shop.nft_event`, held until `migrate` commits, so the nft index's writes
@@ -1640,7 +1663,9 @@ default, and social writes are), each a reader of tables other areas own, with o
 - recounts of `shop.items` and `shop.collections` on Polygon (once
   `shop.mirror_state` records a complete pass) and of accepted
   `social.referral_progress` rows (creators, the collection half of open for
-  business, referral), for the wallets whose stored steps are behind. A pass
+  business, referral), for the wallets whose stored steps are behind. A
+  creator's steps are the size of their item set, never below the stored
+  count, so an imported item id in another format is not counted twice. A pass
   walks those wallets in address order and records the last one recounted
   (`badge_cursors.resume_after`), so a wallet the evaluator cannot move (an
   imported document whose flag is truthy but not `true`) never starves the
@@ -1750,11 +1775,17 @@ with the engine's lookahead and lookback. A scene entity the snapshot does not
 know (a redeploy since) is looked up by `entity_id` in the webhook that carries
 it, under the webhook's lock stripes, and dropped
 only when it is deployed off every badge parcel; one the node has not synced
-is kept for the engine. Every event is kept when the snapshot cannot be read.
+is kept for the engine, which leaves it queued (and the wallet's later events
+behind it) until the scene syncs, trying it again after 5 s, doubling up to
+5 minutes, and matching no parcel after an hour or at once while 1,000
+events already wait (so made-up scene ids bound the retry work). Waiting
+events are counted once (`scene_not_synced`), gauged as
+`badges_presence_waiting_events` and left out of the oldest-age gauge.
+Every event is kept when the snapshot cannot be read.
 A badge published or moved earlier is seen within 5 s; joins before that are
 not counted, and the player's next join is. Expected volume is every
-join and leave of the scene and world rooms of active presence badges while
-`BADGES_PRESENCE_ENABLED` is on (unmeasured); rows live only
+join and leave of the scene and world rooms of active presence badges
+(unmeasured); rows other than waiting ones live only
 until the next pass of the leased `badges-presence` job (5 s), which applies
 up to 500 in `seq` order, one transaction per event that deletes it, so the
 queue is its own cursor and a row committed behind a later `seq` is still
@@ -1764,7 +1795,10 @@ failure counts toward dropping an event (after 3 passes, logged and counted);
 a connection, pool, timeout, conflict or failover error is retried on the next
 pass without counting until the event has been queued for an hour, then counts
 too, so one event cannot hold the queue. `badges_presence_queue_oldest_seconds`
-reports the age of the oldest queued event each pass.
+reports the age of the oldest queued event of a wallet not waiting for a
+scene, each pass (one `presence_events_seq_idx` scan that stops at the first
+such row); a failed read keeps the last value, counts in
+`badges_presence_queue_age_read_failures` and does not fail the pass.
 
 Every presence transaction first takes one advisory lock: the engine and the
 `badges-presence-sweep` job are a single writer fleet-wide, so the runtime
@@ -1841,11 +1875,15 @@ catalog rows, and the bootstrap seed reaches only new databases.
    leaves it complete until such a write.
    A badge takes at most 32 tiers, each `2d` or `3d` at most 8 files, and
    the badges routes refuse bodies over 1 MiB (413), the backfill's over
-   64 MiB.
+   64 MiB and an art upload's over 16 MiB.
 2. Make the art reachable: upload it to the CDN that
-   `BADGES_PUBLIC_ASSET_BASE_URL` names (upstream's by default), or mirror it
-   into `BADGES_ASSETS_DIR` under the same relative paths when the base is
-   `<node>/badges/assets`.
+   `BADGES_PUBLIC_ASSET_BASE_URL` names (upstream's by default), or, when the
+   base is `<node>/badges/assets`, put each file into `BADGES_ASSETS_DIR`
+   under the same relative path: mirror it there, or `PUT
+   /badges/assets/{path}` with the admin bearer and the PNG as the body (204;
+   only a path the badge or one of its tiers names, else 404). The upload is
+   written on the process that receives it, so every process serving the
+   badges routes must mount the same directory (a shared volume).
 3. `PATCH /badges/badges/{id}` `{"published": true}`. The badge is listed and
    awardable. An active badge with no evaluator, backfill import or presence
    configuration (`social.presence_badges`) is named in a warning at startup,
@@ -1861,6 +1899,24 @@ any wallet has a row of it. Each upsert (with the definition it wrote) and
 each publication or archive transition appends a row to
 `social.badge_catalog_audit`; `badge_admin_audit` keeps per-wallet grants and
 revokes, whose `address` a catalog write does not have.
+
+## Place removal feed
+
+`explore.place_removal_pending` (`schemas/10_explore.sql`) is a sparse outbox
+of catalogue removals. Explore's trigger on `explore.place` and
+`explore.place_world_local` inserts one row per transition to removed (opt-out
+is not a removal), snapshotting the place context, and keeps one lifecycle
+bit per place in `explore.place_removal_state`; it is the only writer of new
+rows. The comms gatekeeper (`services/catalyst/comms/src/gatekeeper/removed_places.rs`)
+consumes it by shared SQL: at most 100 due rows a pass on
+`place_removal_due_idx`, `owner_address` filled once when it was empty,
+`cleaned_at` set in the same transaction as its destructive cleanup so a retry
+cannot replay it, `attempts` and `retry_at` advanced with capped backoff, and
+a cleaned row deleted, and the place's `place_removal_state` row with it once
+neither catalogue holds the place and no pending row for it remains. Its context lookups read
+`explore.place_indexed`, joined to `content.active_pointers` and
+`content.deployments` for shared-scene rooms, by primary key or world name.
+Neither table has an FK: queue rows outlive catalogue deletion.
 
 ## Player report intake workload
 

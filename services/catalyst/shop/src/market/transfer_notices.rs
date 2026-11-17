@@ -25,8 +25,8 @@ use super::chain_walk::{self, ChainNet, INDEXER_NFT, INDEXER_TRADE_EVENTS};
 use super::notice_cursor;
 use crate::evm::contracts_addrs::DclContracts;
 use crate::jobs::{Jobs, PeriodicCfg};
-use crate::social::Address;
-use crate::social::notifications::store::{NewNotification, insert_notifications};
+use crate::shared::identity::Address;
+use crate::shared::notifications::{NewNotification, insert_notifications};
 
 pub const KIND: &str = "transfer_received";
 const PRODUCER: &str = notice_cursor::TRANSFER_RECEIVED;

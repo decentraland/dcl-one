@@ -206,6 +206,14 @@ pub async fn get_scene_adapter(
     let token = token
         .to_jwt()
         .map_err(|e| ApiError::internal(format!("livekit token: {e}")))?;
+    // A scene admin joining a room that is casting becomes a presenter; off
+    // the response, bounded, and never a reason to refuse the join (upstream
+    // logs it).
+    crate::gatekeeper::streaming::cast::spawn_admin_presenter_on_join(
+        state.clone(),
+        resolved.room.clone(),
+        identity.clone(),
+    );
     Ok(Json(SceneAdapterResponse {
         adapter: build_adapter_url(&state.livekit.client_url, &token),
     }))
@@ -356,32 +364,27 @@ pub async fn participants(
     Ok(addresses)
 }
 
-/// The destinations feed's connected wallets (`explore::places::live`): the
-/// same room resolution as `/scene-participants` (a Genesis scene by its
-/// pointer in realm `main`, a world by its room), `None` without LiveKit or
-/// when no scene stands at the pointer (the old route's 400/404, which the
-/// places client read as unknown).
-impl crate::explore::places::live::Participants for CommsState {
-    fn participants<'a>(
-        &'a self,
-        world: bool,
-        key: &'a str,
-    ) -> futures::future::BoxFuture<'a, Option<Vec<String>>> {
-        Box::pin(async move {
-            if !self.livekit.configured {
-                return None;
-            }
-            participants(
-                self,
-                ParticipantsQuery {
-                    pointer: (!world).then(|| key.to_string()),
-                    realm_name: Some(if world { key } else { "main" }.to_string()),
-                    room: None,
-                },
-            )
-            .await
-            .ok()
-        })
+impl CommsState {
+    /// The destinations feed's connected wallets (`serve` hands them to
+    /// Explore's live counts): the same room resolution as
+    /// `/scene-participants` (a Genesis scene by its pointer in realm `main`,
+    /// a world by its room), `None` without LiveKit or when no scene stands at
+    /// the pointer (the old route's 400/404, which the places client read as
+    /// unknown).
+    pub async fn live_participants(&self, world: bool, key: &str) -> Option<Vec<String>> {
+        if !self.livekit.configured {
+            return None;
+        }
+        participants(
+            self,
+            ParticipantsQuery {
+                pointer: (!world).then(|| key.to_string()),
+                realm_name: Some(if world { key } else { "main" }.to_string()),
+                room: None,
+            },
+        )
+        .await
+        .ok()
     }
 }
 

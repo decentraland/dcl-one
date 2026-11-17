@@ -18,7 +18,7 @@ capture, so every expectation can be re-read in the pinned source.
 ```sh
 cd services/catalyst
 CATALYST_TEST_DATABASE_URL=postgresql://user:pass@localhost:5432/postgres \
-  cargo test -p catalyst --test explore_parity -- --nocapture
+  cargo test -p catalyst --test node_1 -- explore_parity:: --nocapture
 ```
 
 Without `CATALYST_TEST_DATABASE_URL` the test skips. Every entry runs against a

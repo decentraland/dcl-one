@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { CatalystError } from "@/data/lib/catalyst/client";
 import { loadEventProfile, loadEventProfiles, loadManagedEvents, moderateEvent, saveEventPermissions, type EventProfile, type ManagedEvent } from "@/data/lib/catalyst/places/event-management";
-import EventManagement, { EventDiscoveryNavigation } from "./EventManagement";
+import EventManagement from "./EventManagement";
 
 const auth = vi.hoisted(() => ({ identity: null as AuthIdentity | null, isConnected: false }));
 vi.hoisted(() => { Object.assign(window, { __vite_plugin_react_preamble_installed__: true }); });
@@ -217,11 +217,5 @@ describe("when managing hangouts", () => {
         await screen.findByText("The server kept the account's effective permissions. Moderator accounts always retain every permission.");
       });
     });
-  });
-
-  it("should render public navigation without private settings requests", () => {
-    render(<MemoryRouter><EventDiscoveryNavigation /></MemoryRouter>);
-    expect(loadEventProfile).not.toHaveBeenCalled();
-    expect(loadEventProfiles).not.toHaveBeenCalled();
   });
 });

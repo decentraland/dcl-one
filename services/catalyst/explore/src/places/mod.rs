@@ -1172,5 +1172,3 @@ mod world_fallback_tests {
         assert_eq!(row.contact_name.as_deref(), Some("Builder"));
     }
 }
-
-pub mod removed;

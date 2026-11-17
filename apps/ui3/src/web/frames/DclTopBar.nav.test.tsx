@@ -98,10 +98,10 @@ describe("top bar links hand same-document hrefs to the chrome navigator", () =>
     const navigate = vi.fn<ChromeNavigate>((href) => href !== "/docs/");
     mountBar(navigate);
     fireEvent.mouseEnter(document.querySelectorAll(".dtb__dd")[1]!);
-    const docs = document.querySelector<HTMLAnchorElement>(".dtb__dditem[href=\"/docs/\"]")!;
+    const docs = document.querySelector<HTMLAnchorElement>("[role=\"menuitem\"][href=\"/docs/\"]")!;
     expect(fireEvent.click(docs)).toBe(true);
     expect(navigate).toHaveBeenCalledWith("/docs/");
-    const blog = document.querySelector<HTMLAnchorElement>(".dtb__dditem[href=\"/blog\"]")!;
+    const blog = document.querySelector<HTMLAnchorElement>("[role=\"menuitem\"][href=\"/blog\"]")!;
     expect(fireEvent.click(blog)).toBe(false);
   });
 

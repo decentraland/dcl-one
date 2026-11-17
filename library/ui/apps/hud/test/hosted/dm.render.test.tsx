@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Chat } from '../../features/chat/Chat'
 import type { ChatState, Conversation } from '../../features/session/useEngineSession'
@@ -23,9 +23,11 @@ describe('DM chat panel', () => {
     expect(vi.mocked(chat.select)).toHaveBeenCalledWith(BOB)
   })
 
-  it('no rail without DM tabs', () => {
+  it('without DM tabs the rail holds Nearby alone', () => {
     render(<Chat chat={chatWith({})} />)
-    expect(screen.queryByRole('navigation', { name: 'Conversations' })).toBeNull()
+    const rail = screen.getByRole('navigation', { name: 'Conversations' })
+    expect(within(rail).getByRole('button', { name: 'Nearby chat' })).toHaveAttribute('aria-pressed', 'true')
+    expect(within(rail).queryByRole('button', { name: /^Chat with / })).toBeNull()
   })
 
   it('a DM channel shows the partner title bar, and its menu deletes history or closes the tab', async () => {
@@ -34,7 +36,7 @@ describe('DM chat panel', () => {
     expect(screen.getByText('Online')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /nearby$/ })).toBeNull()
     await userEvent.click(screen.getByRole('button', { name: 'Conversation options' }))
-    await userEvent.click(screen.getByText('Delete chat history'))
+    await userEvent.click(screen.getByText('Delete Chat History'))
     expect(vi.mocked(chat.deleteHistory)).toHaveBeenCalledWith(BOB)
     await userEvent.click(screen.getByRole('button', { name: 'Conversation options' }))
     await userEvent.click(screen.getByText('Close conversation'))

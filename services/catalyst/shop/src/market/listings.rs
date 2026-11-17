@@ -37,7 +37,7 @@ use super::signed::{
 };
 use super::wire::ApiError;
 use super::{MarketplaceState, SharedState};
-use crate::comms::limits::{RateLimitDecision, RateLimiter};
+use crate::shared::limits::{RateLimitDecision, RateLimiter};
 
 use crate::types::{
     ASSET_TYPE_COLLECTION_ITEM, ASSET_TYPE_ERC20, ASSET_TYPE_ERC721, ASSET_TYPE_USD_PEGGED_MANA,
@@ -1246,7 +1246,7 @@ pub async fn create_trade(
         )
     }) {
         let mut savepoint = sqlx::Connection::begin(&mut *tx).await?;
-        match catalyst_social::notifications::insert_notifications(&mut *savepoint, &[n]).await {
+        match crate::shared::notifications::insert_notifications(&mut *savepoint, &[n]).await {
             Ok(_) => savepoint.commit().await?,
             Err(e) => {
                 tracing::warn!(error = %e, trade_id, "bid_received: insert failed; the bid stands");

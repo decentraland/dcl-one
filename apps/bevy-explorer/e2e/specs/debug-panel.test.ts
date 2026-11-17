@@ -43,7 +43,8 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     }>('/cef_hud_perf'), (reading) => (reading.bitmapMiBPerSecond ?? 0) > 0,
     { timeoutMs: 10_000, what: 'a CEF repaint while the debug panel is closed' })
     assert.ok(cef.paintSize?.every(size => size > 0))
-    if (developmentBuild) await explorer.hud.click(sidebarSettings)
+    // the open popup's backdrop covers its handle: Escape closes the popup
+    if (developmentBuild) await explorer.escape()
   }
   const waitTarget = (fps: number) => until(() => explorer.hud.get(panel),
     (read) => read.text.includes('Target frame rate (FPS) ' + fps),
@@ -92,7 +93,8 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     await explorer.clickAt(open.x / 2, open.y + open.height / 2)
     await explorer.hud.click(sidebarSettings)
     await explorer.hud.wait(button('Debug panel'))
-    await explorer.hud.click(sidebarSettings)
+    // Escape closes the popup first, and the debug panel stays
+    await explorer.escape()
     await explorer.hud.waitHidden(button('Debug panel'))
     assert.equal(await explorer.hud.isVisible(panel), true)
     await expand('Avatar')
@@ -106,7 +108,13 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
       { timeoutMs: 20_000, intervalMs: 100, what: 'the debug action to play the wave emote' })
   } finally {
     await explorer.run(before.overrideFps == null ? '/session_graphics fps' : '/session_graphics fps ' + before.overrideFps)
-    if (await explorer.hud.isVisible(panel)) await explorer.escape()
+    // The panel's own Close button, not Escape: with the filter field focused the HUD leaves Cancel
+    // to the field, and a panel left open would stay over every later scenario. The panel comes
+    // after the rail in document order, so its Close is the last match.
+    if (await explorer.hud.isVisible(panel)) {
+      const closes = (await explorer.hud.list('button')).filter((entry) => entry.name === 'Close').length
+      await explorer.hud.click({ ...button('Close'), index: closes - 1 })
+    }
     await explorer.hud.waitHidden(panel)
   }
   assert.equal(await explorer.hud.isVisible(button('Play wave')), false)

@@ -169,6 +169,10 @@ function ScheduleWizardInner({
     time: rangeLabel(s),
     hue: hueFromBackground(s.background, i),
     image: s.image ?? null,
+    // A schedule is not an event: its card opens the schedule's editor, as the browse grid does, and offers no
+    // reminder or share actions.
+    href: `?mode=edit&id=${encodeURIComponent(s.id)}`,
+    actions: false,
   }));
 
   const scheduleBrowse = (
@@ -230,7 +234,7 @@ function ScheduleWizardInner({
         liveNow={liveNow}
         allDays={allDays}
         dayLabels={dayLabels}
-        filterBar={scheduleBrowse}
+        notice={scheduleBrowse}
       />
 
       <div className="event-schedule__controls" role="group" aria-label="Schedule wizard">
@@ -259,7 +263,7 @@ function ScheduleWizardInner({
               onEdit={(patch) => send({ type: "EDIT", patch })}
             />
             <div className="event-schedule__nav">
-              {value === "basics" ? <Link className="event-schedule__btn" to="/whats-on">Back</Link> : <button
+              {value === "basics" ? <Link className="event-schedule__btn" to="/events">Back</Link> : <button
                 type="button"
                 className="event-schedule__btn"
                 onClick={() => send({ type: "BACK" })}

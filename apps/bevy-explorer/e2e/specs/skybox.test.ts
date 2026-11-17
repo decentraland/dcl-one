@@ -5,18 +5,18 @@
 // | TestModifySkyboxTime       | the engine's /time sets 18:00 and the panel shows it               | Partial |
 //
 // Partial:
-// - TestSkyboxWidgetPresence expects the title "Night/day"; the panel's title is "Skybox" (its
-//   dialog name and the start of its text). The `Time progression` switch and the time slider have
-//   no accessible name (hud-accessible-names, "Controls without a name") and the time label is a
-//   span with no role, so the switch and slider are addressed by role alone (each is the only one
-//   on screen with the panel open) and the time is read from the panel's text, which reads
-//   `Skybox HH:mm Time progression`.
+// - TestSkyboxWidgetPresence expects the title "Night/day"; the panel's title is "NIGHT/DAY" (the
+//   start of its text; the dialog's name is "Skybox"). The switch is named `Auto` by the label it
+//   sits in. The time slider has no accessible name (hud-accessible-names, "Controls without a
+//   name"), so it is addressed by role alone (the only one on screen with the panel open), and the
+//   time label is a span with no role, so the time is read from the panel's text, which reads
+//   `NIGHT/DAY Auto Custom HH:mm`.
 // - TestModifySkyboxTime writes the slider's value; the slider has no name and where a click lands
 //   on it depends on its thumb, so the engine's `/time 18 0` stops the clock at 18:00 instead (the
 //   same 0.75 of the day). The panel reads the clock when it opens and does not follow a stopped
 //   one, so it is closed and reopened to show it, as Unity reopens its widget after the write. The
-//   assertions are Unity's: the label is an HH:mm time within 17:50 to 18:10, and the Time
-//   progression switch reaches the state asked of it at each change. Added: the slider reads about
+//   assertions are Unity's: the label is an HH:mm time within 17:50 to 18:10, and the Auto
+//   switch reaches the state asked of it at each change. Added: the slider reads about
 //   18 and is enabled. Unity restores the switch only; here the clock is put back as found too.
 import assert from 'node:assert/strict'
 import { spec, until, type Explorer, type Selector } from '../driver/index.ts'
@@ -28,7 +28,7 @@ const TEXT_TIMEOUT_MS = 10_000
 
 const SKYBOX_BUTTON: Selector = { name: 'Skybox', role: 'button' }
 const PANEL: Selector = { name: 'Skybox', role: 'dialog' }
-const AUTO: Selector = { role: 'switch' }
+const AUTO: Selector = { name: 'Auto', role: 'switch' }
 const SLIDER: Selector = { role: 'slider' }
 
 const TARGET_HOURS = 18
@@ -63,11 +63,11 @@ async function readClock(explorer: Explorer): Promise<{ hours: number; speed: nu
   return { hours: hours! + minutes! / 60, speed }
 }
 
-/** Wait for the Time progression switch to read `on`. */
+/** Wait for the Auto switch to read `on`. */
 async function waitAuto(explorer: Explorer, on: boolean): Promise<void> {
   await until(() => explorer.hud.get(AUTO), (control) => control.checked === on, {
     timeoutMs: TEXT_TIMEOUT_MS,
-    what: `the Time progression switch to be ${on ? 'on' : 'off'}`
+    what: `the Auto switch to be ${on ? 'on' : 'off'}`
   })
 }
 
@@ -82,8 +82,8 @@ async function waitClock(explorer: Explorer, running: boolean): Promise<void> {
 scenario('the Skybox panel shows its title, the switch, the slider and a time', async ({ explorer }) => {
   await openSkybox(explorer)
   const panel = await explorer.hud.get(PANEL)
-  assert.ok(panel.text.startsWith('Skybox'), `the panel should be titled Skybox: ${panel.text}`)
-  assert.ok(await explorer.hud.isVisible(AUTO), 'the panel should have the Time progression switch')
+  assert.ok(panel.text.startsWith('NIGHT/DAY'), `the panel should be titled NIGHT/DAY: ${panel.text}`)
+  assert.ok(await explorer.hud.isVisible(AUTO), 'the panel should have the Auto switch')
   assert.ok(await explorer.hud.isVisible(SLIDER), 'the panel should have the time slider')
   assert.match(panel.text, /\b\d{2}:\d{2}\b/, `the Skybox panel should show a HH:mm time of day: ${panel.text}`)
   await closeSkybox(explorer)

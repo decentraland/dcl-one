@@ -21,8 +21,9 @@ import { REPORT_DIR } from './paths.ts'
  *  as one, as the HUD's Continue as guest makes it (it signs, and keeps a profile); an
  *  `unsigned-guest`, the session-only guest with no signed identity, which the engine's
  *  `/login_guest` signs in (on the web under a HUD that stays on its start page, so with no world
- *  of its own; a scene preview's `?guest=1` boot signs in the same guest); or `none`. */
-export type SignIn = 'account' | 'guest' | 'unsigned-guest' | 'none'
+ *  of its own; a scene preview's `?guest=1` boot signs in the same guest); a `fresh` account, a
+ *  new key each run signed in as the automation account is, not as a guest; or `none`. */
+export type SignIn = 'account' | 'guest' | 'unsigned-guest' | 'fresh' | 'none'
 
 export interface OpenOptions {
   /** The realm to boot into; the target's by default. */
@@ -289,8 +290,8 @@ export async function signIn(
     explorer.profileDeployed()
     return explorer.waitInWorld(WORLD_TIMEOUT_MS)
   }
-  if (mode === 'account') {
-    await explorer.loginIdentity(buildAuthIdentity(accountKey(target)), pick)
+  if (mode === 'account' || mode === 'fresh') {
+    await explorer.loginIdentity(buildAuthIdentity(mode === 'account' ? accountKey(target) : newPrivateKey()), pick)
   } else if (mode === 'guest' || mode === 'unsigned-guest') {
     await explorer.loginGuest()
   }
