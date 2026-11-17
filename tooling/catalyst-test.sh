@@ -10,6 +10,26 @@ receipts="$root/.cache/dev"
 logs="${CARGO_TARGET_DIR:-target}/test-logs"
 mkdir -p "$logs" "$receipts"
 rm -f "$receipts/stats-engine-receipt.log"
+# Every failing binary adds one line here, so the last lines of a failed run name what failed. The
+# summary goes to stdout, the stream of the dumped logs, so it follows them.
+failures="$logs/failures"
+: > "$failures"
+phase="building the test binaries"
+report() {
+  status=$?
+  [ "$status" -ne 0 ] || return 0
+  echo "catalyst-test: failed with status $status while $phase"
+  if [ -s "$failures" ]; then
+    cat "$failures"
+  elif [ "$phase" != "building the test binaries" ] && [ "$phase" != "selecting the test binaries" ] \
+    && [ "$phase" != "running the doc-tests" ]; then
+    echo "catalyst-test: a runner shell failed without naming a binary (see the output above)"
+  fi
+  if [ "${GITHUB_ACTIONS:-}" = true ]; then
+    while IFS= read -r line; do echo "::error title=Rust test binary failed::$line"; done < "$failures"
+  fi
+}
+trap report EXIT
 cargo test --locked "$@" --no-run --message-format=json-render-diagnostics | python3 -c '
 import json, os, sys
 for line in sys.stdin:
@@ -18,6 +38,7 @@ for line in sys.stdin:
         target = artifact["target"]
         print(os.path.relpath(target["src_path"]), ",".join(target["kind"]), artifact["executable"], sep="\t")
 ' > "$logs/binaries"
+phase="selecting the test binaries"
 [ -s "$logs/binaries" ] || { echo "catalyst-test: no test binaries found" >&2; exit 1; }
 shard="${CATALYST_TEST_SHARD:-1/1}"
 index="${shard%/*}" total="${shard#*/}"
@@ -39,10 +60,20 @@ grep -E '/(archipelago|pulse)_[^/]*$' "$logs/shard" > "$logs/sockets" || [ $? -e
 grep -v -E '/(archipelago|pulse)_[^/]*$' "$logs/shard" > "$logs/others" || [ $? -eq 1 ]
 run() {
   xargs -P "$1" -I{} sh -c '
-log="$2/$(basename "$1").log"
-"$1" > "$log" 2>&1 || { cat "$log"; exit 1; }
-sed -n "s|^test result|$(basename "$1")|p" "$log"
-case "$(basename "$1")" in
+name=$(basename "$1")
+log="$2/$name.log"
+status=0
+"$1" > "$log" 2>&1 || status=$?
+if [ "$status" -ne 0 ]; then
+  cat "$log"
+  if [ "$status" -gt 128 ]; then why="was killed by signal $((status - 128))"; else why="exited with status $status"; fi
+  failed=$(sed -n "s/^test \(.*\) \.\.\. FAILED\$/\1/p" "$log" | tr "\n" " " | sed "s/ \$//")
+  line="catalyst-test: $name $why; failed tests: ${failed:-none reported, see the end of its log above}"
+  echo "$line"
+  echo "$line" >> "$2/failures"; exit 1
+fi
+sed -n "s|^test result|$name|p" "$log"
+case "$name" in
   stats_metrics_engine-*)
     sed -n "/^STATS_ENGINE_RECEIPT /p" "$log" > "$3/stats-engine-receipt.log" || exit 1
     cat "$3/stats-engine-receipt.log" ;;
@@ -50,9 +81,13 @@ esac
 ' _ {} "$logs" "$receipts"
 }
 if [ "$socket_jobs" -eq "$jobs" ]; then
+  phase="running the test binaries"
   run "$jobs" < "$logs/shard"
 else
+  phase="running the test binaries"
   run "$jobs" < "$logs/others"
+  phase="running the socket test binaries"
   run "$socket_jobs" < "$logs/sockets"
 fi
+phase="running the doc-tests"
 cargo test --locked "$@" --doc

@@ -259,6 +259,26 @@ pub(crate) mod tests {
     use tower::ServiceExt;
 
     use super::*;
+
+    /// The deliveries worker's mailer with no SendGrid settings.
+    struct UnconfiguredMailer;
+
+    #[async_trait::async_trait]
+    impl subscriptions::AvailabilityMailer for UnconfiguredMailer {
+        fn is_configured(&self) -> bool {
+            false
+        }
+        async fn send_html(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &serde_json::Value,
+        ) -> Result<Option<String>, crate::shared::notifications::SendFailure> {
+            Err(crate::shared::notifications::SendFailure::NotConfigured)
+        }
+    }
     use crate::http::Outbound;
     use crate::{checkout, credits, evm, mana, market, outfits, rentals, subscriptions, treasury};
 
@@ -328,11 +348,9 @@ pub(crate) mod tests {
             },
             None,
         ));
-        let mailer =
-            crate::social::notifications::email::EmailSender::new(Default::default(), http.clone());
         let subscriptions = Arc::new(subscriptions::State::new(
             pool.clone(),
-            Arc::new(mailer),
+            Arc::new(UnconfiguredMailer),
             subscriptions::Settings {
                 shop_base_url: String::new(),
                 delivery_interval: std::time::Duration::from_secs(60),

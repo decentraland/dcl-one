@@ -13,6 +13,8 @@ use crate::{
     price, shop, storage, worlds,
 };
 
+#[path = "serve_adapters.rs"]
+mod adapters;
 #[path = "serve_lifecycle.rs"]
 mod lifecycle;
 #[path = "serve_routes.rs"]
@@ -25,7 +27,7 @@ mod states;
 #[cfg(test)]
 use lifecycle::register_metrics;
 pub(crate) use lifecycle::shutdown_signal;
-use lifecycle::{install_metrics, install_restore_stamps, run_http};
+use lifecycle::{install_metrics, run_http};
 #[cfg(test)]
 pub(crate) use routes::live_presence_routes;
 #[cfg(test)]
@@ -147,7 +149,6 @@ pub async fn serve(
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
     config.resolve_secret_files()?;
     config.content.eth_rpc_url()?;
-    install_restore_stamps(&config)?;
     let sync_settings = SyncSettings::from_config(&config)?;
     let pool = db::connect_pool(
         &config.node.database_url,
@@ -624,8 +625,7 @@ pub async fn serve(
         );
     }
     // The content history prune (src/content/history_prune.rs): behind
-    // CONTENT_HISTORY_PRUNE_ENABLED, and off beside the writes switch (an
-    // authoritative node keeps its history); it logs once why it is not running.
+    // CONTENT_HISTORY_PRUNE_ENABLED; it logs once why it is not running.
     content::history_prune::spawn(
         &jobs,
         pool.clone(),
@@ -925,11 +925,10 @@ pub async fn serve(
             "FLEET_JOBS_ENABLED=false: this process serves no /ws, /ws/v4 or socket-reading connector route and mints no island; the primary serves them"
         );
     }
-    // The gatekeeper's room events feed the worlds access log and, when
-    // enabled, the presence badges (stored before the webhook is
-    // acknowledged, applied by a leased job).
-    let presence_badges =
-        config.social.badges_presence_enabled && config.writes.social_writes_enabled;
+    // The gatekeeper's room events feed the worlds access log and, on a
+    // process with social writes, the presence badges (stored before the
+    // webhook is acknowledged, applied by a leased job).
+    let presence_badges = config.writes.social_writes_enabled;
     let room_event_sinks: Vec<Arc<dyn comms::gatekeeper::events::RoomEventSink>> =
         vec![stage5.core.clone()];
     let presence_badge_settings = {
@@ -1056,10 +1055,12 @@ pub async fn serve(
     social
         .rpc
         .start_fanout(&jobs, comms_stage.gatekeeper.bus.clone());
-    market.attach_profile_images(social.profile_images.clone());
+    market.attach_profile_images(Arc::new(adapters::ShopProfileFaces(
+        social.profile_images.clone(),
+    )));
     let subscriptions = Arc::new(shop::subscriptions::State::new(
         pool.clone(),
-        Arc::new(social.notifications.email.clone()),
+        Arc::new(adapters::ShopMailer(social.notifications.email.clone())),
         shop::subscriptions::Settings {
             shop_base_url: config.shop.shop_base_url.clone(),
             delivery_interval: Duration::from_secs(config.shop.shop_notify_delivery_interval_secs),
@@ -1072,7 +1073,9 @@ pub async fn serve(
     shop::coupons::favorites::spawn_job(&market, config.shop.shop_base_url.clone(), &jobs);
     explore
         .live
-        .set_participants(comms_stage.gatekeeper.clone());
+        .set_participants(Arc::new(adapters::CommsParticipants(
+            comms_stage.gatekeeper.clone(),
+        )));
     social
         .communities
         .set_voice_eviction(comms_stage.gatekeeper.clone());

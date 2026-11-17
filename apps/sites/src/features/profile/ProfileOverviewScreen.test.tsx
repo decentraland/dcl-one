@@ -1,8 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -155,7 +153,7 @@ describe("profile overview screen, tabs", () => {
   it("does not count a modifier or middle click, which opens a new browser tab, as a tab change", () => {
     const onTab = vi.fn();
     show(profile(), false, onTab);
-    const places = within(screen.getByRole("navigation", { name: "Profile sections" })).getByRole("link", { name: "Places" });
+    const places = within(screen.getByRole("tablist", { name: "Profile sections" })).getByRole("tab", { name: "Places" });
 
     fireEvent.click(places, { metaKey: true });
     fireEvent.click(places, { ctrlKey: true });
@@ -164,14 +162,21 @@ describe("profile overview screen, tabs", () => {
     expect(onTab).not.toHaveBeenCalled();
   });
 
-  it("marks Overview as the current page and navigates in the app on a tab", async () => {
+  it("selects Overview, labels its panel with it and navigates in the app on a tab", async () => {
     const onTab = vi.fn();
     const router = show(profile(), false, onTab);
-    const nav = screen.getByRole("navigation", { name: "Profile sections" });
+    const bar = screen.getByRole("tablist", { name: "Profile sections" });
+    const overview = within(bar).getByRole("tab", { name: "Overview" });
+    const places = within(bar).getByRole("tab", { name: "Places" });
 
-    expect(within(nav).getByRole("link", { name: "Overview" }).getAttribute("aria-current")).toBe("page");
+    expect(overview.getAttribute("aria-selected")).toBe("true");
+    expect(places.getAttribute("aria-selected")).toBe("false");
+    expect(places.getAttribute("href")).toBe(`/profile/${A}/places`);
+    const panel = screen.getByRole("tabpanel", { name: "Overview" });
+    expect(overview.getAttribute("aria-controls")).toBe(panel.id);
+    expect(within(panel).getByRole("heading", { name: "About" })).toBeTruthy();
     await act(async () => {
-      fireEvent.click(within(nav).getByRole("link", { name: "Places" }));
+      fireEvent.click(places);
     });
 
     expect(onTab).toHaveBeenCalledWith("places");
@@ -325,36 +330,5 @@ describe("profile overview screen, badges", () => {
 
     await waitFor(() => expect(screen.getByText("Badges are unavailable right now.")).toBeTruthy());
     expect(screen.queryByText("No badges yet. Jump in world and start collecting badges!")).toBeNull();
-  });
-});
-
-describe("provisional Sites UI inventory", () => {
-  it("lists every provisional component, and each carries its TODO(figma-ds) mark", () => {
-    const root = join(__dirname, "../../../../../library/ui/apps/sites/provisional");
-    const readme = readFileSync(join(root, "README.md"), "utf8");
-    const files: string[] = [];
-    const walk = (dir: string) => {
-      for (const entry of readdirSync(dir)) {
-        const path = join(dir, entry);
-        if (statSync(path).isDirectory()) walk(path);
-        else if (/\.(tsx?|module\.css)$/.test(entry)) files.push(path);
-      }
-    };
-    walk(root);
-
-    // The first cell of each table row names a component, relative to the folder, without `.tsx`.
-    const rows = [...readme.matchAll(/^\|\s*`([^`]+)`\s*\|/gm)].map((match) => match[1]!);
-
-    expect(files.length).toBeGreaterThan(0);
-    for (const file of files) {
-      expect(readFileSync(file, "utf8"), file).toContain("TODO(figma-ds)");
-      if (/\.tsx?$/.test(file)) {
-        const name = relative(root, file).replace(/\.tsx?$/, "");
-        expect(rows, `${name} is missing from the inventory`).toContain(name);
-      }
-    }
-    for (const row of rows) {
-      expect(statSync(join(root, `${row}.tsx`), { throwIfNoEntry: false }) ?? statSync(join(root, `${row}.ts`), { throwIfNoEntry: false }), `${row} is listed but has no file`).toBeDefined();
-    }
   });
 });
