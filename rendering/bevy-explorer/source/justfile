@@ -8,7 +8,7 @@ set positional-arguments
 wasm_toolchain := "nightly-2026-04-15"
 
 # the bridge scene's package manager; a shell with pnpm on its PATH sets PNPM=pnpm (nix develop .#wasm does)
-pnpm := env_var_or_default("PNPM", "corepack pnpm@11.27.0")
+pnpm := env_var_or_default("PNPM", "corepack pnpm@12.21.0")
 
 # nixos: cef's bundled libvulkan.so.1 can't find the system's vulkan drivers without this
 nixos_vulkan := if path_exists("/run/opengl-driver/share") == "true" { 'XDG_DATA_DIRS="/run/opengl-driver/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"' } else { "" }

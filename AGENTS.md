@@ -17,6 +17,14 @@ For formal verification of LiveKit or networking decisions, or maintenance of
 their proof evidence, use
 [verify-dcl-networking](.claude/skills/verify-dcl-networking/SKILL.md).
 
+## Design feasibility
+
+- Before planning or implementing runtime features, resource policies or architecture
+  changes that depend on platform capabilities, external services or cross-subsystem
+  ownership, apply [the design feasibility gate](docs/design-feasibility.md).
+  Its outcome and platform coverage decision precedes implementation planning;
+  unresolved design blockers remain visible in PR review.
+
 ## Agentic roles documentation
 
 - README `Agentic roles` lists every agent role: name, goal, main functions, relative link to its tracked definition or workflow.
@@ -46,6 +54,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 - Check the current readiness evidence before claiming deployment or compatibility; missing evidence means the claim remains unverified.
 - Write PR descriptions per `.github/PULL_REQUEST_TEMPLATE.md`.
 - For schema, SQL, ingestion, mirrors or caches, apply `DATABASE.md`; state workload and invariants before choosing tables or indexes.
+- A change to a `schemas/` table that a step of the TS import (`tooling/migration/`) writes or reads (its `source.toml` `targets` and load SQL) updates that step's load SQL, `MAPPING.md` and tests in the same change.
 - Record measured performance changes in the task report; follow-ups are candidates until measured.
 - Preserve wire, authorization and crash/resume contracts.
 - Never reset an existing database to fit a changed schema.
@@ -55,6 +64,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 - Read the [layout ADR](docs/adr/2026-10-19-organizing-library-services-folders.md) before adding, moving or renaming a folder or crate; record layout changes as a new ADR.
 - `library/` depends only on library code.
 - `library/protocol/proto` is the only `.proto` source ([ADR](docs/adr/2026-10-25-protocol-in-dcl-one.md)); `tooling/proto-source-check.py` fails on any other copy.
+- JavaScript projects install with pnpm ([ADR](docs/adr/2026-11-13-pnpm-default-package-manager.md)); published `@dcl/*` packages carry nothing pnpm-specific.
 - Reach other files through `env!("DCL_ONE_ROOT")`, never `../` chains.
 - Domain crates follow `docs/module-layers.toml`; no upward dependency.
 - Keep the fresh-schema bootstrap single.
@@ -63,14 +73,16 @@ Code that serves none of these deliverables is removed, not kept for reference:
 
 ## Ownership
 
-- `explore`: discovery and explorer-facing APIs (places, events, map, realms, flags, client config), including durable world-scene place identities maintained inside deployment transactions; `places::RemovedPlaces` captures catalogue removals, which comms consumes for moderation and ingress cleanup.
+- `explore`: discovery and explorer-facing APIs (places, events, map, realms, flags, client config), including durable world-scene place identities maintained inside deployment transactions; its schema trigger captures catalogue removals in `explore.place_removal_pending`, which comms reads and settles for moderation and ingress cleanup (below).
   - Explore reaches social by shared SQL on exactly two edges, the current contract: it reads `social.communities` and `social.community_members` (one `EXISTS` per community-event write: the community active and not suspended, the signer its owner or an owner/moderator member; explore never writes those rows), and it inserts `social.event_notification_intents` rows (one per event notice, in the event's own transaction, carrying the event snapshot; social owns the table, processes the rows and deletes processed ones after its retention window; explore never updates or deletes them). Changing a column either edge reads or writes updates this paragraph in the same change.
 - `social` owns badges; its badge processor reads, never writes, other areas' tables by shared SQL: `content.deployments` and `content.active_pointers` (deployments by `id`, scene titles, wearable rarity), and on Polygon `shop.items`, `shop.collections`, `shop.sale_event`, `shop.trade_event`, `shop.nft_event`, `shop.chain_cursor` (an index's published block) and `shop.mirror_state` (a mirror's first complete pass). Changing a column it reads updates this paragraph and `DATABASE.md` "Badge processor" in the same change.
+- `shared::notifications` is the one write path into `social.notifications` and its email delivery rows for every producer, Social and Shop alike; Social owns those tables, reads them, delivers the email and keeps the templates, and `with_emailable_kinds!` is the one list of templated types both use. Shop depends on neither Social, Comms nor Explore: it reads flag documents through `shared::feature_flags` and serves the Registry's CORS from `shared::cors`; `serve` hands it Social's mailer and profile-image renderer and hands Comms its name owners (`src/serve_adapters.rs`).
 - `worlds`: world catalogues, deployments, permissions, world/player storage, encrypted env values, SDK7 scene hosting with per-scene isolation, limits and cancellation.
 - Guest code reaches storage through a scoped host API, never the shared pool.
 - `comms` (layer 8): Pulse, the archipelago connector (`/ws`), the gatekeeper (admission, moderation, player reports, voice, streaming, LiveKit webhook, room events) and presence; all but Pulse run in `catalyst serve`.
   - Worlds supplies access and scene identity via `comms::interfaces`; social supplies membership, privacy and notification persistence via `SocialDirectory` and keeps MLS.
   - Comms owns streaming lifecycle and cleanup intent; social owns notification delivery records.
+  - Comms depends on no Explore code. The gatekeeper's removal reader (`gatekeeper::removed_places`) reaches Explore by shared SQL: it reads place context from `explore.place_indexed`, `content.active_pointers` and `content.deployments`; on `explore.place_removal_pending` it reads due rows, sets `owner_address` (only when empty), `cleaned_at` (in its cleanup transaction), `attempts` and `retry_at`, deletes a cleaned row, and deletes the place's `explore.place_removal_state` row once neither `explore.place` nor `explore.place_world_local` holds the place and no `explore.place_removal_pending` row for it remains. Explore's trigger alone inserts those rows. Changing a column it reads or writes updates this paragraph and `DATABASE.md` "Place removal feed" in the same change. Explore's live counts take the gatekeeper's participants through `src/serve_adapters.rs`.
   - Comms enforces access through local calls and its own SQL: owner/player/host scopes, one room resolver, one LiveKit/WebSocket transport; LiveKit media stays external.
   - The gatekeeper's player report intake (`gatekeeper::reports`, nested at `/report-user`) writes `social.player_reports` and `social.player_report_evidence` by shared SQL (each slot keeps `source_key`, the client address bucket of its presign, for that address's share of the node's bound) and keeps the evidence bytes in `storage`, one body for each slot; the `social` writes switch gates the whole area, and `STORAGE_WRITERS` in `shared::writes` names that plane. Changing a column of either table updates this paragraph and `DATABASE.md` "Player report intake workload" in the same change.
   - Pulse keeps assignments and unfinished takeovers in process memory, persists nothing, admits only from its room-authority response and imports nothing from the gatekeeper.
@@ -84,7 +96,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
   - Only the primary `serve` (`FLEET_JOBS_ENABLED`) serves `/ws` and the island subscriber.
   - Social replicas derive online status from Pulse's wallet topology over NATS; every `serve` recovers room occupancy through the gatekeeper's LiveKit adapter; presence owns observations, source age and public/admission projections.
 - `storage`: the shared hash-addressed blob store.
-- `shop::credits::goals` owns seasonal MANA rewards, separately from the paid USD ledger. Its photo worker reads `camera_reel.photo_events` (`id`, `kind`, `photo_id`, `user_address`, `payload`, `created_at`) and `social.subscriptions` (`address`, `email`) through shared SQL; its policy reads `explore_api.feature_flags_local` (`app`, `name`, `value`). It never changes those rows. It commits its receipt, progress, signed grant and notification through Social's transaction-aware notification helper in one transaction. Changing a shared column updates this paragraph and `DATABASE.md` in the same change.
+- `shop::credits::goals` owns seasonal MANA rewards, separately from the paid USD ledger. Its photo worker reads `camera_reel.photo_events` (`id`, `kind`, `photo_id`, `user_address`, `payload`, `created_at`) and `social.subscriptions` (`address`, `email`) through shared SQL; its policy reads `explore_api.feature_flags_local` (`app`, `name`, `value`). It never changes those rows. It commits its receipt, progress, signed grant and notification through the transaction-aware notification writer (`shared::notifications`) in one transaction. Changing a shared column updates this paragraph and `DATABASE.md` in the same change.
 - Domain ownership is not a separate deployable; keep the shared SQL and process contracts.
 
 - Prefer the smallest readable implementation: no forwarding layers, internal HTTP hops or per-service pools; direct SQL and a passed transaction for atomic writes.

@@ -83,6 +83,12 @@ describe("when resolving canonical legal routes", () => {
     ]);
   });
 
+  it("should not claim /creator-fund, the program's own landing page", async () => {
+    await expect(loader(args("creator-fund"))).rejects.toMatchObject({
+      status: 404,
+    });
+  });
+
   it("should leave /credits to the Credits API", async () => {
     await expect(loader(args("credits"))).rejects.toMatchObject({
       status: 404,

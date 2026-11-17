@@ -45,13 +45,23 @@ def run(*args, cwd=SOURCE, env=None):
     print(f'{" ".join(map(str, args))}: {time.monotonic() - started:.1f}s', flush=True)
 
 
-def compile_wasm(no_opt, env):
+def build_environment():
+    return {**os.environ, 'RUSTUP_TOOLCHAIN': 'nightly-2026-04-15',
+            'RAYON_NUM_THREADS': os.environ.get('RAYON_NUM_THREADS', str(min(os.cpu_count() or 1, 16)))}
+
+
+def cargo_wasm(no_opt, env):
+    """Compile both modules in one feature graph; returns the directory that holds the two .wasm files."""
     if no_opt:
         env = {**env, 'CARGO_PROFILE_RELEASE_CODEGEN_UNITS': '16'}
     run('cargo', 'build', '--locked', '--release', '--target', 'wasm32-unknown-unknown',
         '--lib', '-p', 'decentra-bevy', '-p', 'dcl_scene_wasm', '--no-default-features',
         '--features=decentra-bevy/livekit,decentra-bevy/social', env=env)
-    target = Path(env.get('CARGO_TARGET_DIR', SOURCE / 'target')) / 'wasm32-unknown-unknown/release'
+    return Path(env.get('CARGO_TARGET_DIR', SOURCE / 'target')) / 'wasm32-unknown-unknown/release'
+
+
+def compile_wasm(no_opt, env):
+    target = cargo_wasm(no_opt, env)
     for name, directory in (('webgpu_build', 'pkg'), ('dcl_scene_wasm', 'pkg-scene')):
         output = SOURCE / 'deploy/web/engine' / directory
         run('wasm-bindgen', str(target / f'{name}.wasm'), '--target', 'web',
@@ -97,14 +107,13 @@ def prepare_engine(no_opt, engine_cache, shared_build, env):
 
 
 def web(no_opt=False, engine_cache=None, shared_build=False):
-    env = {**os.environ, 'RUSTUP_TOOLCHAIN': 'nightly-2026-04-15',
-           'RAYON_NUM_THREADS': os.environ.get('RAYON_NUM_THREADS', str(min(os.cpu_count() or 1, 16)))}
+    env = build_environment()
     revision = os.environ.get('GITHUB_SHA', 'local')
     with ThreadPoolExecutor(max_workers=2) as pool:
         installations = [
-            pool.submit(run, 'corepack', 'pnpm@11.27.0', '--dir', 'react-web',
+            pool.submit(run, 'corepack', 'pnpm@12.21.0', '--dir', 'react-web',
                         'install', '--frozen-lockfile', '--ignore-scripts', env=env),
-            pool.submit(run, 'corepack', 'pnpm@11.27.0', '--dir', 'react-web/bridge-scene',
+            pool.submit(run, 'corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene',
                         'install', '--frozen-lockfile', '--ignore-scripts', env=env),
         ]
         engine = prepare_engine(no_opt, engine_cache, shared_build, env)
@@ -121,16 +130,16 @@ def web(no_opt=False, engine_cache=None, shared_build=False):
         raise SystemExit('Sandbox worker must have one entry point and export nothing')
     # Relative URLs allow the same build at / or a gateway subpath. No upstream CDN stamping.
     web_env = {**env, 'PUBLIC_URL': '', 'SCENE_BASE_URL': '../'}
-    run('corepack', 'pnpm@11.27.0', '--dir', 'react-web', 'run', 'build', env=web_env)
-    run('corepack', 'pnpm@11.27.0', '--dir', 'react-web/bridge-scene',
+    run('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'build', env=web_env)
+    run('corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene',
         '--filter', '@dcl/hashing', 'build', env=web_env)
     run('node', str(ROOT / 'tooling/check-local-hashing.mjs'),
         str(SOURCE / 'react-web/bridge-scene'), env=web_env)
     # Node 25+ ships a localStorage global (empty without --localstorage-file) that
     # vitest keeps over jsdom's; CI runs Node 24, so the tests see it switched off.
     node_options = ' '.join(filter(None, [env.get('NODE_OPTIONS'), '--no-experimental-webstorage']))
-    run('corepack', 'pnpm@11.27.0', '--dir', 'react-web', 'run', 'test', env={**web_env, 'NODE_OPTIONS': node_options})
-    run('corepack', 'pnpm@11.27.0', '--dir', 'react-web/bridge-scene', 'run', 'bundle', env=web_env)
+    run('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'test', env={**web_env, 'NODE_OPTIONS': node_options})
+    run('corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene', 'run', 'bundle', env=web_env)
     output = APP / 'dist/web'
     if output.exists():
         shutil.rmtree(output)
@@ -155,7 +164,19 @@ def main():
                         help='CI-only compiled WASM cache, restored with an exact input key')
     parser.add_argument('--shared-build', action='store_true',
                         help='Compile both WASM modules in one Cargo feature graph; requires wasm-bindgen and wasm-opt')
+    parser.add_argument('--target-only', action='store_true',
+                        help='Run only the Cargo steps of a shared build (the two modules and the bindings '
+                             'test build) and stop; CI fills a target cache with them')
     args = parser.parse_args()
+    if args.target_only:
+        if args.engine_cache or args.shared_build:
+            parser.error('--target-only packs no engine: it takes neither --engine-cache nor --shared-build')
+        env = build_environment()
+        cargo_wasm(args.no_opt, env)
+        # The bindings script compiles a test build in the same target; a build that restores
+        # the target without it compiles that again.
+        run('bash', './scripts/gen-ts-bindings.sh', env=env)
+        return
     web(args.no_opt, args.engine_cache.resolve() if args.engine_cache else None, args.shared_build)
 
 

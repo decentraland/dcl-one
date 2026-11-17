@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -223,22 +224,55 @@ class EngineCacheTests(unittest.TestCase):
             with patch.dict(os.environ, {'GITHUB_SHA': 'b' * 40}):
                 build.web(no_opt=True, engine_cache=self.cache)
         self.assertFalse(any(c[0] in ('wasm-pack', 'bash') for c in calls))
-        self.assertNotIn(('corepack', 'pnpm@11.27.0', '--dir', 'react-web', 'run', 'test:shared-inputs'), calls)
+        self.assertNotIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'test:shared-inputs'), calls)
         self.assertIn(('node', './react-web/scripts/shared-inputs.mjs', '--check'), calls)
-        self.assertIn(('corepack', 'pnpm@11.27.0', '--dir', 'react-web', 'run', 'test'), calls)
-        self.assertIn(('corepack', 'pnpm@11.27.0', '--dir', 'react-web', 'run', 'build'), calls)
-        self.assertIn(('corepack', 'pnpm@11.27.0', '--dir', 'react-web/bridge-scene', 'run', 'bundle'), calls)
-        self.assertIn(('corepack', 'pnpm@11.27.0', '--dir', 'react-web/bridge-scene',
+        self.assertIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'test'), calls)
+        self.assertIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'build'), calls)
+        self.assertIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene', 'run', 'bundle'), calls)
+        self.assertIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene',
                        'install', '--frozen-lockfile', '--ignore-scripts'), calls)
         self.assertIn(('node', str(self.root / 'tooling/check-local-hashing.mjs'),
                        str(self.source / 'react-web/bridge-scene')), calls)
-        self.assertIn(('corepack', 'pnpm@11.27.0', '--dir', 'react-web',
+        self.assertIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web',
                        'install', '--frozen-lockfile', '--ignore-scripts'), calls)
         self.assertTrue(any(c[0] == 'node' for c in calls))
         meta = artifact.verify(app / 'dist/web', self.root, allow_unoptimized=False)
         self.assertEqual(meta['engine']['revision'], SHA)
         self.assertEqual(meta['build_revision'], 'b' * 40)
         self.assertTrue(meta['optimized'])
+
+    def test_target_only_runs_the_cargo_steps_of_a_shared_build_and_nothing_else(self):
+        calls = []
+
+        def command(*args, **kwargs):
+            calls.append((args, kwargs.get('env') or {}))
+
+        def run(*flags):
+            calls.clear()
+            with patch.object(build, 'ROOT', self.root), patch.object(build, 'SOURCE', self.source), \
+                    patch.object(build, 'run', side_effect=command), \
+                    patch.object(sys, 'argv', ['build-web.py', *flags]):
+                build.main()
+            return [args for args, _ in calls]
+
+        cargo = ('cargo', 'build', '--locked', '--release', '--target', 'wasm32-unknown-unknown',
+                 '--lib', '-p', 'decentra-bevy', '-p', 'dcl_scene_wasm', '--no-default-features',
+                 '--features=decentra-bevy/livekit,decentra-bevy/social')
+        # The bindings script compiles a test build in the same target.
+        bindings = ('bash', './scripts/gen-ts-bindings.sh')
+        self.assertEqual(run('--no-opt', '--target-only'), [cargo, bindings])
+        # The settings Cargo hashes are the ones of a pull request's shared build.
+        environment = calls[0][1]
+        self.assertEqual(environment['CARGO_PROFILE_RELEASE_CODEGEN_UNITS'], '16')
+        self.assertEqual(environment['RUSTUP_TOOLCHAIN'], 'nightly-2026-04-15')
+        self.assertEqual(run('--target-only'), [cargo, bindings])
+        self.assertNotIn('CARGO_PROFILE_RELEASE_CODEGEN_UNITS', calls[0][1])
+        # This mode packs no engine and takes no engine option.
+        for flags in (('--engine-cache', str(self.root / 'engine')), ('--shared-build',)):
+            with self.assertRaises(SystemExit), patch.object(sys, 'stderr'):
+                run('--target-only', *flags)
+            self.assertEqual(calls, [])
+        self.assertFalse((self.root / 'engine').exists())
 
 
 if __name__ == '__main__':

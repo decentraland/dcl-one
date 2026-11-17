@@ -23,7 +23,7 @@
 //! onto which worlds' core maps its permission and block revocations), the
 //! social RPC's voice runtime ([`voice::rooms::VoiceRooms`],
 //! implemented by [`CommsState`]) and a scene's live participants
-//! (`explore::places::live::Participants`). Social's MLS delivery service
+//! (`CommsState::live_participants`, which `serve` hands Explore). Social's MLS delivery service
 //! (`social::messaging`, on its own state) is mounted beside these routes
 //! with its own signed-fetch and community-binding authorization.
 //!
@@ -61,6 +61,7 @@ pub mod events;
 pub use crate::shared::livekit;
 pub mod moderation;
 pub(crate) mod removal;
+pub mod removed_places;
 pub mod reports;
 pub mod revocation;
 pub mod streaming;
