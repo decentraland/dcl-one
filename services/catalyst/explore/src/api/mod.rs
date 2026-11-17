@@ -492,8 +492,9 @@ pub struct State {
     pub opensea: opensea::Runtime,
     /// The operator's runtime key/value map (process state).
     pub runtime_config: runtime_config::RuntimeConfigState,
-    /// The onboarding checkpoints (process state), shared with the Segment
-    /// webhooks that forward them (`social::segment_webhooks`).
+    /// The onboarding checkpoints (`explore_api.onboarding_checkpoints` over
+    /// this pool), shared with the Segment webhooks that forward them
+    /// (`social::segment_webhooks`).
     pub onboarding: Arc<onboarding::OnboardingState>,
     /// `GET /asset-bundle-registry/denylist`'s read of `content.denylist`.
     pub registry_denylist: registry::LocalDenylist,
@@ -522,13 +523,16 @@ impl State {
             settings.ab_cdn_cache_dir.clone(),
             settings.ab_cdn_cache_max_bytes,
         )?;
+        let onboarding = Arc::new(onboarding::OnboardingState::new(pool.clone()));
         let state = Arc::new(Self {
             settings,
             pool,
             http,
             content,
             denylist: Arc::default(),
-            flags: Arc::new(feature_flags::Snapshot::from_document(feature_flags::embedded_document())),
+            flags: Arc::new(feature_flags::Snapshot::from_document(
+                feature_flags::embedded_document(),
+            )),
             map: map::MapState::new(),
             ab_cdn,
             satellite: satellite::SatelliteState::new(settings_budget.0, settings_budget.1),
@@ -536,7 +540,7 @@ impl State {
             posters: posters::PosterState::default(),
             opensea: opensea::Runtime::default(),
             runtime_config: runtime_config::RuntimeConfigState::default(),
-            onboarding: Arc::default(),
+            onboarding,
             registry_denylist: Default::default(),
             eip1654: std::sync::OnceLock::new(),
         });

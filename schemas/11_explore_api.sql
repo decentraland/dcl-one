@@ -130,3 +130,33 @@ CREATE TABLE explore_api.auth_identity_tombstones (
 );
 
 CREATE INDEX auth_identity_tombstones_created_idx ON explore_api.auth_identity_tombstones (created_at);
+
+-- POST /onboarding/checkpoint: one row per (user, checkpoint 1-7), the
+-- auth server's onboarding_checkpoints. reached_at is the first `reached`
+-- and never moves; completed_at is set once (by `completed`, or by reaching
+-- the next checkpoint). id is the insertion order: the order of
+-- GET /onboarding/pending-nudges and the tie-break of a wallet's resolution.
+-- Rows older than the retention (DATABASE.md, "Onboarding checkpoints
+-- workload") are deleted by the writers in small batches.
+CREATE TABLE explore_api.onboarding_checkpoints (
+    id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    user_id text NOT NULL CHECK (char_length(user_id) BETWEEN 1 AND 255),
+    checkpoint smallint NOT NULL CHECK (checkpoint BETWEEN 1 AND 7),
+    email text CHECK (char_length(email) <= 255),
+    wallet text CHECK (char_length(wallet) <= 255 AND wallet = lower(wallet)),
+    reached_at timestamp with time zone NOT NULL,
+    completed_at timestamp with time zone,
+    metadata jsonb CHECK (jsonb_typeof(metadata) = 'object'),
+    CONSTRAINT onboarding_checkpoints_user_checkpoint_key UNIQUE (user_id, checkpoint)
+);
+
+-- A wallet-identified checkpoint resolves to the lowest checkpoint (then the
+-- oldest row) bound to that wallet with an email.
+CREATE INDEX onboarding_checkpoints_wallet_idx
+    ON explore_api.onboarding_checkpoints (wallet, checkpoint, id)
+    WHERE wallet IS NOT NULL AND email IS NOT NULL;
+
+-- The nudge candidates: open rows with an email, by age.
+CREATE INDEX onboarding_checkpoints_pending_idx
+    ON explore_api.onboarding_checkpoints (reached_at)
+    WHERE email IS NOT NULL AND completed_at IS NULL;

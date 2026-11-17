@@ -375,7 +375,7 @@ async fn node_on_pool(settings: Settings, pool: PgPool) -> Node {
     let (content, tmp) = content_state(pool.clone()).await;
     let state = Arc::new(State {
         settings,
-        pool,
+        pool: pool.clone(),
         http: crate::http::Outbound::for_tests(),
         content,
         denylist: Default::default(),
@@ -389,7 +389,7 @@ async fn node_on_pool(settings: Settings, pool: PgPool) -> Node {
         posters: posters::PosterState::default(),
         opensea: opensea::Runtime::default(),
         runtime_config: runtime_config::RuntimeConfigState::default(),
-        onboarding: Arc::default(),
+        onboarding: Arc::new(onboarding::OnboardingState::new(pool)),
         registry_denylist: Default::default(),
         eip1654: std::sync::OnceLock::new(),
     });
@@ -416,6 +416,15 @@ async fn node_with_db(settings: Settings, pool: PgPool) -> Node {
         .await
         .unwrap();
     Node { state, _tmp: tmp }
+}
+
+/// [`node_with_db`]'s state alone, its temporary storage leaked for the
+/// test's lifetime.
+pub(crate) async fn node_with_db_state(settings: Settings, pool: PgPool) -> Shared {
+    let node = node_with_db(settings, pool).await;
+    let state = node.state.clone();
+    std::mem::forget(node);
+    state
 }
 
 pub(crate) struct ScratchDb {
