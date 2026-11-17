@@ -40,7 +40,8 @@ function blocks(canonical: Node[]): string[] {
       tocSkipped = true; // the table of contents, right after the h1
       continue;
     }
-    if (node.tag === "ul") out.push(...(node.children ?? []).map(textOf));
+    if (node.tag === "ul" || node.tag === "ol")
+      out.push(...(node.children ?? []).map(textOf));
     else if (node.tag) out.push(textOf(node));
   }
   return out.map((t) => t.replace(/\s+/g, " ").trim()).filter(Boolean);
@@ -76,6 +77,7 @@ describe("agent markdown of the legal documents", () => {
     ["privacy", "privacy"],
     ["referral", "referral-terms"],
     ["terms", "terms"],
+    ["creatorFund", "creator-fund-terms"],
   ] as const)("when the document has new content (%s)", (key, slug) => {
     it("should carry every heading and text block of the frozen render, in order", () => {
       const text = plain(markdownOf(key));

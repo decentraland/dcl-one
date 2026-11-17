@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
+import { availableParallelism, freemem, loadavg } from "node:os";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -31,13 +33,38 @@ const START_LIMIT_MS = 30_000;
 const START_BUDGET_MS = START_ATTEMPTS * (START_LIMIT_MS + 27_000);
 
 async function startBrowser(signal: AbortSignal) {
-  const executable = await findBrowser([
-    process.env.BROWSER_PATH,
-    process.env.CHROME_PATH,
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/usr/bin/google-chrome",
-    "/usr/bin/chromium",
-  ]);
+  const candidates = [
+    [process.env.BROWSER_PATH, "BROWSER_PATH"],
+    [process.env.CHROME_PATH, "CHROME_PATH"],
+    [
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "macos-chrome",
+    ],
+    ["/usr/bin/google-chrome", "linux-chrome"],
+    ["/usr/bin/chromium", "linux-chromium"],
+  ] as const;
+  const executable = await findBrowser(candidates.map(([file]) => file));
+  const source = candidates.find(([file]) => file === executable)![1];
+  try {
+    const address = process.env.DBUS_SESSION_BUS_ADDRESS;
+    const type = address?.split(":", 1)[0];
+    console.info(
+      "Header geometry launch context:",
+      JSON.stringify({
+        source,
+        cpus: availableParallelism(),
+        load: loadavg().map((value) => Number(value.toFixed(2))),
+        freeMemoryMiB: Math.floor(freemem() / 1024 / 1024),
+        dbus: !address
+          ? "unset"
+          : ["unix", "tcp", "autolaunch"].includes(type!)
+            ? type
+            : "other",
+      }),
+    );
+  } catch {
+    // Diagnostics must not prevent the browser launch.
+  }
   for (let attempt = 1; ; attempt++) {
     try {
       return await openSession(executable, {
@@ -61,7 +88,32 @@ async function startBrowser(signal: AbortSignal) {
 
 // Teardown also owns a startup that outlives this fixture's integration budget.
 beforeAll(async () => {
-  startup = startBrowser(startupController.signal);
+  startup = (async () => {
+    try {
+      return await startBrowser(startupController.signal);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "CAPTURE_BROWSER_PORT_MISSING"
+      ) {
+        try {
+          if (process.env.GITHUB_OUTPUT) {
+            await appendFile(
+              process.env.GITHUB_OUTPUT,
+              "capture-missing-port=true\n",
+            );
+          }
+          console.error(
+            "Header geometry missing-port receipt: capture-missing-port=true",
+          );
+        } catch {
+          // A diagnostic receipt cannot replace the startup failure.
+        }
+      }
+      throw error;
+    }
+  })();
   session = await startup;
 }, START_BUDGET_MS + 10_000);
 afterAll(async () => {
@@ -100,7 +152,7 @@ describe("when native and legacy chrome hosts resolve their header offsets", () 
             };
           }
         ).result.value;
-        const height = width < 1024 ? 64 : 80;
+        const height = width < 992 ? 64 : 92;
         expect(actual.root).toBe(`${height}px`);
         expect(actual.child).toBe(`${height}px`);
         if (host === "shop") expect(actual.shop).toBe(`${height}px`);

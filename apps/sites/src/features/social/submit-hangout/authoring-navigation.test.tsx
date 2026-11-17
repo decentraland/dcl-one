@@ -8,6 +8,15 @@ import SubmitHangout from "./SubmitHangout";
 import ScheduleWizard from "../../explorer/event-schedule/ScheduleWizard";
 
 vi.hoisted(() => { Object.assign(window, { __vite_plugin_react_preamble_installed__: true }); });
+// jsdom has no matchMedia; the schedule wizard's What's On preview asks it for the phone width.
+vi.hoisted(() => {
+  window.matchMedia ??= ((query: string) => ({
+    matches: false,
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  })) as unknown as typeof window.matchMedia;
+});
 
 describe.each(["hangout", "schedule"] as const)("when signed in to the %s wizard", (kind) => {
   let router: ReturnType<typeof createMemoryRouter>;

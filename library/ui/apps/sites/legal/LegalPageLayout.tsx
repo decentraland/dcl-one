@@ -16,7 +16,7 @@ type LegalInline = string | LegalLink | { type: 'strong' | 'em'; children: reado
 type LegalBlock =
   | { type: 'h2' | 'h3' | 'h4'; id?: string; content: readonly LegalInline[] }
   | { type: 'p'; content: readonly LegalInline[] }
-  | { type: 'ul'; items: readonly (readonly LegalInline[])[] }
+  | { type: 'ul' | 'ol'; items: readonly (readonly LegalInline[])[] }
 
 type LegalSection = { id: string; blocks: readonly LegalBlock[] }
 
@@ -84,15 +84,18 @@ function Block({ block }: { block: LegalBlock }) {
     case 'p':
       return <p className={styles.p}>{inlines(block.content)}</p>
     case 'ul':
+    case 'ol': {
+      const List = block.type
       return (
-        <ul className={styles.list}>
+        <List className={styles.list}>
           {block.items.map((item, i) => (
             <li key={i} className={styles.listItem}>
               {inlines(item)}
             </li>
           ))}
-        </ul>
+        </List>
       )
+    }
   }
 }
 

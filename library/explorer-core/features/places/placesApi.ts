@@ -138,15 +138,10 @@ export function fetchDestinations(args: FetchDestinationsArgs = {}, login?: Stor
 }
 
 export const BROWSE_ARGS = { limit: 48, offset: 0, order_by: 'most_active' as const }
-// The feed puts every highlighted row first, so the top four busiest need a page well past them.
-export const LIVE_FEED_ARGS = { limit: 40, offset: 0, order_by: 'most_active' as const }
-export const FEATURED_ARGS = { limit: 100, offset: 0, only_highlighted: true }
 
 /** Warm the default Places view during login so the picker paints from cache (the cache dedupes). */
 export function prefetchPlaces(): void {
   void fetchDestinations(BROWSE_ARGS).catch(() => {})
-  void fetchDestinations(LIVE_FEED_ARGS).catch(() => {})
-  void fetchDestinations(FEATURED_ARGS).catch(() => {})
 }
 
 // ---- pure, side-effect-free helpers (unit-tested) ----

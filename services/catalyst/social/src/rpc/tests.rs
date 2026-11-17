@@ -34,6 +34,14 @@ use super::{Settings, State};
 use crate::comms::gatekeeper::voice::db::{PendingPrivateCall, VoiceDb};
 use crate::jobs::Jobs;
 
+/// A pool on a closed port: every acquire fails after 500 ms instead of sqlx's 30 s default.
+pub(crate) fn closed_pool() -> sqlx::PgPool {
+    sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(Duration::from_millis(500))
+        .connect_lazy("postgres://localhost/unused")
+        .unwrap()
+}
+
 mod auxiliary_source_cases;
 mod community_voice;
 mod connectivity;
@@ -882,9 +890,7 @@ async fn sweep_tick_issues_no_delete_until_a_call_is_due() {
 
 #[tokio::test]
 async fn self_call_is_forbidden_before_any_read() {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .connect_lazy("postgres://localhost/unused")
-        .unwrap();
+    let pool = closed_pool();
     let ctx = test_ctx(
         Db::new(pool.clone()),
         Arc::new(FakeVoiceRooms::new(pool.clone())),
@@ -914,9 +920,7 @@ async fn self_call_is_forbidden_before_any_read() {
 
 #[tokio::test]
 async fn a_missing_voice_runtime_refuses_the_call_explicitly() {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .connect_lazy("postgres://localhost/unused")
-        .unwrap();
+    let pool = closed_pool();
     let ctx = test_ctx(
         Db::new(pool),
         Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
@@ -1553,11 +1557,7 @@ async fn spawn_server_with(
     settings: Settings,
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
 ) -> Server {
-    let pool = pool.unwrap_or_else(|| {
-        sqlx::postgres::PgPoolOptions::new()
-            .connect_lazy("postgres://localhost/unused")
-            .unwrap()
-    });
+    let pool = pool.unwrap_or_else(closed_pool);
     let ctx = test_ctx(
         Db::new(pool.clone()),
         Arc::new(FakeVoiceRooms::new(pool.clone())),
@@ -2071,11 +2071,7 @@ async fn a_malformed_request_body_is_a_400_remote_error() {
     let mut def = super::drpc::service_module_definition::ServiceModuleDefinition::<Context>::new();
     let svc = Arc::new(SocialServiceImpl);
     let ctx = test_ctx(
-        Db::new(
-            sqlx::postgres::PgPoolOptions::new()
-                .connect_lazy("postgres://localhost/unused")
-                .unwrap(),
-        ),
+        Db::new(closed_pool()),
         Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
     );
     {

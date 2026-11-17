@@ -5,7 +5,10 @@
   border-radius: clamp(28px, 2.083vw, 40px);
   background: radial-gradient(
     63.4% 112.7% at 50% 50%,
-    var(--dcl-background-web-light) 0%,
+    #a042cd 0%,
+    #8536ad 25%,
+    #692a8d 50%,
+    #4e1f6c 75%,
     var(--dcl-background-web-dark) 100%
   );
   box-shadow: 0 4px 25px color-mix(in srgb, var(--dcl-neutrals-white) 25%, transparent);
@@ -20,12 +23,15 @@
   font-size: clamp(24px, 1.667vw, 32px);
   font-weight: 500;
   line-height: 1.235;
+  letter-spacing: 0.15008px;
 }
 
+/* Source's broadcast glyph (CardIcons LiveHeadingGlyph): a 34.7×26.4 drawing in its own red. */
 .headingIcon {
-  width: clamp(20px, 1.377vw, 26.4px);
+  display: block;
+  width: auto;
   height: clamp(20px, 1.377vw, 26.4px);
-  color: var(--dcl-system-red);
+  color: #e00000;
 }
 
 .layer {
@@ -78,28 +84,25 @@
   margin-top: var(--dcl-space-16);
 }
 
-/* An 8px dot inside a 24px hit target. */
+/* An 8px dot; its 24px hit target sits outside the layout box so the row stays 8px tall. */
 .dot {
-  display: grid;
-  place-items: center;
-  width: var(--dcl-space-24);
-  height: var(--dcl-space-24);
+  position: relative;
+  width: var(--dcl-space-8);
+  height: var(--dcl-space-8);
   padding: 0;
   border: 0;
   border-radius: var(--dcl-radius-full);
-  background: none;
+  background: color-mix(in srgb, var(--dcl-neutrals-white) 35%, transparent);
   cursor: pointer;
 }
 
-.dot::before {
+.dot::after {
   content: '';
-  width: var(--dcl-space-8);
-  height: var(--dcl-space-8);
-  border-radius: var(--dcl-radius-full);
-  background: color-mix(in srgb, var(--dcl-neutrals-white) 35%, transparent);
+  position: absolute;
+  inset: calc(-1 * var(--dcl-space-8));
 }
 
-.dotActive::before {
+.dotActive {
   background: var(--dcl-neutrals-snow);
 }
 

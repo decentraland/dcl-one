@@ -168,6 +168,10 @@ type StCastWatcherProps = {
   toasts?: WatcherToast[];
   participantCount?: number;
   unreadCount?: number;
+  /** Live media of the cast; without it the live view shows the placeholder frame. */
+  stage?: ReactNode;
+  /** Chat lines in the sidebar; defaults to the demo conversation. */
+  messages?: ChatMessage[];
 };
 
 export default function StCastWatcher({
@@ -188,6 +192,8 @@ export default function StCastWatcher({
   toasts = [],
   participantCount = 12,
   unreadCount = 0,
+  stage,
+  messages = DEMO_MESSAGES,
 }: StCastWatcherProps) {
   const onboardTitle = `Decentraland Cast from ${streamName}`;
 
@@ -247,15 +253,19 @@ export default function StCastWatcher({
                 ) : (
                   <>
                     <LivePill label={liveLabel} />
-                    <div
-                      className="stcastwatcher__frame"
-                      role="img"
-                      aria-label={`Live cast from ${streamName}`}
-                    >
-                      <span className="stcastwatcher__framelogo" aria-hidden="true">
-                        <DclLogo />
-                      </span>
-                    </div>
+                    {stage ? (
+                      <div className="stcastwatcher__stage">{stage}</div>
+                    ) : (
+                      <div
+                        className="stcastwatcher__frame"
+                        role="img"
+                        aria-label={`Live cast from ${streamName}`}
+                      >
+                        <span className="stcastwatcher__framelogo" aria-hidden="true">
+                          <DclLogo />
+                        </span>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -268,7 +278,7 @@ export default function StCastWatcher({
             >
               <ChatSidebar
                 title={chatTitle}
-                messages={DEMO_MESSAGES}
+                messages={messages}
                 footer={chatFooter}
                 onClose={() => {}}
               />
