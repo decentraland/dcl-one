@@ -166,7 +166,8 @@
   }
 
   .dropdownLink[aria-current='page'],
-  .drawerLink[aria-current='page'] {
+  .drawerLink[aria-current='page'],
+  .drawerItemLink[aria-current='page'] {
     background: var(--dcl-bg-pressed);
   }
 
@@ -330,6 +331,8 @@
   .menuButton {
     width: 40px;
     height: 40px;
+    padding: 0;
+    border-radius: var(--dcl-radius-md);
     background: var(--dcl-bg-hover);
   }
 
@@ -345,18 +348,22 @@
     background: transparent;
   }
 
+  /* Figma elevation/overlay: a 50% black drop shadow and a 25px background blur (12.5px in CSS). */
   .drawer {
     position: absolute;
     top: 0;
     right: 0;
-    bottom: 0;
     display: flex;
     flex-direction: column;
     gap: var(--dcl-space-24);
     overflow-y: auto;
     width: 100%;
-    padding: var(--dcl-space-12) var(--dcl-space-16) var(--dcl-space-24);
-    background: var(--dcl-bg-surface);
+    max-height: 100%;
+    padding: var(--dcl-space-12);
+    background: var(--dcl-bg-surface-overlay);
+    box-shadow: 0 4px 16px color-mix(in srgb, var(--dcl-neutrals-black) 50%, transparent);
+    -webkit-backdrop-filter: blur(12.5px);
+    backdrop-filter: blur(12.5px);
     color: var(--dcl-text-primary);
   }
 
@@ -393,27 +400,42 @@
   .drawerSections,
   .drawerItems {
     display: grid;
-    gap: var(--dcl-space-4);
     margin: 0;
     padding: 0;
     list-style: none;
   }
 
+  /* Figma draws the row divider at 0.5px. */
+  .drawerSection {
+    border-bottom: 0.5px solid var(--dcl-border-subtle);
+  }
+
   .drawerItems {
-    padding-left: var(--dcl-space-12);
+    gap: var(--dcl-space-4);
+    padding-bottom: var(--dcl-space-12);
+  }
+
+  .drawerGroup,
+  .drawerLink {
+    composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+    color: var(--dcl-text-primary);
   }
 
   .drawerGroup {
-    composes: text6c6162656c2f736d2d63617073 from '../../foundations/typography/text-styles.module.css';
-    margin: var(--dcl-space-8) 0 var(--dcl-space-4);
-    padding: 0 var(--dcl-space-12);
-    color: var(--dcl-text-secondary);
+    margin: 0;
+    padding: var(--dcl-space-24) var(--dcl-space-16) var(--dcl-space-8);
   }
 
   .drawerLink {
+    display: block;
+    padding: var(--dcl-space-24) var(--dcl-space-16);
+    text-decoration: none;
+  }
+
+  .drawerItemLink {
     composes: text626f64792f6d64 from '../../foundations/typography/text-styles.module.css';
     display: block;
-    padding: var(--dcl-space-8) var(--dcl-space-12);
+    padding: var(--dcl-space-12) var(--dcl-space-16) var(--dcl-space-12) var(--dcl-space-32);
     border-radius: var(--dcl-radius-sm);
     color: var(--dcl-text-primary);
     text-decoration: none;
@@ -453,6 +475,7 @@
     .dropdownLink:hover,
     .menuItem:hover,
     .drawerLink:hover,
+    .drawerItemLink:hover,
     .signIn:hover,
     .iconButton:hover,
     .menuButton:hover {
