@@ -353,12 +353,12 @@
     position: absolute;
     top: 0;
     right: 0;
+    bottom: 0;
     display: flex;
     flex-direction: column;
     gap: var(--dcl-space-24);
     overflow-y: auto;
     width: 100%;
-    max-height: 100%;
     padding: var(--dcl-space-12);
     background: var(--dcl-bg-surface-overlay);
     box-shadow: 0 4px 16px color-mix(in srgb, var(--dcl-neutrals-black) 50%, transparent);

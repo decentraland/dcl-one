@@ -32,12 +32,6 @@ async function resolveWash(token: string): Promise<string> {
   )
 }
 
-/** In-page expression: the panel's last row of pixels, which moves with its content height. */
-const PANEL_LAST_ROW = `(Math.ceil(document.querySelector('[data-testid=navbar-panel]').getBoundingClientRect().bottom)-2)`
-
-/** In-page expression: the panel fits its content and stops above the viewport bottom. */
-const PANEL_FITS_CONTENT = `(()=>{const p=document.querySelector('[data-testid=navbar-panel]'),r=p.getBoundingClientRect();return r.height===p.scrollHeight&&r.bottom<innerHeight})()`
-
 async function click(selector: string, waitForEntry = true) {
   const point = await evaluate<{ x: number; y: number }>(`(() => {
     const element = document.querySelector(${JSON.stringify(selector)});
@@ -498,19 +492,18 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
           )
         const hit = () =>
           evaluate(
-            `(()=>{const panel=document.querySelector('[data-testid=navbar-panel]'),modal=document.querySelector('[role=dialog]'),top=document.elementFromPoint(200,80),bottom=document.elementFromPoint(200,${PANEL_LAST_ROW}),below=document.elementFromPoint(200,820),header=document.querySelector('button[aria-label="Close menu"]');return{top:panel.contains(top),bottom:panel.contains(bottom),below:panel.contains(below),owned:modal.contains(below),fits:${PANEL_FITS_CONTENT},header:header.contains(document.elementFromPoint(header.getBoundingClientRect().x+20,32)),locked:document.body.style.overflow==='hidden',focus:modal.contains(document.activeElement),opacity:getComputedStyle(panel).opacity,y:panel.getBoundingClientRect().y}})()`
+            `(()=>{const panel=document.querySelector('[data-testid=navbar-panel]'),modal=document.querySelector('[role=dialog]'),top=document.elementFromPoint(200,80),bottom=document.elementFromPoint(200,820),header=document.querySelector('button[aria-label="Close menu"]');return{top:panel.contains(top),bottom:panel.contains(bottom),owned:modal.contains(bottom),header:header.contains(document.elementFromPoint(header.getBoundingClientRect().x+20,32)),locked:document.body.style.overflow==='hidden',focus:modal.contains(document.activeElement),opacity:getComputedStyle(panel).opacity,y:panel.getBoundingClientRect().y,height:panel.getBoundingClientRect().height}})()`
           )
         expect(await hit()).toEqual({
           top: reduced,
           bottom: reduced,
-          below: false,
           owned: true,
-          fits: true,
           header: true,
           locked: true,
           focus: true,
           opacity: '1',
-          y: 64
+          y: 64,
+          height: 780
         })
         if (!reduced) {
           await evaluate(`entryAnimation.currentTime=90`)
@@ -569,7 +562,7 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
     expect(await evaluate('document.activeElement.textContent')).toBe('Discover')
     expect(
       await evaluate(
-        `(()=>{const p=document.querySelector('[data-testid=navbar-panel]'),a=document.activeElement,r=a.getBoundingClientRect();return {animations:p.getAnimations().length,visible:a.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)),bottom:p.contains(document.elementFromPoint(200,${PANEL_LAST_ROW})),locked:document.body.style.overflow==='hidden',header:document.querySelector('nav[aria-label="Main"]').getBoundingClientRect().bottom}})()`
+        `(()=>{const p=document.querySelector('[data-testid=navbar-panel]'),a=document.activeElement,r=a.getBoundingClientRect();return {animations:p.getAnimations().length,visible:a.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)),bottom:p.contains(document.elementFromPoint(200,820)),locked:document.body.style.overflow==='hidden',header:document.querySelector('nav[aria-label="Main"]').getBoundingClientRect().bottom}})()`
       )
     ).toEqual({ animations: 0, visible: true, bottom: true, locked: true, header: 64 })
     await key('Tab', true)
@@ -607,7 +600,7 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
       await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
       expect(
         await evaluate(
-          `(()=>{const p=document.querySelector('[data-testid=navbar-panel]');return {animations:p.getAnimations().length,bottom:p.contains(document.elementFromPoint(200,${PANEL_LAST_ROW}))}})()`
+          `(()=>{const p=document.querySelector('[data-testid=navbar-panel]');return {animations:p.getAnimations().length,bottom:p.contains(document.elementFromPoint(200,820))}})()`
         )
       ).toEqual({ animations: 0, bottom: true })
     }
@@ -642,7 +635,7 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
     )
     expect(
       await evaluate(
-        `(()=>{const p=document.querySelector('[data-testid=navbar-panel]');return {complete:p.hasAttribute('data-entry-revealed'),animations:p.getAnimations().length,bottom:p.contains(document.elementFromPoint(200,${PANEL_LAST_ROW}))}})()`
+        `(()=>{const p=document.querySelector('[data-testid=navbar-panel]');return {complete:p.hasAttribute('data-entry-revealed'),animations:p.getAnimations().length,bottom:p.contains(document.elementFromPoint(200,820))}})()`
       )
     ).toEqual({ complete: true, animations: 0, bottom: true })
     await key('Escape')
@@ -697,16 +690,15 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
           bottom: number
           top: number
           height: number
-          content: number
           viewport: number
           locked: boolean
         }>(
-          `(()=>{const h=document.querySelector('nav[aria-label="Main"]').getBoundingClientRect(),panel=document.querySelector('[data-testid=navbar-panel]'),p=panel.getBoundingClientRect();return {bottom:h.bottom,top:p.top,height:p.height,content:panel.scrollHeight,viewport:innerHeight,locked:document.body.style.overflow==='hidden'}})()`
+          `(()=>{const h=document.querySelector('nav[aria-label="Main"]').getBoundingClientRect(),p=document.querySelector('[data-testid=navbar-panel]').getBoundingClientRect();return {bottom:h.bottom,top:p.top,height:p.height,viewport:innerHeight,locked:document.body.style.overflow==='hidden'}})()`
         )
       let bounds = await measure()
       expect(bounds.top).toBe(position === 'offset' ? 88 : 144)
       expect(bounds.top).toBe(bounds.bottom)
-      expect(bounds.height).toBe(Math.min(bounds.content, bounds.viewport - bounds.top))
+      expect(bounds.height + bounds.top).toBe(bounds.viewport)
       expect(bounds.locked).toBe(true)
       await evaluate(
         `scrollTo(0,200);new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))`
@@ -723,13 +715,12 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
       await evaluate(`new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))`)
       bounds = await measure()
       expect(bounds.top).toBe(bounds.bottom)
-      expect(bounds.viewport).toBe(700)
-      expect(bounds.height).toBe(Math.min(bounds.content, bounds.viewport - bounds.top))
+      expect(bounds.height + bounds.top).toBe(700)
       expect(
         await evaluate(
-          `(()=>{const p=document.querySelector('[data-testid=navbar-panel]'),below=document.elementFromPoint(767,699);return {edge:p.contains(document.elementFromPoint(767,${PANEL_LAST_ROW})),below:p.contains(below)||p.parentElement.firstElementChild===below}})()`
+          `document.querySelector('[data-testid=navbar-panel]').contains(document.elementFromPoint(767,699))`
         )
-      ).toEqual({ edge: true, below: true })
+      ).toBe(true)
       await key('Escape')
       expect(await evaluate('document.body.style.overflow')).not.toBe('hidden')
       expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Open menu')
@@ -847,16 +838,15 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
             ).toEqual({ count: 2, lower: true })
           }
           const measure = await evaluate(
-            `(()=>{const d=document.querySelector('[data-testid=navbar-panel]'),layer=d.parentElement,r=d.getBoundingClientRect(),l=layer.getBoundingClientRect();return{dialog:{x:r.x,y:r.y,width:r.width,height:r.height},layer:{x:l.x,y:l.y,width:l.width,height:l.height},background:getComputedStyle(d).backgroundColor,filter:getComputedStyle(d).backdropFilter,shadow:getComputedStyle(d).boxShadow,fits:${PANEL_FITS_CONTENT},bottomInside:d.contains(document.elementFromPoint(innerWidth-1,${PANEL_LAST_ROW})),bottomBackdrop:document.elementFromPoint(1,innerHeight-1)===layer.firstElementChild}})()`
+            `(()=>{const d=document.querySelector('[data-testid=navbar-panel]'),layer=d.parentElement,r=d.getBoundingClientRect(),l=layer.getBoundingClientRect();return{dialog:{x:r.x,y:r.y,width:r.width,height:r.height},layer:{x:l.x,y:l.y,width:l.width,height:l.height},background:getComputedStyle(d).backgroundColor,filter:getComputedStyle(d).backdropFilter,shadow:getComputedStyle(d).boxShadow,bottomInside:d.contains(document.elementFromPoint(innerWidth-1,innerHeight-1)),bottomBackdrop:document.elementFromPoint(1,innerHeight-1)===layer.firstElementChild}})()`
           )
           expect(measure).toMatchObject({
-            dialog: { x: 0, y: 64, width },
+            dialog: { x: 0, y: 64, width, height: 780 },
             layer: { x: 0, y: 64, width, height: 780 },
             background: await resolveWash('--dcl-bg-surface-overlay'),
             filter: 'blur(12.5px)',
-            fits: true,
             bottomInside: true,
-            bottomBackdrop: true
+            bottomBackdrop: false
           })
           expect((measure as { shadow: string }).shadow).toMatch(
             /^(rgba\(0, 0, 0, 0\.5\)|color\(srgb 0 0 0 \/ 0\.5\)) 0px 4px 16px 0px$/
@@ -1049,14 +1039,13 @@ for (const width of [360, 390, 768, 1023]) {
           focus: 'Close menu',
           header: 64
         })
-        const lastRow = await evaluate<number>(PANEL_LAST_ROW)
         const pixels = async () => {
           const shot = (await session.send('Page.captureScreenshot', {
             format: 'png',
             fromSurface: true
           })) as { data: string }
           return evaluate<{ top: number[]; bottom: number[] }>(
-            `(async()=>{const image=new Image();image.src='data:image/png;base64,'+${JSON.stringify(shot.data)};await image.decode();const canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;const context=canvas.getContext('2d');context.drawImage(image,0,0);return{top:Array.from(context.getImageData(32,80,1,1).data),bottom:Array.from(context.getImageData(32,${lastRow},1,1).data)}})()`
+            `(async()=>{const image=new Image();image.src='data:image/png;base64,'+${JSON.stringify(shot.data)};await image.decode();const canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;const context=canvas.getContext('2d');context.drawImage(image,0,0);return{top:Array.from(context.getImageData(32,80,1,1).data),bottom:Array.from(context.getImageData(32,820,1,1).data)}})()`
           )
         }
         const initialPaint = await pixels()
