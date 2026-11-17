@@ -19,7 +19,7 @@ function PlacesPage({ title, tabs, live, children, status = '' }: PlacesPageProp
   return (
     <main className={styles.page}>
       <h1 className={styles.visuallyHidden}>{title}</h1>
-      {tabs ? <div className={styles.tabs}>{tabs}</div> : null}
+      {tabs}
       {live ? <div className={styles.top}>{live}</div> : null}
       {children}
       <p role="status" className={styles.visuallyHidden}>

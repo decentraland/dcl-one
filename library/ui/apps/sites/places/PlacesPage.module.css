@@ -6,10 +6,6 @@
   color: var(--dcl-text-primary);
 }
 
-.tabs {
-  padding-top: var(--dcl-space-24);
-}
-
 .top {
   margin-bottom: var(--dcl-space-48);
   padding: var(--dcl-space-32) var(--dcl-space-32) 0;
