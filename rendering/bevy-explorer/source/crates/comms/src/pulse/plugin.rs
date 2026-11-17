@@ -1536,12 +1536,16 @@ fn update_listener_aoi(
     states: Query<&GlobalCrdtState>,
     existing: Query<(Entity, &Transport), With<PulseSink>>,
     mut announced_default: Local<Option<String>>,
+    mut rebuild_pending: Local<bool>,
 ) {
     // The whole map is rebuilt from scratch below, so only do it when one of its four inputs moved:
     // the loaded definitions, the scene→context registry, the orchestrator's scene→realm map, or
     // the realm a scene without one of its own falls back to. Drained unconditionally — leaving
     // events unread just means reading a bigger backlog next frame.
     let definitions_changed = definition_events.read().count() > 0;
+    // kept until a complete rebuild: changes seen without a listener, or a context without its state
+    *rebuild_pending |=
+        definitions_changed || crdt_contexts.is_changed() || scene_realms.is_changed();
 
     let Some(session) = session else {
         return;
@@ -1558,13 +1562,10 @@ fn update_listener_aoi(
     // the key in at any time.
     let default_realm = announced_realm(session, &realm);
     let default_changed = *announced_default != default_realm;
-    if !definitions_changed
-        && !default_changed
-        && !crdt_contexts.is_changed()
-        && !scene_realms.is_changed()
-    {
+    if !*rebuild_pending && !default_changed {
         return;
     }
+    *rebuild_pending = false;
     announced_default.clone_from(&default_realm);
 
     let Some(listener) = session.role.listener_mut() else {
@@ -1628,6 +1629,8 @@ fn update_listener_aoi(
             continue;
         }
         let Ok(state) = states.get(context) else {
+            // spawned this frame by deferred commands
+            *rebuild_pending = true;
             continue;
         };
         // A whole transport, both halves, exactly like a client's: inbound state for this context
