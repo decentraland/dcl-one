@@ -45,7 +45,7 @@ export function runningAppImage(env: NodeJS.ProcessEnv, execPath: string): strin
  * Makes the running AppImage the handler of `scheme://` links. An AppImage is one file with no
  * install step, so no desktop entry tells the desktop which links it opens, and without one the
  * sign-in link from the browser does not come back to the app. The user can move the file, so
- * each start writes the entry again.
+ * each start writes the entry again. Another installed handler (the deb) stays the default.
  */
 export function registerAppImageProtocolClient(appImagePath: string, scheme: string): void {
   // A line break ends the Exec line, and the remaining text becomes other keys of the entry.
@@ -53,8 +53,7 @@ export function registerAppImageProtocolClient(appImagePath: string, scheme: str
     log.error('[Deeplink] The AppImage path has a line break, no link handler');
     return;
   }
-  const dataHome = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
-  const applications = path.join(dataHome, 'applications');
+  const applications = path.join(dataHome(), 'applications');
   try {
     fs.mkdirSync(applications, { recursive: true });
     fs.writeFileSync(
@@ -65,7 +64,30 @@ export function registerAppImageProtocolClient(appImagePath: string, scheme: str
     log.error('[Deeplink] Could not write the desktop entry of the AppImage:', error);
     return;
   }
-  execFile('xdg-mime', ['default', APPIMAGE_DESKTOP_ENTRY, `x-scheme-handler/${scheme}`], error => {
-    if (error) log.error('[Deeplink] Could not make the AppImage the link handler:', error);
+  const mimeType = `x-scheme-handler/${scheme}`;
+  execFile('xdg-mime', ['query', 'default', mimeType], (queryError, stdout) => {
+    const current = queryError ? '' : String(stdout).trim();
+    if (current && current !== APPIMAGE_DESKTOP_ENTRY && desktopEntryExists(current)) {
+      log.info(`[Deeplink] ${current} already opens ${scheme} links, keeping it`);
+      return;
+    }
+    execFile('xdg-mime', ['default', APPIMAGE_DESKTOP_ENTRY, mimeType], error => {
+      if (error) log.error('[Deeplink] Could not make the AppImage the link handler:', error);
+    });
   });
+}
+
+function dataHome(): string {
+  return process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
+}
+
+/**
+ * True when a desktop entry with this file name is installed. The desktop keeps a default after
+ * its entry is gone (an uninstalled deb), and links then open nothing.
+ */
+function desktopEntryExists(entry: string): boolean {
+  const dataDirs = (process.env.XDG_DATA_DIRS || '/usr/local/share:/usr/share').split(':');
+  return [dataHome(), ...dataDirs]
+    .filter(Boolean)
+    .some(dir => fs.existsSync(path.join(dir, 'applications', entry)));
 }

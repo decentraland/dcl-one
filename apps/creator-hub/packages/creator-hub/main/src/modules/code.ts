@@ -1,7 +1,8 @@
+import os from 'os';
 import path from 'path';
 import fs from 'fs/promises';
 import { promisify } from 'util';
-import { exec as execCallback, execFile as execFileCallback } from 'child_process';
+import { exec as execCallback, spawn } from 'child_process';
 import log from 'electron-log/main';
 import { shell } from 'electron';
 
@@ -14,7 +15,6 @@ import { joinEnvPaths } from './path';
 import { getInjectedPathEntries } from './setup-node';
 
 const exec = promisify(execCallback);
-const execFile = promisify(execFileCallback);
 
 /**
  * PATH for a process handed to the user, with Creator Hub's own shims taken back out and the
@@ -208,13 +208,37 @@ async function findWindowsEditors(): Promise<EditorConfig[]> {
   }
 }
 
-/** The command that starts each editor on Linux. Notepad++ has no Linux build. */
-const LINUX_EDITOR_COMMANDS: Record<string, EditorType> = {
+/**
+ * The command that starts each editor on Linux, from its own package, a snap or a Flatpak.
+ * Notepad++ has no Linux build.
+ */
+const LINUX_EDITOR_COMMANDS: Record<string, string> = {
   code: EditorType.VSCode,
+  'code-insiders': 'Visual Studio Code - Insiders',
+  codium: 'VSCodium',
   cursor: EditorType.Cursor,
   subl: EditorType.Sublime,
   eclipse: EditorType.Eclipse,
+  'com.visualstudio.code': EditorType.VSCode,
+  'com.vscodium.codium': 'VSCodium',
+  'com.sublimetext.three': EditorType.Sublime,
 };
+
+/**
+ * Where Linux editor commands live besides PATH. The app started from the desktop menu gets the
+ * session's PATH, which often lacks the user's own bin folder, snaps and Flatpak exports.
+ */
+function linuxEditorDirs(): string[] {
+  const home = os.homedir();
+  const dirs = [
+    ...(process.env.PATH || '').split(':'),
+    path.join(home, '.local', 'bin'),
+    '/snap/bin',
+    path.join(home, '.local', 'share', 'flatpak', 'exports', 'bin'),
+    '/var/lib/flatpak/exports/bin',
+  ];
+  return [...new Set(dirs.filter(Boolean))];
+}
 
 /** True for a file that the user can run, which is what a shell takes as a command. */
 async function isExecutableFile(filePath: string): Promise<boolean> {
@@ -227,12 +251,16 @@ async function isExecutableFile(filePath: string): Promise<boolean> {
   }
 }
 
-/** On Linux an editor is a command: the first executable file with that name in PATH. */
+/**
+ * On Linux an editor is a command: the first executable file with that name in PATH or the
+ * other command folders. An editor installed more than one way is listed once.
+ */
 async function findLinuxEditors(): Promise<EditorConfig[]> {
-  const dirs = (process.env.PATH || '').split(':').filter(Boolean);
+  const dirs = linuxEditorDirs();
   const installedEditorsFound: EditorConfig[] = [];
 
   for (const [command, name] of Object.entries(LINUX_EDITOR_COMMANDS)) {
+    if (installedEditorsFound.some(editor => editor.name === name)) continue;
     for (const dir of dirs) {
       const fullPath = path.join(dir, command);
       if (!(await isExecutableFile(fullPath))) continue;
@@ -315,11 +343,12 @@ export async function addEditor(editorPath: string): Promise<EditorConfig[]> {
     editorFullPath = editorPath;
     name = fileName.replace('.exe', '') || 'Custom Editor';
   } else {
-    // On Linux an editor is a command: an executable file with any name.
-    if (!(await isExecutableFile(editorPath))) {
+    // On Linux an editor is a command: an executable file with any name. A desktop entry can be
+    // executable too, but it is a launcher description that the system cannot run.
+    const fileName = path.basename(editorPath);
+    if (fileName.endsWith('.desktop') || !(await isExecutableFile(editorPath))) {
       throw new Error('invalid_executable');
     }
-    const fileName = path.basename(editorPath);
     editorFullPath = editorPath;
     name = Object.hasOwn(LINUX_EDITOR_COMMANDS, fileName)
       ? LINUX_EDITOR_COMMANDS[fileName]
@@ -436,6 +465,22 @@ export async function addEditorsPathsToConfig() {
  * Opens `_path` in the configured editor, revealing it in the file manager if that is not
  * possible. Never rejects — callers treat it as fire-and-forget.
  */
+/**
+ * Starts the editor and resolves once it runs. Some editors stay in the foreground until they
+ * close (Eclipse, a Flatpak, a binary picked by hand), so the Hub neither waits for the process
+ * to exit nor keeps its output.
+ */
+function launchEditor(file: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, args, { env, detached: true, stdio: 'ignore', windowsHide: true });
+    child.once('error', reject);
+    child.once('spawn', () => {
+      child.unref();
+      resolve();
+    });
+  });
+}
+
 export async function open(_path: string) {
   const normalizedPath = path.normalize(_path);
 
@@ -446,7 +491,7 @@ export async function open(_path: string) {
 
     if (defaultEditor) {
       log.info('Opening with default editor:', defaultEditor.name, 'at path:', defaultEditor.path);
-      await execFile(defaultEditor.path, [normalizedPath], { env: getEditorEnv() });
+      await launchEditor(defaultEditor.path, [normalizedPath], getEditorEnv());
       await track('Open Code', undefined);
       return;
     }

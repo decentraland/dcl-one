@@ -68,6 +68,9 @@ const config = {
   },
   // The AppImage runs on any distribution, and the deb installs on Debian and Ubuntu. Linux has
   // no code signing step.
+  // Keep AppImage before deb, and before any other package target: a package target writes
+  // resources/package-type into the unpacked app that the AppImage is made from, and an AppImage
+  // with that file updates itself as that package (creator-hub-desktop.yml checks it).
   linux: {
     target: [
       { target: 'AppImage', arch: ['x64'] },

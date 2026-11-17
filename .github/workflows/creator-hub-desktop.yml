@@ -334,15 +334,18 @@ jobs:
       # electron-updater updates an app that has resources/package-type with that package manager.
       # The deb target writes the file into the unpacked app, which the AppImage is also made from,
       # so an AppImage with the file would install the deb as its update.
-      # The last check keeps the supported systems true: a native module compiled on a newer image
-      # needs a newer glibc than Ubuntu 22.04 has.
+      # The last check keeps the supported systems true: a native module or program compiled on a
+      # newer image needs a newer glibc or libstdc++ than Ubuntu 22.04 has. It reads app.asar too,
+      # since a native module packed there still loads.
       - name: Check the AppImage
         if: runner.os == 'Linux'
         working-directory: apps/creator-hub/packages/creator-hub/dist
         env:
           NEWEST_GLIBC: GLIBC_2.35
+          NEWEST_GLIBCXX: GLIBCXX_3.4.30
         run: |
           appimage=$(ls "$PWD"/*.AppImage)
+          app=$(dirname "$PWD")
           cd "$RUNNER_TEMP"
           "$appimage" --appimage-extract > /dev/null
           test -f squashfs-root/resources/app-update.yml
@@ -350,11 +353,21 @@ jobs:
             echo "::error::The AppImage has resources/package-type ($(cat squashfs-root/resources/package-type))"; exit 1
           fi
           test -f squashfs-root/resources/app.asar.unpacked/node_modules/node-pty/build/Release/pty.node
-          find squashfs-root/resources/app.asar.unpacked -name '*.node' | while read -r module; do
-            needs=$(objdump -T "$module" 2>/dev/null | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1 || true)
-            if [ -n "$needs" ] && [ "$(printf '%s\n' "$NEWEST_GLIBC" "$needs" | sort -V | tail -n 1)" != "$NEWEST_GLIBC" ]; then
-              echo "::error::$module needs $needs, newer than $NEWEST_GLIBC"; exit 1
-            fi
+          (cd "$app" && node -e "require(require.resolve('@electron/asar', { paths: [require.resolve('app-builder-lib/package.json')] })).extractAll(process.argv[1], process.argv[2])" \
+            "$RUNNER_TEMP/squashfs-root/resources/app.asar" "$RUNNER_TEMP/app-asar")
+          # Prints the newest version of a symbol prefix (GLIBC_, GLIBCXX_) that the file needs.
+          newest() { objdump -T "$1" 2>/dev/null | grep -oE "$2[0-9.]+" | sort -uV | tail -n 1 || true; }
+          {
+            find squashfs-root/resources app-asar -name '*.node'
+            echo squashfs-root/resources/node-bin/bin/node
+          } | while read -r file; do
+            test -f "$file" || { echo "::error::$file is missing"; exit 1; }
+            for limit in "$NEWEST_GLIBC" "$NEWEST_GLIBCXX"; do
+              needs=$(newest "$file" "${limit%_*}_")
+              if [ -n "$needs" ] && [ "$(printf '%s\n' "$limit" "$needs" | sort -V | tail -n 1)" != "$limit" ]; then
+                echo "::error::$file needs $needs, newer than $limit"; exit 1
+              fi
+            done
           done
 
       - name: Move artifacts to upload folder

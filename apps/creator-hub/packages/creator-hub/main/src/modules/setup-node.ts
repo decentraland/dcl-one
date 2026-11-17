@@ -43,6 +43,40 @@ function isReadOnlyInstall(error: unknown): boolean {
   return code === 'EROFS' || code === 'EACCES' || code === 'EPERM';
 }
 
+/**
+ * Makes `nodeCmdPath` start `nodeBinPath`, replacing any other file there. False when the app
+ * folder is read-only: child processes then run on the bundled Node (node-runtime.ts), which
+ * needs no link. `lstat`, because `stat` follows the link and never reports one.
+ */
+function linkNode(nodeCmdPath: string, nodeBinPath: string): boolean {
+  let existing: fs.Stats | undefined;
+  try {
+    existing = fs.lstatSync(nodeCmdPath);
+  } catch {
+    existing = undefined;
+  }
+  if (existing?.isSymbolicLink() && fs.readlinkSync(nodeCmdPath) === nodeBinPath) {
+    log.info('[Install] Node binaries already installed');
+    return true;
+  }
+
+  log.info(`[Install] Installing node bin linking from ${nodeCmdPath} to ${nodeBinPath}`);
+  try {
+    if (existing) fs.rmSync(nodeCmdPath);
+    if (platform() === 'win32') {
+      // cmd-shim adds the .cmd extension itself
+      cmdShim(nodeBinPath, nodeCmdPath.replace(/\.cmd$/, ''));
+    } else {
+      fs.symlinkSync(nodeBinPath, nodeCmdPath);
+    }
+    return true;
+  } catch (error) {
+    if (!isReadOnlyInstall(error)) throw error;
+    log.warn(`[Install] The app folder is read-only, no node link: ${nodeCmdPath}`);
+    return false;
+  }
+}
+
 export function setupNodeBinary() {
   // Only run in production mode
   if (import.meta.env.DEV || import.meta.env.TEST) {
@@ -53,47 +87,7 @@ export function setupNodeBinary() {
   const nodeBinPath = process.execPath;
   const npmBinPath = getBinPath('npm', 'npm');
 
-  try {
-    // check if link exists
-    const stat = fs.statSync(nodeCmdPath);
-    // check if it is a symlink
-    if (stat.isSymbolicLink()) {
-      const link = fs.readlinkSync(nodeCmdPath);
-      // check if link points to the right bin
-      if (link === process.execPath) {
-        // skip linking
-        log.info('[Install] Node binaries already installed');
-        return;
-      }
-    }
-    // if not a symlink or points to wrong location, delete
-    fs.rmSync(nodeCmdPath);
-  } catch (error) {
-    // if link is not found, continue installing
-  }
-
-  log.info(`[Install] Installing node bin linking from ${nodeCmdPath} to ${nodeBinPath}`);
-  let linked = true;
-  // on windows we use a cmd file
-  if (platform() === 'win32') {
-    cmdShim(
-      nodeBinPath,
-      // remove the .cmd part if present, since it will get added by cmdShim
-      nodeCmdPath.endsWith('.cmd') ? nodeCmdPath.replace(/\.cmd$/, '') : nodeCmdPath,
-    );
-  } else {
-    // otherwise we use a symlink
-    try {
-      fs.symlinkSync(nodeBinPath, nodeCmdPath);
-    } catch (error) {
-      if (!isReadOnlyInstall(error)) throw error;
-      // Child processes run on the bundled Node (node-runtime.ts), which needs no link.
-      log.warn(`[Install] The app folder is read-only, no node link: ${nodeCmdPath}`);
-      linked = false;
-    }
-  }
-
-  if (linked) {
+  if (linkNode(nodeCmdPath, nodeBinPath)) {
     // Update PATH environment variable
     injectedPathEntries = [path.dirname(nodeCmdPath), path.dirname(npmBinPath)];
     process.env.PATH = joinEnvPaths(...injectedPathEntries, process.env.PATH || '');

@@ -35,7 +35,7 @@ describe('setupNodeBinary in a packaged Linux app', () => {
     vi.stubEnv('DEV', false);
     vi.stubEnv('TEST', '');
     process.env.PATH = '/usr/bin';
-    vi.spyOn(fs, 'statSync').mockImplementation(() => {
+    vi.spyOn(fs, 'lstatSync').mockImplementation(() => {
       throw fsError('ENOENT');
     });
     symlink = vi.spyOn(fs, 'symlinkSync').mockImplementation(() => undefined);
@@ -76,6 +76,43 @@ describe('setupNodeBinary in a packaged Linux app', () => {
       expect(mocks.warn).toHaveBeenCalledWith(expect.stringContaining(LINK));
     },
   );
+
+  it('keeps a link that already starts this app, and still puts its folder on PATH', async () => {
+    vi.mocked(fs.lstatSync).mockReturnValue({ isSymbolicLink: () => true } as fs.Stats);
+    vi.spyOn(fs, 'readlinkSync').mockReturnValue(process.execPath);
+    const { setupNodeBinary } = await loadModule();
+
+    setupNodeBinary();
+
+    expect(symlink).not.toHaveBeenCalled();
+    expect(process.env.PATH?.startsWith('/opt/hub/resources/app.asar.unpacked:')).toBe(true);
+  });
+
+  it('replaces a link to another app', async () => {
+    vi.mocked(fs.lstatSync).mockReturnValue({ isSymbolicLink: () => true } as fs.Stats);
+    vi.spyOn(fs, 'readlinkSync').mockReturnValue('/old/creator-hub');
+    const rm = vi.spyOn(fs, 'rmSync').mockImplementation(() => undefined);
+    const { setupNodeBinary } = await loadModule();
+
+    setupNodeBinary();
+
+    expect(rm).toHaveBeenCalledWith(LINK);
+    expect(symlink).toHaveBeenCalledWith(process.execPath, LINK);
+  });
+
+  it('does not fail when a link to another app cannot be removed from a read-only folder', async () => {
+    vi.mocked(fs.lstatSync).mockReturnValue({ isSymbolicLink: () => true } as fs.Stats);
+    vi.spyOn(fs, 'readlinkSync').mockReturnValue('/old/creator-hub');
+    vi.spyOn(fs, 'rmSync').mockImplementation(() => {
+      throw fsError('EACCES');
+    });
+    const { setupNodeBinary, getInjectedPathEntries } = await loadModule();
+
+    expect(() => setupNodeBinary()).not.toThrow();
+
+    expect(symlink).not.toHaveBeenCalled();
+    expect(getInjectedPathEntries()).toEqual([]);
+  });
 
   it('fails on any other link error', async () => {
     symlink.mockImplementation(() => {

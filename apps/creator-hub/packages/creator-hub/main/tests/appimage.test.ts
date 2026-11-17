@@ -11,8 +11,19 @@ import {
 const { execFileSpy } = vi.hoisted(() => ({ execFileSpy: vi.fn() }));
 
 vi.mock('child_process', () => ({ execFile: execFileSpy }));
-vi.mock('fs', () => ({ default: { mkdirSync: vi.fn(), writeFileSync: vi.fn() } }));
-vi.mock('electron-log/main', () => ({ default: { error: vi.fn() } }));
+vi.mock('fs', () => ({
+  default: { mkdirSync: vi.fn(), writeFileSync: vi.fn(), existsSync: vi.fn(() => false) },
+}));
+vi.mock('electron-log/main', () => ({ default: { error: vi.fn(), info: vi.fn() } }));
+
+/** Answers `xdg-mime query default` with `current`, and every other command with success. */
+function xdgMimeDefault(current: string) {
+  execFileSpy.mockImplementation(
+    (_file: string, args: string[], callback: (error: Error | null, stdout: string) => void) => {
+      callback(null, args[0] === 'query' ? `${current}\n` : '');
+    },
+  );
+}
 
 const APPIMAGE = '/home/user/Apps/Decentraland Creator Hub-1.2.3-linux-x86_64.AppImage';
 
@@ -39,8 +50,12 @@ describe('registerAppImageProtocolClient', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    xdgMimeDefault('');
+    vi.mocked(fs.existsSync).mockImplementation(() => false);
     process.env.XDG_DATA_HOME = '/home/user/.local/share';
+    vi.stubEnv('XDG_DATA_DIRS', '/usr/local/share:/usr/share');
     return () => {
+      vi.unstubAllEnvs();
       if (originalDataHome === undefined) delete process.env.XDG_DATA_HOME;
       else process.env.XDG_DATA_HOME = originalDataHome;
     };
@@ -56,6 +71,46 @@ describe('registerAppImageProtocolClient', () => {
   });
 
   it('should make the entry the handler of the link scheme', () => {
+    registerAppImageProtocolClient(APPIMAGE, 'dcl-creator-hub');
+
+    expect(execFileSpy).toHaveBeenCalledWith(
+      'xdg-mime',
+      ['default', APPIMAGE_DESKTOP_ENTRY, 'x-scheme-handler/dcl-creator-hub'],
+      expect.any(Function),
+    );
+  });
+
+  it('should replace its own entry as the handler', () => {
+    xdgMimeDefault(APPIMAGE_DESKTOP_ENTRY);
+
+    registerAppImageProtocolClient(APPIMAGE, 'dcl-creator-hub');
+
+    expect(execFileSpy).toHaveBeenCalledWith(
+      'xdg-mime',
+      ['default', APPIMAGE_DESKTOP_ENTRY, 'x-scheme-handler/dcl-creator-hub'],
+      expect.any(Function),
+    );
+  });
+
+  it('should keep another installed handler, such as the deb', () => {
+    xdgMimeDefault('creator-hub.desktop');
+    vi.mocked(fs.existsSync).mockImplementation(
+      file => file === '/usr/share/applications/creator-hub.desktop',
+    );
+
+    registerAppImageProtocolClient(APPIMAGE, 'dcl-creator-hub');
+
+    expect(execFileSpy).toHaveBeenCalledTimes(1);
+    expect(execFileSpy).toHaveBeenCalledWith(
+      'xdg-mime',
+      ['query', 'default', 'x-scheme-handler/dcl-creator-hub'],
+      expect.any(Function),
+    );
+  });
+
+  it('should take over from a handler whose entry is gone', () => {
+    xdgMimeDefault('creator-hub.desktop');
+
     registerAppImageProtocolClient(APPIMAGE, 'dcl-creator-hub');
 
     expect(execFileSpy).toHaveBeenCalledWith(
