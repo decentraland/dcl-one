@@ -138,6 +138,85 @@ fn an_avatar_that_stops_its_emote_releases_the_emotes_downloads() {
     );
 }
 
+fn urn(urn: &str) -> WearableUrn {
+    WearableUrn::new(urn).unwrap()
+}
+
+/// A body that is not the default one.
+fn other_body() -> WearableUrn {
+    let male = urn("urn:decentraland:off-chain:base-avatars:BaseMale");
+    let female = urn("urn:decentraland:off-chain:base-avatars:BaseFemale");
+    if male == base_wearables::default_bodyshape_urn() {
+        female
+    } else {
+        male
+    }
+}
+
+#[test]
+fn an_avatar_keeps_its_body_until_the_body_fails() {
+    let body = other_body();
+    assert_eq!(
+        AvatarLoadFailures::body(None, body.clone()),
+        Some(body.clone())
+    );
+    // another body failing does not move this one
+    let default_failed = AvatarLoadFailures {
+        bodies: HashSet::from([base_wearables::default_bodyshape_urn()]),
+        ..Default::default()
+    };
+    assert_eq!(
+        AvatarLoadFailures::body(Some(&default_failed), body.clone()),
+        Some(body)
+    );
+}
+
+#[test]
+fn a_failed_body_falls_back_to_the_default_body() {
+    let body = other_body();
+    let failures = AvatarLoadFailures {
+        bodies: HashSet::from([body.clone()]),
+        ..Default::default()
+    };
+    assert_eq!(
+        AvatarLoadFailures::body(Some(&failures), body),
+        Some(base_wearables::default_bodyshape_urn())
+    );
+}
+
+#[test]
+fn an_avatar_whose_body_and_default_body_failed_has_no_body_to_build() {
+    let default = base_wearables::default_bodyshape_urn();
+    let body = other_body();
+    let failures = AvatarLoadFailures {
+        bodies: HashSet::from([body.clone(), default.clone()]),
+        ..Default::default()
+    };
+    assert_eq!(AvatarLoadFailures::body(Some(&failures), body), None);
+    // the default body failing alone ends the fallback too
+    let failures = AvatarLoadFailures {
+        bodies: HashSet::from([default.clone()]),
+        ..Default::default()
+    };
+    assert_eq!(AvatarLoadFailures::body(Some(&failures), default), None);
+}
+
+#[test]
+fn only_the_wearables_that_failed_are_left_out() {
+    let hat = urn("urn:decentraland:off-chain:base-avatars:cap");
+    let shirt = urn("urn:decentraland:off-chain:base-avatars:f_sweater");
+    let failures = AvatarLoadFailures {
+        wearables: HashSet::from([hat.clone()]),
+        ..Default::default()
+    };
+    assert!(AvatarLoadFailures::wearable_failed(Some(&failures), &hat));
+    assert!(!AvatarLoadFailures::wearable_failed(
+        Some(&failures),
+        &shirt
+    ));
+    assert!(!AvatarLoadFailures::wearable_failed(None, &hat));
+}
+
 #[test]
 fn a_bone_is_scaled_below_its_avatar_whatever_scales_the_avatar() {
     let mut world = World::new();

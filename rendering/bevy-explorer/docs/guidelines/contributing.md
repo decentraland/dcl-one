@@ -155,8 +155,8 @@ this engine's design using its requirements and tests.
   inline uses of the same crate in the same change.
 - A change to bevy or to a forked crate is one more patch file under
   `rendering/bevy-explorer/patches/<name>/series` and a new `rev` in `source.toml` and both Cargo
-  files. The tool writes all of them, and a maintainer publishes the `rev`: see
-  [the bevy fork](bevy-fork.md#changing-bevy).
+  files. The tool writes all of them. Push the `rev` to your fork with `publish --remote`, and CI
+  publishes it here after the merge: see [the bevy fork](bevy-fork.md#changing-bevy).
 
 ## Review
 
