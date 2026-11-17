@@ -1,5 +1,4 @@
 use super::*;
-use dcl_component::proto_components::pulse;
 
 const DEFAULT: LocomotionSpeeds = LocomotionSpeeds {
     walk: 2.5,
@@ -7,8 +6,8 @@ const DEFAULT: LocomotionSpeeds = LocomotionSpeeds {
     run: 11.0,
 };
 
-fn gait_of(speed: f32, speeds: &LocomotionSpeeds) -> Option<Gait> {
-    gait_from_blend(movement_blend(speed, speeds))
+fn near(actual: f32, expected: f32) -> bool {
+    (actual - expected).abs() < 1e-4
 }
 
 #[test]
@@ -27,9 +26,14 @@ fn blend_reaches_each_gait_index_at_its_speed() {
 }
 
 #[test]
-fn blend_scales_within_a_gait() {
+fn blend_scales_within_the_walk_tier() {
     assert_eq!(movement_blend(1.25, &DEFAULT), 0.5);
-    assert_eq!(gait_of(1.25, &DEFAULT), Some(Gait::Walk));
+}
+
+#[test]
+fn blend_is_not_speed_squared() {
+    // A 2.5 m/s walk used to go out as 6.25, clamped to 3 on the wire.
+    assert_eq!(movement_blend(2.5, &DEFAULT), 1.0);
 }
 
 #[test]
@@ -39,19 +43,28 @@ fn blend_clamps_above_the_run_speed() {
 }
 
 #[test]
-fn blend_is_not_speed_squared() {
-    // A 2.5 m/s walk used to go out as 6.25, clamped to 3 on the wire.
-    assert_eq!(gait_of(2.5, &DEFAULT), Some(Gait::Walk));
+fn tiers_send_a_blend_inside_their_own_range() {
+    // Walk tier, up to the walk limit and its tolerance.
+    assert!(near(movement_blend(2.6, &DEFAULT), 1.0));
+    // Jog tier: a slow jog is not raised above the walk blend.
+    assert!(near(movement_blend(4.0, &DEFAULT), 1.0));
+    assert!(near(movement_blend(6.135, &DEFAULT), 1.5));
+    assert!(near(movement_blend(8.5, &DEFAULT), 2.0));
+    // Run tier.
+    assert!(near(movement_blend(9.0, &DEFAULT), 3.0 * 9.0 / 11.0));
+    assert!(near(movement_blend(11.0, &DEFAULT), 3.0));
 }
 
 #[test]
-fn walk_speed_override_stays_a_walk() {
+fn walk_speed_override_moves_the_walk_tier() {
     let speeds = LocomotionSpeeds {
-        walk: 5.0,
+        walk: 4.0,
         ..DEFAULT
     };
-    assert_eq!(movement_blend(5.0, &speeds), 1.0);
-    assert_eq!(gait_of(5.0, &speeds), Some(Gait::Walk));
+    assert_eq!(movement_blend(4.0, &speeds), 1.0);
+    assert_eq!(movement_blend(2.0, &speeds), 0.5);
+    assert!(near(movement_blend(4.1, &speeds), 1.0));
+    assert!(near(movement_blend(6.0, &speeds), 2.0 * 6.0 / 8.18));
 }
 
 #[test]
@@ -60,54 +73,24 @@ fn jog_speed_override_moves_the_jog_tier() {
         jog: 12.0,
         ..DEFAULT
     };
-    assert_eq!(gait_of(11.0, &speeds), Some(Gait::Jog));
-    assert_eq!(gait_of(13.0, &speeds), Some(Gait::Run));
+    assert!(near(movement_blend(11.0, &speeds), 2.0 * 11.0 / 12.0));
+    assert_eq!(movement_blend(13.0, &speeds), BLEND_MAX);
 }
 
 #[test]
-fn tiers_follow_the_limits_with_a_small_tolerance() {
-    assert_eq!(gait_of(2.5, &DEFAULT), Some(Gait::Walk));
-    assert_eq!(gait_of(2.6, &DEFAULT), Some(Gait::Walk));
-    assert_eq!(gait_of(2.7, &DEFAULT), Some(Gait::Jog));
-    assert_eq!(gait_of(8.18, &DEFAULT), Some(Gait::Jog));
-    assert_eq!(gait_of(8.5, &DEFAULT), Some(Gait::Jog));
-    assert_eq!(gait_of(8.7, &DEFAULT), Some(Gait::Run));
-    let walk_override = LocomotionSpeeds {
-        walk: 4.0,
-        ..DEFAULT
-    };
-    assert_eq!(gait_of(4.0, &walk_override), Some(Gait::Walk));
-    assert_eq!(gait_of(4.1, &walk_override), Some(Gait::Walk));
-    assert_eq!(gait_of(4.5, &walk_override), Some(Gait::Jog));
-}
-
-#[test]
-fn mid_speed_at_default_speeds_is_a_jog() {
-    assert_eq!(gait_of(5.0, &DEFAULT), Some(Gait::Jog));
-}
-
-#[test]
-fn raised_blends_stay_inside_their_gait() {
-    // A jog just above the walk tier and a run just above the jog tier.
-    assert!((movement_blend(2.7, &DEFAULT) - 1.51).abs() < 1e-5);
-    assert!((movement_blend(8.7, &DEFAULT) - 2.51).abs() < 1e-5);
-    assert_eq!(movement_blend(100.0, &DEFAULT), BLEND_MAX);
-}
-
-#[test]
-fn degenerate_speeds_collapse_to_the_lower_gaits() {
+fn degenerate_speeds_stay_on_the_scale() {
     let all_equal = LocomotionSpeeds {
         walk: 5.0,
         jog: 5.0,
         run: 5.0,
     };
-    assert_eq!(gait_of(5.0, &all_equal), Some(Gait::Walk));
+    assert_eq!(movement_blend(5.0, &all_equal), 1.0);
     let inverted = LocomotionSpeeds {
         walk: 5.0,
         jog: 3.0,
         run: 2.0,
     };
-    assert_eq!(gait_of(5.0, &inverted), Some(Gait::Walk));
+    assert_eq!(movement_blend(5.0, &inverted), 1.0);
     let zero = LocomotionSpeeds {
         walk: 0.0,
         jog: 0.0,
@@ -118,22 +101,7 @@ fn degenerate_speeds_collapse_to_the_lower_gaits() {
 }
 
 #[test]
-fn blend_rises_with_speed_and_round_trips_its_gait() {
-    let mut previous = 0.0;
-    for step in 0..=300 {
-        let speed = step as f32 * 0.05;
-        let blend = movement_blend(speed, &DEFAULT);
-        assert!(blend >= previous, "blend fell at {speed} m/s");
-        assert!((0.0..=BLEND_MAX).contains(&blend));
-        previous = blend;
-    }
-    assert_eq!(gait_of(4.0, &DEFAULT), Some(Gait::Jog));
-    assert_eq!(gait_of(7.0, &DEFAULT), Some(Gait::Jog));
-    assert_eq!(gait_of(10.0, &DEFAULT), Some(Gait::Run));
-}
-
-#[test]
-fn every_sent_gait_round_trips_for_every_speed() {
+fn blend_never_falls_as_speed_rises() {
     let sets = [
         DEFAULT,
         LocomotionSpeeds {
@@ -147,94 +115,41 @@ fn every_sent_gait_round_trips_for_every_speed() {
         },
     ];
     for speeds in sets {
-        for step in 1..=600 {
+        let mut previous = 0.0;
+        for step in 0..=600 {
             let speed = step as f32 * 0.05;
-            let expected = if speed <= speeds.walk * 1.05 {
-                Gait::Walk
-            } else if speed <= speeds.jog * 1.05 {
-                Gait::Jog
-            } else {
-                Gait::Run
-            };
             let blend = movement_blend(speed, &speeds);
-            if blend == 0.0 {
-                assert!(speed <= speeds.walk * WALK_EPSILON * 1.01);
-                continue;
-            }
-            assert_eq!(
-                gait_from_blend(blend),
-                Some(expected),
-                "{speed} m/s under {speeds:?}"
-            );
+            assert!(blend >= previous, "blend fell at {speed} m/s, {speeds:?}");
+            assert!((0.0..=BLEND_MAX).contains(&blend));
+            previous = blend;
         }
     }
 }
 
 #[test]
-fn falling_needs_air_and_descent() {
-    assert!(is_falling(false, -3.0));
+fn the_walk_and_jog_tiers_join_without_a_step() {
+    let edge = DEFAULT.walk * TIER_TOLERANCE;
+    let below = movement_blend(edge - 0.001, &DEFAULT);
+    let above = movement_blend(edge + 0.001, &DEFAULT);
+    assert!((above - below).abs() < 0.01);
+}
+
+#[test]
+fn the_jog_and_run_tiers_join_with_a_bounded_step() {
+    // The run blend starts at its own fraction of the run limit, so the edge is a step of the
+    // difference between the two limits' fractions, not a jump across a gait.
+    let edge = DEFAULT.jog * TIER_TOLERANCE;
+    let below = movement_blend(edge - 0.001, &DEFAULT);
+    let above = movement_blend(edge + 0.001, &DEFAULT);
+    assert!(above >= below);
+    assert!(above - below < 0.4);
+}
+
+#[test]
+fn falling_needs_air_and_a_fast_enough_descent() {
+    assert!(is_falling(false, -3.5));
+    assert!(!is_falling(false, -3.0));
+    assert!(!is_falling(false, -2.0));
     assert!(!is_falling(false, 4.0));
-    assert!(!is_falling(false, 0.0));
-    assert!(!is_falling(true, -3.0));
-}
-
-#[test]
-fn received_blend_names_a_gait() {
-    assert_eq!(gait_from_blend(0.0), Some(Gait::Idle));
-    assert_eq!(gait_from_blend(0.05), Some(Gait::Idle));
-    assert_eq!(gait_from_blend(0.06), Some(Gait::Walk));
-    assert_eq!(gait_from_blend(0.4), Some(Gait::Walk));
-    assert_eq!(gait_from_blend(1.0), Some(Gait::Walk));
-    assert_eq!(gait_from_blend(1.4), Some(Gait::Walk));
-    assert_eq!(gait_from_blend(1.6), Some(Gait::Jog));
-    assert_eq!(gait_from_blend(2.6), Some(Gait::Run));
-    assert_eq!(gait_from_blend(3.0), Some(Gait::Run));
-}
-
-#[test]
-fn implausible_blend_names_no_gait() {
-    assert_eq!(gait_from_blend(f32::NAN), None);
-    assert_eq!(gait_from_blend(f32::INFINITY), None);
-    assert_eq!(gait_from_blend(-0.5), None);
-    // Speed squared from a sender that does not clamp.
-    assert_eq!(gait_from_blend(6.25), None);
-}
-
-/// The blend as a receiver sees it after the Pulse 5-bit quantizer.
-fn over_the_wire(blend: f32) -> f32 {
-    let state = pulse::PlayerState {
-        movement_blend: pulse::PlayerState::movement_blend_quantized(blend),
-        ..Default::default()
-    };
-    state.movement_blend_dequantized()
-}
-
-#[test]
-fn every_sent_gait_survives_the_wire_quantizer() {
-    let sets = [
-        DEFAULT,
-        LocomotionSpeeds {
-            walk: 4.0,
-            ..DEFAULT
-        },
-        LocomotionSpeeds {
-            jog: 12.0,
-            run: 20.0,
-            ..DEFAULT
-        },
-    ];
-    for speeds in sets {
-        for step in 1..=600 {
-            let speed = step as f32 * 0.05;
-            let sent = movement_blend(speed, &speeds);
-            if sent == 0.0 {
-                continue;
-            }
-            assert_eq!(
-                gait_from_blend(over_the_wire(sent)),
-                gait_from_blend(sent),
-                "{speed} m/s under {speeds:?}"
-            );
-        }
-    }
+    assert!(!is_falling(true, -9.0));
 }
