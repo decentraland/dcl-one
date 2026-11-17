@@ -1,23 +1,20 @@
 import { useId, useState, type FormEvent } from "react";
 
 import { Button, InputWebCreatorTools, Skeleton, Switch } from "@dcl/one-ui";
-import { GeneralDownArrow } from "@dcl/one-ui/foundations/icons";
 
 import {
   isAllEmailEnabled,
   isEmailAddress,
-  isTypeEmailEnabled,
   setAllEmail,
   setTypeEmail,
   SUBSCRIPTION_GROUP_COLUMNS,
-  SUBSCRIPTION_GROUPS,
   type SubscriptionDetails,
-  type SubscriptionGroupKey,
 } from "@/data/lib/account/notifications";
 import type { AuthIdentity } from "@/data/lib/auth/types";
 
-import { GROUP_COPY, NOTIFICATIONS_COPY, TYPE_LABELS } from "./copy";
+import { NOTIFICATIONS_COPY } from "./copy";
 import { useSetEmail, useSubscription, useUpdateSubscription } from "./hooks";
+import { NotificationGroupAccordion } from "./NotificationGroupAccordion";
 import styles from "./NotificationsSettings.module.css";
 
 const COPY = NOTIFICATIONS_COPY;
@@ -101,7 +98,7 @@ function EmailCard({ identity, email, unconfirmedEmail, details, loading, onTogg
           autoComplete="email"
           placeholder={COPY.email.placeholder}
           value={value}
-          disabled={loading}
+          disabled={loading || setEmail.isPending}
           error={error}
           onChange={(event) => {
             setDraft(event.currentTarget.value);
@@ -119,42 +116,7 @@ function EmailCard({ identity, email, unconfirmedEmail, details, loading, onTogg
   );
 }
 
-type GroupCardProps = {
-  group: SubscriptionGroupKey;
-  details: SubscriptionDetails;
-  disabled: boolean;
-  onToggleType: (type: string, enabled: boolean) => void;
-};
-
-function GroupCard({ group, details, disabled, onToggleType }: GroupCardProps) {
-  const copy = GROUP_COPY[group];
-  return (
-    <details className={styles.group}>
-      <summary className={styles.groupSummary}>
-        <span className={styles.groupText}>
-          <span className={styles.groupTitle}>{copy.label}</span>
-          <span className={styles.groupDescription}>{copy.description}</span>
-        </span>
-        <GeneralDownArrow className={styles.chevron} size={24} aria-hidden="true" />
-      </summary>
-      <ul className={styles.types}>
-        {SUBSCRIPTION_GROUPS[group].map((type) => (
-          <li key={type}>
-            <Switch
-              className={styles.typeSwitch}
-              label={TYPE_LABELS[type] ?? type}
-              checked={isTypeEmailEnabled(details, type)}
-              disabled={disabled}
-              onCheckedChange={(enabled) => onToggleType(type, enabled)}
-            />
-          </li>
-        ))}
-      </ul>
-    </details>
-  );
-}
-
-/** `/account/notifications`: the email address and which notifications it gets. */
+/** `/account/notifications`: the email card, then each notification category to open and switch per type. */
 export function NotificationsSettings({ identity }: { identity: AuthIdentity }) {
   const titleId = useId();
   const subscription = useSubscription(identity);
@@ -172,12 +134,9 @@ export function NotificationsSettings({ identity }: { identity: AuthIdentity }) 
 
   return (
     <section className={styles.root} aria-labelledby={titleId}>
-      <header className={styles.header}>
-        <h2 id={titleId} className={styles.title}>
-          {COPY.title}
-        </h2>
-        <p className={styles.description}>{COPY.description}</p>
-      </header>
+      <h2 id={titleId} className={styles.srOnly}>
+        {COPY.title}
+      </h2>
 
       <EmailCard
         identity={identity}
@@ -215,7 +174,7 @@ export function NotificationsSettings({ identity }: { identity: AuthIdentity }) 
             {SUBSCRIPTION_GROUP_COLUMNS.map((column, index) => (
               <div className={styles.column} key={index}>
                 {column.map((group) => (
-                  <GroupCard
+                  <NotificationGroupAccordion
                     key={group}
                     group={group}
                     details={details}

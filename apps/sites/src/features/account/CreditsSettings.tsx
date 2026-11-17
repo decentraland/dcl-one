@@ -26,13 +26,20 @@ export function CreditsSettings({ identity }: { identity: AuthIdentity }) {
   const returnFocus = useRef(false);
   const statusRef = useRef<HTMLParagraphElement>(null);
 
+  // After leaving, focus moves to what the re-read shows once it renders: the new status or its failure.
+  const [left, setLeft] = useState(0);
+  useEffect(() => {
+    if (left) statusRef.current?.focus();
+  }, [left]);
+
   useEffect(() => {
     if (confirming) confirmRef.current?.focus();
     else if (returnFocus.current) leaveRef.current?.focus();
     returnFocus.current = false;
   }, [confirming]);
 
-  const current = status.data?.status;
+  // A failed read, the re-read after leaving included, shows the failure, not the last status it held.
+  const current = status.isError ? undefined : status.data?.status;
   const enrolled = current === "enrolled";
 
   const cancel = () => {
@@ -48,7 +55,7 @@ export function CreditsSettings({ identity }: { identity: AuthIdentity }) {
       {
         onSuccess: () => {
           setConfirming(false);
-          statusRef.current?.focus();
+          setLeft((count) => count + 1);
         },
       },
     );
@@ -70,9 +77,14 @@ export function CreditsSettings({ identity }: { identity: AuthIdentity }) {
             <strong className={enrolled ? styles.enrolled : styles.statusValue}>{COPY.status[current]}</strong>
           </p>
         ) : (
-          <p className={styles.error} role="alert">
-            {COPY.loadError}
-          </p>
+          <div className={styles.loadError}>
+            <p ref={statusRef} className={styles.error} role="alert" tabIndex={-1}>
+              {COPY.loadError}
+            </p>
+            <Button variant="secondary" size="sm" onClick={() => void status.refetch()}>
+              {COPY.retry}
+            </Button>
+          </div>
         )}
         <p className={styles.description}>
           {COPY.description}{" "}

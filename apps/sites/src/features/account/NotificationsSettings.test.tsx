@@ -279,6 +279,23 @@ describe("NotificationsSettings", () => {
       expect((screen.getByRole("button", { name: "Resend" }) as HTMLButtonElement).disabled).toBe(false);
     });
 
+    it("locks the field while the address is being saved, so no edit is lost when it lands", async () => {
+      const user = userEvent.setup();
+      api.fetchSubscription.mockResolvedValue({ address: SIGNER, details });
+      let land!: () => void;
+      api.putEmail.mockReturnValue(new Promise<void>((resolve) => (land = resolve)));
+      show();
+      await loaded();
+
+      const field = screen.getByRole("textbox", { name: "Email address" }) as HTMLInputElement;
+      await user.type(field, "jane.doe@example.com");
+      await user.click(screen.getByRole("button", { name: "Submit" }));
+
+      await waitFor(() => expect(field.disabled).toBe(true));
+      land();
+      await waitFor(() => expect(field.disabled).toBe(false));
+    });
+
     it("keeps the typed address and shows the failure when the server refuses it", async () => {
       const user = userEvent.setup();
       api.fetchSubscription.mockResolvedValue({ address: SIGNER, details });

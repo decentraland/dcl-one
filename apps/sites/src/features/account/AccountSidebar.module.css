@@ -1,0 +1,182 @@
+/* The account menu, as decentraland.org's account sidebar: a translucent black panel with the member,
+ * the sections (the open one a violet pill) and log out pinned to the bottom. The source's hover
+ * white at 6% has no token; the 10% hover token stands in for it. */
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-12);
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--dcl-space-16);
+  border-radius: var(--dcl-radius-lg);
+  background: var(--dcl-transparencies-black-40);
+  color: var(--dcl-text-primary);
+}
+
+.user {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  padding: var(--dcl-space-4) var(--dcl-space-4) 0;
+}
+
+.avatar {
+  flex-shrink: 0;
+  overflow: hidden;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-bg-surface-raised);
+}
+
+.avatarImage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.userInfo {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.name {
+  composes: text626f64792f6d642d7374726f6e67 from '@dcl/one-ui/text-styles.module.css';
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.addressRow {
+  composes: text626f64792f736d from '@dcl/one-ui/text-styles.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-4);
+  color: var(--dcl-text-secondary);
+}
+
+.address {
+  white-space: nowrap;
+}
+
+.divider {
+  width: 100%;
+  height: 1px;
+  margin: 0;
+  border: 0;
+  background: var(--dcl-border-subtle);
+}
+
+.sectionLabel {
+  composes: text6c6162656c2f736d2d63617073 from '@dcl/one-ui/text-styles.module.css';
+  margin: 0;
+  padding: 0 var(--dcl-space-4);
+  color: var(--dcl-text-secondary);
+}
+
+.items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  composes: text626f64792f736d2d7374726f6e67 from '@dcl/one-ui/text-styles.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--dcl-space-8) var(--dcl-space-12);
+  border: 0;
+  border-radius: var(--dcl-radius-sm);
+  background: transparent;
+  color: var(--dcl-neutrals-gray);
+  text-align: left;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 0.2s ease,
+    color 0.2s ease;
+}
+
+.item[aria-current='page'] {
+  background: var(--dcl-brand-violet);
+  color: var(--dcl-text-primary);
+}
+
+@media (hover: hover) {
+  .item:hover {
+    background: var(--dcl-bg-hover);
+    color: var(--dcl-text-primary);
+  }
+
+  .item[aria-current='page']:hover {
+    background: var(--dcl-brand-violet);
+  }
+}
+
+.item:focus-visible {
+  outline: 2px solid var(--dcl-transparencies-white-60);
+  outline-offset: 2px;
+}
+
+.itemLabel {
+  min-width: 0;
+}
+
+/* "Tap to open": only on the phone menu, not on the desktop rail. */
+.chevron {
+  display: none;
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--dcl-text-secondary);
+}
+
+.bottom {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-8);
+  margin-top: auto;
+  padding-top: var(--dcl-space-16);
+}
+
+/* The phone menu fills the screen edge to edge, so log out sits at the bottom. */
+@media (max-width: 1023.98px) {
+  .root {
+    flex: 1;
+    border-radius: 0;
+  }
+
+  .chevron {
+    display: inline-flex;
+  }
+}
+
+/* The rail sticks below the site's sticky top bar and keeps log out in view at rest: one screen less
+ * the top bar and the frame's top and bottom padding. */
+@media (min-width: 1024px) {
+  .root {
+    position: sticky;
+    top: calc(var(--site-header-h, 80px) + var(--dcl-space-24));
+    flex: none;
+    align-self: flex-start;
+    width: 264px;
+    min-height: calc(100dvh - var(--site-header-h, 80px) - var(--dcl-space-48) - var(--dcl-space-64));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .item {
+    transition: none;
+  }
+}

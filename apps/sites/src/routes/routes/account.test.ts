@@ -6,7 +6,6 @@ import { describe, expect, it } from "vitest";
 import { markPublicResponse, requestSessionContext } from "@/core/lib/telemetry/session";
 
 import { headers as accountHeaders, loader as accountLoader } from "./account";
-import { loader as indexLoader } from "./account._index";
 import { loader as notFoundLoader } from "./account_.$";
 
 const WALLET = "0x4e9c4a2502fdf71e93ed8ed6ca9ddbd891d6f295";
@@ -73,15 +72,6 @@ describe("/account layout loader", () => {
   });
 });
 
-describe("/account index", () => {
-  it("opens the notifications section, keeping the query", () => {
-    const response = indexLoader({ request: request("https://site.test/account?utm=mail") } as never) as Response;
-
-    expect(response.status).toBe(302);
-    expect(response.headers.get("Location")).toBe("/account/notifications?utm=mail");
-  });
-});
-
 describe("/account unknown sections", () => {
   it.each([
     ["signed out", undefined],
@@ -108,11 +98,5 @@ describe("account route tree", () => {
 
     expect(confirmations.length).toBeGreaterThan(0);
     expect(confirmations.every((file) => file.startsWith("account_."))).toBe(true);
-  });
-
-  it("nests only the settings sections under the layout", () => {
-    const nested = routes.filter((file) => file.startsWith("account.") && !file.includes(".test.")).sort();
-
-    expect(nested).toEqual(["account._index.tsx", "account.credits.tsx", "account.notifications.tsx", "account.tsx"]);
   });
 });

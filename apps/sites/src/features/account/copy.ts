@@ -4,15 +4,16 @@ import type { SubscriptionGroupKey } from "@/data/lib/account/notifications";
 export const ACCOUNT_COPY = {
   title: "Account Settings",
   sections: { notifications: "Notifications", credits: "Credits Settings" },
+  logout: "Log out",
+  back: "back to Account Settings",
+  close: "Close",
   checking: "Checking your session…",
   signedOut: "Sign in to manage your account",
   signIn: "Sign In",
 } as const;
 
 export const NOTIFICATIONS_COPY = {
-  title: "Email Notifications",
-  description:
-    "Don't miss any Decentraland notifications when you're AFK! Sign up to receive email notifications and pick & choose which ones you want to get below.",
+  title: "Notifications",
   loading: "Loading your notification settings…",
   loadError: "We couldn't load your notification settings. Please try again later.",
   saveError: "We couldn't save your notification settings. Please try again.",
@@ -40,38 +41,16 @@ export const NOTIFICATIONS_COPY = {
   },
 } as const;
 
-export const GROUP_COPY: Record<SubscriptionGroupKey, { label: string; description: string }> = {
-  marketplace: {
-    label: "Marketplace",
-    description: "Get notifications about your bids, sales, royalties and rentals.",
-  },
-  worlds: {
-    label: "Worlds",
-    description:
-      "Get notified if your World has insufficient storage or if you're invited to visit/collaborate on a World.",
-  },
-  credits: {
-    label: "Marketplace Credits",
-    description: "Get notifications about Credit expiration, unclaimed Credits, and incomplete goals.",
-  },
-  streaming: {
-    label: "In-World Streaming",
-    description: "Get notifications about the status of your scene stream keys and streams.",
-  },
-  events: { label: "Events", description: "Get notifications about events you've RSVP'd to." },
-  rewards: {
-    label: "Giveaway and Rewards",
-    description: "Get notifications about free items you receive and your giveaway campaigns.",
-  },
-  dao: {
-    label: "DAO",
-    description: "Get notifications about DAO announcements, your proposals and the votes you cast.",
-  },
-  tips: { label: "Tips", description: "Receive notifications when someone tips your scenes." },
-  referral: {
-    label: "Referrals",
-    description: "Get notifications about your successfully completed referrals and rewards unlocked.",
-  },
+export const GROUP_LABELS: Record<SubscriptionGroupKey, string> = {
+  marketplace: "Marketplace",
+  worlds: "Worlds",
+  credits: "Marketplace Credits",
+  streaming: "In-World Streaming",
+  events: "Events",
+  rewards: "Giveaway and Rewards",
+  dao: "DAO",
+  tips: "Tips",
+  referral: "Referrals",
 };
 
 export const TYPE_LABELS: Record<string, string> = {
@@ -120,6 +99,7 @@ export const CREDITS_COPY = {
   learnMore: "Learn more",
   learnMoreHref: "/docs/player/decentraland-in-world/earning-rewards/#weekly-marketplace-credits-rewards",
   loadError: "We couldn't load your credits status. Please try again later.",
+  retry: "Try again",
   leave: "Leave Program",
   confirmTitle: "Leave Marketplace Credits?",
   confirmDescription: "You'll stop earning weekly credits. You can rejoin at any time.",

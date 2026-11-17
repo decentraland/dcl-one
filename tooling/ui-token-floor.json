@@ -1,15 +1,27 @@
 {
   "apps/sites/src/features/account/AccountLayout.module.css": {
     "primitives": 0,
-    "tokens": 12
+    "tokens": 23
+  },
+  "apps/sites/src/features/account/AccountSidebar.module.css": {
+    "primitives": 0,
+    "tokens": 33
   },
   "apps/sites/src/features/account/CreditsSettings.module.css": {
     "primitives": 0,
-    "tokens": 19
+    "tokens": 21
+  },
+  "apps/sites/src/features/account/NotificationGroupAccordion.module.css": {
+    "primitives": 0,
+    "tokens": 12
   },
   "apps/sites/src/features/account/NotificationsSettings.module.css": {
     "primitives": 0,
-    "tokens": 31
+    "tokens": 24
+  },
+  "apps/sites/src/features/components/CopyAddress.module.css": {
+    "primitives": 0,
+    "tokens": 12
   },
   "apps/sites/src/features/components/chrome/routepending.css": {
     "primitives": 11,
@@ -34,6 +46,10 @@
   "apps/sites/src/features/explorer/event-management/EventManagement.module.css": {
     "primitives": 14,
     "tokens": 0
+  },
+  "apps/sites/src/features/profile/ProfileHeader.module.css": {
+    "primitives": 0,
+    "tokens": 19
   },
   "apps/sites/src/features/social/submit-hangout/FeaturedAssetPicker.module.css": {
     "primitives": 2,

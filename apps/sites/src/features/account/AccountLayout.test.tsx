@@ -2,7 +2,7 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type ReactNode } from "react";
-import { createMemoryRouter, RouterProvider } from "react-router";
+import { createMemoryRouter, RouterProvider, useLocation } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
@@ -17,7 +17,9 @@ vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => state.auth }));
 vi.mock("../components/auth/signin-store", () => ({ openSignIn: state.openSignIn }));
 vi.mock("@ui/web/frames/SitesChrome", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
 
-import { AccountLayout } from "./AccountLayout";
+import { ChromeAuthContext, type ChromeAuth } from "@ui/web/frames/chrome-auth";
+
+import { AccountLayout, type AccountSection } from "./AccountLayout";
 
 const identity = { signer: "0x4e9c4a2502fdf71e93ed8ed6ca9ddbd891d6f295", ephemeral: {}, expiration: "2999-01-01T00:00:00.000Z", authChain: [] };
 
@@ -31,21 +33,41 @@ function FirstSigner({ signer }: { signer: string }) {
   return <p>First seen {first}</p>;
 }
 
-function show() {
+const signedOutChrome: ChromeAuth = { signedIn: false, account: "", mana: "", name: "", committee: false };
+
+function Where() {
+  return <p>at {useLocation().pathname}</p>;
+}
+
+function show({
+  active = "notifications",
+  chrome = signedOutChrome,
+  entries = [`/account/${active ?? ""}`],
+}: {
+  active?: AccountSection | null;
+  chrome?: ChromeAuth;
+  entries?: (string | { pathname: string; state: unknown })[];
+} = {}) {
   const router = createMemoryRouter(
     [
       {
-        path: "/account/notifications",
-        element: <AccountLayout active="notifications">{(id) => <Section signer={id.signer} />}</AccountLayout>,
+        path: "/account/:section?",
+        element: (
+          <ChromeAuthContext.Provider value={chrome}>
+            <AccountLayout active={active}>{(id) => <Section signer={id.signer} />}</AccountLayout>
+          </ChromeAuthContext.Provider>
+        ),
       },
+      { path: "*", element: <Where /> },
     ],
-    { initialEntries: ["/account/notifications"] },
+    { initialEntries: entries, initialIndex: entries.length - 1 },
   );
-  return render(<RouterProvider router={router} />);
+  return { router, ...render(<RouterProvider router={router} />) };
 }
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   state.auth = { identity: null, status: "anonymous" };
   vi.resetAllMocks();
 });
@@ -59,6 +81,119 @@ describe("AccountLayout", () => {
     expect(links.map((link) => link.textContent)).toEqual(["Notifications", "Credits Settings"]);
     expect(links[0]!.getAttribute("aria-current")).toBe("page");
     expect(screen.getByText(`Settings for ${identity.signer}`)).toBeTruthy();
+  });
+
+  it("heads the menu with the member's profile name, avatar and address", () => {
+    state.auth = { identity, status: "connected" };
+    const { container } = show({
+      chrome: { ...signedOutChrome, signedIn: true, account: identity.signer.toUpperCase().replace("0X", "0x"), name: "Jane", avatarUrl: "https://example.com/face.png" },
+    });
+
+    const nav = screen.getByRole("navigation", { name: "Account Settings" });
+    expect(nav.textContent).toContain("Jane");
+    expect(nav.textContent).toContain("0x4e9c\u{2026}f295");
+    expect(container.querySelector("nav img")?.getAttribute("src")).toBe("https://example.com/face.png");
+    expect(screen.getByRole("button", { name: "Copy address" })).toBeTruthy();
+  });
+
+  it("names the member by address, without another account's profile, while the chrome is behind", () => {
+    state.auth = { identity, status: "connected" };
+    const { container } = show({
+      chrome: { ...signedOutChrome, signedIn: true, account: "0x1111111111111111111111111111111111111111", name: "Someone else", avatarUrl: "https://example.com/other.png" },
+    });
+
+    const nav = screen.getByRole("navigation", { name: "Account Settings" });
+    expect(nav.textContent).not.toContain("Someone else");
+    expect(screen.getByText("0x4e9c\u{2026}f295", { selector: "p" })).toBeTruthy();
+    expect(container.querySelector("nav img")).toBeNull();
+  });
+
+  it("logs out from the menu when the chrome can, and offers no dead row when it cannot", async () => {
+    const user = userEvent.setup();
+    state.auth = { identity, status: "connected" };
+    const onSignOut = vi.fn();
+    show({ chrome: { ...signedOutChrome, signedIn: true, account: identity.signer, onSignOut } });
+
+    await user.click(screen.getByRole("button", { name: "Log out" }));
+    expect(onSignOut).toHaveBeenCalledTimes(1);
+
+    cleanup();
+    show();
+    expect(screen.queryByRole("button", { name: "Log out" })).toBeNull();
+
+    cleanup();
+    show({ chrome: { ...signedOutChrome, signedIn: true, account: "0x1111111111111111111111111111111111111111", onSignOut } });
+    expect(screen.queryByRole("button", { name: "Log out" })).toBeNull();
+  });
+
+  it("shows the menu alone on /account, with no section header", () => {
+    state.auth = { identity, status: "connected" };
+    const { container } = show({ active: null, entries: ["/account"] });
+
+    expect(container.querySelector('[data-view="menu"]')).not.toBeNull();
+    expect(screen.queryByRole("link", { name: /back to Account Settings/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    for (const link of screen.getAllByRole("link")) expect(link.getAttribute("aria-current")).toBeNull();
+  });
+
+  it("goes back to the menu from a section's header", async () => {
+    const user = userEvent.setup();
+    state.auth = { identity, status: "connected" };
+    const { container, router } = show({ active: "credits" });
+
+    expect(container.querySelector('[data-view="section"]')).not.toBeNull();
+    await user.click(screen.getByRole("link", { name: "Credits Settings, back to Account Settings" }));
+    expect(router.state.location.pathname).toBe("/account");
+  });
+
+  it("closes the settings back past the menu to the page they were entered from", async () => {
+    const user = userEvent.setup();
+    state.auth = { identity, status: "connected" };
+    vi.spyOn(window.history, "state", "get").mockReturnValue({ idx: 2 });
+    const { router } = show({
+      entries: ["/events", "/account", { pathname: "/account/notifications", state: { accountEntry: 1 } }],
+    });
+
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(router.state.location.pathname).toBe("/events");
+  });
+
+  it("closes a section opened straight from another page back to it, or home when it was the first page", async () => {
+    const user = userEvent.setup();
+    state.auth = { identity, status: "connected" };
+    vi.spyOn(window.history, "state", "get").mockReturnValue({ idx: 1 });
+    const { router } = show({ entries: ["/events", "/account/notifications"] });
+
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(router.state.location.pathname).toBe("/events");
+
+    cleanup();
+    vi.spyOn(window.history, "state", "get").mockReturnValue(null);
+    const first = show();
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(first.router.state.location.pathname).toBe("/");
+  });
+
+  it("carries where the settings were entered through the menu and the back link, ignoring a malformed one", async () => {
+    const user = userEvent.setup();
+    state.auth = { identity, status: "connected" };
+    vi.spyOn(window.history, "state", "get").mockReturnValue({ idx: 3 });
+    const { router } = show({ entries: [{ pathname: "/account/notifications", state: { accountEntry: 1 } }] });
+
+    await user.click(screen.getByRole("link", { name: "Credits Settings" }));
+    expect(router.state.location.state).toEqual({ accountEntry: 1 });
+
+    cleanup();
+    const fresh = show({ entries: [{ pathname: "/account/notifications", state: { accountEntry: "x" } }] });
+    await user.click(screen.getByRole("link", { name: "Notifications, back to Account Settings" }));
+    expect(fresh.router.state.location.state).toEqual({ accountEntry: 3 });
+  });
+
+  it("names a section screen with a level-one heading for the phone header", () => {
+    state.auth = { identity, status: "connected" };
+    show({ active: "credits" });
+
+    expect(screen.getByRole("heading", { level: 1, name: "Credits Settings, back to Account Settings" })).toBeTruthy();
   });
 
   it("starts the section afresh when the account switches", async () => {
@@ -89,5 +224,6 @@ describe("AccountLayout", () => {
     await user.click(screen.getByRole("button", { name: "Sign In" }));
     expect(state.openSignIn).toHaveBeenCalledTimes(2);
     expect(screen.queryByText(/Settings for/)).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Account Settings" })).toBeNull();
   });
 });

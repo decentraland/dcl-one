@@ -1,44 +1,33 @@
-/* The notifications section: header, the email card and the notification groups in two columns
- * from 1024px (one below), as decentraland.org's account page lays them out. */
+/* The notifications section, as decentraland.org's notifications page: one translucent black panel
+ * holding the email card and the notification categories, in two columns from 1024px that each grow
+ * on their own when a category opens. */
 .root {
   display: flex;
   flex-direction: column;
   gap: var(--dcl-space-24);
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--dcl-space-16);
+  border-radius: var(--dcl-radius-lg);
+  background: var(--dcl-transparencies-black-20);
 }
 
-.header {
-  display: flex;
-  flex-direction: column;
-  gap: var(--dcl-space-8);
-}
-
-.title {
-  composes: text68656164696e672f34 from '@dcl/one-ui/text-styles.module.css';
-  margin: 0;
-}
-
-.description,
 .cardDescription,
-.groupDescription,
 .hint {
   composes: text626f64792f736d from '@dcl/one-ui/text-styles.module.css';
   margin: 0;
   color: var(--dcl-text-secondary);
 }
 
-.card,
-.group {
-  box-sizing: border-box;
-  border: 1px solid var(--dcl-border-subtle);
-  border-radius: var(--dcl-radius-lg);
-  background: var(--dcl-bg-surface);
-}
-
 .card {
   display: flex;
   flex-direction: column;
   gap: var(--dcl-space-12);
+  box-sizing: border-box;
+  width: 100%;
   padding: var(--dcl-space-24);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-20);
 }
 
 .cardHeader {
@@ -63,6 +52,7 @@
   composes: text6c6162656c2f746167 from '@dcl/one-ui/text-styles.module.css';
   padding: 2px var(--dcl-space-8);
   border-radius: var(--dcl-radius-full);
+  text-transform: uppercase;
 }
 
 .badgeConfirmed {
@@ -76,7 +66,7 @@
 }
 
 .emailForm {
-  max-width: 560px;
+  margin-top: var(--dcl-space-8);
 }
 
 .error {
@@ -93,91 +83,28 @@
 }
 
 .columns {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: var(--dcl-space-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-12);
 }
 
 .column {
   display: flex;
+  flex: 1;
   flex-direction: column;
-  gap: var(--dcl-space-16);
+  gap: var(--dcl-space-12);
   min-width: 0;
-}
-
-.groupSummary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--dcl-space-16);
-  padding: var(--dcl-space-16) var(--dcl-space-24);
-  border-radius: var(--dcl-radius-lg);
-  cursor: pointer;
-  list-style: none;
-}
-
-.groupSummary::-webkit-details-marker {
-  display: none;
-}
-
-.groupSummary:focus-visible {
-  outline: 2px solid var(--dcl-neutrals-snow);
-  outline-offset: 2px;
-}
-
-@media (hover: hover) {
-  .groupSummary:hover {
-    background: var(--dcl-bg-hover);
-  }
-}
-
-.groupText {
-  display: flex;
-  flex-direction: column;
-  gap: var(--dcl-space-4);
-  min-width: 0;
-}
-
-.groupTitle {
-  composes: text626f64792f6d642d7374726f6e67 from '@dcl/one-ui/text-styles.module.css';
-}
-
-.chevron {
-  flex: none;
-  color: var(--dcl-icon-default);
-  transition: transform 150ms ease;
-}
-
-.group[open] .chevron {
-  transform: rotate(180deg);
-}
-
-.types {
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-  padding: 0 var(--dcl-space-24) var(--dcl-space-12);
-  list-style: none;
-}
-
-.types > li + li {
-  border-top: 1px solid var(--dcl-border-subtle);
-}
-
-.typeSwitch {
-  display: flex;
-  width: 100%;
 }
 
 .loading {
   display: grid;
-  gap: var(--dcl-space-16);
+  gap: var(--dcl-space-12);
 }
 
 .skeleton {
   display: block;
   width: 100%;
-  height: 72px;
+  height: 56px;
 }
 
 .srOnly {
@@ -190,14 +117,12 @@
 }
 
 @media (min-width: 1024px) {
-  .columns {
-    grid-template-columns: 1fr 1fr;
-    align-items: start;
+  .root {
+    padding: var(--dcl-space-24);
   }
-}
 
-@media (prefers-reduced-motion: reduce) {
-  .chevron {
-    transition: none;
+  .columns {
+    flex-direction: row;
+    align-items: flex-start;
   }
 }

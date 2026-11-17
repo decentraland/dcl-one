@@ -86,6 +86,35 @@ describe("CreditsSettings", () => {
     expect(screen.queryByRole("button", { name: "Leave Program" })).toBeNull();
   });
 
+  it("reads the status again from Try again after a failed read", async () => {
+    const user = userEvent.setup();
+    api.fetchCreditsStatus.mockRejectedValueOnce(new Error("offline")).mockResolvedValue(enrolled);
+    show();
+
+    await user.click(await screen.findByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByText("Enrolled")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Leave Program" })).toBeTruthy();
+  });
+
+  it("shows the failure, not a stale Enrolled with Leave, when the read after leaving fails", async () => {
+    const user = userEvent.setup();
+    api.fetchCreditsStatus.mockResolvedValueOnce(enrolled).mockRejectedValue(new Error("offline"));
+    api.optOutOfCredits.mockResolvedValue(undefined);
+    show();
+
+    await askToLeave(user);
+    await user.click(screen.getAllByRole("button", { name: "Leave Program" }).at(-1)!);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("We couldn't load your credits status");
+    await waitFor(() => expect(document.activeElement).toBe(alert));
+    expect(screen.queryByText("Enrolled")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Leave Program" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+  });
+
   it("leaves nothing changed when the member cancels, and returns focus to Leave", async () => {
     const user = userEvent.setup();
     api.fetchCreditsStatus.mockResolvedValue(enrolled);
