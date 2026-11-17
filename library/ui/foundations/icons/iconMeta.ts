@@ -701,7 +701,7 @@ export const iconMeta: IconMeta[] = [
     section: 'Chat',
     width: 24,
     height: 24,
-    monochrome: false,
+    monochrome: true,
     hasActiveState: false
   },
   {
@@ -711,7 +711,7 @@ export const iconMeta: IconMeta[] = [
     section: 'Chat',
     width: 24,
     height: 24,
-    monochrome: false,
+    monochrome: true,
     hasActiveState: false
   },
   {
@@ -1131,7 +1131,7 @@ export const iconMeta: IconMeta[] = [
     section: 'General',
     width: 24,
     height: 24,
-    monochrome: false,
+    monochrome: true,
     hasActiveState: false
   },
   {
@@ -1141,7 +1141,7 @@ export const iconMeta: IconMeta[] = [
     section: 'General',
     width: 24,
     height: 24,
-    monochrome: false,
+    monochrome: true,
     hasActiveState: false
   },
   {
@@ -1551,7 +1551,7 @@ export const iconMeta: IconMeta[] = [
     section: 'General',
     width: 24,
     height: 24,
-    monochrome: false,
+    monochrome: true,
     hasActiveState: false
   },
   {
@@ -1821,7 +1821,7 @@ export const iconMeta: IconMeta[] = [
     section: 'General',
     width: 24,
     height: 24,
-    monochrome: false,
+    monochrome: true,
     hasActiveState: false
   },
   {
@@ -1831,7 +1831,7 @@ export const iconMeta: IconMeta[] = [
     section: 'General',
     width: 24,
     height: 24,
-    monochrome: false,
+    monochrome: true,
     hasActiveState: false
   },
   {
@@ -1931,7 +1931,7 @@ export const iconMeta: IconMeta[] = [
     section: 'General',
     width: 24,
     height: 24,
-    monochrome: false,
+    monochrome: true,
     hasActiveState: false
   },
   {
@@ -2261,7 +2261,7 @@ export const iconMeta: IconMeta[] = [
     section: 'General',
     width: 24,
     height: 24,
-    monochrome: false,
+    monochrome: true,
     hasActiveState: false
   },
   {
@@ -2271,7 +2271,7 @@ export const iconMeta: IconMeta[] = [
     section: 'General',
     width: 24,
     height: 24,
-    monochrome: false,
+    monochrome: true,
     hasActiveState: false
   },
   {
@@ -2371,7 +2371,7 @@ export const iconMeta: IconMeta[] = [
     section: 'General',
     width: 24,
     height: 24,
-    monochrome: false,
+    monochrome: true,
     hasActiveState: false
   },
   {
@@ -2671,7 +2671,7 @@ export const iconMeta: IconMeta[] = [
     section: 'General',
     width: 24,
     height: 24,
-    monochrome: false,
+    monochrome: true,
     hasActiveState: false
   },
   {
@@ -2681,7 +2681,7 @@ export const iconMeta: IconMeta[] = [
     section: 'General',
     width: 24,
     height: 24,
-    monochrome: false,
+    monochrome: true,
     hasActiveState: false
   },
   {
@@ -2691,7 +2691,7 @@ export const iconMeta: IconMeta[] = [
     section: 'General',
     width: 24,
     height: 24,
-    monochrome: false,
+    monochrome: true,
     hasActiveState: false
   },
   {
@@ -3031,7 +3031,7 @@ export const iconMeta: IconMeta[] = [
     section: 'General',
     width: 24,
     height: 24,
-    monochrome: false,
+    monochrome: true,
     hasActiveState: false
   },
   {
@@ -3881,7 +3881,7 @@ export const iconMeta: IconMeta[] = [
     section: 'Profile',
     width: 20,
     height: 20,
-    monochrome: false,
+    monochrome: true,
     hasActiveState: false
   },
   {
@@ -4701,7 +4701,7 @@ export const iconMeta: IconMeta[] = [
     section: 'Editor',
     width: 16,
     height: 16,
-    monochrome: false,
+    monochrome: true,
     hasActiveState: false
   },
   {

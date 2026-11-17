@@ -169,7 +169,7 @@ BADGES_MOUNTS = ("assets", "badges", "categories", "status", "users")
 
 # Sites pages under a prefix that an API alias serves (root-aliases.nix): Sites has the
 # exact page and the alias keeps the one prefix location. /cast is the Cast not-found
-# page; /cast/... is the gatekeeper's.
+# page; /cast/... is the gatekeeper's, except the stream and watch links below.
 SITES_EXACT_PAGES = ("/cast",)
 
 
@@ -332,10 +332,17 @@ def render(table, cfg, mime):
     # Keep the Sites .data regex after every API regex.
     locations += location(r"~ \.data$", proxy("sites"))
     for prefix in prefixes:
+        if prefix in ("/admin", "/server"):
+            continue
         if prefix in SITES_EXACT_PAGES:
             locations += location("= " + prefix, proxy("sites"))
-        elif prefix not in ("/admin", "/server"):
+        else:
             locations += pair(prefix, "sites")
+        # The Cast stream and watch links (/cast/s/, /cast/w/) are longer than the gatekeeper's
+        # ^~ /cast/, so Sites serves them; the rest of /cast/ stays the gatekeeper's (root-aliases.nix).
+        if prefix == "/cast":
+            for page in ("/cast/s/", "/cast/w/"):
+                locations += location("^~ " + page, proxy("sites"))
     for path in ("/", "/favicon.ico", "/dcl-sdk-types.json", "/docs/index.md", "/_root.data",
                  "/terms", "/privacy", "/content-policy", "/ethics", "/rewards", "/rewards-terms",
                  "/referral", "/referral-terms", "/credits-terms", "/security", "/brand"):

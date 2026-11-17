@@ -106,7 +106,13 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
       { timeoutMs: 20_000, intervalMs: 100, what: 'the debug action to play the wave emote' })
   } finally {
     await explorer.run(before.overrideFps == null ? '/session_graphics fps' : '/session_graphics fps ' + before.overrideFps)
-    if (await explorer.hud.isVisible(panel)) await explorer.escape()
+    // The panel's own Close button, not Escape: with the filter field focused the HUD leaves Cancel
+    // to the field, and a panel left open would stay over every later scenario. The panel comes
+    // after the rail in document order, so its Close is the last match.
+    if (await explorer.hud.isVisible(panel)) {
+      const closes = (await explorer.hud.list('button')).filter((entry) => entry.name === 'Close').length
+      await explorer.hud.click({ ...button('Close'), index: closes - 1 })
+    }
     await explorer.hud.waitHidden(panel)
   }
   assert.equal(await explorer.hud.isVisible(button('Play wave')), false)

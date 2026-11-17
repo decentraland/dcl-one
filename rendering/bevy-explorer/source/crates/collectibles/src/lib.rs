@@ -2,6 +2,7 @@ pub mod base_wearables;
 pub mod emotes;
 pub mod ext;
 pub mod smart_wearables;
+pub mod spring_bones;
 pub mod urn;
 pub mod wearables;
 

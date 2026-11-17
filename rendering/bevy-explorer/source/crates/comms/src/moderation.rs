@@ -125,6 +125,13 @@ pub struct SceneRoomModeration {
     pub scene_admins: HashSet<Address>,
 }
 
+/// Marks a remote player the local user must neither see nor hear: blocked either way, or banned
+/// from the current scene's room. `ban_block` keeps it current. While it is present the player's
+/// avatar, nametag and attachments are hidden; anything else that must leave the player out reads
+/// this marker rather than deciding again.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BlockedOrBanned;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum MetadataError {
     NotAnObject,

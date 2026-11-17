@@ -205,14 +205,22 @@ def tag_rows(*names):
     return [{'ref': f'refs/tags/{name}'} for name in names]
 
 
+def ref_rows(space, name, commit, kind='commit'):
+    return [{'ref': f'refs/{space}/{name}', 'object': {'sha': commit, 'type': kind}}]
+
+
+HEAD = 'f' * 40
 WINIT = 'repos/rust-windowing/winit'
 WINIT_TAGS = WINIT + '/git/matching-refs/tags/v'
+WINIT_TAG = WINIT + '/git/matching-refs/tags/v0.30.12'
+WINIT_COMPARE = WINIT + '/compare/' + 'a' * 40 + '...' + HEAD
+DRACO = 'repos/example/draco-oxide'
 
 
 class CheckTests(unittest.TestCase):
     def test_a_tag_that_stayed_reports_the_newer_tags_of_its_scheme(self):
         source = {'name': 'winit', 'upstream': 'https://github.com/rust-windowing/winit', 'commit': 'a' * 40, 'ref': 'v0.30.12'}
-        answers = {WINIT + '/compare/' + 'a' * 40 + '...v0.30.12': {'ahead_by': 0, 'behind_by': 0},
+        answers = {WINIT_COMPARE: {'ahead_by': 0, 'behind_by': 0}, WINIT_TAG: ref_rows('tags', 'v0.30.12', HEAD),
                    WINIT_TAGS: tag_rows('v0.29.0', 'v0.30.12', 'v0.30.13', 'v0.31.0-beta.2', 'v0.31.0', 'v0.30.9', 'vello-1.0')}
         result = drift.check_source(source, fake_api(answers))
         self.assertEqual(result, {'ref': 'v0.30.12', 'ahead': 0, 'behind': 0, 'named': True, 'tag': True,
@@ -234,22 +242,25 @@ class CheckTests(unittest.TestCase):
 
     def test_a_tag_that_no_longer_names_the_pin_is_off_its_ref(self):
         source = {'name': 'winit', 'upstream': 'https://github.com/rust-windowing/winit', 'commit': 'a' * 40, 'ref': 'v0.30.12'}
-        answers = {WINIT + '/compare/' + 'a' * 40 + '...v0.30.12': {'ahead_by': 2, 'behind_by': 0}, WINIT_TAGS: tag_rows('v0.30.12')}
+        answers = {WINIT_COMPARE: {'ahead_by': 2, 'behind_by': 0}, WINIT_TAG: ref_rows('tags', 'v0.30.12', HEAD),
+                   WINIT_TAGS: tag_rows('v0.30.12')}
         self.assertEqual(drift.off_ref(drift.check_source(source, fake_api(answers))),
                          'the tag moved, or never named the pin: it is 2 commit(s) past it')
 
     def test_a_branch_that_moved_counts_its_commits(self):
         source = {'name': 'draco-oxide', 'upstream': 'https://github.com/example/draco-oxide', 'commit': 'b' * 40, 'ref': 'fix/rans'}
-        answers = {'repos/example/draco-oxide/compare/' + 'b' * 40 + '...fix%2Frans': {'ahead_by': 4, 'behind_by': 0},
-                   'repos/example/draco-oxide/git/matching-refs/tags/fix/rans': []}
+        answers = {DRACO + '/compare/' + 'b' * 40 + '...' + HEAD: {'ahead_by': 4, 'behind_by': 0},
+                   DRACO + '/git/matching-refs/tags/fix/rans': [],
+                   DRACO + '/git/matching-refs/heads/fix/rans': [*ref_rows('heads', 'fix/rans', HEAD), *ref_rows('heads', 'fix/rans-2', 'e' * 40)]}
         result = drift.check_source(source, fake_api(answers))
         self.assertEqual(result, {'ref': 'fix/rans', 'ahead': 4, 'behind': 0, 'named': True, 'tag': False, 'newer_tags': []})
         self.assertIsNone(drift.off_ref(result))
 
     def test_a_pin_the_named_branch_lacks_is_off_its_ref(self):
         source = {'name': 'draco-oxide', 'upstream': 'https://github.com/example/draco-oxide', 'commit': 'b' * 40, 'ref': 'main'}
-        answers = {'repos/example/draco-oxide/compare/' + 'b' * 40 + '...main': {'ahead_by': 4, 'behind_by': 1},
-                   'repos/example/draco-oxide/git/matching-refs/tags/main': tag_rows('maintenance-1')}
+        answers = {DRACO + '/compare/' + 'b' * 40 + '...' + HEAD: {'ahead_by': 4, 'behind_by': 1},
+                   DRACO + '/git/matching-refs/tags/main': ref_rows('tags', 'maintenance-1', 'e' * 40),
+                   DRACO + '/git/matching-refs/heads/main': ref_rows('heads', 'main', HEAD)}
         self.assertEqual(drift.off_ref(drift.check_source(source, fake_api(answers))), 'the pin has 1 commit(s) main lacks')
 
     def test_a_source_pinned_by_revision_alone_watches_the_default_branch_and_claims_nothing(self):
@@ -262,9 +273,31 @@ class CheckTests(unittest.TestCase):
 
     def test_a_source_github_cannot_compare_is_not_checked(self):
         gone = {'name': 'gone', 'upstream': 'https://github.com/example/gone', 'commit': 'd' * 40, 'ref': 'v1'}
-        self.assertIsNone(drift.check_source(gone, fake_api({'repos/example/gone/compare/' + 'd' * 40 + '...v1': None})))
+        answers = {'repos/example/gone/git/matching-refs/tags/v1': ref_rows('tags', 'v1', HEAD),
+                   'repos/example/gone/compare/' + 'd' * 40 + '...' + HEAD: None}
+        self.assertIsNone(drift.check_source(gone, fake_api(answers)))
         elsewhere = {'name': 'x', 'upstream': 'https://example.org/x.git', 'commit': 'e' * 40, 'ref': 'main'}
         self.assertIsNone(drift.check_source(elsewhere, fake_api({})))
+
+    def test_a_ref_that_is_no_tag_or_branch_of_the_repository_is_not_checked(self):
+        # GitHub compare resolves each of these names, so no compare may be asked for.
+        for ref in ('pull/123/head', 'refs/pull/123/head', 'c' * 40, 'v0.30'):
+            with self.subTest(ref=ref):
+                source = {'name': 'winit', 'upstream': 'https://github.com/rust-windowing/winit', 'commit': 'a' * 40, 'ref': ref}
+                answers = {f'{WINIT}/git/matching-refs/tags/{ref}': ref_rows('tags', 'v0.30.12', HEAD) if ref == 'v0.30' else [],
+                           f'{WINIT}/git/matching-refs/heads/{ref}': []}
+                self.assertIsNone(drift.check_source(source, fake_api(answers)))
+                text, ok = drift.check_report([source], fake_api(answers))
+                self.assertFalse(ok)
+                self.assertIn(f'NOT CHECKED: GitHub cannot compare the tag or branch {ref} with aaaaaaaaaa', text)
+
+    def test_an_annotated_tag_is_compared_by_the_commit_it_names(self):
+        source = {'name': 'winit', 'upstream': 'https://github.com/rust-windowing/winit', 'commit': 'a' * 40, 'ref': 'v0.30.12'}
+        answers = {WINIT_TAG: ref_rows('tags', 'v0.30.12', 'e' * 40, 'tag'),
+                   WINIT + '/git/tags/' + 'e' * 40: {'object': {'sha': HEAD, 'type': 'commit'}},
+                   WINIT_COMPARE: {'ahead_by': 0, 'behind_by': 0}, WINIT_TAGS: tag_rows('v0.30.12')}
+        self.assertEqual(drift.check_source(source, fake_api(answers)),
+                         {'ref': 'v0.30.12', 'ahead': 0, 'behind': 0, 'named': True, 'tag': True, 'newer_tags': []})
 
     def report(self, behind=0):
         sources = [
@@ -272,7 +305,7 @@ class CheckTests(unittest.TestCase):
              'patches': [{'local': False}, {'local': True}]},
             {'name': 'gltf', 'upstream': GLTF, 'commit': 'c' * 40, 'ref': None},
         ]
-        answers = {WINIT + '/compare/' + 'a' * 40 + '...v0.30.12': {'ahead_by': 0, 'behind_by': behind},
+        answers = {WINIT_COMPARE: {'ahead_by': 0, 'behind_by': behind}, WINIT_TAG: ref_rows('tags', 'v0.30.12', HEAD),
                    WINIT_TAGS: tag_rows('v0.30.12', 'v0.30.13', 'v0.31.0'),
                    'repos/gltf-rs/gltf': {'default_branch': 'main'},
                    'repos/gltf-rs/gltf/compare/' + 'c' * 40 + '...main': {'ahead_by': 26, 'behind_by': 2}}

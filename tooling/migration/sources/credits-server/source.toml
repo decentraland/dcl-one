@@ -1,0 +1,122 @@
+name = "credits-server"
+repository = "github.com/decentraland/credits-server"
+revision = "6b7407ef227af07885fe863123c6dbfb9056d1f7"
+database_env = "CREDITS_SERVER_DATABASE_URL"
+after = []
+notes = """
+Imports the USD Credits balance as a ledger (credits.ledger, all in the
+'paid' bucket) and its wallet projections, the wallets' program flags, the
+live multi-account flags (credits.wallet_flags, claim-only) and the Stripe
+orders. See MAPPING.md. Run at cutover, with upstream writes stopped:
+cutover_guard refuses PENDING/EXPIRED USD intents, in-flight Stripe orders,
+unresolved disputes and unreconciled dispute/refund facts.
+
+Not migrated, by reason:
+- MANA-denominated user_credits (goal, on_demand, legacy iap): each is a
+  credit signed by upstream and spendable on the CreditsManager until its
+  expires_at whatever a database says; granting it here too would let it be
+  spent twice. rollbacked_credits and on_demand_credits describe those rows.
+- USD credits not yet available (available_at in the future, held sale
+  proceeds): the node has no hold, so they would be spendable early. A later
+  run imports each once its available_at passes.
+- usd_purchase_intents as credits.authorizations: their salts were signed by
+  upstream; the node's usage index would settle a matching CreditUsed log a
+  second time. SETTLED intents become 'spend' ledger rows; EXPIRED liabilities
+  cannot be proven released from this snapshot and block the import.
+- stripe_events, stripe_payment_refunds, stripe_payment_disputes: webhook
+  de-duplication and reconciliation state of upstream's endpoint; their
+  outcome is folded into purchases.refunded_cents/revoked_credits and the
+  refund ledger rows.
+- iap_credits, iap_account_tokens (App Store state; the node has no IAP),
+  seasons, goals, season_goals, user_progress (the seasons domain is gone),
+  sale_proceeds, proceeds_cursor, proceeds_abandoned_fills, studios,
+  studio_operators, studio_budget_entries, shop_daily_summaries,
+  usd_purchase_alerts (no target; their money effects are user_credits rows).
+- Node-only state left to the node: packs (upstream packs are code), idempotency,
+  captcha_challenges, carts, cart_items, checkouts, fulfillment_outbox,
+  authorizations, authorization_lines, usage_settlements, revocations, usages,
+  usage_index_cursor.
+
+No step has a watermark; every run re-scans and the loads are idempotent
+(ledger rows by tx_ref, purchases by order_id, wallets and flags by address).
+A row the node changed later (a purchase with a newer updated_at, a flag
+lifted by an operator) is kept.
+"""
+
+[[step]]
+name = "cutover_guard"
+targets = []
+extract = "cutover_guard.extract.sql"
+load = "cutover_guard.load.sql"
+key = ["ref"]
+columns = [
+  { name = "ref", type = "text" },
+  { name = "state", type = "text" },
+]
+
+[[step]]
+name = "wallet"
+targets = ["credits.wallets"]
+extract = "wallet.extract.sql"
+load = "wallet.load.sql"
+key = ["address"]
+columns = [
+  { name = "address", type = "text" },
+  { name = "has_started_program", type = "boolean" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "wallet_flag"
+targets = ["credits.wallet_flags"]
+extract = "wallet_flag.extract.sql"
+load = "wallet_flag.load.sql"
+key = ["address"]
+whole = true
+columns = [
+  { name = "address", type = "text" },
+  { name = "ip", type = "text" },
+  { name = "linked_addresses", type = "text[]" },
+  { name = "flagged_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "purchase"
+targets = ["credits.purchases"]
+extract = "purchase.extract.sql"
+load = "purchase.load.sql"
+key = ["order_id"]
+columns = [
+  { name = "order_id", type = "text" },
+  { name = "address", type = "text" },
+  { name = "sku", type = "text" },
+  { name = "credits", type = "numeric" },
+  { name = "amount_cents", type = "bigint" },
+  { name = "quantity", type = "integer" },
+  { name = "source", type = "text" },
+  { name = "upstream_status", type = "text" },
+  { name = "credited", type = "boolean" },
+  { name = "session_id", type = "text" },
+  { name = "payment_intent_id", type = "text" },
+  { name = "refunded_cents", type = "bigint" },
+  { name = "revoked_credits", type = "numeric" },
+  { name = "failure_reason", type = "text" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "ledger"
+targets = ["credits.ledger", "credits.wallets"]
+extract = "ledger.extract.sql"
+load = "ledger.load.sql"
+key = ["address", "ord", "tx_ref"]
+columns = [
+  { name = "address", type = "text" },
+  { name = "ord", type = "integer" },
+  { name = "tx_ref", type = "text" },
+  { name = "kind", type = "text" },
+  { name = "amount", type = "numeric" },
+  { name = "created_at", type = "timestamptz" },
+]
