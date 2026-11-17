@@ -120,14 +120,23 @@ describe('startProjectWatcher', () => {
     });
   });
 
-  describe('when a model is added below assets after the start', () => {
+  // On macOS a write in the moment after `ready` can come before the system delivers events to the
+  // watch, most often while the whole suite runs. The test writes the model again until the watch
+  // reports it: each check is 500 ms apart, longer than the 300 ms the watch waits for a write to
+  // settle. The waits add up to more than the default 5 s of a test.
+  describe('when a model is added below assets after the start', { timeout: 15_000 }, () => {
     it('should tell the main window that the assets of the project changed', async () => {
       startProjectWatcher(project);
       await watchedFolders();
 
-      fs.writeFileSync(path.join(project, 'assets/models/tree.glb'), 'model');
-
-      await vi.waitFor(() => expect(send).toHaveBeenCalled(), { timeout: 10000, interval: 50 });
+      const model = path.join(project, 'assets/models/tree.glb');
+      await vi.waitFor(
+        () => {
+          if (send.mock.calls.length === 0) fs.writeFileSync(model, 'model');
+          expect(send).toHaveBeenCalled();
+        },
+        { timeout: 10_000, interval: 500 },
+      );
       expect(send).toHaveBeenCalledWith(PROJECT_ASSETS_CHANGED_EVENT, { path: project });
     });
   });
