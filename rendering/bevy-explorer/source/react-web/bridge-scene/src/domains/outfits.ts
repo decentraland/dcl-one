@@ -16,12 +16,12 @@ import { sendEquipped } from './wearables'
 import { currentLook, editLook } from './avatarDraft'
 import { captureAvatarThumbnail, waitFrames } from './avatarPreview'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
-import type { OutfitColor, OutfitsData } from '@explorer-core/engine/generated'
+import type { OutfitColor, OutfitData, OutfitsData } from '@explorer-core/engine/generated'
 import type { Ctx } from '../bridge'
 import type { Outfit, OutfitsMetadata, RGBColor } from '@explorer-core/engine/protocol'
 
 const EMPTY: OutfitsMetadata = { outfits: [], namesForExtraSlots: [] }
-const GREY: RGBColor = { r: 0.5, g: 0.5, b: 0.5 }
+const GREY: OutfitColor = { r: 0.5, g: 0.5, b: 0.5, a: 1 }
 // The catalyst takes slots 5 to 9 only with a name the deployer owns.
 const FREE_SLOTS = 5
 // Each listed name is an ownership check at the catalyst.
@@ -77,25 +77,27 @@ async function writeThumbnail(address: string, slot: number, thumbnail: string |
   BevyApi.setOutfitThumbnail(address, slot, kept)
 }
 
-// Unity's outfits reader takes a missing alpha as transparent.
-function opaque(color: { r: number; g: number; b: number; a?: number }): OutfitColor {
+// Other explorers read a missing alpha as 0, so every colour gets one before it is kept or deployed.
+function opaque(color: RGBColor & { a?: number }): OutfitColor {
   return { r: color.r, g: color.g, b: color.b, a: color.a ?? 1 }
+}
+
+// The entity's fields alone, with opaque colours: fields other explorers add are dropped.
+function normalized(outfit: OutfitData): Outfit {
+  return {
+    bodyShape: outfit.bodyShape,
+    eyes: { color: opaque(outfit.eyes.color) },
+    hair: { color: opaque(outfit.hair.color) },
+    skin: { color: opaque(outfit.skin.color) },
+    wearables: outfit.wearables,
+    forceRender: outfit.forceRender ?? []
+  }
 }
 
 // The entity's metadata alone: pictures stay on the device.
 function toDeploy(metadata: OutfitsMetadata): OutfitsData {
   return {
-    outfits: metadata.outfits.map(({ slot, outfit }) => ({
-      slot,
-      outfit: {
-        bodyShape: outfit.bodyShape,
-        eyes: { color: opaque(outfit.eyes.color) },
-        hair: { color: opaque(outfit.hair.color) },
-        skin: { color: opaque(outfit.skin.color) },
-        wearables: outfit.wearables,
-        forceRender: outfit.forceRender ?? []
-      }
-    })),
+    outfits: metadata.outfits.map(({ slot, outfit }) => ({ slot, outfit })),
     namesForExtraSlots: metadata.namesForExtraSlots
   }
 }
@@ -135,7 +137,7 @@ async function loadMetadata(address: string, isGuest: boolean): Promise<OutfitsM
   if (local != null) return local
   if (isGuest) return EMPTY
   const base = await catalystBase()
-  const res = await getJson<{ metadata?: OutfitsMetadata }>(`${base}/lambdas/outfits/${address}`).catch((e: unknown) => {
+  const res = await getJson<{ metadata?: OutfitsData }>(`${base}/lambdas/outfits/${address}`).catch((e: unknown) => {
     if (e instanceof HttpError && e.status === 404) return undefined
     throw e
   })
@@ -143,13 +145,17 @@ async function loadMetadata(address: string, isGuest: boolean): Promise<OutfitsM
   const stored = known.get(key)
   if (stored != null) return stored
   if (res?.metadata == null) return EMPTY
-  known.set(key, res.metadata)
-  return res.metadata
+  const metadata = {
+    ...res.metadata,
+    outfits: res.metadata.outfits.map(({ slot, outfit }) => ({ slot, outfit: normalized(outfit) }))
+  }
+  known.set(key, metadata)
+  return metadata
 }
 
 // Same look, whatever the key order or a missing alpha.
 function sameOutfit(a: Outfit, b: Outfit): boolean {
-  const color = (c: RGBColor): string => {
+  const color = (c: OutfitColor): string => {
     const { r, g, b, a } = opaque(c)
     return `${r},${g},${b},${a}`
   }
@@ -168,9 +174,9 @@ function sameOutfit(a: Outfit, b: Outfit): boolean {
 function currentOutfit(look: AvatarLook): Outfit {
   return {
     bodyShape: look.bodyShape,
-    eyes: { color: look.eyes ?? GREY },
-    hair: { color: look.hair ?? GREY },
-    skin: { color: look.skin ?? GREY },
+    eyes: { color: opaque(look.eyes ?? GREY) },
+    hair: { color: opaque(look.hair ?? GREY) },
+    skin: { color: opaque(look.skin ?? GREY) },
     wearables: look.wearables,
     forceRender: look.forceRender
   }

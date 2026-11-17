@@ -5183,7 +5183,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/outfits.ts",
-      "sha256": "ead5a597885af1f73aa092c295ab0d0e4b8f352a3e86110130e0cc0527984338"
+      "sha256": "d98e502aafc84e87681725a43a075b7d92b5b9d8bd94b797e822098f5e47a772"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/places.ts",
@@ -5391,7 +5391,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
-      "sha256": "361f0575e0491b7649763cac0ba6a995f49312ff8d30ca7925fc60adfbdad333"
+      "sha256": "e0d776eeb3838ceeb80113cb227dbf74f23923f8464fe149d8ea8c8542cbee6b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
@@ -5674,7 +5674,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "33e18b3891f7d6b578862cd8afca7871360d38d6a1f1f2859c7589b3977c1b3c"
+      "sha256": "8a8887e631e9ddcce2a7cc9ba7cef3f3f655e543372b6fcb0f3f5420ab239e75"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -5710,7 +5710,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "2bd6925fa342ff6b4d3f20900beb8ad19765fa6c5ddc9a66ba1e74b4adeb4b97"
+      "sha256": "525dbd957331f49c093b8c7237a2ab20d06f6a7166ad8587cfa190b1310dbd87"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -9034,7 +9034,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpack.clicks.test.tsx",
-      "sha256": "be8dcc595d42e5feda755672974a363a69f0eb4e99e166e8a6f3bf245d5f860e"
+      "sha256": "d2b39a2bc692105ad3b46fff65ba9c821fd709d5ce8b25269c0647ed59af6c6c"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackColors.test.tsx",
@@ -9062,11 +9062,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackOutfitPicture.test.tsx",
-      "sha256": "f5621b51bf2e3cc007f5b4c8d920e2432bbcd2c042bd7deb4c192256e4317e05"
+      "sha256": "fa2c61b19c8fcc1912496c5c12451b64fc1ffde915bdaeb5bddff0835bc3bd6d"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackOutfitSlots.test.tsx",
-      "sha256": "10ac40e2d371ec4b2439882aabcd6109164827c7a9addb2c7145f9fb29b44ff7"
+      "sha256": "058e62af375381c72b235a2a892bb54759132ecd409b2fcf765adceb2e7dc054"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackRandomize.test.tsx",

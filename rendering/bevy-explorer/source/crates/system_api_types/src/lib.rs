@@ -900,7 +900,7 @@ pub struct SettingInfo {
     pub default: f32,
 }
 
-/// A color as the catalyst `outfits` entity stores it. Unity's outfits reader takes a missing `a` as 0.
+/// A color as the catalyst `outfits` entity stores it. Other explorers read a missing `a` as 0.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, ts_rs::TS)]
 #[ts(export)]
 pub struct OutfitColor {

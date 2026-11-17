@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { act } from '@testing-library/react'
 import { enterAsGuest, renderSession, type Harness } from '../harness'
 
-const grey = { color: { r: 0.5, g: 0.5, b: 0.5 } }
+const grey = { color: { r: 0.5, g: 0.5, b: 0.5, a: 1 } }
 const outfit = { bodyShape: '', eyes: grey, hair: grey, skin: grey, wearables: [], forceRender: [] }
 
 describe('the number of outfit slots', () => {

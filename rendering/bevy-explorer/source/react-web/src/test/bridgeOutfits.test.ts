@@ -56,9 +56,14 @@ const outfit = (wearables: string[]) => ({
   wearables,
   forceRender: []
 })
-// As deployed: Unity reads a missing alpha as transparent.
+// As deployed: other explorers read a missing alpha as 0.
 const opaqueGrey = { color: { r: 0.5, g: 0.5, b: 0.5, a: 1 } }
 const deployed = (wearables: string[]) => ({ ...outfit(wearables), eyes: opaqueGrey, hair: opaqueGrey, skin: opaqueGrey })
+// As the page sees outfits read from the catalyst: their colours made opaque.
+const shown = (metadata: OutfitsMetadata) => ({
+  ...metadata,
+  outfits: metadata.outfits.map(({ slot, outfit }) => ({ slot, outfit: deployed(outfit.wearables) }))
+})
 
 type Handler = (msg: PageToScene) => Promise<unknown>
 
@@ -147,7 +152,7 @@ describe('the bridge outfits domain', () => {
         const { request, sent } = await bridge()
         await request({ kind: 'saveOutfit', slot: 1 })
         expect(sent.slice(-2)).toEqual([
-          { kind: 'outfits', metadata: stored },
+          { kind: 'outfits', metadata: shown(stored) },
           { kind: 'outfitSaveFailed', slot: 1, action: 'save', message: 'Error: failed to deploy' }
         ])
       })
@@ -274,7 +279,7 @@ describe('the bridge outfits domain', () => {
       await request({ kind: 'saveOutfit', slot: 0 })
       expect(deployOutfits).not.toHaveBeenCalled()
       expect(sent.slice(-2)).toEqual([
-        { kind: 'outfits', metadata: stored },
+        { kind: 'outfits', metadata: shown(stored) },
         { kind: 'outfitSaveFailed', slot: 0, action: 'save', message: 'Error: slot 0 holds an outfit' }
       ])
     })
