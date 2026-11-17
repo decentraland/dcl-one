@@ -282,7 +282,7 @@ impl VoiceState {
     fn to_json(&self) -> Value {
         let livekit = self.livekit.as_ref();
         let mut report = json!({
-            "mic": { "available": self.mic.available, "enabled": self.mic.enabled, "sceneBlocked": self.mic.scene_blocked },
+            "mic": { "available": self.mic.available, "enabled": self.mic.enabled, "sceneBlocked": self.mic.scene_blocked() },
             "call": self.call,
             "livekit": livekit.is_some(),
             "connected": livekit.map(|livekit| livekit.connected()),
@@ -371,6 +371,13 @@ fn voice_state_cmd(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mic_state(available: bool, enabled: bool) -> MicState {
+        let mut mic = MicState::default();
+        mic.available = available;
+        mic.enabled = enabled;
+        mic
+    }
 
     fn address(last: u8) -> Address {
         Address::from([last; 20])
@@ -554,12 +561,7 @@ mod tests {
     #[test]
     fn voice_state_without_livekit_has_only_the_mic() {
         let state = VoiceState {
-            mic: MicState {
-                available: true,
-                enabled: false,
-                scene_blocked: false,
-                refusals: 0,
-            },
+            mic: mic_state(true, false),
             livekit: None,
             call: None,
         };
@@ -579,12 +581,7 @@ mod tests {
     #[test]
     fn voice_state_with_livekit_reports_rooms_and_speakers() {
         let state = VoiceState {
-            mic: MicState {
-                available: true,
-                enabled: true,
-                scene_blocked: false,
-                refusals: 0,
-            },
+            mic: mic_state(true, true),
             livekit: Some(LivekitVoice::new(
                 [
                     VoiceRoom {
@@ -625,12 +622,7 @@ mod tests {
     #[test]
     fn a_call_reading_that_is_set_needs_no_explanation() {
         let state = VoiceState {
-            mic: MicState {
-                available: true,
-                enabled: false,
-                scene_blocked: false,
-                refusals: 0,
-            },
+            mic: mic_state(true, false),
             livekit: None,
             call: Some(json!({
                 "status": "connected", "callId": "c1", "communityId": null,

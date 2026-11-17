@@ -37,7 +37,7 @@ async function evaluate<T>(expression: string): Promise<T> {
 }
 
 // The Sites surface's outward focus ring (apps/ui3/src/components/surface.css), which the pages run under.
-const surfaceFocus = ":where(.ui-surface, .xc, .st, .ch) :where(button, a, input, select, textarea, [tabindex]):focus-visible { outline: 2px solid #ff829d; outline-offset: 3px; }";
+const surfaceFocus = "@layer dcl.reset { :where(.ui-surface, .xc, .st, .ch) :where(button, a, input, select, textarea, [tabindex]):focus-visible { outline: 2px solid #ff829d; outline-offset: 3px; } }";
 
 async function load(width: number, items: WoUpcomingCard[] = upcoming) {
   await session.send("Emulation.setDeviceMetricsOverride", { width, height: 1000, deviceScaleFactor: 1, mobile: false });

@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use crate::routing::{get, post};
+use crate::shared::routing::{get, post};
 use axum::extract::{Path, Query, State as AxumState};
 use axum::http::{HeaderMap, StatusCode};
 use axum::{Json, Router};

@@ -23,13 +23,13 @@ use proof::{ProofVerifier, VerifiedRoom};
 use crate::protocol::room_authority::{
     self as wire, AUTHORITY_PATH, MAX_BODY, MAX_CLAIMS_BYTES, MAX_LEASES,
 };
+use crate::shared::routing::any;
 use async_trait::async_trait;
 use axum::{
     Router,
     body::{Body, to_bytes},
     http::{HeaderMap, Method, Request, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::any,
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use hmac::{Hmac, KeyInit, Mac};

@@ -59,7 +59,7 @@ pub(crate) mod tests;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::routing::{any, erase, get};
+use crate::shared::routing::{any, erase, get};
 use axum::extract::{Path, State as AxumState};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
