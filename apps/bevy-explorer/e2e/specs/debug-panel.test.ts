@@ -88,8 +88,10 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     } finally {
       await explorer.key('KeyW', 'up')
     }
+    // The world, high in the sky left of the panel: mid-height, another session's avatar can stand
+    // under the pointer, and a click on it opens its menu over the rail.
     const open = await explorer.hud.get(panel)
-    await explorer.clickAt(open.x / 2, open.y + open.height / 2)
+    await explorer.clickAt(open.x / 2, open.y + 10)
     await explorer.hud.click(sidebarSettings)
     await explorer.hud.wait(button('Debug panel'))
     await explorer.hud.click(sidebarSettings)
