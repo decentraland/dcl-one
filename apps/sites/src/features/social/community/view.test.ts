@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canViewContent, membersLabel, membershipState, readAction, roleLabel, signInReturnHref, thumbnailUrl } from "./view";
+import { canViewContent, faceUrl, membersLabel, membershipState, readAction, roleLabel, signInReturnHref, thumbnailUrl } from "./view";
 
 const ID = "e99471aa-31c4-4952-abf6-99905445f43b";
 const base = { communityId: ID, requests: [] as { id: string; communityId: string; type: string; status: string }[] };
@@ -95,22 +95,46 @@ describe("helpers", () => {
 
 describe("thumbnailUrl", () => {
   const own = `/assets-cdn/social/communities/${ID}/raw-thumbnail.png`;
+  const cdn = `/social/communities/${ID}/raw-thumbnail.png`;
 
-  it("falls back to the node's own image when the API names none", () => {
+  it("falls back to the node's own image when the API names none or a malformed one", () => {
     expect(thumbnailUrl({ id: ID, thumbnailUrl: null })).toBe(own);
     expect(thumbnailUrl({ id: ID, thumbnailUrl: "N/A" })).toBe(own);
     expect(thumbnailUrl({ id: ID, thumbnailUrl: "not a url" })).toBe(own);
-  });
-
-  it("reads a communities CDN image through the site's asset alias", () => {
-    expect(thumbnailUrl({ id: ID, thumbnailUrl: `https://assets-cdn.decentraland.org/social/communities/${ID}/raw-thumbnail.png` })).toBe(own);
-  });
-
-  it("keeps a mirrored community's own image URL", () => {
-    expect(thumbnailUrl({ id: ID, thumbnailUrl: "https://images.example.org/c.png" })).toBe("https://images.example.org/c.png");
-  });
-
-  it("refuses a URL that is not http(s)", () => {
     expect(thumbnailUrl({ id: ID, thumbnailUrl: "javascript:alert(1)" })).toBe(own);
+  });
+
+  it("reads an https communities CDN image through the site's asset alias", () => {
+    expect(thumbnailUrl({ id: ID, thumbnailUrl: `https://assets-cdn.decentraland.org${cdn}` })).toBe(own);
+    expect(thumbnailUrl({ id: ID, thumbnailUrl: `https://cdn.decentraland.org${cdn}` })).toBe(own);
+  });
+
+  it("rejects http, unknown hosts and other paths", () => {
+    const other = `/assets-cdn/social/communities/${ID}/raw-thumbnail.png`;
+    expect(thumbnailUrl({ id: ID, thumbnailUrl: `http://assets-cdn.decentraland.org${cdn}` })).toBe(other);
+    expect(thumbnailUrl({ id: ID, thumbnailUrl: `https://tracker.example.org${cdn}` })).toBe(other);
+    expect(thumbnailUrl({ id: ID, thumbnailUrl: "https://assets-cdn.decentraland.org/anything.png" })).toBe(other);
+  });
+});
+
+describe("faceUrl", () => {
+  const entity = "bafkreifkus6iegxyerri7rbfzmxrj5c726prza7lqobufstyc54yuzxwpy";
+
+  it("keeps a profile image as a path on this site", () => {
+    expect(faceUrl(`https://profile-images.decentraland.org/entities/${entity}/face.png`)).toBe(`/profile-images/entities/${entity}/face.png`);
+    expect(faceUrl("bafyhash")).toBe("/content/contents/bafyhash");
+  });
+
+  it("accepts this site's own absolute https face URL as its path", () => {
+    expect(faceUrl(`https://decentraland.org/profile-images/entities/${entity}/face.png`)).toBe(`/profile-images/entities/${entity}/face.png`);
+  });
+
+  it("rejects http, other hosts' images, data URLs and malformed values", () => {
+    expect(faceUrl(`http://profile-images.example.org/entities/${entity}/face.png`)).toBeUndefined();
+    expect(faceUrl("https://tracker.example.org/pixel.png")).toBeUndefined();
+    expect(faceUrl("data:image/png;base64,AAAA")).toBeUndefined();
+    expect(faceUrl("//tracker.example.org/x.png")).toBeUndefined();
+    expect(faceUrl("")).toBeUndefined();
+    expect(faceUrl(null)).toBeUndefined();
   });
 });

@@ -18,7 +18,7 @@ import { CommunityMembers } from "./CommunityMembers";
 import styles from "./CommunityPage.module.css";
 import { isRouteFatal } from "./errors";
 import { useCommunityMembership, type Membership } from "./useCommunityMembership";
-import { canViewContent, membersLabel, thumbnailUrl } from "./view";
+import { canViewContent, faceUrl, membersLabel, thumbnailUrl } from "./view";
 
 type Section = "members" | "events";
 
@@ -94,6 +94,7 @@ function CommunityCard({
   const titleId = useId();
   const profiles = useCreatorProfiles([[community.ownerAddress]]);
   const owner = profiles[community.ownerAddress.toLowerCase()];
+  const ownerFace = faceUrl(owner?.avatarUrl);
   const ownerName = community.ownerName || owner?.name || shortAddress(community.ownerAddress);
   return (
     <section className={styles.info} aria-labelledby={titleId}>
@@ -117,8 +118,8 @@ function CommunityCard({
             <span>{membersLabel(community.membersCount)}</span>
           </p>
           <p className={styles.owner}>
-            {owner?.avatarUrl ? (
-              <img className={styles.ownerAvatar} src={owner.avatarUrl} alt="" loading="lazy" />
+            {ownerFace ? (
+              <img className={styles.ownerAvatar} src={ownerFace} alt="" loading="lazy" />
             ) : (
               <span className={styles.ownerAvatar} aria-hidden="true">
                 {ownerName.charAt(0).toUpperCase()}

@@ -1,3 +1,4 @@
+import { profileFaceUrl } from "@/data/lib/auth/profile-face-url";
 import { siteUrl } from "@/data/lib/catalyst/bases";
 import type { CommunityInfo, JoinRequest } from "@/data/lib/catalyst/social/community-detail";
 
@@ -27,24 +28,47 @@ export function signInReturnHref(id: string, action: CommunityAction, nonce: str
 }
 
 const THUMBNAIL_PATH = /^\/social\/communities\/[0-9a-f-]{36}\/raw-thumbnail\.png$/i;
+/** The communities CDN the social API names images on; this site reads them through `/assets-cdn`. */
+const THUMBNAIL_HOSTS = new Set(["assets-cdn.decentraland.org", "cdn.decentraland.org"]);
 
 /**
- * The community's image. A URL the API names wins: on the communities CDN it is read through this
- * site's asset alias, any other http(s) URL (a mirrored community's) as given. Without one, the
- * image the node keeps for the community, which answers 404 when there is none.
+ * The community's image, always from this site's origin. A URL the API names is used only when it is
+ * an https image on the communities CDN, read through the `/assets-cdn` alias; anything else (another
+ * host, http, not a URL) falls back to the image the node keeps, which answers 404 when there is none.
  */
 export function thumbnailUrl(community: { id: string; thumbnailUrl: string | null }): string {
   const named = community.thumbnailUrl?.trim();
-  if (named && named !== "N/A") {
+  if (named) {
     try {
       const url = new URL(named);
-      if (THUMBNAIL_PATH.test(url.pathname)) return siteUrl(`/assets-cdn${url.pathname}`);
-      if (url.protocol === "https:" || url.protocol === "http:") return url.href;
+      if (url.protocol === "https:" && THUMBNAIL_HOSTS.has(url.hostname) && THUMBNAIL_PATH.test(url.pathname)) {
+        return siteUrl(`/assets-cdn${url.pathname}`);
+      }
     } catch {
       // Not a URL: the node's own image below.
     }
   }
   return siteUrl(`/assets-cdn/social/communities/${encodeURIComponent(community.id)}/raw-thumbnail.png`);
+}
+
+/** Paths of this site that serve profile faces: the profile image cache and the node's content store. */
+const FACE_PATH = /^\/(profile-images\/entities|content\/contents)\//;
+
+/**
+ * A member's or owner's face as a path on this site, or undefined (the initial shows instead). Faces
+ * come from profile data anyone can write, so no other host is ever requested: an https URL counts
+ * only for its path on this site's profile image cache or content store.
+ */
+export function faceUrl(value: string | undefined | null): string | undefined {
+  const local = profileFaceUrl(value ?? undefined, "");
+  if (!local) return undefined;
+  if (local.startsWith("/") && !local.startsWith("//")) return FACE_PATH.test(local) ? local : undefined;
+  try {
+    const url = new URL(local);
+    return url.protocol === "https:" && FACE_PATH.test(url.pathname) ? url.pathname : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const compact = new Intl.NumberFormat("en-US", { notation: "compact", compactDisplay: "short" });

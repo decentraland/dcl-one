@@ -5,14 +5,13 @@ import { Button, Spinner } from "@dcl/one-ui";
 import { GeneralVerified } from "@dcl/one-ui/foundations/icons";
 
 import { useAuth } from "@/data/lib/auth/context";
-import { profileFaceUrl } from "@/data/lib/auth/profile-face-url";
 import { shortAddress } from "@/data/lib/catalyst/format/address";
 import type { CommunityInfo, CommunityMember } from "@/data/lib/catalyst/social/community-detail";
 import { membersQuery } from "@/data/lib/community/queries";
 
 import styles from "./CommunityLists.module.css";
 import { useLoadMore } from "./useLoadMore";
-import { roleLabel } from "./view";
+import { faceUrl, roleLabel } from "./view";
 
 /**
  * A private community's members are read signed, as the member viewing it (only members see them);
@@ -71,8 +70,8 @@ export function CommunityMembers({ community }: { community: CommunityInfo }) {
 
 function MemberRow({ member }: { member: CommunityMember }) {
   const name = member.name || shortAddress(member.memberAddress);
-  // A relative URL renders the same on the server and in the browser.
-  const face = profileFaceUrl(member.profilePictureUrl ?? undefined, "");
+  // A path on this site renders the same on the server and in the browser.
+  const face = faceUrl(member.profilePictureUrl);
   return (
     <li className={styles.member}>
       {face ? (
