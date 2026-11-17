@@ -280,12 +280,9 @@
   min-width: 300px;
   max-width: 430px;
   background: rgba(0, 0, 0, .3);
-  transition: transform .2s ease, box-shadow .2s ease;
 }
-.wo-sm:hover, .wo-sm:focus-within {
-  transform: translateY(-4px);
-  box-shadow: 0 2px 12px 12px rgba(255, 255, 255, .3);
-}
+/* No lift or glow on hover or focus: Figma Events > card-hover (16295:37451) has neither, and the phone carousel's
+   scroll track would clip both. The hover state is the revealed actions. */
 .wo-sm__thumbwrap {
   width: 42%;
   height: 140px;
@@ -524,7 +521,7 @@ h2.wo-all__title {
 .wo-col__filler { flex: 1; min-height: 12px; background: var(--dcl-transparencies-white-10); border-radius: var(--dcl-radius-md); }
 
 .wo-fc { border-radius: var(--dcl-radius-md); overflow: hidden; cursor: pointer; position: relative; width: 100%; min-width: 0; }
-.wo-fc:hover { box-shadow: 0 2px 12px 12px rgba(255, 255, 255, .3); }
+/* No glow: Figma Events > event-card hover (16295:37502) has none, and the day column's 8px scroll padding clipped it. */
 .wo-fc:hover [data-role="hover-actions"],
 .wo-fc:focus-within [data-role="hover-actions"] { opacity: 1; visibility: visible; pointer-events: auto; transform: translateY(0); }
 .wo-fc:hover [data-role="time-pill"],
