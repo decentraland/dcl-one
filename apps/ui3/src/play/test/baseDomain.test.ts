@@ -107,6 +107,12 @@ describe('the Pulse host behind the gateway', () => {
     expect(m.engineServiceOptions().pulseServer).toBe('pulse.example.test')
   })
 
+  it('reaches the engine launch in place of a page-host value in the address bar', async () => {
+    await load('pulse.example.test', `/?pulseServer=${window.location.host}`)
+    const { engineLaunch } = await import('../lib/engineLaunch')
+    expect(engineLaunch(new URLSearchParams(window.location.search)).options.pulseServer).toBe('pulse.example.test')
+  })
+
   it('plays no part under ?baseDomain=, where Pulse composes from the base domain', async () => {
     const m = await load('pulse.example.test', '/?baseDomain=decentraland.org')
     expect(m.serviceUrl('pulseServer')).toBe('pulse-server.decentraland.org')
