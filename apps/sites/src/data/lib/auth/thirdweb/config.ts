@@ -11,6 +11,7 @@ declare global {
       thirdwebSignProxy?: string;
       docsBase?: string;
       commitHash?: string;
+      pulseServer?: string;
     };
   }
 }
