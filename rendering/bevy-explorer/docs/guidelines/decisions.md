@@ -581,6 +581,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   preview mode asks again on every read. A later failure of another kind does not shorten a
   session entry, and a successful download of the url clears its entry. At most 4096 urls are
   held.
+- **A content download that does not match its hash fails the read**, so bytes that are not the
+  file the scene named never reach a loader. It is a failure like a dropped transfer, asked for
+  again after 10 s, not a missing file. A name the check cannot verify is read as before, uncached.
+  Measured first: no correct file of 4574 from live scenes, worlds, wearables and emotes failed it.
 - **Camera layers are identified by entity**, not by an explicit layer number; the cleanup in
   #1320 waits on the protocol change.
 - **`-logFile` with one dash is accepted** (rewritten to `--log-file` before clap, `main.rs`):
