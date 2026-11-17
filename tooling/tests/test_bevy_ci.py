@@ -120,8 +120,8 @@ class WorkflowTest(unittest.TestCase):
                       "&& github.ref == 'refs/heads/main' }}\n", daily)
 
     def test_the_daily_upstream_run_only_reads_the_repository(self):
-        # Publishing a revision writes a ref. The daily run only reads the repository: a maintainer
-        # publishes by hand. The one permission to write is for issues, on the job that reports a failure.
+        # Publishing a revision writes a ref. The daily run only reads the repository: the publish-sources workflow
+        # publishes on a push to main. The one permission to write is for issues, on the job that reports a failure.
         daily = (ci.ROOT / '.github/workflows/bevy-explorer-upstream.yml').read_text()
         self.assertEqual(re.findall(r'^permissions:\n((?:  .+\n)+)', daily, re.M), ['  contents: read\n'])
         jobs = dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)', daily.split('\njobs:\n', 1)[1]))
@@ -170,17 +170,45 @@ class WorkflowTest(unittest.TestCase):
         step = plan[plan.rfind('- name:', 0, pins):pins]
         self.assertNotIn('if:', step)
         self.assertNotIn('continue-on-error', plan)
-        # Cargo fetches each revision from this repository. A revision with no ref fails here, and the
-        # error names the command that publishes it.
-        published = plan.index('          python3 tooling/patched-sources.py publish --check || {\n')
+        # Cargo fetches each revision from this repository by id, and GitHub serves a fork's commits through
+        # it. A revision that neither has fails here, and the error names the command that pushes it to a fork.
+        published = plan.index('          python3 tooling/patched-sources.py publish --check --fetchable || {\n')
         self.assertLess(pins, published)
         select = plan.index('- name: Select engine builds from their inputs')
         self.assertLess(published, select)
         step = plan[plan.rfind('- name:', 0, published):select]
         self.assertNotIn('if:', step)
-        self.assertRegex(step, r"echo '::error::.+`python3 tooling/patched-sources\.py publish`\.'\n +exit 1\n")
+        self.assertRegex(step, r"echo '::error::.+`python3 tooling/patched-sources\.py publish --remote [^`]+`\.'\n +exit 1\n")
         # The plan job's default runner image has the Python the tool needs.
         self.assertRegex(plan, r"(?m)^    runs-on: .*'ubuntu-26\.04'")
+
+    def test_a_push_to_main_publishes_the_pinned_revisions(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
+        # The CI workflow only reads the repository: its pending runs on main can be cancelled.
+        self.assertNotIn('contents: write', workflow)
+        publish = (ci.ROOT / '.github/workflows/bevy-explorer-publish-sources.yml').read_text()
+        # One run for each push to main that changes a source, and none is cancelled: a cancelled run would leave
+        # the `rev` of its push without a ref.
+        self.assertIn("on:\n  push:\n    branches:\n      - main\n    paths:\n      - rendering/bevy-explorer/patches/**\n", publish)
+        self.assertNotIn('concurrency', publish.replace('# No concurrency group', ''))
+        self.assertEqual(re.findall(r'^permissions:\n((?:  .+\n)+)', publish, re.M), ['  contents: read\n'])
+        jobs = dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)', publish.split('\njobs:\n', 1)[1]))
+        self.assertEqual(list(jobs), ['publish'])
+        job = jobs['publish']
+        self.assertIn("    if: github.ref == 'refs/heads/main'\n", job)
+        self.assertEqual(re.findall(r'^    permissions:\n((?:      .+\n)+)', job, re.M), ['      contents: write\n'])
+        # The token is in the environment of the publish step alone, not in the checkout's configuration.
+        self.assertIn('          persist-credentials: false\n', job)
+        self.assertEqual(job.count('github.token'), 1)
+        self.assertNotIn('secrets.', job)
+        # It rebuilds from the upstream commits that the daily run caches: the same key and directory.
+        daily = (ci.ROOT / '.github/workflows/bevy-explorer-upstream.yml').read_text()
+        self.assertEqual(self.upstream_commit_cache(job), self.upstream_commit_cache(daily))
+        self.assertIn('      DCL_PATCHED_SOURCES_CACHE: ${{ github.workspace }}/.cache/patched-sources\n', job)
+        run = job.index('python3 tooling/patched-sources.py publish\n')
+        self.assertLess(job.index('actions/cache/restore@'), run)
+        self.assertNotIn('--remote', job)
+        self.assertNotIn('--check', job)
 
     def test_only_the_test_suite_rebuilds_a_tree_and_only_the_bevy_one(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')

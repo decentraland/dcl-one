@@ -36,3 +36,10 @@ export { textClasses } from './text-styles'
 
 export { InputExplorerNames } from './components/InputExplorerNames/InputExplorerNames'
 export type { InputExplorerNamesProps } from './components/InputExplorerNames/InputExplorerNames'
+
+export { TitleBar } from './components/TitleBar/TitleBar'
+export type {
+  TitleBarProps,
+  TitleBarSection,
+  TitleBarLinkProps
+} from './components/TitleBar/TitleBar'

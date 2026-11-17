@@ -17,9 +17,6 @@ pub mod sim;
 
 use chains::{plan_chains, SkinJoint};
 
-/// How far up a wearable's own bones a branch is followed to the body bone it hangs off.
-pub const MAX_BRANCH_DEPTH: usize = 64;
-
 pub struct SpringBonesPlugin;
 
 impl Plugin for SpringBonesPlugin {
@@ -52,13 +49,14 @@ pub struct SpringJoint {
 }
 
 /// The chains of one wearable, from the joints of its skins as loaded, each joint once.
-/// `body_bone` gives the body's bone for a wearable joint that names one. A chain off a bone the
-/// body lacks is left out, with the chains that branch from it.
+/// `body_bone` gives the body's bone for a wearable joint that names one, and `rest_rotation` a
+/// joint's local rotation as authored. A chain off a bone the body lacks is left out, with the
+/// chains that branch from it.
 pub fn wearable_chains(
     joints: &[Entity],
     nodes: &Query<(&Name, &ChildOf)>,
-    transforms: &Query<&Transform>,
     body_bone: impl Fn(Entity) -> Option<Entity>,
+    rest_rotation: impl Fn(Entity) -> Option<Quat>,
     params: Option<&SpringBoneModel>,
 ) -> Vec<SpringChain> {
     let mut places = HashMap::new();
@@ -112,9 +110,7 @@ pub fn wearable_chains(
                 .map(|(ix, params)| SpringJoint {
                     entity: joints[ix],
                     params,
-                    rest_rotation: transforms
-                        .get(joints[ix])
-                        .map_or(Quat::IDENTITY, |transform| transform.rotation),
+                    rest_rotation: rest_rotation(joints[ix]).unwrap_or(Quat::IDENTITY),
                 })
                 .collect(),
         });
@@ -146,8 +142,8 @@ mod tests {
         planned.0 = wearable_chains(
             &skin.joints,
             &nodes,
-            &transforms,
             |joint| (joint == skin.wearable_head).then_some(skin.body_head),
+            |joint| transforms.get(joint).map(|t| t.rotation).ok(),
             None,
         );
     }

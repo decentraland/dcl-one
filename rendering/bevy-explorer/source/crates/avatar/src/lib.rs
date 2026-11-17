@@ -920,10 +920,12 @@ fn update_render_avatar(
         }
 
         if let Some(attach_points) = maybe_attach_points {
-            // reparent attach points
+            // reparent attach points. they leave the bones the nametag's offset was measured
+            // on: it is measured again on the new body
             commands
                 .entity(entity)
-                .try_push_children(&attach_points.entities());
+                .try_push_children(&attach_points.entities())
+                .try_remove::<NametagHeadOffset>();
         }
 
         if let Some(scene_ent) = maybe_scene_ent {
@@ -1230,14 +1232,15 @@ fn process_avatar(
     mut graphs: ResMut<Assets<AnimationGraph>>,
     (
         name_and_parent,
+        local_transforms,
         previous_avatar,
         scene_ent,
         previous_animator,
         mut contexts,
         timestamp,
-        transforms,
     ): (
         Query<(&Name, &ChildOf)>,
+        Query<(&Transform, &ChildOf)>,
         Query<&PreviousAvatar>,
         Query<&SceneEntity>,
         Query<
@@ -1251,7 +1254,6 @@ fn process_avatar(
         >,
         Query<&mut RendererSceneContext>,
         Res<MonotonicTimestamp<PbAssetLoadLoadingState>>,
-        Query<&Transform>,
     ),
 ) {
     for (avatar_ent, root_gt, def, loaded_avatar, root_player_entity) in query.iter() {
@@ -1767,74 +1769,51 @@ fn process_avatar(
             spring_chains.extend(spring_bones::wearable_chains(
                 &skin_joints,
                 &name_and_parent,
-                &transforms,
                 |joint| armature_map.get(&joint).map(|target| **target),
+                |joint| {
+                    local_transforms
+                        .get(joint)
+                        .map(|(transform, _)| transform.rotation)
+                        .ok()
+                },
                 model.spring_bones.as_deref(),
             ));
 
             // remap bones
             for scene_ent in scene_spawner.iter_instance_entities(*instance) {
                 if let Ok(mut skin) = skins.get_mut(scene_ent) {
-                    let joints = skin
-                        .joints
-                        .iter()
-                        .map(|joint| {
-                            *armature_map.get(joint).unwrap_or_else(|| {
-                                // a bone of the wearable's own. Keep the branch it is on by
-                                // moving the branch under the body bone it hangs off. A branch
-                                // that starts at an `avatar_*` bone the body lacks is kept the
-                                // same way, or under the body's armature when that bone sits
-                                // directly under the wearable's, and stays rigid: no chain
-                                // hangs off that bone.
-                                let mut top = *joint;
-                                for _ in 0..spring_bones::MAX_BRANCH_DEPTH {
-                                    let Ok((name, parent)) = name_and_parent.get(top) else {
-                                        break;
-                                    };
-                                    let Ok(parent_name) = named_ents.get(parent.parent()) else {
-                                        break;
-                                    };
-                                    let parent_name = parent_name.to_lowercase();
-                                    if let Some(body_bone) =
-                                        target_armature_entities.get(&parent_name)
-                                    {
-                                        // once for a branch, however many joints and meshes
-                                        // lead to it
-                                        if moved_branches.insert(top) {
-                                            commands.entity(top).try_insert(ChildOf(*body_bone));
-                                            if name.to_lowercase().starts_with("avatar_") {
-                                                warn!(
-                                                    "the body has no bone {name:?}: the wearable's bones under it stay rigid under {parent_name:?}"
-                                                );
-                                            }
-                                        }
-                                        break;
-                                    }
-                                    if parent_name == "armature" {
-                                        // the wearable's own nodes under the armature moved to
-                                        // the body's above. An `avatar_*` one was set to be
-                                        // despawned instead: keep it, as the skin uses a bone
-                                        // under it.
-                                        if name.to_lowercase().starts_with("avatar_")
-                                            && moved_branches.insert(top)
-                                        {
-                                            wearable_armature_to_despawn.remove(&top);
-                                            commands.entity(top).try_insert(ChildOf(armature_node));
-                                            warn!(
-                                                "the body has no bone {name:?}: the wearable's bones under it stay rigid under the armature"
-                                            );
-                                        }
-                                        break;
-                                    }
-                                    top = parent.parent();
-                                }
-
-                                &joint
-                            })
-                        })
-                        .copied()
-                        .collect();
-                    skin.joints = joints;
+                    for joint in &mut skin.joints {
+                        if let Some(body_bone) = armature_map.get(joint) {
+                            *joint = **body_bone;
+                            continue;
+                        }
+                        // a bone of the wearable's own: keep the branch it is on
+                        let Some(branch) = wearable_branch(
+                            *joint,
+                            &name_and_parent,
+                            &named_ents,
+                            &target_armature_entities,
+                        ) else {
+                            continue;
+                        };
+                        // once for a branch, however many joints and meshes lead to it
+                        if !moved_branches.insert(branch.top) {
+                            continue;
+                        }
+                        let under = branch.body_bone.unwrap_or_else(|| {
+                            // an `avatar_*` node under the wearable's armature was set to be
+                            // despawned: keep it, as the skin uses a bone under it
+                            wearable_armature_to_despawn.remove(&branch.top);
+                            armature_node
+                        });
+                        commands.entity(branch.top).try_insert(ChildOf(under));
+                        if branch.body_lacks_top {
+                            warn!(
+                                "the body has no bone {:?}: the wearable's bones under it stay rigid under {:?}",
+                                branch.name, branch.parent_name
+                            );
+                        }
+                    }
                 }
             }
 
@@ -1867,11 +1846,12 @@ fn process_avatar(
             .entity(avatar_ent)
             .try_insert((AvatarProcessed, Visibility::Inherited));
 
-        // the head bone's units, in metres
+        // the head bone's units, in the avatar's own: the nametag's anchor applies a scene's
+        // scale of the avatar, which the local transforms below the avatar leave out. A scene
+        // may hold the avatar at a scale of nothing while it is built
         let head_scale = target_armature_entities
             .get("avatar_head")
-            .and_then(|head| instance_ents.get(*head).ok())
-            .map(|(_, _, gt, ..)| gt.compute_transform().scale.y);
+            .and_then(|head| scale_below(*head, avatar_ent, &local_transforms));
         commands.entity(root_player_entity.parent()).try_insert((
             AvatarMaterials(instance_scene_materials.values().map(|h| h.id()).collect()),
             NametagHeadOffset::above_head(
@@ -1989,6 +1969,73 @@ fn reparent_attach_point(
             target_armature_entities.keys()
         );
     }
+}
+
+/// How far up a wearable's own bones a branch is followed to the body bone it hangs off.
+const MAX_BRANCH_DEPTH: usize = 64;
+
+/// A branch of a wearable's own bones that a skin joint is on, and where it moves to stay on
+/// the avatar.
+struct WearableBranch<'a> {
+    /// the topmost node of the branch
+    top: Entity,
+    name: &'a Name,
+    /// the body's bone the branch moves under, or nothing for the body's armature
+    body_bone: Option<Entity>,
+    /// the name of the node `top` hangs off in the wearable, in lower case
+    parent_name: String,
+    /// `top` is an `avatar_*` bone the body lacks. The bones under it stay rigid: no spring
+    /// chain hangs off that bone.
+    body_lacks_top: bool,
+}
+
+/// The branch to move for `joint`, a skin joint of a wearable that is no bone of the body. The
+/// branch runs up from the joint to the node under a bone the body has, and moves under that
+/// bone. A branch that starts at an `avatar_*` bone the body lacks ends the same way, or under
+/// the body's armature when that bone sits directly under the wearable's. Nothing for a branch
+/// that ends at another node under the wearable's armature, which has moved to the body's
+/// already, and for a joint that leads to neither.
+fn wearable_branch<'a>(
+    joint: Entity,
+    nodes: &'a Query<(&Name, &ChildOf)>,
+    names: &Query<&Name>,
+    body_bones: &HashMap<String, Entity>,
+) -> Option<WearableBranch<'a>> {
+    let mut top = joint;
+    for _ in 0..MAX_BRANCH_DEPTH {
+        let (name, parent) = nodes.get(top).ok()?;
+        let parent_name = names.get(parent.parent()).ok()?.to_lowercase();
+        let body_bone = body_bones.get(&parent_name).copied();
+        if body_bone.is_some() || parent_name == "armature" {
+            let body_lacks_top = name.to_lowercase().starts_with("avatar_");
+            return (body_bone.is_some() || body_lacks_top).then_some(WearableBranch {
+                top,
+                name,
+                body_bone,
+                parent_name,
+                body_lacks_top,
+            });
+        }
+        top = parent.parent();
+    }
+    None
+}
+
+/// The height scale of `entity` in the units of its ancestor `root`: its own and that of each
+/// entity between them. Nothing for an entity not below `root`.
+fn scale_below(
+    entity: Entity,
+    root: Entity,
+    transforms: &Query<(&Transform, &ChildOf)>,
+) -> Option<f32> {
+    let mut scale = 1.0;
+    let mut current = entity;
+    while current != root {
+        let (transform, parent) = transforms.get(current).ok()?;
+        scale *= transform.scale.y;
+        current = parent.parent();
+    }
+    Some(scale)
 }
 
 /// How far a skinned mesh reaches above the head bone, along that bone and in its units, read
@@ -2301,7 +2348,11 @@ fn remove_attach_points_from_avatar_shape(
         for attach_point in attach_points.entities() {
             commands.entity(attach_point).try_despawn();
         }
-        commands.entity(entity).try_remove::<AttachPoints>();
+        // the offset was measured on the body that goes with the shape: the next body's
+        // nametag waits for its own
+        commands
+            .entity(entity)
+            .try_remove::<(AttachPoints, NametagHeadOffset)>();
     }
 }
 
