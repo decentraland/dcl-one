@@ -3,9 +3,10 @@ import { Link } from "react-router";
 
 import SitesChrome from "@ui/web/frames/SitesChrome";
 
-import { Spinner, TabsBar, type TabsBarLinkProps } from "@dcl/one-ui";
+import { Button, Spinner, TabsBar, type TabsBarLinkProps } from "@dcl/one-ui";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
+import { openSignIn } from "@/features/components/auth/signin-store";
 
 import styles from "./AccountLayout.module.css";
 import { ACCOUNT_COPY } from "./copy";
@@ -49,6 +50,13 @@ export function AccountLayout({ active, children }: AccountLayoutProps) {
           <div className={styles.section}>
             {account.state === "signed-in" ? (
               <div key={account.identity.signer.toLowerCase()}>{children(account.identity)}</div>
+            ) : account.state === "signed-out" ? (
+              <div className={styles.signedOut}>
+                <p>{ACCOUNT_COPY.signedOut}</p>
+                <Button size="md" onClick={() => openSignIn()}>
+                  {ACCOUNT_COPY.signIn}
+                </Button>
+              </div>
             ) : (
               <div className={styles.checking} role="status">
                 <Spinner variant="light" aria-hidden="true" />

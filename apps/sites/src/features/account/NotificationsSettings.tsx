@@ -182,7 +182,7 @@ export function NotificationsSettings({ identity }: { identity: AuthIdentity }) 
         email={email}
         unconfirmedEmail={unconfirmedEmail}
         details={details}
-        loading={subscription.isPending}
+        loading={subscription.isPending || !details}
         onToggleAll={(enabled) => details && save(setAllEmail(details, enabled))}
       />
 

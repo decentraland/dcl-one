@@ -5,6 +5,8 @@ export const ACCOUNT_COPY = {
   title: "Account Settings",
   sections: { notifications: "Notifications", credits: "Credits Settings" },
   checking: "Checking your session…",
+  signedOut: "Sign in to manage your account",
+  signIn: "Sign In",
 } as const;
 
 export const NOTIFICATIONS_COPY = {

@@ -112,6 +112,7 @@ describe("CreditsSettings", () => {
 
     await waitFor(() => expect(api.optOutOfCredits).toHaveBeenCalledWith(identity));
     expect(await screen.findByText("Opted Out")).toBeTruthy();
+    expect(document.activeElement?.textContent).toContain("Opted Out");
     expect(screen.queryByRole("group", { name: "Leave Marketplace Credits?" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Leave Program" })).toBeNull();
   });

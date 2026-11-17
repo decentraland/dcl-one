@@ -86,6 +86,7 @@ describe("NotificationsSettings", () => {
       fail(new Error("offline"));
       expect((await screen.findByRole("alert")).textContent).toContain("We couldn't load your notification settings");
       expect(screen.queryByRole("switch")).toBeNull();
+      expect((screen.getByRole("textbox", { name: "Email address" }) as HTMLInputElement).disabled).toBe(true);
     });
   });
 
@@ -154,6 +155,21 @@ describe("NotificationsSettings", () => {
 
       await waitFor(() => expect(api.putSubscription).toHaveBeenCalledTimes(1));
       expect(api.putSubscription.mock.calls[0]![1]).toEqual({ ...details, ignore_all_email: true });
+    });
+  });
+
+  describe("when the master switch fails to save", () => {
+    it("shows the failure and the master switch back on", async () => {
+      const user = userEvent.setup();
+      api.fetchSubscription.mockResolvedValue(confirmed);
+      api.putSubscription.mockRejectedValue(new Error("500"));
+      show();
+      await loaded();
+
+      await user.click(screen.getByRole("switch", { name: "All email notifications" }));
+
+      expect((await screen.findByRole("alert")).textContent).toContain("We couldn't save your notification settings");
+      expect((screen.getByRole("switch", { name: "All email notifications" }) as HTMLInputElement).checked).toBe(true);
     });
   });
 

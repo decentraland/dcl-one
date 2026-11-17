@@ -24,6 +24,7 @@ export function CreditsSettings({ identity }: { identity: AuthIdentity }) {
   const confirmRef = useRef<HTMLDivElement>(null);
   const leaveRef = useRef<HTMLButtonElement>(null);
   const returnFocus = useRef(false);
+  const statusRef = useRef<HTMLParagraphElement>(null);
 
   useEffect(() => {
     if (confirming) confirmRef.current?.focus();
@@ -42,7 +43,15 @@ export function CreditsSettings({ identity }: { identity: AuthIdentity }) {
 
   const confirm = () => {
     if (optOut.isPending) return;
-    optOut.mutate({ identity }, { onSuccess: () => setConfirming(false) });
+    optOut.mutate(
+      { identity },
+      {
+        onSuccess: () => {
+          setConfirming(false);
+          statusRef.current?.focus();
+        },
+      },
+    );
   };
 
   return (
@@ -56,7 +65,7 @@ export function CreditsSettings({ identity }: { identity: AuthIdentity }) {
             <Skeleton tone="neutral" className={styles.skeleton} />
           </div>
         ) : current ? (
-          <p className={styles.status}>
+          <p ref={statusRef} className={styles.status} tabIndex={-1} aria-live="polite">
             {COPY.statusLabel}{" "}
             <strong className={enrolled ? styles.enrolled : styles.statusValue}>{COPY.status[current]}</strong>
           </p>

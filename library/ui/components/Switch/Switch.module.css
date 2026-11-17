@@ -3,6 +3,7 @@
  * shared tokens, the same on/off colours decentraland.org's settings switches use. */
 @layer dcl.components {
   .root {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: space-between;
@@ -89,11 +90,11 @@
   }
 
   @media (hover: hover) {
-    .input:hover:not(:disabled) + .track {
+    .root:hover .input:not(:disabled) + .track {
       background: var(--dcl-transparencies-white-40);
     }
 
-    .input:checked:hover:not(:disabled) + .track {
+    .root:hover .input:checked:not(:disabled) + .track {
       border-color: var(--dcl-action-primary-hover);
       background: var(--dcl-action-primary-hover);
     }
