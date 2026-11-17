@@ -16,6 +16,7 @@ conformance capture corpus and internal docs stay in the private repository.
 | `apps/creator-hub/` | Creator Hub desktop: pnpm workspace with the Electron app, `@dcl/inspector` and `@dcl/asset-packs` ([ADR](docs/adr/2026-11-09-creator-hub-in-dcl-one.md)) |
 | `rendering/bevy-explorer/` | Explorer source and Play pins |
 | `apps/bevy-explorer/` | Explorer builds and images |
+| `rendering/avatar-preview/` | Avatar preview renderer: the Explorer's avatar look as a standalone wasm module for the shop and the creator hub |
 | `library/` | Shared crates, API types, the protocol (`library/protocol`), the SDK (`library/js-sdk-toolchain`) |
 | `schemas/` | The PostgreSQL schema |
 | `infra/` | Nix packages, container images, the gateway |

@@ -502,6 +502,10 @@
       "path": "library/explorer-core/features/minimap",
       "entries": [
         {
+          "name": "minimapHome.ts",
+          "kind": "regular"
+        },
+        {
           "name": "minimapPlaces.ts",
           "kind": "regular"
         },
@@ -1069,6 +1073,10 @@
         },
         {
           "name": "menu-on",
+          "kind": "directory"
+        },
+        {
+          "name": "minimap",
           "kind": "directory"
         },
         {
@@ -2117,6 +2125,23 @@
         },
         {
           "name": "shop.webp",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/apps/hud/assets/minimap",
+      "entries": [
+        {
+          "name": "LICENSE",
+          "kind": "regular"
+        },
+        {
+          "name": "NOTICE.md",
+          "kind": "regular"
+        },
+        {
+          "name": "reload.png",
           "kind": "regular"
         }
       ]
@@ -5504,8 +5529,12 @@
       "sha256": "7fdc86ebf5a3970823e089a131c5e4656a78ba8ed3ca2f0c744017ab42362a68"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/emoteSlots.ts",
+      "sha256": "f7dad77a623a072bf66dca56deb1919d63bc647475fde58b40f9670a678b4065"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/emotes.ts",
-      "sha256": "4175d16b2c774c8072269f58a198aa64f9951ab90172d61afeadd7ac7f519c69"
+      "sha256": "541420163f151e3adb47c4c147e3da9496f5807328597faaa6bd7b71fb28cd2d"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/events.ts",
@@ -5541,7 +5570,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/profile.ts",
-      "sha256": "1a39a6753fd4543c8096adefb541ec3d35e4e99aee95372666d1f9a8765594d7"
+      "sha256": "f78110656ff507376f8b92ee4df20660fcbdc50813dd961fa0327a80f40714e1"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/randomizer.ts",
@@ -5722,6 +5751,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeEditor.test.ts",
       "sha256": "e890e5b55625e2e1d521abc45fe7bf28852bcdef7b371320a4da75187282f541"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeEmoteSlots.test.ts",
+      "sha256": "fb168bcef131e4b46830824b6536daa341424dad868cc4fdfd338b827d3bee44"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeEvents.test.ts",
@@ -5950,6 +5983,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeEditor.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeEmoteSlots.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeEvents.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeFriends.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeGallery.test.ts",
@@ -6003,7 +6037,7 @@
     },
     {
       "path": "library/explorer-core/engine/EngineDriver.ts",
-      "sha256": "429e6ac0fc58966c4c3fe276ea08cec1a0017a46c84025b8579d537790d1febb"
+      "sha256": "9d47fca759f1b76b5dc762c5ec28b3c06342f87d4bad91193d0c1637634240d3"
     },
     {
       "path": "library/explorer-core/engine/avatarEquip.ts",
@@ -6019,7 +6053,7 @@
     },
     {
       "path": "library/explorer-core/engine/bridge.ts",
-      "sha256": "aae2c9446834e42645f0dab90097b8c88d97978c853ff52224f0e4d8e9b808bc"
+      "sha256": "fb493e075bfbcedb4e83c8f4cab7701850be7c0db1634a8644e3395629a23692"
     },
     {
       "path": "library/explorer-core/engine/bridgeChannel.ts",
@@ -6031,7 +6065,7 @@
     },
     {
       "path": "library/explorer-core/engine/driver.ts",
-      "sha256": "f12aa455fe06b466d2d5327b0c2f287083f101818befe36704b65df96fcc6d69"
+      "sha256": "84d326628a65abd9b9c9dc105df18ef45d3dae1ea19d066b0ac1a84f18bfd4dc"
     },
     {
       "path": "library/explorer-core/engine/engineRpc.ts",
@@ -6247,7 +6281,7 @@
     },
     {
       "path": "library/explorer-core/features/map/home.ts",
-      "sha256": "be7a34786b38b7109954595f63e271753473708a9ac58a42e8bb7c7c9df9e946"
+      "sha256": "d670b1117e1bf56139c854bb00509f403a91c22661be783ba714667a57a50932"
     },
     {
       "path": "library/explorer-core/features/map/mapApi.ts",
@@ -6287,7 +6321,11 @@
     },
     {
       "path": "library/explorer-core/features/map/shareLinks.ts",
-      "sha256": "2fb507eb2596e5de1b9440c598873afcafad9e7e220dce3c810fec6a16d3fe19"
+      "sha256": "0d2bf68165e3b346fe2c854b196f697ae163febf8ad3ff5615e4f6ef2dd1c6c4"
+    },
+    {
+      "path": "library/explorer-core/features/minimap/minimapHome.ts",
+      "sha256": "bcc0dff9298b1740491c7d08d2aeba5cece9c399307cb438a8e4e4fb71620936"
     },
     {
       "path": "library/explorer-core/features/minimap/minimapPlaces.ts",
@@ -6567,7 +6605,7 @@
     },
     {
       "path": "library/explorer-core/test/minimap.test.ts",
-      "sha256": "8260e0d6e58950b2d72049488e48885a2598396b9663531bc9810436a1b457aa"
+      "sha256": "1e9081938c5c50cba3729628917d76082ba4a7e4451498a69cd3fc56b73cf74d"
     },
     {
       "path": "library/explorer-core/test/navmap.test.ts",
@@ -7480,6 +7518,10 @@
     {
       "path": "library/ui/apps/hud/assets/menu-on/shop.webp",
       "sha256": "9e83faaec87c39c6b8e278a2c8ed45e4d6ddbba18005c7f3845096d087f9e10d"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/minimap/reload.png",
+      "sha256": "ca00a32d628e90ff2858bda58df00b26a5823ba1ff8ced84351206108cdafa5f"
     },
     {
       "path": "library/ui/apps/hud/assets/photo-mode/gallery.png",
@@ -9023,7 +9065,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "sha256": "777d12fd358246095e8be957ea08090b0df748c7f605a3cfee02c219c8a3b03f"
+      "sha256": "20ad674a9e274eb36e90cd189cd9902621a019a246b813042ab0ff15223ec3ab"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapToolbar.tsx",
@@ -9115,15 +9157,15 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "sha256": "fa13f06aced6f3f0c5df2e6468839f29fbcb23b4879c4f01f77591026f103aef"
+      "sha256": "2b673de7abc5b1663d75ca80c23219ce429a943b9f365120f23f48f1ceb1dfe8"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.module.css",
-      "sha256": "ff4d56095e4debe6275490b4f50b44e7f80a506ba9075fbc9ca99cd2c9fb326e"
+      "sha256": "c41eb77a1db195e1329314a68e7a60f20e4b589ec9c82fb09164b639d1e86730"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
-      "sha256": "3cad147afd0b2177f9e47ac53e0ef8ddff291f720f1586b47cc1d28e59251f8f"
+      "sha256": "f2bfae4f44312a8589aa93a336236cbd42d8e31dad0930e82f52d2a3ab163d9f"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapTiles.tsx",
@@ -9331,7 +9373,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "42594452f547663f451fb5b59f5b37dcbb43433b7c39c6d7a96de6f9e52a78b9"
+      "sha256": "be10396f4bb54512486d49afc4caed52c46493e8fe6c41dac67471c88ac794fb"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -9363,7 +9405,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "sha256": "955a51d5e767edcb27cf55c780fb1646313ebcc1365fdc4be882f1dd434167df"
+      "sha256": "0e42602becaef695652f2c08220cd345ec6b0b29624299552e9004ca99b74318"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/inviteLink.ts",
@@ -9379,7 +9421,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/panels/MapPanel.tsx",
-      "sha256": "0b87d13c1bf813b073fc2c14e44230d28310d67d92a796ff4ca77fc0cd5ef2d0"
+      "sha256": "bacd0dce37e42289d8b398648662ef4241523a4ac2b4625349a35c0f3cd4df95"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/panels/MePanel.module.css",
@@ -9639,7 +9681,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "bd0ddfe507b8f6575bcb1e7a9755a3edf9f3517c76fe338d1a9d4260dd0cc2e4"
+      "sha256": "a3bd6f224f5eef4d1c96a585a5424393ef9a5a4129b5cd430300a3c94577e40b"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -9699,7 +9741,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/bridgeReadiness.test.ts",
-      "sha256": "95fb7edb18b926388f21789a47269dc5d02b9f56085b97592aee81b683b410fd"
+      "sha256": "f9870142716f3b2eb1fb24519ccbd6815d8b9f4aa2ca622eee25761754f2fed2"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chat.clicks.test.tsx",
@@ -9891,7 +9933,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
-      "sha256": "0cb19bf8b05467d508a5810c75739057a4d754409142e145e85702cdaa4a569b"
+      "sha256": "fa81c7d1b5668e086f5d441a84107c7c8d145a82120fe48c9740dd06efc13066"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nameEdit.test.tsx",
@@ -9939,7 +9981,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/permissions.test.tsx",
-      "sha256": "313a1f180189b7055a305509f7232431afb06d54eada148926c2c58f9af625d9"
+      "sha256": "03c157c1028c234d9e9a6b6ba807627f6d071cae38e2d8cbb415357e9d0d20b8"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/photoMode.test.tsx",
@@ -12275,6 +12317,51 @@
     },
     {
       "from": "library/explorer-core/test/minimap.test.ts",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/minimap.test.ts",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/minimap.test.ts",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/minimap.test.ts",
+      "to": "library/explorer-core/features/map/shareLinks.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/minimap.test.ts",
+      "to": "library/explorer-core/features/map/shareLinks.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/minimap.test.ts",
+      "to": "library/explorer-core/features/map/shareLinks.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/minimap.test.ts",
+      "to": "library/explorer-core/features/minimap/minimapHome.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/minimap.test.ts",
+      "to": "library/explorer-core/features/minimap/minimapHome.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/minimap.test.ts",
+      "to": "library/explorer-core/features/minimap/minimapHome.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/minimap.test.ts",
       "to": "library/explorer-core/features/minimap/minimapPlaces.ts",
       "kind": "native:dynamic"
     },
@@ -27290,6 +27377,66 @@
     },
     {
       "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/map/shareLinks.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/map/shareLinks.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/map/shareLinks.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/minimap/minimapHome.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/minimap/minimapHome.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/features/minimap/minimapHome.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
       "to": "library/explorer-core/features/minimap/minimapPlaces.ts",
       "kind": "native:runtime"
     },
@@ -27316,6 +27463,21 @@
     {
       "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
       "to": "library/explorer-core/features/minimap/minimapPrefs.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "test:runtime"
     },
     {
@@ -27496,6 +27658,36 @@
     {
       "from": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
       "to": "library/explorer-core/features/minimap/minimapPrefs.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
+      "to": "library/ui/apps/hud/assets/minimap/reload.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
+      "to": "library/ui/apps/hud/assets/minimap/reload.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
+      "to": "library/ui/apps/hud/assets/minimap/reload.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
       "kind": "test:runtime"
     },
     {
@@ -35116,6 +35308,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/bridgeReadiness.test.ts",
       "to": "library/explorer-core/engine/bridgeChannel.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/bridgeReadiness.test.ts",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/bridgeReadiness.test.ts",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/bridgeReadiness.test.ts",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "kind": "test:runtime"
     },
     {
@@ -37801,6 +38008,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/mePanel.test.tsx",
       "to": "library/ui/apps/hud/features/sidebar/panels/MePanel.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "test:runtime"
     },
     {
@@ -41811,6 +42033,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/features/map/shareLinks.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/features/minimap/minimapHome.ts",
       "kind": "type"
     },
     {
@@ -47546,6 +47773,21 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/menu-on/shop.webp",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/minimap/reload.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/minimap/reload.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/minimap/reload.png",
       "kind": "test:asset"
     },
     {

@@ -1,8 +1,7 @@
 import { Provider } from 'react-redux';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { fetchStorageStats } from '/@/modules/store/management/slice';
 import { en } from '/@/modules/store/translation/locales';
@@ -10,6 +9,7 @@ import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
 import { createTestStore } from '../../../../tests/utils/testStore';
 import { SpaceUsed } from '.';
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 
 vi.mock('../../Modals/WorldsYourStorageModal', () => ({ WorldsYourStorageModal: () => null }));
 
@@ -33,9 +33,9 @@ describe('SpaceUsed', () => {
       });
       render(
         <Provider store={store as never}>
-          <ThemeProvider theme={dark}>
+          <TestProviders>
             <SpaceUsed />
-          </ThemeProvider>
+          </TestProviders>
         </Provider>,
       );
     });

@@ -64,7 +64,7 @@ jobs:
             apps/creator-hub/packages/inspector/public/bundle.js
             apps/creator-hub/packages/inspector/public/bundle.css
           # Single line on purpose: newlines inside a ${{ }} expression are brittle.
-          key: inspector-e2e-devbundle-${{ runner.os }}-${{ hashFiles('apps/creator-hub/packages/inspector/src/**', 'apps/creator-hub/packages/inspector/build.js', 'apps/creator-hub/packages/inspector/bevy-agent-realm.js', 'apps/creator-hub/packages/inspector/package.json', 'apps/creator-hub/packages/asset-packs/src/**', 'apps/creator-hub/packages/asset-packs/package.json', 'apps/creator-hub/pnpm-lock.yaml') }}
+          key: inspector-e2e-devbundle-${{ runner.os }}-${{ hashFiles('apps/creator-hub/packages/inspector/src/**', 'apps/ui3/package.json', 'apps/ui3/tsconfig.json', 'apps/ui3/src/atoms/**', 'apps/creator-hub/packages/inspector/build.js', 'apps/creator-hub/packages/inspector/bevy-agent-realm.js', 'apps/creator-hub/packages/inspector/package.json', 'apps/creator-hub/packages/asset-packs/src/**', 'apps/creator-hub/packages/asset-packs/package.json', 'apps/creator-hub/pnpm-lock.yaml') }}
 
       - name: build inspector
         if: steps.inspector-dev-bundle.outputs.cache-hit != 'true'
@@ -72,10 +72,9 @@ jobs:
 
       - name: start inspector server
         shell: bash
-        # http-server is a dependency of the app package, so it runs from there.
         run: |
-          cd packages/creator-hub
-          pnpm exec http-server ../inspector/public -p 8000 --cors -a localhost &
+          cd packages/inspector
+          node ../../scripts/serve-static.js public 8000 &
           sleep 5
 
       - name: e2e

@@ -14,13 +14,18 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DclLogo, Kebab, Minus, Plus, showToast } from '../../design'
-import { DEFAULT_REALM, siteUrl } from '@hud-host'
+import { DEFAULT_REALM } from '@hud-host'
 import { DoubleChevron, PinOutline } from './icons'
 import tipIcon from '../../assets/donate/tip.png'
 import { useDonate } from '../donate/useDonate'
 import { EngineViewport } from '../engine/EngineViewport'
 import { PARCEL_METERS, atlasPx, chunksInRect, isGenesisSatelliteView, parcelTileFor, type Chunk } from '@explorer-core/features/map/atlas'
-import { pinForCategories } from '../map/mapArt'
+import { MARKER_ART, pinForCategories } from '../map/mapArt'
+import { homeOf, isStandingInHome } from '@explorer-core/features/map/home'
+import { fetchPlaceAt } from '@explorer-core/features/map/mapApi'
+import { jumpInLink } from '@explorer-core/features/map/shareLinks'
+import { minimapHomeTarget } from '@explorer-core/features/minimap/minimapHome'
+import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import { BASE_PX_PER_PARCEL, ParcelTiles, SatelliteTiles } from './MinimapTiles'
 import { loadMinimapPlaces, placesNear, type MinimapPlace } from '@explorer-core/features/minimap/minimapPlaces'
 import {
@@ -43,6 +48,7 @@ import { SceneRestrictions } from './SceneRestrictions'
 import type { MapState, MinimapState } from '../session/useEngineSession'
 import type { EngineViewportRegion, MinimapStyle } from '@explorer-core/engine/protocol'
 import { hudInsetRef } from '../../lib/hudInset'
+import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import styles from './Minimap.module.css'
 
 /** Side of the square map, before --ui-scale: the panel's inner width (--minimap-map in the module). */
@@ -53,15 +59,24 @@ const ZOOM_TIME = 0.2
  *  markers cluster near the middle rather than filling a map you're only glancing at. */
 const MARKER_RADIUS = 10
 
+/** A marker's place in the map layer: the centre of its parcel, not its corner. */
+function atlasPxAt(parcel: { x: number; y: number }): { left: number; top: number } {
+  const at = atlasPx(parcel.x * PARCEL_METERS + PARCEL_METERS / 2, parcel.y * PARCEL_METERS + PARCEL_METERS / 2, BASE_PX_PER_PARCEL)
+  return { left: at.x, top: at.y }
+}
+
 export const Minimap = memo(function Minimap({
   minimap,
   map,
   sceneTitle,
+  referrer,
   setEngineViewport
 }: {
   minimap: MinimapState
   map: MapState
   sceneTitle: string
+  /** The player's address, which the copied link carries as its referrer. */
+  referrer?: string
   setEngineViewport: (region: EngineViewportRegion, rect: { x: number; y: number; width: number; height: number } | null) => void
 }): React.JSX.Element {
   // Only Genesis City advertises this satellite map, so it is what tells it from a World or a
@@ -218,7 +233,12 @@ export const Minimap = memo(function Minimap({
     }
     // Capture: the map underneath opens the full-screen map on click, so this has to win.
     document.addEventListener('pointerdown', onDown, true)
-    return () => document.removeEventListener('pointerdown', onDown, true)
+    // Cancel (keyboard or gamepad) closes the menu first, through the session's layered dispatch.
+    const unregister = registerCancelLayer(() => setSettingsOpen(false))
+    return () => {
+      document.removeEventListener('pointerdown', onDown, true)
+      unregister()
+    }
   }, [settingsOpen])
 
   // Every preference persists the moment it changes — the menu has no confirm step.
@@ -248,14 +268,44 @@ export const Minimap = memo(function Minimap({
   const { linkRealm } = minimap
   const inWorld = linkRealm != null && linkRealm !== DEFAULT_REALM
   const copyLink = useCallback(() => {
-    const query = inWorld ? `realm=${encodeURIComponent(linkRealm)}` : `position=${map.x},${map.y}`
+    if (linkRealm == null) return
     setSettingsOpen(false)
     const failed = (): void => showToast('Could not copy the link', { tone: 'error' })
     // no clipboard outside a secure context, or in a host that withholds it
     if (navigator.clipboard == null) return failed()
-    navigator.clipboard.writeText(siteUrl(`/jump/?${query}`)).then(() => showToast('Link copied'), failed)
-  }, [inWorld, linkRealm, map.x, map.y])
-  const { changeRealm } = map
+    navigator.clipboard.writeText(jumpInLink(map.x, map.y, referrer, linkRealm)).then(() => showToast('Link copied'), failed)
+  }, [linkRealm, map.x, map.y, referrer])
+  const { changeRealm, setHome } = map
+  const { reloadScene } = minimap
+
+  // Home, as the map holds it. In Genesis City the menu reads the place under the player when it
+  // opens, so any parcel of the home place counts as home.
+  const home = useMemo(() => homeOf(map.home), [map.home])
+  const [placeHere, setPlaceHere] = useState<{ at: string; place: DiscoverPlace | null } | null>(null)
+  const parcelKey = `${map.x},${map.y}`
+  useEffect(() => {
+    if (!settingsOpen || linkRealm !== DEFAULT_REALM) return
+    let alive = true
+    // without the place, home is told by the parcel alone
+    const settle = (place: DiscoverPlace | null): void => {
+      if (alive) setPlaceHere({ at: parcelKey, place })
+    }
+    fetchPlaceAt({ x: map.x, y: map.y }).then(settle, () => settle(null))
+    return () => {
+      alive = false
+    }
+  }, [settingsOpen, linkRealm, parcelKey, map.x, map.y])
+  const homeHere =
+    linkRealm != null && isStandingInHome(home, inWorld ? linkRealm : null, { x: map.x, y: map.y }, placeHere?.at === parcelKey ? placeHere.place : null)
+  const setHomeHere = useCallback(() => {
+    if (linkRealm == null) return
+    const target = minimapHomeTarget(linkRealm, { x: map.x, y: map.y })
+    setHome(target.realm, target.parcel)
+  }, [linkRealm, map.x, map.y, setHome])
+  const reload = useCallback(() => {
+    setSettingsOpen(false)
+    reloadScene()
+  }, [reloadScene])
 
   const tiles = useMemo(() => {
     if (effectiveStyle === 'satellite') return <SatelliteTiles chunks={chunks} />
@@ -312,7 +362,9 @@ export const Minimap = memo(function Minimap({
                 hideStyle={!inGenesis}
                 markers={markerCategories}
                 onMarkers={pickMarkers}
+                home={linkRealm != null ? { on: homeHere, onSet: setHomeHere } : undefined}
                 onCopyLink={linkRealm != null ? copyLink : undefined}
+                onReloadScene={reload}
               />
             )}
           </div>
@@ -338,14 +390,8 @@ export const Minimap = memo(function Minimap({
               <div className={styles.layer}>
                 {tiles}
                 {nearby.map((p) => {
-                  // Anchor at the centre of the place's parcel, not its corner.
-                  const at = atlasPx(
-                    p.x * PARCEL_METERS + PARCEL_METERS / 2,
-                    p.y * PARCEL_METERS + PARCEL_METERS / 2,
-                    BASE_PX_PER_PARCEL
-                  )
                   return (
-                    <span key={p.id} className={styles.poi} style={{ left: at.x, top: at.y }}>
+                    <span key={p.id} className={styles.poi} style={atlasPxAt(p)}>
                       <img className={styles.poiPin} src={pinForCategories(p.categories)} alt="" draggable={false} />
                       {/* Only points of interest are named — labelling every category turns the
                           map into a wall of text, which is why the SDK7 HUD did the same. */}
@@ -353,6 +399,12 @@ export const Minimap = memo(function Minimap({
                     </span>
                   )
                 })}
+                {/* The home pin, as on the full map. */}
+                {inGenesis && home.parcel != null && (
+                  <span className={styles.poi} data-marker="home" style={atlasPxAt(home.parcel)}>
+                    <img className={styles.poiPin} src={MARKER_ART.home} alt="" draggable={false} />
+                  </span>
+                )}
               </div>
             </div>
 

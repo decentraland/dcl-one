@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react';
 import { IoAlertCircleOutline as AlertIcon, IoCheckmark as CheckIcon } from 'react-icons/io5';
-import cx from 'classnames';
+import { cx } from '../../../../lib/utils/cx';
 import type { Props } from './types';
 import './Option.css';
 

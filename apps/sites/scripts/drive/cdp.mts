@@ -44,9 +44,11 @@ export type LaunchChromiumOpts = {
   port: number;
   profileDir: string;
   extraArgs?: string[];
+  /** Keep the GPU: with `--disable-gpu` a fake camera's frames never reach a `<video>`. */
+  gpu?: boolean;
 };
 
-export async function launchChromium({ port, profileDir, extraArgs = [] }: LaunchChromiumOpts): Promise<ChildProcess> {
+export async function launchChromium({ port, profileDir, extraArgs = [], gpu = false }: LaunchChromiumOpts): Promise<ChildProcess> {
   const [bin, ...pre] = chromiumCommand();
   if (!bin) throw new Error("no chromium binary resolved");
   const proc = spawn(
@@ -57,7 +59,7 @@ export async function launchChromium({ port, profileDir, extraArgs = [] }: Launc
       `--remote-debugging-port=${port}`,
       `--user-data-dir=${profileDir}`,
       "--no-first-run",
-      "--disable-gpu",
+      ...(gpu ? [] : ["--disable-gpu"]),
       "--window-size=1600,1000",
       ...extraArgs,
       "about:blank",
