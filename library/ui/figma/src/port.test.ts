@@ -583,6 +583,69 @@ describe('when the real port stages run against canned command output', () => {
     })
   })
 
+  describe('and the NavBar bounds run fails', () => {
+    it('should carry the first vitest failure line into the reason', () => {
+      replies['vitest.mjs'] = {
+        code: 1,
+        stdout:
+          "\n RUN  v3.2.4 /ui\n\n \u001b[31mFAIL\u001b[39m  |consumer| test/navbar-bounds.build.test.ts > in-composition keeps closed-header descendants inside their root at 1440px\nAssertionError: expected [ { name: 'A' } ] to deeply equal []\n Tests  1 failed | 75 passed (76)\n"
+      }
+
+      expect(portVerify(figma, { run })).toMatchObject({
+        failed: 'navbar-bounds',
+        reason:
+          'the NavBar bounds build check failed: FAIL  |consumer| test/navbar-bounds.build.test.ts > in-composition keeps closed-header descendants inside their root at 1440px'
+      })
+    })
+
+    it('should report a startup error vitest writes to stderr', () => {
+      replies['vitest.mjs'] = {
+        code: 1,
+        stdout: '\n RUN  v3.2.4 /ui\n',
+        stderr: 'Error: Chrome did not expose a DevTools port\n'
+      }
+
+      expect(portVerify(figma, { run })).toMatchObject({
+        failed: 'navbar-bounds',
+        reason: 'the NavBar bounds build check failed: Error: Chrome did not expose a DevTools port'
+      })
+    })
+
+    it('should fall back to the generic reason when the run printed nothing', () => {
+      replies['vitest.mjs'] = { code: 1, stdout: '', stderr: '' }
+
+      expect(portVerify(figma, { run })).toMatchObject({
+        failed: 'navbar-bounds',
+        reason: 'the NavBar bounds build check failed: no output'
+      })
+    })
+
+    it('should fail a zero exit that reports no passed tests', () => {
+      replies['vitest.mjs'] = { code: 0, stdout: ' RUN  v3.2.4 /ui\n' }
+
+      expect(portVerify(figma, { run })).toMatchObject({
+        failed: 'navbar-bounds',
+        reason: 'the NavBar bounds build check failed: RUN  v3.2.4 /ui'
+      })
+    })
+  })
+
+  describe('and the NavBar bounds run prints coloured output', () => {
+    it('should still read the passed count', () => {
+      replies['vitest.mjs'] = {
+        code: 0,
+        stdout:
+          '\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[32m76 passed\u001b[39m\u001b[22m\u001b[90m (76)\u001b[39m\n'
+      }
+
+      expect(portVerify(figma, { run })).toMatchObject({ ok: true })
+      const record = JSON.parse(readFileSync(path.join(ui, 'port-verification.json'), 'utf8'))
+      expect(record.checks['navbar-bounds'].detail).toBe(
+        'Fresh public NavBar build passes 76 bounds checks'
+      )
+    })
+  })
+
   describe('and a stage fails with an error that is not a StageError', () => {
     it('should name the stage and the error instead of crashing', () => {
       delete replies['vitest.mjs']
