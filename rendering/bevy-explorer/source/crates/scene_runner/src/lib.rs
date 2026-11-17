@@ -1120,14 +1120,18 @@ pub fn realm_base_url_and_name(realm: &CurrentRealm) -> (String, String) {
     (base_url.to_owned(), realm_name)
 }
 
-/// Whether an in-flight scene has gone past the not-responding timeout, to be marked broken. A
-/// super-user scene (the client's own: the HUD's bridge scene) never is: the client does not work
-/// without it, and its first tick on a cold, busy page can take longer than the timeout.
+/// Whether an in-flight scene has gone past its not-responding timeout, to be marked broken. A
+/// super-user scene (the client's own: the HUD's bridge scene) gets the longer
+/// `SUPER_USER_SCENE_NOT_RESPONDING_TIMEOUT`: the client does not work without it, and its first
+/// tick on a cold, busy page can take longer than the ordinary timeout, but a wedged one must
+/// still give its thread slot back.
 fn not_responding(in_flight: bool, inspected: bool, super_user: bool, since_sent: f64) -> bool {
-    in_flight
-        && !inspected
-        && !super_user
-        && since_sent > renderer_context::SCENE_NOT_RESPONDING_TIMEOUT.as_secs_f64()
+    let limit = if super_user {
+        renderer_context::SUPER_USER_SCENE_NOT_RESPONDING_TIMEOUT
+    } else {
+        renderer_context::SCENE_NOT_RESPONDING_TIMEOUT
+    };
+    in_flight && !inspected && since_sent > limit.as_secs_f64()
 }
 
 #[cfg(test)]
@@ -1135,14 +1139,20 @@ mod not_responding_tests {
     use super::*;
 
     #[test]
-    fn a_super_user_scene_is_never_marked_broken() {
+    fn a_super_user_scene_gets_the_longer_limit() {
         let past = renderer_context::SCENE_NOT_RESPONDING_TIMEOUT.as_secs_f64() + 1.0;
+        let past_super =
+            renderer_context::SUPER_USER_SCENE_NOT_RESPONDING_TIMEOUT.as_secs_f64() + 1.0;
+        assert!(past < past_super);
         assert!(not_responding(true, false, false, past));
         assert!(!not_responding(true, false, true, past));
+        assert!(not_responding(true, false, true, past_super));
         // within the timeout, inspected, or not in flight: nobody is
         assert!(!not_responding(true, false, false, 1.0));
         assert!(!not_responding(true, true, false, past));
+        assert!(!not_responding(true, true, true, past_super));
         assert!(!not_responding(false, false, false, past));
+        assert!(!not_responding(false, false, true, past_super));
     }
 }
 
