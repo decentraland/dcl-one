@@ -225,8 +225,9 @@ static CLAIMS_BY_CLAIMER: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(500, Duration::from_secs(3600)));
 static CLAIMS_OF_OWNER: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(60, Duration::from_secs(3600)));
+// Pair keys grow as claimers x owners: a larger map keeps an overflow from resetting them.
 static CLAIMS_OF_PAIR: LazyLock<RateLimiter> =
-    LazyLock::new(|| RateLimiter::new(10, Duration::from_secs(3600)));
+    LazyLock::new(|| RateLimiter::new(10, Duration::from_secs(3600)).with_max_buckets(200_000));
 
 fn claim_pair(claimer: &str, owner: &str) -> String {
     format!("{claimer}:{owner}")
@@ -1683,11 +1684,25 @@ mod tests {
         let count_path = format!("{claim_path}/count");
         let (_, count) = call(&here, &blocked.key, "GET", &count_path, None, None).await;
         assert_eq!(count["available"], 0, "a blocked wallet sees no stock");
-        // Refused claims never spend the owner's budget (60 an hour).
+        // Refused claims never spend the owner's budget (60 an hour) or the pair's (10).
         for _ in 0..61 {
             let (status, _) = call(&here, &blocked.key, "GET", &claim_path, None, None).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "a blocked claimer");
         }
+        sqlx::query(
+            "DELETE FROM social.blocks WHERE blocker_address = $1 AND blocked_address = $2",
+        )
+        .bind(&owner.address)
+        .bind(&blocked.address)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (status, _) = call(&here, &blocked.key, "GET", &claim_path, None, None).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the pair budget is untouched once unblocked"
+        );
         let held = ClaimSlot::take(&owner.address).unwrap();
         let (status, _) = call(&here, &friend.key, "GET", &claim_path, None, None).await;
         assert_eq!(
@@ -1698,6 +1713,23 @@ mod tests {
         drop(held);
         let (status, _) = call(&here, &friend.key, "GET", &claim_path, None, None).await;
         assert_eq!(status, StatusCode::OK);
+        // An empty stock answers 404 and spends nothing either.
+        for _ in 0..10 {
+            let (status, _) = call(&here, &friend.key, "GET", &claim_path, None, None).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "the stock is empty");
+        }
+        let (status, body) = call(
+            &here,
+            &owner.key,
+            "POST",
+            "/mls/key-packages",
+            Some(json!({ "key_packages": [b64(&key_package(&owner))] })),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, _) = call(&here, &friend.key, "GET", &claim_path, None, None).await;
+        assert_eq!(status, StatusCode::OK, "only handed-out packages count");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
