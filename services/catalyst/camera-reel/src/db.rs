@@ -28,7 +28,6 @@ use uuid::Uuid;
 
 use super::dto::{Image, Metadata};
 use crate::shared::cache::{TtlCache, cache_get, cache_put};
-use crate::storage::gc;
 
 const SERVABLE_TTL: Duration = Duration::from_secs(60);
 
@@ -106,8 +105,8 @@ pub struct ImageBlob {
 }
 
 /// What one delete reports back: ownership outcome, the hashes the row
-/// named (the servable memo drops them; the blobs stay in the shared store),
-/// the ones now withheld node-wide and the owner's remaining image count.
+/// named (the servable memo drops them; the blobs stay in the shared store)
+/// and the owner's remaining image count.
 #[derive(Debug)]
 pub struct DeletedImage {
     pub user_address: String,
@@ -115,7 +114,6 @@ pub struct DeletedImage {
     pub thumbnail_hash: String,
     pub deleted: bool,
     pub remaining: u64,
-    pub withheld: Vec<String>,
 }
 
 /// What a review write did to the row's blobs in `camera_reel.withheld_blobs`:
@@ -140,45 +138,26 @@ fn hashes_of(image_hash: &str, thumbnail_hash: &str) -> Vec<String> {
     hashes
 }
 
-/// Inside the write's transaction, after the row is rejected or gone:
-/// records `hashes` as withheld unless a non-rejected row or any other
-/// domain's reference ([`gc::referenced_elsewhere_on`]) still names them.
-/// Returns the hashes it recorded. A qualifying rejection promotes an older
-/// deletion record; deletion can never downgrade a durable rejection.
-async fn withhold(
+/// Inside the rejection's transaction: records `hashes` as withheld on every
+/// route, whatever else names them, as an operator denial would. Returns the
+/// hashes it recorded; a rejection promotes an older deletion record.
+async fn withhold_rejected(
     tx: &mut sqlx::Transaction<'_, Postgres>,
     image_id: Uuid,
     hashes: &[String],
-    reason: &str,
     now: NaiveDateTime,
 ) -> Result<Vec<String>, sqlx::Error> {
-    let elsewhere = gc::referenced_elsewhere_on(tx, hashes, "camera_reel.images")
-        .await
-        .map_err(|e| match e {
-            gc::GcError::Database(e) => e,
-            other => sqlx::Error::Protocol(other.to_string()),
-        })?;
-    let hashes: Vec<String> = hashes
-        .iter()
-        .filter(|h| !elsewhere.contains(*h))
-        .cloned()
-        .collect();
-    if hashes.is_empty() {
-        return Ok(Vec::new());
-    }
     sqlx::query_scalar::<_, String>(
         "INSERT INTO camera_reel.withheld_blobs (hash, image_id, reason, withheld_at) \
          SELECT h.hash, $2, $3, $4 FROM unnest($1::text[]) AS h(hash) \
-         WHERE NOT EXISTS (SELECT 1 FROM camera_reel.images i \
-                           WHERE (i.image_hash = h.hash OR i.thumbnail_hash = h.hash) AND i.review_status <> 'rejected') \
          ON CONFLICT (hash) DO UPDATE \
              SET reason=EXCLUDED.reason, image_id=EXCLUDED.image_id, withheld_at=EXCLUDED.withheld_at \
-             WHERE camera_reel.withheld_blobs.reason = 'deleted' AND EXCLUDED.reason = 'rejected' \
+             WHERE camera_reel.withheld_blobs.reason = 'deleted' \
          RETURNING hash",
     )
-    .bind(&hashes)
+    .bind(hashes)
     .bind(image_id)
-    .bind(reason)
+    .bind(WITHHELD_REJECTED)
     .bind(now)
     .fetch_all(&mut **tx)
     .await
@@ -646,16 +625,14 @@ impl Database {
 
     /// One transaction: deletes the row (only the owner's when `owner` is
     /// given) and reports, from the same snapshot, the hashes it named and
-    /// how many images the owner has left, then records the hashes nothing
-    /// else names in `withheld_blobs` (`WITHHELD_DELETED`). `None` is "no
-    /// such image"; `deleted == false` is an ownership mismatch, with nothing
-    /// removed. The blobs are never unlinked: the store is shared (module
-    /// docs); the withheld record is what keeps them off every route.
+    /// how many images the owner has left. `None` is "no such image";
+    /// `deleted == false` is an ownership mismatch, with nothing removed.
+    /// The blobs are neither unlinked nor withheld: the store is shared
+    /// (module docs) and the collector reclaims bytes nothing names.
     pub async fn delete_image_owned(
         &self,
         id: &str,
         owner: Option<&str>,
-        now: NaiveDateTime,
     ) -> Result<Option<DeletedImage>, sqlx::Error> {
         let Ok(id) = Uuid::parse_str(id) else {
             return Ok(None);
@@ -681,18 +658,6 @@ impl Database {
         let Some((user_address, image_hash, thumbnail_hash, deleted, remaining)) = row else {
             return Ok(None);
         };
-        let withheld = if deleted {
-            withhold(
-                &mut tx,
-                id,
-                &hashes_of(&image_hash, &thumbnail_hash),
-                WITHHELD_DELETED,
-                now,
-            )
-            .await?
-        } else {
-            Vec::new()
-        };
         tx.commit().await?;
         if deleted {
             self.forget_servable(&image_hash);
@@ -704,7 +669,6 @@ impl Database {
             thumbnail_hash,
             deleted,
             remaining: remaining.max(0) as u64,
-            withheld,
         }))
     }
 
@@ -816,8 +780,8 @@ impl Database {
     }
 
     /// One transaction: the moderator's verdict on the row, then its blobs'
-    /// (`withheld_blobs`): `rejected` withholds the hashes nothing else
-    /// names, any other status releases them. `None` is "no such image".
+    /// (`withheld_blobs`): `rejected` withholds them, any other status
+    /// releases them. `None` is "no such image".
     pub async fn update_image_review_status(
         &self,
         id: &str,
@@ -839,7 +803,7 @@ impl Database {
         let hashes = hashes_of(&image_hash, &thumbnail_hash);
         let verdict = if review_status == WITHHELD_REJECTED {
             BlobVerdict {
-                withheld: withhold(&mut tx, id, &hashes, WITHHELD_REJECTED, now).await?,
+                withheld: withhold_rejected(&mut tx, id, &hashes, now).await?,
                 released: Vec::new(),
             }
         } else {

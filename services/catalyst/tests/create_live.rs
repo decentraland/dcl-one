@@ -979,7 +979,7 @@ async fn the_creator_plane_end_to_end_against_a_running_node() {
         Some(1)
     );
 
-    // Delete: the row goes, the hash stops being served (the blob stays in the shared store).
+    // Delete: the row goes and the reel stops serving the hash (the blob stays in the shared store).
     let del_path = format!("{REEL}/api/images/{image_id}");
     assert_eq!(
         node.signed(&stranger, "delete", &del_path, None)
@@ -998,14 +998,8 @@ async fn the_creator_plane_end_to_end_against_a_running_node() {
     );
     assert_eq!(
         node.get(&format!("/contents/{image_hash}")).await.status,
-        404,
-        "a deleted photo's bytes are withheld on the content routes too"
-    );
-    assert_eq!(
-        node.get(&format!("/builder-api/contents/{image_hash}"))
-            .await
-            .status,
-        404
+        200,
+        "a delete does not withhold the shared bytes; the collector reclaims them"
     );
     assert_eq!(node.get(&user_path).await.body["currentImages"], 0);
     assert_eq!(

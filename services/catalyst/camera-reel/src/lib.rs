@@ -52,15 +52,14 @@
 //! the reel's `GET /api/files/{name}` (from `review_status`), the content server's
 //! `/contents/{hash}` at the root and under the worlds nest and the
 //! builder's `/contents/{hash}` (from `camera_reel.withheld_blobs`, written
-//! in the review's and the delete's transaction and mirrored into the shared
+//! in the rejection's transaction and mirrored into the shared
 //! in-memory `content::Denylist`, refilled at boot by
-//! [`State::load_withheld`]). A hash is
-//! newly withheld only when no non-rejected row and no other domain's store
-//! reference (`storage::gc`'s sources) names it, so an owner's delete cannot
-//! hide another domain's file of the same bytes. A later successful upload can release deletion withholding;
+//! [`State::load_withheld`]). A rejection withholds the row's hashes whatever
+//! else names them. A later successful upload can release an older deletion record;
 //! it does not release rejected hashes or operator and remote denials. A private, non-rejected photo is served to whoever holds its
-//! filename URL or hash. Deletion removes the gallery row and applies withholding
-//! without unlinking immutable shared blobs. `GET /api/files/{name}` serves only
+//! filename URL or hash. Deletion removes the gallery row only: it neither
+//! unlinks nor withholds the shared blobs, which the collector reclaims once
+//! nothing names them. `GET /api/files/{name}` serves only
 //! a hash a non-rejected camera row names; arbitrary content files cannot be
 //! downloaded through this route. Beside the offset pages: a keyset page
 //! (`?cursor=`) over the same order, `nextCursor` on the wire only when
@@ -236,8 +235,8 @@ impl State {
     }
 
     /// Fills the shared denylist from `camera_reel.withheld_blobs`; `serve`
-    /// runs it once before listening, so a restart keeps every rejected and
-    /// deleted photo's bytes off the content routes. Returns the count.
+    /// runs it once before listening, so a restart keeps every rejected
+    /// photo's bytes off the content routes. Returns the count.
     pub async fn load_withheld(&self) -> Result<usize, sqlx::Error> {
         let hashes = self.db.withheld_hashes().await?;
         for hash in &hashes {
@@ -246,7 +245,7 @@ impl State {
         Ok(hashes.len())
     }
 
-    /// Mirrors what a review or delete wrote to `withheld_blobs`.
+    /// Mirrors what a review wrote to `withheld_blobs`.
     pub(crate) fn apply_verdict(&self, verdict: &db::BlobVerdict) {
         for hash in &verdict.withheld {
             self.denylist.add(hash);

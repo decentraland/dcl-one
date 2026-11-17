@@ -615,23 +615,7 @@ pub async fn referenced_rows_among_on(
     conn: &mut sqlx::PgConnection,
     keys: &[String],
 ) -> Result<HashSet<String>, GcError> {
-    rows_among(conn, keys, true, ALL_ROWS, None).await
-}
-
-/// The keys among `keys` any domain other than `skip` (`schema.table`) names, the
-/// asset-pack catalogue included; the caller checks `skip`'s own rows.
-pub async fn referenced_elsewhere_on(
-    conn: &mut sqlx::PgConnection,
-    keys: &[String],
-    skip: &str,
-) -> Result<HashSet<String>, GcError> {
-    if keys.is_empty() {
-        return Ok(HashSet::new());
-    }
-    let catalogue = catalogue_references(conn).await?;
-    let mut found = rows_among(conn, keys, true, ALL_ROWS, Some(skip)).await?;
-    found.extend(keys.iter().filter(|k| catalogue.contains(*k)).cloned());
-    Ok(found)
+    rows_among(conn, keys, true, ALL_ROWS).await
 }
 
 /// The oldest transaction a scan started now might not see: rows it misses were written at or after it.
@@ -658,7 +642,7 @@ async fn referenced_since(
         .fetch_one(&mut *conn)
         .await?;
     let fixed = fixed_references(conn, pins).await?;
-    let mut found = rows_among(conn, keys, true, (current - fence).max(0), None).await?;
+    let mut found = rows_among(conn, keys, true, (current - fence).max(0)).await?;
     found.extend(keys.iter().filter(|k| fixed.contains(*k)).cloned());
     Ok(found)
 }
@@ -703,7 +687,7 @@ async fn references_among(
         return Ok(HashSet::new());
     }
     let fixed = fixed_references(conn, pins).await?;
-    let mut found = rows_among(conn, keys, pending, ALL_ROWS, None).await?;
+    let mut found = rows_among(conn, keys, pending, ALL_ROWS).await?;
     found.extend(keys.iter().filter(|k| fixed.contains(*k)).cloned());
     Ok(found)
 }
@@ -715,7 +699,6 @@ async fn rows_among(
     keys: &[String],
     pending: bool,
     max_age: i64,
-    skip: Option<&str>,
 ) -> Result<HashSet<String>, GcError> {
     let mut found = HashSet::new();
     if keys.is_empty() {
@@ -726,9 +709,6 @@ async fn rows_among(
             continue;
         }
         let (table, column) = split_source(source);
-        if skip == Some(table) {
-            continue;
-        }
         let rows: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT DISTINCT {column} FROM {table} WHERE {column} = ANY($1)"
         )))
@@ -816,8 +796,7 @@ pub async fn unlink_orphans(
     let mut unlinked = 0;
     for batch in candidates.chunks(CHUNK) {
         // The fixed references were filtered out above.
-        let referenced =
-            rows_among(&mut *pool.acquire().await?, batch, true, ALL_ROWS, None).await?;
+        let referenced = rows_among(&mut *pool.acquire().await?, batch, true, ALL_ROWS).await?;
         for key in batch.iter().filter(|k| !referenced.contains(*k)) {
             storage.delete_strict(key).await?;
             unlinked += 1;
@@ -866,7 +845,7 @@ pub async fn collect(
             chunk.dedup();
             // The fixed references never enter a chunk.
             let referenced =
-                rows_among(&mut *pool.acquire().await?, &chunk, true, ALL_ROWS, None).await?;
+                rows_among(&mut *pool.acquire().await?, &chunk, true, ALL_ROWS).await?;
             report.references += referenced.len();
             orphans.extend(chunk.drain(..).filter(|id| !referenced.contains(id)));
         }

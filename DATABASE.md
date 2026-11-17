@@ -1564,10 +1564,8 @@ import by primary key, and the gallery rows stay as they are. Its foreign key
 cascades from `images` (same schema, same lifecycle), so a delete of the
 photo removes it. `--prune` collects the ids of one complete pass in memory
 (16 bytes each) and deletes each imported row the pass did not read through
-the owner-delete statement, which records the blobs in `withheld_blobs`. A
-running `serve` loads that relation at boot, so a pruned photo's bytes are
-withheld on `/contents/{hash}` after its next start; its reel route answers
-404 within the servable memo's minute. The bootstrap defines the table; an
+the owner-delete statement, which removes the row and leaves the blobs to the
+collector; its reel route answers 404 within the servable memo's minute. The bootstrap defines the table; an
 existing database gains it from the object pass, so no step exists.
 
 ## Badges catalog and progress workload
