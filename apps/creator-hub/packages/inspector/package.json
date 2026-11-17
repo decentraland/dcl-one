@@ -79,12 +79,12 @@
     "directory": "apps/creator-hub/packages/inspector"
   },
   "scripts": {
-    "build": "npm run copy-bin && npm run copy-bevy-engine && npm run copy-bevy-agent && node ./build.js --production",
+    "build": "pnpm run copy-bin && pnpm run copy-bevy-engine && pnpm run copy-bevy-agent && node ./build.js --production",
     "copy-bevy-agent": "ts-node --project ./scripts/tsconfig.json ./scripts/copy-bevy-agent.ts",
     "copy-bevy-engine": "ts-node --project ./scripts/tsconfig.json ./scripts/copy-bevy-engine.ts",
     "copy-bin": "ts-node --project ./scripts/tsconfig.json ./scripts/copy-bin.ts",
-    "start": "npm run copy-bin && npm run copy-bevy-engine && npm run copy-bevy-agent && node ./build.js --watch",
-    "test": "npm run test:unit",
+    "start": "pnpm run copy-bin && pnpm run copy-bevy-engine && pnpm run copy-bevy-agent && node ./build.js --watch",
+    "test": "pnpm run test:unit",
     "test:e2e": "playwright test",
     "test:unit": "vitest run",
     "typecheck": "tsc -p tsconfig.check.json && tsc --noEmit -p test/tsconfig.json"
