@@ -55,4 +55,3 @@ type AssignableTo<Sub, Sup> = Sub extends Sup ? true : false;
 type Assert<T extends true> = T;
 
 export type _DriftSchedule = Assert<AssignableTo<RsSchedule, Schedule>>;
-
