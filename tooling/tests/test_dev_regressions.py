@@ -653,7 +653,7 @@ class InventoryTests(unittest.TestCase):
                 )
                 executable.chmod(0o755)
             result = subprocess.run(
-                [shutil.which("bash"), "-c", 'logs="$1"; receipts="$1"; shift; run() {\n' + body
+                [shutil.which("bash"), "-c", 'logs="$1"; receipts="$1"; group_threads=1; socket_threads=1; shift; run() {\n' + body
                  + '\n}; printf "%s\\n" "$@" | run 1', "_", directory.as_posix(),
                  *(executable.as_posix() for executable in executables)],
                 capture_output=True, text=True, check=True,
@@ -688,7 +688,7 @@ class InventoryTests(unittest.TestCase):
         if github_actions:
             env["GITHUB_ACTIONS"] = "true"
         return subprocess.run(
-            [shutil.which("bash"), "-c", 'set -euo pipefail; logs="$1"; receipts="$1"; failures="$1/failures"; shift; '
+            [shutil.which("bash"), "-c", 'set -euo pipefail; logs="$1"; receipts="$1"; failures="$1/failures"; group_threads=1; socket_threads=1; shift; '
              ': > "$failures"; phase="running the test binaries"; report() {\n' + report + '\n}; trap report EXIT; '
              'run() {\n' + body + '\n}; printf "%s\\n" "$@" | run 3', "_", directory.as_posix(),
              *(str(directory / name) for name in fixtures)],
