@@ -80,7 +80,8 @@ scenario(
       await explorer.teleport(...SCENE_PARCEL)
       assert.equal((await loadingState()).stage, absent)
 
-      stub.sceneAdapter({ status: 200, body: { adapter: 'offline:' } })
+      // Admission succeeds; a loopback endpoint keeps the transport out of this assertion.
+      stub.sceneAdapter({ status: 200, body: { adapter: 'livekit:wss://127.0.0.1:9/?access_token=e2e-admission' } })
       await until(() => explorer.banBlockState(), (s) => s.sceneAdmission.state === 'allowed', {
         timeoutMs: ROOM_TIMEOUT_MS,
         what: 'a fresh admission to lift the scene ban'

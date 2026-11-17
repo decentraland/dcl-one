@@ -20,8 +20,8 @@ use common::{
     rpc::{RpcCall, RpcCallEvent, RpcOrigin},
     sets::{SceneLoopSets, SceneSets},
     structs::{
-        AppConfig, AppError, CurrentRealm, DebugInfo, EditorMode, NoRenderApp, PreviewMode,
-        PrimaryCamera, PrimaryUser, SessionGraphics, TimeOfDay,
+        AppConfig, AppError, CurrentRealm, DebugInfo, EditorMode, MicState, NearbyVoiceDisabled,
+        NoRenderApp, PreviewMode, PrimaryCamera, PrimaryUser, SessionGraphics, TimeOfDay,
     },
     util::{dcl_assert, TryPushChildrenEx},
 };
@@ -79,9 +79,11 @@ pub mod gltf_resolver;
 pub mod initialize_scene;
 pub mod load_timing;
 pub mod permissions;
+pub mod portables;
 pub mod primary_entities;
 pub mod renderer_context;
 pub mod scene_partition;
+pub mod scene_spawn_slice;
 mod scene_traffic;
 #[cfg(test)]
 pub mod test;
@@ -98,6 +100,9 @@ pub struct SceneUpdates {
     pub update_deadline: SystemTime,
     pub eligible_jobs: usize,
     pub loop_end_time: Instant,
+    /// The frame length `run_scene_loop` last targeted (vsync refresh rate or the fps target,
+    /// with the session override); None when the target is uncapped (fps 0).
+    pub frame_target: Option<Duration>,
     pub scene_queue: VecDeque<(Entity, FloatOrd)>,
     /// Engine frames since startup (one per `update_scene_priority` run).
     pub frames: u64,
@@ -368,6 +373,7 @@ impl Plugin for SceneRunnerPlugin {
             eligible_jobs: 0,
             scene_queue: Default::default(),
             loop_end_time: Instant::now(),
+            frame_target: None,
             priority_scenes: Default::default(),
             frames: 0,
             skipped_in_flight: 0,
@@ -394,6 +400,7 @@ impl Plugin for SceneRunnerPlugin {
         );
 
         app.add_plugins(SceneLifecyclePlugin);
+        app.add_plugins(portables::PortableExperiencesPlugin);
 
         app.add_systems(
             Update,
@@ -435,12 +442,16 @@ impl Plugin for SceneRunnerPlugin {
         app.add_plugins(SceneUtilPlugin);
         if app.world().get_resource::<NoRenderApp>().is_none() {
             app.add_systems(Update, scene_traffic::track_parcel.in_set(SceneSets::Input));
-            debug_panel::register(app);
+            app.add_plugins(debug_panel::SceneDebugPanelPlugin);
             app.add_plugins(LightsPlugin);
         }
         app.add_plugins(AssetPreloadPlugin);
+        app.add_plugins(scene_spawn_slice::SceneSpawnSlicePlugin);
 
-        app.add_systems(Update, update_scene_room.in_set(SceneSets::PostLoop));
+        app.add_systems(
+            Update,
+            (update_scene_room, update_scene_voice_block).in_set(SceneSets::PostLoop),
+        );
         app.init_resource::<load_timing::FirstRingTiming>();
         app.add_systems(
             Update,
@@ -501,7 +512,9 @@ fn run_scene_loop(world: &mut World) {
     let target_end_time = loop_schedule.next_frame_end.clamp(earliest_end, latest_end);
     loop_schedule.next_frame_end = target_end_time + frame_target_duration;
 
-    world.resource_mut::<SceneUpdates>().loop_end_time = target_end_time;
+    let mut updates = world.resource_mut::<SceneUpdates>();
+    updates.loop_end_time = target_end_time;
+    updates.frame_target = (fps != 0.0).then_some(frame_target_duration);
 
     // run at least once to collect updates even if no scenes are eligible
     let mut run_once = false;
@@ -1066,26 +1079,25 @@ mod get_ray_tests {
     }
 }
 
-/// Replace the value of an `access_token` query param with `REDACTED`, preserving
-/// the rest of the adapter string. Used to keep the server-minted LiveKit room
-/// credential out of RealmInfo (which scene JS can read via op_realm_information).
-fn redact_access_token(adapter: &str) -> String {
-    match adapter.split_once("access_token=") {
-        Some((prefix, rest)) => {
-            let tail = rest.find('&').map(|i| &rest[i..]).unwrap_or("");
-            format!("{prefix}access_token=REDACTED{tail}")
-        }
-        None => adapter.to_owned(),
-    }
-}
-
 // serialized realm info, rebuilt only when the realm or a scene room changes
 #[derive(Default)]
 struct RealmInfoCache {
     disconnected: Vec<u8>,
-    connected: Option<(String, Vec<u8>)>,
+    // the client's one scene room, for each scene it carries
+    connected: Option<Vec<u8>>,
     // server mode holds N rooms in ServerSceneRooms (empty on clients), keyed by scene hash
     server: HashMap<String, Vec<u8>>,
+}
+
+impl RealmInfoCache {
+    /// The realm info a scene reads. `connected` is whether the scene room that carries the
+    /// scene is connected: until then `isConnectedSceneRoom` is false.
+    fn for_scene(&self, hash: &str, connected: bool) -> &[u8] {
+        connected
+            .then(|| self.server.get(hash).or(self.connected.as_ref()))
+            .flatten()
+            .unwrap_or(&self.disconnected)
+    }
 }
 
 /// The realm's base url and name as scenes are told them (`PbRealmInfo`).
@@ -1114,6 +1126,31 @@ fn dispatch_dt(tick_number: u32, last_sent: f64, now: f64) -> f64 {
         now - last_sent
     } else {
         0.0
+    }
+}
+
+#[cfg(test)]
+mod realm_info_tests {
+    use super::*;
+
+    #[test]
+    fn a_scene_reads_a_connected_room_only_while_one_carries_it() {
+        let client = RealmInfoCache {
+            disconnected: vec![0],
+            connected: Some(vec![1]),
+            server: HashMap::default(),
+        };
+        // dialed, or another scene's room
+        assert_eq!(client.for_scene("bafyscene", false), [0]);
+        assert_eq!(client.for_scene("bafyscene", true), [1]);
+
+        let server = RealmInfoCache {
+            disconnected: vec![0],
+            connected: None,
+            server: HashMap::from_iter([("bafyscene".to_owned(), vec![2])]),
+        };
+        assert_eq!(server.for_scene("bafyscene", false), [0]);
+        assert_eq!(server.for_scene("bafyscene", true), [2]);
     }
 }
 
@@ -1149,8 +1186,11 @@ fn send_scene_updates(
     config: Res<AppConfig>,
     window: Query<&Window, With<PrimaryWindow>>,
     realm: Res<CurrentRealm>,
-    data_channel: Res<SceneRoomConnection>,
-    server_rooms: Res<comms::ServerSceneRooms>,
+    (data_channel, server_rooms, scene_rooms): (
+        Res<SceneRoomConnection>,
+        Res<comms::ServerSceneRooms>,
+        comms::scene_rooms::SceneRooms,
+    ),
     scene_realms: Res<comms::global_crdt::SceneRealms>,
     screen_areas: ScreenAreas,
     preview_mode: Res<PreviewMode>,
@@ -1190,12 +1230,12 @@ fn send_scene_updates(
         };
         realm_info_cache.disconnected.clear();
         DclWriter::new(&mut realm_info_cache.disconnected).write(&realm_info);
-        realm_info_cache.connected = data_channel.0.as_ref().map(|(scene, addr, _)| {
+        realm_info_cache.connected = data_channel.0.as_ref().map(|(_, addr, _)| {
             realm_info.room = Some(addr.clone());
             realm_info.is_connected_scene_room = Some(true);
             let mut bytes = Vec::new();
             DclWriter::new(&mut bytes).write(&realm_info);
-            (scene.scene_id.clone(), bytes)
+            bytes
         });
         // Server-mode room adapter is `livekit:...?access_token=<JWT>` minted by the
         // orchestrator for THIS scene. Redact the token: RealmInfo is exposed to scene
@@ -1206,7 +1246,7 @@ fn send_scene_updates(
             .0
             .iter()
             .map(|(hash, (addr, _))| {
-                realm_info.room = Some(redact_access_token(addr));
+                realm_info.room = Some(common::util::redact_access_token(addr));
                 realm_info.is_connected_scene_room = Some(true);
                 // the realm this scene is in, which an orchestrated engine is told per scene —
                 // it is in none itself, so its own name is no answer for any of them
@@ -1296,14 +1336,8 @@ fn send_scene_updates(
     }
 
     // add realm info
-    let realm_bytes = match realm_info_cache.connected.as_ref() {
-        Some((hash, bytes)) if **hash == *context.hash => bytes.as_slice(),
-        _ => realm_info_cache
-            .server
-            .get(&*context.hash)
-            .map(Vec::as_slice)
-            .unwrap_or(realm_info_cache.disconnected.as_slice()),
-    };
+    let connected = scene_rooms.connected(&context.hash);
+    let realm_bytes = realm_info_cache.for_scene(&context.hash, connected);
     context.crdt_store.update_if_different(
         SceneComponentId::REALM_INFO,
         CrdtType::LWW_ANY,
@@ -1760,6 +1794,26 @@ fn update_scene_room(
     *last = Some(ev.clone());
     debug!("set scene room {ev:?}");
     writer.write(ev);
+}
+
+/// Only the parcel scene under the player counts: a portable experience never blocks.
+fn update_scene_voice_block(
+    mic_state: Option<ResMut<MicState>>,
+    containing_scene: ContainingScene,
+    player: Query<Entity, With<PrimaryUser>>,
+    disabling_scenes: Query<(), With<NearbyVoiceDisabled>>,
+) {
+    let Some(mut mic_state) = mic_state else {
+        return;
+    };
+    let blocked = player
+        .single()
+        .ok()
+        .and_then(|player| containing_scene.get_parcel(player))
+        .is_some_and(|scene| disabling_scenes.contains(scene));
+    if mic_state.scene_blocked != blocked {
+        mic_state.set_scene_blocked(blocked);
+    }
 }
 
 fn log_app_errors(mut toaster: Toaster, mut errors: EventReader<AppError>, frame: Res<FrameCount>) {

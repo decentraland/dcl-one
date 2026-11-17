@@ -70,10 +70,6 @@ pub struct ValidatedLine {
     pub registered_name: Option<String>,
 }
 
-fn is_eth_address(s: &str) -> bool {
-    s.len() == 42 && s.starts_with("0x") && s[2..].bytes().all(|b| b.is_ascii_hexdigit())
-}
-
 /// Upstream `validateCreditLine`, message for message.
 pub fn validate_line(raw: &Value) -> Result<ValidatedLine, String> {
     let quoted = match raw.get("usdPriceCents").and_then(Value::as_i64) {
@@ -85,7 +81,7 @@ pub fn validate_line(raw: &Value) -> Result<ValidatedLine, String> {
     if contract_address.is_some() || item_id.is_some() {
         let Some(address) = contract_address
             .and_then(Value::as_str)
-            .filter(|s| is_eth_address(s))
+            .filter(|s| crate::types::is_hex_address(s))
         else {
             return Err(
                 "\"contractAddress\" must be a valid address when an item is given".to_string(),
@@ -227,6 +223,8 @@ pub enum AuthorizeError {
     },
     /// 409: the request's `operationId` already authorized other lines.
     OperationReused,
+    /// 403: a trial (`CREDITS_TRIAL_MODE`) whose buyers don't include the signer.
+    NotATrialBuyer,
     Api(ApiError),
 }
 
@@ -310,6 +308,15 @@ impl AuthorizeError {
                     409,
                     "This purchase was already authorized for other items. Start a new purchase."
                         .to_string(),
+                    extra,
+                )
+            }
+            Self::NotATrialBuyer => {
+                let mut extra = serde_json::Map::new();
+                extra.insert("code".into(), json!("not_a_trial_buyer"));
+                envelope(
+                    403,
+                    "Credits can't be used by this account in this test.".to_string(),
                     extra,
                 )
             }
@@ -476,6 +483,41 @@ async fn item_lookup(
     }
 }
 
+/// The wallets a trade pays: its `received[].beneficiary` (an unparsable one is skipped;
+/// the chain pays the signer for a zero beneficiary, which the signer check covers).
+pub(crate) fn trade_payees(json: &Value) -> Vec<EvmAddress> {
+    json.get("received")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|a| a.get("beneficiary").and_then(Value::as_str))
+        .filter_map(|b| EvmAddress::parse(&b.to_ascii_lowercase()).ok())
+        .collect()
+}
+
+/// Credits never pay a wallet for its own item: the buyer may not be the
+/// item's creator or the trade's signer, who receive the proceeds.
+fn refuse_own_sale(
+    session: Session,
+    index: usize,
+    seller: EvmAddress,
+) -> Result<(), AuthorizeError> {
+    if pays_buyer(session, seller) {
+        return Err(AuthorizeError::Api(ApiError::forbidden(format!(
+            "items[{index}]: {OWN_SALE}"
+        ))));
+    }
+    Ok(())
+}
+
+/// The refusal of a line that would pay the buyer's own wallet.
+pub(crate) const OWN_SALE: &str = "credits cannot buy an item from the buyer's own wallet";
+
+/// Whether paying `payee` pays the signed-in buyer.
+pub(crate) fn pays_buyer(session: Session, payee: EvmAddress) -> bool {
+    matches!(session, Session::Web3 { wallet } | Session::Web2 { account: wallet } if wallet == payee)
+}
+
 /// One line's authoritative facts from the mirrors and the decoded order,
 /// through the rule; `chain_id` is the credits chain this node serves.
 pub(super) async fn derive_line(
@@ -502,10 +544,15 @@ pub(super) async fn derive_line(
     } else if let Some(trade_id) = &v.trade_id {
         let (trade, trade_type) = match state.pricing.fetch_trade(trade_id).await? {
             TradeLookup::Open(json) => (
-                decode_trade(&json).map_err(|m| AuthorizeError::Line {
-                    index,
-                    message: format!("trade {trade_id} cannot be decoded: {m}"),
-                })?,
+                {
+                    for payee in trade_payees(&json) {
+                        refuse_own_sale(session, index, payee)?;
+                    }
+                    decode_trade(&json).map_err(|m| AuthorizeError::Line {
+                        index,
+                        message: format!("trade {trade_id} cannot be decoded: {m}"),
+                    })?
+                },
                 json.get("type")
                     .and_then(Value::as_str)
                     .unwrap_or_default()
@@ -530,6 +577,7 @@ pub(super) async fn derive_line(
                 got: trade.venue.chain_id,
             }));
         }
+        refuse_own_sale(session, index, trade.signer)?;
         // The coupon the line's purchase offer was priced with, chosen again
         // here by the same server rule: the authorized price is the offer's,
         // and a coupon that ended or was outbid since is a changed price.
@@ -544,6 +592,7 @@ pub(super) async fn derive_line(
             if sent.asset_type == TradeAssetType::CollectionItem {
                 match item_lookup(state, chain_id, sent.contract, sent.value).await? {
                     Lookup::Found((record, _)) => {
+                        refuse_own_sale(session, index, record.creator)?;
                         contract = Lookup::Found(ContractRole::Collection);
                         item = Lookup::Found(record);
                     }
@@ -589,6 +638,7 @@ pub(super) async fn derive_line(
         };
         match item_lookup(state, chain_id, collection, item_id).await? {
             Lookup::Found((record, info)) => {
+                refuse_own_sale(session, index, record.creator)?;
                 if !info.store_mintable {
                     return Err(AuthorizeError::Line {
                         index,
@@ -741,19 +791,28 @@ pub async fn authorize_group(
     // A purchase that names itself is recovered from what it reserved, before the
     // index, the gate, the feed, the catalogue or the price is read: those decide
     // whether to issue a new credit, never whether to hand back the one it has.
-    if let Some(digest) = request_digest {
-        if let Some(prior) = state
+    if let Some(digest) = request_digest
+        && let Some(prior) = state
             .credits
             .authorization_for_key(idempotency_key, signer)
             .await?
-        {
-            if prior.request_digest.as_deref() != Some(digest) {
-                return Err(AuthorizeError::OperationReused);
-            }
-            let (issued, lines) =
-                replayed(state, &prior.id, buyer, manager, chain_id, None, "").await?;
-            return credit_out(&wallet, issued, lines, single, signer, true);
+    {
+        if prior.request_digest.as_deref() != Some(digest) {
+            return Err(AuthorizeError::OperationReused);
         }
+        let (issued, lines) =
+            replayed(state, &prior.id, buyer, manager, chain_id, None, "").await?;
+        return credit_out(&wallet, issued, lines, single, signer, true);
+    }
+
+    // A trial issues new credits only to the buyers it names. This is the one place a new
+    // credit starts, after a named purchase is recovered above (its own credit and terms, no
+    // new TTL) and before the index, the gate or a reservation: a buyer taken off the list
+    // keeps what it was already given and gets nothing new.
+    if let Some(trial) = &settings.trial
+        && !trial.admits(signer)
+    {
+        return Err(AuthorizeError::NotATrialBuyer);
     }
 
     if state.usage.ready_at(chrono::Utc::now()).await.is_none() {
@@ -1129,6 +1188,27 @@ fn getrandom_32() -> Option<[u8; 32]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_buyer_cannot_pay_itself_with_credits() {
+        let me = EvmAddress::parse("0x2222222222222222222222222222222222222222").unwrap();
+        let seller = EvmAddress::parse("0x3333333333333333333333333333333333333333").unwrap();
+        let err = refuse_own_sale(Session::Web3 { wallet: me }, 2, me).unwrap_err();
+        assert!(
+            matches!(&err, AuthorizeError::Api(ApiError::Forbidden(m)) if m.starts_with("items[2]")),
+            "got {err:?}"
+        );
+        assert!(refuse_own_sale(Session::Web3 { wallet: me }, 0, seller).is_ok());
+        let trade = json!({ "received": [
+            { "beneficiary": "0x3333333333333333333333333333333333333333" },
+            { "beneficiary": "0x2222222222222222222222222222222222222222" },
+        ] });
+        assert_eq!(
+            trade_payees(&trade),
+            vec![seller, me],
+            "the payee may be the buyer"
+        );
+    }
 
     #[test]
     fn line_validation_is_upstreams_message_for_message() {

@@ -1,0 +1,136 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--dcl-space-24);
+}
+
+.centered {
+  align-items: center;
+}
+
+/* The rows of a centered root. */
+.centeredRow {
+  justify-content: center;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dcl-space-16);
+}
+
+/* The icon file is light; source darkens it the same way on the white Epic button. */
+.epic {
+  width: var(--dcl-space-32);
+  height: var(--dcl-space-32);
+  filter: brightness(0);
+}
+
+.alternatives {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dcl-space-16);
+}
+
+.downloads {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  margin: 0;
+  font-size: var(--dcl-font-size-body-md);
+  /* text-secondary-on-brand is 3.84:1 on the radial gradient's center; primary is 5.90:1. */
+  color: var(--dcl-text-primary);
+}
+
+.altList {
+  display: flex;
+  gap: var(--dcl-space-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.altIcon {
+  width: var(--dcl-space-32);
+  height: var(--dcl-space-32);
+}
+
+/* A full-width primary action at the Button large height: its 12px padding around a 32px badge
+   is 56px. Source's is 64px around a 40px badge; that geometry waits on design (B1). */
+.store {
+  width: 100%;
+}
+
+.badge {
+  display: block;
+  height: var(--dcl-space-32);
+}
+
+/* Opt-in landing treatment, measured from the production site's CTA controls. */
+.sourceActions {
+  gap: var(--dcl-space-24);
+}
+
+.sourceAction {
+  width: 304px;
+  height: var(--dcl-space-64);
+  gap: var(--dcl-space-16);
+  padding: 0;
+  border-radius: var(--dcl-radius-lg);
+  font-size: 19.89px;
+  font-weight: 600;
+  letter-spacing: 0.61px;
+  line-height: 1.5;
+}
+
+.sourceEpic {
+  gap: var(--dcl-space-24);
+  border: 3px solid var(--dcl-neutrals-white);
+}
+
+.sourceEpicIcon {
+  width: 40px;
+  height: 40px;
+  filter: brightness(0);
+}
+
+.sourceAlternative {
+  min-width: var(--dcl-space-24);
+  min-height: var(--dcl-space-24);
+  width: var(--dcl-space-24);
+  height: var(--dcl-space-24);
+  padding: 0;
+  border-radius: 0;
+  line-height: 0;
+}
+
+.sourceAltIcon {
+  width: var(--dcl-space-24);
+  height: var(--dcl-space-24);
+}
+
+.sourceDownloads {
+  min-width: 210px;
+  font-family: 'Inter', Helvetica, Arial, sans-serif;
+  letter-spacing: 0.00938em;
+  white-space: nowrap;
+  color: var(--dcl-neutrals-white);
+  gap: var(--dcl-space-12);
+  line-height: 24px;
+}
+
+.sourceStore {
+  width: calc(100% - var(--dcl-space-32));
+  max-width: 345px;
+  height: var(--dcl-space-64);
+  padding: 0;
+  border-radius: var(--dcl-radius-md);
+  box-shadow: 0 2px var(--dcl-space-8) var(--dcl-transparencies-black-40);
+}
+
+.sourceBadge {
+  display: block;
+  height: 40px;
+}

@@ -1,6 +1,6 @@
 import { redirect } from "react-router";
 
-import { ensureSid, serializeSidCookie } from "@/core/lib/telemetry/session";
+import { ownedSessionCookies, requestSession } from "@/core/lib/telemetry/session";
 import { track } from "@/core/lib/telemetry/track";
 
 import type { Route } from "./+types/builder.worlds";
@@ -9,8 +9,11 @@ const STORY = "creator-integration-redirect-worlds";
 const FROM = "/builder/worlds";
 const TO = "/create/worlds";
 
-export async function loader({ request }: Route.LoaderArgs) {
-  const { sid, created } = ensureSid(request);
+export async function loader({ request, context }: Route.LoaderArgs) {
+  const session = requestSession(request, context);
+  const { sid } = session;
+  // Behind the root middleware the cookie is set once on the response; only a direct call sets it here.
+  const cookies = ownedSessionCookies(request, session);
 
   const query = new URL(request.url).searchParams.toString();
   const location = query ? `${TO}?${query}` : TO;
@@ -23,6 +26,6 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   return redirect(
     location,
-    created ? { headers: { "Set-Cookie": serializeSidCookie(sid) } } : undefined,
+    cookies ? { headers: cookies } : undefined,
   );
 }

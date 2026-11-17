@@ -1,0 +1,128 @@
+.card {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 560px) minmax(0, 1fr);
+  min-height: 380px;
+  overflow: hidden;
+  border-radius: var(--dcl-radius-xl);
+  background: var(--dcl-bg-surface);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--dcl-space-16);
+  padding: var(--dcl-space-48);
+  background: var(--dcl-gradient-amethyst);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dcl-space-16);
+  margin: 0;
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-body-md-strong);
+  font-weight: 600;
+}
+
+.title {
+  max-width: 460px;
+  margin: 0;
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-heading-1);
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+.link:focus-visible {
+  outline: none;
+}
+
+.link:focus-visible::after {
+  outline: 2px solid var(--dcl-text-primary);
+  outline-offset: -2px;
+  border-radius: var(--dcl-radius-xl);
+}
+
+.excerpt {
+  max-width: 460px;
+  margin: 0;
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-body-lg);
+  line-height: 1.5;
+}
+
+.cta {
+  align-self: flex-start;
+  margin-top: var(--dcl-space-8);
+  padding: var(--dcl-space-12) var(--dcl-space-48);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-action-primary);
+  color: var(--dcl-text-on-action);
+  font-size: var(--dcl-font-size-button-xl);
+  font-weight: 700;
+  line-height: 22px;
+  text-transform: uppercase;
+}
+
+.card:hover .cta {
+  background: var(--dcl-action-primary-hover);
+}
+
+.image {
+  min-height: 200px;
+  background: linear-gradient(90deg, hsl(var(--blog-hue, 268) 65% 50%) 15%, var(--dcl-bg-page) 85%);
+}
+
+@media (max-width: 1023px) {
+  .card {
+    grid-template-columns: 1fr;
+  }
+
+  .image {
+    order: -1;
+  }
+}
+
+@media (max-width: 767px) {
+  .card {
+    border-radius: var(--dcl-radius-lg);
+  }
+
+  .panel {
+    gap: var(--dcl-space-12);
+    padding: var(--dcl-space-24) var(--dcl-space-24) var(--dcl-space-32);
+  }
+
+  .title {
+    font-size: var(--dcl-font-size-heading-2);
+  }
+
+  .excerpt {
+    font-size: var(--dcl-font-size-body-md);
+  }
+
+  .link:focus-visible::after {
+    border-radius: var(--dcl-radius-lg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cta {
+    transition: background-color 150ms ease;
+  }
+}

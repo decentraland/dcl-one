@@ -7,7 +7,7 @@
 // individual setSetting calls; the preset's own value is derived by matching the live
 // values against each preset (Custom when none match).
 import { BevyApi } from '../bevy-api'
-import type { Setting } from '../../../src/engine/protocol'
+import type { Setting } from '@explorer-core/engine/protocol'
 import type { Ctx } from '../bridge'
 
 const PRESET_SETTING = 'Graphics Preset'

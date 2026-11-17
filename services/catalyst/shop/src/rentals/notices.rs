@@ -29,8 +29,8 @@ use crate::market::MarketplaceState;
 use crate::market::chain_walk::{self, ChainNet};
 use crate::market::notice_cursor::{self, advance, lock, seed};
 use crate::market::transfer_notices::Pass;
-use crate::social::Address;
-use crate::social::notifications::store::{NewNotification, insert_notifications};
+use crate::shared::identity::Address;
+use crate::shared::notifications::{NewNotification, insert_notifications};
 
 pub const KIND_STARTED: &str = notice_cursor::RENTAL_STARTED;
 pub const KIND_ENDED: &str = notice_cursor::RENTAL_ENDED;
@@ -86,7 +86,11 @@ WITH r AS (
 }
 
 /// The parcel (`x,y`) a rented token stands for and whether it is an
-/// estate of several, over the period rows `p`.
+/// estate of several, over the period rows `p`. An estate's parcel comes
+/// from the land-authz estate links, read without its readiness gate since
+/// it only describes the notice: while a registry switch replays
+/// (`land_authz::indexer::begin_replay` deletes the links, and the new
+/// registries' fold rebuilds them), an estate's notice names no parcel.
 const PLACE: &str = "
     CASE WHEN p.contract_address = $2
          THEN land_authz.token_x(p.token_id) || ',' || land_authz.token_y(p.token_id)
@@ -190,7 +194,8 @@ async fn published(pool: &PgPool) -> Option<(i64, i64)> {
     Some((c.last_block, c.last_block_time?))
 }
 
-const WAITING: &str = "the rentals index is not published (SHOP_RENTALS_INDEX_ENABLED)";
+const WAITING: &str =
+    "the rentals index is not published (chain-1 RPC unset or SHOP_RENTALS_INDEX_ENABLED=false)";
 
 /// One `rental_started` pass: every published rent after the cursor.
 pub async fn run_started(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
@@ -318,7 +323,7 @@ pub async fn run_ended(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
 
 pub fn spawn(state: &Arc<MarketplaceState>, jobs: &Jobs) {
     tracing::info!(
-        "rental notifications run while the rentals index is published (SHOP_RENTALS_INDEX_ENABLED); \
+        "rental notifications run while the rentals index is published; \
          until then their job progress reads `waiting`"
     );
     let pool = state.pool.clone();

@@ -11,6 +11,7 @@ use alloy_core::primitives::Address;
 use bevy::{
     color::palettes,
     math::DVec3,
+    pbr::CascadeShadowConfig,
     platform::collections::{HashMap, HashSet},
     prelude::*,
     render::{primitives::Aabb, view::RenderLayers},
@@ -432,6 +433,33 @@ pub struct PrimaryCamera {
     pub scene_override: Option<CameraOverride>,
 }
 
+/// Where the camera sits relative to the player, with a scene's override applied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CameraView {
+    FirstPerson,
+    ThirdPerson,
+    Cinematic,
+}
+
+impl PrimaryCamera {
+    /// The camera is in first person when it is this close behind the player.
+    pub const FIRST_PERSON_DISTANCE: f32 = 0.05;
+
+    /// The view in effect: a scene's override wins over the player's own zoom.
+    pub fn view(&self) -> CameraView {
+        let distance = match self.scene_override {
+            Some(CameraOverride::Cinematic(_)) => return CameraView::Cinematic,
+            Some(CameraOverride::Distance(distance)) => distance,
+            None => self.distance,
+        };
+        if distance <= Self::FIRST_PERSON_DISTANCE {
+            CameraView::FirstPerson
+        } else {
+            CameraView::ThirdPerson
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CinematicSettings {
     pub origin: Entity,
@@ -581,6 +609,8 @@ pub struct AppConfig {
     pub scene_imposter_multisample_amount: f32,
     pub scene_imposter_bake: SceneImposterBake,
     pub parcel_grass_setting: ParcelGrassSetting,
+    /// The landscape distance in metres ([`LandscapeDistance`]), read at startup.
+    pub landscape_distance: f32,
     pub sysinfo_visible: bool,
     pub scene_log_to_console: bool,
     pub max_avatars: usize,
@@ -594,6 +624,7 @@ pub struct AppConfig {
     pub scene_permissions: HashMap<String, HashMap<PermissionType, PermissionValue>>,
     pub inputs: InputMapSerialized,
     pub point_at_marker_visibility: PointAtMarkerVisibility,
+    pub chat_bubble_visibility: ChatBubbleVisibility,
     /// Who may DM the local user. Owned by the social service, so never persisted here: the
     /// slot mirrors the server value and the social crate upserts user changes to it. `None`
     /// until either the user or the server has set it.
@@ -602,6 +633,10 @@ pub struct AppConfig {
     pub camera_smoothing: CameraSmoothing,
     /// The language the player chose (BCP-47); `None` follows the system language.
     pub language: Option<String>,
+    /// Base url of an abgen Bevy variants service (prototype), when `--bevy-variants-url` /
+    /// `?bevyVariants=` is absent; `None` = the asset-bundle generator's CDN for the base
+    /// domain, `off` = off.
+    pub bevy_variants_url: Option<String>,
     // field-level default (0) so configs saved before this field existed read as outdated,
     // rather than taking the current generation from the container-level default
     #[serde(default)]
@@ -644,6 +679,7 @@ impl Default for AppConfig {
             scene_imposter_multisample_amount: 0.0,
             scene_imposter_bake: SceneImposterBake::Off,
             parcel_grass_setting: Default::default(),
+            landscape_distance: LandscapeDistance::default().0,
             sysinfo_visible: false,
             scene_log_to_console: false,
             max_avatars: 20,
@@ -657,9 +693,11 @@ impl Default for AppConfig {
             scene_permissions: Default::default(),
             inputs: Default::default(),
             point_at_marker_visibility: Default::default(),
+            chat_bubble_visibility: Default::default(),
             dm_privacy: None,
             camera_smoothing: Default::default(),
             language: None,
+            bevy_variants_url: None,
             settings_generation: SETTINGS_GENERATION,
             inputs_generation: INPUTS_GENERATION,
             is_fresh_user_id: true,
@@ -801,13 +839,33 @@ impl AppConfig {
         self.inputs
             .0
             .retain(|(action, _)| *action != Action::System(SystemAction::ShowProfile));
-        for (action, bindings) in InputMapSerialized::default().0 {
+        // A merged default leaves out inputs the user gave another action, or one press would
+        // fire both. Inputs the defaults share on purpose still merge.
+        let defaults = InputMapSerialized::default().0;
+        let chosen: HashSet<InputIdentifier> = self
+            .inputs
+            .0
+            .iter()
+            .flat_map(|(action, bindings)| {
+                let own = defaults
+                    .iter()
+                    .find(|(default_action, _)| default_action == action)
+                    .map(|(_, default_bindings)| default_bindings.as_slice())
+                    .unwrap_or_default();
+                bindings.iter().filter(move |id| !own.contains(id)).copied()
+            })
+            .collect();
+        for (action, bindings) in defaults {
             if !self
                 .inputs
                 .0
                 .iter()
                 .any(|(existing, _)| *existing == action)
             {
+                let bindings = bindings
+                    .into_iter()
+                    .filter(|id| !chosen.contains(id))
+                    .collect();
                 self.inputs.0.push((action, bindings));
             }
         }
@@ -891,7 +949,8 @@ pub struct GraphicsSettings {
     pub avatar_ghosts: bool,
     /// bytes of throttled asset uploads to the gpu per frame; 0 = unlimited
     pub gpu_bytes_per_frame: usize,
-    /// share of the screen's device pixels the web canvas renders at
+    /// share of the window's device pixels the world renders at, upscaled to the window with FSR
+    /// (`visuals::upscale`); the UI stays at full resolution
     pub render_scale: f32,
 }
 
@@ -960,10 +1019,15 @@ pub enum AudioType {
     Avatar,
 }
 
+// a field missing from a saved config takes its default (a failed parse resets the whole config)
 #[derive(Resource, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct AudioSettings {
     pub master: i32, // 0-100
+    /// nearby players' voices
     pub voice: i32,
+    /// private calls and community voice streams
+    pub voice_chat: i32,
     pub scene: i32,
     pub system: i32,
     pub avatar: i32,
@@ -974,6 +1038,7 @@ impl Default for AudioSettings {
         Self {
             master: 100,
             voice: 100,
+            voice_chat: 100,
             scene: 100,
             system: 100,
             avatar: 100,
@@ -984,6 +1049,9 @@ impl Default for AudioSettings {
 impl AudioSettings {
     pub fn voice(&self) -> f32 {
         (self.voice * self.master) as f32 / 10_000.0
+    }
+    pub fn voice_chat(&self) -> f32 {
+        (self.voice_chat * self.master) as f32 / 10_000.0
     }
     pub fn scene(&self) -> f32 {
         (self.scene * self.master) as f32 / 10_000.0
@@ -999,8 +1067,46 @@ impl AudioSettings {
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ShadowSetting {
     Off,
+    /// one cascade, hardware 2x2 filtering
     Low,
+    /// four soft cascades
     High,
+}
+
+/// The far bounds of High's first three cascades, as fractions of the shadow distance.
+pub const SUN_CASCADE_4_SPLITS: [f32; 3] = [0.102, 0.282, 0.474];
+/// How far from the player a spot light can cast shadows, in metres.
+pub const SPOT_SHADOW_MAX_DISTANCE: f32 = 20.0;
+pub const MIN_CASCADE: f32 = 0.1;
+
+/// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows.
+pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShadowConfig> {
+    if distance <= 0.0 {
+        return None;
+    }
+    let far = distance.max(MIN_CASCADE + f32::EPSILON);
+    let bounds = match setting {
+        ShadowSetting::Off => return None,
+        ShadowSetting::Low => vec![far],
+        ShadowSetting::High => {
+            let mut previous = MIN_CASCADE;
+            SUN_CASCADE_4_SPLITS
+                .iter()
+                .map(|split| (f64::from(*split) * f64::from(far)) as f32)
+                .chain([far])
+                .map(|bound| {
+                    // bounds must increase strictly, even for a distance under the minimum
+                    previous = bound.max(previous + f32::EPSILON);
+                    previous
+                })
+                .collect()
+        }
+    };
+    Some(CascadeShadowConfig {
+        bounds,
+        overlap_proportion: 0.2,
+        minimum_distance: MIN_CASCADE,
+    })
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1079,6 +1185,32 @@ pub struct SceneLoadDistance {
     pub load: f32,
     pub unload: f32, // additional
     pub load_imposter: f32,
+}
+
+/// The landscape distance in metres: how far the hills are displaced and the cliffs are drawn.
+/// Set from the config's `landscape_distance` at startup ([`LandscapeDistance::from_config`]).
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct LandscapeDistance(pub f32);
+
+impl LandscapeDistance {
+    pub const MIN: f32 = 500.0;
+    pub const MAX: f32 = 7000.0;
+
+    /// The config's value held to [`Self::MIN`]..=[`Self::MAX`]; a value that is not a number
+    /// gives the default.
+    pub fn from_config(metres: f32) -> Self {
+        if metres.is_nan() {
+            Self::default()
+        } else {
+            Self(metres.clamp(Self::MIN, Self::MAX))
+        }
+    }
+}
+
+impl Default for LandscapeDistance {
+    fn default() -> Self {
+        Self(1000.0)
+    }
 }
 
 #[derive(Debug)]
@@ -1193,7 +1325,59 @@ pub struct SceneMeta {
     pub spawn_points: Option<Vec<SpawnPoint>>,
     pub skybox_config: Option<SkyboxConfig>,
     pub authoritative_multiplayer: Option<bool>,
+    /// `featureToggles`: a host scene's switches, of which `portableExperiences`
+    /// ([`PortableExperiencesToggle`]) and `nearbyVoiceChat` are read. Kept as raw json so a value of another shape never
+    /// fails the scene.json.
+    pub feature_toggles: Option<serde_json::Value>,
 }
+
+impl SceneMeta {
+    /// What this scene says about portable experiences while the player stands in it.
+    pub fn portable_experiences_toggle(&self) -> PortableExperiencesToggle {
+        self.feature_toggles
+            .as_ref()
+            .and_then(|toggles| toggles.get("portableExperiences"))
+            .and_then(serde_json::Value::as_str)
+            .map(|value| value.parse().unwrap_or_default())
+            .unwrap_or_default()
+    }
+
+    /// Whether nearby voice stays on while the player stands in this scene: `nearbyVoiceChat`
+    /// absent, not a string, empty or `enabled` (any case); any other string turns it off.
+    pub fn nearby_voice_chat_enabled(&self) -> bool {
+        self.feature_toggles
+            .as_ref()
+            .and_then(|toggles| toggles.get("nearbyVoiceChat"))
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(|value| value.is_empty() || value.eq_ignore_ascii_case("enabled"))
+    }
+}
+
+/// A host scene's `featureToggles.portableExperiences`: whether portable experiences run (and
+/// show their UI) while the player is inside the scene. Anything but `disabled` lets them run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum PortableExperiencesToggle {
+    #[default]
+    Enabled,
+    Disabled,
+    HideUi,
+}
+
+impl std::str::FromStr for PortableExperiencesToggle {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "enabled" => Ok(Self::Enabled),
+            "disabled" => Ok(Self::Disabled),
+            "hideui" => Ok(Self::HideUi),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct NearbyVoiceDisabled;
 
 pub trait PermissionStrings {
     fn active(&self) -> &str;
@@ -1440,7 +1624,7 @@ pub struct EngineMovementControl {
     pub penetration_bounds: (DVec3, DVec3),
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MoveKind {
     #[default]
     Idle,
@@ -1573,6 +1757,8 @@ pub struct SceneGlobalLight {
     /// setting unless a scene overrides it, as a tint and a multiplier
     pub ambient_color: Color,
     pub ambient_brightness: f32,
+    /// a scene hid the sun and moon discs (not their light)
+    pub sun_hidden: bool,
     pub layers: RenderLayers,
 }
 
@@ -1681,6 +1867,34 @@ pub enum AppError {
 pub struct MicState {
     pub available: bool,
     pub enabled: bool,
+    /// The scene the player stands in turns nearby voice off.
+    #[serde(default)]
+    pub scene_blocked: bool,
+    /// Counts the mic opens the scene refused.
+    #[serde(default)]
+    pub refusals: u32,
+}
+
+impl MicState {
+    /// Leaving the scene does not reopen the mic.
+    pub fn set_scene_blocked(&mut self, blocked: bool) {
+        self.scene_blocked = blocked;
+        if blocked {
+            self.enabled = false;
+        }
+    }
+
+    pub fn refuse(&mut self) {
+        self.refusals = self.refusals.wrapping_add(1);
+    }
+
+    /// Closing the mic is never refused.
+    pub fn request_enabled(&mut self, enabled: bool) {
+        if enabled && self.available && self.scene_blocked {
+            self.refuse();
+        }
+        self.enabled = self.available && !self.scene_blocked && enabled;
+    }
 }
 
 #[derive(Debug, Resource, Default)]
@@ -1885,6 +2099,15 @@ pub enum PointAtMarkerVisibility {
     None,
 }
 
+/// Which chat messages open a bubble over their sender's nametag.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChatBubbleVisibility {
+    #[default]
+    All,
+    NearbyOnly,
+    None,
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CameraSmoothing {
     Raw,
@@ -1923,6 +2146,119 @@ pub struct PointAtMarkerVisibilityChanged;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inputs::CommonInputAction;
+
+    #[test]
+    fn landscape_distance_from_config_is_clamped() {
+        let from = |metres| LandscapeDistance::from_config(metres).0;
+        assert_eq!(from(1000.0), 1000.0);
+        assert_eq!(from(0.0), LandscapeDistance::MIN);
+        assert_eq!(from(-50.0), LandscapeDistance::MIN);
+        assert_eq!(from(20_000.0), LandscapeDistance::MAX);
+        assert_eq!(from(f32::INFINITY), LandscapeDistance::MAX);
+        assert_eq!(from(f32::NAN), LandscapeDistance::default().0);
+    }
+
+    #[test]
+    fn sun_cascades_split_the_shadow_distance() {
+        let high = sun_cascades(ShadowSetting::High, 100.0).unwrap();
+        assert_eq!(high.bounds, vec![10.2, 28.2, 47.4, 100.0]);
+        assert_eq!(high.minimum_distance, MIN_CASCADE);
+        let medium = sun_cascades(ShadowSetting::Low, 60.0).unwrap();
+        assert_eq!(medium.bounds, vec![60.0]);
+        assert!(sun_cascades(ShadowSetting::Off, 60.0).is_none());
+        assert!(sun_cascades(ShadowSetting::High, 0.0).is_none());
+        // a distance under the minimum still yields a strictly increasing config
+        let tiny = sun_cascades(ShadowSetting::High, 0.05).unwrap();
+        assert!(tiny.bounds.windows(2).all(|w| w[0] < w[1]) && tiny.bounds[0] > MIN_CASCADE);
+    }
+
+    #[test]
+    fn a_config_saved_before_the_voice_chat_volume_keeps_its_audio() {
+        let config = AppConfig::from_json(
+            br#"{"user_id":"u","audio":{"master":80,"voice":40,"scene":30,"system":20,"avatar":10}}"#,
+        );
+        assert_eq!(config.user_id, "u");
+        assert_eq!(
+            config.audio,
+            AudioSettings {
+                master: 80,
+                voice: 40,
+                voice_chat: 100,
+                scene: 30,
+                system: 20,
+                avatar: 10,
+            }
+        );
+    }
+
+    #[test]
+    fn the_mic_stays_closed_after_leaving_a_scene_that_turns_nearby_voice_off() {
+        let mut mic = MicState {
+            available: true,
+            enabled: true,
+            scene_blocked: false,
+            refusals: 0,
+        };
+        mic.set_scene_blocked(true);
+        assert!(mic.scene_blocked && !mic.enabled);
+        mic.set_scene_blocked(false);
+        assert!(!mic.scene_blocked && !mic.enabled);
+    }
+
+    #[test]
+    fn a_scene_that_turns_nearby_voice_off_counts_each_refused_open() {
+        let mut mic = MicState {
+            available: true,
+            enabled: false,
+            scene_blocked: true,
+            refusals: 0,
+        };
+        mic.request_enabled(true);
+        assert!(!mic.enabled);
+        assert_eq!(mic.refusals, 1);
+        mic.request_enabled(false);
+        assert_eq!(mic.refusals, 1, "closing the mic is never refused");
+
+        mic.available = false;
+        mic.request_enabled(true);
+        assert_eq!(mic.refusals, 1, "no mic to refuse");
+
+        mic.available = true;
+        mic.scene_blocked = false;
+        mic.request_enabled(true);
+        assert!(mic.enabled);
+        assert_eq!(mic.refusals, 1);
+    }
+
+    #[test]
+    fn a_scene_turns_nearby_voice_off_with_any_value_but_enabled() {
+        let enabled = |toggles: &str| {
+            let meta: SceneMeta = serde_json::from_str(&format!(
+                r#"{{"main":"index.js","scene":{{"base":"0,0","parcels":["0,0"]}}{toggles}}}"#
+            ))
+            .unwrap();
+            meta.nearby_voice_chat_enabled()
+        };
+        assert!(enabled(""));
+        assert!(enabled(r#","featureToggles":{}"#));
+        assert!(enabled(r#","featureToggles":{"voiceChat":"disabled"}"#));
+        assert!(enabled(r#","featureToggles":{"nearbyVoiceChat":""}"#));
+        assert!(enabled(
+            r#","featureToggles":{"nearbyVoiceChat":"enabled"}"#
+        ));
+        assert!(enabled(
+            r#","featureToggles":{"nearbyVoiceChat":"ENABLED"}"#
+        ));
+        assert!(!enabled(
+            r#","featureToggles":{"nearbyVoiceChat":"disabled"}"#
+        ));
+        assert!(!enabled(r#","featureToggles":{"nearbyVoiceChat":"off"}"#));
+        // values of another shape are ignored rather than failing the scene.json
+        assert!(enabled(r#","featureToggles":{"nearbyVoiceChat":false}"#));
+        assert!(enabled(r#","featureToggles":{"nearbyVoiceChat":1}"#));
+        assert!(enabled(r#","featureToggles":["disabled"]"#));
+    }
 
     #[test]
     fn reset_outdated_settings_caps_uncapped_uploads() {
@@ -1974,6 +2310,11 @@ mod tests {
                         Action::System(SystemAction::QuickEmote4),
                         vec![InputIdentifier::Key(KeyCode::KeyX)],
                     ),
+                    // a default binding that a photo-mode default shares
+                    (
+                        Action::Scene(CommonInputAction::IaPrimary),
+                        vec![InputIdentifier::Key(KeyCode::KeyE)],
+                    ),
                 ],
                 Default::default(),
             ),
@@ -2003,6 +2344,18 @@ mod tests {
             get(&config, SystemAction::Places),
             Some(vec![InputIdentifier::Key(KeyCode::KeyZ)])
         );
+        // ...but not onto a key the user gave another action: X stays QuickEmote4's alone
+        assert_eq!(get(&config, SystemAction::Events), Some(vec![]));
+        // a key the defaults share on purpose still merges
+        let photo_tilt_right = InputMapSerialized::default()
+            .0
+            .into_iter()
+            .find(|(a, _)| *a == Action::System(SystemAction::PhotoTiltRight))
+            .map(|(_, bindings)| bindings);
+        assert!(photo_tilt_right
+            .as_ref()
+            .is_some_and(|b| b.contains(&InputIdentifier::Key(KeyCode::KeyE))));
+        assert_eq!(get(&config, SystemAction::PhotoTiltRight), photo_tilt_right);
         assert_eq!(config.inputs_generation, INPUTS_GENERATION);
         // fixed bindings restored: the wheel always scrolls
         assert_eq!(
@@ -2054,6 +2407,42 @@ mod tests {
         assert!(parse(r#"{"sizes":[],"satelliteView":{"topLeftOffset":null}}"#).is_none());
         assert!(parse(r#"{"sizes":[],"satelliteView":{"topLeftOffset":{"x":1}}}"#).is_none());
         assert!(parse(r#"{"sizes":[],"satelliteView":{"version":1}}"#).is_none());
+    }
+
+    #[test]
+    fn feature_toggles_parse_leniently() {
+        let meta = |toggles: &str| -> SceneMeta {
+            serde_json::from_str(&format!(
+                r#"{{"main":"bin/index.js","scene":{{"base":"0,0","parcels":["0,0"]}}{toggles}}}"#
+            ))
+            .unwrap()
+        };
+        assert_eq!(
+            meta("").portable_experiences_toggle(),
+            PortableExperiencesToggle::Enabled
+        );
+        assert_eq!(
+            meta(r#","featureToggles":{"portableExperiences":"disabled","voiceChat":false}"#)
+                .portable_experiences_toggle(),
+            PortableExperiencesToggle::Disabled
+        );
+        assert_eq!(
+            meta(r#","featureToggles":{"portableExperiences":"hideUi"}"#)
+                .portable_experiences_toggle(),
+            PortableExperiencesToggle::HideUi
+        );
+        // values of another shape are ignored rather than failing the scene.json
+        for toggles in [
+            r#","featureToggles":{"portableExperiences":1}"#,
+            r#","featureToggles":["disabled"]"#,
+            r#","featureToggles":{"portableExperiences":"unknown"}"#,
+        ] {
+            assert_eq!(
+                meta(toggles).portable_experiences_toggle(),
+                PortableExperiencesToggle::Enabled,
+                "{toggles}"
+            );
+        }
     }
 }
 

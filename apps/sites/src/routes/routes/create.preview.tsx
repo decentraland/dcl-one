@@ -53,8 +53,8 @@ const SHOT_CAP = 12;
 
 const mpTrack = track as unknown as MpTrackFn;
 
-export async function loader({ request }: Route.LoaderArgs) {
-  const { sid, assignment, wrap } = await pageLoader(request,  FALLBACK);
+export async function loader({ request, context }: Route.LoaderArgs) {
+  const { sid, assignment, wrap } = await pageLoader(request, context,  FALLBACK);
   return wrap({
     sid,
     variant: assignment.variant,

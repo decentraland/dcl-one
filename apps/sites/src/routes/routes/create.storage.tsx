@@ -62,7 +62,7 @@ const FALLBACK: PageDefaults = {
   variant: "storage-dashboard",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const address =
     url.searchParams.get("address")?.trim() || readWallet(request) || undefined;
@@ -73,7 +73,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const quotaOpen = url.searchParams.get("quota") === "1";
 
   const [{ sid, wrap }, d] = await Promise.all([
-    pageLoader(request,  FALLBACK),
+    pageLoader(request, context,  FALLBACK),
     loadWorldsStorage(address, { signal: request.signal }).catch(
     () => null,
   ),

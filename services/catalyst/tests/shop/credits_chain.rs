@@ -84,6 +84,8 @@ sol! {
     function isRevoked(bytes32 creditHash) returns (bool);
     function secondarySalesAllowed() returns (bool);
     function hasRole(bytes32 role, address account) returns (bool);
+    function pause();
+    function unpause();
 }
 
 const ARTIFACTS: &str = concat!(
@@ -288,7 +290,7 @@ async fn deploy_all(
         .deploy(
             deployer,
             bytecode(arts, "MockMana"),
-            &(U256::from(1_000_000u64 * MANA as u64)).abi_encode(),
+            &(U256::from(1_000_000u128 * MANA)).abi_encode(),
         )
         .await;
     let factory = anvil
@@ -315,7 +317,7 @@ async fn deploy_all(
     };
     let args = (
         roles,
-        U256::from(1_000u64 * MANA as u64),
+        U256::from(1_000u128 * MANA),
         true,
         secondary_sales_allowed,
         mana,
@@ -347,7 +349,7 @@ async fn deploy_all(
             Some(mana),
             &transferCall {
                 to: manager,
-                amount: U256::from(100u64 * MANA as u64),
+                amount: U256::from(100u128 * MANA),
             }
             .abi_encode(),
         )
@@ -466,12 +468,12 @@ async fn the_pinned_manager_accepts_our_credit_for_a_mint_and_refuses_a_resale()
         sender: d.buyer,
         chain_id: CHAIN_ID,
         manager: d.manager,
-        value: U256::from(10u64 * MANA as u64),
+        value: U256::from(10u128 * MANA),
         expires_at: now + 300,
         salt,
     };
     let signature = wallet.sign_credit(&identity).unwrap();
-    let price = U256::from(5u64 * MANA as u64);
+    let price = U256::from(5u128 * MANA);
 
     // A resale first: refused by the flag, before any order is decoded.
     let resale = ExternalCall {
@@ -603,7 +605,7 @@ async fn the_pinned_manager_accepts_our_credit_for_a_mint_and_refuses_a_resale()
             &use_credits(
                 &identity,
                 &signature,
-                store_buy(&d, U256::from(2u64 * MANA as u64)),
+                store_buy(&d, U256::from(2u128 * MANA)),
             ),
         )
         .await;
@@ -651,6 +653,35 @@ async fn the_pinned_manager_accepts_our_credit_for_a_mint_and_refuses_a_resale()
         .await
         .unwrap_err();
     assert!(why.contains("shared upstream manager"), "{why}");
+    // Closed while the manager is paused, open again once it is unpaused.
+    let receipt = anvil
+        .send(d.deployer, Some(d.manager), &pauseCall {}.abi_encode())
+        .await;
+    assert_eq!(receipt["status"], "0x1", "pause()");
+    let why = ChainGate::new(chain.clone(), CHAIN_ID)
+        .check(d.manager, wallet.signer())
+        .await
+        .unwrap_err();
+    assert!(why.contains("is paused"), "{why}");
+    let receipt = anvil
+        .send(d.deployer, Some(d.manager), &unpauseCall {}.abi_encode())
+        .await;
+    assert_eq!(receipt["status"], "0x1", "unpause()");
+    assert_eq!(
+        ChainGate::new(chain.clone(), CHAIN_ID)
+            .check(d.manager, wallet.signer())
+            .await,
+        Ok(())
+    );
+    // Closed when the manager can't be read: an address with no code answers no bool.
+    let why = ChainGate::new(chain.clone(), CHAIN_ID)
+        .check(d.buyer, wallet.signer())
+        .await
+        .unwrap_err();
+    assert!(
+        why.contains("paused()") && why.contains("not a bool"),
+        "{why}"
+    );
 
     // Revocation: revokeCredits from the revoker role, then the credit is refused.
     anvil

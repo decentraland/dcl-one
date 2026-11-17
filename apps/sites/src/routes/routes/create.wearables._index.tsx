@@ -32,7 +32,7 @@ const FALLBACK: PageDefaults = {
   variant: "wearables-home",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const view = readView(url.searchParams.get("view"));
   const address =
@@ -42,7 +42,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   // Collections load in the browser: the builder requires a signed auth
   // chain, which only the viewer's session can produce.
-  const { sid, wrap } = await pageLoader(request,  FALLBACK);
+  const { sid, wrap } = await pageLoader(request, context,  FALLBACK);
 
   return wrap({ sid, view, address });
 }

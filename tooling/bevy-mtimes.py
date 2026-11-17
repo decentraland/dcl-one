@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
-"""Keep unchanged engine, Bevy and protocol inputs fresh across CI checkouts.
+"""Keep unchanged engine, in-tree crate and protocol inputs fresh across CI checkouts.
 
 Cargo decides whether a path dependency is fresh by file times, and a fresh checkout gives
 every file the current time, so path dependencies in a CI cache would be rebuilt by every job
-of every run, changed or not. Crates from git or crates.io are judged by version instead.
+of every run, changed or not. Crates from git or crates.io are judged by version instead: Bevy
+and the forked crates are git dependencies; the one path copy is the Bevy tree of the Bevy crate tests.
 
-  record <target-dir>   after the build: each tracked build input's git blob id and mtime, floored
+  record <target-dir>   after the build: each build input's git blob id and mtime, floored
                         to whole seconds, into every profile's .fingerprint directory, so the
                         manifest travels in the same cache archive as the artifacts it vouches for
   restore <target-dir>  after the checkout and the cache restore, before Cargo runs: each file
                         whose blob id still matches gets its recorded mtime back; a changed or
                         new file keeps the checkout's time, so Cargo rebuilds what depends on it
 
+A tracked file's blob id comes from the index. The Bevy tree that `tooling/patched-sources.py` writes for
+the Bevy crate tests is not tracked, so its blob ids are those of the bytes on disk, stamp included.
+
 To Cargo this is a checkout that never moved. Floored times stay valid when a cache archive
 keeps whole seconds only; in CI the tree is only ever written at checkout, before any build.
-Without a manifest (a cold cache, or one rust-cache pruned) restore changes nothing.
+Without a manifest (a cold cache) restore changes nothing.
 """
 import argparse
 import json
@@ -25,21 +29,36 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 TREE = 'rendering/bevy-explorer/bevy'
-TREES = (TREE, 'rendering/bevy-explorer/source', 'library/protocol/proto')
-# rust-cache keeps a .fingerprint entry whose name, up to the last '-', is a dependency's
-# package name (cleanup.ts rmExcept); `bevy` is one, so the manifest survives its pruning.
+TREES = (TREE, 'rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet', 'rendering/bevy-explorer/source', 'library/protocol/proto')
+# tooling/bevy-target-cache.py prunes the .fingerprint entries of workspace crates, <crate>-<hash>;
+# `bevy` is no workspace crate, so the manifest survives its pruning.
 MANIFEST = 'bevy-mtimes.json'
 SECOND = 10**9
 
 
 def blobs(root):
-    """{path: blob id} for every tracked file under TREE, from the index."""
+    """{path: id} for every input under TREES: a file's blob id from the index, or from the bytes of the tree git does
+    not track."""
     out = subprocess.check_output(['git', 'ls-files', '--stage', '-z', '--', *TREES], cwd=root)
     result = {}
     for record in filter(None, out.split(b'\0')):
         meta, path = record.split(b'\t', 1)
         result[path.decode('utf-8')] = meta.split()[1].decode('ascii')
+    result.update(hashed(root, TREE))
     return result
+
+
+def hashed(root, tree):
+    """{path: blob id} of the bytes of every file under an untracked tree; no filter, so no line-ending conversion."""
+    paths = sorted(Path(directory, name).relative_to(root).as_posix()
+                   for directory, _dirs, names in os.walk(Path(root) / tree) for name in names)
+    # git reads one path per line and unquotes a line that starts with a quote.
+    paths = [path for path in paths if '\n' not in path and not path.startswith('"') and not (Path(root) / path).is_symlink()]
+    if not paths:
+        return {}
+    out = subprocess.check_output(['git', 'hash-object', '--no-filters', '--stdin-paths'], cwd=root,
+                                  input=''.join(path + '\n' for path in paths).encode('utf-8'))
+    return dict(zip(paths, out.decode('ascii').split(), strict=True))
 
 
 def fingerprint_dirs(target):
@@ -85,7 +104,7 @@ def main():
         print(f'{", ".join(TREES)}: mtimes recorded in {record(ROOT, args.target)} profile(s) of {args.target}')
     else:
         restored, left = restore(ROOT, args.target)
-        print(f'{", ".join(TREES)}: {restored} unchanged file(s) keep their cached mtime; {left} changed or unrecorded')
+        print(f'{", ".join(TREES)}: {restored} unchanged input(s) keep their cached mtime; {left} changed or unrecorded')
     return 0
 
 

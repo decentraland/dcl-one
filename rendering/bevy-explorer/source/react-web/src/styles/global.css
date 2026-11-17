@@ -1,4 +1,9 @@
-@import './tokens.css';
+@import '@hud/styles/tokens.css';
+
+/* This host's public files, which the shared HUD's stylesheets read. */
+:root {
+  --hud-logo: url('/assets/logo.png');
+}
 
 * {
   box-sizing: border-box;

@@ -9,32 +9,39 @@ pub async fn op_get_active_video_streams(state: &WorkerContext) -> Result<JsValu
 }
 
 #[wasm_bindgen]
-pub async fn op_set_topic_subscription(
+pub async fn op_comms_subscribe_topic(
     state: &WorkerContext,
-    topic: String,
-    subscribed: bool,
+    topic: Option<String>,
 ) -> Result<(), WasmError> {
-    dcl_js::comms_api::op_set_topic_subscription(state.rc(), topic, subscribed)
+    dcl_js::comms_api::op_comms_subscribe_topic(state.rc(), topic)
         .await
         .map_err(WasmError::from)
 }
 
 #[wasm_bindgen]
-pub async fn op_publish_topic_data(
+pub async fn op_comms_unsubscribe_topic(
     state: &WorkerContext,
-    topic: String,
-    data: String,
+    topic: Option<String>,
 ) -> Result<(), WasmError> {
-    dcl_js::comms_api::op_publish_topic_data(state.rc(), topic, data)
+    dcl_js::comms_api::op_comms_unsubscribe_topic(state.rc(), topic)
         .await
         .map_err(WasmError::from)
 }
 
 #[wasm_bindgen]
-pub async fn op_consume_topic_messages(
+pub async fn op_comms_publish_data(
     state: &WorkerContext,
-    topic: String,
+    topic: Option<String>,
+    data: Option<String>,
+) {
+    dcl_js::comms_api::op_comms_publish_data(state.rc(), topic, data).await
+}
+
+#[wasm_bindgen]
+pub async fn op_comms_consume_messages(
+    state: &WorkerContext,
+    topic: Option<String>,
 ) -> Result<JsValue, WasmError> {
-    let data = dcl_js::comms_api::op_consume_topic_messages(state.rc(), topic).await;
-    serde_result!(data)
+    let data = dcl_js::comms_api::op_comms_consume_messages(state.rc(), topic).await;
+    serde_result!(Ok::<_, anyhow::Error>(data))
 }

@@ -2,7 +2,7 @@
 // the Trending and New rows, each with a way to the full catalogue. What it shows comes in as props; the
 // page reads it (homeQuery) and draws each row's card.
 
-import { Button, ChevronRight, EmptyState, Rail } from '../../../design'
+import { Button, ChevronRight, EmptyState, Rail } from '@hud/design'
 import { pressedWith, type PressedWith } from './pressedWith'
 import { ShopItemSkeleton } from './ShopItemCard'
 import styles from './ShopHome.module.css'

@@ -168,7 +168,7 @@ export async function getJSON<T>(path: string, opts: GetOptions = {}): Promise<T
 
 export type PostOptions = {
   identity: AuthIdentity;
-  method?: "POST" | "PATCH" | "DELETE";
+  method?: "POST" | "PUT" | "PATCH" | "DELETE";
   base?: string;
   query?: Query;
   signal?: AbortSignal;

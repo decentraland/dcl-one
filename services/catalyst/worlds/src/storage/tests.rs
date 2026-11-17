@@ -1099,6 +1099,32 @@ async fn undeployed_storage_is_retained_but_does_not_consume_the_redeployment_qu
         store.env_get_enc(&old, "secret").await.unwrap().unwrap(),
         b"encrypted"
     );
+
+    // The new scene's clear routes, then the world row's deletion, leave the
+    // retired safety copy alone.
+    store.world_delete_all(&new).await.unwrap();
+    store.player_delete_all(&new).await.unwrap();
+    store.env_delete_all(&new).await.unwrap();
+    sqlx::query("DELETE FROM worlds.worlds WHERE name = $1")
+        .bind(world.key())
+        .execute(&pool)
+        .await
+        .unwrap();
+    for table in [
+        "worlds.world_storage",
+        "worlds.player_storage",
+        "worlds.env_variables",
+    ] {
+        let kept: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM {table} WHERE realm = $1 AND scene_namespace = $2"
+        )))
+        .bind(old.realm())
+        .bind(old.scene_namespace())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(kept, 1, "{table} keeps the retired scene's row");
+    }
 }
 
 const SCENE_ID: &str = "bafkrei-delegated-scene";
@@ -1124,7 +1150,9 @@ async fn signed_request(
     scope: Option<&str>,
     body: Option<&str>,
 ) -> Request<Body> {
-    let headers = signed_as(key, Shape::Legacy, method, path, metadata, metadata).await;
+    // Signed over the pathname, as upstream verifies it.
+    let pathname = path.split('?').next().unwrap_or(path);
+    let headers = signed_as(key, Shape::Legacy, method, pathname, metadata, metadata).await;
     with_headers(method, path, headers, scope, body)
 }
 
@@ -1365,8 +1393,83 @@ async fn parcel_mismatched_claim_is_rejected() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(
         body,
-        json!({ "ok": false, "error": "Not Authorized", "message": NOT_AUTHORIZED_MSG })
+        json!({ "error": "Not Authorized", "message": NOT_AUTHORIZED_MSG })
     );
+}
+
+/// Upstream binds the claim's `SceneId:` to the signed metadata's `sceneId`,
+/// not to the scene the parcel resolves to; a missing or non-string one
+/// reads as `""` and matches no claim.
+#[tokio::test]
+async fn the_claim_scene_id_is_the_signed_metadata_scene_id() {
+    let Some(pool) = scratch().await else { return };
+    let (world, _owner) = seed_owned_world(&pool).await;
+    let authoritative = Address::parse(&address_of(AUTHORITATIVE_KEY)).unwrap();
+    let app = router(state(&pool, Some(authoritative)));
+    let worker_key = random_key();
+    let claim_for = |scene_id: &str| {
+        claim_payload(
+            &address_of(&worker_key),
+            world.key(),
+            scene_id,
+            PARCEL,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+        )
+    };
+    let named = "bafkrei-named-by-the-host";
+    let scope_hdr = scope_header(&wallet(AUTHORITATIVE_KEY), &claim_for(named)).await;
+    let cases = [
+        (
+            scene_metadata(world.display(), PARCEL, named),
+            StatusCode::OK,
+        ),
+        (
+            scene_metadata(world.display(), PARCEL, SCENE_ID),
+            StatusCode::UNAUTHORIZED,
+        ),
+        (
+            json!({ "realm": { "serverName": world.display() }, "parcel": PARCEL, "sceneId": 7 })
+                .to_string(),
+            StatusCode::UNAUTHORIZED,
+        ),
+    ];
+    for (meta, expected) in cases {
+        let (status, body) = send(
+            &app,
+            signed_request(
+                "get",
+                "/values/k",
+                &worker_key,
+                &meta,
+                Some(&scope_hdr),
+                None,
+            )
+            .await,
+        )
+        .await;
+        let status = if status == StatusCode::NOT_FOUND {
+            StatusCode::OK
+        } else {
+            status
+        };
+        assert_eq!(status, expected, "{meta}: {body}");
+    }
+    let empty_claim = scope_header(&wallet(AUTHORITATIVE_KEY), &claim_for("")).await;
+    let meta = json!({ "realm": { "serverName": world.display() }, "parcel": PARCEL }).to_string();
+    let (status, body) = send(
+        &app,
+        signed_request(
+            "get",
+            "/values/k",
+            &worker_key,
+            &meta,
+            Some(&empty_claim),
+            None,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
 }
 
 /// The permission core decides: the owner and a deployer whose grant covers
@@ -1629,17 +1732,295 @@ async fn an_unauthorized_upsert_gets_the_body_refusal_before_the_401() {
         let (status, body) = send(&app, put(&meta, Some(&oversized)).await).await;
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{path}: {body}");
 
+        // A chunked body cannot be sized up front: 411, and the socket closes.
+        let (mut parts, _) = put(&meta, None).await.into_parts();
+        parts
+            .headers
+            .insert("transfer-encoding", HeaderValue::from_static("chunked"));
+        let chunked = Request::from_parts(parts, Body::from(small.clone()));
+        let resp = app.clone().oneshot(chunked).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::LENGTH_REQUIRED, "{path}");
+        assert_eq!(resp.headers()["connection"], "close", "{path}");
+
+        // No Content-Length and no Transfer-Encoding is an empty body.
         let (parts, _) = put(&meta, None).await.into_parts();
-        let no_length = Request::from_parts(parts, Body::from(small.clone()));
+        let no_length = Request::from_parts(parts, Body::empty());
         let (status, body) = send(&app, no_length).await;
-        assert_eq!(status, StatusCode::LENGTH_REQUIRED, "{path}: {body}");
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}: {body}");
 
         let (status, body) = send(&app, put(&meta, Some(&small)).await).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}: {body}");
+        assert_eq!(
+            body,
+            json!({ "error": "Not Authorized", "message": NOT_AUTHORIZED_MSG }),
+            "{path}"
+        );
 
         let (status, body) = send(&app, put(&no_scene, Some(&oversized)).await).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{path}: {body}");
     }
+}
+
+/// The upsert contract after authorization, as upstream's schema validator
+/// and handlers answer it: 415, then the body (`JSON.parse`, then the ajv
+/// schema), then the key, then the player address; the stored and echoed
+/// text is `JSON.stringify`'s.
+#[tokio::test]
+async fn upserts_answer_the_schema_validator_then_the_key_then_the_address() {
+    let Some(pool) = scratch().await else { return };
+    let (world, _) = seed_owned_world(&pool).await;
+    let owner_key = random_key();
+    seed_world(
+        &pool,
+        &world,
+        Some(&Address::parse(&address_of(&owner_key)).unwrap()),
+    )
+    .await;
+    let app = router(state(&pool, None));
+    let meta = scene_metadata(world.display(), PARCEL, SCENE_ID);
+    let player = address();
+    let put = async |path: &str, content_type: Option<&str>, body: &str| {
+        let mut req = signed_request("put", path, &owner_key, &meta, None, Some(body)).await;
+        match content_type {
+            Some(ct) => req
+                .headers_mut()
+                .insert("content-type", HeaderValue::from_str(ct).unwrap()),
+            None => req.headers_mut().remove("content-type"),
+        };
+        send(&app, req).await
+    };
+    let invalid_body =
+        |data: Value| json!({ "ok": false, "message": "Invalid JSON body", "data": data });
+    let extra = json!([{
+        "instancePath": "", "schemaPath": "#/additionalProperties", "keyword": "additionalProperties",
+        "params": { "additionalProperty": "extra" }, "message": "must NOT have additional properties"
+    }]);
+
+    for path in [
+        "/values/k".to_string(),
+        format!("/players/{}/values/k", player.as_str()),
+        "/env/k".to_string(),
+    ] {
+        for ct in [None, Some("text/plain"), Some("application/jsonx")] {
+            assert_eq!(
+                put(&path, ct, r#"{"value":"1"}"#).await,
+                (
+                    StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                    json!({ "ok": false, "message": "Content-Type must be application/json" })
+                ),
+                "{path} {ct:?}"
+            );
+        }
+        assert_eq!(
+            put(&path, Some("application/json"), "{").await,
+            (
+                StatusCode::BAD_REQUEST,
+                json!({ "ok": false, "message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)" })
+            ),
+            "{path}"
+        );
+        assert_eq!(
+            put(&path, Some("application/json"), "").await,
+            (
+                StatusCode::BAD_REQUEST,
+                json!({ "ok": false, "message": "Unexpected end of JSON input" })
+            ),
+            "{path}"
+        );
+        assert_eq!(
+            put(
+                &path,
+                Some("application/json"),
+                r#"{"value":"1","extra":2}"#
+            )
+            .await,
+            (StatusCode::BAD_REQUEST, invalid_body(extra.clone())),
+            "{path}"
+        );
+        assert_eq!(
+            put(&path, Some("application/json"), "{}").await.1["data"][0]["keyword"],
+            "required",
+            "{path}"
+        );
+        let (status, body) = put(
+            &path,
+            Some("application/vnd.api+json; charset=utf-8"),
+            r#"{"value":"1"}"#,
+        )
+        .await;
+        assert!(status.is_success(), "{path}: {body}");
+    }
+    let (status, body) = put("/env/k", Some("application/json"), r#"{"value":5}"#).await;
+    assert_eq!(
+        (status, body["data"].clone()),
+        (
+            StatusCode::BAD_REQUEST,
+            json!([{ "instancePath": "/value", "schemaPath": "#/properties/value/type", "keyword": "type",
+                     "params": { "type": "string" }, "message": "must be string" }])
+        )
+    );
+
+    // A non-finite number fails the recursive anyOf, as ajv's strictNumbers.
+    let (status, body) = put(
+        "/values/k",
+        Some("application/json"),
+        r#"{"value":[1,1e400]}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["message"], "Invalid JSON body");
+    let paths: Vec<_> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            format!(
+                "{} {}",
+                e["instancePath"].as_str().unwrap(),
+                e["schemaPath"].as_str().unwrap()
+            )
+        })
+        .collect();
+    assert_eq!(paths.len(), 13);
+    assert_eq!(paths[4], "/value/1 #/anyOf/0/type");
+    assert_eq!(paths[12], "/value #/anyOf");
+
+    // The body is checked before the key, the key before the address.
+    let long = "k".repeat(256);
+    let key_msg =
+        json!({ "error": "Bad request", "message": "Key must be between 1 and 255 characters" });
+    assert_eq!(
+        put(&format!("/values/{long}"), Some("application/json"), "{}")
+            .await
+            .1["message"],
+        "Invalid JSON body"
+    );
+    assert_eq!(
+        put(
+            &format!("/values/{long}"),
+            Some("application/json"),
+            r#"{"value":1}"#
+        )
+        .await,
+        (StatusCode::BAD_REQUEST, key_msg.clone())
+    );
+    assert_eq!(
+        put(
+            &format!("/players/nope/values/{long}"),
+            Some("application/json"),
+            r#"{"value":1}"#
+        )
+        .await,
+        (StatusCode::BAD_REQUEST, key_msg.clone())
+    );
+    for (method, expected) in [("get", key_msg.clone()), ("delete", key_msg.clone())] {
+        let req = signed_request(
+            method,
+            &format!("/players/nope/values/{long}"),
+            &owner_key,
+            &meta,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(
+            send(&app, req).await,
+            (StatusCode::BAD_REQUEST, expected),
+            "{method}"
+        );
+    }
+    // Not trimmed: an encoded space around the address is refused.
+    let spaced = format!("/players/%20{}/values/k", player.as_str());
+    for method in ["get", "delete"] {
+        let req = signed_request(method, &spaced, &owner_key, &meta, None, None).await;
+        assert_eq!(
+            send(&app, req).await,
+            (
+                StatusCode::BAD_REQUEST,
+                json!({ "error": "Bad request", "message": "Invalid player address" })
+            ),
+            "{method}"
+        );
+    }
+
+    // A NUL in a key is the handler's 400, after the credential.
+    let nul_msg =
+        json!({ "error": "Bad request", "message": "Key must not contain NUL characters" });
+    assert_eq!(
+        put("/values/a%00b", Some("application/json"), r#"{"value":1}"#).await,
+        (StatusCode::BAD_REQUEST, nul_msg.clone())
+    );
+    for method in ["get", "delete"] {
+        let req = signed_request(method, "/values/a%00b", &owner_key, &meta, None, None).await;
+        assert_eq!(
+            send(&app, req).await,
+            (StatusCode::BAD_REQUEST, nul_msg.clone()),
+            "{method}"
+        );
+        let req = signed_request(method, "/values/a%00b", OUTSIDER_KEY, &meta, None, None).await;
+        assert_eq!(
+            send(&app, req).await.0,
+            StatusCode::UNAUTHORIZED,
+            "{method}"
+        );
+    }
+    let req = signed_request("get", "/values?prefix=%00", &owner_key, &meta, None, None).await;
+    assert_eq!(
+        send(&app, req).await.0,
+        StatusCode::BAD_REQUEST,
+        "a NUL query stays refused"
+    );
+}
+
+/// Stored and echoed text is `JSON.stringify(JSON.parse(body).value)`: JS
+/// number formatting and key order, its byte length counted for the quota;
+/// nesting deeper than serde_json's 128 levels is accepted.
+#[tokio::test]
+async fn upserted_values_are_stored_as_javascript_serializes_them() {
+    let Some(pool) = scratch().await else { return };
+    let (world, _) = seed_owned_world(&pool).await;
+    let owner_key = random_key();
+    seed_world(
+        &pool,
+        &world,
+        Some(&Address::parse(&address_of(&owner_key)).unwrap()),
+    )
+    .await;
+    let app = router(state(&pool, None));
+    let meta = scene_metadata(world.display(), PARCEL, SCENE_ID);
+    let raw_put = async |path: &str, body: &str| {
+        let req = signed_request("put", path, &owner_key, &meta, None, Some(body)).await;
+        let resp = app.clone().oneshot(req).await.unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 22)
+            .await
+            .unwrap();
+        (status, String::from_utf8(bytes.to_vec()).unwrap())
+    };
+
+    let body = r#"{"value":{"b":1.0,"a":1e2,"2":-0,"1":12345678901234567890,"z":[1e21,1e-7,0.000001," "],"b":2.50}}"#;
+    let stored = "{\"1\":12345678901234567000,\"2\":0,\"b\":2.5,\"a\":100,\"z\":[1e+21,1e-7,0.000001,\"\u{2028}\"]}";
+    assert_eq!(
+        raw_put("/values/js", body).await,
+        (StatusCode::OK, format!("{{\"value\":{stored}}}"))
+    );
+    let req = signed_request("get", "/usage/world", &owner_key, &meta, None, None).await;
+    assert_eq!(send(&app, req).await.1["usedBytes"], json!(stored.len()));
+    let path = format!("/players/{}/values/js", address().as_str());
+    assert_eq!(
+        raw_put(&path, r#"{"value":-0.0}"#).await,
+        (StatusCode::OK, r#"{"value":0}"#.to_string())
+    );
+
+    let depth = 1_000;
+    let nested = format!("{}1{}", "[".repeat(depth), "]".repeat(depth));
+    assert_eq!(
+        raw_put("/values/deep", &format!(r#"{{"value":{nested}}}"#)).await,
+        (StatusCode::OK, format!(r#"{{"value":{nested}}}"#))
+    );
+    let scope = scene_ns(&pool, &world, PARCEL).await;
+    let text = raw_world_value_text(&pool, &scope, "deep").await.unwrap();
+    assert_eq!(text.replace(' ', ""), nested);
 }
 
 /// A request whose parcel holds no scene is the old Places-miss 400, ahead
@@ -1672,11 +2053,12 @@ async fn a_missing_scene_is_a_400_and_a_mirrored_world_refuses_everyone() {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-        assert!(
-            body["message"]
-                .as_str()
-                .unwrap()
-                .contains("Scene not found"),
+        assert_eq!(
+            body["message"],
+            format!(
+                "Scene not found in Places API for world \"{}\" at parcel \"7,7\"",
+                world.key()
+            ),
             "{body}"
         );
     }
@@ -2355,7 +2737,7 @@ async fn genesis_scenes_scope_by_the_active_pointer_and_admit_the_land_authority
 }
 
 #[tokio::test]
-async fn genesis_land_source_failure_returns_503_without_granting_storage() {
+async fn genesis_land_source_failure_is_upstreams_401_without_granting_storage() {
     let Some(pool) = scratch().await else { return };
     let (id, p1, _, dep_id) = seed_genesis_scene(&pool).await;
     let service = Router::new().fallback(|| async { StatusCode::SERVICE_UNAVAILABLE });
@@ -2365,7 +2747,7 @@ async fn genesis_land_source_failure_returns_503_without_granting_storage() {
     let app = router(state_with_land_operators(&pool, &format!("http://{addr}")));
     let key = random_key();
     let meta = scene_metadata("main", &p1, &id);
-    let (status, _) = send(
+    let (status, body) = send(
         &app,
         signed_request(
             "put",
@@ -2378,7 +2760,8 @@ async fn genesis_land_source_failure_returns_503_without_granting_storage() {
         .await,
     )
     .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(body["message"], super::FAILED_TO_VERIFY_MSG);
     server.abort();
     remove_genesis_scene(&pool, &id, dep_id).await;
 }
@@ -2594,9 +2977,9 @@ async fn genesis_land_ownership_counts_only_at_the_request_parcel() {
 }
 
 /// Nested under `/world-storage`, a signature over the public path verifies
-/// without a proxy header; the env routes answer 503 without a key.
+/// without a proxy header; the env routes serve through the required key.
 #[tokio::test]
-async fn the_nested_public_path_verifies_and_env_needs_a_key() {
+async fn the_nested_public_path_verifies_and_env_serves() {
     let Some(pool) = scratch().await else { return };
     let (world, _) = seed_owned_world(&pool).await;
     let owner_key = random_key();
@@ -2606,9 +2989,10 @@ async fn the_nested_public_path_verifies_and_env_needs_a_key() {
         Some(&Address::parse(&address_of(&owner_key)).unwrap()),
     )
     .await;
-    let mut settings = Settings::for_tests(None);
-    settings.encryption_key = None;
-    let app = Router::new().nest("/world-storage", router(state_with(&pool, settings)));
+    let app = Router::new().nest(
+        "/world-storage",
+        router(state_with(&pool, Settings::for_tests(None))),
+    );
     let meta = scene_metadata(world.display(), "0,0", SCENE_ID);
 
     let (status, body) = send(
@@ -2671,11 +3055,7 @@ async fn the_nested_public_path_verifies_and_env_needs_a_key() {
         .await,
     )
     .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
-    assert!(
-        body["message"].as_str().unwrap().contains("ENCRYPTION_KEY"),
-        "{body}"
-    );
+    assert!(status.is_success(), "{status} {body}");
     let (status, body) = send(
         &app,
         signed_request("get", "/world-storage/env/k", &owner_key, &meta, None, None).await,
@@ -2684,7 +3064,7 @@ async fn the_nested_public_path_verifies_and_env_needs_a_key() {
     assert_eq!(
         status,
         StatusCode::UNAUTHORIZED,
-        "an owner never reads env values, key or no key: {body}"
+        "an owner never reads env values: {body}"
     );
     let (status, body) = send(
         &app,
@@ -2699,11 +3079,8 @@ async fn the_nested_public_path_verifies_and_env_needs_a_key() {
         .await,
     )
     .await;
-    assert_eq!(
-        (status, body["usedBytes"].as_i64()),
-        (StatusCode::OK, Some(0)),
-        "usage and the key listing need no key"
-    );
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["usedBytes"].as_i64().unwrap() > 0, "{body}");
     let (status, body) = send(
         &app,
         signed_request("get", "/world-storage/env", &owner_key, &meta, None, None).await,
@@ -2711,7 +3088,7 @@ async fn the_nested_public_path_verifies_and_env_needs_a_key() {
     .await;
     assert_eq!(
         (status, body["pagination"]["total"].as_i64()),
-        (StatusCode::OK, Some(0))
+        (StatusCode::OK, Some(1))
     );
 }
 
@@ -2767,14 +3144,6 @@ async fn a_pathname_signature_verifies_a_listing_with_a_query_and_opens_nothing_
 
     let key = owner_key.as_str();
     for (case, app, shape, signed, target, original_path) in [
-        (
-            "path and query, nested",
-            &nested,
-            Shape::V6,
-            "/world-storage/values?limit=10",
-            "/world-storage/values?limit=10",
-            None,
-        ),
         (
             "pathname, nested",
             &nested,
@@ -2839,6 +3208,14 @@ async fn a_pathname_signature_verifies_a_listing_with_a_query_and_opens_nothing_
     }
 
     for (case, method, signed, target, original_path) in [
+        // Upstream binds the pathname only.
+        (
+            "path and query",
+            "get",
+            "/values?limit=1",
+            "/values?limit=1",
+            None,
+        ),
         ("another route", "get", "/values", "/env?limit=1", None),
         (
             "another key",
@@ -2951,14 +3328,17 @@ async fn refuses_a_legacy_request_that_respells_an_authorized_key() {
             .await
             .expect_err("a re-spelled authorized key must not be served");
         let refused_by_the_expected_guard = if from_the_gate {
-            matches!(err, AuthChainError::SceneSignerRejected)
+            matches!(err, AuthChainError::SceneSignerRejected(_))
         } else {
-            matches!(err, AuthChainError::MalformedChain { .. })
+            err == AuthChainError::InvalidMetadata(format!(
+                "Invalid chain metadata: expected \"{declared}\", got \"{respelled}\""
+            ))
         };
         assert!(
             refused_by_the_expected_guard,
             "{respelled:?} produced {err:?}"
         );
+        assert_eq!(err.status_code(), 400);
     }
 }
 
@@ -2977,11 +3357,85 @@ async fn refuses_a_scene_signer_in_every_spelling() {
                 .await
                 .expect_err("a scene-signed request must never reach this surface");
             assert!(
-                matches!(err, AuthChainError::SceneSignerRejected),
+                matches!(err, AuthChainError::SceneSignerRejected(_)),
                 "{signer:?} {shape:?} produced {err:?}"
+            );
+            assert_eq!(
+                err.raw_message(),
+                format!(
+                    "Invalid metadata content: {}",
+                    super::js::safe(&super::js::JsValue::parse(&metadata).unwrap().stringify())
+                )
             );
         }
     }
+}
+
+/// The legacy key check walks `realm` before any signature holds, so a deeply
+/// nested `realm` must fail the signature, not overflow the stack.
+#[tokio::test]
+async fn deeply_nested_realm_fails_the_signature_without_overflowing() {
+    let depth = 200_000;
+    let metadata = format!(r#"{{"realm":{}0{}}}"#, "[".repeat(depth), "]".repeat(depth));
+    let err = verify(&signed_as(KEY, Shape::V6, METHOD, PATH, "{}", &metadata).await)
+        .await
+        .expect_err("metadata other than the signed one must fail");
+    assert!(
+        matches!(err, AuthChainError::InvalidSignature(_)),
+        "{err:?}"
+    );
+}
+
+/// Metadata parses as `JSON.parse` does: a lone surrogate, an overflowing
+/// number and nesting past 128 verify under both payload shapes and serve
+/// the scene, and the scene gate echoes them as `JSON.stringify` writes them.
+#[tokio::test]
+async fn metadata_accepts_what_json_parse_accepts() {
+    let deep = format!("{}0{}", "[".repeat(1000), "]".repeat(1000));
+    let extras = format!(r#""note":"\ud800","big":1e400,"deep":{deep}"#);
+    let metadata =
+        format!(r#"{{"signer":"dcl:authoritative-server","realmName":"some.dcl.eth",{extras}}}"#);
+    for shape in [Shape::Legacy, Shape::V6] {
+        let signer = verify(&signed_as(KEY, shape, METHOD, PATH, &metadata, &metadata).await)
+            .await
+            .unwrap_or_else(|e| panic!("{shape:?} must verify: {e:?}"));
+        assert_eq!(signer.as_str(), address_of(KEY));
+    }
+
+    let refused = r#"{"signer":"decentraland-kernel-scene","x":"\ud800","n":1e400}"#;
+    let err = verify(&signed_as(KEY, Shape::V6, METHOD, PATH, refused, refused).await)
+        .await
+        .expect_err("a scene-signed request must be refused");
+    assert_eq!(
+        err.raw_message(),
+        r#"Invalid metadata content: {"signer":"decentraland-kernel-scene","x":"\ud800","n":null}"#
+    );
+
+    let Some(pool) = scratch().await else { return };
+    let world = world_name();
+    let owner_key = random_key();
+    let owner = Address::parse(&address_of(&owner_key)).unwrap();
+    seed_world(&pool, &world, Some(&owner)).await;
+    seed_scene(&pool, &world, SCENE_ID, &["0,0"], Some("0,0"), false).await;
+    let app = router(state(&pool, None));
+    let meta = format!(
+        r#"{{"realm":{{"serverName":"{}"}},"parcel":"0,0","sceneId":"{SCENE_ID}",{extras}}}"#,
+        world.display()
+    );
+    let (status, body) = send(
+        &app,
+        signed_request(
+            "put",
+            "/values/k",
+            &owner_key,
+            &meta,
+            None,
+            Some(r#"{"value":1}"#),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!((status, body), (StatusCode::OK, json!({ "value": 1 })));
 }
 
 /// The gate answers before signature verification, so a refused request pays
@@ -2994,8 +3448,12 @@ async fn the_scene_gate_answers_before_signature_verification() {
         .await
         .expect_err("a scene-signed request must be refused");
     assert!(
-        matches!(err, AuthChainError::SceneSignerRejected),
+        matches!(err, AuthChainError::SceneSignerRejected(_)),
         "the gate must win over the signature check, got {err:?}"
+    );
+    assert_eq!(
+        err.raw_message(),
+        r#"Invalid metadata content: {"parcel":"0,0","realm":{"serverName":"some.dcl.eth"},"realmName…"#
     );
 }
 
@@ -3009,7 +3467,7 @@ async fn a_stale_scene_signed_request_is_expired_before_the_gate_runs() {
         .await
         .expect_err("a ten-minute-old request must be refused");
     assert!(
-        matches!(err, AuthChainError::Expired { .. }),
+        matches!(err, AuthChainError::Expired(_)),
         "freshness must answer before the gate, got {err:?}"
     );
     // The window is 60 s: 90 s old is refused.
@@ -3017,20 +3475,46 @@ async fn a_stale_scene_signed_request_is_expired_before_the_gate_runs() {
     let metadata = posture_metadata("dcl:authoritative-server");
     assert!(matches!(
         verify(&signed_at(KEY, Shape::V6, METHOD, PATH, &metadata, &metadata, &ts).await).await,
-        Err(AuthChainError::Expired { .. })
+        Err(AuthChainError::Expired(_))
     ));
 }
 
+/// `Number(raw)`: any finite spelling of now is fresh and signs as sent.
 #[tokio::test]
-async fn refuses_a_timestamp_that_is_not_plain_integer_milliseconds() {
-    for ts in ["1.7e12", "1700000000000.0", "Infinity"] {
-        let metadata = posture_metadata("dcl:authoritative-server");
+async fn a_timestamp_is_any_finite_javascript_number() {
+    let metadata = posture_metadata("dcl:authoritative-server");
+    let now = chrono::Utc::now().timestamp_millis();
+    for ts in [
+        format!("{now}.0"),
+        format!("{now}.5"),
+        format!("{}e-3", now as i128 * 1000),
+        format!("+{now}"),
+    ] {
+        let headers = signed_at(KEY, Shape::V6, METHOD, PATH, &metadata, &metadata, &ts).await;
+        assert!(verify(&headers).await.is_ok(), "{ts}");
+    }
+    for ts in ["Infinity", "not-a-number", "1e400"] {
         let err = verify(&signed_at(KEY, Shape::V6, METHOD, PATH, &metadata, &metadata, ts).await)
             .await
             .expect_err("a timestamp with no computable window must not be served");
         assert!(
             matches!(&err, AuthChainError::InvalidTimestamp(value) if value == ts),
             "timestamp {ts:?} produced {err:?}"
+        );
+        assert_eq!(err.raw_message(), format!("Invalid chain timestamp: {ts}"));
+    }
+}
+
+/// Upstream joins the absent metadata header as the empty string, not `{}`.
+#[tokio::test]
+async fn an_absent_metadata_header_signs_as_the_empty_string() {
+    for (signed, verifies) in [("", true), ("{}", false)] {
+        let mut headers = signed_as(KEY, Shape::V6, METHOD, PATH, signed, "{}").await;
+        headers.remove("x-identity-metadata");
+        assert_eq!(
+            verify(&headers).await.is_ok(),
+            verifies,
+            "signed over {signed:?}"
         );
     }
 }
@@ -3046,12 +3530,13 @@ async fn an_absent_or_empty_timestamp_header_expires() {
         .await
         .expect_err("a request with no timestamp must not be served");
     assert!(
-        matches!(err, AuthChainError::Expired { signed_at: 0, .. }),
+        matches!(err, AuthChainError::Expired(_)),
         "an absent timestamp produced {err:?}"
     );
     assert_eq!(err.status_code(), 401);
     assert!(
-        err.raw_message().starts_with("Expired signature: "),
+        err.raw_message()
+            .starts_with("Expired signature: signature timestamp: 0, timestamp expiration: 60000, local timestamp: "),
         "{}",
         err.raw_message()
     );
@@ -3062,7 +3547,8 @@ async fn an_absent_or_empty_timestamp_header_expires() {
         .await
         .expect_err("an empty timestamp must not be served");
     assert!(
-        matches!(err, AuthChainError::Expired { signed_at: 0, .. }),
+        err.raw_message()
+            .starts_with("Expired signature: signature timestamp: 0, "),
         "an empty timestamp produced {err:?}"
     );
 }
@@ -3080,7 +3566,7 @@ async fn a_non_object_metadata_header_is_refused_before_the_gate() {
         );
         assert_eq!(
             err.raw_message(),
-            format!("Invalid chain format: invalid chain metadata: \"{metadata}\"")
+            format!("Invalid chain metadata: \"{metadata}\"")
         );
     }
     let err = verify(&HeaderMap::new()).await.unwrap_err();
@@ -3523,9 +4009,9 @@ async fn genesis_logs_permissions_follow_the_active_pointer() {
         );
     }
 
-    // Published history still proves the collaborator grant while ordinary
-    // LAND readiness falls back during cursor advancement. A broken fallback
-    // must not suppress that independent grant, but an outsider gets its 503.
+    // While ordinary LAND readiness falls back during cursor advancement, a
+    // broken fallback is upstream's 401 for everyone: the owner lookup runs
+    // first and its failure answers before logsPermissions is read.
     sqlx::query("UPDATE land_authz.index_cursor SET last_block = 101")
         .execute(&pool)
         .await
@@ -3549,18 +4035,15 @@ async fn genesis_logs_permissions_follow_the_active_pointer() {
         Settings::for_tests(None),
         None,
     )));
-    let (status, body) = send(
-        &broken_app,
-        signed_request("get", "/values/g", &collab_key, &meta, None, None).await,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let (status, body) = send(
-        &broken_app,
-        signed_request("get", "/values/g", OUTSIDER_KEY, &meta, None, None).await,
-    )
-    .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    for key in [collab_key.as_str(), OUTSIDER_KEY] {
+        let (status, body) = send(
+            &broken_app,
+            signed_request("get", "/values/g", key, &meta, None, None).await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+        assert_eq!(body["message"], super::FAILED_TO_VERIFY_MSG);
+    }
     sqlx::query("UPDATE land_authz.index_cursor SET last_block = 100")
         .execute(&pool)
         .await
@@ -3668,12 +4151,16 @@ async fn collaborator_lists_exactly_the_signers_active_scenes() {
     seed_logs_scene(&pool, &mirrored, &ids[2], &["0,0"], json!([collab]), true).await;
     let other = address_of(&other_key);
     seed_logs_scene(&pool, &unrelated, &ids[3], &["0,0"], json!([other]), false).await;
-    for (id, hours_ago) in [(&ids[0], 3), (&ids[1], 2)] {
+    // Ordered by when this node stored the scene, as upstream's index by its
+    // `updated_at`; the entity's own timestamp says the opposite here.
+    for (id, stored_hours_ago, entity_hours_ago) in [(&ids[0], 3, 0), (&ids[1], 2, 5)] {
         sqlx::query(
-            "UPDATE worlds.world_scenes SET entity = jsonb_set(entity, '{timestamp}', to_jsonb((extract(epoch FROM timezone('UTC', now()) - make_interval(hours => $2)) * 1000)::bigint)) WHERE entity_id = $1",
+            "UPDATE worlds.world_scenes SET created_at = timezone('UTC', now()) - make_interval(hours => $2), \
+             entity = jsonb_set(entity, '{timestamp}', to_jsonb((extract(epoch FROM timezone('UTC', now()) - make_interval(hours => $3)) * 1000)::bigint)) WHERE entity_id = $1",
         )
         .bind(id)
-        .bind(hours_ago)
+        .bind(stored_hours_ago)
+        .bind(entity_hours_ago)
         .execute(&pool)
         .await
         .unwrap();
@@ -3743,7 +4230,7 @@ async fn collaborator_lists_exactly_the_signers_active_scenes() {
         })
     );
 
-    // Signed over the path with its query; the pathname-only form needs #80.
+    // Signed over the pathname, as upstream verifies it.
     let (status, body) = send(
         &app,
         signed_request(
@@ -3835,13 +4322,15 @@ async fn genesis_nonmembers_never_evaluate_the_ownership_history_function() {
     )
     .await;
     // Only this private database is changed. A listed collaborator proves the
-    // sentinel is live; an outsider must not execute it in either query.
+    // sentinel is live (the listing's 500; the storage route denies on a failed
+    // logs lookup, as upstream does); an outsider must not execute it in either
+    // query.
     sqlx::query("CREATE OR REPLACE FUNCTION land_authz.scene_collaborators_current(configured_network text, configured_land text, configured_estate text, pointers text[], entity_timestamp timestamp without time zone) RETURNS boolean LANGUAGE plpgsql STABLE AS $$ BEGIN RAISE EXCEPTION 'history probe executed'; END $$")
         .execute(&fixture.pool).await.unwrap();
     let app = router(fixture.state());
     let meta = scene_metadata("main", &pointer, &id);
     for (signer, expected) in [
-        (&key[..], StatusCode::INTERNAL_SERVER_ERROR),
+        (&key[..], StatusCode::UNAUTHORIZED),
         (OUTSIDER_KEY, StatusCode::UNAUTHORIZED),
     ] {
         let (status, body) = send(
@@ -3887,8 +4376,8 @@ async fn collaborator_pagination_excludes_only_scenes_without_a_parseable_parcel
             false,
         )
         .await;
-        sqlx::query("UPDATE worlds.world_scenes SET entity = jsonb_set(entity, '{timestamp}', to_jsonb($2::bigint)) WHERE entity_id = $1")
-            .bind(id).bind(i as i64).execute(&pool).await.unwrap();
+        sqlx::query("UPDATE worlds.world_scenes SET created_at = timezone('UTC', now()) - make_interval(mins => $2) WHERE entity_id = $1")
+            .bind(id).bind(10 - i as i32).execute(&pool).await.unwrap();
     }
     // Newest invalid scene must not occupy the first slot or contribute to total.
     sqlx::query("UPDATE worlds.world_scenes SET parcels = $2 WHERE entity_id = $1")
@@ -3955,6 +4444,38 @@ async fn collaborator_pagination_excludes_only_scenes_without_a_parseable_parcel
         assert_eq!(page.len(), expected, "{raw:?}");
         assert_eq!(total, expected as i64, "{raw:?}");
     }
+}
+
+#[tokio::test]
+async fn collaborator_ties_on_storage_time_break_on_the_scene_id() {
+    let Some(pool) = scratch().await else { return };
+    let signer = address();
+    let world = world_name();
+    seed_world(&pool, &world, Some(&address())).await;
+    let suffix = Uuid::new_v4().simple().to_string();
+    let ids = [format!("bafyTieB{suffix}"), format!("bafyTieA{suffix}")];
+    for (i, id) in ids.iter().enumerate() {
+        seed_logs_scene(
+            &pool,
+            &world,
+            id,
+            &[&format!("{i},5")],
+            json!([signer.as_str()]),
+            false,
+        )
+        .await;
+    }
+    sqlx::query("UPDATE worlds.world_scenes SET created_at = '2026-01-01T00:00:00' WHERE entity_id = ANY($1)")
+        .bind(&ids[..])
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (page, total) = super::collaborator::list(&pool, None, &signer, 10, 0)
+        .await
+        .unwrap();
+    assert_eq!(total, 2);
+    let order: Vec<_> = page.iter().map(|s| s.scene_id.clone()).collect();
+    assert_eq!(order, vec![ids[1].clone(), ids[0].clone()]);
 }
 
 async fn assert_genesis_collaboration(
@@ -4206,12 +4727,37 @@ async fn malformed_logs_permissions_grant_nothing() {
         json!({"address":"0xabc"}),
         json!([42, null, {"address":"0xabc"}]),
     ] {
-        let grants: Vec<String> = sqlx::query_scalar("SELECT worlds.logs_permissions($1)")
+        let grants: Vec<String> = sqlx::query_scalar("SELECT worlds.logs_permissions_decoded($1)")
             .bind(value.to_string())
             .fetch_one(&pool)
             .await
             .unwrap();
         assert!(grants.is_empty(), "{value}: {grants:?}");
+    }
+}
+
+/// Entries read as `JSON.parse` reads them: escapes decode, an entry with
+/// an escape no address can carry is left out without failing.
+#[tokio::test]
+async fn logs_permissions_decode_json_escapes() {
+    let Some(pool) = scratch().await else { return };
+    for (raw, expected) in [
+        (
+            r#"["\u0030xABC", "0x\u0061bc", "0xdef"]"#,
+            vec!["0xabc", "0xabc", "0xdef"],
+        ),
+        (
+            r#"["a\u0000b", "\ud83d\ude00", "\ud800", "0x\\u0000", "0x1"]"#,
+            vec!["0x1"],
+        ),
+        (r#"["\"q\"", "x\/y"]"#, vec!["\"q\"", "x/y"]),
+    ] {
+        let grants: Vec<String> = sqlx::query_scalar("SELECT worlds.logs_permissions_decoded($1)")
+            .bind(raw)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(grants, expected, "{raw}");
     }
 }
 
@@ -4472,6 +5018,36 @@ async fn exports_refuse_bad_formats_selections_and_bodies() {
         .insert("transfer-encoding", HeaderValue::from_static("chunked"));
     let (status, _) = send(&app, req).await;
     assert_eq!(status, StatusCode::LENGTH_REQUIRED);
+
+    // Upstream's order: the signed fetch, the scene, the body cap, authorization.
+    let unsigned = Request::builder()
+        .method("POST")
+        .uri("/exports?format=json")
+        .header("content-length", huge.len().to_string())
+        .body(Body::from(huge.clone()))
+        .unwrap();
+    let (status, body) = send(&app, unsigned).await;
+    assert!(
+        status == StatusCode::BAD_REQUEST || status == StatusCode::UNAUTHORIZED,
+        "the signed fetch answers before the body cap: {status} {body}"
+    );
+    let nowhere = scene_metadata(world.display(), "90,90", SCENE_ID);
+    let (status, body) = send(
+        &app,
+        export_request(&owner_key, &nowhere, "?format=json", Some(&huge)).await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "the scene first: {body}");
+    let (status, _) = send(
+        &app,
+        export_request(&random_key(), &meta, "?format=json", Some(&huge)).await,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "the body cap runs before authorization"
+    );
 }
 
 #[tokio::test]
@@ -4639,6 +5215,53 @@ async fn exports_stream_world_then_player_rows_gzipped_and_never_env() {
 }
 
 #[tokio::test]
+async fn export_query_timeout_is_separate_from_the_idle_budget_and_restored() {
+    let Some(pool) = scratch().await else { return };
+    let mut conn = pool.acquire().await.unwrap();
+    let previous: (String, String) = sqlx::query_as(
+        "SELECT current_setting('statement_timeout'), current_setting('idle_in_transaction_session_timeout')"
+    ).fetch_one(&mut *conn).await.unwrap();
+    for query_timeout in [Duration::from_millis(25), Duration::ZERO] {
+        let mut tx = sqlx::Connection::begin(&mut *conn).await.unwrap();
+        super::export::configure_timeouts(
+            &mut tx,
+            ExportSettings {
+                stream_query_timeout: query_timeout,
+                timeout: Duration::from_secs(2),
+                ..no_cooldown()
+            },
+        )
+        .await
+        .unwrap();
+        let configured: (String, String) = sqlx::query_as(
+            "SELECT current_setting('statement_timeout'), current_setting('idle_in_transaction_session_timeout')"
+        ).fetch_one(&mut *tx).await.unwrap();
+        assert_eq!(
+            configured,
+            (
+                if query_timeout.is_zero() { "0" } else { "25ms" }.into(),
+                "2s".into()
+            )
+        );
+        if !query_timeout.is_zero() {
+            let error = sqlx::query("SELECT pg_sleep(0.2)")
+                .execute(&mut *tx)
+                .await
+                .unwrap_err();
+            assert_eq!(
+                error.as_database_error().unwrap().code().as_deref(),
+                Some("57014")
+            );
+        }
+        tx.rollback().await.unwrap();
+        let restored: (String, String) = sqlx::query_as(
+            "SELECT current_setting('statement_timeout'), current_setting('idle_in_transaction_session_timeout')"
+        ).fetch_one(&mut *conn).await.unwrap();
+        assert_eq!(restored, previous);
+    }
+}
+
+#[tokio::test]
 async fn exports_cap_the_scene_and_the_process_and_cool_down() {
     let Some(pool) = scratch().await else { return };
     let owner_key = random_key();
@@ -4773,19 +5396,15 @@ async fn exports_abort_past_the_size_cap_and_the_timeout() {
                 export_request(&owner_key, &meta, "?format=csv", None).await,
             )
             .await;
-            if export.timeout.is_zero() {
-                assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-                assert_eq!(resp.headers()["retry-after"], "1");
-            } else {
-                assert_eq!(resp.status(), StatusCode::OK);
-                // Check the HTTP body error itself, not only the gzip decoder.
-                assert!(
-                    axum::body::to_bytes(resp.into_body(), 1 << 20)
-                        .await
-                        .is_err(),
-                    "{export:?}"
-                );
-            }
+            // Upstream answers 200 and aborts the stream, a zero timeout included.
+            assert_eq!(resp.status(), StatusCode::OK);
+            // Check the HTTP body error itself, not only the gzip decoder.
+            assert!(
+                axum::body::to_bytes(resp.into_body(), 1 << 20)
+                    .await
+                    .is_err(),
+                "{export:?}"
+            );
         }
     }
 }
@@ -4793,7 +5412,6 @@ async fn exports_abort_past_the_size_cap_and_the_timeout() {
 #[tokio::test]
 async fn exports_bound_database_resources_and_keep_one_snapshot() {
     use super::export::{ExportLimits, Format, Selection};
-    use axum::response::IntoResponse;
     use futures::StreamExt;
     let Some(pool) = scratch().await else { return };
     let (world, _) = seed_owned_world(&pool).await;
@@ -4812,39 +5430,37 @@ async fn exports_bound_database_resources_and_keep_one_snapshot() {
         .fetch_one(&dedicated)
         .await
         .unwrap();
-    let cooling = ExportLimits::new(ExportSettings::default());
+    // An exhausted pool: the export was admitted (200 upstream), so the
+    // stream is cut once the timer runs out, and the cooldown stays consumed.
+    let cooling_settings = ExportSettings {
+        timeout: Duration::from_millis(200),
+        ..ExportSettings::default()
+    };
+    let cooling = ExportLimits::new(cooling_settings);
     let held = dedicated.acquire().await.unwrap();
-    let result = super::export::body(
+    let starved = super::export::body(
         dedicated.clone(),
         scope.clone(),
         Selection::default(),
         Format::Json,
         cooling.open("scene").unwrap(),
-        settings,
-    )
-    .await;
-    let error = result.expect_err("exhausted pool must refuse export setup");
-    assert!(matches!(error, super::errors::ApiError::Unavailable(_)));
-    let response = error.into_response();
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(response.headers()["retry-after"], "1");
-    drop(cooling.open("scene").unwrap());
+        cooling_settings,
+    );
+    assert!(axum::body::to_bytes(starved, 1 << 20).await.is_err());
+    assert!(matches!(
+        cooling.open("scene"),
+        Err(super::export::Refusal::Cooldown { .. })
+    ));
     drop(held);
     let retry = super::export::body(
         dedicated.clone(),
         scope.clone(),
         Selection::default(),
         Format::Json,
-        cooling.open("scene").unwrap(),
+        limits.open("scene").unwrap(),
         settings,
-    )
-    .await
-    .unwrap();
+    );
     axum::body::to_bytes(retry, 1 << 20).await.unwrap();
-    assert!(matches!(
-        cooling.open("scene"),
-        Err(super::export::Refusal::Cooldown { .. })
-    ));
 
     // More incompressible data than the four-chunk buffer can hold: an unread
     // body keeps the producer blocked until cancellation or its deadline.
@@ -4860,9 +5476,7 @@ async fn exports_bound_database_resources_and_keep_one_snapshot() {
             Format::Json,
             limits.open("scene").unwrap(),
             settings,
-        )
-        .await
-        .unwrap();
+        );
         let body = if disconnect {
             drop(body);
             None
@@ -4922,9 +5536,7 @@ async fn exports_bound_database_resources_and_keep_one_snapshot() {
         Format::Json,
         slot,
         settings,
-    )
-    .await
-    .unwrap();
+    );
     // Drain the channel while the producer consumes the whole world query.
     // The per-export pause then holds a genuinely idle transaction independent
     // of PostgreSQL or operating-system socket buffer sizes.
@@ -4998,9 +5610,7 @@ async fn exports_bound_database_resources_and_keep_one_snapshot() {
         Format::Json,
         limits.open("scene").unwrap(),
         settings,
-    )
-    .await
-    .unwrap();
+    );
     let mut stream = body.into_data_stream();
     let mut compressed = stream.next().await.unwrap().unwrap().to_vec();
     let terminated: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
@@ -5134,9 +5744,7 @@ async fn exports_report_rollback_failure_before_writing_a_valid_gzip_trailer() {
         Format::Json,
         slot,
         settings,
-    )
-    .await
-    .unwrap();
+    );
     let reader = tokio::spawn(async move {
         let mut stream = body.into_data_stream();
         let mut compressed = Vec::new();

@@ -3,7 +3,7 @@
 // is (too long, taken, available…), its price and what CLAIM NAME and MAKE OFFER do come in as props; the
 // page checks the NAME and draws the nametag over the avatar from the same value.
 
-import { Button, Chip, MaskIcon } from '../../../design'
+import { Button, Chip, MaskIcon } from '@hud/design'
 import uniqueIcon from '../../../assets/shop/names/unique-name.svg'
 import resaleIcon from '../../../assets/shop/names/resale-name.svg'
 import creditsIcon from '../../../assets/shop/names/credits-outline.svg'
@@ -14,7 +14,7 @@ import heroGlowSpark from '../../../assets/shop/names/hero-glow-spark.svg'
 import bannerGlowWide from '../../../assets/shop/names/banner-glow-wide.svg'
 import bannerGlowThin from '../../../assets/shop/names/banner-glow-thin.svg'
 import bannerGlowTop from '../../../assets/shop/names/banner-glow-top.svg'
-import bannerArt from '../../../assets/backpack/outfits-name-banner.webp'
+import bannerArt from '@hud/assets/backpack/outfits-name-banner.webp'
 import { pressedWith, type PressedWith } from './pressedWith'
 import styles from './ShopNames.module.css'
 

@@ -5,7 +5,7 @@ const topic = 'scene-comms-smoke'
 
 async function exchange(sequence: number) {
   await publishData({ topic, data: `ping ${sequence}` })
-  const { messages } = await consumeMessages({ topic })
+  const messages = await consumeMessages({ topic }) as unknown as { sender: string; data: string }[]
   for (const { sender, data } of messages) {
     console.log(`[scene-comms] received ${data} from ${sender}`)
   }
@@ -13,7 +13,7 @@ async function exchange(sequence: number) {
 
 export async function main() {
   await subscribeToTopic({ topic })
-  const { messages } = await consumeMessages({ topic })
+  const messages = await consumeMessages({ topic }) as unknown as { sender: string; data: string }[]
   console.log(`[scene-comms] subscribed and drained ${messages.length} initial messages`)
 
   let elapsed = 0

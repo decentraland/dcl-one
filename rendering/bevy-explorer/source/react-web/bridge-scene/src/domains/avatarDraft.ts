@@ -11,8 +11,8 @@ import type { Ctx } from '../bridge'
 import { catalystBase } from '../http'
 import { resolveDefsByUrn } from './collections'
 import { itemUrn } from './urns'
-import { lookDeploy, sameLook, type AvatarLook } from '../../../src/engine/avatarEquip'
-import { bodyShapesOf, isCompatible } from '../../../src/engine/bodyShape'
+import { lookDeploy, sameLook, type AvatarLook } from '@explorer-core/engine/avatarEquip'
+import { bodyShapesOf, isCompatible } from '@explorer-core/engine/bodyShape'
 import { identity } from '../identity'
 
 let draft: AvatarLook | null = null
@@ -24,8 +24,8 @@ let deployed: AvatarLook | null = null
 // later save carries that look, so its outcome settles the commit (`profileSaveSettled`; another
 // close and the welcome page's save cover it with their own result).
 let superseded: { edited: AvatarLook; look: AvatarLook } | null = null
-// The look the stage wears before there is a player: the guest start page's pick, which the
-// sign-in then carries, so the player arrives already wearing it.
+// The look the stage wears before there is a player: a new account's pick, which the sign-in then
+// carries, so the player arrives already wearing it.
 let standIn: AvatarLook | null = null
 identity.onChange(() => {
   draft = null

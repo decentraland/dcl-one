@@ -156,6 +156,12 @@
     "why": "Measured, not defaulted: when the forum POST fails the collection is re-read, and this return only happens when that fresh read carries a forum_link -- proof the post exists (a retry after a lost response). Without one the original error is rethrown."
   },
   {
+    "file": "src/data/lib/help/status.ts",
+    "rule": "fabricating-catch",
+    "text": "return \"down\";",
+    "why": "A ping that fails is the measurement this probe exists to take: /help reports a service that does not answer, cannot be reached or does not answer within the timeout as down, exactly as decentraland/sites did, and `overallState` folds those into the page's overall verdict. Nothing is parsed, so no payload is being papered over: the ok arm is reached only from an OK HTTP answer. The one failure that is not a measurement, the caller's own abort (the query unmounted), is rethrown on the line above instead of being reported as down."
+  },
+  {
     "file": "src/data/lib/screens/shop.server.ts",
     "rule": "fabricating-catch",
     "text": "return { data: [], total: 0, state };",

@@ -5,15 +5,15 @@ import io
 import json
 import os
 from pathlib import Path
-import posixpath
 import re
 import shutil
 import stat
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 import zipfile
+from hud_manifest_fixture import seal, SHARED
 
 spec = importlib.util.spec_from_file_location('fetch_play', Path(__file__).resolve().parents[1] / 'fetch-play.py')
 play = importlib.util.module_from_spec(spec)
@@ -55,7 +55,7 @@ class GitHubReadTests(unittest.TestCase):
                 self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8, 16])
 
     def test_auth_not_found_and_unknown_errors_do_not_retry(self):
-        for status in (400, 401, 403, 404, 418, 422, 429):
+        for status in (400, 401, 403, 404, 418, 422):
             with self.subTest(status=status), \
                     patch.object(play.subprocess, 'check_output', side_effect=self.error(status)) as get, \
                     patch.object(play.time, 'sleep') as sleep:
@@ -63,6 +63,35 @@ class GitHubReadTests(unittest.TestCase):
                     play.api('actions/runs/42')
                 self.assertEqual(get.call_count, 1)
                 sleep.assert_not_called()
+
+    def test_rate_limit_backs_off_from_a_minute_and_stays_bounded(self):
+        limited = [subprocess.CalledProcessError(1, ['gh', 'api'], stderr=text) for text in (
+            'gh: API rate limit exceeded for installation ID 7. (HTTP 403)\n',
+            'gh: You have exceeded a secondary rate limit. Please wait a few minutes. (HTTP 403)\n',
+            'gh: Too Many Requests (HTTP 429)\n')]
+        for failure in limited:
+            with self.subTest(failure=failure.stderr), \
+                    patch.object(play.subprocess, 'check_output', side_effect=[failure, '{}']) as get, \
+                    patch.object(play.time, 'sleep') as sleep:
+                self.assertEqual(play.api('actions/runs/42'), {})
+                self.assertEqual(get.call_count, 2)
+                sleep.assert_called_once_with(60)
+        # Without a wait budget: five tries. With one: doubled to a cap, never past the deadline.
+        with patch.object(play.subprocess, 'check_output', side_effect=limited[0]) as get, \
+                patch.object(play.time, 'sleep') as sleep:
+            with self.assertRaises(subprocess.CalledProcessError):
+                play.api('actions/runs/42')
+            self.assertEqual(get.call_count, 5)
+            self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 120, 240, 240])
+        clock = [0]
+        with patch.object(play.subprocess, 'check_output', side_effect=limited[1]) as get, \
+                patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
+                patch.object(play.time, 'sleep',
+                             side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep:
+            with self.assertRaises(subprocess.CalledProcessError):
+                play.api('actions/runs/42', deadline=500)
+            self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 120, 240, 80])
+            self.assertEqual(clock[0], 500)
 
     def test_invalid_json_does_not_retry_or_become_a_successful_read(self):
         with patch.object(play.subprocess, 'check_output', return_value='not JSON') as get, \
@@ -153,11 +182,10 @@ class PlayImportTests(unittest.TestCase):
         self.build = self.root / 'build'
         for name in contract.INPUTS:
             self.write(name, 'build input')
-        self.write('apps/ui3/src/play/engine/generated/Example.ts', 'export type Example = string;\n')
-        self.write('rendering/bevy-explorer/source/react-web/src/engine/generated/Example.ts',
-                   'export type Example = string;\n')
+        self.write(contract.BINDINGS + '/Example.ts', 'export type Example = string;\n')
+        self.write(contract.HUD + 'App.tsx', 'export {}\n')
         self.write(contract.SOURCE + 'src/lib.rs', 'fn engine() {}\n')
-        self.write(contract.LOCK, json.dumps({'hud_source_sha256': contract.hud_inputs(self.root)}))
+        seal(self.root)
         for name in contract.REQUIRED:
             self.write('build/' + name, b'\0asm\x01\0\0\0fixture' if name.endswith('.wasm') else b'fixture')
         self.write('build/build-info.json', json.dumps({'revision': SHA, 'engine': {
@@ -171,6 +199,8 @@ class PlayImportTests(unittest.TestCase):
         path = self.root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content.encode() if isinstance(content, str) else content)
+        if (self.root / contract.shared_inputs.MANIFEST).exists():
+            seal(self.root)
         return path
 
     def test_import_keeps_only_served_content_and_contract_and_reuses_it(self):
@@ -211,7 +241,7 @@ class PlayImportTests(unittest.TestCase):
         extra.unlink()
         target = self.build / 'service_worker.js'
         target.unlink()
-        target.symlink_to(self.root / contract.LOCK)
+        target.symlink_to(self.root / contract.BINDINGS / 'Example.ts')
         with self.assertRaisesRegex(ValueError, 'linked'):
             play.install(self.build)
 
@@ -270,12 +300,8 @@ class PlayImportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'inputs differ'):
             play.install(self.build)
 
-    def test_hud_adaptation_and_generated_bindings_must_match(self):
-        self.write(contract.LOCK, json.dumps({'hud_source_sha256': 'b' * 64}))
-        with self.assertRaisesRegex(ValueError, 'HUD adaptation must be reviewed'):
-            play.install(self.build)
-        self.write(contract.LOCK, json.dumps({'hud_source_sha256': contract.hud_inputs(self.root)}))
-        self.write('apps/ui3/src/play/engine/generated/Example.ts', 'different protocol')
+    def test_generated_bindings_must_match(self):
+        self.write(contract.BINDINGS + '/Example.ts', 'different protocol')
         with self.assertRaisesRegex(ValueError, 'bindings differ'):
             play.install(self.build)
 
@@ -284,16 +310,23 @@ class PlayImportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'inputs differ'):
             play.install(self.build)
 
-    def test_vendored_bevy_edits_invalidate_the_artifact(self):
-        # The engine compiles rendering/bevy-explorer/bevy; this fixture has no .git, so this is
-        # the walk Nix's filtered contract takes.
-        self.write('rendering/bevy-explorer/bevy/crates/bevy_scene/src/scene_spawner.rs', 'fn changed() {}\n')
+    def test_a_changed_revision_of_a_patched_source_invalidates_the_artifact(self):
+        # Bevy and the forked crates are git dependencies: the lock names the revision the engine
+        # compiles. This fixture has no .git, so this is the walk Nix's filtered contract takes.
+        self.write(contract.SOURCE + 'Cargo.lock', '[[package]]\nname = "bevy"\n')
         with self.assertRaisesRegex(ValueError, 'inputs differ'):
             play.install(self.build)
 
-    def test_vendored_bevy_is_an_engine_input_in_git_and_in_the_nix_contract(self):
-        bevy = 'rendering/bevy-explorer/bevy/crates/bevy_scene/src/scene_spawner.rs'
+    def test_a_patch_series_is_not_an_engine_input(self):
+        # The series only records how a revision was made; the engine compiles the revision.
+        self.write('rendering/bevy-explorer/patches/bevy/series/0001-scene-spawner.patch', 'fn changed() {}\n')
+        play.install(self.build)
+
+    def test_the_in_tree_crates_are_engine_inputs_in_git_and_in_the_nix_contract(self):
+        bevy = 'rendering/bevy-explorer/patches/bevy/series/0001-scene-spawner.patch'
         self.write(bevy, 'fn spawn() {}\n')
+        crate = 'rendering/bevy-explorer/vendor/boimp/src/lib.rs'
+        self.write(crate, 'pub fn import() {}\n')
         def git(*args):
             return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid',
                                             *args], cwd=self.root, text=True).strip()
@@ -302,7 +335,10 @@ class PlayImportTests(unittest.TestCase):
         git('config', 'gc.auto', '0')
         git('add', '.')
         git('commit', '-qm', 'fixture')
-        self.assertIn(bevy, contract.input_files(self.root, engine_only=True))
+        inputs = set(contract.input_files(self.root, engine_only=True))
+        self.assertIn(crate, inputs)
+        self.assertNotIn('tooling/patched-sources.py', inputs)
+        self.assertNotIn(bevy, inputs)
         key = contract.engine_inputs(self.root)
         self.assertEqual(key, contract.engine_inputs(self.root, git('rev-parse', 'HEAD')))
         filtered = self.root / 'nix-contract'
@@ -312,22 +348,38 @@ class PlayImportTests(unittest.TestCase):
             shutil.copyfile(self.root / name, target)
         self.assertEqual(key, contract.engine_inputs(filtered))
         self.write(bevy, 'fn spawn_sliced() {}\n')
+        self.assertEqual(key, contract.engine_inputs(self.root))
+        self.write(crate, 'pub fn import_sliced() {}\n')
         self.assertNotEqual(key, contract.engine_inputs(self.root))
 
-    def test_shared_hud_sources_rebuild_the_artifact_but_neither_the_engine_nor_the_sites_review(self):
+    def test_an_in_tree_crate_edit_invalidates_the_artifact(self):
+        # bevy_dui, boimp and rpc-rust are compiled from tracked bytes. No .git here: the walk Nix's
+        # filtered contract takes.
+        name = 'rendering/bevy-explorer/vendor/boimp/src/lib.rs'
+        key = contract.engine_inputs(self.root)
+        self.write(name, name + ' changed\n')
+        self.assertNotEqual(key, contract.engine_inputs(self.root))
+        with self.assertRaisesRegex(ValueError, 'inputs differ'):
+            play.install(self.build)
+
+    def test_the_patch_tool_is_not_an_engine_input(self):
+        # No build step runs the tool: Cargo fetches each revision.
+        self.write('tooling/patched-sources.py', 'changed\n')
+        play.install(self.build)
+
+    def test_shared_hud_sources_rebuild_the_artifact_but_not_the_engine(self):
         # react-web compiles these through its aliases (react-web/vite.shared.ts).
-        engine, hud = contract.engine_inputs(self.root), contract.hud_inputs(self.root)
-        for shared in contract.HUD_SHARED:
+        engine = contract.engine_inputs(self.root)
+        for shared in SHARED:
             with self.subTest(shared=shared):
                 self.write(shared + 'changed.ts' if shared.endswith('/') else shared, 'export const changed = true;\n')
                 with self.assertRaisesRegex(ValueError, 'inputs differ'):
                     play.install(self.build)
                 self.assertEqual(engine, contract.engine_inputs(self.root))
-                self.assertEqual(hud, contract.hud_inputs(self.root))
                 contract.pack(self.build, self.root)
                 play.install(self.build)
 
-    def test_a_shared_file_entry_names_that_file_only(self):
+    def test_root_ui_exports_and_components_are_not_hud_inputs(self):
         def git(*args):
             return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid',
                                             *args], cwd=self.root, text=True).strip()
@@ -338,7 +390,10 @@ class PlayImportTests(unittest.TestCase):
         git('add', '.')
         git('commit', '-qm', 'fixture')
         key = contract.inputs(self.root)
-        for neighbour in ('library/ui/index.tsx', 'library/ui/index.ts.orig', 'library/ui/figma/src/cli.ts'):
+        for neighbour in ('library/ui/index.ts', 'library/ui/index.tsx', 'library/ui/index.ts.orig',
+                          'library/ui/components/NavBar/NavBar.tsx',
+                          'library/ui/components/NavBar/NavBar.module.css',
+                          'library/ui/figma/src/cli.ts'):
             self.write(neighbour, 'export {};\n')
         git('add', '.')
         git('commit', '-qm', 'neighbours')
@@ -347,7 +402,7 @@ class PlayImportTests(unittest.TestCase):
 
     def test_the_lfs_fonts_under_the_shared_foundations_are_no_input_either_way_they_are_checked_out(self):
         # A checkout without LFS holds a pointer; Nix's `git+file:.?lfs=1` source holds the font itself.
-        font = contract.HUD_UNREAD[0] + 'inter-latin-wght-normal.woff2'
+        font = 'library/ui/foundations/typography/fonts/inter-latin-wght-normal.woff2'
         self.write(font, 'version https://git-lfs.github.com/spec/v1\noid sha256:00\nsize 1\n')
         key = contract.inputs(self.root)
         self.write(font, b'wOF2 the font itself')
@@ -357,7 +412,7 @@ class PlayImportTests(unittest.TestCase):
 
     def test_shared_hud_sources_are_inputs_in_git_and_in_the_nix_contract(self):
         # Each entry, a tree or one file, the same in a checkout, in a commit and in Nix's filtered copy.
-        names = [entry + 'model/money.ts' if entry.endswith('/') else entry for entry in contract.HUD_SHARED]
+        names = list(SHARED)
         for name in names:
             self.write(name, 'export const zero = 0n;\n')
         def git(*args):
@@ -385,22 +440,16 @@ class PlayImportTests(unittest.TestCase):
         self.write(names[0], 'export const zero = 1n;\n')
         self.assertNotEqual(key, contract.inputs(self.root))
 
-    def test_rebuilt_hud_changes_require_reviewing_the_sites_adaptation(self):
+    def test_rebuilt_hud_changes_install_once_packed(self):
         self.write(contract.HUD + 'new-screen.ts', 'export const screen = "new";\n')
         contract.pack(self.build, self.root)
-        with self.assertRaisesRegex(ValueError, 'HUD adaptation must be reviewed'):
-            play.install(self.build)
-        self.write(contract.LOCK, json.dumps({'hud_source_sha256': contract.hud_inputs(self.root)}))
         play.install(self.build)
 
-    def test_producer_build_does_not_require_sites_lock_or_bindings(self):
-        (self.root / contract.LOCK).unlink()
-        shutil.rmtree(self.root / 'apps/ui3')
+    def test_producer_build_records_the_bindings_sites_compares(self):
         meta = contract.pack(self.build, self.root)
         self.assertEqual(meta['files']['bindings/Example.ts'],
                          contract.digest(b'export type Example = string;\n'))
-        self.write(contract.LOCK, json.dumps({'hud_source_sha256': contract.hud_inputs(self.root)}))
-        self.write('apps/ui3/src/play/engine/generated/Example.ts', 'different protocol')
+        self.write(contract.BINDINGS + '/Example.ts', 'different protocol')
         with self.assertRaisesRegex(ValueError, 'bindings differ'):
             play.install(self.build)
 
@@ -460,12 +509,10 @@ class PlayImportTests(unittest.TestCase):
     def test_tooling_only_async_edits_do_not_invalidate_shipped_web_inputs(self):
         artifact = contract.inputs(self.root)
         engine = contract.engine_inputs(self.root)
-        hud = contract.hud_inputs(self.root)
         for source in ('export const retry = 1;', 'export const retry = 2;'):
             self.write('library/async/index.ts', source)
             self.assertEqual(contract.inputs(self.root), artifact)
             self.assertEqual(contract.engine_inputs(self.root), engine)
-            self.assertEqual(contract.hud_inputs(self.root), hud)
             play.install(self.build, production=True)
 
     def test_removed_source_input_invalidates_the_artifact(self):
@@ -678,11 +725,11 @@ class PlayImportTests(unittest.TestCase):
                     patch.object(contract, 'engine_inputs', side_effect=engine_inputs), \
                     self.assertRaisesRegex(ValueError, 'inputs differ'):
                 contract.verify(destination, self.root, trust_inputs=True)
-        # HUD review and bindings are still the tree's, whatever built the engine.
-        self.write(contract.LOCK, json.dumps({'hud_source_sha256': 'stale'}))
+        # The bindings are still the tree's, whatever built the engine.
+        self.write(contract.BINDINGS + '/Example.ts', 'different protocol')
         with patch.object(contract, 'inputs', side_effect=inputs), \
                 patch.object(contract, 'engine_inputs', side_effect=engine_inputs), \
-                self.assertRaisesRegex(ValueError, 'HUD adaptation'):
+                self.assertRaisesRegex(ValueError, 'bindings differ'):
             contract.verify(destination, self.root, producer=SHA)
 
     def test_trust_inputs_passes_a_build_of_the_trees_own_inputs_without_a_record(self):
@@ -862,15 +909,18 @@ class PlayImportTests(unittest.TestCase):
         job = workflow[workflow.index('\n  build-deploy-web:\n') + 1:]
         job = re.split(r'\n  [a-z][\w-]*:\n', job)[0]
         self.assertIn(f'\n    name: {play.PRODUCER}\n', job)
+        def step_end(start):
+            following = job.find('      - name:', start + 1)
+            return following if following != -1 else job.index('\n    defaults:\n', start)
         tested = job.index('      - name: Build and test the local web app\n')
         upload = job.index(f'      - name: {play.UPLOAD_STEP}\n')
-        end = job.index('      - name:', upload + 1)
+        end = step_end(upload)
         self.assertLess(tested, upload)
         self.assertIn('          path: apps/bevy-explorer/dist/web/\n', job[upload:end])
         # Upload success must imply every earlier step passed.
         self.assertNotIn('continue-on-error', job[:end])
         for step in (tested, upload):
-            self.assertIsNone(re.search(r'\n {8}if:', job[step:job.index('      - name:', step + 1)]))
+            self.assertIsNone(re.search(r'\n {8}if:', job[step:step_end(step)]))
 
     def test_github_digest_and_producer_sha_are_verified_before_install(self):
         archive = self.root / 'good.zip'
@@ -1051,6 +1101,51 @@ class PlayImportTests(unittest.TestCase):
                                      (self.build / 'engine/pkg/webgpu_build_bg.wasm').read_bytes())
                     self.assertEqual(contract.verify(destination, self.root)['build_revision'], pr['merge'])
 
+    def test_wait_ends_when_the_producer_of_a_running_workflow_ends_without_an_upload(self):
+        # A consumer job inside the Bevy run keeps that run under way; the wait must not last to the deadline.
+        expected = contract.inputs(self.root)
+        # A skipped producer is no failure to rerun: the run found the engine inputs unchanged.
+        named = {'failure': r'did not upload a web build: 42 \(failure\)\. Rerun it, then this job',
+                 'cancelled': r'did not upload a web build: 42 \(cancelled\)\. Rerun it, then this job',
+                 'skipped': r'skipped the web build: 42\. Refresh main with:'}
+        for conclusion in ('failure', 'cancelled', 'skipped'):
+            with self.subTest(conclusion=conclusion):
+                ended = {'name': play.PRODUCER, 'status': 'completed', 'conclusion': conclusion}
+                responses = [{'workflow_runs': [run(status='in_progress', conclusion=None)]},
+                             {'total_count': 1, 'jobs': [ended]}]
+                with patch.object(play, 'api', side_effect=responses) as api, \
+                        patch.object(play, 'current_pr', return_value=None), \
+                        patch.dict(play.os.environ, {'GITHUB_SHA': SHA}), \
+                        patch.object(play.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
+                        patch.object(contract, 'inputs', return_value=expected), \
+                        patch.object(play.time, 'sleep') as sleep, \
+                        self.assertRaisesRegex(RuntimeError, named[conclusion]) as failure:
+                    play.fetch(wait=60)
+                sleep.assert_not_called()
+                self.assertEqual(api.call_count, 2)
+                self.assertEqual('Rerun it' in str(failure.exception), conclusion != 'skipped')
+        # A second run of the same commit that has no producer job yet keeps the wait open,
+        # and the older run is not read before the first poll.
+        class Waited(Exception):
+            pass
+        ended = {'name': play.PRODUCER, 'status': 'completed', 'conclusion': 'failure'}
+        responses = [{'workflow_runs': [run(id=43, status='queued', conclusion=None),
+                                        run(status='in_progress', conclusion=None)]},
+                     {'total_count': 0, 'jobs': []}]
+        with patch.object(play, 'api', side_effect=responses) as api, \
+                patch.object(play, 'current_pr', return_value=None), \
+                patch.dict(play.os.environ, {'GITHUB_SHA': SHA}), \
+                patch.object(play.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
+                patch.object(contract, 'inputs', return_value=expected), \
+                patch.object(play.time, 'sleep', side_effect=Waited), \
+                self.assertRaises(Waited):
+            play.fetch(wait=60)
+        self.assertEqual(api.call_count, 2)
+        # The same job in a completed run keeps the old answer: no record, no exception.
+        with patch.object(play, 'api', return_value={'total_count': 1, 'jobs': [
+                {'name': play.PRODUCER, 'status': 'completed', 'conclusion': 'skipped'}]}):
+            self.assertIsNone(play.producer_record(run()))
+
     def test_development_rejects_untrusted_and_already_failed_runs_before_job_lookup(self):
         pr = {'number': 7, 'head': SHA, 'merge': 'b' * 40}
         candidates = [run(status='in_progress', conclusion=None, head_repository={'full_name': 'other/project'}),
@@ -1130,6 +1225,99 @@ class PlayImportTests(unittest.TestCase):
         download.assert_called_once_with(run(), None, True, None, 180, producer=None)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8])
         self.assertEqual(clock[0], 14)
+
+    def history(self, first, older):
+        # Page one: `first`, then 99 runs of other branches. Page two: `older`.
+        return [[first] + [run(id=900 + n, head_branch='dev') for n in range(99)], older]
+
+    def test_wait_polls_a_matching_run_under_way_before_it_reads_older_history(self):
+        # The consumer of an engine change: its own run is the newest, and its build is not uploaded yet.
+        under_way = run(id=60, status='in_progress', conclusion=None)
+        pages = self.history(under_way, [run(id=41, head_sha='b' * 40), run(id=40, head_sha='c' * 40)])
+        polls = iter([[under_way], [run(id=60)]])
+        first = [True]
+
+        def response(path, deadline):
+            page = int(path.rsplit('=', 1)[1])
+            if page == 1 and not first[0]:
+                return {'workflow_runs': next(polls)}
+            first[0] = False
+            return {'workflow_runs': pages[page - 1]}
+
+        with patch.object(play, 'api', side_effect=response) as api, \
+                patch.object(play, 'inputs_at', return_value='match') as inputs_at, \
+                patch.object(contract, 'inputs', return_value='match'), \
+                patch.object(play, 'download_run', return_value=self.build) as download, \
+                patch.object(play.time, 'sleep') as sleep:
+            self.assertEqual(play.fetch(wait=600, production=True), self.build)
+        self.assertEqual([call.args[0].rsplit('=', 1)[1] for call in api.call_args_list], ['1', '1', '1'])
+        self.assertEqual([call.args[0] for call in inputs_at.call_args_list], [SHA])  # no older commit fetched
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4])
+        download.assert_called_once_with(run(id=60), None, True, None, ANY, producer=None)
+
+    def test_history_goes_on_when_the_run_under_way_gives_no_build(self):
+        under_way = run(id=60, status='in_progress', conclusion=None)
+        older = run(id=41)
+        pages = self.history(under_way, [older])
+        requests = []
+
+        def response(path, deadline):
+            requests.append(path.rsplit('=', 1)[1])
+            if requests == ['1', '1']:
+                return {'workflow_runs': [run(id=60, conclusion='cancelled')]}
+            return {'workflow_runs': pages[int(requests[-1]) - 1]}
+
+        with patch.object(play, 'api', side_effect=response), \
+                patch.object(play, 'inputs_at', return_value='match'), \
+                patch.object(contract, 'inputs', return_value='match'), \
+                patch.object(play, 'download_run', return_value=self.build) as download, \
+                patch.object(play.time, 'sleep') as sleep:
+            self.assertEqual(play.fetch(wait=600, production=True), self.build)
+        self.assertEqual(requests, ['1', '1', '2'])
+        sleep.assert_called_once_with(2)
+        download.assert_called_once_with(older, None, True, None, ANY, producer=None)
+
+    def test_an_import_without_a_wait_reads_older_history_past_a_run_under_way(self):
+        older = run(id=41)
+        pages = self.history(run(id=60, status='in_progress', conclusion=None), [older])
+        with patch.object(play, 'api', side_effect=[{'workflow_runs': page} for page in pages]) as api, \
+                patch.object(play, 'inputs_at', return_value='match'), \
+                patch.object(contract, 'inputs', return_value='match'), \
+                patch.object(play, 'download_run', return_value=self.build) as download, \
+                patch.object(play.time, 'sleep') as sleep:
+            self.assertEqual(play.fetch(production=True), self.build)
+        self.assertEqual(api.call_count, 2)
+        sleep.assert_not_called()
+        download.assert_called_once_with(older, None, True, None, None, producer=None)
+
+    def test_a_change_without_engine_inputs_takes_the_finished_main_build_and_does_not_wait(self):
+        pr = {'number': 7, 'head': 'b' * 40, 'base': 'c' * 40, 'merge': 'd' * 40}
+        finished = run(id=41, head_sha='e' * 40)
+        with patch.object(play, 'api', return_value={'workflow_runs': [
+                run(id=60, status='in_progress', conclusion=None), finished]}), \
+                patch.object(play, 'current_pr', return_value=pr), \
+                patch.object(play, 'engine_changed', return_value=False), \
+                patch.object(play, 'inputs_at', return_value='main'), \
+                patch.object(contract, 'inputs', return_value='ours'), \
+                patch.object(play, 'download_run', side_effect=[None, self.build]) as download, \
+                patch.object(play.time, 'sleep') as sleep:
+            self.assertEqual(play.fetch(wait=600), self.build)
+        sleep.assert_not_called()
+        self.assertEqual([call.args[0]['id'] for call in download.call_args_list], [60, 41])
+
+    def test_a_wait_that_ends_inside_a_read_names_the_run_under_way(self):
+        responses = [{'workflow_runs': [run(status='in_progress', conclusion=None)]},
+                     TimeoutError('GitHub read exceeded the configured wait deadline')]
+        with patch.object(play, 'api', side_effect=responses), \
+                patch.object(play, 'current_pr', return_value=None), \
+                patch.dict(play.os.environ, {'GITHUB_SHA': SHA}), \
+                patch.object(play, 'inputs_at', return_value='match'), \
+                patch.object(contract, 'inputs', return_value='match'), \
+                patch.object(play, 'download_run', return_value=None), \
+                patch.object(play.time, 'sleep'), \
+                self.assertRaisesRegex(RuntimeError, r'Bevy CI run 42 has not uploaded its web build after the '
+                                       r'60 s wait\. Rerun this job when it has'):
+            play.fetch(wait=60)
 
     def test_pending_run_on_recent_page_is_not_fetched_twice(self):
         with patch.object(play, 'api', side_effect=[
@@ -1223,8 +1411,10 @@ class PlayImportTests(unittest.TestCase):
                 patch.object(play, 'download_run') as download, \
                 patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
                 patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep, \
-                self.assertRaisesRegex(RuntimeError, 'Refresh main with:'):
+                self.assertRaisesRegex(RuntimeError, r'Bevy CI run 42 has not passed after the 60 s wait\. '
+                                       'Rerun this job when it has') as failure:
             play.fetch(wait=60, production=True)
+        self.assertNotIn('Refresh main with:', str(failure.exception))  # a second main run is no help
         self.assertEqual(api.call_count, 6)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8, 16, 30])
         self.assertEqual(clock[0], 60)
@@ -1232,59 +1422,26 @@ class PlayImportTests(unittest.TestCase):
 
 
 class HudSharedSourcesTests(unittest.TestCase):
-    """The library sources the web HUD aliases are inputs everywhere its build is fingerprinted or selected."""
+    """The checked resolver graph supplies all consumers without a second import parser."""
 
-    root = Path(__file__).resolve().parents[2]
-    web = root / contract.SOURCE / 'react-web'
+    def test_checked_graph_contains_only_foundations_for_the_ui_consumer(self):
+        root = Path(__file__).resolve().parents[2]
+        manifest = contract.shared_inputs.read_manifest(root)
+        paths = {row['path'] for row in manifest['files']}
+        self.assertTrue(any(p.startswith('library/ui/foundations/') for p in paths))
+        self.assertNotIn('library/ui/index.ts', paths)
+        self.assertFalse(any(p.startswith('library/ui/components/') for p in paths))
 
-    def named(self, file, pattern):
-        return set(re.findall(pattern, (self.web / file).read_text()))
-
-    def test_the_hud_aliases_and_the_build_inputs_name_the_same_sources(self):
-        aliased = self.named('vite.shared.ts', r"'\.\./\.\./\.\./\.\./(library/[^']+)'")
-        mapped = self.named('tsconfig.json', r'"\.\./\.\./\.\./\.\./(library/[^"*]+?)(?:/\*)?"')
-        for path in sorted(aliased | mapped):
-            with self.subTest(path=path):
-                self.assertTrue(contract.hud_shared(path) or contract.hud_shared(path + '/'),
-                                f'react-web aliases or maps {path}, which the build inputs miss')
-        self.assertLessEqual(mapped, aliased, 'react-web/tsconfig.json maps a source vite.shared.ts does not alias')
-        self.assertEqual({entry.rstrip('/') for entry in contract.HUD_SHARED} - aliased, set(),
-                         'a build input names a source react-web/vite.shared.ts no longer aliases')
-        nix = (self.root / 'infra/packages/play.nix').read_text()
-        # `just native-*` rebuilds the native HUD when one of these is newer than its last bundle.
-        just = (self.root / contract.SOURCE / 'justfile').read_text()
-        spec = importlib.util.spec_from_file_location('bevy_ci', self.root / 'tooling/bevy-ci.py')
-        ci = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(ci)
-        for entry in contract.HUD_SHARED:
-            with self.subTest(entry=entry):
-                self.assertIn(entry.rstrip('/'), ci.INPUTS)
-                self.assertRegex(nix, rf'/{re.escape(entry.rstrip("/"))}(\s|$)')
-                self.assertRegex(just, rf' \.\./\.\./\.\./{re.escape(entry.rstrip("/"))} ')
-
-    def test_every_library_ui_file_the_hud_compiles_is_an_input(self):
-        # From the @dcl/one-ui entries react-web aliases, through relative imports and stylesheet @imports. A
-        # stylesheet's url() is not followed: its only targets are the Inter files the HUD takes from its own
-        # package instead (react-web/src/test/sharedUi.test.tsx).
-        entries = {path for path in self.named('vite.shared.ts', r"'\.\./\.\./\.\./\.\./(library/ui/[^']+)'")
-                   if (self.root / path).is_file()}
-        self.assertTrue(entries)
-        reached, queue = set(), sorted(entries)
-        while queue:
-            path = queue.pop()
-            if path in reached:
-                continue
-            reached.add(path)
-            text = (self.root / path).read_text()
-            for spec in re.findall(r"""(?:\bfrom|\bimport|@import)\s+['"](\.[^'"]+)['"]""", text):
-                base = posixpath.normpath(posixpath.join(posixpath.dirname(path), spec))
-                found = [candidate for candidate in (base, base + '.ts', base + '.tsx', base + '/index.ts')
-                         if (self.root / candidate).is_file()]
-                self.assertTrue(found, f'{path} imports {spec}, which is no file')
-                queue.append(found[0])
-        outside = sorted(path for path in reached if not contract.hud_shared(path) or path.startswith(contract.HUD_UNREAD))
-        self.assertEqual(outside, [], 'the HUD compiles these library/ui files, which are no build input')
-        self.assertGreater(len(reached), len(entries))
+    def test_native_and_nix_consume_the_checked_graph(self):
+        root = Path(__file__).resolve().parents[2]
+        self.assertIn('hud_shared_inputs.py', (root / contract.SOURCE / 'justfile').read_text())
+        nix = (root / 'infra/packages/play.nix').read_text()
+        self.assertIn('shared-inputs.json', nix)
+        self.assertIn('import ./hud-shared-inputs.nix', nix)
+        validator = (root / 'infra/packages/hud-shared-inputs.nix').read_text()
+        self.assertIn('hashFile "sha256"', validator)
+        self.assertLess(nix.index('checked = assert import'), nix.index('sharedFiles ='))
+        self.assertNotIn('/library/ui/foundations', nix)
 
 
 if __name__ == '__main__':

@@ -1,3 +1,4 @@
+import { RouterContextProvider } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/features/explorer/open-screen/OpenScreen", () => ({
@@ -22,7 +23,7 @@ function args(): Parameters<typeof loader>[0] {
   return {
     request: new Request("https://sites.test/client/open-screen"),
     params: {},
-    context: {} as never,
+    context: new RouterContextProvider(),
   } as unknown as Parameters<typeof loader>[0];
 }
 

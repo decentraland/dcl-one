@@ -75,13 +75,18 @@ pub async fn pack(opts: &PackOptions) -> Result<()> {
             ignore_composite: false,
             custom_entry_point: false,
             skip_type_check: false,
-            out_root: None,
+            out_root: Some(root.join(build::RELEASE_OUT)),
             quiet: false,
         })
         .await?;
     }
 
-    let rel_paths = deploy::collect_publishable_files(&root)?;
+    // the project's texture setting, as `deploy` applies it: the archive holds
+    // what a deploy would upload
+    let textures =
+        crate::textures::stage_for_deploy(&root, crate::textures::Overrides::default(), false)
+            .await?;
+    let rel_paths = deploy::with_release_files(&root, deploy::collect_publishable_files(&root)?);
     let mut seen_lower = HashSet::new();
     for rel in &rel_paths {
         if !seen_lower.insert(rel.to_lowercase()) {
@@ -93,13 +98,14 @@ pub async fn pack(opts: &PackOptions) -> Result<()> {
         }
     }
     let files: Vec<(String, Vec<u8>)> = crate::scene::parallel_map(&rel_paths, |rel| {
-        let p = root.join(rel);
+        let p = deploy::payload_path(&root, rel);
         let bytes =
             std::fs::read(&p).with_context(|| format!("reading content file {}", p.display()))?;
         Ok((rel.clone(), bytes))
     })
     .into_iter()
     .collect::<Result<_>>()?;
+    drop(textures);
     let total: u64 = files.iter().map(|(_, b)| b.len() as u64).sum();
     if files.is_empty() {
         return Err(UserError::new(

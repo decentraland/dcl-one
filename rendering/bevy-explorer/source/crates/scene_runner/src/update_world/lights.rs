@@ -12,13 +12,16 @@ use bevy::{
 use common::{
     dynamics::PLAYER_COLLIDER_RADIUS,
     sets::SceneSets,
-    structs::{AppConfig, PrimaryUser, SceneGlobalLight, TimeOfDay, PRIMARY_AVATAR_LIGHT_LAYER},
+    structs::{
+        AppConfig, PrimaryUser, SceneGlobalLight, TimeOfDay, PRIMARY_AVATAR_LIGHT_LAYER,
+        SPOT_SHADOW_MAX_DISTANCE,
+    },
     util::TryPushChildrenEx,
 };
 use dcl_component::{
     proto_components::{
-        common::{TextureUnion, Vector3},
-        sdk::components::{pb_light_source, PbGlobalLight, PbLightSource},
+        common::{ColorGradient, TextureUnion, Vector3},
+        sdk::components::{pb_light_source, PbGlobalLight, PbLightSource, PbSun},
         Color3DclToBevy,
     },
     SceneComponentId,
@@ -40,7 +43,7 @@ impl Plugin for LightsPlugin {
         app.insert_resource(LightSwitches {
             lights: true,
             shadows: true,
-            point_shadows: true,
+            point_shadows: false,
         })
         .add_console_command::<LightCommand, _>(light_command)
         .add_preview_console_command::<SetLightSwitch, _>(set_light_switch)
@@ -51,6 +54,9 @@ impl Plugin for LightsPlugin {
                 ("SDK lights", "count"),
                 ("Visible SDK lights", "visible"),
                 ("Active shadow casters", "casters"),
+                ("Shadow caster slots", "casterSlots"),
+                ("Shadow caster range from the player (m)", "casterRange"),
+                ("Nearest caster distance (m)", "nearestCaster"),
             ],
             actions: &[],
             inputs: &[
@@ -82,6 +88,10 @@ impl Plugin for LightsPlugin {
             SceneComponentId::GLOBAL_LIGHT,
             ComponentPosition::RootOnly,
         );
+        app.add_crdt_lww_component::<PbSun, Sun>(
+            SceneComponentId::SUN,
+            ComponentPosition::RootOnly,
+        );
         app.add_systems(
             Update,
             (
@@ -99,6 +109,9 @@ impl Plugin for LightsPlugin {
 struct LightSwitches {
     lights: bool,
     shadows: bool,
+    /// Lets point lights take shadow caster slots too. Off by default: a point light's shadow
+    /// renders six faces, so scene shadows go to spot lights; this is a tester's aid, not a
+    /// setting.
     point_shadows: bool,
 }
 
@@ -130,21 +143,40 @@ fn set_light_switch(mut cmd: ConsoleCommand<SetLightSwitch>, mut switches: ResMu
 fn light_command(
     mut cmd: ConsoleCommand<LightCommand>,
     switches: Res<LightSwitches>,
-    lights: Query<(&Visibility, Option<&PointLight>, Option<&SpotLight>), With<LightEntity>>,
+    config: Res<AppConfig>,
+    player: Query<&GlobalTransform, With<PrimaryUser>>,
+    lights: Query<
+        (
+            &Visibility,
+            &GlobalTransform,
+            Option<&PointLight>,
+            Option<&SpotLight>,
+        ),
+        With<LightEntity>,
+    >,
 ) {
     let Some(Ok(_)) = cmd.take() else { return };
+    let player = player.single().ok().map(GlobalTransform::translation);
     let mut visible = 0;
     let mut casters = 0;
-    for (vis, point, spot) in &lights {
+    let mut nearest: Option<f32> = None;
+    for (vis, gt, point, spot) in &lights {
         if *vis != Visibility::Hidden {
             visible += 1;
             if point.is_some_and(|l| l.shadows_enabled) || spot.is_some_and(|l| l.shadows_enabled) {
                 casters += 1;
+                if let Some(player) = player {
+                    let distance = (gt.translation() - player).length();
+                    nearest = Some(nearest.map_or(distance, |n| n.min(distance)));
+                }
             }
         }
     }
     cmd.reply_ok(serde_json::json!({"lights": switches.lights, "shadows": switches.shadows, "pointShadows":switches.point_shadows,
-        "count":lights.iter().len(), "visible":visible, "casters":casters}).to_string());
+        "count":lights.iter().len(), "visible":visible, "casters":casters,
+        "casterSlots":config.graphics.shadow_caster_count, "casterRange":SPOT_SHADOW_MAX_DISTANCE,
+        "nearestCaster":nearest,
+        "unavailable": {"nearestCaster": "no light casts a shadow"}}).to_string());
 }
 
 #[derive(Component, Debug, Default)]
@@ -201,6 +233,100 @@ impl From<PbGlobalLight> for GlobalLight {
             direction: value.direction.as_ref().map(Vector3::world_vec_to_vec3),
             ambient_color: value.ambient_color.map(Color3DclToBevy::convert_linear_rgb),
             ambient_brightness: value.ambient_brightness,
+        }
+    }
+}
+
+/// The largest scene colour or light multiplier: the largest finite half float, as the sky is
+/// drawn into 16-bit float textures.
+pub const MAX_SCENE_VALUE: f32 = 65504.0;
+
+/// Gradient keys past this many are dropped.
+const MAX_GRADIENT_KEYS: usize = 100;
+
+/// Keys a gradient is resampled to when it has more.
+const RAMP_KEYS: usize = 8;
+
+/// A scene colour gradient over the day (0 = midnight, 1 = the next midnight), ready to sample:
+/// keys in time order, colours finite and in `0..=MAX_SCENE_VALUE`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ColorRamp(Vec<(f32, Vec3)>);
+
+impl ColorRamp {
+    /// `None` for a gradient with no usable keys. Of keys at the same time the later one wins.
+    pub fn new(gradient: &ColorGradient) -> Option<Self> {
+        let mut keys: Vec<(f32, Vec3)> = gradient
+            .keys
+            .iter()
+            .take(MAX_GRADIENT_KEYS)
+            .filter_map(|key| {
+                let c = key.color.as_ref()?;
+                let color = Vec3::new(c.r, c.g, c.b);
+                (key.time.is_finite() && color.is_finite()).then_some((
+                    key.time.clamp(0.0, 1.0),
+                    color.clamp(Vec3::ZERO, Vec3::splat(MAX_SCENE_VALUE)),
+                ))
+            })
+            .collect();
+        // a stable sort keeps keys at the same time (-0 and 0 included) in their given order
+        keys.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        let mut ramp = Self(Vec::with_capacity(keys.len()));
+        for key in keys {
+            if ramp.0.last().is_some_and(|previous| previous.0 == key.0) {
+                ramp.0.pop();
+            }
+            ramp.0.push(key);
+        }
+        if ramp.0.is_empty() {
+            return None;
+        }
+        if ramp.0.len() > RAMP_KEYS {
+            ramp = Self(
+                (0..RAMP_KEYS)
+                    .map(|n| {
+                        let t = n as f32 / (RAMP_KEYS - 1) as f32;
+                        (t, ramp.sample(t))
+                    })
+                    .collect(),
+            );
+        }
+        Some(ramp)
+    }
+
+    /// The colour at `time` of day, 0 to 1. Before the first key and after the last, that key's.
+    pub fn sample(&self, time: f32) -> Vec3 {
+        let time = time.clamp(0.0, 1.0);
+        let next = self.0.partition_point(|(t, _)| *t < time);
+        match (next.checked_sub(1).map(|i| self.0[i]), self.0.get(next)) {
+            (Some((t0, c0)), Some(&(t1, c1))) => c0.lerp(c1, (time - t0) / (t1 - t0)),
+            (Some((_, c)), None) | (None, Some(&(_, c))) => c,
+            (None, None) => Vec3::ZERO,
+        }
+    }
+}
+
+/// A scene's override of the sun, on its root.
+#[derive(Component)]
+pub struct Sun {
+    pub color: Option<ColorRamp>,
+    pub visible: Option<bool>,
+    pub intensity: Option<f32>,
+    pub direction: Option<Vec3>,
+}
+
+impl From<PbSun> for Sun {
+    fn from(value: PbSun) -> Self {
+        Self {
+            color: value.color.as_ref().and_then(ColorRamp::new),
+            visible: value.visible,
+            intensity: value
+                .intensity
+                .filter(|i| i.is_finite())
+                .map(|i| i.clamp(0.0, MAX_SCENE_VALUE)),
+            direction: value
+                .direction
+                .as_ref()
+                .and_then(|d| d.world_vec_to_vec3().try_normalize()),
         }
     }
 }
@@ -288,6 +414,7 @@ pub fn update_directional_light(
         &RendererSceneContext,
         Option<&LightSource>,
         Option<&GlobalLight>,
+        Option<&Sun>,
     )>,
     mut global_light: ResMut<SceneGlobalLight>,
     containing_scene: ContainingScene,
@@ -324,6 +451,7 @@ pub fn update_directional_light(
         sun_direction,
         ambient_color: Color::WHITE,
         ambient_brightness: 1.0,
+        sun_hidden: false,
         layers: RenderLayers::default(),
     };
 
@@ -331,53 +459,85 @@ pub fn update_directional_light(
         return;
     };
 
-    let mut apply =
-        |parcel: Entity, maybe_light: Option<&LightSource>, maybe_global: Option<&GlobalLight>| {
-            global_light.source = Some(parcel);
-            if let Some(light) = maybe_light {
-                if let Some(color) = light.color {
-                    global_light.dir_color = color;
-                }
-                if let Some(ill) = if light.enabled {
-                    light.intensity
-                } else {
-                    Some(0.0)
-                } {
-                    global_light.dir_illuminance = ill;
-                    global_light.sun_illuminance = ill;
-                }
+    let day_fraction = time.elapsed_secs().rem_euclid(86400.0) / 86400.0;
+    let mut apply = |parcel: Entity,
+                     maybe_light: Option<&LightSource>,
+                     maybe_global: Option<&GlobalLight>,
+                     maybe_sun: Option<&Sun>| {
+        global_light.source = Some(parcel);
+        if let Some(light) = maybe_light {
+            if let Some(color) = light.color {
+                global_light.dir_color = color;
             }
+            if let Some(ill) = if light.enabled {
+                light.intensity
+            } else {
+                Some(0.0)
+            } {
+                global_light.dir_illuminance = ill;
+                global_light.sun_illuminance = ill;
+            }
+        }
 
-            if let Some(global) = maybe_global {
-                if let Some(dir) = global.direction {
-                    global_light.dir_direction = dir;
-                    global_light.sun_direction = dir;
-                }
-                if let Some(color) = global.ambient_color {
-                    global_light.ambient_color = color;
-                }
-                if let Some(brightness) = global.ambient_brightness {
-                    global_light.ambient_brightness = brightness;
-                };
+        if let Some(global) = maybe_global {
+            if let Some(dir) = global.direction {
+                global_light.dir_direction = dir;
+                global_light.sun_direction = dir;
             }
-        };
+            if let Some(color) = global.ambient_color {
+                global_light.ambient_color = color;
+            }
+            if let Some(brightness) = global.ambient_brightness {
+                global_light.ambient_brightness = brightness;
+            };
+        }
+
+        if let Some(sun) = maybe_sun {
+            if let Some(color) = &sun.color {
+                // as for LightSource: colours > 1 are rescaled to 1, and the light is
+                // multiplied by pow(max, 2.2), so the sky gets the hue only
+                let color = color.sample(day_fraction);
+                let color_scale = color.max_element().max(1.0);
+                let color = color / color_scale;
+                global_light.dir_color = Color::linear_rgb(color.x, color.y, color.z);
+                global_light.dir_illuminance *= color_scale.powf(2.2);
+            }
+            // the light only: the sky keeps its time-of-day brightness
+            if let Some(intensity) = sun.intensity {
+                global_light.dir_illuminance *= intensity;
+            }
+            if let Some(dir) = sun.direction {
+                global_light.dir_direction = dir;
+                global_light.sun_direction = dir;
+            }
+            if let Some(visible) = sun.visible {
+                global_light.sun_hidden = !visible;
+            }
+        }
+    };
 
     if let Some(active_parcel) = containing_scene.get_parcel_oow(player) {
         // try and get settings from active parcel scene first
-        if let Ok((_, maybe_light, maybe_global)) = lights.get(active_parcel) {
-            if maybe_light.is_some() || maybe_global.is_some() {
-                apply(active_parcel, maybe_light, maybe_global);
+        if let Ok((_, maybe_light, maybe_global, maybe_sun)) = lights.get(active_parcel) {
+            if maybe_light.is_some() || maybe_global.is_some() || maybe_sun.is_some() {
+                apply(active_parcel, maybe_light, maybe_global, maybe_sun);
                 return;
             }
         }
     }
 
     // if the primary parcel doesn't specify anything, check any portables
-    let mut portable_settings: Option<(&str, Entity, Option<&LightSource>, Option<&GlobalLight>)> =
-        None;
+    #[allow(clippy::type_complexity)]
+    let mut portable_settings: Option<(
+        &str,
+        Entity,
+        Option<&LightSource>,
+        Option<&GlobalLight>,
+        Option<&Sun>,
+    )> = None;
     for entity in containing_scene.get_portables(false) {
-        if let Ok((ctx, maybe_light, maybe_global)) = lights.get(entity) {
-            if maybe_light.is_none() && maybe_global.is_none() {
+        if let Ok((ctx, maybe_light, maybe_global, maybe_sun)) = lights.get(entity) {
+            if maybe_light.is_none() && maybe_global.is_none() && maybe_sun.is_none() {
                 continue;
             }
 
@@ -390,12 +550,12 @@ pub fn update_directional_light(
                 continue;
             }
 
-            portable_settings = Some((&ctx.hash, entity, maybe_light, maybe_global));
+            portable_settings = Some((&ctx.hash, entity, maybe_light, maybe_global, maybe_sun));
         }
     }
 
-    if let Some((_, portable, maybe_light, maybe_global)) = portable_settings {
-        apply(portable, maybe_light, maybe_global);
+    if let Some((_, portable, maybe_light, maybe_global, maybe_sun)) = portable_settings {
+        apply(portable, maybe_light, maybe_global, maybe_sun);
     }
 }
 
@@ -554,8 +714,38 @@ fn update_point_lights(
 #[derive(Component)]
 pub struct RetryLightTexture;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LightKind {
+    Point,
+    Spot,
+}
+
+/// Entities to give shadows: spot lights only (point lights
+/// too with `point_lights`), within SPOT_SHADOW_MAX_DISTANCE of the player, nearest first, at
+/// most `max`.
+pub fn shadow_caster_slots(
+    candidates: impl IntoIterator<Item = (Entity, LightKind, f32)>,
+    max: usize,
+    point_lights: bool,
+) -> Vec<Entity> {
+    let mut spots: Vec<_> = candidates
+        .into_iter()
+        .filter(|(_, kind, distance)| {
+            (point_lights || *kind == LightKind::Spot) && *distance <= SPOT_SHADOW_MAX_DISTANCE
+        })
+        .collect();
+    spots.sort_by_key(|(_, _, distance)| FloatOrd(*distance));
+    spots.into_iter().take(max).map(|(e, _, _)| e).collect()
+}
+
 fn manage_shadow_casters(
-    read_lights: Populated<(Entity, &GlobalTransform, &LightEntity, &ChildOf)>,
+    read_lights: Populated<(
+        Entity,
+        &GlobalTransform,
+        &LightEntity,
+        &ChildOf,
+        Has<SpotLight>,
+    )>,
     mut write_lights: Query<(
         Option<&mut PointLight>,
         Option<&mut SpotLight>,
@@ -566,7 +756,7 @@ fn manage_shadow_casters(
     containing_scene: ContainingScene,
     config: Res<AppConfig>,
     switches: Res<LightSwitches>,
-    mut lights: Local<Vec<(Entity, bool, FloatOrd, bool)>>,
+    mut lights: Local<Vec<(Entity, bool, FloatOrd, bool, LightKind, f32)>>,
 ) {
     let (player, player_gt) = player.into_inner();
     let player_t = player_gt.translation();
@@ -574,30 +764,41 @@ fn manage_shadow_casters(
     let active_scenes = containing_scene.get_area(player, PLAYER_COLLIDER_RADIUS);
 
     // collect lights
-    lights.extend(read_lights.iter().map(|(entity, gt, light, parent)| {
-        let enabled = light.enabled
-            && parent_visibility
-                .get(parent.parent())
-                .is_ok_and(|pv| pv.get());
-        let importance = if enabled {
-            let distance = (gt.translation() - player_t).length();
-            let importance = light.range / distance;
-            FloatOrd(importance)
-        } else {
-            FloatOrd(0.0)
-        };
+    lights.extend(
+        read_lights
+            .iter()
+            .map(|(entity, gt, light, parent, is_spot)| {
+                let enabled = light.enabled
+                    && parent_visibility
+                        .get(parent.parent())
+                        .is_ok_and(|pv| pv.get());
+                let distance = (gt.translation() - player_t).length();
+                let importance = if enabled {
+                    let importance = light.range / distance;
+                    FloatOrd(importance)
+                } else {
+                    FloatOrd(0.0)
+                };
+                let kind = if is_spot {
+                    LightKind::Spot
+                } else {
+                    LightKind::Point
+                };
 
-        (
-            entity,
-            active_scenes.contains(&light.scene),
-            importance,
-            light.shadows_enabled,
-        )
-    }));
+                (
+                    entity,
+                    active_scenes.contains(&light.scene),
+                    importance,
+                    light.shadows_enabled,
+                    kind,
+                    distance,
+                )
+            }),
+    );
     // sort by scene-active and distance
-    lights.sort_by_key(|(_, scene_active, importance, _)| (*scene_active, *importance));
+    lights.sort_by_key(|(_, scene_active, importance, ..)| (*scene_active, *importance));
     // enable up to limit
-    let mut max_enabled = if switches.lights {
+    let max_enabled = if switches.lights {
         config.graphics.light_count
     } else {
         0
@@ -615,19 +816,27 @@ fn manage_shadow_casters(
         max_enabled,
         max_casters
     );
+    let casters = shadow_caster_slots(
+        lights
+            .iter()
+            .rev()
+            .filter(|(_, _, importance, ..)| importance.0 != 0.0)
+            .take(max_enabled)
+            .filter(|(_, _, _, shadows_enabled, ..)| *shadows_enabled)
+            .map(|(entity, _, _, _, kind, distance)| (*entity, *kind, *distance)),
+        max_casters,
+        switches.point_shadows,
+    );
+    let mut max_enabled = max_enabled;
     // only write (and trigger change detection) when the target value differs
-    for (light, _, importance, shadows_enabled) in lights.drain(..).rev() {
+    for (light, _, importance, ..) in lights.drain(..).rev() {
         let (maybe_p, maybe_s, mut vis) = write_lights.get_mut(light).unwrap();
 
         if importance.0 != 0.0 && max_enabled > 0 {
             vis.set_if_neq(Visibility::Visible);
             max_enabled -= 1;
 
-            let cast =
-                shadows_enabled && max_casters > 0 && (maybe_p.is_none() || switches.point_shadows);
-            if cast {
-                max_casters -= 1;
-            }
+            let cast = casters.contains(&light);
             if let Some(mut p) = maybe_p {
                 if p.shadows_enabled != cast {
                     p.shadows_enabled = cast;
@@ -647,6 +856,116 @@ fn manage_shadow_casters(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dcl_component::proto_components::common::{Color4, ColorKey};
+
+    fn gradient(keys: &[(f32, f32)]) -> ColorGradient {
+        ColorGradient {
+            keys: keys
+                .iter()
+                .map(|&(time, red)| ColorKey {
+                    time,
+                    color: Some(Color4 {
+                        r: red,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 1.0,
+                    }),
+                })
+                .collect(),
+        }
+    }
+
+    fn sample(keys: &[(f32, f32)], time: f32) -> Option<Vec3> {
+        ColorRamp::new(&gradient(keys)).map(|ramp| ramp.sample(time))
+    }
+
+    #[test]
+    fn ramps_sort_clamp_and_keep_later_duplicates_without_midnight_wrap() {
+        let keys = [(1.5, 5.0), (0.5, 2.0), (-1.0, 1.0), (0.5, 3.0)];
+        assert_eq!(sample(&keys, 0.0), Some(Vec3::X));
+        assert_eq!(sample(&keys, 0.25), Some(Vec3::X * 2.0));
+        assert_eq!(sample(&keys, 0.5), Some(Vec3::X * 3.0));
+        assert_eq!(sample(&keys, 1.0), Some(Vec3::X * 5.0));
+        assert_eq!(sample(&[], 0.5), None);
+        assert_eq!(sample(&[(f32::NAN, 1.0), (0.0, f32::INFINITY)], 0.5), None);
+    }
+
+    #[test]
+    fn ramp_colours_are_bounded_to_half_floats() {
+        assert_eq!(sample(&[(0.0, 1e30)], 0.5), Some(Vec3::X * MAX_SCENE_VALUE));
+        assert_eq!(sample(&[(0.0, -4.0)], 0.5), Some(Vec3::ZERO));
+    }
+
+    #[test]
+    fn ramps_drop_keys_past_the_bound_and_resample_to_eight() {
+        let mut keys: Vec<_> = (0..MAX_GRADIENT_KEYS)
+            .map(|n| (n as f32 / (MAX_GRADIENT_KEYS - 1) as f32, n as f32))
+            .collect();
+        keys.push((1.0, 999.0));
+        let ramp = ColorRamp::new(&gradient(&keys)).unwrap();
+        assert_eq!(ramp.0.len(), RAMP_KEYS);
+        assert_eq!(ramp.sample(1.0), Vec3::X * (MAX_GRADIENT_KEYS - 1) as f32);
+        assert!((ramp.sample(0.5).x - (MAX_GRADIENT_KEYS - 1) as f32 / 2.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn sun_keeps_explicit_zero_and_false_and_bounds_its_numbers() {
+        let sun = Sun::from(PbSun {
+            intensity: Some(0.0),
+            visible: Some(false),
+            direction: Some(Vector3 {
+                x: 0.0,
+                y: 0.0,
+                z: 4.0,
+            }),
+            ..Default::default()
+        });
+        assert_eq!(sun.intensity, Some(0.0));
+        assert_eq!(sun.visible, Some(false));
+        assert!(sun.direction.unwrap().abs_diff_eq(Vec3::NEG_Z, 1e-6));
+        let sun = Sun::from(PbSun {
+            intensity: Some(1e30),
+            direction: Some(Vector3::default()),
+            ..Default::default()
+        });
+        assert_eq!(sun.intensity, Some(MAX_SCENE_VALUE));
+        assert_eq!(sun.direction, None);
+        let sun = Sun::from(PbSun {
+            intensity: Some(f32::INFINITY),
+            ..Default::default()
+        });
+        assert_eq!(sun.intensity, None);
+    }
+
+    #[test]
+    fn shadow_casters_are_nearest_spots_within_twenty_metres() {
+        let e = |i: u32| Entity::from_raw(i);
+        let slots = shadow_caster_slots(
+            [
+                (e(1), LightKind::Spot, 25.0),
+                (e(2), LightKind::Point, 1.0),
+                (e(3), LightKind::Spot, 5.0),
+                (e(4), LightKind::Spot, 3.0),
+                (e(5), LightKind::Spot, 19.9),
+                (e(6), LightKind::Spot, 10.0),
+            ],
+            3,
+            false,
+        );
+        assert_eq!(slots, vec![e(4), e(3), e(6)]);
+        assert!(shadow_caster_slots([(e(1), LightKind::Spot, 5.0)], 0, false).is_empty());
+        // the point-shadows switch lets point lights compete for the slots
+        let slots = shadow_caster_slots(
+            [
+                (e(2), LightKind::Point, 1.0),
+                (e(3), LightKind::Spot, 5.0),
+                (e(7), LightKind::Point, 30.0),
+            ],
+            3,
+            true,
+        );
+        assert_eq!(slots, vec![e(2), e(3)]);
+    }
 
     #[test]
     fn sun_follows_unitys_path() {

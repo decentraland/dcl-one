@@ -1,0 +1,194 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-layout-section-gap);
+  padding: var(--dcl-layout-section-padding-y) var(--dcl-layout-margin-x);
+  background: var(--dcl-gradient-radial-background), var(--dcl-bg-page);
+  color: var(--dcl-text-primary);
+}
+
+.title {
+  composes: text68656164696e672f6c67 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  text-align: center;
+}
+
+/* Phones scroll the cards sideways; from breakpoints.tablet they share the row, centered, as
+   source (one card up to 850px wide, a design measurement). */
+.cards {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 85%;
+  gap: var(--dcl-space-16);
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  list-style: none;
+}
+
+@media (min-width: 768px) {
+  .cards {
+    display: flex;
+    justify-content: center;
+    gap: var(--dcl-space-24);
+    overflow-x: visible;
+  }
+
+  .card {
+    flex: 1 1 0;
+    max-width: 850px;
+  }
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  scroll-snap-align: start;
+  border-radius: var(--dcl-radius-lg);
+}
+
+.card:focus-within {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.media {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: var(--dcl-gradient-amethyst);
+}
+
+/* Source's cover is 297px tall from desktop (a design measurement). */
+@media (min-width: 1024px) {
+  .media {
+    aspect-ratio: auto;
+    height: 297px;
+  }
+}
+
+.image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.badges {
+  position: absolute;
+  top: var(--dcl-space-16);
+  left: var(--dcl-space-16);
+  display: flex;
+  gap: var(--dcl-space-8);
+}
+
+/* Source's badges: 24px tall pills. */
+.badge {
+  composes: text6c6162656c2f746167 from '../../../foundations/typography/text-styles.module.css';
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-4);
+  height: var(--dcl-space-24);
+  padding: 0 var(--dcl-space-12);
+  border-radius: var(--dcl-radius-sm);
+  color: var(--dcl-neutrals-white);
+}
+
+.live {
+  composes: badge;
+  background: var(--dcl-system-red);
+  text-transform: uppercase;
+}
+
+.users {
+  composes: badge;
+  background: var(--dcl-neutrals-shadow);
+}
+
+.dot {
+  width: var(--dcl-space-8);
+  height: var(--dcl-space-8);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-system-green);
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--dcl-space-32);
+  padding: var(--dcl-space-16);
+  background: var(--dcl-transparencies-black-60);
+}
+
+.cardTitle {
+  composes: text68656164696e672f34 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+}
+
+.titleLink {
+  color: inherit;
+  text-decoration: none;
+  outline: none;
+}
+
+/* The title link covers the card, so the whole card opens the page. */
+.titleLink::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+.creatorRow {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+}
+
+.avatar {
+  composes: text626f64792f6d642d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--dcl-space-32);
+  height: var(--dcl-space-32);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-brand-lavender);
+  color: var(--dcl-neutrals-white);
+  object-fit: cover;
+}
+
+.by {
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+}
+
+/* Above the card's covering title link, so it stays its own target. */
+.creator {
+  position: relative;
+  z-index: 1;
+  color: var(--dcl-brand-ruby);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+a.creator:hover {
+  text-decoration: underline;
+}
+
+a.creator:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}

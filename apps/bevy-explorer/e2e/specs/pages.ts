@@ -1,6 +1,6 @@
 // The HUD's full-screen pages (Backpack, Places, Events, Map, Gallery, Settings, Communities):
 // how each opens (key, rail button, top-bar tab) and the control that proves it is open. Names are
-// the HUD's accessible names (react-web/src/features); the key hints in the top-bar tabs are the
+// the HUD's accessible names (library/ui/apps/hud/features); the key hints in the top-bar tabs are the
 // engine's default bindings, so a tab is `Places [ Z ]` as the page joins its text nodes.
 import type { Explorer, Selector } from '../driver/index.ts'
 
@@ -36,8 +36,8 @@ export const PAGES: Record<PageName, Page> = {
   gallery: { key: 'KeyG', rail: 'Gallery', tab: 'Gallery [ G ]', marker: { name: 'Gallery', role: 'heading' } },
   settings: { key: 'KeyP', rail: 'Settings', tab: 'Settings [ P ]', marker: { name: 'Settings', role: 'heading' } },
   places: { key: 'KeyZ', rail: 'Places', tab: 'Places [ Z ]', marker: { name: 'Places sections', role: 'tablist' } },
-  events: { rail: 'Events', tab: 'Events', marker: { name: 'Events sections', role: 'tablist' } },
-  map: { key: 'KeyM', tab: 'Map [ M ]', marker: { name: 'Search places & worlds', role: 'textbox' } }
+  events: { key: 'KeyX', rail: 'Events', tab: 'Events [ X ]', marker: { name: 'Events', role: 'heading' } },
+  map: { key: 'KeyM', tab: 'Map [ M ]', marker: { name: 'Search', role: 'textbox' } }
 }
 
 export const PAGE_OPEN_TIMEOUT_MS = 20_000

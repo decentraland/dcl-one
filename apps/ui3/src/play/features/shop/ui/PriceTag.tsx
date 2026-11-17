@@ -5,7 +5,7 @@ import { formatCredits, formatCreditsFull } from '@shop/checkout/lib/currency'
 import CreditMark from '../../../../shop/credits/components/CreditMark'
 import type { CardPrice } from '@shop/discovery/cardPrice'
 import { formatMana } from '@shop/model/money'
-import { ManaIcon } from '../../../design'
+import { ManaIcon } from '@hud/design'
 
 export function PriceTag({ price, size = 16 }: { price: CardPrice; size?: number }): React.JSX.Element {
   switch (price.kind) {

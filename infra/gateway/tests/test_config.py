@@ -43,9 +43,17 @@ class ConfigurationTest(unittest.TestCase):
         maps = nginx_map.parse(text)
         gated = ["/admin/api/jobs", "/server.data", "/metabase/", "/telemetry/dash/sql",
                  "/telemetry/dash/SQL.data", "/telemetry/dash/flag", "/telemetry/dash/group/target.data",
-                 "/telemetry/dash/admin", "/telemetry/dash/admin.data", "/telemetry/dash/admin/users"]
+                 "/telemetry/dash/admin", "/telemetry/dash/admin.data", "/telemetry/dash/admin/users",
+                 "/rpc/admin/rpc/config", "/v1/admin/names/approve-mana", "/shop-api/v1/admin/names/approve-mana",
+                 "/shop-api/admin/campaigns/1/collections", "/marketplace-api/v1/admin/audit",
+                 "/transactions-api/v1/admin/relayer", "/credits/admin/flags", "/CREDITS/Admin.data",
+                 "/social-rpc/admin/x", "/places/api/admin/x", "/events/v1/admin/x",
+                 "/market/v1/admin/audit", "/camera-reel/admin/images/1", "/scene-state/admin/scene/x/reset",
+                 "/worlds-content-server/gc", "/WORLDS-CONTENT-SERVER/reprocess-ab"]
         public = ["/telemetry/dash", "/telemetry/dash/overview", "/telemetry/dash/sqlx",
-                  "/telemetry/dash/administrator", "/telemetry"]
+                  "/telemetry/dash/administrator", "/telemetry", "/events/admin/pending-events",
+                  "/events/admin/users", "/docs/creator/images/editor/admin/activate.webp",
+                  "/credits/administrator", "/v1/moderation/communities", "/shop-api/v1/users"]
         for uri, expected in [(uri, "1") for uri in gated] + [(uri, "0") for uri in public]:
             with self.subTest(uri=uri):
                 self.assertEqual(nginx_map.Request(maps, uri=uri)["operator_path"], expected)
@@ -67,7 +75,7 @@ class ConfigurationTest(unittest.TestCase):
         text = gateway.render({"sites": [], "internal": [], "node": [], "aliases": [], "deploy": []},
                               cfg, "/mime.types")
         self.assertIn("geo $sync_peer { default 0; 203.0.113.7/32 1; 2001:db8::1/128 1; }", text)
-        self.assertIn("limit_req_zone $binary_remote_addr zone=read:10m rate=30r/s;", text)
+        self.assertIn("limit_req_zone $binary_remote_addr zone=read:10m rate=100r/s;", text)
         self.assertIn("limit_req_zone $content_limit_key zone=content:10m rate=100r/s;", text)
         key_map = re.search(r'map "\$sync_peer:\$request_method:\$uri" \$content_limit_key \{(.*?)\}', text, re.S)[1]
         exempt = re.search(r'"(~[^"]+)" ""', key_map)[1][1:]
@@ -100,6 +108,27 @@ class ConfigurationTest(unittest.TestCase):
             table = {"sites": [name], "internal": ["/metrics", "/internal/pulse"]}
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, "reserved"):
                 gateway.render(table, cfg, "/mime.types")
+
+    def test_cast_page_is_exact_and_leaves_the_cast_api_prefix(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": ["cast._index.tsx"], "internal": ["/metrics"], "node": [], "deploy": [],
+                 "aliases": [{"key": "^~ /cast/", "to": "/comms-gatekeeper$uri"}]}
+        text = gateway.render(table, cfg, "/mime.types")
+        self.assertIn("location = /cast {", text)
+        self.assertEqual(text.count("location ^~ /cast/ {"), 1)
+        self.assertNotIn("location /cast/ {", text)
+
+    def test_cast_stream_and_watch_links_are_sites_pages(self):
+        # The gatekeeper's links are {CAST2_URL}/s/<key> and /w/<location>, CAST2_URL = <origin>/cast.
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": ["cast.s.$token.tsx", "cast.w.$location.tsx"], "internal": ["/metrics"],
+                 "node": [], "deploy": [],
+                 "aliases": [{"key": "^~ /cast/", "to": "/comms-gatekeeper$uri"}]}
+        text = gateway.render(table, cfg, "/mime.types")
+        for page in ("/cast/s/", "/cast/w/"):
+            with self.subTest(page=page):
+                self.assertIn(f"location ^~ {page} {{\nproxy_pass http://sites;", text)
+        self.assertEqual(text.count("location ^~ /cast/ {"), 1)
 
     def test_worlds_host_deploys_get_the_deploy_body_cap(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
@@ -197,6 +226,41 @@ class ConfigurationTest(unittest.TestCase):
         self.assertEqual(gateway.WORLDS_DEPLOY_CAP, mib("deploy.rs", "MAX_UPLOAD_WIRE_SIZE_BYTES"))
         self.assertEqual(gateway.WORLDS_SETTINGS_CAP, mib("settings.rs", "MAX_SETTINGS_UPLOAD_WIRE_BYTES"))
 
+    def test_badges_backfill_cap_matches_the_route_limit(self):
+        source = (Path(__file__).parents[3] / "services/catalyst/social/src/badges/mod.rs").read_text()
+        expr = re.search(r"const MAX_BACKFILL_BODY_BYTES: usize = ([^;]+);", source)[1]
+        self.assertRegex(expr, r"^[\d\s*]+$")
+        self.assertEqual(gateway.BADGES_BACKFILL_CAP, f"{eval(expr) // (1024 * 1024)}m")
+        _, regexes = self.worlds_locations()
+        for path in ["/badges/badges/halloweeks_2026/backfill", "/badges/badges/traveler/backfill"]:
+            with self.subTest(path=path):
+                body = next(body for regex, body in regexes if regex.search(path))
+                self.assertIn(f"client_max_body_size {gateway.BADGES_BACKFILL_CAP};", body)
+                self.assertIn(f"limit_conn deploy_uploads {gateway.DEPLOY_CONNECTIONS_PER_ADDRESS};", body)
+        for path in ["/badges/badges/traveler", "/badges/users/0xab/badges/traveler",
+                     "/badges/badges/x/backfill/y", "/x/badges/badges/x/backfill"]:
+            with self.subTest(path=path):
+                self.assertFalse(any("64m" in body for regex, body in regexes if regex.search(path)))
+
+    def test_badges_asset_cap_matches_the_route_limit(self):
+        source = (Path(__file__).parents[3] / "services/catalyst/social/src/badges/mod.rs").read_text()
+        expr = re.search(r"const MAX_ASSET_BODY_BYTES: usize = ([^;]+);", source)[1]
+        self.assertRegex(expr, r"^[\d\s*]+$")
+        self.assertEqual(gateway.BADGES_ASSET_CAP, f"{eval(expr) // (1024 * 1024)}m")
+        _, regexes = self.worlds_locations()
+        body = next(body for regex, body in regexes if regex.search("/badges/assets/traveler/starter/2d/normal.png"))
+        self.assertIn(f"client_max_body_size {gateway.BADGES_ASSET_CAP};", body)
+        # public reads share no upload budget: only PUTs are keyed
+        self.assertNotIn("deploy_uploads", body)
+        self.assertIn("limit_conn badge_asset_uploads", body)
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        text = gateway.render({"sites": [], "internal": [], "node": [], "aliases": [], "deploy": []},
+                              cfg, "/mime.types")
+        self.assertIn('map $request_method $badge_asset_upload_key { PUT $binary_remote_addr; default ""; }', text)
+        self.assertIn("limit_conn_zone $badge_asset_upload_key zone=badge_asset_uploads:10m;", text)
+        self.assertFalse(any(regex.search("/x/badges/assets/a.png") for regex, _ in regexes
+                             if f"client_max_body_size {gateway.BADGES_ASSET_CAP};" in _))
+
     def test_the_content_deploy_cap_reaches_the_apps_route_limit(self):
         root = Path(__file__).parents[3] / "services/catalyst"
         source = (root / "content/src/create_entity.rs").read_text()
@@ -234,6 +298,43 @@ class ConfigurationTest(unittest.TestCase):
         for body in bodies:
             self.assertIn(f"limit_conn deploy_uploads {gateway.DEPLOY_CONNECTIONS_PER_ADDRESS};", body)
 
+    def test_protected_storage_keeps_the_apps_content_headers(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_STORAGE_ROOT": "/content"})
+        table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [], "deploy": ["/entities"]}
+        text = gateway.render(table, cfg, "/mime.types")
+        body = re.search(r"location \^~ /__protected_storage/ \{\n(.*?)\n\}", text, re.S)[1]
+        # The app's Cache-Control passes through the redirect; a second one would double it.
+        self.assertNotIn("Cache-Control", body)
+        self.assertIn("add_header Access-Control-Expose-Headers "
+                      "$upstream_http_access_control_expose_headers always;", body)
+        # Ranges the app does not answer itself get the whole file, as upstream.
+        self.assertIn("max_ranges 0;", body)
+
+    def test_report_evidence_cap_matches_the_route_limit(self):
+        root = Path(__file__).parents[3] / "services/catalyst"
+        source = (root / "comms/src/gatekeeper/reports.rs").read_text()
+        expr = re.search(r"const MAX_FILE_BYTES: usize = ([^;]+);", source)[1]
+        self.assertRegex(expr, r"^[\d\s*]+$")
+        self.assertEqual(gateway.REPORT_EVIDENCE_CAP, f"{eval(expr) // (1024 * 1024)}m")
+        text, regexes = self.worlds_locations()
+        report = "6f1b4f8a-6a1e-4c2f-9b3d-0d9a2c7b1e55"
+        for path in [f"/report-user/api/reports/players/{report}/evidence/0-shot.png",
+                     f"/report-user/api/reports/{report}/evidence/0-shot.data"]:
+            with self.subTest(path=path):
+                body = next(body for regex, body in regexes if regex.search(path))
+                self.assertIn("proxy_pass http://apis;", body)
+                self.assertIn(f"client_max_body_size {gateway.REPORT_EVIDENCE_CAP};", body)
+                self.assertIn("limit_conn deploy_uploads", body)
+        for path in ["/report-user/api/reports/players", "/report-user/api/reports/players/presign",
+                     f"/report-user/api/reports/players/{report}/evidence/0-shot.png/more",
+                     f"/report-user/api/reports/{report}/evidence/",
+                     f"/comms-gatekeeper/reports/players/{report}/evidence/0-shot.png",
+                     f"/x/report-user/api/reports/players/{report}/evidence/0-shot.png"]:
+            with self.subTest(path=path):
+                self.assertFalse(any(gateway.REPORT_EVIDENCE_CAP in body
+                                     for regex, body in regexes if regex.search(path)))
+        self.assertNotIn("location /report-user", text)
+
     def worlds_locations(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test"})
         table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],
@@ -253,15 +354,42 @@ class ConfigurationTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertFalse(any("12m" in body for regex, body in regexes if regex.search(path)))
 
-    def test_worlds_content_reads_use_the_content_rate_zone(self):
-        _, regexes = self.worlds_locations()
-        for path in ["/worlds-content-server/contents/bafy", "/worlds-content-server/ipfs/bafy"]:
+    def test_worlds_reads_are_not_rate_limited_but_writes_and_admin_are(self):
+        # Upstream worlds-content-server limits no route by rate (WR-37).
+        text, regexes = self.worlds_locations()
+        self.assertIn("limit_req_zone $worlds_limit_key zone=worlds:10m rate=30r/s;", text)
+        key_map = re.search(r'map "\$request_method:\$uri" \$worlds_limit_key \{(.*?)\}', text, re.S)[1]
+        rules = [(re.compile(m[1][1:]), m[2]) for m in re.finditer(r'"(~[^"]+)" (\S+);', key_map)]
+
+        def key(subject):
+            return next((value for regex, value in rules if regex.search(subject)), "$binary_remote_addr")
+        for subject in ["GET:/worlds-content-server/status", "HEAD:/world/w.dcl.eth/about",
+                        "OPTIONS:/worlds-content-server/world/w.dcl.eth/permissions", "GET:/index"]:
+            with self.subTest(subject=subject):
+                self.assertEqual(key(subject), '""')
+        for subject in ["POST:/worlds-content-server/world/w.dcl.eth/permissions/deployment",
+                        "DELETE:/worlds-content-server/entities/w.dcl.eth", "POST:/world/w.dcl.eth/scenes",
+                        "GET:/worlds-content-server/admin/worlds", "POST:/worlds-content-server/gc",
+                        "GET:/worlds-content-server/reprocess-ab"]:
+            with self.subTest(subject=subject):
+                self.assertEqual(key(subject), "$binary_remote_addr")
+        exact = {key: re.search(r"\nlocation " + re.escape(key) + r" \{\n(.*?)\n\}", text, re.S)[1]
+                 for key in ["= /worlds-content-server", "/worlds-content-server/", "= /index", "= /worlds",
+                             "= /worlds/status"]}
+        for name, body in exact.items():
+            with self.subTest(location=name):
+                self.assertIn("limit_req zone=worlds burst=60 nodelay;", body)
+        for path in ["/worlds-content-server/contents/bafy", "/worlds-content-server/ipfs/bafy",
+                     "/worlds-content-server/world/w.dcl.eth/settings", "/world/w.dcl.eth/settings",
+                     "/world/w.dcl.eth/about"]:
             with self.subTest(path=path):
                 body = next(body for regex, body in regexes if regex.search(path))
-                self.assertIn("limit_req zone=content burst=1000 nodelay;", body)
-        for path in ["/worlds-content-server/status", "/worlds-content-server/contentsx/a"]:
-            with self.subTest(path=path):
-                self.assertFalse(any("zone=content" in body for regex, body in regexes if regex.search(path)))
+                self.assertIn("limit_req zone=worlds burst=60 nodelay;", body)
+                self.assertNotIn("zone=content", body)
+        settings = next(body for regex, body in regexes if regex.search("/world/w.dcl.eth/settings"))
+        self.assertIn("limit_conn worlds_uploads 10;", settings)
+        deploy = next(body for regex, body in regexes if regex.search("/worlds-content-server/entities"))
+        self.assertIn("limit_req zone=deploy burst=4 nodelay;", deploy)
 
     def test_the_deploy_zone_sits_above_the_content_servers_burst_limit(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
@@ -302,6 +430,46 @@ class ConfigurationTest(unittest.TestCase):
             self.assertNotIn(f"location ^~ {path}/", config)
         self.assertIn("location ^~ /places/api/ {\nproxy_pass http://apis;", config)
         self.assertIn("location /places/ {\nproxy_pass http://sites;", config)
+
+    def test_legal_documents_route_to_sites_without_claiming_api_paths(self):
+        root = Path(__file__).parents[3]
+        legal_fixtures = root / "apps/sites/src/data/legal/fixtures"
+        canonical_paths = {
+            json.loads(path.read_text())["path"] for path in legal_fixtures.glob("*.json")
+        }
+        public_paths = canonical_paths | {"/content-policy", "/rewards", "/referral"}
+        # The route table production renders: every Sites route file, and no node row for
+        # /credits, which reaches the APIs through `location /`.
+        sites = sorted(path.name for path in (root / "apps/sites/src/routes/routes").iterdir())
+        table = {"sites": sites, "internal": [], "aliases": [], "node": [], "deploy": []}
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        config = gateway.render(table, cfg, "/mime.types")
+
+        for path in public_paths - {"/content"}:
+            with self.subTest(path=path):
+                self.assertIn(f"location = {path} {{\nproxy_pass http://sites;", config)
+        self.assertIn("location = /content {\nproxy_pass http://$content_root;", config)
+        self.assertIn("location /content/ {\nproxy_pass http://apis;", config)
+        self.assertIn("location / {\nproxy_pass http://apis;", config)
+        sites_locations = re.findall(r"location (= |\^~ )?(/\S*) \{\nproxy_pass http://sites;", config)
+        for path in ("/credits", "/credits/", "/credits/seasons"):
+            with self.subTest(path=path):
+                self.assertEqual([], [
+                    (kind, prefix) for kind, prefix in sites_locations
+                    if (path == prefix if kind == "= " else path.startswith(prefix)) and prefix != "/"
+                ])
+
+    def test_content_page_is_sites_only_on_the_apex_host(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test",
+                                "GATEWAY_HOST_ALIASES": "www.example.test"})
+        table = {"sites": [], "internal": [], "aliases": [], "node": [], "deploy": []}
+        maps = nginx_map.parse(gateway.render(table, cfg, "/mime.types"))
+        root = lambda host: nginx_map.Request(maps, host=host)["content_root"]
+        self.assertEqual(root("example.test"), "sites")
+        self.assertEqual(root("www.example.test"), "sites")
+        for host in ("peer.example.test", "worlds.example.test", "content.example.test"):
+            with self.subTest(host=host):
+                self.assertEqual(root(host), "apis")
 
     def test_bundled_event_image_uses_api_without_claiming_other_event_assets(self):
         path = "/events/assets/event-default.webp"

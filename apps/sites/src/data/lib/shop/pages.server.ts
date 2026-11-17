@@ -17,7 +17,7 @@ import { shopFlags } from "@ui/shop/discovery/flags";
 import { primeRemoteFlags } from "@ui/shop/discovery/lib/remoteFlags";
 import type { ShopPageId } from "@ui/shop/routes";
 
-import { catalystUrl, processEnv, publicCatalystUrl, type BaseEnv } from "../catalyst/bases";
+import { catalystUrl, processEnv, publicPageUrl, type BaseEnv } from "../catalyst/bases";
 import { dappsFlagsAnswer, type DappsFlags, type DappsFlagsAnswer, type DappsFlagVariants } from "../feature-flags.server";
 import { serverShopApiMode } from "./mode";
 import { defaultShopSeo, type PrimedQuery, type ShopPageData, type ShopSeo } from "./pages";
@@ -93,12 +93,6 @@ async function settle<T>(read: Promise<T>): Promise<{ ok: true; value: T } | { o
   }
 }
 
-/** The public origin a canonical URL names: PUBLIC_CATALYST_URL when set, else the request's. */
-function canonicalFor(request: Request, pathname: string, env: BaseEnv): string {
-  const configured = env.PUBLIC_CATALYST_URL?.trim() ? publicCatalystUrl(env) : new URL(request.url).origin;
-  return `${configured.replace(/\/$/, "")}${pathname}`;
-}
-
 const ADDRESS = /^0x[0-9a-f]{40}$/;
 
 type Collected = { queries: PrimedQuery[]; seo: ShopSeo; status: number };
@@ -109,7 +103,7 @@ async function itemPage(input: Required<Pick<ShopLoadInput, "request" | "params"
   const tokenId = token ? (routeSegment(params.tokenId) ?? null) : null;
   const itemId = token ? itemIdFromTokenId(tokenId) : (routeSegment(params.itemId) ?? null);
   const path = token ? `/shop/token/${contract}/${tokenId ?? ""}` : `/shop/item/${contract}/${itemId ?? ""}`;
-  const seo = defaultShopSeo(token ? "tokenDetail" : "itemDetail", canonicalFor(request, path, env));
+  const seo = defaultShopSeo(token ? "tokenDetail" : "itemDetail", publicPageUrl(request, path, env));
   if (!ADDRESS.test(contract) || (token ? !tokenId : !itemId)) return { queries: [], seo, status: 404 };
 
   const signal = deadline(request);
@@ -153,7 +147,7 @@ async function itemPage(input: Required<Pick<ShopLoadInput, "request" | "params"
 
 async function collectionPage(request: Request, params: ShopLoadInput["params"], client: ShopClient, now: () => number, env: BaseEnv): Promise<Collected> {
   const contract = routeSegment(params.contractAddress);
-  const seo = defaultShopSeo("collection", canonicalFor(request, `/shop/collection/${contract ?? ""}`, env));
+  const seo = defaultShopSeo("collection", publicPageUrl(request, `/shop/collection/${contract ?? ""}`, env));
   if (!contract) return { queries: [], seo, status: 404 };
   const found = await settle(fetchCollection(contract, { client, creatorSales, signal: deadline(request) }));
   if (!found.ok) return { queries: [], seo, status: 200 };
@@ -167,7 +161,7 @@ async function collectionPage(request: Request, params: ShopLoadInput["params"],
 }
 
 async function overviewPage(ctx: ReadCtx, client: ShopClient, env: BaseEnv): Promise<Collected> {
-  const seo = defaultShopSeo("overview", canonicalFor(ctx.request, "/shop/overview", env));
+  const seo = defaultShopSeo("overview", publicPageUrl(ctx.request, "/shop/overview", env));
   const flags = shopFlags();
   // The server reads for no one, and the Marketplace is a web3 session's (market/access.tsx): primary sales only.
   const [listings, trending, deals] = await Promise.all([
@@ -187,7 +181,7 @@ async function overviewPage(ctx: ReadCtx, client: ShopClient, env: BaseEnv): Pro
 /** The grid's first page under the URL's filters, so the cards (the page's largest paint) arrive with the document. */
 async function itemsPage(ctx: ReadCtx, client: ShopClient, env: BaseEnv): Promise<Collected> {
   const url = new URL(ctx.request.url);
-  const seo = defaultShopSeo("items", canonicalFor(ctx.request, url.pathname, env));
+  const seo = defaultShopSeo("items", publicPageUrl(ctx.request, url.pathname, env));
   const { q } = itemsQuery(url.searchParams);
   const filters = readUrlFilters(url.searchParams, itemsFilterDefaults(q, dealsRequestedIn(url.searchParams)));
   const grid = itemsGrid(filters, q);
@@ -234,7 +228,7 @@ export async function loadShopPage(page: ShopPageId, input: ShopLoadInput): Prom
       collected = { queries: [], seo: defaultShopSeo("notFound"), status: 404 };
       break;
     default:
-      collected = { queries: [], seo: defaultShopSeo(page, canonicalFor(request, pathname, env)), status: 200 };
+      collected = { queries: [], seo: defaultShopSeo(page, publicPageUrl(request, pathname, env)), status: 200 };
   }
   return {
     data: { page, seo: collected.seo, queries: collected.queries, featureFlags, ...(featureFlagVariants ? { featureFlagVariants } : {}) },

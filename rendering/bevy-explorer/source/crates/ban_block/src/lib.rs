@@ -3,20 +3,16 @@
 //! A facade over the crates that produce each fact. Social blocks live in the social client,
 //! the local user's scene admission and the scene room's ban and admin lists in comms, and the
 //! only state this crate owns is the platform-ban check. [`BanBlock`] reads them all as one
-//! system parameter; [`BanBlockEvent`] says when any of them changed.
+//! system parameter. There are no events of its own: every fact it answers from is a resource
+//! or a component.
 
 mod debug;
-mod events;
 mod platform_ban;
 
 use alloy_core::primitives::Address;
 use bevy::{
-    app::{App, Plugin, PostUpdate},
-    ecs::{
-        query::Has,
-        schedule::IntoScheduleConfigs,
-        system::{Query, Res, SystemParam},
-    },
+    app::{App, Plugin},
+    ecs::system::{Query, Res, SystemParam},
     platform::collections::HashSet,
 };
 use serde::Serialize;
@@ -24,29 +20,14 @@ use social::SocialClient;
 use wallet::Wallet;
 
 pub use comms::{AdmissionView, BanScope, SceneAdmission, SceneRoomModeration};
-pub use events::BanBlockEvent;
 pub use platform_ban::{PlatformBanInfo, PlatformBanSource, PlatformBanState, PlatformBanStatus};
 
 pub struct BanBlockPlugin;
 
 impl Plugin for BanBlockPlugin {
     fn build(&self, app: &mut App) {
-        app.add_event::<BanBlockEvent>();
-        // without the social plugin there is no social update system to order after
-        if app.world().contains_resource::<SocialClient>() {
-            app.add_systems(
-                PostUpdate,
-                events::emit_ban_block_events.after(social::apply_social_updates),
-            );
-        } else {
-            app.add_systems(PostUpdate, events::emit_ban_block_events);
-        }
-        platform_ban::register(app);
-        app.add_systems(
-            PostUpdate,
-            events::cross_feed_admission_refusal.before(events::emit_ban_block_events),
-        );
-        debug::register(app);
+        app.add_plugins(platform_ban::PlatformBanPlugin);
+        app.add_plugins(debug::BanBlockDebugPlugin);
     }
 }
 
@@ -64,7 +45,7 @@ pub struct BanBlock<'w, 's> {
         (
             &'static comms::SceneRoom,
             &'static SceneRoomModeration,
-            Has<comms::livekit::room::Connected>,
+            comms::room_connection::RoomStatus,
         ),
     >,
     #[cfg(not(feature = "livekit"))]
@@ -237,12 +218,14 @@ impl BanBlock<'_, '_> {
     /// `NotConnected`.
     pub fn scene_room(&self) -> SceneRoomView<'_> {
         #[cfg(feature = "livekit")]
-        if let Ok((scene, moderation, true)) = self.room.single() {
-            return SceneRoomView::Connected {
-                scene_id: &scene.0,
-                banned_addresses: &moderation.banned_addresses,
-                scene_admins: &moderation.scene_admins,
-            };
+        if let Ok((scene, moderation, status)) = self.room.single() {
+            if status.state() == comms::room_connection::RoomState::Connected {
+                return SceneRoomView::Connected {
+                    scene_id: &scene.0,
+                    banned_addresses: &moderation.banned_addresses,
+                    scene_admins: &moderation.scene_admins,
+                };
+            }
         }
         SceneRoomView::NotConnected
     }
@@ -323,6 +306,51 @@ mod tests {
         assert_eq!(
             down.admin_permissions_for_addr(address(2)),
             AdminPermissionsStatus::NotLoadedYet
+        );
+    }
+
+    #[cfg(feature = "livekit")]
+    #[test]
+    fn suspended_or_denied_rooms_do_not_expose_live_moderation() {
+        use bevy::{ecs::system::RunSystemOnce, prelude::*};
+        use comms::room_connection::{ConnectionHealth, FailureKind, RoomRecovery, RoomSuspended};
+        let mut world = World::new();
+        world.init_resource::<Wallet>();
+        world.init_resource::<PlatformBanStatus>();
+        world.init_resource::<SceneAdmission>();
+        let health = ConnectionHealth::default();
+        health.connected();
+        let room = world
+            .spawn((
+                comms::SceneRoom("scene".into()),
+                SceneRoomModeration {
+                    scene_admins: HashSet::from_iter([address(1)]),
+                    ..Default::default()
+                },
+                RoomRecovery::default(),
+                health,
+            ))
+            .id();
+        let read = |ban_block: BanBlock| ban_block.admin_permissions_for_addr(address(1));
+        assert_eq!(
+            world.run_system_once(read).unwrap(),
+            AdminPermissionsStatus::Admin
+        );
+        world.entity_mut(room).insert(RoomSuspended);
+        assert_eq!(
+            world.run_system_once(read).unwrap(),
+            AdminPermissionsStatus::NotLoadedYet
+        );
+        world.entity_mut(room).remove::<RoomSuspended>();
+        world.get_mut::<RoomRecovery>(room).unwrap().failure = Some(FailureKind::Denied);
+        assert_eq!(
+            world.run_system_once(read).unwrap(),
+            AdminPermissionsStatus::NotLoadedYet
+        );
+        world.get_mut::<RoomRecovery>(room).unwrap().reset();
+        assert_eq!(
+            world.run_system_once(read).unwrap(),
+            AdminPermissionsStatus::Admin
         );
     }
 

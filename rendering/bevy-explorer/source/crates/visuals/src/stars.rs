@@ -45,6 +45,7 @@ use bevy::{
 };
 use bevy_atmosphere::{pipeline::AtmosphereImage, prelude::AtmosphereCamera};
 use common::structs::SceneGlobalLight;
+use scene_material::highlight::HighlightLabel;
 
 pub struct StarsPlugin;
 
@@ -71,7 +72,12 @@ impl Plugin for StarsPlugin {
             .add_render_graph_node::<ViewNodeRunner<StarsNode>>(Core3d, StarsLabel)
             .add_render_graph_edges(
                 Core3d,
-                (Node3d::DepthOfField, StarsLabel, Node3d::Tonemapping),
+                (
+                    Node3d::DepthOfField,
+                    HighlightLabel,
+                    StarsLabel,
+                    Node3d::Tonemapping,
+                ),
             );
     }
 
@@ -122,6 +128,7 @@ mod settings {
 /// Stars fade in as the sun drops below the horizon, like the sky's night colour.
 fn update_stars_settings(
     light: Res<SceneGlobalLight>,
+    environment: Res<crate::environment::SceneEnvironment>,
     time: Res<Time>,
     mut settings: ResMut<StarsSettings>,
 ) {
@@ -129,7 +136,12 @@ fn update_stars_settings(
     let t = (light.sun_direction.y / 0.15).clamp(0.0, 1.0);
     let night = t * t * (3.0 - 2.0 * t);
     let sun_position = -light.sun_direction;
-    settings.night = night;
+    settings.night = if environment.texture.is_some() {
+        0.0
+    } else {
+        night
+    };
+    settings.brightness = environment.star_brightness.unwrap_or(4.0);
     settings.sun_position = sun_position;
     settings.time = time.elapsed_secs();
 }

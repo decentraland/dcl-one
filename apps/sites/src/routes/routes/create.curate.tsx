@@ -35,7 +35,7 @@ const FALLBACK: PageDefaults = {
   variant: "comments",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const step = url.searchParams.get("step")?.trim() || null;
   const activeId = url.searchParams.get("id")?.trim() || null;
@@ -49,7 +49,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     null;
 
   const [{ sid, assignment, wrap }, { committee, allRows, usedFixture, error, usedFallback }] = await Promise.all([
-    pageLoader(request,  FALLBACK),
+    pageLoader(request, context,  FALLBACK),
     loadCommitteeCuration({
       youAddress: youParam,
       isCommittee: true,

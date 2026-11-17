@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AuthIdentity } from '../features/auth/sso'
-import { personalSign } from '../shell/sign'
+import type { AuthIdentity } from '@explorer-core/features/auth/sso'
+import { personalSign } from '@explorer-core/shell/sign'
 import { leave, visit } from './entryUrl'
 import { recoverSigner } from './recoverSigner'
 
@@ -23,10 +23,14 @@ function identity(signer: string, days: number, privateKey = KEY): AuthIdentity 
 const GUEST = '0x1e9a6ddcb5d0b8c2ffd79372e022d63d053ab1bf'
 const ACCOUNT = '0x7e5f4552091a69125d5dfcb7b8c2659029395bdf'
 
-vi.mock('../features/auth/guest', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../features/auth/guest')>()),
-  webGuestBackend: {},
+vi.mock('@explorer-core/features/auth/guest', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@explorer-core/features/auth/guest')>()),
   createGuestIdentity: vi.fn(async () => identity(GUEST, 30))
+}))
+
+vi.mock('@explorer-core/shell/emailLogin', () => ({
+  startEmailSignIn: vi.fn(async () => undefined),
+  completeEmailSignIn: vi.fn(async () => ({ identity: identity(ACCOUNT, 7), wallet: { token: 'tok', walletAddress: ACCOUNT } }))
 }))
 
 async function shell() {
@@ -37,6 +41,21 @@ async function shell() {
 describe('shell login requests', () => {
   beforeEach(() => localStorage.clear())
 
+  it('emailLogin keeps the email account like the sign-in page does and hands the app the public identity', async () => {
+    const { request } = await shell()
+    expect(await request('emailStart', { email: 'player@example.com' })).toBeNull()
+    const login = (await request('emailLogin', { email: 'player@example.com', code: '123456' })) as { address: string; identity: AuthIdentity; guest?: boolean }
+    expect(login.address).toBe(ACCOUNT)
+    expect(login.guest).toBeUndefined()
+    expect(login.identity.ephemeralIdentity.privateKey).toBeUndefined()
+    expect(JSON.parse(localStorage.getItem(`single-sign-on-${ACCOUNT}`) ?? 'null').ephemeralIdentity.privateKey).toBe(KEY)
+    // this page has no Shop: the wallet's token stays in the shell's call
+    expect(localStorage.getItem('dcl:auth:thirdweb:v1')).toBeNull()
+    // it is now the current login, and the shell signs with it
+    expect(await request('identity', undefined)).toEqual(login)
+    expect(await request('sign', { signer: EPHEMERAL, message: 'Some data' })).toBe(personalSign(KEY, 'Some data'))
+  })
+
   it('createGuest keeps the guest with its key and hands the app the public identity', async () => {
     const { request } = await shell()
     const login = (await request('createGuest', undefined)) as { address: string; identity: AuthIdentity; guest?: boolean }
@@ -45,6 +64,10 @@ describe('shell login requests', () => {
     expect(login.identity.ephemeralIdentity.privateKey).toBeUndefined()
     const stored = JSON.parse(localStorage.getItem('dcl-guest-identity') ?? 'null') as AuthIdentity
     expect(stored.ephemeralIdentity.privateKey).toBe(KEY)
+
+    // off Decentraland's domains thirdweb serves no guest wallet: the guest is a key made here
+    const { createGuestIdentity, localGuestBackend } = await import('@explorer-core/features/auth/guest')
+    expect(createGuestIdentity).toHaveBeenLastCalledWith(localGuestBackend)
 
     // it is now the current login, and the shell signs with it
     expect(await request('identity', undefined)).toEqual(login)
@@ -57,7 +80,7 @@ describe('shell login requests', () => {
 
     it('makes one guest with no network call, keeps only its root key, and hands the app the public identity', async () => {
       const fetchSpy = vi.spyOn(globalThis, 'fetch')
-      const { createGuestIdentity } = await import('../features/auth/guest')
+      const { createGuestIdentity } = await import('@explorer-core/features/auth/guest')
       vi.mocked(createGuestIdentity).mockClear()
       try {
         const { request } = await shell()
@@ -195,7 +218,7 @@ describe('shell login requests', () => {
   })
 
   it('signing with an account replaces the guest', async () => {
-    localStorage.setItem('dcl-guest-identity', JSON.stringify(identity(GUEST, 1)))
+    localStorage.setItem('dcl-guest-identity', JSON.stringify(identity(GUEST, 2)))
     localStorage.setItem(`single-sign-on-${ACCOUNT}`, JSON.stringify(identity(ACCOUNT, 30)))
     localStorage.setItem(`thirdweb_guest_session_id_e1adce863fe287bb6cf0e3fd90bdb77f`, 'session')
     const { request } = await shell()

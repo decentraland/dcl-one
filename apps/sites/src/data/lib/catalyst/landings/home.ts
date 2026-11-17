@@ -18,6 +18,7 @@ const CtaTargetSchema = z.object({
 const HeroSchema = z.object({
   kicker: z.string(),
   title: z.string(),
+  mobileTitle: z.string().optional(),
   subtitle: z.string(),
   downloads: z.string().nullish().transform((v) => v ?? null),
   downloadsLabel: z.string(),
@@ -126,7 +127,7 @@ export function eventToRitualItem(e: Event): RitualRailItem {
     title: e.name ?? "Untitled event",
     day: day == null ? null : WEEKDAY_NAMES[day] ?? null,
     image: e.image ?? null,
-    href: `/whats-on/${encodeURIComponent(e.id)}`,
+    href: `/events?id=${encodeURIComponent(e.id)}`,
   };
 }
 

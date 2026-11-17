@@ -147,6 +147,19 @@ const textRoleSpecSchema = z.object({
   href: z.string().optional()
 })
 
+// A responsive variant axis (components.<Figma name>.responsive in figma.config.json): each option of `prop` names a
+// foundations breakpoint. A caller that omits the prop gets every option's view, each shown by CSS media queries from
+// its breakpoint's minimum width up to the next one, so server and client render the same markup.
+const responsiveConfigSchema = z.object({
+  prop: z.string().min(1),
+  breakpoints: z.record(z.string(), z.string().min(1))
+})
+// The resolved axis: its options in ascending order of minimum width, the first one starting at 0.
+const responsiveSpecSchema = z.object({
+  prop: z.string(),
+  breakpoints: z.array(z.object({ value: z.string(), min: z.number() }))
+})
+
 const componentSpecSchema = z.object({
   name: z.string(),
   figmaName: z.string(),
@@ -165,7 +178,8 @@ const componentSpecSchema = z.object({
   notes: z.array(z.string()),
   size: z.object({ w: z.number(), h: z.number() }),
   semantics: z.record(z.string(), semanticSchema).optional(),
-  textRoles: z.array(textRoleSpecSchema).optional()
+  textRoles: z.array(textRoleSpecSchema).optional(),
+  responsive: responsiveSpecSchema.optional()
 })
 
 type StateRule = z.infer<typeof stateRuleSchema>
@@ -176,10 +190,12 @@ type SlotSpec = z.infer<typeof slotSpecSchema>
 type ComponentSpec = z.infer<typeof componentSpecSchema>
 type TextRole = z.infer<typeof textRoleSchema>
 type TextRoleSpec = z.infer<typeof textRoleSpecSchema>
+type ResponsiveConfig = z.infer<typeof responsiveConfigSchema>
 
 export {
   componentSpecSchema,
   cssBlockSchema,
+  responsiveConfigSchema,
   semanticSchema,
   textRoleSchema,
   viewNodeSchema,
@@ -190,6 +206,7 @@ export type {
   CssBlock,
   Loop,
   Motion,
+  ResponsiveConfig,
   Semantic,
   SlotSpec,
   StateRule,

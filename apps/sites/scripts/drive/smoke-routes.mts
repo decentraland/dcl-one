@@ -63,7 +63,7 @@ export const ROUTES: Route[] = [
   { path: "/shop", auth: "out" },
   { path: "/marketplace", auth: "out" },
   { path: "/discover", auth: "out" },
-  { path: "/whats-on", auth: "out" },
+  { path: "/events", auth: "out" },
   { path: "/places", auth: "out" },
   { path: "/shop/my-items", auth: "both", allowConsole: [AUTH_PROBE] },
   { path: "/blog", auth: "out" },
@@ -71,7 +71,9 @@ export const ROUTES: Route[] = [
   { path: "/seasons", auth: "out" },
   { path: "/privacy", auth: "out" },
   { path: "/terms", auth: "out" },
+  { path: "/content", auth: "out" },
   { path: "/content-policy", auth: "out" },
+  { path: "/credits-terms", auth: "out" },
   { path: "/ethics", auth: "out" },
 ];
 

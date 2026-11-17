@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "name": "core::GltfContainer",
+      "data": {
+        "0": {
+          "json": {
+            "src": "{assetPath}/wooden_wall.glb"
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Script",
+      "data": {
+        "0": {
+          "json": {
+            "value": [
+              {
+                "path": "{assetPath}/WoodenWall.ts",
+                "priority": 0,
+                "layout": "{\"params\":{\"health\":{\"type\":\"number\",\"value\":30,\"optional\":true,\"tooltip\":\"How many hits the fence takes before it falls.\"},\"hitAnimation\":{\"type\":\"string\",\"value\":\"Hit\",\"optional\":true,\"tooltip\":\"Animation clip played on each hit it survives.\"},\"fallAnimation\":{\"type\":\"string\",\"value\":\"Fall\",\"optional\":true,\"tooltip\":\"Animation clip played when it's destroyed.\"},\"fallSound\":{\"type\":\"string\",\"value\":\"fall.mp3\",\"optional\":true,\"tooltip\":\"Audio file played when it falls (e.g. fall.mp3). Empty for none.\"}},\"actions\":[{\"methodName\":\"destroy\",\"description\":\"Knocks the fence down: plays the fall animation and sound.\",\"params\":{}}],\"events\":[\"destroyed\"]}"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Actions",
+      "data": {
+        "0": {
+          "json": {
+            "id": "{self}",
+            "value": [
+              {
+                "name": "Destroy",
+                "type": "call_script_method",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/WoodenWall.ts\",\"methodName\":\"destroy\",\"params\":{}}"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

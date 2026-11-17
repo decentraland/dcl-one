@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import semver from 'semver'
-import { diagnostic, type Diagnostic } from './diagnostics.js'
+import { diagnostic, type Diagnostic, type ReasonOf } from './diagnostics.js'
 import type { FigmaSet } from './figma-index.js'
 import type { LibraryInfo } from './library.js'
 import { FIGMA_FILE_PLACEHOLDER, SUPPORTED_CONTRACT, type ParsedMapping } from './mapping-file.js'
@@ -12,8 +12,11 @@ type ValidationContext = {
   libraryRange?: string
 }
 
-const incompatible = (reason: string, message: string, details: Record<string, unknown> = {}) =>
-  diagnostic('contract-incompatible', 'error', message, { reason, ...details })
+const incompatible = (
+  reason: ReasonOf<'contract-incompatible'>,
+  message: string,
+  details: Record<string, unknown> = {}
+) => diagnostic('contract-incompatible', message, { ...details, reason })
 
 function importSpecifier(mapping: ParsedMapping): string | undefined {
   return mapping.imports
@@ -89,7 +92,6 @@ async function validateAgainstLibrary(
         found.push(
           diagnostic(
             'export-unverifiable',
-            'warning',
             `${rel}: the package entry uses "export *", ${component} cannot be confirmed as a public export statically`
           )
         )
@@ -116,7 +118,9 @@ function validateAgainstFigma(mapping: ParsedMapping, set: FigmaSet): Diagnostic
   for (const local of mapping.locals) {
     if (local.kind === 'text') continue
     read.add(local.figmaProperty)
-    const property = set.properties[local.figmaProperty]
+    const property = Object.hasOwn(set.properties, local.figmaProperty)
+      ? set.properties[local.figmaProperty]
+      : undefined
     if (!property) {
       found.push(
         incompatible(
@@ -128,13 +132,12 @@ function validateAgainstFigma(mapping: ParsedMapping, set: FigmaSet): Diagnostic
       continue
     }
     if (local.kind === 'enum' && property.options) {
-      const uncovered = property.options.filter((option) => !(option in local.values))
+      const uncovered = property.options.filter((option) => !Object.hasOwn(local.values, option))
       const stale = Object.keys(local.values).filter((key) => !property.options!.includes(key))
       if (uncovered.length > 0) {
         found.push(
           diagnostic(
             'figma-drift',
-            'warning',
             `${rel}: Figma options of "${local.figmaProperty}" not covered by the mapping: ${uncovered.join(', ')}`,
             { property: local.figmaProperty, uncovered }
           )
@@ -144,7 +147,6 @@ function validateAgainstFigma(mapping: ParsedMapping, set: FigmaSet): Diagnostic
         found.push(
           diagnostic(
             'figma-drift',
-            'warning',
             `${rel}: mapping lists options of "${local.figmaProperty}" that Figma no longer has: ${stale.join(', ')}`,
             { property: local.figmaProperty, stale }
           )
@@ -155,11 +157,10 @@ function validateAgainstFigma(mapping: ParsedMapping, set: FigmaSet): Diagnostic
 
   for (const state of mapping.header.states) {
     read.add(state)
-    if (!set.properties[state]) {
+    if (!Object.hasOwn(set.properties, state)) {
       found.push(
         diagnostic(
           'figma-drift',
-          'warning',
           `${rel}: declared state "${state}" is not a Figma property of "${set.name}"`,
           {
             state
@@ -174,7 +175,6 @@ function validateAgainstFigma(mapping: ParsedMapping, set: FigmaSet): Diagnostic
       found.push(
         diagnostic(
           'unmapped-figma-property',
-          'warning',
           `${rel} does not read Figma property "${name}" (${property.type}). Map it or declare it in "// states=".`,
           { property: name, type: property.type }
         )

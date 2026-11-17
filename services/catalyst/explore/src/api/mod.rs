@@ -1,7 +1,7 @@
 //! The explorer-api surface unity-explorer hits at boot, served in-process:
 //! the realm-provider about doc over this node's own sync status
-//! ([`realm_provider`]), the asset-bundle registry reads as a cached upstream
-//! reader ([`registry`]), and four mirrors with a local overlay and a
+//! ([`realm_provider`]), the asset-bundle Registry gateway
+//! ([`registry`]), and four mirrors with a local overlay and a
 //! persisted pass marker: dcl-lists ([`lists`]), the config denylist
 //! ([`denylist`]), the feature flags ([`feature_flags`]) and the
 //! api.decentraland.org tile grid behind `map.png` ([`map`]), plus the
@@ -67,8 +67,9 @@ pub struct Sources {
     pub denylist: String,
     /// The feature-flags document itself (`.../explorer.json`).
     pub feature_flags: String,
-    /// asset-bundle registry: `POST {registry}/entities/active`, `/profiles`, ...;
-    /// empty reads none.
+    /// Uncached Registry source reads (see [`registry`]): a loopback URL is the
+    /// local abgen runtime, any other a public Registry; empty serves `200 []`
+    /// to the boot reads.
     pub registry: String,
     /// atlas API: `GET {map}/v2/tiles/info`, `GET {map}/v2/tiles`.
     pub map: String,
@@ -160,7 +161,7 @@ pub struct Settings {
     /// one of them is a mirror feeding itself.
     pub own_hosts: Vec<String>,
     /// `EXPLORER_MIRRORS_ENABLED`: whether `spawn_jobs` starts the four
-    /// mirrors. The sources are validated either way (the registry reader
+    /// mirrors. The sources are validated either way (the Registry gateway
     /// uses its on demand).
     pub mirrors_enabled: bool,
     /// What the LAND/Estate metadata's `image` points at (`MAP_IMAGE_BASE_URL`;
@@ -202,6 +203,8 @@ pub struct Settings {
     pub opensea: opensea::Settings,
     /// `ONBOARDING_API_KEY`: the bearer of `/onboarding/*`; unset, both routes answer 401.
     pub onboarding_api_key: Option<String>,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`: peers whose `X-Real-IP` names the client.
+    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
 }
 
 impl Settings {
@@ -314,6 +317,7 @@ impl Settings {
                 .onboarding_api_key
                 .clone()
                 .filter(|k| !k.trim().is_empty()),
+            trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
         }
     }
 
@@ -354,6 +358,7 @@ impl Settings {
                 ..opensea::Settings::defaults()
             },
             onboarding_api_key: None,
+            trusted_proxy_cidrs: Vec::new(),
         }
     }
 
@@ -370,6 +375,16 @@ impl Settings {
         );
         for (name, source) in self.sources.all() {
             if source.is_empty() {
+                continue;
+            }
+            if name == "EXPLORER_REGISTRY_SOURCE_URL"
+                && matches!(
+                    registry::Backend::parse(source).with_context(|| format!("{name}={source}"))?,
+                    registry::Backend::Native(_)
+                )
+            {
+                // The local abgen runtime: loopback by construction, never an
+                // SSRF target; a public Registry takes the checks below.
                 continue;
             }
             let parsed = self
@@ -465,10 +480,10 @@ pub struct State {
     /// Sync status and public URLs for the realm doc; the profiles reader's
     /// local-first path arrives with the lambdas module.
     pub content: Arc<ContentState>,
-    pub registry: registry::Cache,
     /// Shared with social's referral checks, which read it in place.
     pub denylist: Arc<denylist::Snapshot>,
-    pub flags: feature_flags::Snapshot,
+    /// Shared with social, which marks official posts from it (`communities::features`).
+    pub flags: Arc<feature_flags::Snapshot>,
     pub map: map::MapState,
     pub ab_cdn: ab_cdn::Cache,
     pub satellite: satellite::SatelliteState,
@@ -482,6 +497,8 @@ pub struct State {
     /// The onboarding checkpoints (process state), shared with the Segment
     /// webhooks that forward them (`social::segment_webhooks`).
     pub onboarding: Arc<onboarding::OnboardingState>,
+    /// `GET /asset-bundle-registry/denylist`'s read of `content.denylist`.
+    pub registry_denylist: registry::LocalDenylist,
     /// The ONE EIP-1654 validator, attached after construction (`attach_eip1654`).
     pub eip1654: std::sync::OnceLock<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
 }
@@ -512,9 +529,8 @@ impl State {
             pool,
             http,
             content,
-            registry: registry::Cache::new(),
             denylist: Arc::default(),
-            flags: feature_flags::Snapshot::default(),
+            flags: Arc::new(feature_flags::Snapshot::from_document(feature_flags::embedded_document())),
             map: map::MapState::new(),
             ab_cdn,
             satellite: satellite::SatelliteState::new(settings_budget.0, settings_budget.1),
@@ -524,6 +540,7 @@ impl State {
             auth_api: auth_api::AuthApiState::default(),
             runtime_config: runtime_config::RuntimeConfigState::default(),
             onboarding: Arc::default(),
+            registry_denylist: Default::default(),
             eip1654: std::sync::OnceLock::new(),
         });
         state
@@ -531,9 +548,7 @@ impl State {
             .reload(&state.pool)
             .await
             .context("loading the mirrored denylist")?;
-        state
-            .flags
-            .reload(&state.pool, &app)
+        feature_flags::reload(&state.flags, &state.pool, &app)
             .await
             .context("loading the mirrored feature flags")?;
         state
@@ -692,6 +707,9 @@ impl State {
     }
 }
 
+/// The Registry's service key; it keeps its own CORS ([`registry::cors`]).
+const REGISTRY_PREFIX: &str = "asset-bundle-registry";
+
 /// One router per upstream service, keyed by the subdomain the explorer
 /// derives it from (`realm-provider-ea.<domain>`, `api.<domain>`, ...), for
 /// a deployment that serves the raw-subdomain form.
@@ -703,10 +721,7 @@ pub fn service_routers(state: Shared) -> Vec<(&'static str, Router)> {
         ),
         ("auth-api", auth_api::routes().with_state(state.clone())),
         ("onboarding", onboarding::routes().with_state(state.clone())),
-        (
-            "asset-bundle-registry",
-            registry::routes().with_state(state.clone()),
-        ),
+        (REGISTRY_PREFIX, registry::routes(state.clone())),
         ("dcl-lists", lists::routes().with_state(state.clone())),
         ("config", denylist::routes().with_state(state.clone())),
         (
@@ -729,6 +744,8 @@ pub fn service_routers(state: Shared) -> Vec<(&'static str, Router)> {
 /// the statics the main vhost served at the root: `/world-manifest.json`,
 /// `/satellite/{z}/{x}/{y}` (web.nix's `/satellite/` location) and the
 /// poster bucket's `/poster[-vertical]/{file}` (the vhost's own paths).
+/// Everything but the Registry answers permissive CORS; the Registry is
+/// nested after that layer so only its own CORS applies.
 pub fn router(state: Shared) -> Router {
     let mut app = Router::new()
         .route("/mirrors", get(mirror::status))
@@ -736,10 +753,17 @@ pub fn router(state: Shared) -> Router {
         .route("/satellite/{z}/{x}/{y}", get(satellite::tile))
         .merge(posters::routes())
         .with_state(state.clone());
-    for (prefix, service) in service_routers(state) {
+    let (registry, services): (Vec<_>, Vec<_>) = service_routers(state)
+        .into_iter()
+        .partition(|(prefix, _)| *prefix == REGISTRY_PREFIX);
+    for (prefix, service) in services {
         app = app.nest(&format!("/{prefix}"), service);
     }
-    app.layer(CorsLayer::permissive())
+    let mut app = app.layer(CorsLayer::permissive());
+    for (prefix, service) in registry {
+        app = app.nest(&format!("/{prefix}"), service);
+    }
+    app
 }
 
 /// The unavailable envelope (`marketplace::unavailable`'s shape) for a

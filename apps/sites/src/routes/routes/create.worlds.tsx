@@ -57,7 +57,7 @@ const FALLBACK: PageDefaults = {
   variant: "manage-hub",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const filter = readFilter(url.searchParams.get("filter"));
   const sort = readSort(url.searchParams.get("sort"));
@@ -65,7 +65,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const address = url.searchParams.get("address")?.trim() || readWallet(request) || "";
 
   const [{ sid, wrap }, d] = await Promise.all([
-    pageLoader(request,  FALLBACK),
+    pageLoader(request, context,  FALLBACK),
     loadManageWorlds(address, request.signal).catch(() => null),
   ]);
 

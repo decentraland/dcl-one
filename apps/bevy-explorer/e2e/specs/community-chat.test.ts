@@ -29,10 +29,10 @@ const INPUT_IDLE = { name: 'Press Enter to chat', role: 'textbox' } as const
 const VIEW_ALL = { name: 'VIEW ALL ›', role: 'button' } as const
 const BACK_TO_BROWSE = { name: '‹ BACK', role: 'button' } as const
 /** A member's card ends in View; a card the player could join ends in Join. */
-const MEMBER_CARD = /\s*Public\s*·\s*\d+\s*Members\s+View$/
+const MEMBER_CARD = /\s*(?:Public|Private)\s*·\s*\d+\s*Members\s+View$/
 const JOIN_CARD = /\s*Public\s*·\s*\d+\s*Members\s+Join$/
 /** What names a card whatever its member count and button: its name and owner. */
-const keyOf = (card: string): string => withoutInitial(card).replace(/\s*Public\s*·\s*\d+\s*Members\s+(?:Join|View)$/, '')
+const keyOf = (card: string): string => withoutInitial(card).replace(/\s*(?:Public|Private)\s*·\s*\d+\s*Members\s+(?:Join|View)$/, '')
 const MORE = { name: 'More', role: 'button' } as const
 const LEAVE = { name: 'Leave community', role: 'button' } as const
 
@@ -42,8 +42,7 @@ async function memberCards(explorer: Explorer): Promise<string[]> {
   return buttons.map((button) => button.name).filter((name) => MEMBER_CARD.test(name)).map(withoutInitial)
 }
 
-/** The community cards once the communities list has arrived: the engine sends it whole, in one
- *  message. */
+/** The community cards once the grid's first page has arrived. */
 async function waitForCards(explorer: Explorer): Promise<void> {
   await until(() => explorer.hud.list('button'), (buttons) => buttons.some((b) => /Members\s+(?:Join|View)$/.test(b.name)), { timeoutMs: CONTROL_TIMEOUT_MS, what: 'the community cards to load' })
 }

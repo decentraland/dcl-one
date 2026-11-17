@@ -4,8 +4,8 @@
 // sale) is offered on the web Shop's item page.
 
 import type { CardPrice } from '@shop/discovery/cardPrice'
-import { Close, MaskIcon, rarityPanel } from '../../../design'
-import hiddenIcon from '../../../assets/backpack/icon-hidden.webp'
+import { Close, MaskIcon, rarityPanel } from '@hud/design'
+import hiddenIcon from '@hud/assets/backpack/icon-hidden.webp'
 import cartIcon from '../../../assets/shop/cart.svg'
 import favoriteIcon from '../../../assets/shop/favorite.svg'
 import externalIcon from '../../../assets/shop/external.svg'

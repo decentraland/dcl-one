@@ -11,7 +11,7 @@ import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
 import type { UsdCents } from '@shop/model/money'
 import type { GroupProgress } from '@shop/model/purchase'
 import { BOOK, creatorOrder, ITEM, storeMint } from '@shop/payment/fixtures'
-import type { StoredLogin } from '../features/auth/sso'
+import type { StoredLogin } from '@explorer-core/features/auth/sso'
 import { SHOP_BUSY, SHOP_EVENT, SHOP_PROTOCOL, type ShopNamesMode, type ShopOperation, type ShopOperationEvent } from '../lib/shopProtocol'
 import { claimLock, createShellShop, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices, type ShellShopWallet } from '../shell/shop/purchase'
 import { NAME_SIMULATION_MS } from '../shell/shop/namePurchase'
@@ -1028,6 +1028,17 @@ describe('the shell purchase', () => {
     expect(view).toMatchObject({ retry: false, message: expect.stringMatching(/can't keep the purchase to this tab/) })
     expect(t.run).not.toHaveBeenCalled()
     expect(t.provider.requests).toEqual([])
+  })
+
+  it('shares the one dialog with Donate: a purchase still starting counts, and waits while Donate is up', async () => {
+    const t = setup()
+    const started = t.buy()
+    expect(t.shop.dialogOpen()).toBe(true)
+    await started
+    expect(t.shop.dialogOpen()).toBe(true)
+    const u = setup()
+    ;(u.deps as { otherDialogOpen?: () => boolean }).otherDialogOpen = () => true
+    await expect(u.buy()).rejects.toMatchObject({ code: SHOP_BUSY })
   })
 
   it('runs one dialog at a time', async () => {

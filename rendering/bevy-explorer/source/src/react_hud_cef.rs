@@ -16,7 +16,7 @@
 // ui) skips this plugin entirely — the engine-side ui drives instead.
 //
 // Run (files only, no servers):
-//   cd react-web && npm run bundle:native   # page -> assets/react-hud, scene -> assets/bridge-scene
+//   cd react-web && pnpm run bundle:native   # page -> assets/react-hud, scene -> assets/bridge-scene
 //   cargo run --release --features react-hud-cef --bin decentra-bevy -- --realm <realm>
 // The page loads from cef://localhost/react-hud (the bevy assets dir) and the bridge-scene loads
 // as a file realm from assets/bridge-scene. Override: REACT_HUD_URL (e.g. a vite dev server with
@@ -45,6 +45,7 @@ use cef_offscreen::prelude::{
 use common::rpc::{RpcResultReceiver, RpcResultSender, RpcStreamSender};
 use common::structs::{OutOfWorld, PrimaryUser};
 use input_manager::{InputPriorities, MouseInteractionComponent};
+use scene_runner::update_scene::synthetic_pointer::SyntheticPointer;
 use std::collections::BTreeMap;
 use std::time::Instant;
 use system_bridge::{SystemApi, SystemBridge};
@@ -95,7 +96,7 @@ impl Plugin for ReactHudCefPlugin {
             JsEmitEventPlugin::<PageEnvelope>::default(),
         ));
         app.add_plugins(automation::HudAutomationPlugin);
-        diagnostics::register(app);
+        app.add_plugins(diagnostics::CefHudDiagnosticsPlugin);
         app.add_systems(Startup, spawn_hud);
         app.add_systems(
             Update,
@@ -179,7 +180,7 @@ fn react_hud_url() -> Option<String> {
     if let Ok(url) = std::env::var("REACT_HUD_URL") {
         return Some(url);
     }
-    // Bundled page (npm run bundle:native → assets/react-hud) served over the cef:// scheme —
+    // Bundled page (pnpm run bundle:native → assets/react-hud) served over the cef:// scheme —
     // dev and prod run the same embedded build, no server. The path check mirrors the bevy
     // asset root: cwd for packaged runs, the checkout for `cargo run` from any directory.
     let mut roots = vec![
@@ -210,7 +211,7 @@ fn spawn_hud(
 ) {
     let Some(mut url) = react_hud_url() else {
         error!(
-            "[react-hud-cef] no HUD page: run `npm run bundle:native` in react-web (or set \
+            "[react-hud-cef] no HUD page: run `pnpm run bundle:native` in react-web (or set \
              REACT_HUD_URL); the app will run without a HUD"
         );
         return;
@@ -418,7 +419,9 @@ struct MultiClick {
 // full document like on web — outside-clicks defocus text fields, :hover tracks the real cursor);
 // what the ENGINE receives is gated per-pixel — an opaque HUD pixel under the cursor blocks world
 // input (via Interaction on the fullscreen node). While pointer-locked (camera mouse-look) there
-// is no cursor and the engine keeps everything.
+// is no cursor and the engine keeps everything. While a synthetic aim drives the pointer
+// (`/hover_entity`, `/click_entity`), its presses are meant for the aimed entity, not for the page
+// under the OS cursor, so button presses and releases are not forwarded (motion still is).
 #[allow(clippy::too_many_arguments)]
 fn route_mouse(
     state: Option<ResMut<ReactHudCef>>,
@@ -431,6 +434,7 @@ fn route_mouse(
     time: Res<Time>,
     mut clicks: Local<MultiClick>,
     mut commands: Commands,
+    synthetic: Option<Res<SyntheticPointer>>,
 ) {
     let Some(mut state) = state else { return };
     let Ok(window) = windows.single() else {
@@ -473,7 +477,13 @@ fn route_mouse(
 
     let Some(cursor) = cursor else { return };
     browsers.send_mouse_move(&state.hud, buttons.get_pressed(), cursor, false);
-    for button in [MouseButton::Left, MouseButton::Right, MouseButton::Middle] {
+    let aimed = synthetic.is_some_and(|synthetic| synthetic.0.is_some());
+    let routed: &[MouseButton] = if aimed {
+        &[]
+    } else {
+        &[MouseButton::Left, MouseButton::Right, MouseButton::Middle]
+    };
+    for &button in routed {
         if buttons.just_pressed(button) {
             let now = time.elapsed_secs_f64();
             // same button, quick succession, near-stationary -> next multi-click step
@@ -684,6 +694,14 @@ fn on_page_envelope(
                 ) {
                     state.prefs.insert(key.to_owned(), value.to_owned());
                     write_prefs(&state.prefs);
+                }
+            }
+            // The page names no path: only the folder the download handler saves to is opened.
+            Some("openDownloads") => {
+                if let Some(dir) = cef_offscreen::prelude::downloads_dir() {
+                    if let Err(e) = opener::open(&dir) {
+                        warn!("[react-hud-cef] could not open {}: {e}", dir.display());
+                    }
                 }
             }
             _ => {}

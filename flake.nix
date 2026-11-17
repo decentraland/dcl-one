@@ -14,19 +14,30 @@
     let
       systems = [ "aarch64-darwin" "aarch64-linux" "x86_64-linux" ];
       eachSystem = nixpkgs.lib.genAttrs systems;
-    in {
-      packages = nixpkgs.lib.genAttrs [ "aarch64-linux" "x86_64-linux" ] (system:
+      rustPackages = system:
         let
           pkgs = import nixpkgs { inherit system; overlays = [ (import rust-overlay) ]; };
           rust = pkgs.rust-bin.fromRustupToolchainFile ./services/catalyst/rust-toolchain.toml;
-        in import ./infra/packages {
-          inherit pkgs;
-          craneLib = (crane.mkLib pkgs).overrideToolchain rust;
+        in { inherit pkgs; craneLib = (crane.mkLib pkgs).overrideToolchain rust; };
+      # Three chained layers: third-party crates, Bevy and the crates that use it, the Explorer.
+      bevy-explorer = import ./infra/packages/bevy-explorer.nix (rustPackages "x86_64-linux");
+    in {
+      packages = nixpkgs.lib.genAttrs [ "aarch64-linux" "x86_64-linux" ] (system:
+        import ./infra/packages (rustPackages system // {
           revision = self.rev or self.dirtyRev or "unversioned";
-        }) // {
+        })) // {
           # The tool environments alone: the macOS CI legs take ffmpeg from here.
           aarch64-darwin = import ./infra/packages/tools.nix { pkgs = import nixpkgs { system = "aarch64-darwin"; }; };
         };
+
+      # `nix build .#bevy-explorer` and `.#bevy-explorer.tests`. An evaluation of the Explorer
+      # builds its patched sources, and `nix flake check` evaluates every attribute of
+      # `packages` and `checks`, so the Explorer is in neither.
+      legacyPackages.x86_64-linux = {
+        inherit bevy-explorer;
+        bevy-explorer-deps = bevy-explorer.deps;
+        bevy-explorer-bevy = bevy-explorer.bevy;
+      };
 
       checks.x86_64-linux.dev-service = import ./infra/dev/service-test {
         pkgs = import nixpkgs { system = "x86_64-linux"; };
@@ -70,8 +81,57 @@
               pkgs.glibcLocales.override { allLocales = false; locales = [ "C.UTF-8/UTF-8" "en_US.UTF-8/UTF-8" ]; }
             }/lib/locale/locale-archive";
           });
+          # The web explorer's loop, `just wasm` in rendering/bevy-explorer/source: the nightly its
+          # justfile pins, and wasm-bindgen at that workspace's Cargo.lock version, so wasm-pack
+          # downloads neither it nor wasm-opt. No services: the shell hook is the default shell's.
+          # Node 26 has no corepack, so the shell carries pnpm and the justfile reads PNPM. This
+          # pnpm must not fetch the version a package.json pins: that binary cannot start on NixOS.
+          wasm = pkgs.mkShell {
+            packages = with pkgs; [
+              (rust-bin.nightly."2026-04-15".default.override {
+                targets = [ "wasm32-unknown-unknown" ];
+                extensions = [ "rust-src" ];
+              })
+              just wasm-pack wasm-bindgen-cli_0_2_114 binaryen nodejs_26 python3 gitMinimal
+              (pnpm.override { nodejs-slim = nodejs-slim_26; })
+              pkg-config cmake clang protobuf
+            ] ++ lib.optionals stdenv.hostPlatform.isLinux [ udev ];
+            LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+            PNPM = "pnpm";
+            pnpm_config_manage_package_manager_versions = "false";
+          };
+          # The native Explorer's loop, `cargo build` and `just native-debug` in
+          # rendering/bevy-explorer/source: the toolchain, the build tools and the libraries of the
+          # Nix package (infra/packages/bevy-explorer-native.nix). No services. Linux compiles with
+          # the package's clang; on x86_64 the prebuilt V8 and CEF come from the store, so no build
+          # script downloads them and `just setup-cef` is not needed. macOS compiles and links with
+          # Apple's toolchain (Xcode command line tools), which has the SDK the engine needs.
+          native = import ./infra/packages/bevy-explorer-native.nix { inherit pkgs; };
+          explorerHook = builtins.readFile ./infra/dev/explorer-shell-hook.sh;
+          explorerTools = with pkgs; native.tools ++ [
+            rust just python3 gitMinimal nodejs_26 (pnpm.override { nodejs-slim = nodejs-slim_26; })
+          ];
+          explorerNode = { PNPM = "pnpm"; pnpm_config_manage_package_manager_versions = "false"; };
+          explorer =
+            if pkgs.stdenv.hostPlatform.isDarwin then pkgs.mkShellNoCC (explorerNode // {
+              packages = explorerTools;
+              buildInputs = [ pkgs.ffmpeg_6-headless ];
+              shellHook = explorerHook;
+            })
+            else (pkgs.mkShell.override { inherit (native) stdenv; }) (explorerNode // {
+              packages = explorerTools ++ [ pkgs.rustPlatform.bindgenHook ];
+              buildInputs = native.libraries;
+              # What the client loads at run time and no binary names: the window system, Vulkan, audio.
+              EXPLORER_RUNTIME_LIBRARIES = pkgs.lib.makeLibraryPath (with pkgs; [
+                vulkan-loader libxkbcommon wayland libx11 libxcursor libxi libxrandr libGL alsa-lib udev
+              ]);
+              shellHook = explorerHook;
+            } // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+              RUSTY_V8_ARCHIVE = "${native.v8}";
+              CEF_PATH = "${native.cef}";
+            });
         in {
-          inherit default ci;
+          inherit default ci wasm explorer;
           # foundation-dev desktop: the Tauri shell (apps/desktop). Linux needs
           # WebKitGTK; libsoup gets TLS from glib-networking.
           desktop = default.overrideAttrs (old: {

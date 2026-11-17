@@ -11,6 +11,7 @@ use dcl_types::{CommsMessageType, RpcCalls, SceneResourceCounters};
 
 use super::State;
 
+use dcl_types::MAX_BINARY_MESSAGE_BYTES;
 pub use dcl_types::MAX_COMMS_MESSAGE_BYTES;
 const MAX_NETWORK_MESSAGE_QUEUE: usize = 1024;
 pub const MAX_SEND_MESSAGES_PER_TICK: usize = 512;
@@ -76,9 +77,9 @@ pub async fn op_comms_send_binary_single(
     recipient: Option<String>,
 ) -> Result<(), anyhow::Error> {
     debug!("op_comms_send_binary_single");
-    if message.as_ref().len() > MAX_COMMS_MESSAGE_BYTES {
+    if message.as_ref().len() > MAX_BINARY_MESSAGE_BYTES {
         anyhow::bail!(
-            "message too large ({} > {MAX_COMMS_MESSAGE_BYTES} bytes)",
+            "message too large ({} > {MAX_BINARY_MESSAGE_BYTES} bytes)",
             message.as_ref().len()
         );
     }
@@ -133,4 +134,36 @@ pub async fn op_comms_recv_binary(
     counters.comms_msgs_in += results.len() as u64;
     counters.comms_bytes_in += bytes_in;
     Ok(results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_state::TestState;
+
+    #[test]
+    fn scene_binary_op_checks_the_receiver_limit_before_spending_budget() {
+        let mut state = TestState::default();
+        state.put(RpcCalls::default());
+        state.put(SceneResourceCounters::default());
+        let state = Rc::new(RefCell::new(state));
+        let send = |size| {
+            futures_lite::future::block_on(op_comms_send_binary_single(
+                state.clone(),
+                vec![0; size],
+                None,
+            ))
+        };
+        assert!(send(MAX_BINARY_MESSAGE_BYTES + 1).is_err());
+        assert!(!state.borrow().has::<CommsSendBudget>());
+        assert!(send(MAX_BINARY_MESSAGE_BYTES).is_ok());
+        assert_eq!(state.borrow().borrow::<CommsSendBudget>().sent, 1);
+        assert_eq!(
+            state
+                .borrow()
+                .borrow::<SceneResourceCounters>()
+                .comms_bytes_out,
+            MAX_BINARY_MESSAGE_BYTES as u64
+        );
+    }
 }

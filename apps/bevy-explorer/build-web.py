@@ -11,6 +11,9 @@ import subprocess
 import sys
 import time
 
+ENVIRONMENT = ('environment: WASM_PACK_MODE is passed to wasm-pack as --mode. The value no-install uses the '
+               'wasm-bindgen on PATH instead of a download, for a sandboxed or offline build. '
+               'No workflow of this tree sets it; the person who runs the build does.')
 APP = Path(__file__).resolve().parent
 ROOT = APP.parents[1]
 SOURCE = ROOT / 'rendering/bevy-explorer/source'
@@ -19,9 +22,26 @@ artifact = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(artifact)
 
 
+def git_bash():
+    # `bash` on a Windows PATH is often WSL's launcher (System32). Git for Windows' own bash sits at
+    # <root>/bin/bash.exe, which puts Git's tools on PATH; `git --exec-path` is under <root>.
+    exec_path = subprocess.run(('git', '--exec-path'), capture_output=True, text=True, check=True).stdout
+    for parent in Path(exec_path.strip()).parents:
+        if (parent / 'bin/bash.exe').is_file():
+            return str(parent / 'bin/bash.exe')
+    raise SystemExit('Git Bash not found: install Git for Windows (scripts/gen-ts-bindings.sh needs bash)')
+
+
+def executable(name):
+    # Windows starts corepack (corepack.cmd) only by its full path, not by the bare name.
+    if os.name != 'nt':
+        return name
+    return git_bash() if name == 'bash' else shutil.which(name) or name
+
+
 def run(*args, cwd=SOURCE, env=None):
     started = time.monotonic()
-    subprocess.run(args, cwd=cwd, env=env, check=True)
+    subprocess.run((executable(str(args[0])), *args[1:]), cwd=cwd, env=env, check=True)
     print(f'{" ".join(map(str, args))}: {time.monotonic() - started:.1f}s', flush=True)
 
 
@@ -45,6 +65,9 @@ def compile_wasm(no_opt, env):
 
 def prepare_engine(no_opt, engine_cache, shared_build, env):
     flags = ['--no-opt'] if no_opt else []
+    # WASM_PACK_MODE=no-install needs the Cargo.lock's wasm-bindgen-cli installed (see ENVIRONMENT).
+    if mode := os.environ.get('WASM_PACK_MODE'):
+        flags += ['--mode', mode]
     revision = os.environ.get('GITHUB_SHA', 'local')
     if engine_cache and engine_cache.exists():
         engine = artifact.restore_engine(engine_cache, ROOT, allow_unoptimized=no_opt)
@@ -78,11 +101,16 @@ def web(no_opt=False, engine_cache=None, shared_build=False):
            'RAYON_NUM_THREADS': os.environ.get('RAYON_NUM_THREADS', str(min(os.cpu_count() or 1, 16)))}
     revision = os.environ.get('GITHUB_SHA', 'local')
     with ThreadPoolExecutor(max_workers=2) as pool:
-        installations = [pool.submit(run, 'npm', 'ci', '--prefix', project, env=env)
-                         for project in ('react-web', 'react-web/bridge-scene')]
+        installations = [
+            pool.submit(run, 'corepack', 'pnpm@12.21.0', '--dir', 'react-web',
+                        'install', '--frozen-lockfile', '--ignore-scripts', env=env),
+            pool.submit(run, 'corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene',
+                        'install', '--frozen-lockfile', '--ignore-scripts', env=env),
+        ]
         engine = prepare_engine(no_opt, engine_cache, shared_build, env)
         for installation in installations:
             installation.result()
+    run('node', './react-web/scripts/shared-inputs.mjs', '--check', env=env)
     metadata = SOURCE / 'target/sandbox-worker.meta.json'
     metadata.parent.mkdir(exist_ok=True)
     run('node', './react-web/node_modules/esbuild/bin/esbuild', './deploy/web/engine/sandbox_worker.js',
@@ -93,9 +121,16 @@ def web(no_opt=False, engine_cache=None, shared_build=False):
         raise SystemExit('Sandbox worker must have one entry point and export nothing')
     # Relative URLs allow the same build at / or a gateway subpath. No upstream CDN stamping.
     web_env = {**env, 'PUBLIC_URL': '', 'SCENE_BASE_URL': '../'}
-    run('npm', 'run', 'build', '--prefix', 'react-web', env=web_env)
-    run('npm', 'run', 'test', '--prefix', 'react-web', env=web_env)
-    run('npm', 'run', 'bundle', '--prefix', 'react-web/bridge-scene', env=web_env)
+    run('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'build', env=web_env)
+    run('corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene',
+        '--filter', '@dcl/hashing', 'build', env=web_env)
+    run('node', str(ROOT / 'tooling/check-local-hashing.mjs'),
+        str(SOURCE / 'react-web/bridge-scene'), env=web_env)
+    # Node 25+ ships a localStorage global (empty without --localstorage-file) that
+    # vitest keeps over jsdom's; CI runs Node 24, so the tests see it switched off.
+    node_options = ' '.join(filter(None, [env.get('NODE_OPTIONS'), '--no-experimental-webstorage']))
+    run('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'test', env={**web_env, 'NODE_OPTIONS': node_options})
+    run('corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene', 'run', 'bundle', env=web_env)
     output = APP / 'dist/web'
     if output.exists():
         shutil.rmtree(output)
@@ -114,7 +149,7 @@ def web(no_opt=False, engine_cache=None, shared_build=False):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, epilog=ENVIRONMENT)
     parser.add_argument('--no-opt', action='store_true', help='Skip wasm-opt for development/PR builds')
     parser.add_argument('--engine-cache', type=Path,
                         help='CI-only compiled WASM cache, restored with an exact input key')

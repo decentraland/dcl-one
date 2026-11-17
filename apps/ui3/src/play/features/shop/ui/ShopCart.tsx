@@ -7,7 +7,7 @@
 
 import { useRef } from 'react'
 import { formatCredits, formatCreditsFull } from '@shop/checkout/lib/currency'
-import { ScrollThumb } from '../../../design'
+import { ScrollThumb } from '@hud/design'
 import closeIcon from '../../../assets/shop/cart/close.svg'
 import heartIcon from '../../../assets/shop/cart/heart.svg'
 import minusIcon from '../../../assets/shop/cart/minus.svg'

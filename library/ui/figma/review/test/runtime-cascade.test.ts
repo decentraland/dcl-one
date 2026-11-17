@@ -41,7 +41,7 @@ async function renderLabel(stylesheets: (string | { css: string })[], name: stri
       `<body><span id="label" class="${labelClasses}">Sign In</span></body></html>`
   )
   const send = session.send as Send
-  await send('Page.navigate', { url: pathToFileURL(page).href })
+  await session.navigate(pathToFileURL(page).href)
   const { result } = (await send('Runtime.evaluate', {
     expression: `new Promise((resolve) => {
       const done = () => document.fonts.ready.then(() =>

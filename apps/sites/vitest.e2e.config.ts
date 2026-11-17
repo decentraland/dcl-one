@@ -12,6 +12,7 @@ export default defineConfig({
     alias: [
       { find: /^.*\.css$/, replacement: cssStub },
       { find: "@ui", replacement: ui },
+      { find: "@dcl/one-ui", replacement: fileURLToPath(new URL("../../library/ui", import.meta.url)) },
       { find: "@catalyst-api", replacement: catalystApi },
       { find: "@shop", replacement: shopCore },
       { find: "dcl-validate-impl", replacement: `${ui}/validate/checked.ts` },

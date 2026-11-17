@@ -13,7 +13,7 @@
 // (Windows), and prints `adapter-luid: <high>,<low>` for the caller to pass the same way. A VM
 // whose display adapter is a paravirtual one keeps its real GPU as a second adapter, and the
 // browser starts on the first.
-//   npm run gpu-probe [-- --adapter nvidia] [-- <more browser flags>...]
+//   pnpm run gpu-probe [--adapter nvidia] [<more browser flags>...]
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -47,7 +47,7 @@ const GPU_PAGE_TEXT = `(() => {
   return parts.join('')
 })()`
 
-/** The page's side: the app's gate asks for an adapter the same way (`react-web/src/lib/gpu.ts`). */
+/** The page's side: the app's gate asks for an adapter the same way (`library/explorer-core/lib/gpu.ts`). */
 const PROBE = `(async () => {
   if (!navigator.gpu) return 'navigator.gpu is absent'
   const adapter = await navigator.gpu.requestAdapter()

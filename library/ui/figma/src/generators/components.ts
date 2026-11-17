@@ -269,7 +269,10 @@ function caseProps(view: ViewSpec): Record<string, string | boolean> {
 // A caller that omits every axis prop gets the defaults, so that selection must be a drawn view: the runtime throws
 // for any undrawn one, and a default the generator itself produces must never be one.
 function assertDrawnDefaults(spec: ComponentSpec): void {
-  const axes = spec.props.filter((prop) => !FLAG_PROPS.includes(prop.name))
+  // A responsive axis has no default; resolveResponsive already requires every option to draw the same rows.
+  const axes = spec.props.filter(
+    (prop) => !FLAG_PROPS.includes(prop.name) && prop.name !== spec.responsive?.prop
+  )
   const drawn = spec.views.some((view) =>
     axes.every((prop) =>
       prop.kind === 'boolean'
@@ -310,12 +313,34 @@ function variantContract(spec: ComponentSpec): string | undefined {
         `  | { ${axes
           .map((prop, index) => {
             const value = row[index]!
-            return `${prop.name}${value === prop.default ? '?' : ''}: ${typeof value === 'boolean' ? value : literal(value)}`
+            const optional = value === prop.default || prop.name === spec.responsive?.prop
+            return `${prop.name}${optional ? '?' : ''}: ${typeof value === 'boolean' ? value : literal(value)}`
           })
           .join('; ')} }`
     ),
     ')'
   ].join('\n')
+}
+
+// Each option of a responsive axis gets a class that hides its view outside [its minimum width, the next one). The
+// rule is !important so neither the view's own display nor a consumer's unlayered display can show two views at once.
+function responsiveCss(spec: ComponentSpec, cssRules: string[]): [string, string][] | undefined {
+  if (!spec.responsive) return undefined
+  const { breakpoints } = spec.responsive
+  return breakpoints.map(({ value, min }, index) => {
+    const name = assertIdentifier(`responsive${value.charAt(0).toUpperCase()}${value.slice(1)}`)
+    const next = breakpoints[index + 1]?.min
+    // min-width, as the foundations emit; `not all and` is its exact complement, with no max-width fraction.
+    const hidden = [
+      ...(min > 0 ? [`not all and (min-width: ${min}px)`] : []),
+      ...(next !== undefined ? [`(min-width: ${next}px)`] : [])
+    ]
+    if (hidden.length)
+      cssRules.push(
+        `@media ${hidden.join(', ')} {\n  .${name} {\n    display: none !important;\n  }\n}`
+      )
+    return [value, name]
+  })
 }
 
 function emitComponent(
@@ -371,6 +396,7 @@ function emitComponent(
       }
     : undefined
   const views = spec.views.map((view, index) => emitView(view, index, cssRules, semantic))
+  const responsiveClasses = responsiveCss(spec, cssRules)
   const hrefProps = [...(semantic?.props.hrefs ?? [])].sort()
   const handlerProps = [...(semantic?.props.handlers ?? [])].sort()
   const semanticNames = [...hrefProps, ...handlerProps]
@@ -391,9 +417,11 @@ function emitComponent(
     '  forceState?: ForcedState'
   ]
   const destructure = [
-    ...spec.props.map(
-      (prop) =>
-        `${prop.name} = ${prop.kind === 'boolean' ? String(prop.default) : quote(String(prop.default))}`
+    // An omitted responsive prop selects every option's view, so it has no default.
+    ...spec.props.map((prop) =>
+      prop.name === spec.responsive?.prop
+        ? prop.name
+        : `${prop.name} = ${prop.kind === 'boolean' ? String(prop.default) : quote(String(prop.default))}`
     ),
     ...slots.map((slot) => slot.name),
     ...labelRoles,
@@ -473,6 +501,11 @@ function emitComponent(
       ? [`    counts={{ ${countRoles.map((role) => `${role.name}: ${role.label}`).join(', ')} }}`]
       : []),
     ...(semanticNames.length ? [`    semanticProps={{ ${semanticNames.join(', ')} }}`] : []),
+    ...(responsiveClasses
+      ? [
+          `    responsive={{ prop: ${quote(spec.responsive!.prop)}, classes: { ${responsiveClasses.map(([value, name]) => `${quote(value)}: styles.${name}`).join(', ')} } }}`
+        ]
+      : []),
     '    forceState={forceState}',
     ...(disabled ? ['    disabled={disabled}'] : []),
     // The caller's props go in as data, never spread over the generated configuration above.

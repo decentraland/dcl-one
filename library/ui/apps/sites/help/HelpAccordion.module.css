@@ -1,0 +1,109 @@
+/*
+ * Source: decentraland/sites FaqAccordion, FaqAccordionSummary, FaqAccordionDetails, FaqQuestion
+ * (src/pages/help/HelpPage.styled.ts) and CircleAndArrowIcon. The item fills (#331636, hover and open #3d1a41) have
+ * no token: they are the brand violet mixed into the page background, which lands within 3 RGB steps of them.
+ */
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-8);
+}
+
+.item {
+  box-sizing: border-box;
+  width: min(661px, 100%);
+  min-height: 64px;
+  padding: var(--dcl-space-12) var(--dcl-space-16);
+  border-radius: 27px;
+  background: color-mix(in srgb, var(--dcl-brand-violet) 20%, var(--dcl-bg-page));
+  transition: background 0.2s ease;
+}
+
+.item:hover,
+.expanded {
+  background: color-mix(in srgb, var(--dcl-brand-violet) 25%, var(--dcl-bg-page));
+}
+
+.expanded {
+  padding-top: var(--dcl-space-32);
+}
+
+.heading {
+  margin: 0;
+}
+
+.trigger {
+  display: flex;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dcl-space-8);
+  padding: 0;
+  border: 0;
+  border-radius: var(--dcl-radius-md);
+  background: transparent;
+  color: var(--dcl-text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 4px;
+}
+
+.question {
+  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
+  margin-left: var(--dcl-space-24);
+  font-weight: 300;
+}
+
+/* The round toggle: a faint ring while closed, a filled white disc with a dark arrow, turned up, while open. */
+.icon {
+  display: inline-flex;
+  box-sizing: border-box;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--dcl-transparencies-white-20);
+  border-radius: var(--dcl-radius-full);
+  color: var(--dcl-neutrals-white);
+  transition: transform 0.3s ease;
+}
+
+.expanded .icon {
+  border-color: var(--dcl-neutrals-white);
+  background: var(--dcl-neutrals-white);
+  color: var(--dcl-neutrals-charcoal);
+  transform: rotate(180deg);
+}
+
+/* The source's answer is bare text in MUI's body typography: 16px, primary text, under a taller open summary. */
+.answer {
+  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
+  padding: 20px 0 var(--dcl-space-8) var(--dcl-space-24);
+  color: var(--dcl-text-primary);
+  white-space: pre-line;
+}
+
+.answer a {
+  color: var(--dcl-neutrals-snow);
+  text-decoration: underline;
+}
+
+@media (max-width: 767px) {
+  .item {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .item,
+  .icon {
+    transition: none;
+  }
+}

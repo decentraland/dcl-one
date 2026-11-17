@@ -22,7 +22,7 @@ const FALLBACK: PageDefaults = {
   variant: "os_detected",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const step = url.searchParams.get("step")?.trim() ?? "view";
   const osParam = url.searchParams.get("os");
@@ -30,7 +30,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const { sid, wrap } = await pageLoader(
     request,
-    
+    context,
     FALLBACK,
   );
 

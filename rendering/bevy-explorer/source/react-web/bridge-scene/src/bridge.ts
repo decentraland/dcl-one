@@ -7,11 +7,11 @@
 //   • ctx.on('<kind>', handler)  — a request coming FROM React (e.g. 'getProfile')
 //   • ctx.push(system)           — a per-frame system that PUSHES updates TO React
 // so for any piece of HUD data you can open one domain file and see exactly where it comes
-// from. Messages are typed by the SHARED wire protocol (react-web/src/engine/protocol.ts) —
+// from. Messages are typed by the SHARED wire protocol (library/explorer-core/engine/protocol.ts) —
 // the same file the React page uses — so changing a message on either side breaks the other.
 
 import { engine } from '@dcl/sdk/ecs'
-import type { Envelope, PageToScene, SceneToPage } from '../../src/engine/protocol'
+import type { Envelope, PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
 
 // The bare name: the sandbox's injected BroadcastChannel appends a per-tab session suffix
 // (sandbox_worker.js), matching the page's bridgeChannelName() — so two tabs never share a bridge.

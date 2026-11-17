@@ -67,18 +67,28 @@ function enumerate(name: string): { text: string; compiles: boolean }[] {
     ])
   const valueOf = (object: Record<string, unknown>, axis: string) =>
     object[axis] === UNDEFINED || object[axis] === undefined ? defaults[axis] : object[axis]
+  // A responsive axis left unset renders every option's view, so the object is drawn only when each of them is.
+  const responsive = /responsive=\{\{ prop: '(\w+)'/.exec(fn)?.[1]
+  const selections = (object: Record<string, unknown>) =>
+    responsive && valueOf(object, responsive) === undefined
+      ? domain(responsive).map((option) => ({ ...object, [responsive]: option }))
+      : [object]
   return objects.map((object) => ({
     text: `{ ${Object.entries(object)
       .map(([key, value]) => `${key}: ${value === UNDEFINED ? 'undefined' : JSON.stringify(value)}`)
       .join(', ')} }`,
-    compiles: keys.has(
-      viewKey({
-        values: Object.fromEntries(values.map((axis) => [axis, valueOf(object, axis) as string])),
-        booleans: Object.fromEntries(
-          booleans.map((axis) => [axis, valueOf(object, axis) as boolean])
-        ),
-        flags: {}
-      })
+    compiles: selections(object).every((selected) =>
+      keys.has(
+        viewKey({
+          values: Object.fromEntries(
+            values.map((axis) => [axis, valueOf(selected, axis) as string])
+          ),
+          booleans: Object.fromEntries(
+            booleans.map((axis) => [axis, valueOf(selected, axis) as boolean])
+          ),
+          flags: {}
+        })
+      )
     )
   }))
 }

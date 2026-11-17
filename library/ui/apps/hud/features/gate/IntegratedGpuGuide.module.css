@@ -1,0 +1,24 @@
+/* Rides the shared PopupHost scrim like EntryParamsDialog; the steps are FlagStep's. */
+.lead {
+  margin: 0 0 16px;
+  font-size: var(--fs-md);
+  line-height: 1.45;
+  color: var(--ink-95);
+}
+.adapter {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.after {
+  margin: 16px 0 0;
+  font-size: var(--fs-md);
+  color: var(--ink-7);
+}

@@ -1,4 +1,3 @@
-#![recursion_limit = "256"]
 //! The explore parity suite: every entry of `tests/fixtures/explore_parity/*.fixture.json`
 //! (what the old places and events services answer, derived from their pinned source)
 //! is sent to the explore router over a seeded scratch database and compared per its
@@ -2467,6 +2466,7 @@ async fn explore_route_timings() {
     }
     let db = match std::env::var("EXPLORE_PARITY_TIMING_DB") {
         Ok(name) => db::existing_database(&name).await,
+        Err(_) if flag("EXPLORE_PARITY_KEEP_DB") => db::kept_database().await,
         Err(_) => db::scratch_database().await,
     };
     let Some(db) = db else {

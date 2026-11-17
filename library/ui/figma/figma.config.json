@@ -269,6 +269,14 @@
     },
     "NavBar": {
       "exposeTextSlots": false,
+      "responsive": {
+        "prop": "viewport",
+        "breakpoints": {
+          "mobile": "mobile",
+          "desktop": "desktop",
+          "largeDesktop": "largeDesktop"
+        }
+      },
       "semantics": {
         "@root": {
           "role": "navigation",
@@ -342,8 +350,5 @@
         "reason": "Owner-authorized web-modal background review"
       }
     ]
-  },
-  "promotion": {
-    "include": ["NavBar"]
   }
 }

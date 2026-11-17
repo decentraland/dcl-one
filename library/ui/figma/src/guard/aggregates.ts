@@ -1,3 +1,4 @@
+import { libraryComponentEntries } from './library.js'
 import { componentOwner, componentOwnerById } from './component-identity.js'
 import { exportStatements } from './exports.js'
 import { AGGREGATES, SNAPSHOT, type Ownership } from './ownership.js'
@@ -74,12 +75,18 @@ function parseAggregate(
   }
   if (aggregate === 'library-promotion') {
     const data = JSON.parse(text) as { components?: string[]; files?: Record<string, string> }
-    const { components = [], ...rest } = data
+    const {
+      components: _components,
+      internal: _internal,
+      ...rest
+    } = data as typeof data & { internal?: string[] }
+    void _components
+    void _internal
     delete rest.files
     fromList(
-      components,
-      (name) => name,
-      (name) => componentOwner(ownership, name)?.pageId ?? null,
+      libraryComponentEntries(data),
+      (entry) => entry.name,
+      (entry) => componentOwner(ownership, entry.name)?.pageId ?? null,
       'component',
       entries,
       order

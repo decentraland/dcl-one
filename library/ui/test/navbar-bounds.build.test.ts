@@ -90,9 +90,7 @@ type Bounds = {
 }
 
 async function measure(variant: number): Promise<Bounds> {
-  await session.send('Page.navigate', {
-    url: `${origin}/${FOLDER}/?audit=1&component=NavBar&variant=${variant}`
-  })
+  await session.navigate(`${origin}/${FOLDER}/?audit=1&component=NavBar&variant=${variant}`)
   const { result, exceptionDetails } = (await session.send('Runtime.evaluate', {
     expression: `new Promise((resolve, reject) => {
       const started = Date.now()

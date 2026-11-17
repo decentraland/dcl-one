@@ -12,7 +12,7 @@ const shell = vi.hoisted(() => ({
   handlers: new Map<string, (message: Record<string, unknown>) => void>(),
   request: vi.fn()
 }))
-vi.mock('../lib/shell', () => ({
+vi.mock('@explorer-core/lib/shell', () => ({
   inShell: true,
   postToShell: vi.fn(),
   shellRequest: (method: string, params?: unknown) => shell.request(method, params),
@@ -26,9 +26,9 @@ import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop
 import { webNameUrl } from '../features/shop/itemLinks'
 import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
 import { LEGACY_SHOP_BUSY_MESSAGE, SHOP_EVENT, shopBusy } from '../lib/shopProtocol'
-import type { Profile } from '../engine/protocol'
-import { PopupHost, resetPopups, ToastHost } from '../design'
-import { fakeProfileState } from './harness'
+import type { Profile } from '@explorer-core/engine/protocol'
+import { PopupHost, resetPopups, ToastHost } from '@hud/design'
+import { fakeProfileState } from '@hud/test/harness'
 
 const BUYER = '0x00000000000000000000000000000000000ab47f'
 const CONTRACT = '0x1111111111111111111111111111111111111111'

@@ -34,7 +34,7 @@
 //       a stream): sets __engineExited
 //     __engineExited — true once the engine ended its own run (__engineExit, __perfEnd): its
 //       heartbeat stops and that is no crash, so the watchdog and the host stand down
-//       (react-web/src/engine/bridgeChannel.ts reads it)
+//       (library/explorer-core/engine/bridgeChannel.ts reads it, through each host's engineExited)
 //     __engineHeartbeat / reportEngineError / __rearmCrashWatchdog — crash watchdog plumbing
 //     __engineTextFocus — true while an engine-rendered text field holds keyboard focus (the
 //       wasm keeps it current via __setEngineTextFocus); HUD hotkeys must not fire while set

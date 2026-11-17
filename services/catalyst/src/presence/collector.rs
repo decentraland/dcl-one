@@ -62,12 +62,12 @@ pub async fn fetch(
     realm: &str,
     taken_at: NaiveDateTime,
 ) -> Result<SnapshotData> {
-    let (peers, islands, hot_scenes, live) = tokio::try_join!(
-        sources.peers(),
-        sources.islands(),
-        sources.hot_scenes(),
-        sources.worlds_live_data()
-    )?;
+    let (statistics, live) = tokio::try_join!(sources.statistics(), sources.worlds_live_data())?;
+    let super::sources::Statistics {
+        peers,
+        islands,
+        hot_scenes,
+    } = statistics;
     let (active_worlds, worlds_live_total) = match live {
         Some(live) => (
             model::active_worlds(live.per_world),
@@ -363,7 +363,6 @@ pub async fn sweep_retention(pool: &PgPool, cutoff: NaiveDateTime, limit: i64) -
 /// writes are disabled: the archive is local authority, and a pass recorded
 /// here would be lost with the node.
 pub async fn run_pass(state: &PresenceState, now: DateTime<Utc>) -> Result<SnapshotSummary> {
-    // The switch alone, not the restore stamps: a pass records this node's own regenerable observations.
     if !state.settings.writes_enabled {
         anyhow::bail!(
             "the presence collector records nothing while {}=false",

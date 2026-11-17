@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
-import { semanticSchema, textRoleSchema } from './ir/components.js'
+import { responsiveConfigSchema, semanticSchema, textRoleSchema } from './ir/components.js'
 
 const pageSchema = z.object({
   id: z.string().min(1).nullable().optional(),
@@ -17,7 +17,8 @@ const componentOverrideSchema = z.object({
   skipOptions: z.array(z.string()).optional(),
   exposeTextSlots: z.boolean().optional(),
   semantics: z.record(z.string(), semanticSchema).optional(),
-  textRoles: z.record(z.string(), textRoleSchema).optional()
+  textRoles: z.record(z.string(), textRoleSchema).optional(),
+  responsive: responsiveConfigSchema.optional()
 })
 
 // Exclusion removes a public token export, so each supported name is reviewed here, not only in config.
@@ -67,8 +68,9 @@ const configSchema = z.object({
         context.addIssue({ code: 'custom', message })
     }),
   contract: contractSchema.optional(),
-  // Reviewed components promote-reviewed copies into library/ui; their preview dependencies are
-  // added automatically. Omitted: every eligible component.
+  // Synced components that supersede a hand-written mapping of the same name: check-mappings reports that
+  // mapping as superseded-by-sync or superseded-pending instead of validating it. Omitted: none. `include`
+  // cannot be empty, so remove the block to name none.
   promotion: z.object({ include: z.array(z.string().min(1)).min(1) }).optional(),
   selection: z
     .object({
@@ -126,6 +128,7 @@ async function loadConfig(cwd = process.cwd()): Promise<FigmaConfig> {
 
 export {
   configSchema,
+  contractSchema,
   FILE_KEY_ENV,
   exclusionNameErrors,
   loadConfig,

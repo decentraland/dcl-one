@@ -1,7 +1,6 @@
 // The platform-ban half of the ban & block status service: the engine's public read of
 // `GET /users/<address>/bans` on the comms gatekeeper. Not an explorer-automation fixture;
-// unity-explorer checks the same endpoint once at start-up (`ApplicationBlocklistGuard`) and
-// shows a blocked screen, which is a consumer this service only feeds.
+// unity-explorer checks the same endpoint once at start-up (`ApplicationBlocklistGuard`).
 //
 // | Scenario                                             | Class            |
 // | the platform ban is checked after sign-in            | New              |

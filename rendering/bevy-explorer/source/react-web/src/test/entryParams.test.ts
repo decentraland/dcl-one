@@ -2,7 +2,7 @@
 // what a link carried that nothing reads (features/gate/EntryParamsDialog.tsx).
 
 import { describe, expect, it } from 'vitest'
-import { WEB_PARAMS } from '../engine/generated'
+import { WEB_PARAMS } from '@explorer-core/engine/generated'
 import { BENCHMARK_PARAMS } from '../lib/bootMode'
 import { acceptedEntryParams, entryRealm, perfStreamPath, unrecognisedEntryParams } from '../lib/entryParams'
 
@@ -25,7 +25,7 @@ describe('acceptedEntryParams', () => {
 describe('unrecognisedEntryParams', () => {
   it('is empty for a link made of accepted params only', () => {
     expect(unrecognisedEntryParams(new URLSearchParams('?realm=x&position=1,2&mock=1&preview&world=boedo'))).toEqual([])
-    expect(unrecognisedEntryParams(new URLSearchParams('?native=1&hud=0&gate=gpu&simerror=realm'))).toEqual([])
+    expect(unrecognisedEntryParams(new URLSearchParams('?native=1&hud=0&gate=gpu&gpuGuide=1&simerror=realm'))).toEqual([])
     // campaign links: Segment reads them, never called out
     expect(unrecognisedEntryParams(new URLSearchParams('?utm_source=x&utm_campaign=y&anon_user_id=abc&analyticsSession=s'))).toEqual([])
     // ad clicks: a Google Ads final url as the ad serves it, and other platforms' click ids

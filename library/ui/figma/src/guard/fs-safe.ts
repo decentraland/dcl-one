@@ -158,7 +158,9 @@ async function validateOutputPath(
   return output
 }
 
-const toPosix = (value: string): string => value.split(path.sep).join('/')
+// The separator is a parameter only so a Windows path can be tested on any platform.
+const toPosix = (value: string, separator: string = path.sep): string =>
+  value.split(separator).join('/')
 
 export {
   atomicWrite,

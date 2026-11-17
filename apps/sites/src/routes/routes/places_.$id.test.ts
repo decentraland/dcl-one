@@ -1,3 +1,4 @@
+import { RouterContextProvider } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CatalystError } from "@/data/lib/catalyst/client";
@@ -10,6 +11,7 @@ vi.mock("@/core/lib/telemetry/page-loader", () => ({
   pageLoaderWith: vi.fn(
     async (
       _request: Request,
+      _context: unknown,
       _defaults: unknown,
       load: (base: { sid: string }) => Promise<unknown>,
     ) => ({
@@ -29,7 +31,7 @@ function place(id: string) {
 }
 
 async function run(path: string, id: string) {
-  return loader({ request: new Request(`https://sites.test${path}`), params: { id }, context: {} } as never);
+  return loader({ request: new Request(`https://sites.test${path}`), params: { id }, context: new RouterContextProvider() } as never);
 }
 
 beforeEach(() => vi.clearAllMocks());

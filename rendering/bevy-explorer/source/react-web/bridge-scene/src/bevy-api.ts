@@ -2,7 +2,7 @@
 // inside the super-user (--system-scene) scene sandbox. This is the ENGINE-side surface (raw shapes);
 // the wire shapes React sees live in the shared protocol. Only the methods the domains use
 // are declared — extend as needed.
-import type { ActionWire, Setting } from '../../src/engine/protocol'
+import type { ActionWire, Setting } from '@explorer-core/engine/protocol'
 import type { CompactProfile, SerializedProfile } from './domains/profile'
 import type {
   AnalyticsEvent,
@@ -12,8 +12,13 @@ import type {
   ChatMessage,
   ChatReactionData,
   CommunityMemberConnectivityData,
+  ConnectivitySnapshot,
+  CommunityVoiceUpdate,
   DmHistoryEntryData,
   DmUserStateData,
+  ListenedCommunity,
+  VoiceChatAction,
+  VoiceChatState,
   VoiceMessage,
   FriendData,
   FriendRequestData,
@@ -25,6 +30,7 @@ import type {
   PermanentPermissionItem,
   PermissionRequestEvent,
   PhotoModeState,
+  PortableInfo,
   ProfileChangedEvent,
   ProximityEvent,
   SatelliteView,
@@ -34,7 +40,7 @@ import type {
   Vector3,
   WelcomeState,
   WorldAccessEvent
-} from '../../src/engine/generated'
+} from '@explorer-core/engine/generated'
 
 // --- raw social-service shapes (BevyApi.social.*), generated from the Rust structs ---
 export type { FriendData, FriendStatusData, FriendRequestData }
@@ -71,13 +77,24 @@ export type SocialApi = {
   /** Community members coming online or going offline (never away); the local user's own
    *  updates say which communities they are in. */
   getCommunityConnectivityStream: () => Promise<AsyncIterable<CommunityMemberConnectivityData>>
-  /** The community channels the local user listens to, as community ids; replaces the set. */
-  setCommunityChannels: (ids: string[]) => void
+  /** The communities whose chat channels the local user listens to; replaces the set. */
+  setCommunityChannels: (communities: ListenedCommunity[]) => void
+}
+
+/** Private calls and community streams (BevyApi.voiceChat.*), generated from the Rust structs. */
+export type { VoiceChatState, VoiceChatAction, CommunityVoiceUpdate }
+export type VoiceChatApi = {
+  /** The voice chat state now, then on every change; `close()` ends it. */
+  getStateStream: () => AsyncIterable<VoiceChatState> & { close: () => void }
+  /** Every community stream started / ended broadcast; `close()` ends it. */
+  getCommunityUpdateStream: () => AsyncIterable<CommunityVoiceUpdate> & { close: () => void }
+  /** Fire and forget; the outcome shows on the state stream. */
+  action: (action: VoiceChatAction) => void
 }
 
 export type ChatStreamMessage = ChatMessage
 export type SceneLoadingState = SceneLoadingUi
-export type MicState = { enabled: boolean; available: boolean }
+export type MicState = { enabled: boolean; available: boolean; scene_blocked: boolean; refusals: number }
 
 // World-entity hover events. targetType: 0=WORLD, 1=UI, 2=AVATAR. eventType: PointerEventType.
 // eventInfo.maxPlayerDistance absent/null → the entry is range-gated by camera distance only (the
@@ -127,6 +144,8 @@ export type PermissionUsedRaw = {
 
 export type BevyApiInterface = {
   getHomeScene: () => Promise<HomeScene>
+  /** Pin the home scene the engine boots into and the HUD's home actions go to. */
+  setHomeScene: (home: { realm: string; parcel: { x: number; y: number } }) => Promise<void>
   /** What the welcome page must show for the signed-in account (all false when the host shows none). */
   getWelcome?: () => Promise<WelcomeState>
   /** The welcome page's accept: records the terms for this install. A held new profile deploys with
@@ -156,6 +175,9 @@ export type BevyApiInterface = {
    *  UiCanvasInformation.interactable_area. */
   setInteractableArea: (area: { left: number; top: number; right: number; bottom: number }) => void
   sendChat: (message: string, channel: string) => void
+  /** Replace the text of the chat bubble still showing `messageId` (its translation, or the
+   *  original back); a message no bubble shows is ignored. */
+  setChatBubbleText: (messageId: string, message: string) => void
   getChatStream: () => Promise<AsyncIterable<ChatStreamMessage>>
   /** Add or remove the local user's reaction to a chat message; echoed on getChatReactionStream. */
   sendChatReaction: (channel: string, messageId: string, emoji: string, remove: boolean) => void
@@ -167,6 +189,8 @@ export type BevyApiInterface = {
   getAnalyticsEventStream: () => Promise<AsyncIterable<AnalyticsEvent>>
   getHoverStream: () => Promise<AsyncIterable<SystemHoverEvent>>
   getProximityStream: () => Promise<AsyncIterable<SystemProximityEvent>>
+  getConnectivityStream: () => Promise<AsyncIterable<ConnectivitySnapshot>>
+  retryConnectivity: () => void
   /** Photo mode (the camera reel's in-world camera): its state whenever it changes. Optional:
    *  absent on runtimes whose SystemApi predates it. */
   getPhotoModeStream?: () => Promise<AsyncIterable<PhotoModeState>>
@@ -177,6 +201,10 @@ export type BevyApiInterface = {
   consoleCommand?: (cmd: string, args: string[]) => Promise<string>
   getMicState: () => Promise<MicState>
   setMicEnabled: (enabled: boolean) => void
+  /** Saved per account by the engine. Optional: absent on runtimes whose SystemApi predates it. */
+  setNearbyMuted?: (address: string, muted: boolean) => Promise<void>
+  /** The wallets whose nearby voice is muted: the list now, then again on every change. */
+  getNearbyMuteStream?: () => Promise<AsyncIterable<string[]>>
   getAvatarModifiers: () => Promise<AvatarModifierState[]>
   getPermissionRequestStream: () => Promise<AsyncIterable<PermissionRequestRaw>>
   setSinglePermission: (body: SetSinglePermission) => void
@@ -189,6 +217,9 @@ export type BevyApiInterface = {
   getPermissionUsedStream: () => Promise<AsyncIterable<PermissionUsedRaw>>
   /** The stored rules at one level: `value` is the scene hash (Scene) or realm url (Realm). */
   getPermanentPermissions: (body: { level: 'Scene' | 'Realm' | 'Global'; value?: string }) => Promise<PermanentPermissionItem[]>
+  /** The portables the player can see and stop, tagged by kind: the whole list on subscribe and on
+   *  every change (never the HUD's own scene or a startup portable). */
+  getPortablesStream: () => Promise<AsyncIterable<PortableInfo[]>>
   /** Live scenes, for resolving a permission request's scene name (hash → title) and the current
    *  scene to reload — `/reload` uses `parcels`/`isSuper` to target the scene the player stands in,
    *  never the bridge. */
@@ -220,6 +251,8 @@ export type BevyApiInterface = {
   loginCancel: () => void
   logout: () => void
   social: SocialApi
+  /** Optional: absent on runtimes whose SystemApi predates voice chat. */
+  voiceChat?: VoiceChatApi
 }
 
 const globalRequire = (globalThis as { require?: (module: string) => unknown }).require

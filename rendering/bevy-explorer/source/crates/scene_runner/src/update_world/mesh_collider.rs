@@ -21,7 +21,8 @@ use rapier3d_f64::{
 use crate::{
     gltf_resolver::GltfMeshResolver,
     update_world::{
-        gltf_container::mesh_to_parry_shape, mesh_renderer::truncated_cone::TruncatedCone,
+        gltf_container::{mesh_to_parry_shape, GltfProcessing},
+        mesh_renderer::truncated_cone::TruncatedCone,
     },
     ContainerEntity, PrimaryUser, RendererSceneContext, SceneSets,
 };
@@ -460,7 +461,7 @@ impl SceneColliderData {
         None
     }
 
-    fn update_bvh(&mut self) {
+    pub(crate) fn update_bvh(&mut self) {
         if !self.changed_colliders.is_empty() || !self.removed_colliders.is_empty() {
             let changed = self.changed_colliders.drain().collect::<Vec<_>>();
             let removed = self.removed_colliders.drain().collect::<Vec<_>>();
@@ -499,7 +500,29 @@ impl SceneColliderData {
         specific_collider: Option<&ColliderId>,
     ) -> Option<RaycastResult> {
         self.update_bvh();
+        self.cast_ray_nearest_flushed(
+            origin,
+            direction,
+            distance,
+            collision_mask,
+            skip_inside,
+            include_sensors,
+            specific_collider,
+        )
+    }
 
+    /// [`Self::cast_ray_nearest`] without the lazy flush, so it can share the data across threads.
+    /// Panics unless [`Self::update_bvh`] ran since the last collider change.
+    pub(crate) fn cast_ray_nearest_flushed(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        distance: f32,
+        collision_mask: u32,
+        skip_inside: bool,
+        include_sensors: bool,
+        specific_collider: Option<&ColliderId>,
+    ) -> Option<RaycastResult> {
         let ray = Ray {
             origin: origin.as_dvec3().into(),
             dir: direction.as_dvec3().into(),
@@ -620,7 +643,19 @@ impl SceneColliderData {
         skip_inside: bool,
     ) -> Vec<RaycastResult> {
         self.update_bvh();
+        self.cast_ray_all_flushed(origin, direction, distance, collision_mask, skip_inside)
+    }
 
+    /// [`Self::cast_ray_all`] without the lazy flush, so it can share the data across threads.
+    /// Panics unless [`Self::update_bvh`] ran since the last collider change.
+    pub(crate) fn cast_ray_all_flushed(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        distance: f32,
+        collision_mask: u32,
+        skip_inside: bool,
+    ) -> Vec<RaycastResult> {
         let ray = Ray {
             origin: origin.as_dvec3().into(),
             dir: direction.as_dvec3().into(),
@@ -676,10 +711,34 @@ impl SceneColliderData {
         include_sensors: bool,
         size_adjust: f32,
     ) -> Vec<RaycastResult> {
+        self.update_bvh();
+        self.cast_avatar_all_flushed(
+            origin,
+            direction,
+            distance,
+            collision_mask,
+            skip_inside,
+            include_sensors,
+            size_adjust,
+        )
+    }
+
+    /// [`Self::cast_avatar_all`] without the lazy flush, so it can share the data across threads.
+    /// Panics unless [`Self::update_bvh`] ran since the last collider change.
+    pub(crate) fn cast_avatar_all_flushed(
+        &self,
+        origin: DVec3,
+        direction: DVec3,
+        distance: f64,
+        collision_mask: u32,
+        skip_inside: bool,
+        include_sensors: bool,
+        size_adjust: f32,
+    ) -> Vec<RaycastResult> {
         let mut results = Vec::new();
         let mut ignore = HashSet::new();
 
-        while let Some(result) = self.cast_avatar_nearest(
+        while let Some(result) = self.cast_avatar_nearest_flushed(
             origin,
             direction,
             distance,
@@ -708,7 +767,31 @@ impl SceneColliderData {
         size_adjust: f32,
     ) -> Option<RaycastResult> {
         self.update_bvh();
+        self.cast_avatar_nearest_flushed(
+            origin,
+            direction,
+            distance,
+            collision_mask,
+            skip_inside,
+            include_sensors,
+            exclude_colliders,
+            size_adjust,
+        )
+    }
 
+    /// [`Self::cast_avatar_nearest`] without the lazy flush, so it can share the data across
+    /// threads. Panics unless [`Self::update_bvh`] ran since the last collider change.
+    pub(crate) fn cast_avatar_nearest_flushed(
+        &self,
+        origin: DVec3,
+        direction: DVec3,
+        distance: f64,
+        collision_mask: u32,
+        skip_inside: bool,
+        include_sensors: bool,
+        exclude_colliders: HashSet<&ColliderId>,
+        size_adjust: f32,
+    ) -> Option<RaycastResult> {
         if !direction.is_finite() {
             return None;
         }
@@ -1004,6 +1087,19 @@ impl SceneColliderData {
         Some(Vec3::new(c.x as f32, c.y as f32, c.z as f32))
     }
 
+    /// Removes `id`'s collider if `entity` still holds it. Another entity may have taken the id
+    /// over since: a glTF's replacement registers its colliders under the same ids while the old
+    /// model is still shown.
+    pub fn remove_collider_of(&mut self, id: &ColliderId, entity: Entity) {
+        if self
+            .collider_state
+            .get(id)
+            .is_some_and(|state| state.entity == Some(entity))
+        {
+            self.remove_collider(id);
+        }
+    }
+
     pub fn remove_collider(&mut self, id: &ColliderId) {
         if let Some(handle) = self.scaled_collider.get_by_left(id) {
             self.collider_set.remove(
@@ -1134,7 +1230,12 @@ fn update_colliders<T: ColliderType>(
     // add colliders
     // any entity with a mesh collider that we're not already using, or where the mesh collider has changed
     new_colliders: Query<
-        (Entity, &MeshCollider<T>, &ContainerEntity),
+        (
+            Entity,
+            &MeshCollider<T>,
+            &ContainerEntity,
+            Has<HasCollider<T>>,
+        ),
         Or<(Changed<MeshCollider<T>>, Without<HasCollider<T>>)>,
     >,
     // remove colliders
@@ -1146,12 +1247,22 @@ fn update_colliders<T: ColliderType>(
     mut scene_data: Query<(&RendererSceneContext, &mut SceneColliderData)>,
     mut gltf_mesh_resolver: GltfMeshResolver,
     meshes: Res<Assets<Mesh>>,
+    gltfs_in_progress: Query<(), With<GltfProcessing>>,
 ) {
     gltf_mesh_resolver.begin_frame();
 
     // add colliders
     // any entity with a mesh collider that we're not using, or where the mesh collider has changed
-    for (ent, collider_def, container) in new_colliders.iter() {
+    for (ent, collider_def, container, has_collider) in new_colliders.iter() {
+        // still unmatched by `Without<HasCollider>`, so it comes back next frame
+        if waits_for_reveal(
+            ent,
+            container,
+            has_collider,
+            gltfs_in_progress.contains(container.container),
+        ) {
+            continue;
+        }
         let collider = match &collider_def.shape {
             MeshColliderShape::Box => ColliderBuilder::cuboid(0.5, 0.5, 0.5),
             MeshColliderShape::Cylinder {
@@ -1239,7 +1350,7 @@ fn update_colliders<T: ColliderType>(
             continue;
         };
 
-        scene_data.remove_collider(&collider.0);
+        scene_data.remove_collider_of(&collider.0, ent);
 
         commands.entity(ent).remove::<HasCollider<T>>();
     }
@@ -1253,7 +1364,7 @@ fn on_collider_removed<T: ColliderType>(
     let entity = trigger.target();
     if let Ok((has_collider, container)) = collider_query.get(entity) {
         if let Ok(mut scene_data) = scene_data.get_mut(container.root) {
-            scene_data.remove_collider(&has_collider.0);
+            scene_data.remove_collider_of(&has_collider.0, entity);
         }
     }
 }
@@ -1515,6 +1626,24 @@ fn render_debug_colliders<T: ColliderType>(
         }
     }
 }
+
+/// Whether a collider waits for its glTF to be revealed: a new one on a node of a model still
+/// being processed, which is hidden. A change to a collider already registered, such as one of
+/// the old model shown meanwhile, and the container entity's own collider apply at once: a
+/// `Changed` skipped here would be lost.
+fn waits_for_reveal(
+    entity: Entity,
+    container: &ContainerEntity,
+    has_collider: bool,
+    model_in_progress: bool,
+) -> bool {
+    model_in_progress && !has_collider && entity != container.container
+}
+
+#[cfg(test)]
+mod ownership_tests;
+#[cfg(test)]
+mod reveal_tests;
 
 #[cfg(test)]
 mod tests {

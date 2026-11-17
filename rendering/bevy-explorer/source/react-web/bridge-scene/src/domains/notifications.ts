@@ -6,8 +6,8 @@ import { getPlayer } from '@dcl/sdk/players'
 import { serviceBase, signed } from '../http'
 import { identity } from '../identity'
 import type { Ctx } from '../bridge'
-import type { AppNotification } from '../../../src/engine/protocol'
-import { notificationTimeMs } from '../../../src/lib/notificationTime'
+import type { AppNotification } from '@explorer-core/engine/protocol'
+import { notificationTimeMs } from '@explorer-core/lib/notificationTime'
 
 /** unity-explorer's NotificationsRequestController polls at the same rate. */
 export const POLL_INTERVAL_S = 5

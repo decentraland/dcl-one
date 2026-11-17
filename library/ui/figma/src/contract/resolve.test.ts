@@ -1,6 +1,13 @@
-import { rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { checkMappings, resolveComponent, type ResolveContext } from './resolve.js'
+import {
+  checkMappings,
+  checkMappingsReport,
+  resolveComponent,
+  type ResolveContext
+} from './resolve.js'
 import { buttonSet, makeLibrary, mappingSource } from './test-fixtures.js'
 
 const created: string[] = []
@@ -16,6 +23,17 @@ const context = (mappingRoot: string, extra: Partial<ResolveContext> = {}): Reso
   figmaSets: [buttonSet],
   ...extra
 })
+
+const lock = (revision: string) =>
+  JSON.stringify({
+    sources: [
+      {
+        repository: 'https://github.com/decentraland/figma-design-system',
+        revision: 'a'.repeat(40),
+        snapshot: { revision, digests: { 'pages.json': 'b'.repeat(64) } }
+      }
+    ]
+  })
 
 const codes = (result: Awaited<ReturnType<typeof resolveComponent>>) =>
   result.ok ? [] : result.errors.map((error) => error.code)
@@ -236,6 +254,842 @@ describe('resolveComponent', () => {
     })
   })
 
+  describe('when identity cannot be established', () => {
+    it('should report identity-uncertain, not mapping-missing, for an unmapped node without a capture', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '7:7'
+      })
+
+      expect(codes(result)).toEqual(['identity-uncertain'])
+      expect(!result.ok && result.errors[0]!.action).toMatch(
+        /do not treat it as a missing mapping/i
+      )
+    })
+
+    it('should ask for variant properties when a name alone matches a mapping', async () => {
+      const { root } = await library()
+      await writeFile(path.join(root, 'upstream.lock.json'), lock('e'.repeat(40)))
+      const result = await resolveComponent(context(path.join(root, 'src'), { figmaSets: [] }), {
+        name: 'Button'
+      })
+
+      expect(codes(result)).toEqual(['identity-uncertain'])
+      const [error] = !result.ok ? result.errors : []
+      expect(error!.details).toEqual({
+        reason: 'name-unconfirmed',
+        reads: ['Kind', 'Blocked'],
+        name: 'Button',
+        component: 'Button',
+        captureRevision: 'e'.repeat(40)
+      })
+      expect(error!.action).toMatch(/Resolve again with the instance variantProperties/)
+      expect(error!.action).not.toMatch(/Report/)
+    })
+
+    it('should send the caller to the set name for an unmatched node id without a capture', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1:2'
+      })
+
+      expect(!result.ok && result.errors[0]!.action).toMatch(
+        /resolve again with the component set name and variantProperties/
+      )
+    })
+
+    it('should report several mappings claiming one node as a library defect to report', async () => {
+      const { mappingRoot } = await library({
+        mappings: {
+          'Button.figma.ts': mappingSource(),
+          'Copy.figma.ts': mappingSource({ id: 'copy' })
+        }
+      })
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '1:1' })
+
+      expect(codes(result)).toEqual(['identity-ambiguous'])
+      const [error] = !result.ok ? result.errors : []
+      expect(error!.details).toMatchObject({
+        reason: 'mappings',
+        nodeId: '1:1',
+        files: ['src/Button.figma.ts', 'src/Copy.figma.ts']
+      })
+      expect(error!.action).toMatch(/library defect/)
+    })
+
+    it('should report identity-not-found for a node outside the capture with no mapping', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '7:7' })
+
+      expect(codes(result)).toEqual(['identity-not-found'])
+    })
+
+    it('should report identity-not-found for an unknown name in the capture', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(context(mappingRoot), { name: 'Nothing' })
+
+      expect(codes(result)).toEqual(['identity-not-found'])
+    })
+  })
+
+  describe('when a captured component has no mapping', () => {
+    it('should give the contributor report context and no Figma URL or key', async () => {
+      const { root, mappingRoot } = await library({
+        mappings: { 'Other.figma.ts': mappingSource({ nodeId: '5-5', component: 'Other' }) }
+      })
+      await writeFile(path.join(root, 'upstream.lock.json'), lock('c'.repeat(40)))
+
+      const result = await resolveComponent(context(mappingRoot), {
+        nodeId: '1:1',
+        variantProperties: { Kind: 'Primary' }
+      })
+
+      expect(codes(result)).toEqual(['mapping-missing'])
+      const [error] = !result.ok ? result.errors : []
+      expect(error!.details).toMatchObject({
+        nodeId: '1:1',
+        name: 'Button',
+        variantProperties: { Kind: 'Primary' },
+        library: { name: 'fixture-library', version: '1.2.0' },
+        captureRevision: 'c'.repeat(40),
+        supported: ['Other']
+      })
+      expect(error!.action).toMatch(/Do not build a replacement/)
+      expect(JSON.stringify(result)).not.toMatch(/figma\.com|AAAAAAAAAAAAAAAAAAAAAA/)
+    })
+  })
+
+  describe('when the library tracks a capture lock', () => {
+    it('should name the pinned capture revision in the provenance without a capture', async () => {
+      const { root, mappingRoot } = await library()
+      await writeFile(path.join(root, 'upstream.lock.json'), lock('d'.repeat(40)))
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1-1'
+      })
+
+      expect(result.ok && result.resolved.provenance.capture).toEqual({ revision: 'd'.repeat(40) })
+    })
+
+    it('should omit the capture when the library has no lock', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '1-1' })
+
+      expect(result.ok && 'capture' in result.resolved.provenance).toBe(false)
+    })
+
+    it.each([
+      ['a short revision', lock('abc')],
+      ['no figma-design-system source', JSON.stringify({ sources: [] })],
+      ['text that is not JSON', '{not json']
+    ])(
+      'should resolve with a capture-revision-unknown warning on a lock with %s',
+      async (_label, text) => {
+        const { root, mappingRoot } = await library()
+        await writeFile(path.join(root, 'upstream.lock.json'), text)
+
+        const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+          nodeId: '1-1'
+        })
+
+        expect(result.ok).toBe(true)
+        expect(result.warnings.map((w) => w.code)).toContain('capture-revision-unknown')
+        expect(result.ok && 'capture' in result.resolved.provenance).toBe(false)
+      }
+    )
+  })
+
+  describe('when a component is identified by its set name without a capture', () => {
+    // A mapping that reads no variant property: nothing but the name can confirm it.
+    const noVariants = () =>
+      mappingSource()
+        .replace(/const kind = instance\.getEnum\('Kind', \{[\s\S]*?\}\)\n/, '')
+        .replace(/const disabled = [^\n]*\n/, '')
+        .replace('kind="${kind}"${disabled}', '')
+    const byName = async (name: string, componentNames?: Record<string, string>) => {
+      const { mappingRoot } = await library({ mappings: { 'Button.figma.ts': noVariants() } })
+      return resolveComponent(context(mappingRoot, { figmaSets: [], componentNames }), { name })
+    }
+
+    it('should name a mapped variant property the instance did not give', async () => {
+      const result = await named('Button', { Kind: 'Secondary' })
+
+      expect(result.warnings.find((w) => w.code === 'figma-identity-unverified')?.details).toEqual({
+        combinationChecked: false,
+        notGiven: ['Blocked']
+      })
+    })
+
+    // The nearest false positive: every mapped property given leaves nothing to name.
+    it('should name nothing when the instance gives every mapped variant property', async () => {
+      const result = await named('Button', { Kind: 'Primary', Blocked: 'No' })
+
+      expect(result.warnings.find((w) => w.code === 'figma-identity-unverified')?.details).toEqual({
+        combinationChecked: false,
+        notGiven: []
+      })
+    })
+
+    it('should refuse an alias of a mapping that reads no variant property', async () => {
+      const result = await byName('Component 1', { 'Component 1': 'Button' })
+
+      expect(codes(result)).toEqual(['identity-uncertain'])
+      expect(!result.ok && result.errors[0]!.details).toMatchObject({
+        reason: 'name-unconfirmed',
+        name: 'Component 1'
+      })
+    })
+
+    // The nearest false positive: the mapping's own component name still resolves it.
+    it('should resolve the component name of a mapping that reads no variant property', async () => {
+      const result = await byName('Button', { 'Component 1': 'Button' })
+
+      expect(result.ok && result.resolved.usage).toBe('<Button >Label</Button>')
+    })
+
+    const named = (name: string, variantProperties?: Record<string, string>, extra = {}) =>
+      library().then(({ mappingRoot }) =>
+        resolveComponent(context(mappingRoot, { figmaSets: [], ...extra }), {
+          name,
+          variantProperties
+        })
+      )
+
+    it.each([
+      ['the exported component name', 'Button', {}],
+      ['the template id', 'button', {}],
+      [
+        'a componentNames alias',
+        'Button-Contained-Text',
+        { componentNames: { 'Button-Contained-Text': 'Button' } }
+      ]
+    ])('should resolve %s once the variant properties fit', async (_label, name, extra) => {
+      const result = await named(name, { Kind: 'Secondary', Hover: 'No' }, extra)
+
+      expect(result.ok && result.resolved.usage).toBe('<Button kind="secondary">Label</Button>')
+      expect(result.ok && result.resolved.provenance.figma.identity).toBe('mapping-only')
+      expect(result.warnings.map((w) => w.code)).toEqual(
+        expect.arrayContaining(['figma-identity-unverified', 'identity-name-match'])
+      )
+    })
+
+    it('should refuse a property the mapping does not read as incompatible', async () => {
+      const result = await named('Button', { Kind: 'Primary', Size: 'Large' })
+
+      expect(codes(result)).toEqual(['identity-uncertain'])
+      expect(!result.ok && result.errors[0]!.details).toMatchObject({
+        reason: 'name-incompatible',
+        unknown: ['Size'],
+        unsupported: []
+      })
+    })
+
+    const withBooleans = (
+      variantProperties: Record<string, string>,
+      booleanProperties: Record<string, string>
+    ) =>
+      library().then(({ mappingRoot }) =>
+        resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+          name: 'Button',
+          variantProperties,
+          booleanProperties
+        })
+      )
+
+    it('should resolve with an unread boolean property and warn that the mapping does not read it', async () => {
+      const result = await withBooleans({ Kind: 'Secondary' }, { 'Show icon': 'false' })
+
+      expect(result.ok && result.resolved.usage).toBe('<Button kind="secondary">Label</Button>')
+      expect(result.warnings).toContainEqual(
+        expect.objectContaining({
+          code: 'unmapped-figma-property',
+          details: expect.objectContaining({ property: 'Show icon' })
+        })
+      )
+    })
+
+    // The nearest false positive of the boolean rule: a two-state VARIANT the mapping does not read.
+    it.each([['true'], ['false'], ['True']])(
+      'should still refuse an unread variant valued %s',
+      async (value) => {
+        const result = await named('Button', { Kind: 'Primary', Destructive: value })
+
+        expect(codes(result)).toEqual(['identity-uncertain'])
+        expect(!result.ok && result.errors[0]!.details).toMatchObject({
+          reason: 'name-incompatible',
+          unknown: ['Destructive']
+        })
+      }
+    )
+
+    it('should refuse a boolean alone, which does not confirm the name', async () => {
+      const result = await withBooleans({}, { 'Show icon': 'true' })
+
+      expect(!result.ok && result.errors[0]!.details).toMatchObject({ reason: 'name-unconfirmed' })
+    })
+
+    it('should refuse a boolean the mapping reads as a variant', async () => {
+      const result = await withBooleans({ Kind: 'Primary' }, { Blocked: 'true' })
+
+      expect(!result.ok && result.errors[0]!.details).toMatchObject({
+        reason: 'name-incompatible',
+        unknown: ['Blocked']
+      })
+    })
+
+    it.each([['True'], ['yes'], ['']])(
+      'should refuse the boolean value %j as invalid input',
+      async (value) => {
+        const result = await withBooleans({ Kind: 'Primary' }, { 'Show icon': value })
+
+        expect(codes(result)).toEqual(['invalid-input'])
+      }
+    )
+
+    it('should refuse a value the mapping does not support as incompatible, not as a missing variant', async () => {
+      const result = await named('Button', { Kind: 'Tertiary' })
+
+      expect(!result.ok && result.errors[0]!.details).toMatchObject({
+        reason: 'name-incompatible',
+        unsupported: [{ property: 'Kind', value: 'Tertiary', supported: ['Primary', 'Secondary'] }]
+      })
+    })
+
+    it('should report an unknown name as uncertain identity, never as a missing mapping', async () => {
+      const result = await named('Card', { Kind: 'Primary' })
+
+      expect(codes(result)).toEqual(['identity-uncertain'])
+      expect(!result.ok && result.errors[0]!.details).toMatchObject({ reason: 'name-unmatched' })
+    })
+
+    it('should refuse a name two mappings declare', async () => {
+      const { mappingRoot } = await library({
+        mappings: {
+          'Button.figma.ts': mappingSource(),
+          'Other.figma.ts': mappingSource({ nodeId: '2-2', id: 'Button', component: 'Other' })
+        }
+      })
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        name: 'Button',
+        variantProperties: { Kind: 'Primary' }
+      })
+
+      expect(codes(result)).toEqual(['identity-ambiguous'])
+      expect(!result.ok && result.errors[0]!.details).toMatchObject({
+        reason: 'name-mappings',
+        files: ['src/Button.figma.ts', 'src/Other.figma.ts']
+      })
+      expect(!result.ok && result.errors[0]!.action).toMatch(/library defect/)
+    })
+
+    it('should refuse a name that one mapping declares and an alias gives another', async () => {
+      const { mappingRoot } = await library({
+        mappings: {
+          'Button.figma.ts': mappingSource(),
+          'Other.figma.ts': mappingSource({ nodeId: '2-2', id: 'other', component: 'Other' })
+        }
+      })
+
+      const result = await resolveComponent(
+        context(mappingRoot, { figmaSets: [], componentNames: { Button: 'Other' } }),
+        { name: 'Button', variantProperties: { Kind: 'Primary' } }
+      )
+
+      expect(!result.ok && result.errors[0]!.details).toMatchObject({ reason: 'name-mappings' })
+    })
+
+    it.each([
+      ['a declared state only', { Hover: 'No' }],
+      ['a property the mapping does not read only', { Size: 'L' }]
+    ])('should not confirm a name with %s', async (_label, variantProperties) => {
+      const result = await named('Button', variantProperties)
+
+      expect(!result.ok && result.errors[0]!.details).toMatchObject({ reason: 'name-unconfirmed' })
+    })
+
+    it('should resolve a mapping that reads no variant property by name alone', async () => {
+      const source = mappingSource({ kindValues: {} })
+        .replace(/const kind = [\s\S]*?\}\)\n/, '')
+        .replace(/const disabled = [\s\S]*?\}\)\n/, '')
+        .replace(' kind="${kind}"${disabled}', '')
+      const { mappingRoot } = await library({ mappings: { 'Button.figma.ts': source } })
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        name: 'Button'
+      })
+
+      expect(result.ok && result.resolved.usage).toBe('<Button>Label</Button>')
+      expect(result.warnings.map((w) => w.code)).toContain('identity-name-match')
+    })
+  })
+
+  describe('when two captured sets share a name', () => {
+    const other = {
+      ...buttonSet,
+      setId: '8:8',
+      page: 'Chat',
+      properties: { Size: { type: 'VARIANT', default: 'S', options: ['S', 'L'] } },
+      variants: [{ id: '8:9', name: 'Size=S', props: { Size: 'S' } }]
+    }
+
+    it('should pick the one set the variant properties fit', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(
+        context(mappingRoot, { figmaSets: [buttonSet, other] }),
+        {
+          name: 'Button',
+          variantProperties: { Kind: 'Secondary' }
+        }
+      )
+
+      expect(result.ok && result.resolved.provenance.figma.setId).toBe('1:1')
+      expect(result.warnings.map((w) => w.code)).toContain('identity-name-match')
+    })
+
+    it.each([
+      ['no variant properties', undefined],
+      ['properties neither set defines', { Theme: 'dark' }],
+      ['a value neither set allows', { Kind: 'Tertiary' }]
+    ])('should stay ambiguous with %s', async (_label, variantProperties) => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(
+        context(mappingRoot, { figmaSets: [buttonSet, other] }),
+        {
+          name: 'Button',
+          variantProperties
+        }
+      )
+
+      expect(codes(result)).toEqual(['identity-ambiguous'])
+    })
+  })
+
+  describe('when a set is captured on two pages', () => {
+    it('should resolve its name as one component and say it was identified by name', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(
+        context(mappingRoot, { figmaSets: [buttonSet, { ...buttonSet, page: 'Other page' }] }),
+        { name: 'Button', variantProperties: { Kind: 'Secondary' } }
+      )
+
+      expect(result.ok && result.resolved.usage).toBe('<Button kind="secondary">Label</Button>')
+      expect(result.warnings.map((w) => w.code)).toContain('identity-name-match')
+    })
+  })
+
+  describe('when a request names an Object member', () => {
+    it.each(['toString', '__proto__', 'constructor'])(
+      'should refuse the variant value %s instead of rendering an inherited member',
+      async (value) => {
+        const { mappingRoot } = await library()
+
+        const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+          nodeId: '1:1',
+          variantProperties: JSON.parse(`{"Kind":${JSON.stringify(value)}}`)
+        })
+
+        expect(codes(result)).toEqual(['variant-unsupported'])
+      }
+    )
+
+    it('should refuse a Figma property named __proto__ against the capture', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(context(mappingRoot), {
+        nodeId: '1:1',
+        variantProperties: JSON.parse('{"__proto__":"x"}')
+      })
+
+      expect(codes(result)).toEqual(['variant-not-in-figma'])
+    })
+
+    it('should not take an inherited member as text for a text layer', async () => {
+      const { mappingRoot } = await library({
+        mappings: {
+          'Button.figma.ts': mappingSource({
+            body: "const labelLayer = instance.findText('toString')\nconst label = labelLayer.type === 'TEXT' ? labelLayer.textContent : ''"
+          }).replace('>Label</', '>${label}</')
+        }
+      })
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1:1',
+        texts: {}
+      })
+
+      expect(result.ok && result.resolved.usage).toBe('<Button kind="">toString</Button>')
+    })
+  })
+
+  describe('when the review follow-up checks apply', () => {
+    it('should refuse a node outside a loaded capture even when a stale mapping targets it', async () => {
+      const { mappingRoot } = await library({
+        mappings: { 'Button.figma.ts': mappingSource({ nodeId: '7-7' }) }
+      })
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '7:7' })
+
+      expect(codes(result)).toEqual(['identity-not-found'])
+      const [error] = !result.ok ? result.errors : []
+      expect(error!.details).toEqual({
+        reason: 'stale-mapping',
+        nodeId: '7:7',
+        files: ['src/Button.figma.ts']
+      })
+      expect(error!.action).toMatch(/library defect/)
+    })
+
+    it('should give every failure the library and capture context a report needs', async () => {
+      const { root, mappingRoot } = await library()
+      await writeFile(path.join(root, 'upstream.lock.json'), lock('f'.repeat(40)))
+
+      const result = await resolveComponent(context(mappingRoot), {
+        nodeId: '1:1',
+        variantProperties: { Kind: 'Secondary', Blocked: 'Yes' }
+      })
+
+      expect(result).toMatchObject({
+        ok: false,
+        context: {
+          library: { name: 'fixture-library', version: '1.2.0' },
+          capture: { revision: 'f'.repeat(40) }
+        }
+      })
+    })
+
+    it('should name the unreadable lock in capture-revision-unknown', async () => {
+      const { root, mappingRoot } = await library()
+      await writeFile(path.join(root, 'upstream.lock.json'), '{}')
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '1:1' })
+
+      const warning = result.warnings.find((w) => w.code === 'capture-revision-unknown')!
+      expect(warning.details).toEqual({
+        lock: 'fixture-library/upstream.lock.json'
+      })
+    })
+
+    it('should not take a revision from a lock the pin reader refuses', async () => {
+      const { root, mappingRoot } = await library()
+      await writeFile(
+        path.join(root, 'upstream.lock.json'),
+        JSON.stringify({
+          sources: [
+            {
+              repository: 'https://github.com/decentraland/figma-design-system',
+              snapshot: { revision: 'f'.repeat(40) }
+            }
+          ]
+        })
+      )
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1:1'
+      })
+
+      expect(result.warnings.map((w) => w.code)).toContain('capture-revision-unknown')
+      expect(result.ok && 'capture' in result.resolved.provenance).toBe(false)
+    })
+
+    const booleanMapping = () =>
+      library({
+        mappings: {
+          'Button.figma.ts': mappingSource({
+            body: "const blocked = instance.getBoolean('Blocked', { true: ' disabled', false: '' })"
+          })
+            .replace(/const disabled = [^\n]*\n/, '')
+            .replace('${disabled}', '${blocked}')
+        }
+      })
+
+    it('should render a boolean the mapping reads from booleanProperties', async () => {
+      const { mappingRoot } = await booleanMapping()
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1:1',
+        variantProperties: { Kind: 'Primary' },
+        booleanProperties: { Blocked: 'true' }
+      })
+
+      expect(result.ok && result.resolved.usage).toBe(
+        '<Button kind="primary" disabled>Label</Button>'
+      )
+      expect(result.warnings.map((w) => w.code)).not.toContain('unmapped-figma-property')
+    })
+
+    it('should refuse, with a node id, a boolean the mapping reads as a variant', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1:1',
+        variantProperties: { Kind: 'Primary' },
+        booleanProperties: { Blocked: 'true' }
+      })
+
+      expect(codes(result)).toEqual(['variant-unsupported'])
+    })
+
+    it('should warn, as the capture path does, about a property the mapping does not read', async () => {
+      const { mappingRoot } = await booleanMapping()
+
+      const withoutCapture = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1:1',
+        variantProperties: { Kind: 'Primary', Size: 'M' }
+      })
+
+      expect(withoutCapture.ok).toBe(true)
+      expect(
+        withoutCapture.warnings.find((w) => w.code === 'unmapped-figma-property')?.details
+      ).toMatchObject({ property: 'Size' })
+    })
+
+    it.each([
+      ['without a capture', []],
+      [
+        'with a capture',
+        [{ ...buttonSet, properties: { ...buttonSet.properties, Blocked: { type: 'BOOLEAN' } } }]
+      ]
+    ])('should refuse a boolean value outside the accepted words %s', async (_label, figmaSets) => {
+      const { mappingRoot } = await booleanMapping()
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets }), {
+        nodeId: '1:1',
+        variantProperties: { Blocked: 'Maybe' }
+      })
+
+      expect(codes(result)).toEqual(['variant-unsupported'])
+    })
+
+    it('should say no selection was applied without a capture or variant properties', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1:1'
+      })
+
+      expect(result.ok && result.resolved.usageFor.basis).toBe('unspecified')
+    })
+
+    it('should report booleans as requested, and the boolean the mapping reads as selected', async () => {
+      const { mappingRoot } = await booleanMapping()
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1:1',
+        booleanProperties: { Blocked: 'true', 'Show icon': 'false' }
+      })
+
+      expect(result.ok && result.resolved.usageFor).toEqual({
+        variantProperties: {},
+        booleanProperties: { Blocked: 'true', 'Show icon': 'false' },
+        basis: 'requested'
+      })
+      expect(
+        result.ok && result.resolved.propTranslation.find((entry) => entry.figmaType === 'BOOLEAN')
+      ).toMatchObject({ figmaProperty: 'Blocked', selected: { figma: 'true', code: 'disabled' } })
+    })
+
+    // The nearest false positive: a boolean local with no value given stays unselected.
+    it('should leave a boolean the instance does not give unselected', async () => {
+      const { mappingRoot } = await booleanMapping()
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1:1',
+        booleanProperties: { 'Show icon': 'true' }
+      })
+
+      const entry =
+        result.ok && result.resolved.propTranslation.find((item) => item.figmaType === 'BOOLEAN')
+      expect(entry && 'selected' in entry).toBe(false)
+      expect(result.ok && result.resolved.usageFor.basis).toBe('requested')
+    })
+
+    it('should accept a declared state and warn about a text the mapping does not render', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1:1',
+        variantProperties: { Kind: 'Primary', Hover: 'Yes' },
+        texts: { Caption: 'x' }
+      })
+
+      expect(result.ok).toBe(true)
+      expect(
+        result.warnings.find((w) => w.code === 'unmapped-figma-property')?.details
+      ).toMatchObject({
+        text: 'Caption'
+      })
+    })
+  })
+
+  describe.each([
+    [
+      'a directory that does not exist inside the package',
+      (root: string) => path.join(root, 'src/missing')
+    ],
+    ['a file', (root: string) => path.join(root, 'src/Button.tsx')]
+  ])('when the mapping root is %s', (_label, rootOf) => {
+    it('should report mapping-root-not-configured from resolve and check-mappings, never a raw error', async () => {
+      const { root } = await library()
+      const ctx = context(rootOf(root))
+
+      expect(codes(await resolveComponent(ctx, { nodeId: '1:1' }))).toEqual([
+        'mapping-root-not-configured'
+      ])
+      expect(await checkMappingsReport(ctx)).toMatchObject({
+        ok: false,
+        errors: [expect.objectContaining({ code: 'mapping-root-not-configured' })]
+      })
+      expect(await checkMappings(ctx)).toEqual([])
+    })
+  })
+
+  describe('when the component registry records accepted limits', () => {
+    const limits = [
+      { id: 'logo-size', text: 'The logo is pending.' },
+      { id: 'mock-data', text: 'Views show mock data.' }
+    ]
+    it('should return every limit and an accepted-limits warning', async () => {
+      const { mappingRoot } = await library()
+      await writeFile(
+        path.join(mappingRoot, 'promotion.json'),
+        JSON.stringify({ components: [{ name: 'Button', limits }] })
+      )
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '1:1' })
+
+      expect(result.ok && result.resolved.limits).toEqual(limits)
+      expect(result.warnings.find((w) => w.code === 'accepted-limits')?.details).toEqual({
+        ids: ['logo-size', 'mock-data']
+      })
+    })
+
+    it.each([
+      ['a registry entry without limits', JSON.stringify({ components: ['Button'] })],
+      ['no registry', undefined]
+    ])('should return no limits and no warning for %s', async (_label, registry) => {
+      const { mappingRoot } = await library()
+      if (registry) await writeFile(path.join(mappingRoot, 'promotion.json'), registry)
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '1:1' })
+
+      expect(result.ok && result.resolved.limits).toEqual([])
+      expect(result.warnings.map((w) => w.code)).not.toContain('accepted-limits')
+    })
+
+    it.each([
+      [
+        'invalid limits',
+        JSON.stringify({ components: [{ name: 'Button', limits: [{ id: 'x', text: '' }] }] })
+      ],
+      ['malformed JSON', '{"components": ['],
+      ['an entry object without a name', JSON.stringify({ components: [{ limits }] })]
+    ])(
+      'should fail closed on a registry with %s, with a coded diagnostic',
+      async (_label, text) => {
+        const { mappingRoot } = await library()
+        await writeFile(path.join(mappingRoot, 'promotion.json'), text)
+
+        const result = await resolveComponent(context(mappingRoot), { nodeId: '1:1' })
+
+        expect(codes(result)).toEqual(['contract-incompatible'])
+        expect(!result.ok && result.errors[0]!.details).toMatchObject({
+          reason: 'component-registry'
+        })
+      }
+    )
+
+    it('should keep the identity code when the registry is invalid but the node is not identified', async () => {
+      const { mappingRoot } = await library()
+      await writeFile(path.join(mappingRoot, 'promotion.json'), '{')
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '8:8'
+      })
+
+      expect(codes(result)).toEqual(['identity-uncertain'])
+    })
+
+    it('should find the registry above a mapping root pointed at a subdirectory', async () => {
+      const { mappingRoot } = await library({ mappings: {} })
+      const sub = path.join(mappingRoot, 'Button')
+      await mkdir(sub)
+      await writeFile(path.join(sub, 'Button.figma.ts'), mappingSource())
+      await writeFile(
+        path.join(mappingRoot, 'promotion.json'),
+        JSON.stringify({ components: [{ name: 'Button', limits }] })
+      )
+
+      const result = await resolveComponent(context(sub, { figmaSets: [] }), { nodeId: '1:1' })
+
+      expect(result.ok && result.resolved.limits).toEqual(limits)
+    })
+
+    // The nearest false positive: a registry outside the library package is not the library's.
+    it('should not read a registry outside the library package', async () => {
+      // The package sits inside its own temporary directory, which holds the outside registry.
+      const outer = await mkdtemp(path.join(tmpdir(), 'dcl-figma-outer-'))
+      created.push(outer)
+      const { root } = await library()
+      const pkg = path.join(outer, 'pkg')
+      await rename(root, pkg)
+      await writeFile(path.join(outer, 'promotion.json'), '{')
+
+      const result = await resolveComponent(context(path.join(pkg, 'src')), { nodeId: '1:1' })
+
+      expect(result.ok && result.resolved.limits).toEqual([])
+    })
+
+    // The nearest false positive: the same outside registry is read once it is inside the package.
+    it('should read that registry once it is inside the package', async () => {
+      const { root, mappingRoot } = await library()
+      await writeFile(path.join(root, 'promotion.json'), '{')
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '1:1' })
+
+      expect(!result.ok && result.errors[0]!.message).toContain('promotion.json is not JSON')
+    })
+
+    it('should not quote the input of a registry that is not JSON', async () => {
+      const { mappingRoot } = await library()
+      await writeFile(path.join(mappingRoot, 'promotion.json'), '{"components": [ see https://x')
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '1:1' })
+
+      expect(!result.ok && result.errors[0]!.message).toMatch(/promotion\.json is not JSON\.$/)
+      expect(JSON.stringify(result)).not.toContain('https://x')
+    })
+
+    it('should refuse a registry that names a component twice instead of keeping the later limits', async () => {
+      const { mappingRoot } = await library()
+      await writeFile(
+        path.join(mappingRoot, 'promotion.json'),
+        JSON.stringify({
+          components: [
+            { name: 'Button', limits: [{ id: 'a', text: 'First.' }] },
+            { name: 'Button', limits: [{ id: 'b', text: 'Second.' }] }
+          ]
+        })
+      )
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '1:1' })
+
+      expect(codes(result)).toEqual(['contract-incompatible'])
+      expect(!result.ok && result.errors[0]!.message).toContain(
+        'Duplicate component registry name: Button'
+      )
+    })
+  })
+
   describe('when no mapping source is configured', () => {
     it('should report mapping-root-not-configured', async () => {
       const result = await resolveComponent({ figmaSets: [] }, { nodeId: '1:1' })
@@ -277,6 +1131,53 @@ describe('checkMappings', () => {
       expect(results[0]!.diagnostics.map((d) => d.code)).toContain('identity-not-found')
     })
   })
+  describe('when two mappings collide', () => {
+    it.each([
+      [
+        'on the Figma node',
+        { 'Copy.figma.ts': mappingSource({ id: 'copy' }) },
+        { reason: 'duplicate-node', nodeId: '1:1' },
+        /one mapping per component set/
+      ],
+      [
+        'on the template id',
+        { 'Copy.figma.ts': mappingSource({ nodeId: '1-9' }) },
+        { reason: 'duplicate-id', id: 'button' },
+        /its own id/
+      ]
+    ])(
+      'should report %s with both files and a maintainer action',
+      async (_l, extra, details, action) => {
+        const { mappingRoot } = await library({
+          mappings: { 'Button.figma.ts': mappingSource(), ...extra }
+        })
+
+        const results = await checkMappings(context(mappingRoot, { figmaSets: [] }))
+        const found = results
+          .flatMap((r) => r.diagnostics)
+          .find((d) => d.code === 'identity-ambiguous')!
+
+        expect(found.details).toMatchObject({
+          ...details,
+          files: ['src/Button.figma.ts', 'src/Copy.figma.ts']
+        })
+        expect(found.action).toMatch(action)
+      }
+    )
+
+    it('should give a mapping outside the capture the maintainer action', async () => {
+      const { mappingRoot } = await library({
+        mappings: { 'Button.figma.ts': mappingSource({ nodeId: '9-9' }) }
+      })
+
+      const [result] = await checkMappings(context(mappingRoot))
+      const found = result!.diagnostics.find((d) => d.code === 'identity-not-found')!
+
+      expect(found.details).toMatchObject({ reason: 'mapping-node', file: 'src/Button.figma.ts' })
+      expect(found.action).toMatch(/Point the mapping at the captured component set/)
+    })
+  })
+
   describe('when a ready page under sync generates a component with the hand-written name', () => {
     it('should report the hand-written mapping as superseded instead of failing on its old node', async () => {
       const { mappingRoot } = await library({
