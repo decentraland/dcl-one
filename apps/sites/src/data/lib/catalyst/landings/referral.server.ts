@@ -3,12 +3,12 @@ import path from "node:path";
 
 import {
   fetchReferrerProfile,
-  referrerFromParam,
+  referrerFromAddress,
+  resolveReferrerAddress,
   ReferralStateSchema,
   type ReferrerVM,
   type ReferralState,
 } from "./referral";
-import { ETH_ADDRESS_RE } from "../format/address";
 
 const FIXTURE = path.join(
   process.cwd(),
@@ -65,19 +65,10 @@ export async function loadInviteReferral(
   const fx = readFixture();
   const param = referrerParam.trim();
 
-  let referrer: ReferrerVM;
-  if (param && ETH_ADDRESS_RE.test(param)) {
-    try {
-      const resolved = await fetchReferrerProfile(param, { signal });
-      referrer = resolved ?? referrerFromParam(param);
-    } catch {
-      referrer = referrerFromParam(param);
-    }
-  } else if (param) {
-    referrer = referrerFromParam(param);
-  } else {
-    referrer = referrerFromParam("");
-  }
+  const address = await resolveReferrerAddress(param, { signal });
+  const referrer = address
+    ? await fetchReferrerProfile(address, { signal }).catch(() => referrerFromAddress(address))
+    : referrerFromAddress(null);
 
   return {
     referrer,

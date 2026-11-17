@@ -39,7 +39,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 2. What's On and discovery (places, events, map);
 3. `/play`: Explorer (`rendering/bevy-explorer`), HUD (`apps/ui3/src/play`), desktop packaging (`apps/bevy-explorer`);
 4. `/shop`: Marketplace and Store merged;
-5. `/create`: Creator Hub, web and the desktop workspace `apps/creator-hub` (Electron app, `@dcl/inspector`, `@dcl/asset-packs`);
+5. `/create`: creators landing; `/create/home`, `/create/*`: Creator Hub, web and the desktop workspace `apps/creator-hub` (Electron app, `@dcl/inspector`, `@dcl/asset-packs`);
 6. `apps/dcl-scene-cli`: the `@dcl/sdk-commands` rewrite;
 7. `/docs`: the docs.decentraland.org rewrite;
 8. page-coherence scripts (`apps/sites/scripts`);
@@ -54,6 +54,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 - Check the current readiness evidence before claiming deployment or compatibility; missing evidence means the claim remains unverified.
 - Write PR descriptions per `.github/PULL_REQUEST_TEMPLATE.md`.
 - For schema, SQL, ingestion, mirrors or caches, apply `DATABASE.md`; state workload and invariants before choosing tables or indexes.
+- A change to a `schemas/` table that a step of the TS import (`tooling/migration/`) writes or reads (its `source.toml` `targets` and load SQL) updates that step's load SQL, `MAPPING.md` and tests in the same change.
 - Record measured performance changes in the task report; follow-ups are candidates until measured.
 - Preserve wire, authorization and crash/resume contracts.
 - Never reset an existing database to fit a changed schema.

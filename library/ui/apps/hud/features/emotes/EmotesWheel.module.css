@@ -1,4 +1,5 @@
-/* Radial emotes wheel — 10 EmoteSlot cards in a ring; floats over the world, HUD-scaled. */
+/* Radial emotes wheel — 10 EmoteSlot cards in a ring; floats over the world, HUD-scaled. The
+   backdrop paints nothing: it only takes the click that closes the wheel. */
 .backdrop {
   position: fixed;
   inset: 0;
@@ -6,15 +7,23 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.15);
 }
 
 .wheel {
   position: relative;
-  width: 430px;
-  height: 430px;
+  width: 514px;
+  height: 514px;
   font-family: var(--font-family);
   transform: scale(var(--ui-scale));
+}
+/* The dark plate under the cards: it fills the hole and shows between the cards to their rim. */
+.wheel::before {
+  content: '';
+  position: absolute;
+  inset: 7px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(0, 0, 0, 0.753) 94%, rgba(0, 0, 0, 0.26) 97%, transparent);
+  pointer-events: none;
 }
 
 /* Each slot card positioned at its angle; content stays upright (EmoteSlot rotate). */
@@ -34,64 +43,74 @@
   cursor: default;
 }
 
-/* Centre label — over the hole, shows the hovered emote + hints. */
+/* Centre label, over the hole: EMOTES sits just above the wheel's centre, Customise just below it
+   and the hint under that; the hovered emote's name goes above the title. */
 .center {
   position: absolute;
   left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 170px;
+  top: calc(50% - 19px);
+  transform: translateX(-50%);
+  width: 200px;
   text-align: center;
   color: var(--text);
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
   pointer-events: none;
 }
 .hoverName {
-  min-height: 22px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
   font-size: 18px;
   font-weight: 700;
-  margin-bottom: 10px;
 }
 .title {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  line-height: 20px;
 }
 .customise {
-  margin-bottom: 10px;
-  padding: 4px 12px;
+  display: block;
+  margin: 0 auto;
+  padding: 0 12px;
   border: none;
   border-radius: var(--r-pill);
   background: transparent;
   font-family: inherit;
   font-size: 13px;
   font-weight: 600;
-  color: var(--ink-7);
+  line-height: 18px;
+  color: var(--text);
   cursor: pointer;
-  transition: color var(--dur-fast) ease, background-color var(--dur-fast) ease;
+  pointer-events: auto;
+  transition: background-color var(--dur-fast) ease;
 }
 .customise:hover {
-  color: var(--text);
   background: var(--white-10);
 }
 .hint {
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--ink-6);
+  margin: 20px auto 0;
+  max-width: 190px;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 15px;
+  color: var(--text);
+}
+.hint b {
+  font-weight: 800;
 }
 
 .close {
   position: absolute;
-  right: -36px;
-  top: 8px;
+  left: 448px;
+  top: 56px;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   border: none;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.6);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.85);
   color: var(--text);
   font-size: 20px;
   line-height: 1;

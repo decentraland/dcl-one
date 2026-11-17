@@ -106,17 +106,21 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('cache-on-failure: true', cache)
         self.assertLess(rust.index('Put the Nix Rust toolchain on PATH'), rust.index('Swatinem/rust-cache@'))
         self.assertLess(rust.index('Swatinem/rust-cache@'), rust.index('bash tooling/dev-test.sh rust'))
-        # The compiler cache: optional, pinned, and on only when the dependency cache hit its exact key
-        # and the server started, so it holds what that entry does not and a failure of the cache does
-        # not fail the tests. The wrapper is set in the test script only, because the dependency cache
-        # key hashes the job environment.
+        # The compiler cache: optional, pinned, and on only when the dependency cache restored an entry
+        # (exact or partial key) and the server started, so it holds what that entry does not and a
+        # failure of the cache does not fail the tests. The wrapper is set in the test script only,
+        # because the dependency cache key hashes the job environment.
         self.assertIn('        id: deps\n        uses: Swatinem/rust-cache@', rust)
         tool = re.search(r'(?ms)^      - name: Install the optional compiler cache\n(.*?)(?=^      - |\Z)', rust).group(1)
         self.assertIn('continue-on-error: true', tool)
         self.assertRegex(tool, r'uses: Mozilla-Actions/sccache-action@[0-9a-f]{40} # v')
         self.assertNotRegex(rust, r'(?m)^ +RUSTC_WRAPPER: ')
         tests = re.search(r'(?ms)^      - name: Run backend tests with PostgreSQL and isolated NATS\n(.*?)(?=^      - |\Z)', rust).group(1)
-        self.assertIn("USE_COMPILER_CACHE: ${{ steps.deps.outputs.cache-hit == 'true' && steps.compiler-cache.outcome == 'success' }}", tests)
+        restored = re.search(r'(?ms)^      - name: Check whether the dependency cache restored an entry\n(.*?)(?=^      - |\Z)', rust).group(1)
+        self.assertIn('id: deps-restored', restored)
+        self.assertIn('[ -d services/catalyst/target/debug/deps ]', restored)
+        self.assertLess(rust.index('Swatinem/rust-cache@'), rust.index('id: deps-restored'))
+        self.assertIn("USE_COMPILER_CACHE: ${{ steps.deps-restored.outputs.restored == 'true' && steps.compiler-cache.outcome == 'success' }}", tests)
         self.assertIn('if [ "$USE_COMPILER_CACHE" = true ] && sccache --start-server; then\n            export RUSTC_WRAPPER=sccache\n', tests)
         self.assertEqual(tests.count('RUSTC_WRAPPER=sccache'), 1)
         self.assertLess(tests.index('export RUSTC_WRAPPER=sccache'), tests.index('bash tooling/dev-test.sh rust'))
@@ -324,6 +328,11 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             {'id': 17, 'ref': 'refs/pull/11/merge', 'key': bevy + 'old'},
             {'id': 18, 'ref': 'refs/pull/11/merge', 'key': bevy + 'new'},
             {'id': 19, 'ref': 'refs/heads/main', 'key': 'v0-rust-e2e-scene-cli-scene-cli-Windows_NT-x64-only'},
+            {'id': 20, 'ref': 'refs/heads/main', 'key': 'bevy-web-unopt-v1-main-' + 'a' * 64 + '-' + '1' * 64},
+            {'id': 21, 'ref': 'refs/heads/main', 'key': 'bevy-web-unopt-v1-main-' + 'b' * 64 + '-' + '2' * 64},
+            {'id': 22, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
+            {'id': 23, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'c' * 64},
+            {'id': 24, 'ref': 'refs/pull/10/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
         ]
         def api(args, **kwargs):
             if any(arg.endswith('/actions/caches') for arg in args):
@@ -346,6 +355,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             'repos/decentraland/dcl-one/actions/caches/12',
             'repos/decentraland/dcl-one/actions/caches/15',
             'repos/decentraland/dcl-one/actions/caches/17',
+            'repos/decentraland/dcl-one/actions/caches/20',
+            'repos/decentraland/dcl-one/actions/caches/22',
+            'repos/decentraland/dcl-one/actions/caches/24',
         ])
         self.assertEqual(listing.call_count, 3, 'one state lookup per PR, regardless of cache count')
 

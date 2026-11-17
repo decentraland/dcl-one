@@ -9,21 +9,25 @@ import { useSession } from '../session/SessionContext'
 import { requestPassport, useProfile } from '../session/profileStore'
 import { relationshipOf } from '@explorer-core/lib/relationship'
 import { openNameEdit } from './NameEditModal'
-import { ProfilePassport } from './ProfilePassport'
+import { ProfilePassport, type PassportTab } from './ProfilePassport'
 import type { Profile } from '@explorer-core/engine/protocol'
 import { splitName, userColor } from '@explorer-core/lib/identity'
 import { hexToColor3 } from '@explorer-core/lib/color'
 import { confirmBlock, confirmUnblock, confirmUnfriend, reportUser } from '../friends/friendDialogs'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
 import { startCallWith } from '../voiceChat/callGate'
+import { canJumpToFriend, jumpToFriend } from '../friends/jumpToFriend'
 
 export function Passport({
   userId,
   onClose,
   onDirtyChange,
-  discarded
+  discarded,
+  initialTab
 }: {
   userId: string
+  /** The tab the passport opens on; Overview without it. */
+  initialTab?: PassportTab
   onClose: () => void
   onDirtyChange?: (dirty: boolean) => void
   /** Set when the player closed with "Discard": the name colour is dropped with the form edits. */
@@ -83,6 +87,7 @@ export function Passport({
     <ProfilePassport
       profile={profile}
       isSelf={isSelf}
+      initialTab={initialTab}
       onDirtyChange={onDirtyChange}
       editing={
         isSelf && session.profile.data != null
@@ -113,6 +118,11 @@ export function Passport({
       onUnblock={() => void confirmUnblock(splitName(friendUser.name).base).then((ok) => ok && session.friends.act('unblock', userId))}
       onBlock={() => void confirmBlock(splitName(friendUser.name).base).then((ok) => ok && session.friends.act('block', userId))}
       onReport={() => void reportUser(session.profile.data?.address, userId)}
+      onJump={
+        !isSelf && canJumpToFriend(session.friends, userId)
+          ? (a) => void jumpToFriend(session.map, a).then((to) => to != null && onClose())
+          : undefined
+      }
       inviteItems={inviteItems}
       onClose={onClose}
       photoActions={{
@@ -121,8 +131,10 @@ export function Passport({
         metas: session.gallery.metas,
         loadPhoto: session.gallery.loadPhoto,
         onTeleport: (x, y) => {
+          // A refused Jump In leaves the passport and its photo open.
+          if (session.map.teleport(x, y) === 'refused') return false
           onClose()
-          session.map.teleport(x, y)
+          return true
         },
         onViewPerson: (u) => openPassport(u.address)
       }}
@@ -130,8 +142,8 @@ export function Passport({
   )
 }
 
-/** Open a user's full-screen passport as a popup. */
-export function openPassport(userId: string): () => void {
+/** Open a user's full-screen passport as a popup, on `tab` when given. */
+export function openPassport(userId: string, tab?: PassportTab): () => void {
   // Unsaved edits, kept current by the passport. A stray click on the scrim is refused outright;
   // a deliberate close — the ×, or the Escape/Cancel action, which the popup layer routes through
   // the same guard — asks first.
@@ -142,6 +154,7 @@ export function openPassport(userId: string): () => void {
     (close) => (
       <Passport
         userId={userId}
+        initialTab={tab}
         onClose={close}
         discarded={discarded}
         onDirtyChange={(d) => {

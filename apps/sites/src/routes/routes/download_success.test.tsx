@@ -16,8 +16,10 @@ vi.hoisted(() =>
 );
 
 function data(search = "") {
+  const selection = installerSelection(new URLSearchParams(search));
   return {
-    ...installerSelection(new URLSearchParams(search)),
+    ...selection,
+    url: `https://explorer-artifacts.decentraland.org/launcher-rust/Decentraland_installer.${selection.os === "windows" ? "exe" : "dmg"}`,
     locale:
       new URLSearchParams(search).get("lang") === "es"
         ? ("es" as const)

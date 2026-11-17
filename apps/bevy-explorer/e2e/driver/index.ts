@@ -12,7 +12,7 @@ export { serveRealm, buildScene, buildPreviewWearable, previewWearablesDocument,
 export { PACKAGE_ROOT, REPO_ROOT, SCENES_DIR, REFERENCES_DIR, REPORT_DIR } from './paths.ts'
 export { decodePng, encodePng, type Image } from './png.ts'
 export { compareImages, comparePng, type Comparison } from './compare.ts'
-export { openSession, openExplorer, closeSession, closeSessions, enterWorld, signIn } from './session.ts'
+export { openSession, openExplorer, closeSession, closeSessions, enterWorld, signIn, type OpenOptions } from './session.ts'
 export { scenario, spec, closeToRest, type ScenarioContext, type ScenarioOptions } from './harness.ts'
 export { ScenarioReport } from './report.ts'
 export { serveGatekeeperStub, sharedGatekeeperStub, closeGatekeeperStubs, bannedReply, refusal, NOT_BANNED, type GatekeeperStub, type StubReply } from './gatekeeper-stub.ts'

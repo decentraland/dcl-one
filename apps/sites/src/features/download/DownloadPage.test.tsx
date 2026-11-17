@@ -30,12 +30,14 @@ describe("DownloadPage", () => {
         osName: "Windows",
         href: "https://explorer-artifacts.decentraland.org/launcher-rust/Decentraland_installer.exe",
       },
-      alternatives: [
-        {
-          icon: "macos",
-          label: "Download for macOS",
-          href: "https://explorer-artifacts.decentraland.org/launcher-rust/Decentraland_installer.dmg",
-        },
+      alternativeGroups: [
+        [
+          {
+            icon: "macos",
+            label: "Download for macOS",
+            href: "https://explorer-artifacts.decentraland.org/launcher-rust/Decentraland_installer.dmg",
+          },
+        ],
       ],
       downloads: "Total Downloads: +438K",
     };

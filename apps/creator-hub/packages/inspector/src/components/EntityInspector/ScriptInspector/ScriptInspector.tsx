@@ -13,7 +13,7 @@ import { useAppDispatch, useAppSelector } from '../../../redux/hooks';
 import { getDataLayerInterface, importAsset } from '../../../redux/data-layer';
 import { selectAssetCatalog } from '../../../redux/app';
 import { retry } from '../../../lib/utils/retry';
-import { isMissingScriptFile } from '../../../lib/utils/script-files';
+import { isMissingSceneFile, isMissingScriptFile } from '../../../lib/utils/script-files';
 import { analytics, Event } from '../../../lib/logic/analytics';
 import { getScriptParams, mergeLayout, parseLayout } from '../../../lib/sdk/script-params';
 import { Container } from '../../Container';
@@ -133,7 +133,9 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
     (scriptPath: string, param: ScriptParamUnion) =>
       sceneFiles &&
       param.type === 'string' &&
-      isMissingScriptFile(scriptPath, param.value, sceneFiles)
+      (param.format && param.format !== 'wallet'
+        ? isMissingSceneFile(param.value, sceneFiles)
+        : isMissingScriptFile(scriptPath, param.value, sceneFiles))
         ? `"${param.value}" is missing`
         : undefined,
     [sceneFiles],
@@ -425,6 +427,7 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
       if (!layout) return null;
       const paramsEntries = Object.entries(layout.params);
       if (paramsEntries.length === 0) return null;
+      const values = Object.fromEntries(paramsEntries.map(([name, param]) => [name, param.value]));
 
       return (
         <Container
@@ -438,6 +441,7 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
                 key={name}
                 name={name}
                 param={param}
+                siblings={values}
                 getError={leaf => getMissingFileError(scripts[index].path, leaf)}
                 onUpdate={update => handleUpdateDynamicField(index, name, update)}
               />

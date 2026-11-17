@@ -22,6 +22,7 @@ export type ScriptParamUnion =
   | ScriptParamBoolean
   | ScriptParamString
   | ScriptParamEnum
+  | ScriptParamColor
   | ScriptParamEntity
   | ScriptParamAction
   | ScriptParamObject
@@ -30,6 +31,9 @@ export type ScriptParamUnion =
 export type ScriptParam = {
   optional?: boolean;
   tooltip?: string;
+  // `@enabledIf <key>` / `@enabledIf !<key>`: the field is greyed out and locked unless the
+  // sibling field `<key>` is on (or off, with `!`). The script still receives its value.
+  enabledIf?: string;
 };
 
 export type ScriptParamNumber = ScriptParam & {
@@ -56,9 +60,13 @@ export type ScriptParamString = ScriptParam & {
   // `@actionsOf <key>`: the value names one of the actions on the entity held by the sibling
   // field `<key>` of the same object, so the editor offers that entity's actions.
   actionsOf?: string;
-  // `@format wallet`: the value is an Ethereum address.
-  format?: 'wallet';
+  // `@format wallet`: the value is an Ethereum address. `@format image` (or audio, video, model):
+  // the value is the path of a scene file of that kind, picked with the file field.
+  format?: ScriptStringFormat;
 };
+
+export type ScriptFileFormat = 'image' | 'audio' | 'video' | 'model';
+export type ScriptStringFormat = 'wallet' | ScriptFileFormat;
 
 // A string-literal union in the constructor (e.g. `shape: 'box' | 'sphere'`) becomes a
 // dropdown. `options` come from the parsed type; `value` is the current choice.
@@ -66,6 +74,16 @@ export type ScriptParamEnum = ScriptParam & {
   type: 'enum';
   value: string;
   options: string[];
+};
+
+export type ScriptColor = { r: number; g: number; b: number; a?: number };
+
+// A `Color3` or `Color4` param, edited with the same picker as the Material colours. `value` is
+// the plain `{ r, g, b }` (plus `a` for a Color4) the constructor receives, so it already is a
+// Color3/Color4 at runtime. The picker is RGB-only: a Color4 keeps the alpha it was declared with.
+export type ScriptParamColor = ScriptParam & {
+  type: 'color';
+  value: ScriptColor;
 };
 
 export type ScriptParamEntity = ScriptParam & {

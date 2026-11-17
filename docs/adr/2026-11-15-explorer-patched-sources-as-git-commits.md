@@ -1,6 +1,6 @@
 # ADR: The Explorer's patched sources are git commits in this repository
 
-- Status: Accepted
+- Status: Accepted; superseded in part by [2026-11-17](2026-11-17-explorer-patched-sources-published-by-ci.md)
 - Date: 2026-11-15
 - Supersedes in part: [The Explorer's Bevy and forked crates are an upstream commit plus patches](2026-11-14-explorer-sources-as-patches.md)
 
