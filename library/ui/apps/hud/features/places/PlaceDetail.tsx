@@ -175,7 +175,7 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
 
   const worldName = place.world_name ?? ''
   const communityKey = communityIds.join(',')
-  // a re-check for the communities keeps the verdict until it answers
+  // a re-check for the communities keeps the verdict until it answers, and when it cannot tell
   const checkedFor = useRef<string | null>(null)
   useEffect(() => {
     if (!world) return
@@ -186,7 +186,10 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
     }
     const ctrl = new AbortController()
     const communities = !communitiesLoaded ? null : communityKey === '' ? [] : communityKey.split(',')
-    fetchWorldAccess(worldName, wallet, communities, ctrl.signal).then(setAccess, () => undefined)
+    fetchWorldAccess(worldName, wallet, communities, ctrl.signal).then(
+      (a) => setAccess((prev) => (a === 'failed' && prev !== 'checking' ? prev : a)),
+      () => undefined
+    )
     return () => ctrl.abort()
   }, [world, worldName, wallet, communityKey, communitiesLoaded])
 

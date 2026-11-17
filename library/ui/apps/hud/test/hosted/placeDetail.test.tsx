@@ -254,6 +254,25 @@ describe('place detail', () => {
     expect(screen.queryByRole('button', { name: 'Jump in to Party World' })).toBeNull()
   })
 
+  it('keeps the verdict when the re-check for the communities cannot tell', async () => {
+    const session = fakeSession()
+    session.lobbyData.communitiesLoaded = false
+    vi.mocked(fetchWorldAccess).mockResolvedValueOnce('denied').mockResolvedValueOnce('failed')
+    const view = (s: EngineSession): React.JSX.Element => (
+      <SessionProvider value={s}>
+        <PopupHost />
+      </SessionProvider>
+    )
+    const { rerender } = render(view(session))
+    act(() => openPlaceDetail({ place: WORLD, onJumpIn: () => true }))
+    expect(await screen.findByText('INVITE ONLY')).toBeInTheDocument()
+    rerender(view({ ...session, lobbyData: { ...session.lobbyData, communitiesLoaded: true } }))
+    await waitFor(() => expect(fetchWorldAccess).toHaveBeenCalledTimes(2))
+    await act(async () => undefined)
+    expect(screen.getByText('INVITE ONLY')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Jump in to Party World' })).toBeNull()
+  })
+
   it("holds a world's Jump in until its access is known, then follows it", async () => {
     let answer: (access: 'denied') => void = () => undefined
     vi.mocked(fetchWorldAccess).mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))

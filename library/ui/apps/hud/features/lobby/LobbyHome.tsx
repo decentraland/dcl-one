@@ -250,20 +250,28 @@ export function LobbyHome({
   const onlineByAddress = useMemo(() => new Map(online.map((f) => [f.address.toLowerCase(), f])), [online])
 
   const busy = session.login.busy
-  // moves on with every pick, lookup, modal opened over the lobby and on unmount: a lookup
-  // answering later neither travels nor reports a failure
+  const busyRef = useRef(busy)
+  busyRef.current = busy
+  // moves on with every pick, lookup, modal or page opened over the lobby and on unmount: a
+  // lookup answering later neither travels nor reports a failure
   const travels = useRef(0)
   const moveOn = (): void => void travels.current++
   useEffect(() => () => void travels.current++, [])
+  const covered = session.lobbyData.covered
+  const wasCovered = useRef(covered)
+  useLayoutEffect(() => {
+    if (covered && !wasCovered.current) travels.current++
+    wasCovered.current = covered
+  }, [covered])
   /** False when the pick was refused (sign-in still finishing, or nowhere to go). */
   const pick = useCallback(
     (dest: Destination): boolean => {
       travels.current++
       const ok = onPick(dest)
-      if (!ok && busy) showToast(SIGNING_IN_PICK)
+      if (!ok && busyRef.current) showToast(SIGNING_IN_PICK)
       return ok
     },
-    [onPick, busy]
+    [onPick]
   )
   const afterLookup = <T,>(lookup: Promise<T>): Promise<T | typeof STALE> => {
     const seq = ++travels.current
@@ -622,7 +630,7 @@ export function LobbyHome({
           canvas={canvas}
           toCanvas={toCanvas}
           welcome={profile?.name ? `Welcome ${profile.name}!` : 'Welcome!'}
-          covered={session.lobbyData.covered}
+          covered={covered}
           onDone={(layout) => {
             if (layout != null) {
               saveLayout(layout)

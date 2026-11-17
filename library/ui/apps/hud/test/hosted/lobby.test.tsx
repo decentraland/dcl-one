@@ -292,6 +292,33 @@ describe('lobby widgets', () => {
     expect(screen.getByRole('dialog', { name: 'Map' })).toBeInTheDocument()
   })
 
+  it("does not travel when a friend's location answers after a page opened over the lobby from elsewhere", async () => {
+    const session = fakeSession()
+    session.friends.loading = false
+    session.friends.list = [{ address: '0xf1', name: 'Mojito', status: 'online' }]
+    let answer: (found: Map<string, { kind: 'genesis'; parcel: { x: number; y: number } }>) => void = () => undefined
+    vi.mocked(fetchWhereabouts)
+      .mockResolvedValueOnce(new Map([['0xf1', { kind: 'genesis', parcel: { x: 4, y: 5 } }]]))
+      .mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
+    const { rerender } = render(lobby(session, () => undefined))
+    fireEvent.click(await screen.findByRole('button', { name: 'Join Mojito' }))
+    await waitFor(() => expect(fetchWhereabouts).toHaveBeenCalledTimes(2))
+    rerender(lobby({ ...session, lobbyData: { ...session.lobbyData, covered: true } }, () => undefined))
+    await act(async () => answer(new Map([['0xf1', { kind: 'genesis', parcel: { x: 4, y: 5 } }]])))
+    expect(session.pickDestination).not.toHaveBeenCalled()
+  })
+
+  it('travels to a friend from a lobby that opened under a page already', async () => {
+    const session = fakeSession()
+    session.friends.loading = false
+    session.friends.list = [{ address: '0xf1', name: 'Mojito', status: 'online' }]
+    session.lobbyData = { ...session.lobbyData, covered: true }
+    vi.mocked(fetchWhereabouts).mockResolvedValue(new Map([['0xf1', { kind: 'genesis', parcel: { x: 4, y: 5 } }]]))
+    render(lobby(session, () => undefined))
+    fireEvent.click(await screen.findByRole('button', { name: 'Join Mojito' }))
+    await waitFor(() => expect(session.pickDestination).toHaveBeenCalledWith({ kind: 'parcel', x: 4, y: 5 }))
+  })
+
   it('lists live and upcoming events and marks one interested', async () => {
     const session = fakeSession()
     const soon = new Date(Date.now() + 40 * 60_000)
@@ -594,6 +621,38 @@ describe('lobby go to', () => {
     await act(async () => fail(new Error('down')))
     expect(screen.queryByText('The most crowded place could not be found. Please try again.')).toBeNull()
     expect(session.pickDestination).not.toHaveBeenCalled()
+  })
+
+  it('does not travel when a world answers after a page opened over the lobby from elsewhere', async () => {
+    const session = withGoTo()
+    let answer: (r: 'ok') => void = () => undefined
+    vi.mocked(worldReachable).mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
+    const { rerender } = render(lobby(session, () => undefined))
+    goTo('foo')
+    await waitFor(() => expect(worldReachable).toHaveBeenCalledOnce())
+    rerender(lobby({ ...session, lobbyData: { ...session.lobbyData, covered: true } }, () => undefined))
+    await act(async () => answer('ok'))
+    expect(session.pickDestination).not.toHaveBeenCalled()
+  })
+
+  it('says sign-in is finishing when a world answers after it started and the pick is refused', async () => {
+    const session = withGoTo()
+    vi.mocked(session.pickDestination).mockReturnValue(false)
+    let answer: (r: 'ok') => void = () => undefined
+    vi.mocked(worldReachable).mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
+    const view = (s: EngineSession): React.JSX.Element => (
+      <>
+        {lobby(s)}
+        <ToastHost />
+      </>
+    )
+    const { rerender } = render(view(session))
+    goTo('foo')
+    await waitFor(() => expect(worldReachable).toHaveBeenCalledOnce())
+    rerender(view({ ...session, login: { ...session.login, busy: true } }))
+    await act(async () => answer('ok'))
+    expect(session.pickDestination).toHaveBeenCalledOnce()
+    expect(await screen.findByText('Still signing in. Try again in a moment.')).toBeInTheDocument()
   })
 
   it('does not travel when the crowd answers after another pick', async () => {
