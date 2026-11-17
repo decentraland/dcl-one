@@ -90,59 +90,33 @@ function useCopyLink(href: string) {
   return { status, copy }
 }
 
-/** Remind me, Add to calendar and Copy link, as the public EventCard's actions. */
+/**
+ * The public EventCard's actions. A day card: Remind me (with its label), Add to calendar and Copy link
+ * at 20px. A small card: the same as icon-only 24px glyphs, or for a live event JUMP IN (when it has
+ * somewhere to go) and Copy link.
+ */
 function EventActions({
   title,
-  remind,
-  calendarHref,
-  onCopy
-}: Omit<ActionProps, 'href'> & { onCopy: () => void }) {
-  return (
-    <>
-      {remind ? (
-        <EventCardAction
-          aria-label={`Remind me: ${title}`}
-          aria-pressed={remind.active}
-          disabled={remind.pending}
-          icon={<GeneralBell size={20} aria-hidden="true" />}
-          label="Remind me"
-          onClick={remind.onToggle}
-        />
-      ) : null}
-      {calendarHref ? (
-        <EventCardActionLink
-          aria-label={`Add to calendar: ${title}`}
-          href={calendarHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          icon={<GeneralAddToCalendar size={20} aria-hidden="true" />}
-        />
-      ) : null}
-      <EventCardAction
-        aria-label={`Copy link: ${title}`}
-        icon={<GeneralCopy size={20} aria-hidden="true" />}
-        onClick={onCopy}
-      />
-    </>
-  )
-}
-
-/**
- * A small card's icon-only actions. Live: JUMP IN (when the event has somewhere to go) and Copy link.
- * Otherwise: Remind me, Add to calendar and Copy link.
- */
-function SmallActions({
-  title,
-  live,
+  size,
+  live = false,
   jumpIn,
   remind,
   calendarHref,
   onCopy
-}: Omit<ActionProps, 'href'> & { live: boolean; jumpIn?: JumpIn; onCopy: () => void }) {
+}: Omit<ActionProps, 'href'> & {
+  size: 'small' | 'day'
+  live?: boolean
+  jumpIn?: JumpIn
+  onCopy: () => void
+}) {
+  const small = size === 'small'
+  const glyph = small ? 24 : 20
+  const Reminder = small ? (remind?.active ? GeneralReminderOn : GeneralReminderOff) : GeneralBell
+  const Share = small ? MenusShare : GeneralCopy
   const share = (
     <EventCardAction
       aria-label={`Copy link: ${title}`}
-      icon={<MenusShare size={24} aria-hidden="true" />}
+      icon={<Share size={glyph} aria-hidden="true" />}
       onClick={onCopy}
     />
   )
@@ -160,7 +134,6 @@ function SmallActions({
         {share}
       </>
     )
-  const Reminder = remind?.active ? GeneralReminderOn : GeneralReminderOff
   return (
     <>
       {remind ? (
@@ -168,7 +141,8 @@ function SmallActions({
           aria-label={`Remind me: ${title}`}
           aria-pressed={remind.active}
           disabled={remind.pending}
-          icon={<Reminder size={24} aria-hidden="true" />}
+          icon={<Reminder size={glyph} aria-hidden="true" />}
+          label={small ? undefined : 'Remind me'}
           onClick={remind.onToggle}
         />
       ) : null}
@@ -178,7 +152,7 @@ function SmallActions({
           href={calendarHref}
           target="_blank"
           rel="noopener noreferrer"
-          icon={<GeneralAddToCalendar size={24} aria-hidden="true" />}
+          icon={<GeneralAddToCalendar size={glyph} aria-hidden="true" />}
         />
       ) : null}
       {share}
@@ -218,7 +192,8 @@ function UpcomingCard({
       players={live ? users : undefined}
       playersLabel={live ? usersLabel : undefined}
       actions={
-        <SmallActions
+        <EventActions
+          size="small"
           title={title}
           live={live}
           jumpIn={jumpIn}
@@ -263,6 +238,7 @@ function DayCard({
       actions={
         live ? undefined : (
           <EventActions
+            size="day"
             title={title}
             remind={remind}
             calendarHref={calendarHref}

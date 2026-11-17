@@ -77,10 +77,11 @@
     padding: var(--dcl-space-4) var(--dcl-space-16) var(--dcl-space-4) 18px;
   }
 
+  /* The cover stays a 135px square: a taller card (every row shown on a touch screen) centres it. */
   .small .media {
-    align-self: stretch;
+    align-self: center;
     width: 135px;
-    min-height: 135px;
+    height: 135px;
     border-radius: var(--dcl-radius-lg);
     background: var(--dcl-neutrals-gray);
   }
@@ -185,8 +186,6 @@
 
   /* Icon-only square actions (the design's button-icon): 44px to tap, 32px on a device that hovers. */
   .small .action {
-    width: 44px;
-    height: 44px;
     border-radius: var(--dcl-radius-sm);
     background: var(--dcl-transparencies-white-10);
     color: var(--dcl-neutrals-snow);

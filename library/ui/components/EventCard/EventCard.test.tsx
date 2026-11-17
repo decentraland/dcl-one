@@ -360,7 +360,8 @@ describe('EventCard motion', () => {
     expect(blockOf(css, '.actions')).not.toMatch(/opacity|transform|position/)
     expect(blockOf(css, '.footer')).toContain('flex-direction: column')
     expect(blockOf(css, '.action')).toMatch(/width: 44px;\s*height: 44px/)
-    expect(blockOf(css, '.small .action')).toMatch(/width: 44px;\s*height: 44px/)
+    expect(blockOf(css, '.small .action')).not.toMatch(/width|height/)
+    expect(blockOf(css, '.small .media')).toMatch(/width: 135px;\s*height: 135px/)
     // The small card's folding rows exist only for a device that hovers.
     expect(blockOf(css, '.small .body')).not.toMatch(/grid-template-rows/)
     expect(css.indexOf('.showOnHover {')).toBeGreaterThan(css.indexOf('@media (hover: hover)'))

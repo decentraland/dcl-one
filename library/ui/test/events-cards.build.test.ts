@@ -305,6 +305,17 @@ describe('when Events cards reveal their controls', () => {
     expect(state.hover).toBe(false)
     expect(state.visible).toBe('visible')
     expect(state.sizes).toEqual([44, 44, 44])
+    const layout = await evaluate<{
+      cover: number[]
+      card: number
+      host: string
+      hostShown: boolean
+    }>(
+      `(()=>{const card=document.querySelector(${JSON.stringify(UPCOMING)}),cover=card.querySelector('[class*="media"]').getBoundingClientRect(),host=card.querySelector('[class*="hideOnHover"]');return {cover:[cover.width,cover.height],card:card.getBoundingClientRect().height,host:getComputedStyle(host).opacity,hostShown:host.getBoundingClientRect().height>0}})()`
+    )
+    expect(layout.cover).toEqual([135, 135])
+    expect(layout.card).toBeGreaterThan(135)
+    expect(layout).toMatchObject({ host: '1', hostShown: true })
     expect(
       await evaluate(
         `getComputedStyle(document.querySelector(${JSON.stringify(UPCOMING)}).querySelector('[class*="smallTime"]')).opacity`
