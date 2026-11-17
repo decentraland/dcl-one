@@ -18,6 +18,8 @@ type DownloadRelease = {
 
 const RELEASES_LATEST_API = "https://api.github.com/repos/decentraland/creator-hub/releases/latest";
 const RELEASES_LATEST_PAGE = "https://github.com/decentraland/creator-hub/releases/latest";
+// The links are rendered as-is, so only this repository's release downloads are accepted.
+const RELEASE_DOWNLOAD_PREFIX = "https://github.com/decentraland/creator-hub/releases/download/";
 // Unauthenticated GitHub API calls allow 60 an hour per IP, so each node reads the release at most every 10 minutes.
 const RELEASE_TTL_MS = 10 * 60_000;
 // A failed read is held for a minute, so a GitHub outage or rate limit does not repeat for each request.
@@ -61,11 +63,12 @@ function parseRelease(body: unknown): DownloadRelease | null {
   const parsed = ReleaseSchema.safeParse(body);
   if (!parsed.success) return null;
   const options: Record<string, DownloadOption> = {};
+  // A release missing an installer would hand that system another one, so it counts as a failed read.
   for (const a of ASSETS) {
     const asset = parsed.data.assets.find((x) => a.match(x.name));
-    if (asset) options[a.key] = { ...a.option, fileName: asset.name, url: asset.browser_download_url };
+    if (!asset?.browser_download_url.startsWith(RELEASE_DOWNLOAD_PREFIX)) return null;
+    options[a.key] = { ...a.option, fileName: asset.name, url: asset.browser_download_url };
   }
-  if (Object.keys(options).length === 0) return null;
   return { version: parsed.data.tag_name, options };
 }
 

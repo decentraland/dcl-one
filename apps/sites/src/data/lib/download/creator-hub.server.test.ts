@@ -78,11 +78,49 @@ describe("the latest Creator Hub release", () => {
     expect(d.secondary.map((o) => o.url)).toEqual([RELEASES_PAGE]);
   });
 
-  it("does not ask again for a minute after a failed read", async () => {
+  it("asks again a minute after a failed read, not before", async () => {
     fetchMock.mockRejectedValueOnce(new Error("network"));
     await loadLatestRelease();
-    vi.advanceTimersByTime(30_000);
+    vi.advanceTimersByTime(59_000);
     await loadLatestRelease();
     expect(fetchMock).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(2_000);
+    answer(release("0.42.0"));
+    await loadLatestRelease();
+    await vi.waitFor(async () => expect((await loadLatestRelease()).version).toBe("0.42.0"));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps serving the cached release when a background refresh fails", async () => {
+    answer(release("0.42.0"));
+    await loadLatestRelease();
+    vi.advanceTimersByTime(11 * 60_000);
+    fetchMock.mockRejectedValueOnce(new Error("network"));
+    expect((await loadLatestRelease()).version).toBe("0.42.0");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await vi.advanceTimersByTimeAsync(61_000);
+    answer({ message: "API rate limit exceeded" }, 403);
+    expect((await loadLatestRelease()).version).toBe("0.42.0");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect((await loadLatestRelease()).version).toBe("0.42.0");
+  });
+
+  it("treats a release missing an installer as a failed read", async () => {
+    answer(release("0.42.0"));
+    await loadLatestRelease();
+    vi.advanceTimersByTime(21 * 60_000);
+    const partial = release("0.43.0");
+    answer({ ...partial, assets: partial.assets.filter((a) => !a.name.includes("mac-x64")) });
+    const r = await loadLatestRelease();
+    expect(r.version).toBe("0.42.0");
+    expect(r.options["macos-amd64"]?.fileName).toBe("Decentraland-Creator-Hub-0.42.0-mac-x64.dmg");
+  });
+
+  it("rejects an installer link outside the creator-hub releases", async () => {
+    const r = release("0.42.0");
+    r.assets[0] = { ...r.assets[0]!, browser_download_url: "https://example.com/Decentraland-Creator-Hub-0.42.0-mac-arm64.dmg" };
+    answer(r);
+    const d = resolveDownload(await loadLatestRelease(), null, { os: "macos", arch: "arm64" });
+    expect(d.primary.url).toBe(RELEASES_PAGE);
   });
 });
