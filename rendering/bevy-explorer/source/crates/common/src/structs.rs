@@ -289,6 +289,14 @@ pub struct EmoteCommand {
     pub mask: EmoteMask,
 }
 
+/// The local player triggered an emote: `source` is `self` (the HUD, the console) or `scene`,
+/// the `used_emote` source values.
+#[derive(Event, Clone, Debug)]
+pub struct PlayerEmoteTriggered {
+    pub urn: String,
+    pub source: &'static str,
+}
+
 /// A transition in an avatar's triggered-emote playback, reported to scenes as an
 /// `AvatarEmoteCommand` entry by `avatar::emote_report`. Raised by `comms` from the wire (in wire
 /// order, so client and server report the same sequence) and by the avatar animator from
@@ -1669,6 +1677,14 @@ pub enum MoveKind {
 #[derive(Component, Default)]
 pub struct AvatarDynamicState {
     pub velocity: Vec3,
+    /// Primary player only: the velocity a startup portable's controller (launch-time, console or
+    /// server-hosted, such as the default controller) gave the player this frame, after collisions
+    /// and without lifts or platforms, with movement input held; zero while a parcel scene, a
+    /// smart wearable or a scene-spawned portable drives, a suppression holds or a force pushes the
+    /// player.
+    pub own_velocity: Vec3,
+    /// `own_velocity` over this frame: the distance it moved the player.
+    pub own_displacement: Vec3,
     pub ground_height: f32,
     pub jump_time: f64,
     pub move_kind: MoveKind,

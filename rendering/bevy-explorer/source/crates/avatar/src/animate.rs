@@ -26,8 +26,8 @@ use common::{
     structs::{
         AudioEmitter, AudioType, AvatarDynamicState, EmoteCommand, EmoteLifecycle,
         EmoteLifecycleEvent, EmoteLifecycleSource, EmoteMask, MoveKind, OneShotAudio,
-        PlayerModifiers, PrimaryUser, SceneDrivenAnim, SceneDrivenAnimationFeedback,
-        SceneDrivenAnimationFeedbackState,
+        PlayerEmoteTriggered, PlayerModifiers, PrimaryUser, SceneDrivenAnim,
+        SceneDrivenAnimationFeedback, SceneDrivenAnimationFeedbackState, StartupScenes,
     },
     util::TryPushChildrenEx,
 };
@@ -154,6 +154,7 @@ pub struct AvatarAnimationPlugin;
 
 impl Plugin for AvatarAnimationPlugin {
     fn build(&self, app: &mut App) {
+        app.add_event::<PlayerEmoteTriggered>();
         app.add_systems(
             Update,
             (
@@ -245,10 +246,26 @@ fn handle_trigger_emotes(
     mut commands: Commands,
     mut emote_cmds: EventReader<RpcCallEvent>,
     player: Query<(Entity, Option<&EmoteCommand>), With<PrimaryUser>>,
-    mut perms: Permission<EmoteCommand>,
+    mut perms: Permission<(EmoteCommand, &'static str)>,
+    startup: Option<Res<StartupScenes>>,
+    mut triggered: EventWriter<PlayerEmoteTriggered>,
 ) {
     let Ok((player, maybe_prev)) = player.single() else {
         return;
+    };
+    // the HUD plays the player's own emotes through a super-user system scene
+    let source = |hash: &str| {
+        let system = startup.as_ref().is_some_and(|startup| {
+            startup
+                .scenes
+                .iter()
+                .any(|scene| scene.super_user && scene.hash.as_deref() == Some(hash))
+        });
+        if system {
+            "self"
+        } else {
+            "scene"
+        }
     };
     let timestamp = maybe_prev
         .map(|prev| prev.timestamp + 1)
@@ -258,25 +275,40 @@ fn handle_trigger_emotes(
         // a stop is an empty command; `animate` reports the interruption
         let (scene, command) = match (&ev.origin, &ev.call) {
             (
-                RpcOrigin::Scene { entity: scene, .. },
+                RpcOrigin::Scene {
+                    entity: scene,
+                    hash,
+                },
                 RpcCall::TriggerEmote { urn, r#loop, mask },
             ) => (
                 scene,
-                EmoteCommand {
-                    urn: urn.clone(),
-                    r#loop: *r#loop,
-                    timestamp,
-                    mask: *mask,
-                },
+                (
+                    EmoteCommand {
+                        urn: urn.clone(),
+                        r#loop: *r#loop,
+                        timestamp,
+                        mask: *mask,
+                    },
+                    source(hash),
+                ),
             ),
-            (RpcOrigin::Scene { entity: scene, .. }, RpcCall::StopEmote) => (
-                scene,
-                EmoteCommand {
-                    urn: String::new(),
-                    r#loop: false,
-                    timestamp,
-                    mask: EmoteMask::FullBody,
+            (
+                RpcOrigin::Scene {
+                    entity: scene,
+                    hash,
                 },
+                RpcCall::StopEmote,
+            ) => (
+                scene,
+                (
+                    EmoteCommand {
+                        urn: String::new(),
+                        r#loop: false,
+                        timestamp,
+                        mask: EmoteMask::FullBody,
+                    },
+                    source(hash),
+                ),
             ),
             _ => continue,
         };
@@ -289,8 +321,14 @@ fn handle_trigger_emotes(
         );
     }
 
-    for emote in perms.drain_success(common::structs::PermissionType::PlayEmote) {
-        commands.entity(player).try_insert(emote.clone());
+    for (emote, source) in perms.drain_success(common::structs::PermissionType::PlayEmote) {
+        if !emote.urn.is_empty() {
+            triggered.write(PlayerEmoteTriggered {
+                urn: emote.urn.clone(),
+                source,
+            });
+        }
+        commands.entity(player).try_insert(emote);
     }
 
     for _ in perms.drain_fail(common::structs::PermissionType::PlayEmote) {}
@@ -2142,6 +2180,7 @@ fn emote_console_command(
     mut input: ConsoleCommand<EmoteConsoleCommand>,
     player: Query<(Entity, Option<&EmoteCommand>), With<PrimaryUser>>,
     profile: Res<CurrentUserProfile>,
+    mut triggered: EventWriter<PlayerEmoteTriggered>,
 ) {
     if let Some(Ok(command)) = input.take() {
         if let Ok((player, maybe_prev)) = player.single() {
@@ -2160,6 +2199,10 @@ fn emote_console_command(
             info!("anim {} -> {}", command.urn, urn);
             let timestamp = maybe_prev.map(|p| p.timestamp + 1).unwrap_or_default();
 
+            triggered.write(PlayerEmoteTriggered {
+                urn: urn.clone(),
+                source: "self",
+            });
             commands.entity(player).try_insert(EmoteCommand {
                 urn: urn.clone(),
                 timestamp,

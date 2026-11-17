@@ -1,6 +1,10 @@
 use std::{borrow::Borrow, collections::VecDeque, num::ParseIntError, str::FromStr};
 
-use analytics::segment_system::SegmentConfig;
+use analytics::{
+    badges::ParcelTracker,
+    data_definition::{SegmentEvent, SegmentEventMoveToParcel},
+    segment_system::{SegmentConfig, SegmentMetricsEvents},
+};
 use bevy::{
     asset::{io::Reader, AssetLoader, LoadContext},
     diagnostic::FrameCount,
@@ -41,6 +45,7 @@ use ipfs::{
 };
 use scene_material::{BoundRegion, SceneBounds};
 use system_bridge::{LiveSceneInfo, SystemApi, SystemBridge};
+use wallet::Wallet;
 
 use super::{update_world::CrdtExtractors, LoadSceneEvent, PrimaryUser, SceneSets, SceneUpdates};
 use crate::{
@@ -111,6 +116,8 @@ impl Plugin for SceneLifecyclePlugin {
             )
                 .in_set(SceneSets::Init),
         );
+
+        app.add_systems(Update, report_move_to_parcel);
 
         app.add_systems(
             PostUpdate,
@@ -1255,6 +1262,39 @@ pub fn process_realm_change(
             segment_config.update_realm(realm.to_owned());
         }
     }
+}
+
+/// `move_to_parcel` for the node's badges: every parcel change of the player, with the scene the
+/// realm lists there, and the current parcel again after a login or realm change. Nothing while
+/// out of world (still at the old realm's parcel after a realm change), and a move made without a
+/// usable auth chain is sent from the last parcel sent once one is.
+fn report_move_to_parcel(
+    player: Query<&GlobalTransform, (With<PrimaryUser>, Without<OutOfWorld>)>,
+    pointers: Res<ScenePointers>,
+    config: Option<Res<SegmentConfig>>,
+    metrics: Option<ResMut<SegmentMetricsEvents>>,
+    wallet: Option<Res<Wallet>>,
+    mut tracker: Local<ParcelTracker>,
+) {
+    let (Some(config), Some(mut metrics), Ok(player)) = (config, metrics, player.single()) else {
+        return;
+    };
+    let parcel = vec3_to_parcel(player.translation());
+    let (address, realm) = (&config.common().dcl_eth_address, &config.common().realm);
+    let Some(old) = tracker.moved(address, realm, parcel) else {
+        return;
+    };
+    let Some(common) = wallet.and_then(|wallet| config.client_event_common(&wallet)) else {
+        return;
+    };
+    tracker.sent(address, realm, parcel);
+    let scene = pointers
+        .get(parcel)
+        .map(|pointer| pointer.hash_and_urn().map(|(hash, _)| hash));
+    metrics.add_event(
+        SegmentEvent::MoveToParcel(SegmentEventMoveToParcel::new(old, parcel, scene)),
+        &common,
+    );
 }
 
 #[allow(clippy::type_complexity)]

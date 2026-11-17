@@ -1,3 +1,4 @@
+pub mod badges;
 pub mod crash;
 pub mod data_definition;
 pub mod frame;
