@@ -298,7 +298,7 @@ impl Jobs {
     /// spawned with [`Jobs::spawn_scoped`] end with it. Cancellation does not
     /// interrupt the body: the job returns to standby only once the body
     /// returns, and another process may run the job meanwhile (see the module
-    /// docs on fencing). An `Err` releases the
+    /// docs on fencing). An `Err` or a panic releases the
     /// lease and retries after a backoff, so a fleet-wide job never stays
     /// dead while a process could run it; `Ok` finishes the job. Without
     /// leases the body runs once, as [`Jobs::spawn`] would run it.
@@ -335,7 +335,14 @@ impl Jobs {
                     trace: ctx.trace.clone(),
                     name: ctx.name.clone(),
                 };
-                let fut = body(run_ctx);
+                use futures::FutureExt;
+                let fut = std::panic::AssertUnwindSafe(async { body(run_ctx).await })
+                    .catch_unwind()
+                    .map(|outcome| {
+                        outcome.unwrap_or_else(|panic| {
+                            Err(anyhow::anyhow!("panic: {}", panic_message(panic.as_ref())))
+                        })
+                    });
                 tokio::pin!(fut);
                 let lost = guard.lost.clone();
                 let outcome = tokio::select! {
@@ -1598,6 +1605,47 @@ mod lease_tests {
                 .contains("first pass fails"),
             "{report:?}"
         );
+        let aborted = jobs.shutdown(Duration::from_secs(5)).await;
+        assert!(aborted.is_empty(), "{aborted:?}");
+    }
+
+    #[tokio::test]
+    async fn a_panicking_leased_body_releases_the_lease_and_retries_after_a_backoff() {
+        let Some(pool) = catalyst_db::scratch::pool(6).await else {
+            return;
+        };
+        let settings = settings("panic");
+        let jobs = Jobs::with_leases(pool.clone(), settings.clone());
+        let runs = Arc::new(AtomicUsize::new(0));
+        jobs.spawn_leased("panicky", {
+            let runs = runs.clone();
+            move |ctx: JobContext| {
+                let n = runs.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if n == 0 {
+                        panic!("first pass panics");
+                    }
+                    ctx.cancel.cancelled().await;
+                    Ok(())
+                }
+            }
+        });
+        wait_until("second run", || runs.load(Ordering::SeqCst) == 2).await;
+        let report = jobs
+            .report()
+            .into_iter()
+            .find(|j| j.name == "panicky")
+            .unwrap();
+        assert_eq!(report.state, JobState::Running);
+        assert!(
+            report
+                .last_error
+                .as_deref()
+                .unwrap_or("")
+                .contains("panic: first pass panics"),
+            "{report:?}"
+        );
+        assert_eq!(jobs.leases().unwrap().held(), vec!["panicky".to_string()]);
         let aborted = jobs.shutdown(Duration::from_secs(5)).await;
         assert!(aborted.is_empty(), "{aborted:?}");
     }
