@@ -30,15 +30,13 @@ export function headers(): Record<string, string> {
   };
 }
 
-// Instant branded first paint before the HUD bundle mounts (mirrors the upstream app.html).
+// Instant branded first paint before the HUD bundle mounts (mirrors the upstream app.html): the
+// splash, the animated logo on the purple vignette, which the HUD's own splash (StartupSplash) continues.
 const SPLASH_STYLE = `
-html, body { margin: 0; background: #54098a; }
-#play-boot-splash { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
-  justify-content: center; gap: 20px; font-family: system-ui, -apple-system, sans-serif; color: #fff;
-  background: radial-gradient(circle at 66% 38%, #b528d8 0%, #8016b8 44%, #54098a 100%); }
-#play-boot-splash img { width: 88px; height: 88px; animation: play-boot-pulse 1.6s ease-in-out infinite; }
-#play-boot-splash h1 { margin: 0; font-size: 1.5rem; font-weight: 600; letter-spacing: 0.01em; }
-@keyframes play-boot-pulse { 0%, 100% { transform: scale(1); opacity: .85; } 50% { transform: scale(1.08); opacity: 1; } }
+html, body { margin: 0; background: #4c0080; }
+#play-boot-splash { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(ellipse 100% 100% at 50% 50%, #bf00ff 16.7%, #4c0080 66.7%); }
+#play-boot-splash img { width: clamp(74.4px, min(6.458vw, 11.481vh), 161.2px); height: clamp(74.4px, min(6.458vw, 11.481vh), 161.2px); }
 `;
 
 export default function PlayApp() {
@@ -62,8 +60,7 @@ export default function PlayApp() {
       <style>{SPLASH_STYLE}</style>
       <div id="root" ref={root}>
         <div id="play-boot-splash">
-          <img src="/play/assets/logo.png" alt="" />
-          <h1>Decentraland</h1>
+          <img src="/play/assets/splash-logo.webp" alt="" />
         </div>
       </div>
     </>

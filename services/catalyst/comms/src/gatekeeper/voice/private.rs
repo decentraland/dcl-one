@@ -29,7 +29,7 @@ pub async fn private_messages_token(
     }
     let ip_address = get_request_ip(&headers);
     let device_id = device_identifier(&sf.metadata);
-    let record = crate::writes::side_refusal(switch).is_none();
+    let record = crate::writes::side_writes_on(switch);
     let upsert = async {
         if !record {
             return;

@@ -267,10 +267,12 @@ impl Settings {
 }
 
 /// The 503 message of an operator write while `OPS_WRITES_ENABLED` is off.
-pub const OPERATOR_WRITES_DISABLED: &str = "operator writes are disabled on this node (OPS_WRITES_ENABLED=false): a backup restore has to be demonstrated before this node accepts operator writes";
+pub const OPERATOR_WRITES_DISABLED: &str =
+    "operator writes are disabled on this node (OPS_WRITES_ENABLED=false)";
 
 /// The 503 message of a user write while `DATA_WRITES_ENABLED` is off.
-pub const USER_WRITES_DISABLED: &str = "explore writes are disabled on this node (DATA_WRITES_ENABLED=false): a backup restore has to be demonstrated before this node accepts user writes";
+pub const USER_WRITES_DISABLED: &str =
+    "explore writes are disabled on this node (DATA_WRITES_ENABLED=false)";
 
 pub struct ExploreState {
     pub pool: PgPool,
@@ -346,25 +348,21 @@ impl ExploreState {
         self
     }
 
-    /// A user write may proceed: `DATA_WRITES_ENABLED` is on and the
-    /// restore stamps vouch for this node.
+    /// A user write may proceed: `DATA_WRITES_ENABLED` is on.
     pub fn user_writes(&self) -> Result<(), ApiError> {
-        match crate::shared::writes::refusal(self.settings.user_writes_enabled) {
-            None => Ok(()),
-            Some(r) => Err(ApiError::WritesDisabled(
-                r.message("explore", USER_WRITES_DISABLED),
-            )),
+        if self.settings.user_writes_enabled {
+            Ok(())
+        } else {
+            Err(ApiError::WritesDisabled(USER_WRITES_DISABLED.into()))
         }
     }
 
-    /// An operator write may proceed: `OPS_WRITES_ENABLED` is on and the
-    /// restore stamps vouch for this node.
+    /// An operator write may proceed: `OPS_WRITES_ENABLED` is on.
     pub fn operator_writes(&self) -> Result<(), ApiError> {
-        match crate::shared::writes::ops_refusal(self.settings.operator_writes_enabled) {
-            None => Ok(()),
-            Some(r) => Err(ApiError::WritesDisabled(
-                r.message("operator", OPERATOR_WRITES_DISABLED),
-            )),
+        if self.settings.operator_writes_enabled {
+            Ok(())
+        } else {
+            Err(ApiError::WritesDisabled(OPERATOR_WRITES_DISABLED.into()))
         }
     }
 
@@ -1926,47 +1924,36 @@ mod tests {
         assert_eq!(h["access-control-allow-origin"], "https://example.com");
     }
 
-    /// The explore writes' two switches wait on the restore stamps too: a
-    /// stale drill stamp answers the 503 naming the stamp and its age.
+    /// Each explore switch alone decides its writes; off answers the 503
+    /// with the switch's message and a `Retry-After`.
     #[tokio::test]
-    async fn a_stale_restore_stamp_holds_explore_writes_and_names_it() {
-        use crate::shared::writes::restore::{
-            Stamp,
-            lab::{DAY, StampLab},
-            scoped,
-        };
+    async fn the_explore_switches_alone_decide_their_writes() {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://nobody@127.0.0.1:1/nowhere")
             .unwrap();
-        let state = ExploreState::new(
-            pool,
-            Settings {
-                user_writes_enabled: true,
-                operator_writes_enabled: true,
-                ..Settings::for_tests()
-            },
-            None,
-        );
-        let lab = StampLab::fresh();
-        scoped(lab.stamps.clone(), async {
-            assert!(state.user_writes().is_ok());
-            assert!(state.operator_writes().is_ok());
-            lab.write_aged(Stamp::Drill, 8 * DAY + DAY / 2);
-            let held = |r: Result<(), ApiError>| match r {
-                Err(ApiError::WritesDisabled(m)) => m.into_owned(),
-                other => panic!("{other:?}"),
-            };
-            assert_eq!(
-                held(state.user_writes()),
-                "explore writes are held on this node: the last passing restore drill (drill.json) is 8 d 12 h old, past WRITES_DRILL_MAX_AGE_DAYS=8"
-            );
-            assert!(
-                held(state.operator_writes()).starts_with("operator writes are held on this node: ")
-            );
-            let res = axum::response::IntoResponse::into_response(state.user_writes().unwrap_err());
-            assert_eq!(res.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
-            assert_eq!(res.headers()[axum::http::header::RETRY_AFTER], "3600");
-        })
-        .await;
+        let state = |on: bool| {
+            ExploreState::new(
+                pool.clone(),
+                Settings {
+                    user_writes_enabled: on,
+                    operator_writes_enabled: on,
+                    ..Settings::for_tests()
+                },
+                None,
+            )
+        };
+        let on = state(true);
+        assert!(on.user_writes().is_ok());
+        assert!(on.operator_writes().is_ok());
+        let off = state(false);
+        let refused = |r: Result<(), ApiError>| match r {
+            Err(ApiError::WritesDisabled(m)) => m.into_owned(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(refused(off.user_writes()), USER_WRITES_DISABLED);
+        assert_eq!(refused(off.operator_writes()), OPERATOR_WRITES_DISABLED);
+        let res = axum::response::IntoResponse::into_response(off.user_writes().unwrap_err());
+        assert_eq!(res.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(res.headers()[axum::http::header::RETRY_AFTER], "3600");
     }
 }

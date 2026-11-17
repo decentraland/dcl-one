@@ -38,9 +38,8 @@ pub enum ApiError {
     #[error("{0}")]
     Internal(String),
 
-    /// A write refused by the node's write switch (`explore::writes`), or
-    /// held by its restore stamps (`writes::refusal`): 503 with
-    /// `Retry-After`, the social switch's answer in this envelope.
+    /// A write refused by the node's write switch (`explore::writes`): 503
+    /// with `Retry-After`, the social switch's answer in this envelope.
     #[error("{0}")]
     WritesDisabled(std::borrow::Cow<'static, str>),
 }

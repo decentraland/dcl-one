@@ -1,4 +1,5 @@
-// Shared by the HUD and the bridge's nametags, so a name has one colour everywhere. No DOM imports.
+// The HUD's name colour. The engine derives the same one for its nametags (`name_color` in
+// `crates/comms/src/profile/name_color.rs`), so a name has one colour everywhere. No DOM imports.
 
 /** The reference client's name colour: an FNV-1a hue of the display name (letters and digits only,
  *  plus #last4 of the address when unclaimed) at 75% saturation, full value. */

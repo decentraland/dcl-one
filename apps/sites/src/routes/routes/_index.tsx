@@ -85,7 +85,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         <WhatsOn
           title="Jump Into What's Happening"
           labels={{ live: "LIVE", by: "by" }}
-          viewAll={{ label: "View all", href: "/whats-on" }}
+          viewAll={{ label: "View all", href: "/events" }}
           cards={(heroEventCards(content) ?? []).map((card) => ({
             id: card.id,
             title: card.title,

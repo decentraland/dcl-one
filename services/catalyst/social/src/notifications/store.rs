@@ -6,7 +6,7 @@
 //! `delivery.rs` drains. The time is always a bind parameter.
 
 use crate::shared::now_utc;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -17,9 +17,14 @@ use uuid::Uuid;
 use super::email::{EmailSource, make_code};
 use super::errors::ApiError;
 use super::seen::SeenDebounce;
-use super::templates;
 use super::types::{NotificationItem, Subscription, normalize_details};
 use crate::identity::Address;
+use crate::shared::notifications::UPSERT_TAIL;
+pub(crate) use crate::shared::notifications::details_flag;
+pub(super) use crate::shared::notifications::{DELIVERY_ROWS_SQL, insert_event_notifications};
+pub use crate::shared::notifications::{
+    NewNotification, insert_keyed_notification, insert_notifications,
+};
 
 pub fn ms_to_naive(ms: i64) -> Option<NaiveDateTime> {
     DateTime::<Utc>::from_timestamp_millis(ms).map(|t| t.naive_utc())
@@ -137,55 +142,6 @@ pub(super) fn uuid_or_null(text: &str) -> String {
     format!("CASE WHEN pg_input_is_valid({text}, 'uuid') THEN ({text})::uuid END")
 }
 
-/// The `details` flag at `path` (a `->` chain on `s.details`) when it is a JSON
-/// boolean, else `default`: a malformed flag never fails the statement.
-pub(crate) fn details_flag(path: &str, default: bool) -> String {
-    format!(
-        "COALESCE(CASE WHEN jsonb_typeof(s.details{path}) = 'boolean' THEN (s.details{path})::boolean END, {default})"
-    )
-}
-
-/// The `email` delivery row of every notification a CTE named `ins`
-/// (columns `id, address, type`) inserted: `pending` when the type has a
-/// template and the recipient can receive it, else `skipped` with the
-/// reason (pruned with the other terminal rows). A type absent from
-/// `message_type` emails, as the old `autoMigrate` defaults.
-pub(super) static DELIVERY_ROWS_SQL: LazyLock<String> = LazyLock::new(|| {
-    format!(
-        r#"
-    INSERT INTO social.notification_deliveries (notification_id, channel, state, last_error)
-    SELECT n.id, 'email',
-           CASE WHEN d.reason IS NULL THEN 'pending' ELSE 'skipped' END,
-           d.reason
-    FROM ins n
-    LEFT JOIN social.subscriptions s ON s.address = n.address
-    CROSS JOIN LATERAL (
-        SELECT CASE
-            WHEN n.type NOT IN ({}) THEN 'no email template'
-            WHEN s.email IS NULL THEN 'no confirmed email'
-            WHEN {} THEN 'ignore_all_email'
-            WHEN NOT {} THEN 'opted out of this type'
-        END AS reason
-    ) d
-    ON CONFLICT (notification_id, channel) DO NOTHING
-"#,
-        templates::EMAILABLE_SQL_LIST,
-        details_flag("->'ignore_all_email'", false),
-        details_flag("->'message_type'->n.type->'email'", true),
-    )
-});
-
-/// Follows an `ups` CTE (`id, address, type, inserted`): delivery rows for the
-/// new rows only, then the count of new rows.
-static UPSERT_TAIL: LazyLock<String> = LazyLock::new(|| {
-    format!(
-        "ins AS (SELECT id, address, type FROM ups WHERE inserted),
-        delivered AS ({})
-        SELECT count(*) FROM ins",
-        *DELIVERY_ROWS_SQL
-    )
-});
-
 /// A repeated broadcast key refreshes the wallet's row like upstream's upsert.
 const BROADCAST_REFRESH: &str =
     "ON CONFLICT (address, broadcast_key) WHERE broadcast_key IS NOT NULL DO UPDATE
@@ -203,154 +159,6 @@ type ListRow = (
     String,
     Json,
 );
-
-/// One notification a producer wants delivered. `id` is the producer's
-/// idempotency key (a v5 uuid over the event for replayable sources).
-#[derive(Debug, Clone)]
-pub struct NewNotification {
-    pub id: Uuid,
-    pub address: Address,
-    pub kind: String,
-    pub metadata: Json,
-    pub occurred_at: NaiveDateTime,
-}
-
-impl NewNotification {
-    pub fn now(address: Address, kind: &str, metadata: Json) -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            address,
-            kind: kind.to_string(),
-            metadata,
-            occurred_at: now_utc(),
-        }
-    }
-}
-
-/// Inserts the batch with its delivery rows in one statement; returns how
-/// many were new. A repeated id refreshes metadata and time and keeps the
-/// read state; only a new row gets a delivery row, so a repeat never emails.
-pub async fn insert_notifications<'e, E>(
-    executor: E,
-    batch: &[NewNotification],
-) -> Result<u64, sqlx::Error>
-where
-    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
-{
-    insert_batch(executor, batch, false).await
-}
-
-/// Event delivery opts into in-app preferences without silently changing the
-/// established behavior of other producers. Hidden rows are already read so
-/// they never enter the bell's partial unread index; email remains independent.
-pub(super) async fn insert_event_notifications<'e, E>(
-    executor: E,
-    batch: &[NewNotification],
-) -> Result<u64, sqlx::Error>
-where
-    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
-{
-    insert_batch(executor, batch, true).await
-}
-
-/// One notification deduplicated per `(address, broadcast_key)` (the
-/// source's event key) instead of its id, with its delivery row. A repeat of
-/// the same type refreshes metadata and time like [`insert_notifications`].
-pub async fn insert_keyed_notification<'e, E>(
-    executor: E,
-    broadcast_key: &str,
-    notification: &NewNotification,
-) -> Result<u64, sqlx::Error>
-where
-    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
-{
-    let sql = format!(
-        r#"
-        WITH ups AS (
-            INSERT INTO social.notifications AS t (id, address, type, metadata, broadcast_key, occurred_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (address, broadcast_key) WHERE broadcast_key IS NOT NULL DO UPDATE
-                SET metadata = EXCLUDED.metadata, occurred_at = EXCLUDED.occurred_at
-                WHERE t.type = EXCLUDED.type
-            RETURNING id, address, type, (xmax = 0) AS inserted
-        ),
-        {tail}
-        "#,
-        tail = *UPSERT_TAIL
-    );
-    let inserted: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
-        .bind(notification.id)
-        .bind(&notification.address)
-        .bind(&notification.kind)
-        .bind(&notification.metadata)
-        .bind(broadcast_key)
-        .bind(notification.occurred_at)
-        .fetch_one(executor)
-        .await?;
-    Ok(inserted as u64)
-}
-
-async fn insert_batch<'e, E>(
-    executor: E,
-    batch: &[NewNotification],
-    event_preferences: bool,
-) -> Result<u64, sqlx::Error>
-where
-    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
-{
-    if batch.is_empty() {
-        return Ok(0);
-    }
-    // DO UPDATE may touch a row once per statement: the last of a repeated id
-    // wins; id order keeps overlapping batches locking rows in one order.
-    let mut seen = std::collections::HashSet::new();
-    let mut unique: Vec<&NewNotification> =
-        batch.iter().rev().filter(|n| seen.insert(n.id)).collect();
-    unique.sort_by_key(|n| n.id);
-    let batch = unique;
-    let ids: Vec<Uuid> = batch.iter().map(|n| n.id).collect();
-    let addresses: Vec<&str> = batch.iter().map(|n| n.address.as_str()).collect();
-    let kinds: Vec<&str> = batch.iter().map(|n| n.kind.as_str()).collect();
-    let metadata: Vec<Json> = batch.iter().map(|n| n.metadata.clone()).collect();
-    let occurred: Vec<NaiveDateTime> = batch.iter().map(|n| n.occurred_at).collect();
-    let sql = format!(
-        r#"
-        WITH ups AS (
-            INSERT INTO social.notifications AS t (id, address, type, metadata, occurred_at, in_app, read, read_at)
-            SELECT n.*, v.visible, NOT v.visible,
-                   CASE WHEN NOT v.visible THEN timezone('UTC', now()) END
-            FROM UNNEST($1::uuid[], $2::text[], $3::text[], $4::jsonb[], $5::timestamp[])
-                AS n(id,address,type,metadata,occurred_at)
-            LEFT JOIN social.subscriptions s ON s.address = n.address
-            CROSS JOIN LATERAL (
-                SELECT NOT $6::boolean OR (
-                    NOT {ignore_all}
-                    AND {in_app}
-                ) AS visible
-            ) v
-            ORDER BY n.id
-            ON CONFLICT (id) DO UPDATE
-                SET metadata = EXCLUDED.metadata, occurred_at = EXCLUDED.occurred_at
-                WHERE t.address = EXCLUDED.address AND t.type = EXCLUDED.type
-            RETURNING id, address, type, (xmax = 0) AS inserted
-        ),
-        {tail}
-        "#,
-        tail = *UPSERT_TAIL,
-        ignore_all = details_flag("->'ignore_all_in_app'", false),
-        in_app = details_flag("->'message_type'->n.type->'in_app'", true),
-    );
-    let inserted: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
-        .bind(&ids)
-        .bind(&addresses)
-        .bind(&kinds)
-        .bind(&metadata)
-        .bind(&occurred)
-        .bind(event_preferences)
-        .fetch_one(executor)
-        .await?;
-    Ok(inserted as u64)
-}
 
 #[derive(Debug)]
 pub enum SetEmailOutcome {

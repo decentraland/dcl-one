@@ -158,42 +158,55 @@ logout via the profile chip.
 
 ## 4. World-space UI — agent / manual checklist (can't be mocked)
 
-The 3D nametags, the pointer-lock crosshair, and projected proximity tips are drawn **in the engine
-scene**, not the DOM, so `?mock=1` can't show them and screenshots can't be deterministic. Verify
-these by hand (or have an agent drive the Chrome extension against a live world) after any change to
-`bridge-scene/src/domains/{nametags,pointer,proximity,avatarPointer}.*`:
+The 3D nametags, the pointer-lock crosshair, and projected proximity tips are drawn **in the engine**
+(the nametags by `crates/avatar/src/nametag`, the rest by the bridge scene), not the DOM, so `?mock=1`
+can't show them and screenshots can't be deterministic. Verify these by hand (or have an agent drive
+the Chrome extension against a live world) after any change to `crates/avatar/src/nametag` or
+`bridge-scene/src/domains/{pointer,proximity,avatarPointer}.*`. `/nametag_state` reports every shown
+tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test bubble:
 
 - [ ] **Nametags** appear above every avatar's head, follow them while walking, and **face the camera**.
-- [ ] Name **colour** = profile custom colour if set, else the address-hash palette; **claimed** names
-      show the verified seal, **unclaimed** show `#abcd` tight to the name.
+- [ ] Name **colour** = a claimed name's custom colour if set, else the hue hashed from the name (the
+      colour the HUD shows for it); **claimed** names show the verified seal, **unclaimed** show `#abcd`
+      tight to the name, dimmed. The name stays on one line.
+      A name written with its own tag (`Ada#ffff`) still shows the address' tag, and a guest
+      shows no seal whatever its profile claims.
 - [ ] A name colour picked on the passport reaches the tag once the passport closes, on your own
       avatar and, for other players, on theirs, without a rename or a reload.
-- [ ] **Fixed world scale — never a giant.** A tag is a constant *world* size (it shrinks with distance,
-      like the old SDK scene); it must NEVER balloon into a screen-filling pill when the camera pulls back
-      or when its `AvatarAttach` fails to bind. (We dropped the old constant-on-screen scaling precisely
-      because it turned a stranded tag into a giant.)
-- [ ] **Exactly one tag per address — no duplicates / orphans / pile-up.** None accumulate over a long
-      session, after alt-tabbing away and back, or across a comms/livekit blip's leave→enter churn (the
-      classic regression). They're pooled — one reusable entity per wallet, never destroyed (engine entity
-      removal is unreliable for attached entities; we show/hide instead).
-- [ ] Tags **fade out** past ~20–40 m. Your **own** tag shows above your head in third person and is
-      hidden in first person.
+- [ ] **Constant size on screen.** A tag looks the same size at 3 m and at 39 m, and at any field of
+      view; its text is sharp at both. It sits clear of what the avatar wears on its head, and follows
+      the head through emotes with no lag.
+- [ ] **Exactly one tag per player — no duplicates / orphans / pile-up.** None accumulate over a long
+      session, after alt-tabbing away and back, or across a comms/livekit blip's leave→enter churn. A
+      player who leaves takes their tag with them at once. `/nametag_state` counts the tags as
+      `shown` and `hidden`: together, one per player with a profile.
+- [ ] Tags show from 2 m to 40 m from the camera, **fading out** from 20 m, and not behind a wall.
+      Your **own** tag shows above your head in third person and is hidden in first person.
 - [ ] **Crosshair** shows when the camera is locked (mouse hidden) and hides when the cursor is free.
 - [ ] **Hover / proximity prompts** ("Press E…") show on interactables and sit on the right entity.
-- [ ] **Community chat bubbles** (`bridge-scene/src/domains/{chat,nametags}.*`): a message said in a
-      community chat by a player standing nearby shows as their bubble with the community's name on
-      a smaller, dimmer, left-aligned row above their name, cut short with an ellipsis (and over
-      your own head for your own); a Nearby message shows no such row, and a DM no bubble at all.
-- [ ] **Hushed badge** (`bridge-scene/src/domains/{nearbyMutes,voice,nametags}.*`): while a player whose
-      nearby voice you muted (profile menu, Hush) is talking, their tag shows the red hushed icon in
-      place of the green speaking bars, and nothing when they are quiet; Hear brings the bars back.
-      The same player talking in a private call or community stream with you, which the mute leaves
-      audible, shows the green bars.
+- [ ] **Chat bubbles**: a message opens its author's tag into a bubble with a tail for 5 s (a new
+      message restarts it); a long message wraps and is cut at 100 characters with an ellipsis; a message that @-mentions you has a pink-to-purple
+      ring. A message said in a **community** chat by a player standing nearby shows the community's
+      name on a smaller, dimmer row above their name, cut short with an ellipsis (and over your own
+      head for your own); a **DM** shows a green `DM` tag after the name, and your own names who it is
+      for when they are around. The Chat bubbles setting (All / Nearby only / None) picks which show.
+      A translated message replaces the bubble's text.
+- [ ] **Voice badges**: a talking player's tag shows three green bars swinging; your own shows three
+      dots while your microphone is open and you are quiet. While a player whose nearby voice you muted
+      (profile menu, Hush) is talking, their tag shows the red hushed icon in place of the bars, and
+      nothing when they are quiet; Hear brings the bars back. The same player talking in a private call
+      or community stream with you, which the mute leaves audible, shows the green bars.
 - [ ] **Lobby stage** (`bridge-scene/src/domains/avatarPreview.tsx`, lobby region): after sign-in the
       page's stand-in (backdrop + snapshot) crossfades to the engine stage with the live avatar centred;
       Customize opens the Backpack modal with the avatar through its hole and hands the stage back on
       close; Jump In loads the world (the hold is released) and a failed trip returns to the lobby.
       The `lobby` baseline only shows the stand-in (mock has no engine).
+- [ ] **Sign-in stage** (`avatarPreview.tsx`, signin region): a new account's look and name screens
+      show its avatar on the golden podium at the right, over the sign-in background (vignette and
+      drifting logo pattern) drawn by the engine across the whole screen. The page's background fades
+      out only once the engine reports `signinStageReady`, and comes back at once on Back. Picking a
+      look or body type changes the avatar in place. Check a 16:9 window and a much wider or taller one.
+      Mock has no engine, so the page's background stays.
 
 ---
 
@@ -317,15 +330,22 @@ back as `analyticsSession`). Expectations:
   shell and the app take the attribution params (`utm_*`, `gad_*`, ad click ids such as `gclid`,
   the landing page's anonymous id) off the address bar (`dropAttributionParams`), so a copied link
   or a reload does not attribute again; the Google tag gets them from what the shell kept at load.
-- **Sign-in** (`useEngineSession`): with no session the guest start page (`GuestStartPage`) is
-  AVATAR_NAMING, its ACCEPT AND PLAY a LETS_GO click and CONTINUE WITH AN ACCOUNT (sign in or
-  sign up) a SIGN_IN click; the guest account is created only on that click, and the welcome page
-  it then needs is answered with the picked name instead of shown. COMEBACK (after a failed stored
-  sign-in), ACCOUNT_GUEST_CREATE, AUTH_BROWSER_OPEN, AUTH_SUCCESS {login_type}, AUTH_ERROR {error};
-  clicks lets_go, use_another_account, try_again. `Guest Wallet Creation` wraps the
-  thirdweb guest step (`features/auth/guestWalletEvent.ts`).
-- **Welcome / lobby**: WELCOME or AVATAR_NAMING, AUTH_DEPLOY_SUCCESS; clicks LETS_GO,
-  NAME_RANDOMIZE; LOBBY, PLACES_PICKER; clicks JUMP_IN {kind, place_id|event_id}, CUSTOMIZE,
+- **Sign-in** (`useEngineSession`): with no session the first screen (`features/startup`) is
+  ACCOUNT_HOME, its PLAY AS GUEST a PLAY_GUEST click and LOGIN
+  OR SIGNUP a SIGN_IN click; the guest account is created only on that click. After any sign-in,
+  Verifying shows until the account's welcome answer (an existing account's terms are accepted for
+  it); a new account (AVATAR_NAMING) picks a starting look and a name, deploys on JUMP IN and goes
+  straight in, AUTH_DEPLOY_SUCCESS. LOGIN OR SIGNUP opens the methods screen: Google,
+  MetaMask and More options leave for the sign-in page with `?loginMethod=` (SIGN_IN, AUTH_BROWSER_OPEN
+  {method}); an email code is sent and checked in the HUD (the web shell or the bridge scene makes
+  the thirdweb calls) and its account signs in as fully_registered. COMEBACK (after a failed stored
+  sign-in), ACCOUNT_GUEST_CREATE, AUTH_BROWSER_OPEN, AUTH_SUCCESS {login_type}, AUTH_ERROR
+  {error}. `Guest Wallet Creation` wraps the
+  thirdweb guest step (`features/auth/guestWalletEvent.ts`). A stored sign-in with a day or less
+  left is forgotten at startup (`getStoredLogin`), so the player gets the first screen and the auth
+  site asks for a new sign-in; a run already going keeps its sign-in until it expires.
+- **Welcome / lobby**: WELCOME or AVATAR_NAMING, AUTH_DEPLOY_SUCCESS; click LETS_GO (JUMP IN on the
+  name screen); LOBBY, PLACES_PICKER; clicks JUMP_IN {kind, place_id|event_id}, CUSTOMIZE,
   NOTIFICATIONS, CLOSE (`LobbyHome.tsx`).
 - **Loading**: the engine's, not the page's. LOADING_START {position, realm, when}, LOADING_END
   {position, status} and LOADING_TIMEOUT after 90 s follow its own loading screen
@@ -407,6 +427,26 @@ Expectations:
   `hosted/gallery.page.test.tsx` (paging, failures, the menu and its actions),
   `profile.passport.test.tsx` (passport photos) and `reelGrid.test.tsx` (rows, virtualization, menu
   placement); here, `src/test/bridgeGallery.test.ts` (the bridge's requests and replies).
+
+## Map
+
+The full-screen map (`library/ui/apps/hud/features/map`, core in `library/explorer-core/features/map`).
+Expectations:
+
+- **Signed reads and writes go through the bridge:** places by parcel, the destinations search, likes,
+  favourites and a place's photos in `domains/places.ts`; events at parcels and reminders through the
+  events domain's own `getEvents` and `setEventAttending`. Each request kind has its own answer kind
+  that echoes `request` (a reminder's names its event), and every request is answered, a failed one
+  with `failed`. The points-of-interest list and the connected players are plain fetches.
+- **Ids:** the map and the Events page both send `getEvents`; their ids come from one sequence
+  (`engine/requestIds.ts`), so each takes only the answers to its own requests.
+- **Nothing draws per frame:** the camera writes custom properties on the viewport; the sea is one
+  image (`assets/map/sea.webp`) placed in the world layer like a satellite tile.
+- **Home:** the map reads the session's home and sets it with `setHomeScene`; Set as Home does not
+  clear it.
+- Tests: `library/explorer-core/test/{navmap,mapCore}.test.ts`, `library/ui/apps/hud/test/hosted/map.page.test.tsx`,
+  `hosted/home.session.test.tsx`, `mapEventInfo.test.tsx`; here, `src/test/bridgePlaces.test.ts` and
+  `bridgeEvents.test.ts`. Visual baseline: `panel-map`.
 
 ## Donate
 
