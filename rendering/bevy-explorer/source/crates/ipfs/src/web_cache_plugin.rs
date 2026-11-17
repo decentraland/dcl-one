@@ -1,6 +1,12 @@
 //! The web content cache's cap, its trim requests and its debug section (`web_cache`).
 
-use bevy::{prelude::*, tasks::IoTaskPool, time::common_conditions::on_real_timer};
+use bevy::{
+    diagnostic::{Diagnostic, DiagnosticMeasurement, DiagnosticsStore, RegisterDiagnostic},
+    platform::time::Instant,
+    prelude::*,
+    tasks::IoTaskPool,
+    time::common_conditions::on_real_timer,
+};
 use bevy_console::ConsoleCommand;
 use common::{structs::AppConfig, util::TaskCompat};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
@@ -34,7 +40,11 @@ impl Plugin for WebCachePlugin {
                 Update,
                 flush_used_keys.run_if(on_real_timer(Duration::from_secs(30))),
             )
+            .add_systems(PostUpdate, web_cache_diagnostics)
             .add_console_command::<WebCacheStateCommand, _>(web_cache_state);
+        for (path, _) in web_cache::diagnostics(&default()) {
+            app.register_diagnostic(Diagnostic::new(path));
+        }
         let inputs: &'static [DebugInput] = if self.preview {
             &[DebugInput {
                 label: "Cap override for this session (MiB, 0 = configured)",
@@ -100,6 +110,20 @@ fn apply_cap(
             web_cache::request_trim(false).await;
         })
         .detach();
+}
+
+// The statics behind the readings are written on the asset loader and processor workers too: one
+// wasm memory is shared by every worker of an engine instance.
+fn web_cache_diagnostics(
+    mut diagnostics: ResMut<DiagnosticsStore>,
+    cap_override: Res<WebCacheCapOverride>,
+) {
+    let time = Instant::now();
+    for (path, value) in web_cache::diagnostics(&web_cache::state(cap_override.0)) {
+        if let (Some(diagnostic), Some(value)) = (diagnostics.get_mut(&path), value) {
+            diagnostic.add_measurement(DiagnosticMeasurement { time, value });
+        }
+    }
 }
 
 fn flush_used_keys() {

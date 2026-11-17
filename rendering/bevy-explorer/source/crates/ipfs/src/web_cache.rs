@@ -12,6 +12,7 @@
 //! `trim_interval` bytes written, when the cap changes, and before retrying a write that failed
 //! for quota.
 
+use bevy::diagnostic::DiagnosticPath;
 use serde::Deserialize;
 
 // stand-in origin for shared entries: `.invalid` is reserved, so no server's own entries land here
@@ -241,6 +242,63 @@ pub fn state_json(state: &WebCacheState) -> serde_json::Value {
             "entriesWithUse": "No trim has enumerated the cache yet: it has stayed under its cap.",
         },
     })
+}
+
+/// The readings that are measurements, as diagnostics: the session's counters, the uses waiting,
+/// and the worker's storage readings as a trim last reported them (`None` until one does, and
+/// for a quota the browser did not report).
+pub fn diagnostics(state: &WebCacheState) -> [(DiagnosticPath, Option<f64>); 12] {
+    let last = state.last;
+    [
+        (
+            const { DiagnosticPath::const_new("WEB_CACHE_WRITTEN_BYTES") },
+            Some(state.written_bytes as f64),
+        ),
+        (
+            const { DiagnosticPath::const_new("WEB_CACHE_QUOTA_RETRIES") },
+            Some(state.quota_retries as f64),
+        ),
+        (
+            const { DiagnosticPath::const_new("WEB_CACHE_TRIMS") },
+            Some(state.trims as f64),
+        ),
+        (
+            const { DiagnosticPath::const_new("WEB_CACHE_UNANSWERED_TRIMS") },
+            Some(state.unanswered as f64),
+        ),
+        (
+            const { DiagnosticPath::const_new("WEB_CACHE_EVICTED_ENTRIES") },
+            Some(state.evicted_entries_total as f64),
+        ),
+        (
+            const { DiagnosticPath::const_new("WEB_CACHE_EVICTED_BYTES") },
+            Some(state.evicted_bytes_total as f64),
+        ),
+        (
+            const { DiagnosticPath::const_new("WEB_CACHE_PENDING_USES") },
+            Some(state.pending_uses as f64),
+        ),
+        (
+            const { DiagnosticPath::const_new("WEB_CACHE_ORIGIN_USAGE_BYTES") },
+            last.map(|r| r.usage),
+        ),
+        (
+            const { DiagnosticPath::const_new("WEB_CACHE_ORIGIN_QUOTA_BYTES") },
+            last.and_then(|r| r.quota.is_finite().then_some(r.quota)),
+        ),
+        (
+            const { DiagnosticPath::const_new("WEB_CACHE_CACHE_STORAGE_BYTES") },
+            last.map(|r| r.caches_usage),
+        ),
+        (
+            const { DiagnosticPath::const_new("WEB_CACHE_CONTENT_BYTES") },
+            last.and_then(|r| r.content_bytes),
+        ),
+        (
+            const { DiagnosticPath::const_new("WEB_CACHE_ENTRIES_WITH_USE") },
+            last.and_then(|r| r.entries_with_use),
+        ),
+    ]
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1001,6 +1059,88 @@ mod tests {
         used.note("a");
         assert_eq!(used.waiting(), ["a"]);
         assert_eq!(used.len(), 1);
+    }
+
+    fn diagnostic(state: &WebCacheState, name: &str) -> Option<f64> {
+        let (_, value) = diagnostics(state)
+            .into_iter()
+            .find(|(path, _)| path.as_str() == name)
+            .unwrap_or_else(|| panic!("no diagnostic {name}"));
+        value
+    }
+
+    #[test]
+    fn the_counters_are_diagnostics_from_the_start() {
+        let state = WebCacheState {
+            written_bytes: 5 << 20,
+            quota_retries: 1,
+            trims: 4,
+            unanswered: 2,
+            evicted_entries_total: 160,
+            evicted_bytes_total: 10 << 20,
+            pending_uses: 3,
+            ..Default::default()
+        };
+        assert_eq!(
+            diagnostic(&state, "WEB_CACHE_WRITTEN_BYTES"),
+            Some((5 << 20) as f64)
+        );
+        assert_eq!(diagnostic(&state, "WEB_CACHE_QUOTA_RETRIES"), Some(1.0));
+        assert_eq!(diagnostic(&state, "WEB_CACHE_TRIMS"), Some(4.0));
+        assert_eq!(diagnostic(&state, "WEB_CACHE_UNANSWERED_TRIMS"), Some(2.0));
+        assert_eq!(diagnostic(&state, "WEB_CACHE_EVICTED_ENTRIES"), Some(160.0));
+        assert_eq!(
+            diagnostic(&state, "WEB_CACHE_EVICTED_BYTES"),
+            Some((10 << 20) as f64)
+        );
+        assert_eq!(diagnostic(&state, "WEB_CACHE_PENDING_USES"), Some(3.0));
+        // no trim has reported yet
+        assert_eq!(diagnostic(&state, "WEB_CACHE_ORIGIN_USAGE_BYTES"), None);
+        assert_eq!(diagnostic(&state, "WEB_CACHE_ENTRIES_WITH_USE"), None);
+    }
+
+    #[test]
+    fn the_last_trims_readings_are_diagnostics_without_an_unreported_quota() {
+        let mut state = WebCacheState {
+            last: Some(TrimReport {
+                usage: 900.0,
+                quota: f64::INFINITY,
+                caches_usage: 800.0,
+                content_bytes: Some(750.0),
+                entries_with_use: Some(7.0),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            diagnostic(&state, "WEB_CACHE_ORIGIN_USAGE_BYTES"),
+            Some(900.0)
+        );
+        assert_eq!(diagnostic(&state, "WEB_CACHE_ORIGIN_QUOTA_BYTES"), None);
+        assert_eq!(
+            diagnostic(&state, "WEB_CACHE_CACHE_STORAGE_BYTES"),
+            Some(800.0)
+        );
+        assert_eq!(diagnostic(&state, "WEB_CACHE_CONTENT_BYTES"), Some(750.0));
+        assert_eq!(diagnostic(&state, "WEB_CACHE_ENTRIES_WITH_USE"), Some(7.0));
+        state.last = Some(TrimReport {
+            quota: 1e9,
+            ..Default::default()
+        });
+        assert_eq!(
+            diagnostic(&state, "WEB_CACHE_ORIGIN_QUOTA_BYTES"),
+            Some(1e9)
+        );
+        assert_eq!(diagnostic(&state, "WEB_CACHE_CONTENT_BYTES"), None);
+    }
+
+    #[test]
+    fn every_diagnostic_has_its_own_path() {
+        let paths: std::collections::HashSet<_> = diagnostics(&WebCacheState::default())
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect();
+        assert_eq!(paths.len(), 12);
     }
 
     #[test]
