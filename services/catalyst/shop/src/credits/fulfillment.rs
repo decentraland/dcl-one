@@ -387,8 +387,23 @@ impl OutboxWorker {
     /// While a pending line's buy is unsettled the checkout stays
     /// `reversing` (the tick resumes that line); a line whose buy spent MANA
     /// without reaching escrow is held out of the refund for reconciliation.
+    /// Unrecorded `pending` claims are first marked `error`, and the claim
+    /// refuses to claim or re-arm a frozen checkout's line, so nothing counted
+    /// refundable can be sent afterwards.
     #[tracing::instrument(skip(self, buyer))]
     pub async fn compensate(&self, checkout_id: i64, buyer: &str) -> Result<(), ApiError> {
+        // a buy still being signed can no longer record (so broadcast) once refundable
+        sqlx::query(
+            "UPDATE shop.broker_purchases b SET status = 'error', updated_at = timezone('UTC', now()) \
+             FROM credits.fulfillment_outbox o \
+             WHERE o.checkout_id = $1 AND o.status <> 'confirmed' \
+               AND b.idempotency_key = 'checkout:' || o.checkout_id || ':' || o.id \
+               AND b.status = 'pending' AND b.write_ahead AND b.tx_hash IS NULL \
+               AND EXISTS (SELECT 1 FROM credits.checkouts c WHERE c.id = $1 AND c.status = 'reversing')",
+        )
+        .bind(checkout_id)
+        .execute(&self.credits.pool)
+        .await?;
         // A line whose unsent claim released a buy as dead is refunded only
         // once a later look finds none of those buys mined; one that did
         // spent MANA and is held. A failed look leaves the checkout

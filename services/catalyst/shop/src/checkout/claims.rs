@@ -97,18 +97,26 @@ pub const BROKER_PENDING_TAKEOVER_SECS: i64 = 120;
 /// `pending` for [`BROKER_PENDING_TAKEOVER_SECS`] (its caller stopped before
 /// recording). A re-armed row takes this request's columns, so the row
 /// describes the transaction it will record. The claimant fences its writes
-/// on `updated_at = $now`.
+/// on `updated_at = $now`. A key naming a credits checkout line
+/// (`checkout:{checkout_id}:{outbox_id}`) is neither claimed nor re-armed once
+/// that checkout is frozen (`reversing`, `reversed`, `failed`); the checkout
+/// row is read under `FOR SHARE`, so the check orders against the freeze.
 pub async fn claim_broker_purchase(
     pool: &PgPool,
     claim: &BrokerPurchaseClaim<'_>,
     now: NaiveDateTime,
 ) -> Result<Claim, sqlx::Error> {
     sqlx::query_as(
-        "WITH claim AS (\
+        "WITH frozen AS (\
+           SELECT status FROM credits.checkouts \
+           WHERE id = substring($1 from '^checkout:([0-9]{1,18}):[0-9]+$')::bigint \
+           FOR SHARE\
+         ), claim AS (\
            INSERT INTO shop.broker_purchases \
            (idempotency_key, collection, item_id, token_id, buyer_address, escrow_address, price_wei, chain_id, mode, \
             trade_hashed_signature, usd_amount_wei, mana_usd_rate_wei, status, write_ahead, created_at, updated_at) \
-           VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8, $9, $10, $11::numeric, $12::numeric, 'pending', true, $13, $13) \
+           SELECT $1, $2, $3, $4, $5, $6, $7::numeric, $8, $9, $10, $11::numeric, $12::numeric, 'pending', true, $13, $13 \
+           WHERE NOT EXISTS (SELECT 1 FROM frozen WHERE status IN ('reversing', 'reversed', 'failed')) \
            ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
            RETURNING id\
          ), rearm AS (\
@@ -119,6 +127,7 @@ pub async fn claim_broker_purchase(
            WHERE idempotency_key = $1 AND write_ahead AND tx_hash IS NULL \
              AND (status = 'error' OR (status = 'pending' AND updated_at < $13 - make_interval(secs => $14))) \
              AND NOT EXISTS (SELECT 1 FROM claim) \
+             AND NOT EXISTS (SELECT 1 FROM frozen WHERE status IN ('reversing', 'reversed', 'failed')) \
            RETURNING id\
          ) \
          SELECT EXISTS (SELECT 1 FROM claim) AS claimed, EXISTS (SELECT 1 FROM rearm) AS rearmed, \

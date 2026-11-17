@@ -648,8 +648,10 @@ async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
          FROM shop.broker_purchases WHERE idempotency_key = $1",
     )
     .bind(key)
-    .fetch_one(&state.pool)
-    .await?;
+    .fetch_optional(&state.pool)
+    .await?
+    // the claim refused this key (its credits checkout is frozen)
+    .ok_or_else(|| ApiError::Conflict(format!("broker buy {key:?} could not be claimed")))?;
 
     match row.status.as_str() {
         "confirmed" => {

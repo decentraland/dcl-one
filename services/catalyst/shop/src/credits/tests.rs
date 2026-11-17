@@ -6390,6 +6390,115 @@ async fn compensation_refunds_only_lines_whose_buy_spent_no_mana() {
     cleanup(&pool, &addr).await;
 }
 
+/// Claims `key` through the broker's own claim statement.
+async fn claim_through_broker(pool: &PgPool, key: &str) -> crate::checkout::claims::Claim {
+    crate::checkout::claims::claim_broker_purchase(
+        pool,
+        &crate::checkout::claims::BrokerPurchaseClaim {
+            key,
+            collection: COLLECTION,
+            item_id: Some("1"),
+            token_id: None,
+            buyer_address: COLLECTION,
+            escrow_address: "0x0000000000000000000000000000000000000001",
+            price_wei: "1",
+            chain_id: 137,
+            mode: "primary",
+            trade_hashed_signature: None,
+            usd_amount_wei: None,
+            mana_usd_rate_wei: None,
+        },
+        crate::evm::now(),
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn compensation_fences_unrecorded_claims_and_the_claim_refuses_a_frozen_checkout() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    seed_wallet(&pool, &addr, "0", "10").await;
+    let state = state_with(
+        pool.clone(),
+        StateCfg {
+            fulfillment_mode: "auto",
+            ..StateCfg::default()
+        },
+        market_for_checkout(),
+        MockBroker::configured(),
+    );
+
+    // One line failed unclaimed; its sibling's claim is still being signed.
+    let checkout = debited_checkout(&state, &addr, &["1", "4"]).await;
+    let lines = outbox_lines(&pool, checkout).await;
+    let (failed, signing) = (lines[0].0, lines[1].0);
+    let (failed_key, signing_key) = (
+        format!("checkout:{checkout}:{failed}"),
+        format!("checkout:{checkout}:{signing}"),
+    );
+    let claimed_at = chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    claim_broker_buy(&pool, &signing_key, "pending", None).await;
+    sqlx::query(
+        "UPDATE shop.broker_purchases SET tx_hash = NULL, updated_at = $2 WHERE idempotency_key = $1",
+    )
+    .bind(&signing_key)
+    .bind(claimed_at)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE credits.fulfillment_outbox SET status = 'failed' WHERE id = $1")
+        .bind(failed)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE credits.checkouts SET status = 'reversing' WHERE id = $1")
+        .bind(checkout)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    state.outbox_worker().run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "reversed");
+    assert_eq!(available(&pool, &addr).await, "10", "both lines refunded");
+    let (status, updated_at): (String, chrono::NaiveDateTime) = sqlx::query_as(
+        "SELECT status, updated_at FROM shop.broker_purchases WHERE idempotency_key = $1",
+    )
+    .bind(&signing_key)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(status, "error", "the unrecorded claim is fenced");
+    assert_ne!(
+        updated_at, claimed_at,
+        "a late record (fenced on 'pending' and the claim's clock) matches no row"
+    );
+
+    // The frozen checkout's lines are neither re-armed nor claimed afresh.
+    let rearm = claim_through_broker(&pool, &signing_key).await;
+    assert!(!rearm.claimed && !rearm.rearmed);
+    assert_eq!(rearm.status.as_deref(), Some("error"));
+    let fresh = claim_through_broker(&pool, &failed_key).await;
+    assert!(!fresh.claimed && !fresh.rearmed);
+    assert_eq!(fresh.status, None);
+
+    // A checkout still fulfilling claims as before.
+    let live = debited_checkout(&state, &addr, &["1"]).await;
+    let line = outbox_lines(&pool, live).await[0].0;
+    assert!(
+        claim_through_broker(&pool, &format!("checkout:{live}:{line}"))
+            .await
+            .claimed
+    );
+    assert_reconciles(&pool, &addr, "after fencing the unrecorded claim").await;
+
+    cleanup(&pool, &addr).await;
+}
+
 #[tokio::test]
 async fn cart_reads_and_writes_keep_their_totals_and_the_checkout_records_its_ledger_row() {
     let _serial = OUTBOX_SERIAL.lock().await;
