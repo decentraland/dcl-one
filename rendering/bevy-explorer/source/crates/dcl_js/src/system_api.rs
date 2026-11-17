@@ -23,6 +23,7 @@ use system_bridge::{
     ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
     SetPermanentPermission, SetSinglePermission, SystemApi, TextureOptimizationStatus,
     VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
+    WorldAccessVerdict,
 };
 use tokio::sync::Notify;
 
@@ -418,6 +419,20 @@ pub async fn op_get_satellite_view(
         .borrow_mut::<SuperUserScene>()
         .send(SystemApi::GetSatelliteView(sx))
         .unwrap();
+
+    rx.await.map_err(|e| anyhow::anyhow!(e))
+}
+
+pub async fn op_get_world_access(
+    state: Rc<RefCell<impl State>>,
+    world: String,
+) -> Result<WorldAccessVerdict, anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetWorldAccess(world, sx))?;
 
     rx.await.map_err(|e| anyhow::anyhow!(e))
 }

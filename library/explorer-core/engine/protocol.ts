@@ -19,6 +19,7 @@ import type {
   VoiceChatAction,
   VoiceChatState,
   WelcomeState,
+  WorldAccessVerdict,
 } from './generated'
 import type { AvatarLook } from './avatarEquip'
 
@@ -285,6 +286,7 @@ export type PageToScene =
   | GetGalleryRequest
   | QuitRequest
   | GetPlaceRequest
+  | GetWorldAccessRequest
   | WatchMapPlayersRequest
   | SetPhotoModeRequest
   | TakePhotoRequest
@@ -1873,6 +1875,18 @@ export interface PlaceMessage {
   place: SignedPlace | null
 }
 
+export interface GetWorldAccessRequest {
+  kind: 'getWorldAccess'
+  requestId: number
+  world: string
+}
+
+export interface WorldAccessMessage {
+  kind: 'worldAccess'
+  requestId: number
+  access: WorldAccessVerdict
+}
+
 /** Native only: the web page has nothing to close. */
 export interface QuitRequest {
   kind: 'quit'
@@ -2389,6 +2403,7 @@ export interface AvatarClickMessage {
 export type SceneToPage =
   | BridgeReadyMessage
   | PlaceMessage
+  | WorldAccessMessage
   | { kind: 'connectivity'; state: ConnectivitySnapshot }
   | { kind: 'connectivityRetry'; requestId: string; error?: string }
   | BridgeUnavailableMessage

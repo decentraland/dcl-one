@@ -24,7 +24,7 @@ import visitsIcon from '../../assets/places/visits.png'
 import type { SignedPlace } from '@explorer-core/engine/protocol'
 import { likeRateOf, setPlaceFavorite, setPlaceLike } from '@explorer-core/features/map/mapApi'
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
-import { fetchWorldAccess, type WorldAccess } from '@explorer-core/features/places/worldAccess'
+import type { WorldAccessVerdict as WorldAccess } from '@explorer-core/engine/generated'
 import { placeOnline } from '@explorer-core/features/lobby/lobbyApi'
 import { userColor } from '@explorer-core/lib/identity'
 import { lobbyEvents } from '../events/eventsStore'
@@ -134,10 +134,8 @@ const ACCESS_TEXT: Partial<Record<WorldAccess, string>> = { denied: 'INVITE ONLY
 
 function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClose: () => void }): React.JSX.Element {
   const session = useSession()
-  const { readSigned } = session.places
+  const { readSigned, worldAccess } = session.places
   const wallet = session.profile.data?.address ?? null
-  const communityIds = session.communities.list.map((c) => c.id)
-  const communitiesLoaded = session.lobbyData.communitiesLoaded
   const world = isWorldPlace(place)
 
   const [signed, setSigned] = useState<SignedPlace | null>(null)
@@ -174,24 +172,18 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
   }, [readSigned, place.id])
 
   const worldName = place.world_name ?? ''
-  const communityKey = communityIds.join(',')
-  // a re-check for the communities keeps the verdict until it answers, and when it cannot tell
-  const checkedFor = useRef<string | null>(null)
+  // the engine checks for the signed-in wallet, so a change of wallet asks again
   useEffect(() => {
     if (!world) return
-    const target = `${worldName}|${wallet ?? ''}`
-    if (checkedFor.current !== target) {
-      checkedFor.current = target
-      setAccess('checking')
+    let live = true
+    setAccess('checking')
+    void worldAccess(worldName).then((a) => {
+      if (live) setAccess(a)
+    })
+    return () => {
+      live = false
     }
-    const ctrl = new AbortController()
-    const communities = !communitiesLoaded ? null : communityKey === '' ? [] : communityKey.split(',')
-    fetchWorldAccess(worldName, wallet, communities, ctrl.signal).then(
-      (a) => setAccess((prev) => (a === 'failed' && prev !== 'checking' ? prev : a)),
-      () => undefined
-    )
-    return () => ctrl.abort()
-  }, [world, worldName, wallet, communityKey, communitiesLoaded])
+  }, [world, worldName, wallet, worldAccess])
 
   const vote = (next: boolean | null, error: string): void => {
     writes.current.vote = 'sent'

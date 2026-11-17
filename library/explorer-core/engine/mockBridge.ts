@@ -1428,6 +1428,10 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       setTimeout(() => reply({ kind: 'place', requestId: msg.requestId, place: { id: msg.id, user_like: false, user_dislike: false, user_favorite: false, user_visits: 1234, updated_at: new Date().toISOString() } }), 300)
       return
     }
+    if (msg.kind === 'getWorldAccess') {
+      setTimeout(() => reply({ kind: 'worldAccess', requestId: msg.requestId, access: 'allowed' }), 300)
+      return
+    }
     if (msg.kind === 'getEventPlaces') {
       reply({ kind: 'eventPlaces', request: msg.request, places: mockEventPlaces(msg.placeIds) })
       return

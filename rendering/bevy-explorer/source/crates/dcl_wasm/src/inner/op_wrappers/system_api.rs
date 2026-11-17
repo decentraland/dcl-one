@@ -192,6 +192,14 @@ pub async fn op_accept_terms(state: &WorkerContext) -> Result<(), WasmError> {
 }
 
 #[wasm_bindgen]
+pub async fn op_get_world_access(
+    state: &WorkerContext,
+    world: String,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_world_access(state.rc(), world).await)
+}
+
+#[wasm_bindgen]
 pub async fn op_get_satellite_view(state: &WorkerContext) -> Result<JsValue, WasmError> {
     serde_result!(dcl_js::system_api::op_get_satellite_view(state.rc()).await)
 }

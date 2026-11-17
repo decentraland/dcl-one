@@ -3,15 +3,14 @@
 import { serviceUrl } from '@hud-host'
 import type { DiscoverPlace } from '../places/placesApi'
 import { getPref, PREF, setPref } from '../../lib/prefs'
-import type { RealmCheck } from '../../lib/realmCheck'
+import { PARCEL_METERS } from '../map/atlas'
+import { fetchConnectedWorld, fetchPeers } from '../map/mapApi'
 
 const PLACES_API = `${serviceUrl('places')}/api`
 const RECENTS_MAX = 20
 const CACHE_TTL = 60_000
 const WHERE_LOOKUPS = 4
 const TIMEOUT_MS = 5_000
-// 100 wallets keep the peers URL near 5 KB, under common proxy limits
-const PEERS_PER_READ = 100
 
 export type LobbyPlace = DiscoverPlace & { connected_addresses?: string[] | null }
 
@@ -107,50 +106,20 @@ export function fetchRecents(): Promise<LobbyPlace[]> {
 
 export type FriendWhere = { kind: 'genesis'; parcel: { x: number; y: number } } | { kind: 'world'; world: string; parcel: { x: number; y: number } | null } | { kind: 'unknown' }
 
-type Peer = { id?: string; address?: string; parcel?: [number, number] }
-
-/** None for a batch comms cannot answer, so its worlds are still asked. */
-async function fetchPeers(wallets: string[]): Promise<Peer[]> {
-  const batches: string[][] = []
-  for (let i = 0; i < wallets.length; i += PEERS_PER_READ) batches.push(wallets.slice(i, i + PEERS_PER_READ))
-  return (await Promise.all(batches.map(fetchPeerBatch))).flat()
-}
-
-async function fetchPeerBatch(wallets: string[]): Promise<Peer[]> {
-  const query = wallets.map((w) => `id=${encodeURIComponent(w)}`).join('&')
-  const res = await fetch(`${serviceUrl('archipelagoStats')}/comms/peers?${query}`, { signal: AbortSignal.timeout(TIMEOUT_MS) }).catch(() => null)
-  if (res == null) return []
-  if (!res.ok) {
-    await res.body?.cancel().catch(() => undefined)
-    return []
-  }
-  const body = (await res.json().catch(() => null)) as { peers?: Peer[] } | null
-  return body?.peers ?? []
-}
-
-async function fetchConnectedWorld(wallet: string): Promise<string | null> {
-  const r = await fetch(`${serviceUrl('worldsServer')}/wallet/${encodeURIComponent(wallet)}/connected-world`, { signal: AbortSignal.timeout(TIMEOUT_MS) }).catch(() => null)
-  if (r == null) return null
-  if (!r.ok) {
-    await r.body?.cancel().catch(() => undefined)
-    return null
-  }
-  const data = (await r.json().catch(() => null)) as { world?: string } | null
-  return data?.world || null
-}
-
 /** Comms peers first; each wallet still missing is asked for the world it is in. */
 export async function fetchWhereabouts(wallets: string[]): Promise<Map<string, FriendWhere>> {
   const found = new Map<string, FriendWhere>()
   if (wallets.length === 0) return found
-  for (const peer of await fetchPeers(wallets)) {
-    const id = (peer.id ?? peer.address ?? '').toLowerCase()
-    if (id && Array.isArray(peer.parcel)) found.set(id, { kind: 'genesis', parcel: { x: peer.parcel[0], y: peer.parcel[1] } })
+  // a batch comms cannot answer leaves its wallets to the worlds
+  const peers = await fetchPeers(AbortSignal.timeout(TIMEOUT_MS), wallets).catch(() => [])
+  for (const peer of peers) {
+    // the position is in world metres
+    found.set(peer.address.toLowerCase(), { kind: 'genesis', parcel: { x: Math.floor(peer.x / PARCEL_METERS), y: Math.floor(peer.z / PARCEL_METERS) } })
   }
   const queue = wallets.filter((w) => !found.has(w.toLowerCase()))
   const lookup = async (): Promise<void> => {
     for (let w = queue.shift(); w != null; w = queue.shift()) {
-      const world = await fetchConnectedWorld(w)
+      const world = await fetchConnectedWorld(w, AbortSignal.timeout(TIMEOUT_MS)).catch(() => null)
       if (world != null) found.set(w.toLowerCase(), { kind: 'world', world, parcel: null })
     }
   }
@@ -175,13 +144,4 @@ export async function fetchCrowd(): Promise<{ x: number; y: number }> {
   const top = scenes[0]?.baseCoords
   if (!Array.isArray(top)) throw new Error('hot-scenes: none')
   return { x: top[0], y: top[1] }
-}
-
-/** Probes the realm as a realm change does before going. */
-export async function worldReachable(world: string): Promise<RealmCheck> {
-  const r = await fetch(`${serviceUrl('worldsServer')}/world/${encodeURIComponent(world)}/about`, { method: 'HEAD', signal: AbortSignal.timeout(TIMEOUT_MS) }).catch(() => null)
-  if (r == null) return 'unreachable'
-  if (r.ok) return 'ok'
-  await r.body?.cancel().catch(() => undefined)
-  return r.status === 404 ? 'not-found' : 'unreachable'
 }

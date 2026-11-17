@@ -105,7 +105,7 @@ scenario('searching places filters the cards and emptying the field restores the
 })
 
 scenario('a place detail opens from a card', async () => {}, {
-  todo: 'not written yet: a place card opens the place's detail'
+  todo: "not written yet: a place card opens the place's detail"
 })
 
 scenario('choosing a category reloads the cards and all restores them', async ({ explorer }) => {

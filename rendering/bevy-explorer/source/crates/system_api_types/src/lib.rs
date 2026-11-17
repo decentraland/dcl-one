@@ -847,6 +847,20 @@ pub enum WorldAccessEvent {
     Cancelled,
 }
 
+/// Whether the local user may enter a world, by the check a realm change runs before entering.
+/// `invited`: let in by its allow-list. `failed`: the check could not tell; the world decides on
+/// arrival.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum WorldAccessVerdict {
+    Allowed,
+    Invited,
+    Denied,
+    Password,
+    Failed,
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug, ts_rs::TS)]
 pub enum PermissionValue {
     Allow,

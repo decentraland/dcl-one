@@ -3,8 +3,10 @@
 //   from: the places service via BevyApi.kernelFetch, signed so each place carries the signed-in
 //         user's own like, dislike and favourite;
 //       + camera-reel for a place's photos;
-//       + one place by id for the lobby's place details, with its connected players.
+//       + one place by id for the lobby's place details, with its connected players;
+//       + whether the player may enter a world, from the engine's entry check.
 import type { DiscoverPlace, PlacePhoto, SearchPlacesRequest, SignedPlace } from '@explorer-core/engine/protocol'
+import { BevyApi } from '../bevy-api'
 import type { Ctx } from '../bridge'
 import { serviceBase, signed, signedBody } from '../http'
 
@@ -78,6 +80,14 @@ export function registerPlaces(ctx: Ctx): void {
     } catch (e) {
       console.error('[places] place read failed', e)
       ctx.send({ kind: 'place', requestId: msg.requestId, place: null })
+    }
+  })
+  ctx.on('getWorldAccess', async (msg) => {
+    try {
+      ctx.send({ kind: 'worldAccess', requestId: msg.requestId, access: (await BevyApi.getWorldAccess?.(msg.world)) ?? 'failed' })
+    } catch (e) {
+      console.error('[places] world access failed', e)
+      ctx.send({ kind: 'worldAccess', requestId: msg.requestId, access: 'failed' })
     }
   })
   ctx.on('getPlacesAt', async (msg) => {

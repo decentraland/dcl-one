@@ -142,6 +142,8 @@ pub enum SystemApi {
     SetHomeScene(HomeScene),
     /// None takes the lobby stage down.
     SetLobbyStage(Option<LobbyStage>),
+    /// Whether the local user may enter the named world (`name.dcl.eth`).
+    GetWorldAccess(String, RpcResultSender<WorldAccessVerdict>),
     /// Credential-free resolved service endpoints.
     GetServiceUrls(RpcResultSender<Vec<(String, String)>>),
     GetWelcome(RpcResultSender<WelcomeState>),

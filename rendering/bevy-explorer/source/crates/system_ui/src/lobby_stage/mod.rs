@@ -18,17 +18,17 @@ use bevy::{
     pbr::{CascadeShadowConfigBuilder, NotShadowCaster, NotShadowReceiver},
     prelude::*,
     render::{
-        camera::{CameraUpdateSystem, Exposure},
+        camera::Exposure,
         view::{ColorGrading, NoFrustumCulling, RenderLayers},
     },
     scene::SceneInstanceReady,
 };
 use common::{
-    sets::SceneSets,
-    structs::{sun_cascades, AppConfig, StageLight, MIN_CASCADE},
+    sets::{PostUpdateSets, SceneSets},
+    structs::{sun_cascades, AppConfig, StageCamera, StageLight, MIN_CASCADE},
 };
 use scene_runner::{initialize_scene::SuperUserScene, renderer_context::RendererSceneContext};
-use system_bridge::{LobbyStage, SystemApi};
+use system_bridge::{settings::NewCameraEvent, LobbyStage, SystemApi};
 use texture_camera::TextureLayersCache;
 
 use self::{
@@ -88,22 +88,15 @@ pub struct LobbyStagePlugin;
 impl Plugin for LobbyStagePlugin {
     fn build(&self, app: &mut App) {
         add_materials(app);
-        app.init_resource::<StageRequest>()
-            .add_systems(
-                Update,
-                (take_requests, sync_stage)
-                    .chain()
-                    .in_set(SceneSets::RestrictedActions),
-            )
-            .add_systems(
-                PostUpdate,
-                // a resize resets the projection's aspect ratio until the camera update
-                fit_stage
-                    .after(TransformSystem::TransformPropagate)
-                    .after(CameraUpdateSystem),
-            )
-            .add_observer(moss_rocks)
-            .add_observer(layer_scene);
+        app.add_systems(
+            Update,
+            (take_requests, sync_stage)
+                .chain()
+                .in_set(SceneSets::RestrictedActions),
+        )
+        .add_systems(PostUpdate, fit_stage.in_set(PostUpdateSets::CameraFit))
+        .add_observer(moss_rocks)
+        .add_observer(layer_scene);
         diagnostics::register(app);
     }
 }
@@ -125,8 +118,11 @@ fn add_materials(app: &mut App) {
     ));
 }
 
-#[derive(Resource, Default)]
-struct StageRequest(Option<LobbyStage>);
+/// On the system scene's root: what the scene asked for, so it goes with the scene.
+#[derive(Component)]
+struct StageRequest(LobbyStage);
+
+type SystemRoot = (With<SuperUserScene>, With<RendererSceneContext>);
 
 #[derive(Component)]
 struct Stage {
@@ -152,35 +148,43 @@ struct Mossy {
     mask: f32,
 }
 
-fn take_requests(mut events: EventReader<SystemApi>, mut request: ResMut<StageRequest>) {
+fn take_requests(
+    mut events: EventReader<SystemApi>,
+    roots: Query<Entity, SystemRoot>,
+    mut commands: Commands,
+) {
     for event in events.read() {
-        if let SystemApi::SetLobbyStage(stage) = event {
-            if stage
-                .as_ref()
-                .is_some_and(|s| !s.feet.world_vec_to_vec3().is_finite())
-            {
+        let SystemApi::SetLobbyStage(stage) = event else {
+            continue;
+        };
+        let Some(root) = roots.iter().next() else {
+            warn!("setLobbyStage: no system scene");
+            continue;
+        };
+        match stage {
+            Some(stage) if !stage.feet.world_vec_to_vec3().is_finite() => {
                 warn!("setLobbyStage: ignoring non-finite feet");
-                continue;
             }
-            request.0 = stage.clone();
+            Some(stage) => {
+                commands
+                    .entity(root)
+                    .try_insert(StageRequest(stage.clone()));
+            }
+            None => {
+                commands.entity(root).try_remove::<StageRequest>();
+            }
         }
     }
 }
 
-fn render_layer(
-    cache: &TextureLayersCache,
-    roots: &Query<Entity, (With<SuperUserScene>, With<RendererSceneContext>)>,
-    layer: u32,
-) -> Option<usize> {
+fn render_layer(cache: &TextureLayersCache, root: Entity, layer: u32) -> Option<usize> {
     if layer == 0 {
         return None;
     }
-    let root = roots.iter().next()?;
-    let base = cache.lookup.get(&root)?;
-    Some((base * 15 + (layer - 1).min(15)) as usize)
+    cache.layer(root, layer).map(|l| l as usize)
 }
 
-type StageCamera = (
+type CameraItem = (
     Entity,
     Ref<'static, GlobalTransform>,
     &'static RenderLayers,
@@ -191,21 +195,19 @@ type StageCamera = (
 #[allow(clippy::too_many_arguments)]
 fn sync_stage(
     mut commands: Commands,
-    request: Res<StageRequest>,
     mut stages: Query<(Entity, &mut Stage)>,
     cache: Res<TextureLayersCache>,
-    roots: Query<Entity, (With<SuperUserScene>, With<RendererSceneContext>)>,
-    root_transforms: Query<&GlobalTransform, (With<SuperUserScene>, With<RendererSceneContext>)>,
-    cameras: Query<StageCamera, With<Camera3d>>,
-    bloomed: Query<(), With<Bloom>>,
+    roots: Query<(Entity, &StageRequest, &GlobalTransform), SystemRoot>,
+    cameras: Query<CameraItem, With<Camera3d>>,
+    mut new_cameras: EventWriter<NewCameraEvent>,
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut builder: StageAssets,
     config: Res<AppConfig>,
 ) {
-    let wanted = request.0.as_ref().and_then(|stage| {
-        let render_layer = render_layer(&cache, &roots, stage.layer)?;
-        Some((stage, render_layer))
+    let wanted = roots.iter().next().and_then(|(root, request, transform)| {
+        let render_layer = render_layer(&cache, root, request.0.layer)?;
+        Some((&request.0, render_layer, root, transform))
     });
 
     // The stage faces the perspective camera that renders its layer. A texture camera is rebuilt
@@ -218,31 +220,40 @@ fn sync_stage(
             .find(|(_, _, l, p, _)| **l == layers && matches!(p, Projection::Perspective(_)))
     };
 
+    let wanted_camera = wanted
+        .as_ref()
+        .and_then(|(_, render_layer, ..)| camera_for(*render_layer))
+        .map(|(c, ..)| c);
+    let mut released = Vec::new();
     let mut built = false;
     for (entity, mut stage) in &mut stages {
-        let keep = wanted.as_ref().is_some_and(|(want, render_layer)| {
+        let keep = wanted.as_ref().is_some_and(|(want, render_layer, ..)| {
             presets::preset(&want.preset).id == stage.preset.id
                 && want.layer == stage.layer
                 && *render_layer == stage.render_layer
                 && want.feet.world_vec_to_vec3() == stage.feet
         });
         if !keep {
+            released.extend(stage.camera);
             commands.entity(entity).despawn();
             continue;
         }
         built = true;
-        let camera = camera_for(stage.render_layer).map(|(c, ..)| c);
-        // the bloom setting re-applies Bloom to every camera
-        let redressed = camera.is_some_and(|c| bloomed.contains(c));
-        if stage.camera != camera || redressed {
-            stage.camera = camera;
-            if let Some(camera) = camera {
+        if stage.camera != wanted_camera {
+            released.extend(stage.camera);
+            stage.camera = wanted_camera;
+            if let Some(camera) = wanted_camera {
                 unprocessed(&mut commands, camera);
             }
         }
     }
+    for camera in released {
+        if Some(camera) != wanted_camera && cameras.contains(camera) {
+            processed(&mut commands, &mut new_cameras, camera);
+        }
+    }
 
-    let Some((want, render_layer)) = wanted else {
+    let Some((want, render_layer, scene_root, root_transform)) = wanted else {
         return;
     };
     if built {
@@ -257,14 +268,6 @@ fn sync_stage(
     if camera_transform.is_added() {
         return;
     }
-    let Some((scene_root, root_transform)) = roots
-        .iter()
-        .next()
-        .and_then(|r| root_transforms.get(r).ok().map(|t| (r, t)))
-    else {
-        return;
-    };
-
     // The stage hangs from the scene's root, as the avatar and its camera do, so it moves with
     // them (a scene's root starts parked below the world and is raised once the scene runs).
     let feet = want.feet.world_vec_to_vec3();
@@ -320,8 +323,22 @@ fn sync_stage(
 fn unprocessed(commands: &mut Commands, camera: Entity) {
     commands
         .entity(camera)
-        .try_insert((Tonemapping::None, ColorGrading::default()))
-        .remove::<Bloom>();
+        .try_insert((StageCamera, Tonemapping::None, ColorGrading::default()))
+        .try_remove::<Bloom>();
+}
+
+/// A camera the stage no longer shows gets the engine's processing back, and the settings
+/// re-applied over it.
+fn processed(
+    commands: &mut Commands,
+    new_cameras: &mut EventWriter<NewCameraEvent>,
+    camera: Entity,
+) {
+    commands
+        .entity(camera)
+        .try_remove::<StageCamera>()
+        .try_insert(platform::default_camera_components());
+    new_cameras.write(NewCameraEvent(camera));
 }
 
 #[derive(bevy::ecs::system::SystemParam)]
@@ -711,13 +728,9 @@ pub fn fit(
 #[allow(clippy::type_complexity)]
 fn fit_stage(
     stages: Query<(&Stage, &GlobalTransform, &Children)>,
-    cameras: Query<(&GlobalTransform, &Projection), Without<Backdrop>>,
+    cameras: Query<(&GlobalTransform, &Projection)>,
     mut backdrops: Query<
-        (
-            &mut Transform,
-            &mut GlobalTransform,
-            &MeshMaterial3d<StandardMaterial>,
-        ),
+        (&mut Transform, &MeshMaterial3d<StandardMaterial>),
         (With<Backdrop>, Without<StageFloor>, Without<Stage>),
     >,
     floors: Query<&MeshMaterial3d<FloorMaterial>, With<StageFloor>>,
@@ -738,7 +751,7 @@ fn fit_stage(
         let Some(backdrop) = children.iter().find(|c| backdrops.contains(*c)) else {
             continue;
         };
-        let Ok((mut transform, mut global, material)) = backdrops.get_mut(backdrop) else {
+        let Ok((mut transform, material)) = backdrops.get_mut(backdrop) else {
             continue;
         };
         let texture_aspect = standard
@@ -765,8 +778,6 @@ fn fit_stage(
         };
         if *transform != local {
             *transform = local;
-            // propagation has run
-            *global = stage_transform.mul_transform(local);
         }
 
         // `get_mut` marks the material modified, which re-prepares it
@@ -801,6 +812,107 @@ mod tests {
         let mut world = World::new();
         let _ = world.run_system_once(fit_stage);
         let _ = world.run_system_once(sync_stage);
+    }
+
+    /// The request lives on the system scene's root, so a respawned scene starts with none.
+    #[test]
+    fn a_stage_request_is_kept_on_the_system_scene_root() {
+        use bevy::{ecs::system::RunSystemOnce, platform::collections::HashSet};
+        use dcl_types::SceneId;
+
+        let mut world = World::new();
+        world.init_resource::<Events<SystemApi>>();
+        let root = world
+            .spawn((
+                SuperUserScene,
+                RendererSceneContext::new(
+                    SceneId::DUMMY,
+                    "hash".to_owned(),
+                    "storage_root".to_owned(),
+                    false,
+                    0,
+                    "title".to_owned(),
+                    IVec2::ZERO,
+                    HashSet::from_iter([IVec2::ZERO]),
+                    vec![],
+                    Default::default(),
+                    vec![],
+                    Entity::PLACEHOLDER,
+                    0.,
+                    false,
+                    "sdk_version",
+                    false,
+                    false,
+                ),
+            ))
+            .id();
+        let stage = LobbyStage {
+            preset: "halloween-2026".to_owned(),
+            layer: 1,
+            feet: Default::default(),
+        };
+        let send = |world: &mut World, stage: Option<LobbyStage>| {
+            world.send_event(SystemApi::SetLobbyStage(stage));
+            world.run_system_once(take_requests).unwrap();
+        };
+
+        send(&mut world, Some(stage.clone()));
+        assert!(world.entity(root).contains::<StageRequest>());
+        send(&mut world, None);
+        assert!(!world.entity(root).contains::<StageRequest>());
+
+        send(&mut world, Some(stage));
+        world.despawn(root);
+        assert_eq!(world.query::<&StageRequest>().iter(&world).count(), 0);
+    }
+
+    /// Whichever of the stage and the bloom setting reaches a new camera first, the stage's
+    /// camera ends without bloom; once released it is processed again and follows the setting.
+    #[test]
+    fn the_stage_camera_keeps_no_bloom_and_gets_it_back_when_released() {
+        use bevy::ecs::system::RunSystemOnce;
+        use common::structs::BloomSetting;
+        use system_bridge::settings::AppSetting;
+
+        let bloom = |commands: &mut Commands, camera: Entity| {
+            BloomSetting::High.apply_to_camera(&(), commands.reborrow(), camera)
+        };
+        for stage_first in [true, false] {
+            let mut world = World::new();
+            world.init_resource::<Events<NewCameraEvent>>();
+            let camera = world.spawn(Camera3d::default()).id();
+            world
+                .run_system_once(move |mut commands: Commands| {
+                    if stage_first {
+                        unprocessed(&mut commands, camera);
+                        bloom(&mut commands, camera);
+                    } else {
+                        bloom(&mut commands, camera);
+                        unprocessed(&mut commands, camera);
+                    }
+                })
+                .unwrap();
+            let entity = world.entity(camera);
+            assert!(entity.contains::<StageCamera>());
+            assert!(!entity.contains::<Bloom>(), "stage first: {stage_first}");
+            assert_eq!(entity.get::<Tonemapping>(), Some(&Tonemapping::None));
+
+            world
+                .run_system_once(
+                    move |mut commands: Commands, mut new_cameras: EventWriter<NewCameraEvent>| {
+                        processed(&mut commands, &mut new_cameras, camera);
+                    },
+                )
+                .unwrap();
+            let entity = world.entity(camera);
+            assert!(!entity.contains::<StageCamera>());
+            assert_ne!(entity.get::<Tonemapping>(), Some(&Tonemapping::None));
+            assert_eq!(world.resource::<Events<NewCameraEvent>>().len(), 1);
+            world
+                .run_system_once(move |mut commands: Commands| bloom(&mut commands, camera))
+                .unwrap();
+            assert!(world.entity(camera).contains::<Bloom>());
+        }
     }
 
     #[test]

@@ -1084,6 +1084,11 @@ pub const MIN_CASCADE: f32 = 0.1;
 #[derive(Component)]
 pub struct StageLight;
 
+/// The camera that shows the lobby stage, drawn with no post-processing: the bloom setting
+/// leaves it alone.
+#[derive(Component)]
+pub struct StageCamera;
+
 /// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows.
 pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShadowConfig> {
     if distance <= 0.0 {

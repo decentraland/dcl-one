@@ -16,7 +16,7 @@ use system_bridge::{
     PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PortableInfo,
     ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
     TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
-    WorldAccessEvent,
+    WorldAccessEvent, WorldAccessVerdict,
 };
 
 // list of op declarations
@@ -50,6 +50,7 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_get_welcome(),
             op_accept_terms(),
             op_get_satellite_view(),
+            op_get_world_access(),
             op_get_system_action_stream(),
             op_read_system_action_stream(),
             op_get_chat_stream(),
@@ -317,6 +318,15 @@ pub async fn op_get_welcome(state: Rc<RefCell<OpState>>) -> Result<WelcomeState,
 #[op2(async)]
 pub async fn op_accept_terms(state: Rc<RefCell<OpState>>) -> Result<(), anyhow::Error> {
     dcl_js::system_api::op_accept_terms(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_get_world_access(
+    state: Rc<RefCell<OpState>>,
+    #[string] world: String,
+) -> Result<WorldAccessVerdict, anyhow::Error> {
+    dcl_js::system_api::op_get_world_access(state, world).await
 }
 
 #[op2(async)]

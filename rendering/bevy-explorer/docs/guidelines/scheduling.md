@@ -111,6 +111,7 @@ index of every ordering point around the avatar, camera and collider transform p
 | `Nametag` | Nametag positioning from post-IK globals |
 | `AttachSync` | Avatar-attach and scene-proxy position sync |
 | `Billboard` | Billboard orientation, facing this frame's camera |
+| `CameraFit` | Geometry fitted to a camera's final projection, after bevy's `CameraUpdateSystem` (a resize resets a projection's aspect ratio there) |
 
 A system that needs a position in `PostUpdate` goes `.in_set(PostUpdateSets::X)` as a
 producer or `.after(PostUpdateSets::X)` as a consumer. If an ordering point is genuinely

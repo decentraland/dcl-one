@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { serviceUrl } from '@hud-host'
-import { fetchCrowd, fetchDestinationsById, fetchWhereabouts, worldReachable } from '../features/lobby/lobbyApi'
-import { fetchWorldAccess } from '../features/places/worldAccess'
+import { fetchCrowd, fetchDestinationsById, fetchWhereabouts } from '../features/lobby/lobbyApi'
+import { fixMapPublicReads } from '../features/map/mapApi'
+import { checkRealm } from '../lib/realmCheck'
 
 // A refused read releases its body: an unread stream holds the connection until it is collected.
 function refused(status: number): { response: Response; cancel: ReturnType<typeof vi.fn> } {
@@ -17,12 +18,6 @@ afterEach(() => {
 })
 
 describe('refused server reads', () => {
-  it("reads a world's access as undecided and releases the body", async () => {
-    const { response, cancel } = refused(503)
-    vi.stubGlobal('fetch', vi.fn(async () => response))
-    await expect(fetchWorldAccess('party.dcl.eth', null, [])).resolves.toBe('failed')
-    expect(cancel).toHaveBeenCalledOnce()
-  })
 
   it('releases the body of each friend in no world (404) and lists them as unknown', async () => {
     const refusals = [refused(404), refused(404)]
@@ -84,26 +79,13 @@ describe('refused server reads', () => {
       vi.fn(async (url: string) => {
         const ids = new URL(url).searchParams.getAll('id')
         asked.push(ids)
-        return ok({ peers: ids.map((id) => ({ id, parcel: [1, 2] })) })
+        return ok({ peers: ids.map((address) => ({ address, position: [16, 0, 32] })) })
       })
     )
     const wallets = Array.from({ length: 250 }, (_, i) => `0x${i}`)
     const where = await fetchWhereabouts(wallets)
     expect(asked.map((ids) => ids.length)).toEqual([100, 100, 50])
     expect(where.get('0x249')).toEqual({ kind: 'genesis', parcel: { x: 1, y: 2 } })
-  })
-
-  it('tells a world that does not exist from a worlds server that cannot answer', async () => {
-    const missing = refused(404)
-    vi.stubGlobal('fetch', vi.fn(async () => missing.response))
-    await expect(worldReachable('ghost.dcl.eth')).resolves.toBe('not-found')
-    expect(missing.cancel).toHaveBeenCalledOnce()
-    const down = refused(503)
-    vi.stubGlobal('fetch', vi.fn(async () => down.response))
-    await expect(worldReachable('party.dcl.eth')).resolves.toBe('unreachable')
-    expect(down.cancel).toHaveBeenCalledOnce()
-    vi.stubGlobal('fetch', vi.fn(async () => ok({})))
-    await expect(worldReachable('party.dcl.eth')).resolves.toBe('ok')
   })
 
   it('reads the most crowded scene from the archipelago stats, and releases a refused read', async () => {
@@ -118,16 +100,46 @@ describe('refused server reads', () => {
     expect(hot.cancel).toHaveBeenCalledOnce()
   })
 
-  it('gives up on a stalled places, hot-scenes or world read', async () => {
+  it('gives up on a stalled places or hot-scenes read', async () => {
     const timeout = new AbortController()
     const asked = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal)
     const stalled = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(new DOMException('timed out', 'TimeoutError')))))
     vi.stubGlobal('fetch', stalled)
-    const reads = [fetchDestinationsById(['p']).catch(() => 'failed'), fetchCrowd().catch(() => 'failed'), worldReachable('party.dcl.eth')]
-    expect(stalled).toHaveBeenCalledTimes(3)
-    expect(asked).toHaveBeenCalledTimes(3)
+    const reads = [fetchDestinationsById(['p']).catch(() => 'failed'), fetchCrowd().catch(() => 'failed')]
+    expect(stalled).toHaveBeenCalledTimes(2)
+    expect(asked).toHaveBeenCalledTimes(2)
     timeout.abort()
-    await expect(Promise.all(reads)).resolves.toEqual(['failed', 'failed', 'unreachable'])
+    await expect(Promise.all(reads)).resolves.toEqual(['failed', 'failed'])
     asked.mockRestore()
+  })
+})
+
+describe('lobby reads shared with the map', () => {
+  it("answers friends' whereabouts from the map's fixed reads in mock mode, without the network", async () => {
+    const fetch = vi.fn(async () => ok({}))
+    vi.stubGlobal('fetch', fetch)
+    fixMapPublicReads({ pois: [], peers: [{ address: '0xabc', x: 40, z: -20 }], worlds: { '0xdef': 'boedo.dcl.eth' } })
+    try {
+      const where = await fetchWhereabouts(['0xABC', '0xDEF', '0x123'])
+      expect(where.get('0xabc')).toEqual({ kind: 'genesis', parcel: { x: 2, y: -2 } })
+      expect(where.get('0xdef')).toEqual({ kind: 'world', world: 'boedo.dcl.eth', parcel: null })
+      expect(where.get('0x123')).toEqual({ kind: 'unknown' })
+      expect(fetch).not.toHaveBeenCalled()
+    } finally {
+      fixMapPublicReads(null)
+    }
+  })
+
+  it("tells Go to's world that does not exist from a worlds server that cannot answer", async () => {
+    const world = `${serviceUrl('worldsServer')}/world/ghost.eth`
+    const missing = refused(404)
+    vi.stubGlobal('fetch', vi.fn(async () => missing.response))
+    await expect(checkRealm(world)).resolves.toBe('not-found')
+    expect(missing.cancel).toHaveBeenCalledOnce()
+    const down = refused(503)
+    const read = vi.fn(async () => down.response)
+    vi.stubGlobal('fetch', read)
+    await expect(checkRealm(world)).resolves.toBe('unreachable')
+    expect(String((read.mock.calls[0] as unknown[])[0])).toBe(`${world}/about`)
   })
 })

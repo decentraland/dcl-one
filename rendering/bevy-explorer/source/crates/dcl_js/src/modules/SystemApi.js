@@ -291,6 +291,11 @@ module.exports.getSatelliteView = async function() {
     return await Deno.core.ops.op_get_satellite_view()
 }
 
+// 'allowed' | 'invited' | 'denied' | 'password' | 'failed'
+module.exports.getWorldAccess = async function(world) {
+    return await Deno.core.ops.op_get_world_access(world)
+}
+
 // get system actions as a stream
 // type SystemAction = {
 //   action: string,

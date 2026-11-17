@@ -13,19 +13,20 @@ import notificationsOff from '../../assets/lobby/notifications-off.png'
 import notificationsOn from '../../assets/lobby/notifications-on.png'
 import placesIcon from '../../assets/lobby/places-off.png'
 import { ContextMenu, MaskIcon, showToast } from '../../design'
-import { isNativeHud } from '@hud-host'
+import { isNativeHud, serviceUrl } from '@hud-host'
+import { exitApplication } from '../gate/exitApplication'
 import { bugReportUrl } from '@explorer-core/lib/bugReport'
 import { clickButton } from '@explorer-core/lib/analytics'
 import { userColor } from '@explorer-core/lib/identity'
 import { holeClip } from '@explorer-core/lib/holeClip'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
-import { realmCheckMessage } from '@explorer-core/lib/realmCheck'
+import { checkRealm, realmCheckMessage } from '@explorer-core/lib/realmCheck'
 import { lobbyStagePreset } from '@explorer-core/engine/lobbyStage'
 import { eventDestination } from '@explorer-core/features/events/eventsApi'
 import { placeTeleport } from '@explorer-core/features/places/placesApi'
 import { LobbyLayout, familyTitle, widgetFamily, widgetSpan } from '@explorer-core/features/lobby/layout'
 import { loadLayout, saveLayout } from '@explorer-core/features/lobby/layoutStorage'
-import { fetchCrowd, worldReachable, type LobbyPlace } from '@explorer-core/features/lobby/lobbyApi'
+import { fetchCrowd, type LobbyPlace } from '@explorer-core/features/lobby/lobbyApi'
 import { splitEvents } from '@explorer-core/features/lobby/lobbyEvents'
 import { parseGotoTarget, randomParcel, worldName } from '@explorer-core/features/lobby/goto'
 import * as lobbyAnalytics from '@explorer-core/features/lobby/lobbyAnalytics'
@@ -409,7 +410,8 @@ export function LobbyHome({
       const target = parseGotoTarget(text)
       if (target.world != null) {
         const world = worldName(target.world)
-        const reachable = await afterLookup(worldReachable(world))
+        // the realm's own address, so a name.eth world is probed on the worlds server too
+        const reachable = await afterLookup(checkRealm(`${serviceUrl('worldsServer')}/world/${encodeURIComponent(world)}`))
         if (reachable === STALE) return null
         if (reachable === 'not-found') return false
         if (reachable === 'unreachable') {
@@ -662,7 +664,7 @@ export function LobbyHome({
           onReportBug={() => window.open(bugReportUrl(), '_blank', 'noopener')}
           // in world the engine keeps its account while a realm is loaded
           onSignOut={onClose == null ? session.logout : session.login.signedInAs != null && !isNativeHud() ? signOutOfWorld : null}
-          onExit={isNativeHud() ? session.quit : null}
+          onExit={exitApplication}
         />
       )}
 

@@ -9,7 +9,8 @@ import { LobbyHome } from '../../features/lobby/LobbyHome'
 import type { EventData } from '@explorer-core/engine/protocol'
 import type { QueryStatus } from '../../features/events/eventsStore'
 import { eventAt } from './eventFixtures'
-import { fetchCrowd, fetchLandingPlace, fetchRecents, fetchWhereabouts, worldReachable, type FriendWhere, type LobbyPlace } from '@explorer-core/features/lobby/lobbyApi'
+import { fetchCrowd, fetchLandingPlace, fetchRecents, fetchWhereabouts, type FriendWhere, type LobbyPlace } from '@explorer-core/features/lobby/lobbyApi'
+import { checkRealm } from '@explorer-core/lib/realmCheck'
 import { getPref, PREF, setPref } from '@explorer-core/lib/prefs'
 import * as analytics from '@explorer-core/lib/analytics'
 import { receiveProfile, resetProfileStore, setProfileRequester } from '../../features/session/profileStore'
@@ -33,9 +34,13 @@ vi.mock('@explorer-core/features/lobby/lobbyApi', async (importOriginal) => ({
   fetchHighlighted: vi.fn(async () => []),
   fetchWhereabouts: vi.fn(async () => new Map()),
   fetchCrowd: vi.fn(async () => ({ x: 5, y: 6 })),
-  worldReachable: vi.fn(async () => 'ok' as const),
   // a friend's location title would otherwise read the live places service
   whereTitle: vi.fn(async (where: FriendWhere) => (where.kind === 'genesis' ? `${where.parcel.x},${where.parcel.y}` : where.kind === 'world' ? where.world : 'Lobby'))
+}))
+
+vi.mock('@explorer-core/lib/realmCheck', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@explorer-core/lib/realmCheck')>()),
+  checkRealm: vi.fn(async () => 'ok' as const)
 }))
 
 const lobby = (session: EngineSession, onClose?: () => void): React.JSX.Element => (
@@ -567,7 +572,8 @@ describe('lobby go to', () => {
     await waitFor(() => expect(session.pickDestination).toHaveBeenCalledWith({ kind: 'parcel', x: 3, y: -5 }))
     goTo('mana')
     await waitFor(() => expect(session.pickDestination).toHaveBeenCalledWith({ kind: 'world', realm: 'mana.dcl.eth', position: undefined }))
-    vi.mocked(worldReachable).mockResolvedValueOnce('not-found')
+    expect(checkRealm).toHaveBeenLastCalledWith(expect.stringMatching(/\/world\/mana\.dcl\.eth$/))
+    vi.mocked(checkRealm).mockResolvedValueOnce('not-found')
     goTo('ghost')
     expect(await screen.findByRole('alert')).toBeInTheDocument()
   })
@@ -581,7 +587,7 @@ describe('lobby go to', () => {
 
   it('does not flag a world the worlds server cannot check, and says so', async () => {
     const session = withGoTo()
-    vi.mocked(worldReachable).mockResolvedValueOnce('unreachable')
+    vi.mocked(checkRealm).mockResolvedValueOnce('unreachable')
     render(
       <>
         {lobby(session)}
@@ -626,10 +632,10 @@ describe('lobby go to', () => {
   it('does not travel when a world answers after a page opened over the lobby from elsewhere', async () => {
     const session = withGoTo()
     let answer: (r: 'ok') => void = () => undefined
-    vi.mocked(worldReachable).mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
+    vi.mocked(checkRealm).mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
     const { rerender } = render(lobby(session, () => undefined))
     goTo('foo')
-    await waitFor(() => expect(worldReachable).toHaveBeenCalledOnce())
+    await waitFor(() => expect(checkRealm).toHaveBeenCalledOnce())
     rerender(lobby({ ...session, lobbyData: { ...session.lobbyData, covered: true } }, () => undefined))
     await act(async () => answer('ok'))
     expect(session.pickDestination).not.toHaveBeenCalled()
@@ -639,7 +645,7 @@ describe('lobby go to', () => {
     const session = withGoTo()
     vi.mocked(session.pickDestination).mockReturnValue(false)
     let answer: (r: 'ok') => void = () => undefined
-    vi.mocked(worldReachable).mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
+    vi.mocked(checkRealm).mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
     const view = (s: EngineSession): React.JSX.Element => (
       <>
         {lobby(s)}
@@ -648,7 +654,7 @@ describe('lobby go to', () => {
     )
     const { rerender } = render(view(session))
     goTo('foo')
-    await waitFor(() => expect(worldReachable).toHaveBeenCalledOnce())
+    await waitFor(() => expect(checkRealm).toHaveBeenCalledOnce())
     rerender(view({ ...session, login: { ...session.login, busy: true } }))
     await act(async () => answer('ok'))
     expect(session.pickDestination).toHaveBeenCalledOnce()
@@ -824,12 +830,12 @@ describe('lobby layout editor', () => {
 })
 
 describe('lobby profile menu and visit', () => {
-  it('signs out from the menu once confirmed, and offers no Exit on the web', async () => {
+  it('signs out from the menu once confirmed, and offers Exit', async () => {
     const session = fakeSession()
     render(lobbyWithPopups(session))
     fireEvent.click(screen.getByRole('button', { name: /guest|test/i, expanded: false }))
     const menu = screen.getByRole('menu', { name: 'Profile menu' })
-    expect(within(menu).queryByRole('menuitem', { name: 'Exit' })).not.toBeInTheDocument()
+    expect(within(menu).getByRole('menuitem', { name: 'Exit' })).toBeInTheDocument()
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Sign Out' }))
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     const ask = await screen.findByRole('dialog', { name: 'Sign out?' })

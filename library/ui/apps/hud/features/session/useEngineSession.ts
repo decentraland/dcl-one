@@ -7,7 +7,7 @@ import { hoverKey, proximityKey } from '@explorer-core/engine/pointerKeys'
 import type { LoginDriver, NewAccountPick } from '@explorer-core/engine/driver'
 import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
 import { recordVisit } from '@explorer-core/features/lobby/lobbyApi'
-import type { PortableInfo, PortableState, SatelliteView } from '@explorer-core/engine/generated'
+import type { PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import type { EngineViewportRegion, PhotoModeSnapshot, PhotoModeSource, PreviewFocus } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
@@ -57,6 +57,7 @@ import { editorEntry } from '@explorer-core/features/editorHost/source'
 import { hudActsOn, type EditorHudMode } from '@explorer-core/features/editorHost/hudMode'
 import { streamHere } from '../voiceChat/streamHere'
 import { receiveMapReply, setMapTransport } from '@explorer-core/features/map/mapApi'
+import { setNativeQuit } from '../gate/exitApplication'
 import { nearbyPlayers, travelCount } from '@explorer-core/features/map/mapPeople'
 import { eventAnalytics } from '../events/eventFormat'
 import { useEventsData, type EventsData } from '../events/useEventsData'
@@ -97,6 +98,7 @@ import type {
   GalleryWriteMessage,
   ExternalUrlOpenedMessage,
   PlaceMessage,
+  WorldAccessMessage,
   SignedPlace,
   HoverAction,
   MinimapRotation,
@@ -507,6 +509,9 @@ export interface PlacesState {
   close: () => void
   /** One place read signed, with the player's own votes; null when the read failed. */
   readSigned: (id: string) => Promise<SignedPlace | null>
+  /** Whether the player may enter a world, by the engine's entry check; `failed` when it could
+   *  not tell in time, and the world decides on arrival. */
+  worldAccess: (world: string) => Promise<WorldAccessVerdict>
 }
 
 /** What opened the Events page: its key, the menu's top bar, or the sidebar. */
@@ -943,11 +948,13 @@ const EMAIL_SUCCESS_MS = 600
 export const VERIFY_TIMED_OUT = 'verifying timed out'
 const AUTH_PROFILE_WAIT_MS = 30_000
 export const BRIDGE_CALL_TIMEOUT_MS = 30_000
+/** A slower world access check is `failed`: Jump in shows and the world decides on arrival. */
+export const WORLD_ACCESS_TIMEOUT_MS = 8_000
 export const SIGNING_IN_PICK = 'Still signing in. Try again in a moment.'
 // camera-reel-service deletes the photo and its thumbnail from S3 in turn, up to 15 s each.
 export const GALLERY_DELETE_TIMEOUT_MS = 60_000
 
-type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage | PlaceMessage
+type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage | PlaceMessage | WorldAccessMessage
 
 export type LoginStatus =
   | 'loading'
@@ -1157,8 +1164,6 @@ export interface EngineSession {
   nav: (action: NavAction) => void
   /** `preset` is a LOBBY_STAGE_PRESETS id; `idleEmotes` applies to the lobby page alone. */
   lobbyStage: { preset: string; set: (options: { preset?: string; idleEmotes?: boolean }) => void }
-  /** Native only. */
-  quit: () => void
   /** Open an `https:` url in the user's browser through the engine; resolves whether it opened. */
   openExternalUrl: (url: string) => Promise<boolean>
   /** Report (or clear) the screen rect where the scene should render an engine view. */
@@ -1662,6 +1667,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     // The profile store asks the engine itself for any address it's shown and doesn't hold.
     setProfileRequester((address, extras) => driver.send({ kind: 'getUserProfile', address, extras }))
     setMapTransport((msg) => driver.send(msg))
+    setNativeQuit(() => driver.send({ kind: 'quit' }))
     nearbyPlayers.setTransport((on) => driver.send({ kind: 'watchMapPlayers', on }))
 
     // The engine's answer to the profile save in flight, or the bridge failing to handle it (then no
@@ -2550,7 +2556,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'gallery':
         case 'galleryWrite':
         case 'externalUrlOpened':
-        case 'place': {
+        case 'place':
+        case 'worldAccess': {
           const resolve = bridgePendingRef.current.get(msg.requestId)
           bridgePendingRef.current.delete(msg.requestId)
           resolve?.(msg)
@@ -2647,6 +2654,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     return () => {
       off()
       setMapTransport(null)
+      setNativeQuit(null)
       nearbyPlayers.setTransport(null)
       driver.dispose()
       driverRef.current = null
@@ -2856,7 +2864,6 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     },
     []
   )
-  const quit = useCallback(() => driverRef.current?.send({ kind: 'quit' }), [])
   const loadLobbyEvents = eventsData.loadLobby
   const warmLobby = useCallback(() => {
     ensure('getCommunities')
@@ -3234,6 +3241,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   )
   const readSignedPlace = useCallback(
     async (id: string): Promise<SignedPlace | null> => (await bridgeCall('place', (requestId) => ({ kind: 'getPlace', requestId, id })))?.place ?? null,
+    [bridgeCall]
+  )
+  const worldAccess = useCallback(
+    async (world: string): Promise<WorldAccessVerdict> =>
+      (await bridgeCall('worldAccess', (requestId) => ({ kind: 'getWorldAccess', requestId, world }), WORLD_ACCESS_TIMEOUT_MS))?.access ?? 'failed',
     [bridgeCall]
   )
   const openExternalUrl = useCallback(
@@ -5088,7 +5100,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity, invites: communityInvites, loadInvites: loadCommunityInvites, pendingCount, loadInvitesCount: loadCommunityInvitesCount, manageRequest: manageCommunityRequest, memberSections, cardOpen: setOpenCard, loadMemberSection, invitable, loadInvitable, invite: inviteToCommunity, unban: unbanCommunityMember, posts: communityPosts, loadPosts: loadCommunityPosts, loadMorePosts: loadMoreCommunityPosts, createPost: createCommunityPost, deletePost: deleteCommunityPost, likePost: likeCommunityPost },
     map: mapSlice,
     minimap: minimapSlice,
-    places: { open: placesOpen, toggle: togglePlaces, close: closePlaces, readSigned: readSignedPlace },
+    places: { open: placesOpen, toggle: togglePlaces, close: closePlaces, readSigned: readSignedPlace, worldAccess },
     events: { open: eventsOpen, toggle: toggleEvents, close: closeEvents, data: eventsData, memberOf: eventCommunities },
     shop: { open: shopOpen, toggle: toggleShop },
     create: { open: createOpen, toggle: toggleCreate, show: showCreate },
@@ -5131,7 +5143,6 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     openExternalUrl,
     setEngineViewport,
     lobbyStage: { preset: lobbyStagePresetState, set: setLobbyStage },
-    quit,
     setInteractableArea,
     logout,
     menuOpen,

@@ -11,11 +11,14 @@ through one system API call, `setLobbyStage`: a look's id, the scene camera laye
 the avatar and camera render on, and the avatar's feet in the scene's coordinates.
 `null` takes the stage down.
 
-The stage module (`crates/system_ui/src/lobby_stage`) builds the set under the
-system scene's root on the render layer of that camera, so it moves with the scene
-and only that camera sees it. Every frame it refits the backdrop to the camera:
-the floor dissolves along a band ending at the look's screen height, and the
-backdrop covers the frame above it. The set's surfaces are engine materials (floor,
+The stage module (`crates/system_ui/src/lobby_stage`) keeps the request on the
+system scene's root and builds the set under that root on the render layer of that
+camera, so it moves with the scene, goes with it, and only that camera sees it. The
+camera shows the stage without tonemapping, grading or bloom: it carries the
+`StageCamera` marker, which the bloom setting leaves alone, and gets the engine's
+processing and the player's settings back once the stage is down. Every frame it
+refits the backdrop to the camera: the floor dissolves along a band ending at the
+look's screen height, and the backdrop covers the frame above it. The set's surfaces are engine materials (floor,
 mist, dust, contact shadow, vignette, mossy rocks) and embedded GLB props. The
 looks are engine data, listed for the HUD by id in `library/explorer-core/engine/lobbyStage.ts`;
 the HUD stores the chosen id (Settings → Lobby) and sends it with the lobby region.
@@ -31,5 +34,13 @@ A new look is engine data plus embedded assets, and an id in `lobbyStage.ts`; th
 models come from `tooling/lobby-stage-assets.py`. Unknown ids show the first look,
 so a HUD ahead of or behind the engine still gets a stage.
 
-Revisit this choice if scenes gain custom materials, or if the stage must show
-outside the system scene's camera.
+Drawing the stage in the bridge scene was considered: textured planes, scrolled
+textures, the SDK particle system and baked moss would approximate most parts. It
+would still need two new scene capabilities (an unprocessed texture camera and a
+key light of the layer's own), and it would trade the source look for scene
+limitations. The lobby is part of the Explorer's interface, and nothing requires
+its stage to deploy or spawn apart from the engine, so it stays engine data.
+
+Revisit this choice if scenes gain custom materials, if the stage must show
+outside the system scene's camera, or if looks must ship apart from engine
+releases.

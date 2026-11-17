@@ -529,10 +529,6 @@
         {
           "name": "placesApi.ts",
           "kind": "regular"
-        },
-        {
-          "name": "worldAccess.ts",
-          "kind": "regular"
         }
       ]
     },
@@ -872,10 +868,6 @@
         },
         {
           "name": "utm.test.ts",
-          "kind": "regular"
-        },
-        {
-          "name": "worldAccess.test.ts",
           "kind": "regular"
         }
       ]
@@ -4908,6 +4900,10 @@
           "kind": "regular"
         },
         {
+          "name": "exitApplication.test.ts",
+          "kind": "regular"
+        },
+        {
           "name": "fpsMeter.test.tsx",
           "kind": "regular"
         },
@@ -5676,7 +5672,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "204d6e34fd23aeae96b0d619f526136fe6cf0d36abc6bd9f4b89b31d11802914"
+      "sha256": "31fc24d9dadebae432a8e1a87d9e519d4002602933d943a3c9ba62f693748a5b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/destinations.ts",
@@ -5736,7 +5732,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/places.ts",
-      "sha256": "5f9e8843c9c11a60a129e54be3d325282384edd7ded21f558c6e5e739a8c25f4"
+      "sha256": "71b0eeaa152a83c36b392bcd527cd3dc73123b174e9d08d3ef2b1616f50e3c48"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/profile.ts",
@@ -6236,7 +6232,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "6fce5be6e3e7b3cd6c1f169aa3278e86429a6dfa4a7317f0560943f44a9b8704"
+      "sha256": "32ed7fb881d0726147e993e7425e52eb61f478ca2a9df646b62d1623ed543971"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -6276,7 +6272,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "465be51bf56285805ee6f12e463df2e56b1bb206e2633f684c58273b86363f8e"
+      "sha256": "63c329dab018d955b96495cffc19921e54be686752848509520f55ab4485427b"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -6424,7 +6420,7 @@
     },
     {
       "path": "library/explorer-core/features/lobby/lobbyApi.ts",
-      "sha256": "68f99e5f538fed4b55615e0e6ba9f0625221cf7a7d4a3f6318c0bd2d9f5bf303"
+      "sha256": "27577fcc1cee6adfb95d8c11a21cd9175d376383a296463fb42d4dc60ee5de3c"
     },
     {
       "path": "library/explorer-core/features/lobby/lobbyEvents.ts",
@@ -6452,7 +6448,7 @@
     },
     {
       "path": "library/explorer-core/features/map/mapApi.ts",
-      "sha256": "695cd088937712b412e056d7ccb7b0ebfed6b0a93ac59e96f281d1a3f962822a"
+      "sha256": "fb855a6872db572d1d45bab9f51e1eb905e165ad17ed798775815bb179864d9d"
     },
     {
       "path": "library/explorer-core/features/map/mapCoords.ts",
@@ -6505,10 +6501,6 @@
     {
       "path": "library/explorer-core/features/places/placesApi.ts",
       "sha256": "f3b387ac63ff4637757fb12b4696c085a8b4a667e74fd5c80c3d8a2ee9c152b4"
-    },
-    {
-      "path": "library/explorer-core/features/places/worldAccess.ts",
-      "sha256": "f897eb84437f02de9a17c52f07592b12820d54eb13374620ef43a320034aa1e4"
     },
     {
       "path": "library/explorer-core/features/pointer/cursorStore.ts",
@@ -6800,7 +6792,7 @@
     },
     {
       "path": "library/explorer-core/test/serverReadErrors.test.ts",
-      "sha256": "7bac706f82f37bb9b0b45d3fc31e38130358db3147d2531b27fa22c028161375"
+      "sha256": "5d04d2849a25196e5beb261bca83940659cb95fa2eac51d50376eccb48cfe7f7"
     },
     {
       "path": "library/explorer-core/test/shellSign.test.ts",
@@ -6813,10 +6805,6 @@
     {
       "path": "library/explorer-core/test/utm.test.ts",
       "sha256": "ef127eabccc61e88b4dcb2bfcc60d89bca3709bec2f74c0fffdb5c15a492258f"
-    },
-    {
-      "path": "library/explorer-core/test/worldAccess.test.ts",
-      "sha256": "30e8608813a0c8913ba7c73ca5e8aa67f2b2cf776ff225e79267aa20855c2864"
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
@@ -9296,7 +9284,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gate/exitApplication.ts",
-      "sha256": "49d7fb067c0f6e881f2b1defa91659797b3c7f6a276cb6643d41522dcb1cafc3"
+      "sha256": "6d666ed887e860cb0e4108f5176fe4e9d3763a3293ca5eda20b1238077b36f3a"
     },
     {
       "path": "library/ui/apps/hud/features/gate/signOutOfWorld.ts",
@@ -9332,7 +9320,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "sha256": "9d87979772c923d751477b38f2432b6a65c666cba1b6c5b34e4d3feeeedbbefb"
+      "sha256": "b8c6471072e2e1c615b4a226893e472908d79848bbcab62238131a0450946cf2"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.module.css",
@@ -9588,7 +9576,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "sha256": "0cccb6e2cb039283d041d73e60d7254233096aa27fba6be15d08b52caf779358"
+      "sha256": "b144d044e673e76fb68f3b34bb12b7a1ccd33c61af7a055349fcbccd1bd5e869"
     },
     {
       "path": "library/ui/apps/hud/features/places/PlacesBrowser.tsx",
@@ -9724,7 +9712,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "55e7a397dc79ea0722d1914414e902638ea3543ff84bbd8728092483e1e10c9d"
+      "sha256": "24d4ed64ffc8ea69804a6a2b33b9cd8a3fce6bdc5408bbb2c800df68bcc8c510"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -9764,7 +9752,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "sha256": "5625a313725cfa02039efe33d21605c6210ffc04920d7a431cc106ecb8e61ad4"
+      "sha256": "8220cd4a2e52cc252a6ab16bd37c264002578dbc62cfb45d486035fec1fb1e17"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/panels/DiscoverPanel.tsx",
@@ -9872,7 +9860,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupFooter.tsx",
-      "sha256": "0358071c9af264fe31ef5745cb28f45d323b788fa763d043503b304265a33ca6"
+      "sha256": "f014f9196930962df4f79869e2bb81044e77cc188b3c8e0c2220e89e9382592a"
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupSplash.module.css",
@@ -9900,7 +9888,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/connectionError.ts",
-      "sha256": "6a14a0afe1b5b946c0bc92c67438889d1a036e3646bba1651c5c4fe1143e4dce"
+      "sha256": "c9430296d53c3e2bfbcd681e8b52ff100905eadcfb20d102ea58303bb422a4c5"
     },
     {
       "path": "library/ui/apps/hud/features/startup/presets.ts",
@@ -10035,6 +10023,10 @@
       "sha256": "b0fa53ae546c421b7c4319e8ab5b9db966ec8cd1c1483b4dd351e0416a9d97be"
     },
     {
+      "path": "library/ui/apps/hud/test/exitApplication.test.ts",
+      "sha256": "314eb25a02357ea7e6501f68a1fc29b42b787668016252fcb99c44aaf3fec0c6"
+    },
+    {
       "path": "library/ui/apps/hud/test/fpsMeter.test.tsx",
       "sha256": "420bb571282af0c37f0ea0fdac71e7861d44d9a3a39caa157a336eab16e71b98"
     },
@@ -10044,7 +10036,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "e15c12403a370e189daf233a593eb0da79a3500a643993f5e871d5252dcc81ce"
+      "sha256": "4b8eae6b1bb7d6cf1f5490ff72f12a672dfcea1914ca970eaaa595a4ea0e6516"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -10256,7 +10248,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
-      "sha256": "3ca5faf774ccff64893e1a4681f15cb79714dc58e30c2bcc0eb52876a4bd8a5c"
+      "sha256": "ca5a03337c402925323a9b0cf2e2e0d7241a7390074b772718045afb044502a7"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/lobbyFriendLocations.test.tsx",
@@ -10276,7 +10268,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/login.clicks.test.tsx",
-      "sha256": "8348a2c3326b266c77cb561b25b2dfaadac89b8edd81f5f97533dcd710cb9330"
+      "sha256": "a048f6c8e513b4d9f3639720d2ab6f4094ee42dc93f8859b61e0cc82de0f8b9f"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
@@ -10352,7 +10344,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/placeDetail.test.tsx",
-      "sha256": "f4ed6df9733533c10ac02a6973bacb512f5df43657224c80eb1da9fffe4b9374"
+      "sha256": "2823292e61c0d770a0ef39a17656333c3a479b1ba625175c6ad646f87e4448e8"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/placesDiscovery.test.tsx",
@@ -10400,7 +10392,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/sidebar.test.tsx",
-      "sha256": "5aa7bf3dd6ab476748965247651e44f3b33c494d25a85ba027806476dce14012"
+      "sha256": "e1be29ccdb6302c4208500f18660bea047baf533504add5aba7a2e151886c63e"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/sidebarAutoHide.test.tsx",
@@ -11435,6 +11427,36 @@
     },
     {
       "from": "library/explorer-core/features/lobby/lobbyApi.ts",
+      "to": "library/explorer-core/features/map/atlas.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/lobby/lobbyApi.ts",
+      "to": "library/explorer-core/features/map/atlas.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/lobby/lobbyApi.ts",
+      "to": "library/explorer-core/features/map/atlas.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/lobby/lobbyApi.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/lobby/lobbyApi.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/lobby/lobbyApi.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/lobby/lobbyApi.ts",
       "to": "library/explorer-core/lib/prefs.ts",
       "kind": "native:runtime"
     },
@@ -12980,17 +13002,32 @@
     },
     {
       "from": "library/explorer-core/test/serverReadErrors.test.ts",
-      "to": "library/explorer-core/features/places/worldAccess.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/explorer-core/test/serverReadErrors.test.ts",
-      "to": "library/explorer-core/features/places/worldAccess.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/explorer-core/test/serverReadErrors.test.ts",
-      "to": "library/explorer-core/features/places/worldAccess.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/serverReadErrors.test.ts",
+      "to": "library/explorer-core/lib/realmCheck.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/serverReadErrors.test.ts",
+      "to": "library/explorer-core/lib/realmCheck.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/serverReadErrors.test.ts",
+      "to": "library/explorer-core/lib/realmCheck.ts",
       "kind": "test:runtime"
     },
     {
@@ -13051,21 +13088,6 @@
     {
       "from": "library/explorer-core/test/utm.test.ts",
       "to": "library/explorer-core/lib/utm.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/explorer-core/test/worldAccess.test.ts",
-      "to": "library/explorer-core/features/places/worldAccess.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/explorer-core/test/worldAccess.test.ts",
-      "to": "library/explorer-core/features/places/worldAccess.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/explorer-core/test/worldAccess.test.ts",
-      "to": "library/explorer-core/features/places/worldAccess.ts",
       "kind": "test:runtime"
     },
     {
@@ -25265,6 +25287,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/ui/apps/hud/features/gate/exitApplication.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/ui/apps/hud/features/gate/exitApplication.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/ui/apps/hud/features/gate/exitApplication.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
       "to": "library/ui/apps/hud/features/gate/signOutOfWorld.ts",
       "kind": "native:runtime"
     },
@@ -29675,21 +29712,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/explorer-core/features/places/worldAccess.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/explorer-core/features/places/worldAccess.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/explorer-core/features/places/worldAccess.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "to": "library/explorer-core/lib/identity.ts",
       "kind": "native:runtime"
     },
@@ -32296,6 +32318,21 @@
     {
       "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "to": "library/ui/apps/hud/features/friends/friendToasts.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/gate/exitApplication.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/gate/exitApplication.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/gate/exitApplication.ts",
       "kind": "test:runtime"
     },
     {
@@ -36499,6 +36536,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/exitApplication.test.ts",
+      "to": "library/ui/apps/hud/features/gate/exitApplication.ts",
+      "kind": "native:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/exitApplication.test.ts",
+      "to": "library/ui/apps/hud/features/gate/exitApplication.ts",
+      "kind": "production:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/exitApplication.test.ts",
+      "to": "library/ui/apps/hud/features/gate/exitApplication.ts",
+      "kind": "test:dynamic"
+    },
+    {
       "from": "library/ui/apps/hud/test/fpsMeter.test.tsx",
       "to": "library/ui/apps/hud/features/debug/FpsMeter.tsx",
       "kind": "native:runtime"
@@ -39001,6 +39053,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
       "to": "library/explorer-core/lib/prefs.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
+      "to": "library/explorer-core/lib/realmCheck.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
+      "to": "library/explorer-core/lib/realmCheck.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/lobby.test.tsx",
+      "to": "library/explorer-core/lib/realmCheck.ts",
       "kind": "test:runtime"
     },
     {
@@ -40306,21 +40373,6 @@
     {
       "from": "library/ui/apps/hud/test/hosted/placeDetail.test.tsx",
       "to": "library/explorer-core/features/map/mapApi.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/hosted/placeDetail.test.tsx",
-      "to": "library/explorer-core/features/places/worldAccess.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/hosted/placeDetail.test.tsx",
-      "to": "library/explorer-core/features/places/worldAccess.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/hosted/placeDetail.test.tsx",
-      "to": "library/explorer-core/features/places/worldAccess.ts",
       "kind": "test:runtime"
     },
     {
@@ -43770,11 +43822,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/explorer-core/features/places/worldAccess.ts",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/features/pointer/cursorStore.ts",
       "kind": "type"
     },
@@ -44151,11 +44198,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/utm.test.ts",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/explorer-core/test/worldAccess.test.ts",
       "kind": "type"
     },
     {
@@ -45476,6 +45518,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/error.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/exitApplication.test.ts",
       "kind": "type"
     },
     {
