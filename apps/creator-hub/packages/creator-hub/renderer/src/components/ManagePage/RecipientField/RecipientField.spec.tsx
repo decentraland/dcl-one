@@ -1,13 +1,13 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { resolveNameOwner } from '/@/modules/store/ens/names';
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
 import { RecipientField } from '.';
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 
 vi.mock('/@/modules/store/ens/names', async importOriginal => ({
   ...(await importOriginal<object>()),
@@ -23,13 +23,13 @@ const BEN = '0x00000000000000000000000000000000000000b2';
 function renderField(purpose: 'transfer' | 'add' = 'transfer') {
   const onResolved = vi.fn();
   render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <RecipientField
         purpose={purpose}
         self={SELF}
         onResolved={onResolved}
       />
-    </ThemeProvider>,
+    </TestProviders>,
   );
   const type = (value: string) =>
     fireEvent.change(screen.getByRole('textbox', { name: 'Wallet address or NAME' }), {

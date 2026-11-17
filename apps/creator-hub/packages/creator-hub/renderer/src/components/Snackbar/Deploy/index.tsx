@@ -1,12 +1,16 @@
 import { useCallback, useMemo, useState } from 'react';
-import CloseIcon from '@mui/icons-material/Close';
-import { Alert, Button, IconButton, CircularProgress as Loader } from 'decentraland-ui2';
+import { CloseIcon } from '@ui/atoms/icons-material';
+import Button from '@ui/atoms/Button';
+import IconButton from '@ui/atoms/IconButton';
+import Spinner from '@ui/atoms/Spinner';
 
 import { t } from '/@/modules/store/translation/utils';
 import { useDeploy } from '/@/hooks/useDeploy';
 import { useWorkspace } from '/@/hooks/useWorkspace';
 
 import { PublishProject } from '/@/components/Modals/PublishProject';
+
+import { SnackbarAlert } from '../Alert';
 
 export function Deploy({ path, onClose }: { path: string; onClose: () => void }) {
   const { getDeployment } = useDeploy();
@@ -48,8 +52,11 @@ function Pending({ path, title, onClose }: { path: string; title: string; onClos
         >
           {t('snackbar.deploy.pending.actions.view')}
         </Button>
-        <IconButton onClick={onClose}>
-          <CloseIcon color="secondary" />
+        <IconButton
+          aria-label={t('modal.close')}
+          onClick={onClose}
+        >
+          <CloseIcon tone="secondary" />
         </IconButton>
       </>
     ),
@@ -61,12 +68,19 @@ function Pending({ path, title, onClose }: { path: string; title: string; onClos
   return (
     <>
       {!open && (
-        <Alert
-          icon={<Loader size={20} />}
+        <SnackbarAlert
+          icon={
+            <Spinner
+              ring="wide"
+              role="progressbar"
+              size={20}
+              color="primary"
+            />
+          }
           action={renderActions()}
         >
           {t('snackbar.deploy.pending.title', { title })}
-        </Alert>
+        </SnackbarAlert>
       )}
       <PublishProject
         open={open}
@@ -97,8 +111,11 @@ function Success({ path, title, onClose }: { path: string; title: string; onClos
         >
           {t('snackbar.deploy.success.actions.view')}
         </Button>
-        <IconButton onClick={onClose}>
-          <CloseIcon color="secondary" />
+        <IconButton
+          aria-label={t('modal.close')}
+          onClick={onClose}
+        >
+          <CloseIcon tone="secondary" />
         </IconButton>
       </>
     ),
@@ -110,12 +127,12 @@ function Success({ path, title, onClose }: { path: string; title: string; onClos
   return (
     <>
       {!open && (
-        <Alert
+        <SnackbarAlert
           severity="success"
           action={renderActions()}
         >
           {t('snackbar.deploy.success.title', { title })}
-        </Alert>
+        </SnackbarAlert>
       )}
       <PublishProject
         open={open}
@@ -146,8 +163,11 @@ function Error({ path, title, onClose }: { path: string; title: string; onClose:
         >
           {t('snackbar.deploy.error.actions.retry')}
         </Button>
-        <IconButton onClick={onClose}>
-          <CloseIcon color="secondary" />
+        <IconButton
+          aria-label={t('modal.close')}
+          onClick={onClose}
+        >
+          <CloseIcon tone="secondary" />
         </IconButton>
       </>
     ),
@@ -159,12 +179,12 @@ function Error({ path, title, onClose }: { path: string; title: string; onClose:
   return (
     <>
       {!open && (
-        <Alert
+        <SnackbarAlert
           severity="error"
           action={renderActions()}
         >
           {t('snackbar.deploy.error.title', { title: `"${title}"` })}
-        </Alert>
+        </SnackbarAlert>
       )}
       <PublishProject
         open={open}

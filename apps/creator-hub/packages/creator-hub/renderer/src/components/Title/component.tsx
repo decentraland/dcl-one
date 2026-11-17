@@ -1,28 +1,34 @@
-import BackChevronIcon from '@mui/icons-material/ArrowBackIosNewRounded';
+import { cx } from '/@/lib/cx';
+import IconButton from '@ui/atoms/IconButton';
+import Text from '@ui/atoms/Text';
+import { ArrowBackIosNewRoundedIcon } from '@ui/atoms/icons-material';
 
 import { t } from '/@/modules/store/translation/utils';
 
 import type { Props } from './types';
-import { BackButton, Heading, Root } from './component.styled';
+import styles from './component.module.css';
 
 export function Title({ id, value, onBack }: Props) {
   return (
-    <Root className="Title">
+    <div className={cx('Title', styles.root)}>
       {onBack && (
-        <BackButton
+        <IconButton
+          className={styles.back}
+          tone="primary"
           aria-label={t('title.back')}
           onClick={onBack}
         >
-          <BackChevronIcon />
-        </BackButton>
+          <ArrowBackIosNewRoundedIcon fontSize="inherit" />
+        </IconButton>
       )}
-      <Heading
+      <Text
         id={id}
+        className={styles.heading}
         variant="h3"
-        component="h1"
+        as="h1"
       >
         {value}
-      </Heading>
-    </Root>
+      </Text>
+    </div>
   );
 }

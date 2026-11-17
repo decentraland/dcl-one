@@ -72,7 +72,6 @@ const IGNORE_TEXTURES = [
 
 function collectTexturesFromMaterial(material: Material, textures: Set<string>): void {
   for (const key in material) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const value = (material as any)[key];
     if (value && typeof value === 'object' && 'getInternalTexture' in value) {
       const texture = value;

@@ -1,8 +1,8 @@
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import yauzl from 'yauzl';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import extract from '@dcl/zip-extract';
 
 import type { SceneExportProgress } from '/shared/types/scene-export';
 
@@ -28,30 +28,19 @@ const ENTITY_ID = 'bafkreientity';
 
 type ZipEntry = { data: Buffer; compressionMethod: number };
 
-function readZip(file: string): Promise<Map<string, ZipEntry>> {
-  return new Promise((resolve, reject) => {
+async function readZip(file: string): Promise<Map<string, ZipEntry>> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'scene-export-read-'));
+  try {
+    const methods = new Map<string, number>();
+    await extract(file, { dir, onEntry: entry => methods.set(entry.fileName, entry.method) });
     const entries = new Map<string, ZipEntry>();
-    yauzl.open(file, { lazyEntries: true }, (err, zip) => {
-      if (err) return reject(err);
-      zip.on('error', reject);
-      zip.on('end', () => resolve(entries));
-      zip.on('entry', (entry: yauzl.Entry) => {
-        zip.openReadStream(entry, (streamErr, stream) => {
-          if (streamErr) return reject(streamErr);
-          const chunks: Buffer[] = [];
-          stream.on('data', chunk => chunks.push(chunk));
-          stream.on('end', () => {
-            entries.set(entry.fileName, {
-              data: Buffer.concat(chunks),
-              compressionMethod: entry.compressionMethod,
-            });
-            zip.readEntry();
-          });
-        });
-      });
-      zip.readEntry();
-    });
-  });
+    for (const [name, compressionMethod] of methods) {
+      entries.set(name, { data: await fs.readFile(path.join(dir, name)), compressionMethod });
+    }
+    return entries;
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 }
 
 function text(entries: Map<string, ZipEntry>, name: string) {

@@ -1,12 +1,12 @@
 import { type ReactNode } from 'react';
-import { flatten } from 'flat';
-import { Typography } from 'decentraland-ui2';
+import { flatten } from '/@/modules/store/translation/flatten';
+import Text from '@ui/atoms/Text';
 
 import { en } from '/@/modules/store/translation/locales';
 import type { TranslationPath } from '/@/modules/store/translation/types';
 import { getCurrentLocale, t } from '/@/modules/store/translation/utils';
 
-import { Actions, Description, PageFallback } from './component.styled';
+import { Actions, Description, PageFallback } from './parts';
 
 const english = flatten<typeof en, Record<string, string>>(en);
 
@@ -31,7 +31,12 @@ export function ErrorFallback({ description, testId, children }: Props) {
       role="alert"
       data-testid={testId}
     >
-      <Typography variant="h5">{fallbackText('error_boundary.title')}</Typography>
+      <Text
+        variant="h5"
+        tone="primary"
+      >
+        {fallbackText('error_boundary.title')}
+      </Text>
       <Description variant="body1">{description}</Description>
       <Actions>{children}</Actions>
     </PageFallback>

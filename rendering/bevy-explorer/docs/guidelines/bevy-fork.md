@@ -106,6 +106,9 @@ across workers:
 - `MAX_MORPH_WEIGHTS` raised from 64 to 256.
 - `specular_multiscatter` matches the Filament reference (upstream #23514); inverse tonemapping
   fix.
+- `sectional_color_grading` fades the shadows section into the midtones over the level margin.
+  Stock bevy gives that fade to the highlights, so the shadows section ends at a hard step, and a
+  shadows gain darkens the pixels just above it: a dark rim along every shadow edge.
 
 ## glTF and images
 

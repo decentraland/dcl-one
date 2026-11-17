@@ -1,0 +1,1214 @@
+{
+  "about": "Signed fetch test vectors. Made with @dcl/crypto 3.7.0 and decentraland-crypto-fetch 3.0.0 before the app got its own signer. See signedFetch.vectors.spec.ts for how they were made. Every key here is a throwaway test key made for this file. Do not edit by hand.",
+  "madeWith": {
+    "@dcl/crypto": "3.7.0",
+    "decentraland-crypto-fetch": "3.0.0",
+    "node": "v24.22.2"
+  },
+  "clock": {
+    "now": 1773500966535,
+    "iso": "2026-03-14T15:09:26.535Z",
+    "timeZone": "UTC"
+  },
+  "throwawayTestKeys": {
+    "owner": {
+      "label": "creator-hub signed fetch fixture: throwaway owner key",
+      "privateKey": "e4133db40e1a63af6d8e55ca9b6081e512a8240c3e042bf644c00e4c02771896",
+      "publicKey": "0cc762065302d71d101672e556e2b11c1dcfe312ecedc2059721493f7e5fad6ab9e29e3df2740615da51575323ddbe1b7994c4168712e4dbf00d0a7112216342",
+      "address": "0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0"
+    },
+    "ephemeral": {
+      "label": "creator-hub signed fetch fixture: throwaway ephemeral key",
+      "privateKey": "883c4b5340e48f458ae6eda775bb10bc3e1918ead4bc340f480e1793aaf23fc0",
+      "publicKey": "eaa2483a3f56bf399f896f94549081223169ab8d1c4aa8f9e624725a4de1445fe6442a8e436b76d73ee82c4cba396b83385e4d15b93b7fa767c250890a5ff330",
+      "address": "0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81"
+    },
+    "otherEphemeral": {
+      "label": "creator-hub signed fetch fixture: second throwaway ephemeral key",
+      "privateKey": "fa8f4c5ddcca512e85388e46f9f9f23acb05fa278a38d37ba1338e3291c5709d",
+      "publicKey": "ebd12cced3c37789224fa8369d1d9c2d2ab2a13c80e3abd7de342f5d82e1b68a2df4e455eda1767230417675fde6588bfabca611f21f4b30fdcc688f67992398",
+      "address": "0xfcd9076AbAF038FFCb05F06509C688c687F4b9AE"
+    }
+  },
+  "contractWalletSignature": "0xabababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+  "identities": [
+    {
+      "name": "personal",
+      "note": "A wallet that signs with its key.",
+      "ownerAddress": "0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0",
+      "ephemeralKey": "ephemeral",
+      "minutes": 10,
+      "ownerSignsWith": "owner key",
+      "signedMessage": "Decentraland Login\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\nExpiration: 2026-03-14T15:19:26.535Z",
+      "identity": {
+        "ephemeralIdentity": {
+          "privateKey": "883c4b5340e48f458ae6eda775bb10bc3e1918ead4bc340f480e1793aaf23fc0",
+          "publicKey": "eaa2483a3f56bf399f896f94549081223169ab8d1c4aa8f9e624725a4de1445fe6442a8e436b76d73ee82c4cba396b83385e4d15b93b7fa767c250890a5ff330",
+          "address": "0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81"
+        },
+        "expiration": "2026-03-14T15:19:26.535Z",
+        "authChain": [
+          {
+            "type": "SIGNER",
+            "payload": "0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0",
+            "signature": ""
+          },
+          {
+            "type": "ECDSA_EPHEMERAL",
+            "payload": "Decentraland Login\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\nExpiration: 2026-03-14T15:19:26.535Z",
+            "signature": "0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c"
+          }
+        ]
+      }
+    },
+    {
+      "name": "personal-month",
+      "note": "A longer expiration and a second ephemeral key.",
+      "ownerAddress": "0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0",
+      "ephemeralKey": "otherEphemeral",
+      "minutes": 44640,
+      "ownerSignsWith": "owner key",
+      "signedMessage": "Decentraland Login\nEphemeral address: 0xfcd9076AbAF038FFCb05F06509C688c687F4b9AE\nExpiration: 2026-04-14T15:09:26.535Z",
+      "identity": {
+        "ephemeralIdentity": {
+          "privateKey": "fa8f4c5ddcca512e85388e46f9f9f23acb05fa278a38d37ba1338e3291c5709d",
+          "publicKey": "ebd12cced3c37789224fa8369d1d9c2d2ab2a13c80e3abd7de342f5d82e1b68a2df4e455eda1767230417675fde6588bfabca611f21f4b30fdcc688f67992398",
+          "address": "0xfcd9076AbAF038FFCb05F06509C688c687F4b9AE"
+        },
+        "expiration": "2026-04-14T15:09:26.535Z",
+        "authChain": [
+          {
+            "type": "SIGNER",
+            "payload": "0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0",
+            "signature": ""
+          },
+          {
+            "type": "ECDSA_EPHEMERAL",
+            "payload": "Decentraland Login\nEphemeral address: 0xfcd9076AbAF038FFCb05F06509C688c687F4b9AE\nExpiration: 2026-04-14T15:09:26.535Z",
+            "signature": "0x92a74287f479a9d1d10c2dc8b5abf2836a2e1bb2365cd735aeec88fd5247844226e8490997d7afbe1b5b51b1ce48289cd103f4da64785d7b3d5ad259582aaa7e1b"
+          }
+        ]
+      }
+    },
+    {
+      "name": "contract-wallet",
+      "note": "A contract wallet: the second link has the EIP-1654 type.",
+      "ownerAddress": "0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0",
+      "ephemeralKey": "ephemeral",
+      "minutes": 10,
+      "ownerSignsWith": "made-up contract wallet signature",
+      "signedMessage": "Decentraland Login\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\nExpiration: 2026-03-14T15:19:26.535Z",
+      "identity": {
+        "ephemeralIdentity": {
+          "privateKey": "883c4b5340e48f458ae6eda775bb10bc3e1918ead4bc340f480e1793aaf23fc0",
+          "publicKey": "eaa2483a3f56bf399f896f94549081223169ab8d1c4aa8f9e624725a4de1445fe6442a8e436b76d73ee82c4cba396b83385e4d15b93b7fa767c250890a5ff330",
+          "address": "0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81"
+        },
+        "expiration": "2026-03-14T15:19:26.535Z",
+        "authChain": [
+          {
+            "type": "SIGNER",
+            "payload": "0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0",
+            "signature": ""
+          },
+          {
+            "type": "ECDSA_EIP_1654_EPHEMERAL",
+            "payload": "Decentraland Login\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\nExpiration: 2026-03-14T15:19:26.535Z",
+            "signature": "0xabababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+          }
+        ]
+      }
+    },
+    {
+      "name": "personal-other-key-spelling",
+      "note": "The identity \"personal\" with the other spelling of the private key (with or without 0x). It signs the same.",
+      "derivedFrom": "personal",
+      "identity": {
+        "ephemeralIdentity": {
+          "privateKey": "0x883c4b5340e48f458ae6eda775bb10bc3e1918ead4bc340f480e1793aaf23fc0",
+          "publicKey": "eaa2483a3f56bf399f896f94549081223169ab8d1c4aa8f9e624725a4de1445fe6442a8e436b76d73ee82c4cba396b83385e4d15b93b7fa767c250890a5ff330",
+          "address": "0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81"
+        },
+        "expiration": "2026-03-14T15:19:26.535Z",
+        "authChain": [
+          {
+            "type": "SIGNER",
+            "payload": "0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0",
+            "signature": ""
+          },
+          {
+            "type": "ECDSA_EPHEMERAL",
+            "payload": "Decentraland Login\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\nExpiration: 2026-03-14T15:19:26.535Z",
+            "signature": "0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c"
+          }
+        ]
+      }
+    }
+  ],
+  "localTime": [
+    {
+      "name": "clocks go forward in the span",
+      "timeZone": "Europe/Berlin",
+      "ephemeralKey": "otherEphemeral",
+      "minutes": 44640,
+      "shiftMinutes": -60,
+      "expiration": "2026-04-14T14:09:26.535Z"
+    },
+    {
+      "name": "clocks go back by half an hour in the span",
+      "timeZone": "Australia/Lord_Howe",
+      "ephemeralKey": "otherEphemeral",
+      "minutes": 44640,
+      "shiftMinutes": 30,
+      "expiration": "2026-04-14T15:39:26.535Z"
+    }
+  ],
+  "payloads": [
+    {
+      "name": "entity id, CID v1",
+      "identity": "personal",
+      "payload": "bafkreigaknpexyvxt76zgkitavbwx6ejgfheup5oybpm77f3pxzrvwpfdi",
+      "authChain": [
+        {
+          "type": "SIGNER",
+          "payload": "0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0",
+          "signature": ""
+        },
+        {
+          "type": "ECDSA_EPHEMERAL",
+          "payload": "Decentraland Login\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\nExpiration: 2026-03-14T15:19:26.535Z",
+          "signature": "0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c"
+        },
+        {
+          "type": "ECDSA_SIGNED_ENTITY",
+          "payload": "bafkreigaknpexyvxt76zgkitavbwx6ejgfheup5oybpm77f3pxzrvwpfdi",
+          "signature": "0xdd14ed297e9beba64c8864daf1bdd8e4aa68b6bf672d42383d92bd6da603390b2feac84d794278ca59b01b29a6023e4fbbd4be7ee5d8dc0b7f625e06a7de3cfb1b"
+        }
+      ],
+      "validSignature": true
+    },
+    {
+      "name": "entity id, CID v0 with capitals",
+      "identity": "personal",
+      "payload": "QmUsqJaHc5HQaBrojhBdjF4fr5MQc6CqhwZjqwhVRftNAo",
+      "authChain": [
+        {
+          "type": "SIGNER",
+          "payload": "0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0",
+          "signature": ""
+        },
+        {
+          "type": "ECDSA_EPHEMERAL",
+          "payload": "Decentraland Login\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\nExpiration: 2026-03-14T15:19:26.535Z",
+          "signature": "0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c"
+        },
+        {
+          "type": "ECDSA_SIGNED_ENTITY",
+          "payload": "QmUsqJaHc5HQaBrojhBdjF4fr5MQc6CqhwZjqwhVRftNAo",
+          "signature": "0x60672a1fd1cd6c528edaa79a37c414cbe9313419384fd61a82afdd7c238c30ae54803e02985ff1d7c2535f142565cb7adeb3c5f664d81941fff3c28a684f46611b"
+        }
+      ],
+      "validSignature": true
+    },
+    {
+      "name": "entity id, contract wallet identity",
+      "identity": "contract-wallet",
+      "payload": "bafkreigaknpexyvxt76zgkitavbwx6ejgfheup5oybpm77f3pxzrvwpfdi",
+      "authChain": [
+        {
+          "type": "SIGNER",
+          "payload": "0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0",
+          "signature": ""
+        },
+        {
+          "type": "ECDSA_EIP_1654_EPHEMERAL",
+          "payload": "Decentraland Login\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\nExpiration: 2026-03-14T15:19:26.535Z",
+          "signature": "0xabababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+        },
+        {
+          "type": "ECDSA_SIGNED_ENTITY",
+          "payload": "bafkreigaknpexyvxt76zgkitavbwx6ejgfheup5oybpm77f3pxzrvwpfdi",
+          "signature": "0xdd14ed297e9beba64c8864daf1bdd8e4aa68b6bf672d42383d92bd6da603390b2feac84d794278ca59b01b29a6023e4fbbd4be7ee5d8dc0b7f625e06a7de3cfb1b"
+        }
+      ]
+    },
+    {
+      "name": "entity id, second ephemeral key",
+      "identity": "personal-month",
+      "payload": "bafkreigaknpexyvxt76zgkitavbwx6ejgfheup5oybpm77f3pxzrvwpfdi",
+      "authChain": [
+        {
+          "type": "SIGNER",
+          "payload": "0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0",
+          "signature": ""
+        },
+        {
+          "type": "ECDSA_EPHEMERAL",
+          "payload": "Decentraland Login\nEphemeral address: 0xfcd9076AbAF038FFCb05F06509C688c687F4b9AE\nExpiration: 2026-04-14T15:09:26.535Z",
+          "signature": "0x92a74287f479a9d1d10c2dc8b5abf2836a2e1bb2365cd735aeec88fd5247844226e8490997d7afbe1b5b51b1ce48289cd103f4da64785d7b3d5ad259582aaa7e1b"
+        },
+        {
+          "type": "ECDSA_SIGNED_ENTITY",
+          "payload": "bafkreigaknpexyvxt76zgkitavbwx6ejgfheup5oybpm77f3pxzrvwpfdi",
+          "signature": "0x79f472400182eb1928ab928b71b464b5791a803aa7e5442cf0568d70b621438c7f6e86fb19ef52d4f400a9b2cd8c9199ac1b7c3b6447eb2928e5787cc741200e1c"
+        }
+      ],
+      "validSignature": true
+    },
+    {
+      "name": "entity id, other spelling of the private key",
+      "identity": "personal-other-key-spelling",
+      "payload": "bafkreigaknpexyvxt76zgkitavbwx6ejgfheup5oybpm77f3pxzrvwpfdi",
+      "authChain": [
+        {
+          "type": "SIGNER",
+          "payload": "0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0",
+          "signature": ""
+        },
+        {
+          "type": "ECDSA_EPHEMERAL",
+          "payload": "Decentraland Login\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\nExpiration: 2026-03-14T15:19:26.535Z",
+          "signature": "0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c"
+        },
+        {
+          "type": "ECDSA_SIGNED_ENTITY",
+          "payload": "bafkreigaknpexyvxt76zgkitavbwx6ejgfheup5oybpm77f3pxzrvwpfdi",
+          "signature": "0xdd14ed297e9beba64c8864daf1bdd8e4aa68b6bf672d42383d92bd6da603390b2feac84d794278ca59b01b29a6023e4fbbd4be7ee5d8dc0b7f625e06a7de3cfb1b"
+        }
+      ],
+      "validSignature": true
+    },
+    {
+      "name": "deployment status request (getAuthHeaders)",
+      "identity": "personal",
+      "payload": "get:/entities/status/bafkreigaknpexyvxt76zgkitavbwx6ejgfheup5oybpm77f3pxzrvwpfdi:1773500966535:{}",
+      "authChain": [
+        {
+          "type": "SIGNER",
+          "payload": "0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0",
+          "signature": ""
+        },
+        {
+          "type": "ECDSA_EPHEMERAL",
+          "payload": "Decentraland Login\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\nExpiration: 2026-03-14T15:19:26.535Z",
+          "signature": "0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c"
+        },
+        {
+          "type": "ECDSA_SIGNED_ENTITY",
+          "payload": "get:/entities/status/bafkreigaknpexyvxt76zgkitavbwx6ejgfheup5oybpm77f3pxzrvwpfdi:1773500966535:{}",
+          "signature": "0x035d8e836e46329f47b49612e714564b8f7c4dbc9e8469571f48d3b4ecf60cf6057a4da75139d865677d21a655b8148830c5c9a43878ad79a753965751871a9a1b"
+        }
+      ],
+      "validSignature": true
+    },
+    {
+      "name": "text with characters outside ASCII",
+      "identity": "personal",
+      "payload": "señal ✓ 世界",
+      "authChain": [
+        {
+          "type": "SIGNER",
+          "payload": "0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0",
+          "signature": ""
+        },
+        {
+          "type": "ECDSA_EPHEMERAL",
+          "payload": "Decentraland Login\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\nExpiration: 2026-03-14T15:19:26.535Z",
+          "signature": "0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c"
+        },
+        {
+          "type": "ECDSA_SIGNED_ENTITY",
+          "payload": "señal ✓ 世界",
+          "signature": "0x8864dbe24eb675015ee23a677993add59f0cc254e37fd82a673f77dbefbf9f3c33136ea2e20382ee6d4cb38bd3dc67cdd2b30a6b0fa9877a51f70d2e281791c01c"
+        }
+      ],
+      "validSignature": true
+    },
+    {
+      "name": "empty text",
+      "identity": "personal",
+      "payload": "",
+      "authChain": [
+        {
+          "type": "SIGNER",
+          "payload": "0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0",
+          "signature": ""
+        },
+        {
+          "type": "ECDSA_EPHEMERAL",
+          "payload": "Decentraland Login\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\nExpiration: 2026-03-14T15:19:26.535Z",
+          "signature": "0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c"
+        },
+        {
+          "type": "ECDSA_SIGNED_ENTITY",
+          "payload": "",
+          "signature": "0xb6a8e4e1580b6cc2853031afcb7a72b7e665d92fed34feeff62eb24d3431256973c01ebdfd877da3ad50c450b12ef323a3e8d677c3bec4da18333e5405e888771b"
+        }
+      ],
+      "validSignature": true
+    }
+  ],
+  "headers": [
+    {
+      "name": "metrics batch",
+      "identity": "personal",
+      "method": "post",
+      "path": "/v2/metrics",
+      "metadata": {},
+      "now": 1773500966535,
+      "headers": [
+        [
+          "x-identity-auth-chain-0",
+          "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+        ],
+        [
+          "x-identity-auth-chain-1",
+          "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+        ],
+        [
+          "x-identity-auth-chain-2",
+          "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v2/metrics:1773500966535:{}\",\"signature\":\"0xf3868b422ad5b1bd5c763804fd3697e3acaf4242e15b3818d54b1344c0e42a4871af34b8daa02bbd3972c7df83a03a0b02350363ea71420f5aca89ee3067e38a1c\"}"
+        ],
+        ["x-identity-metadata", "{}"],
+        ["x-identity-timestamp", "1773500966535"]
+      ]
+    },
+    {
+      "name": "creator fund read",
+      "identity": "personal",
+      "method": "get",
+      "path": "/creator-fund/payouts",
+      "metadata": {},
+      "now": 1773500966535,
+      "headers": [
+        [
+          "x-identity-auth-chain-0",
+          "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+        ],
+        [
+          "x-identity-auth-chain-1",
+          "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+        ],
+        [
+          "x-identity-auth-chain-2",
+          "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/creator-fund/payouts:1773500966535:{}\",\"signature\":\"0x4e141e7491349891dd29ee96052bda193afe6f4e185c89395642c48cc11b3ef41b305fb4e87a00f09237594f91d937c20ba7420061a290c153bc79d61e18c81c1c\"}"
+        ],
+        ["x-identity-metadata", "{}"],
+        ["x-identity-timestamp", "1773500966535"]
+      ]
+    },
+    {
+      "name": "creator fund write",
+      "identity": "personal",
+      "method": "post",
+      "path": "/creator-fund/enrollment",
+      "metadata": {
+        "hashPayload": "ee0a25b0b963035ccb27ef17dc175c3ad66edb6bd03d3d7bf85ed6ee5d9b5223"
+      },
+      "now": 1773500966535,
+      "headers": [
+        [
+          "x-identity-auth-chain-0",
+          "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+        ],
+        [
+          "x-identity-auth-chain-1",
+          "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+        ],
+        [
+          "x-identity-auth-chain-2",
+          "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/creator-fund/enrollment:1773500966535:{\\\"hashPayload\\\":\\\"ee0a25b0b963035ccb27ef17dc175c3ad66edb6bd03d3d7bf85ed6ee5d9b5223\\\"}\",\"signature\":\"0x4ed6330fb873f25967e4e2bb10331db345cc3b03eb67b450acd5583e16dd0a8c6f064825062911b507b3c292ce93521aa1fb6a7b206bf43b15692f2d375cc16f1c\"}"
+        ],
+        [
+          "x-identity-metadata",
+          "{\"hashPayload\":\"ee0a25b0b963035ccb27ef17dc175c3ad66edb6bd03d3d7bf85ed6ee5d9b5223\"}"
+        ],
+        ["x-identity-timestamp", "1773500966535"]
+      ]
+    },
+    {
+      "name": "creator fund update",
+      "identity": "personal",
+      "method": "put",
+      "path": "/creator-fund/enrollment",
+      "metadata": {
+        "hashPayload": "ee0a25b0b963035ccb27ef17dc175c3ad66edb6bd03d3d7bf85ed6ee5d9b5223"
+      },
+      "now": 1773500966535,
+      "headers": [
+        [
+          "x-identity-auth-chain-0",
+          "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+        ],
+        [
+          "x-identity-auth-chain-1",
+          "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+        ],
+        [
+          "x-identity-auth-chain-2",
+          "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"put:/creator-fund/enrollment:1773500966535:{\\\"hashPayload\\\":\\\"ee0a25b0b963035ccb27ef17dc175c3ad66edb6bd03d3d7bf85ed6ee5d9b5223\\\"}\",\"signature\":\"0x55bcff8b9489c441ed80d86f569090729eb9cd9e6d3ea3122664b8fc93c1722162d19145991435f273f9c436fb8120859158711f260d3a8dcc67412c093dbd971b\"}"
+        ],
+        [
+          "x-identity-metadata",
+          "{\"hashPayload\":\"ee0a25b0b963035ccb27ef17dc175c3ad66edb6bd03d3d7bf85ed6ee5d9b5223\"}"
+        ],
+        ["x-identity-timestamp", "1773500966535"]
+      ]
+    },
+    {
+      "name": "sharing read",
+      "identity": "personal",
+      "method": "get",
+      "path": "/consent",
+      "metadata": {},
+      "now": 1773500966535,
+      "headers": [
+        [
+          "x-identity-auth-chain-0",
+          "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+        ],
+        [
+          "x-identity-auth-chain-1",
+          "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+        ],
+        [
+          "x-identity-auth-chain-2",
+          "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/consent:1773500966535:{}\",\"signature\":\"0x5f3bac75ace28f9e125e6fc46c6c99ffeff719ea956b0d966ad6037efe914b790d2a30ee5f4319b372a2c98ecdf813bdba10b13f863b604c47f84185b09bd7b41c\"}"
+        ],
+        ["x-identity-metadata", "{}"],
+        ["x-identity-timestamp", "1773500966535"]
+      ]
+    },
+    {
+      "name": "sharing write",
+      "identity": "personal",
+      "method": "put",
+      "path": "/consent",
+      "metadata": {
+        "nonce": "3f2b6c1e-8a4d-4c7b-9e21-5d0a7b6c4f10",
+        "body_sha256": "ee0a25b0b963035ccb27ef17dc175c3ad66edb6bd03d3d7bf85ed6ee5d9b5223"
+      },
+      "now": 1773500966535,
+      "headers": [
+        [
+          "x-identity-auth-chain-0",
+          "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+        ],
+        [
+          "x-identity-auth-chain-1",
+          "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+        ],
+        [
+          "x-identity-auth-chain-2",
+          "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"put:/consent:1773500966535:{\\\"nonce\\\":\\\"3f2b6c1e-8a4d-4c7b-9e21-5d0a7b6c4f10\\\",\\\"body_sha256\\\":\\\"ee0a25b0b963035ccb27ef17dc175c3ad66edb6bd03d3d7bf85ed6ee5d9b5223\\\"}\",\"signature\":\"0x9646ed8a512e4409e1b5a4529d4ea3e693811850ff2a2f799e2b9905ff44b7151b5c0ae0eefb4c4a7d444127afec62fd17c6ad973b397b09f04f7e9e95fd4f351c\"}"
+        ],
+        [
+          "x-identity-metadata",
+          "{\"nonce\":\"3f2b6c1e-8a4d-4c7b-9e21-5d0a7b6c4f10\",\"body_sha256\":\"ee0a25b0b963035ccb27ef17dc175c3ad66edb6bd03d3d7bf85ed6ee5d9b5223\"}"
+        ],
+        ["x-identity-timestamp", "1773500966535"]
+      ]
+    },
+    {
+      "name": "sharing write without body",
+      "identity": "personal",
+      "method": "post",
+      "path": "/turns",
+      "metadata": {
+        "nonce": "3f2b6c1e-8a4d-4c7b-9e21-5d0a7b6c4f10"
+      },
+      "now": 1773500966535,
+      "headers": [
+        [
+          "x-identity-auth-chain-0",
+          "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+        ],
+        [
+          "x-identity-auth-chain-1",
+          "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+        ],
+        [
+          "x-identity-auth-chain-2",
+          "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/turns:1773500966535:{\\\"nonce\\\":\\\"3f2b6c1e-8a4d-4c7b-9e21-5d0a7b6c4f10\\\"}\",\"signature\":\"0x7ed61dbd26319b9cd2046965d918a69f19f29939998e72b6ce45241115ca3d19067909f142f56ad51899f91720f2adaa0e26400aafa96667529c3202ec27c4201c\"}"
+        ],
+        ["x-identity-metadata", "{\"nonce\":\"3f2b6c1e-8a4d-4c7b-9e21-5d0a7b6c4f10\"}"],
+        ["x-identity-timestamp", "1773500966535"]
+      ]
+    },
+    {
+      "name": "method and path with capitals",
+      "identity": "personal",
+      "method": "POST",
+      "path": "/World/Foo/Permissions",
+      "metadata": {},
+      "now": 1773500966535,
+      "headers": [
+        [
+          "x-identity-auth-chain-0",
+          "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+        ],
+        [
+          "x-identity-auth-chain-1",
+          "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+        ],
+        [
+          "x-identity-auth-chain-2",
+          "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/world/foo/permissions:1773500966535:{}\",\"signature\":\"0xd28851b5c7526d0e8f792cef213001a625952080b1dcbf365e22a796c15543df17a11270d837935714750143a9294b2c7a22b69cd04352a802be35e6cd6d1e2e1c\"}"
+        ],
+        ["x-identity-metadata", "{}"],
+        ["x-identity-timestamp", "1773500966535"]
+      ]
+    },
+    {
+      "name": "contract wallet identity",
+      "identity": "contract-wallet",
+      "method": "post",
+      "path": "/v2/metrics",
+      "metadata": {},
+      "now": 1773500966535,
+      "headers": [
+        [
+          "x-identity-auth-chain-0",
+          "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+        ],
+        [
+          "x-identity-auth-chain-1",
+          "{\"type\":\"ECDSA_EIP_1654_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0xabababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\"}"
+        ],
+        [
+          "x-identity-auth-chain-2",
+          "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v2/metrics:1773500966535:{}\",\"signature\":\"0xf3868b422ad5b1bd5c763804fd3697e3acaf4242e15b3818d54b1344c0e42a4871af34b8daa02bbd3972c7df83a03a0b02350363ea71420f5aca89ee3067e38a1c\"}"
+        ],
+        ["x-identity-metadata", "{}"],
+        ["x-identity-timestamp", "1773500966535"]
+      ]
+    },
+    {
+      "name": "second ephemeral key",
+      "identity": "personal-month",
+      "method": "post",
+      "path": "/v2/metrics",
+      "metadata": {},
+      "now": 1773500966535,
+      "headers": [
+        [
+          "x-identity-auth-chain-0",
+          "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+        ],
+        [
+          "x-identity-auth-chain-1",
+          "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xfcd9076AbAF038FFCb05F06509C688c687F4b9AE\\nExpiration: 2026-04-14T15:09:26.535Z\",\"signature\":\"0x92a74287f479a9d1d10c2dc8b5abf2836a2e1bb2365cd735aeec88fd5247844226e8490997d7afbe1b5b51b1ce48289cd103f4da64785d7b3d5ad259582aaa7e1b\"}"
+        ],
+        [
+          "x-identity-auth-chain-2",
+          "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v2/metrics:1773500966535:{}\",\"signature\":\"0x3e0c43e9cdddc85bba491e78063e7b5589bd06adbb26ef6d93e2887e0341d651099dcc5f84c8cc9ae0c7b11c0dec9aa9fc56ed6fdccea246a62d54d9cf6787e31b\"}"
+        ],
+        ["x-identity-metadata", "{}"],
+        ["x-identity-timestamp", "1773500966535"]
+      ]
+    },
+    {
+      "name": "metadata with Latin-1 text",
+      "identity": "personal",
+      "method": "post",
+      "path": "/world/foo.dcl.eth/permissions/access",
+      "metadata": {
+        "type": "shared-secret",
+        "secret": "Contraseña"
+      },
+      "now": 1773500966535,
+      "headers": [
+        [
+          "x-identity-auth-chain-0",
+          "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+        ],
+        [
+          "x-identity-auth-chain-1",
+          "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+        ],
+        [
+          "x-identity-auth-chain-2",
+          "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/world/foo.dcl.eth/permissions/access:1773500966535:{\\\"type\\\":\\\"shared-secret\\\",\\\"secret\\\":\\\"Contraseña\\\"}\",\"signature\":\"0x9d5d2e3de30879170fd7f7f0076ef96cf24f4b6c961164b472f2b24aeb070408541ad36f3ffe0510d002befd69e36aeee9cf8b9eccf44f811fde29a6740511be1c\"}"
+        ],
+        ["x-identity-metadata", "{\"type\":\"shared-secret\",\"secret\":\"Contraseña\"}"],
+        ["x-identity-timestamp", "1773500966535"]
+      ]
+    },
+    {
+      "name": "with the headers of the caller",
+      "identity": "personal",
+      "method": "post",
+      "path": "/v2/metrics",
+      "metadata": {},
+      "init": {
+        "Content-Type": "application/json",
+        "X-Identity-Timestamp": "1"
+      },
+      "now": 1773500966535,
+      "headers": [
+        ["content-type", "application/json"],
+        [
+          "x-identity-auth-chain-0",
+          "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+        ],
+        [
+          "x-identity-auth-chain-1",
+          "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+        ],
+        [
+          "x-identity-auth-chain-2",
+          "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v2/metrics:1773500966535:{}\",\"signature\":\"0xf3868b422ad5b1bd5c763804fd3697e3acaf4242e15b3818d54b1344c0e42a4871af34b8daa02bbd3972c7df83a03a0b02350363ea71420f5aca89ee3067e38a1c\"}"
+        ],
+        ["x-identity-metadata", "{}"],
+        ["x-identity-timestamp", "1773500966535"]
+      ]
+    }
+  ],
+  "headerErrors": [
+    {
+      "name": "metadata with a character that a header cannot hold",
+      "identity": "personal",
+      "method": "post",
+      "path": "/p",
+      "metadata": {
+        "secret": "clave ✓"
+      },
+      "throws": "TypeError"
+    }
+  ],
+  "fetches": [
+    {
+      "name": "world settings (form body)",
+      "identity": "personal",
+      "input": "https://worlds-content-server.example.org/world/Foo.dcl.eth/settings",
+      "init": {
+        "method": "PUT",
+        "body": "form-data"
+      },
+      "now": 1773500966535,
+      "request": {
+        "url": "https://worlds-content-server.example.org/world/Foo.dcl.eth/settings",
+        "method": "PUT",
+        "headers": [
+          [
+            "x-identity-auth-chain-0",
+            "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+          ],
+          [
+            "x-identity-auth-chain-1",
+            "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+          ],
+          [
+            "x-identity-auth-chain-2",
+            "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"put:/world/foo.dcl.eth/settings:1773500966535:{}\",\"signature\":\"0x2f1f75f6c304e4e39c2f71869234b3e77c4123d4b2934f679aa2cb3d7ff4ac457fcc271907fd14825b1e89ee5d9c80b1c1444fc387cc195ac17d5dabd81906cc1b\"}"
+          ],
+          ["x-identity-metadata", "{}"],
+          ["x-identity-timestamp", "1773500966535"]
+        ]
+      }
+    },
+    {
+      "name": "unpublish one world scene (encoded comma)",
+      "identity": "personal",
+      "input": "https://worlds-content-server.example.org/world/Foo.dcl.eth/scenes/-10%2C20",
+      "init": {
+        "method": "DELETE"
+      },
+      "now": 1773500966535,
+      "request": {
+        "url": "https://worlds-content-server.example.org/world/Foo.dcl.eth/scenes/-10%2C20",
+        "method": "DELETE",
+        "headers": [
+          [
+            "x-identity-auth-chain-0",
+            "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+          ],
+          [
+            "x-identity-auth-chain-1",
+            "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+          ],
+          [
+            "x-identity-auth-chain-2",
+            "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"delete:/world/foo.dcl.eth/scenes/-10%2c20:1773500966535:{}\",\"signature\":\"0xd92b022f44a5fccf6e44071c01067499453ff3fab41a25260614257a589148a90d642a8e5803cbccdafd565e413e76df2f1c147827b0d8991aa4d6c075cbdc0f1c\"}"
+          ],
+          ["x-identity-metadata", "{}"],
+          ["x-identity-timestamp", "1773500966535"]
+        ],
+        "body": ""
+      }
+    },
+    {
+      "name": "unpublish the whole world",
+      "identity": "personal",
+      "input": "https://worlds-content-server.example.org/entities/Foo.dcl.eth",
+      "init": {
+        "method": "DELETE"
+      },
+      "now": 1773500966535,
+      "request": {
+        "url": "https://worlds-content-server.example.org/entities/Foo.dcl.eth",
+        "method": "DELETE",
+        "headers": [
+          [
+            "x-identity-auth-chain-0",
+            "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+          ],
+          [
+            "x-identity-auth-chain-1",
+            "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+          ],
+          [
+            "x-identity-auth-chain-2",
+            "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"delete:/entities/foo.dcl.eth:1773500966535:{}\",\"signature\":\"0x0960e824d8826655726387329ce97fb512a7a62b8b21acf876db6154f7af6de95032dee97fbde30108ed81b81434f6d3f141636cffe9297270e3d8254597af181c\"}"
+          ],
+          ["x-identity-metadata", "{}"],
+          ["x-identity-timestamp", "1773500966535"]
+        ],
+        "body": ""
+      }
+    },
+    {
+      "name": "permission type: password",
+      "identity": "personal",
+      "input": "https://worlds-content-server.example.org/world/Foo.dcl.eth/permissions/access",
+      "init": {
+        "method": "POST",
+        "metadata": {
+          "type": "shared-secret",
+          "secret": "MyPassWord123"
+        }
+      },
+      "now": 1773500966535,
+      "request": {
+        "url": "https://worlds-content-server.example.org/world/Foo.dcl.eth/permissions/access",
+        "method": "POST",
+        "headers": [
+          [
+            "x-identity-auth-chain-0",
+            "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+          ],
+          [
+            "x-identity-auth-chain-1",
+            "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+          ],
+          [
+            "x-identity-auth-chain-2",
+            "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/world/foo.dcl.eth/permissions/access:1773500966535:{\\\"type\\\":\\\"shared-secret\\\",\\\"secret\\\":\\\"MyPassWord123\\\"}\",\"signature\":\"0x3025ee5a8704117d8f24b11868d95f4f8559bf66a8d7ac4878896cc71054fbb0514a9e9dc62904724f8aa45c5b40a528b7188c5e2e48da8aa5c776aa332986ea1b\"}"
+          ],
+          ["x-identity-metadata", "{\"type\":\"shared-secret\",\"secret\":\"MyPassWord123\"}"],
+          ["x-identity-timestamp", "1773500966535"]
+        ],
+        "body": ""
+      }
+    },
+    {
+      "name": "permission type: allow list with wallets and communities",
+      "identity": "personal",
+      "input": "https://worlds-content-server.example.org/world/Foo.dcl.eth/permissions/access",
+      "init": {
+        "method": "POST",
+        "metadata": {
+          "type": "allow-list",
+          "wallets": ["0x52908400098527886E0F7030069857D2E4169EE7"],
+          "communities": ["4E1B8A62-9C3F-4D7A-B5E0-2F6C1D8A9B34"]
+        }
+      },
+      "now": 1773500966535,
+      "request": {
+        "url": "https://worlds-content-server.example.org/world/Foo.dcl.eth/permissions/access",
+        "method": "POST",
+        "headers": [
+          [
+            "x-identity-auth-chain-0",
+            "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+          ],
+          [
+            "x-identity-auth-chain-1",
+            "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+          ],
+          [
+            "x-identity-auth-chain-2",
+            "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/world/foo.dcl.eth/permissions/access:1773500966535:{\\\"type\\\":\\\"allow-list\\\",\\\"wallets\\\":[\\\"0x52908400098527886E0F7030069857D2E4169EE7\\\"],\\\"communities\\\":[\\\"4E1B8A62-9C3F-4D7A-B5E0-2F6C1D8A9B34\\\"]}\",\"signature\":\"0x657c54cdbbf9fbd22c2fd512ed613f028aa868ce89d5463989abd37a5694994101bfe74af8ac1f1b80f00c9215b6a3b7efe528f08bfc27b66efb5a5458f7b6491b\"}"
+          ],
+          [
+            "x-identity-metadata",
+            "{\"type\":\"allow-list\",\"wallets\":[\"0x52908400098527886E0F7030069857D2E4169EE7\"],\"communities\":[\"4E1B8A62-9C3F-4D7A-B5E0-2F6C1D8A9B34\"]}"
+          ],
+          ["x-identity-timestamp", "1773500966535"]
+        ],
+        "body": ""
+      }
+    },
+    {
+      "name": "permission type only",
+      "identity": "personal",
+      "input": "https://worlds-content-server.example.org/world/Foo.dcl.eth/permissions/deployment",
+      "init": {
+        "method": "POST",
+        "metadata": {
+          "type": "allow-list"
+        }
+      },
+      "now": 1773500966535,
+      "request": {
+        "url": "https://worlds-content-server.example.org/world/Foo.dcl.eth/permissions/deployment",
+        "method": "POST",
+        "headers": [
+          [
+            "x-identity-auth-chain-0",
+            "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+          ],
+          [
+            "x-identity-auth-chain-1",
+            "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+          ],
+          [
+            "x-identity-auth-chain-2",
+            "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/world/foo.dcl.eth/permissions/deployment:1773500966535:{\\\"type\\\":\\\"allow-list\\\"}\",\"signature\":\"0x4acb9feb262bd1f2fba30b3fa5a9cf33b30ac65cf1276fecce8e149d9893d18b136077e3dc7ce3d1ebf7056504eb80899bd963ed53771f6e02d0a6e327ab7c1b1b\"}"
+          ],
+          ["x-identity-metadata", "{\"type\":\"allow-list\"}"],
+          ["x-identity-timestamp", "1773500966535"]
+        ],
+        "body": ""
+      }
+    },
+    {
+      "name": "add a wallet to a permission (address with capitals)",
+      "identity": "personal",
+      "input": "https://worlds-content-server.example.org/world/Foo.dcl.eth/permissions/deployment/0x52908400098527886E0F7030069857D2E4169EE7",
+      "init": {
+        "method": "PUT"
+      },
+      "now": 1773500966535,
+      "request": {
+        "url": "https://worlds-content-server.example.org/world/Foo.dcl.eth/permissions/deployment/0x52908400098527886E0F7030069857D2E4169EE7",
+        "method": "PUT",
+        "headers": [
+          [
+            "x-identity-auth-chain-0",
+            "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+          ],
+          [
+            "x-identity-auth-chain-1",
+            "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+          ],
+          [
+            "x-identity-auth-chain-2",
+            "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"put:/world/foo.dcl.eth/permissions/deployment/0x52908400098527886e0f7030069857d2e4169ee7:1773500966535:{}\",\"signature\":\"0xc0b5fa7b05df03a53f11710bcff9c6ac5e3ed8d48cf482ba7430866cd9c9205015121b1684d0370f9182c36b9e8bf122b0a0cbe27f0d766c4e2a248537ca24501c\"}"
+          ],
+          ["x-identity-metadata", "{}"],
+          ["x-identity-timestamp", "1773500966535"]
+        ],
+        "body": ""
+      }
+    },
+    {
+      "name": "remove a wallet from a permission",
+      "identity": "personal",
+      "input": "https://worlds-content-server.example.org/world/Foo.dcl.eth/permissions/deployment/0x52908400098527886E0F7030069857D2E4169EE7",
+      "init": {
+        "method": "DELETE"
+      },
+      "now": 1773500966535,
+      "request": {
+        "url": "https://worlds-content-server.example.org/world/Foo.dcl.eth/permissions/deployment/0x52908400098527886E0F7030069857D2E4169EE7",
+        "method": "DELETE",
+        "headers": [
+          [
+            "x-identity-auth-chain-0",
+            "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+          ],
+          [
+            "x-identity-auth-chain-1",
+            "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+          ],
+          [
+            "x-identity-auth-chain-2",
+            "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"delete:/world/foo.dcl.eth/permissions/deployment/0x52908400098527886e0f7030069857d2e4169ee7:1773500966535:{}\",\"signature\":\"0xd13a88d36d1bb3d4f5b5f92dcf72008fd2aacb6fc07fb9e5b7bc41fd1496990a4c08ad8401619816df7c0f9fe00c2bf1c73c4e6e1c9015fdf567f12b9056d6b81b\"}"
+          ],
+          ["x-identity-metadata", "{}"],
+          ["x-identity-timestamp", "1773500966535"]
+        ],
+        "body": ""
+      }
+    },
+    {
+      "name": "add parcels to a wallet (JSON body)",
+      "identity": "personal",
+      "input": "https://worlds-content-server.example.org/world/Foo.dcl.eth/permissions/deployment/address/0x52908400098527886E0F7030069857D2E4169EE7/parcels",
+      "init": {
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"parcels\":[\"0,0\",\"-1,2\"]}"
+      },
+      "now": 1773500966535,
+      "request": {
+        "url": "https://worlds-content-server.example.org/world/Foo.dcl.eth/permissions/deployment/address/0x52908400098527886E0F7030069857D2E4169EE7/parcels",
+        "method": "POST",
+        "headers": [
+          ["content-type", "application/json"],
+          [
+            "x-identity-auth-chain-0",
+            "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+          ],
+          [
+            "x-identity-auth-chain-1",
+            "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+          ],
+          [
+            "x-identity-auth-chain-2",
+            "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/world/foo.dcl.eth/permissions/deployment/address/0x52908400098527886e0f7030069857d2e4169ee7/parcels:1773500966535:{}\",\"signature\":\"0x4cab50164fe900b7343130586fdb580197252d4cc9ad022b079f2dbbc02cf29d51b1c78e63736bd44b38356f8764390695cea1cc734e01f0832a41ead7124b3c1c\"}"
+          ],
+          ["x-identity-metadata", "{}"],
+          ["x-identity-timestamp", "1773500966535"]
+        ],
+        "body": "{\"parcels\":[\"0,0\",\"-1,2\"]}"
+      }
+    },
+    {
+      "name": "remove parcels from a wallet (JSON body)",
+      "identity": "personal",
+      "input": "https://worlds-content-server.example.org/world/Foo.dcl.eth/permissions/deployment/address/0x52908400098527886E0F7030069857D2E4169EE7/parcels",
+      "init": {
+        "method": "DELETE",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"parcels\":[\"0,0\",\"-1,2\"]}"
+      },
+      "now": 1773500966535,
+      "request": {
+        "url": "https://worlds-content-server.example.org/world/Foo.dcl.eth/permissions/deployment/address/0x52908400098527886E0F7030069857D2E4169EE7/parcels",
+        "method": "DELETE",
+        "headers": [
+          ["content-type", "application/json"],
+          [
+            "x-identity-auth-chain-0",
+            "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+          ],
+          [
+            "x-identity-auth-chain-1",
+            "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+          ],
+          [
+            "x-identity-auth-chain-2",
+            "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"delete:/world/foo.dcl.eth/permissions/deployment/address/0x52908400098527886e0f7030069857d2e4169ee7/parcels:1773500966535:{}\",\"signature\":\"0x7f2f605d3c39b37b4ef5596096f5582084706d13f559171d65d76b7b15529126282074481d15eb045b508a6cb9c0713f8a608e04366eca4f62abbd31835c2b9e1c\"}"
+          ],
+          ["x-identity-metadata", "{}"],
+          ["x-identity-timestamp", "1773500966535"]
+        ],
+        "body": "{\"parcels\":[\"0,0\",\"-1,2\"]}"
+      }
+    },
+    {
+      "name": "contributable domains (explicit GET)",
+      "identity": "personal",
+      "input": "https://worlds-content-server.example.org/wallet/contribute",
+      "init": {
+        "method": "GET"
+      },
+      "now": 1773500966535,
+      "request": {
+        "url": "https://worlds-content-server.example.org/wallet/contribute",
+        "method": "GET",
+        "headers": [
+          [
+            "x-identity-auth-chain-0",
+            "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+          ],
+          [
+            "x-identity-auth-chain-1",
+            "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+          ],
+          [
+            "x-identity-auth-chain-2",
+            "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/wallet/contribute:1773500966535:{}\",\"signature\":\"0xa41a87cfb46095db385c357d28fd8cd07940d04a6c6e1fa86f2507cf0c41931d6940f76d0e5dbd02653ddc0692cabeabbcdd64064252627ba65554a997565be81b\"}"
+          ],
+          ["x-identity-metadata", "{}"],
+          ["x-identity-timestamp", "1773500966535"]
+        ],
+        "body": ""
+      }
+    },
+    {
+      "name": "one community (no method, id with capitals)",
+      "identity": "personal",
+      "input": "https://social-api.example.org/v1/communities/4E1B8A62-9C3F-4D7A-B5E0-2F6C1D8A9B34",
+      "init": {},
+      "now": 1773500966535,
+      "request": {
+        "url": "https://social-api.example.org/v1/communities/4E1B8A62-9C3F-4D7A-B5E0-2F6C1D8A9B34",
+        "method": "GET",
+        "headers": [
+          [
+            "x-identity-auth-chain-0",
+            "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+          ],
+          [
+            "x-identity-auth-chain-1",
+            "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+          ],
+          [
+            "x-identity-auth-chain-2",
+            "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/communities/4e1b8a62-9c3f-4d7a-b5e0-2f6c1d8a9b34:1773500966535:{}\",\"signature\":\"0x2071e8577856e008dba18cda8694d7ee684b0a68b9941e204322c1861304432d7835b271b695ecdc46469dea9d6c684d97ae0c12de745cb031e1ed6073592a651b\"}"
+          ],
+          ["x-identity-metadata", "{}"],
+          ["x-identity-timestamp", "1773500966535"]
+        ],
+        "body": ""
+      }
+    },
+    {
+      "name": "community list (the query is not signed)",
+      "identity": "personal",
+      "input": "https://social-api.example.org/v1/communities?roleFilter=owner&search=My+World&limit=10&offset=20",
+      "init": {},
+      "now": 1773500966535,
+      "request": {
+        "url": "https://social-api.example.org/v1/communities?roleFilter=owner&search=My+World&limit=10&offset=20",
+        "method": "GET",
+        "headers": [
+          [
+            "x-identity-auth-chain-0",
+            "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+          ],
+          [
+            "x-identity-auth-chain-1",
+            "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+          ],
+          [
+            "x-identity-auth-chain-2",
+            "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/communities:1773500966535:{}\",\"signature\":\"0x4870fffa4692aef79ff6ac498dc6b0e8306576303eb2fa07d0981d22fd8ecd176124265e7909bf752c739eb75658c0be612ebf7006ea9af889a5ddc6b5aa4dc91c\"}"
+          ],
+          ["x-identity-metadata", "{}"],
+          ["x-identity-timestamp", "1773500966535"]
+        ],
+        "body": ""
+      }
+    },
+    {
+      "name": "world name with characters outside ASCII",
+      "identity": "personal",
+      "input": "https://worlds-content-server.example.org/world/se%C3%B1al.dcl.eth/scenes/0%2C0",
+      "init": {
+        "method": "DELETE"
+      },
+      "now": 1773500966535,
+      "request": {
+        "url": "https://worlds-content-server.example.org/world/se%C3%B1al.dcl.eth/scenes/0%2C0",
+        "method": "DELETE",
+        "headers": [
+          [
+            "x-identity-auth-chain-0",
+            "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+          ],
+          [
+            "x-identity-auth-chain-1",
+            "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+          ],
+          [
+            "x-identity-auth-chain-2",
+            "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"delete:/world/se%c3%b1al.dcl.eth/scenes/0%2c0:1773500966535:{}\",\"signature\":\"0x7472648cbab73add04761afd5976eeeef0a9eea0831a2d8bbab8512faa49575f58047db7752a45a3cca3b543c99c36f71f95773ce780219a59b4f494125444e41c\"}"
+          ],
+          ["x-identity-metadata", "{}"],
+          ["x-identity-timestamp", "1773500966535"]
+        ],
+        "body": ""
+      }
+    },
+    {
+      "name": "server address with a path before the route",
+      "identity": "personal",
+      "input": "https://example.org/Content/v2/entities/Foo.dcl.eth",
+      "init": {
+        "method": "DELETE"
+      },
+      "now": 1773500966535,
+      "request": {
+        "url": "https://example.org/Content/v2/entities/Foo.dcl.eth",
+        "method": "DELETE",
+        "headers": [
+          [
+            "x-identity-auth-chain-0",
+            "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+          ],
+          [
+            "x-identity-auth-chain-1",
+            "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+          ],
+          [
+            "x-identity-auth-chain-2",
+            "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"delete:/content/v2/entities/foo.dcl.eth:1773500966535:{}\",\"signature\":\"0xb898f30f74cf31ceeb57803c3028f6f333e8a78a38649f26e56c72d9cd8647c470a2de387505606d3ced3e0cd8b480b658b885ef78d1dff492192682b33131fe1b\"}"
+          ],
+          ["x-identity-metadata", "{}"],
+          ["x-identity-timestamp", "1773500966535"]
+        ],
+        "body": ""
+      }
+    },
+    {
+      "name": "contract wallet identity",
+      "identity": "contract-wallet",
+      "input": "https://worlds-content-server.example.org/wallet/contribute",
+      "init": {
+        "method": "GET"
+      },
+      "now": 1773500966535,
+      "request": {
+        "url": "https://worlds-content-server.example.org/wallet/contribute",
+        "method": "GET",
+        "headers": [
+          [
+            "x-identity-auth-chain-0",
+            "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+          ],
+          [
+            "x-identity-auth-chain-1",
+            "{\"type\":\"ECDSA_EIP_1654_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0xabababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\"}"
+          ],
+          [
+            "x-identity-auth-chain-2",
+            "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/wallet/contribute:1773500966535:{}\",\"signature\":\"0xa41a87cfb46095db385c357d28fd8cd07940d04a6c6e1fa86f2507cf0c41931d6940f76d0e5dbd02653ddc0692cabeabbcdd64064252627ba65554a997565be81b\"}"
+          ],
+          ["x-identity-metadata", "{}"],
+          ["x-identity-timestamp", "1773500966535"]
+        ],
+        "body": ""
+      }
+    },
+    {
+      "name": "address given as a URL object",
+      "identity": "personal",
+      "input": {
+        "url": "https://worlds-content-server.example.org/entities/Foo.dcl.eth"
+      },
+      "init": {
+        "method": "DELETE"
+      },
+      "now": 1773500966535,
+      "request": {
+        "url": "https://worlds-content-server.example.org/entities/Foo.dcl.eth",
+        "method": "DELETE",
+        "headers": [
+          [
+            "x-identity-auth-chain-0",
+            "{\"type\":\"SIGNER\",\"payload\":\"0x4FaeB3b49797f97C9F420a921072d07FA9a1E7f0\",\"signature\":\"\"}"
+          ],
+          [
+            "x-identity-auth-chain-1",
+            "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5235bcC2AAD2D0D00F2Db18eFf3414AeD8D49D81\\nExpiration: 2026-03-14T15:19:26.535Z\",\"signature\":\"0x40739d1d923657469a20ba7ad383fe1a010a3893e96fce947051360d54b02d6f78a110d0da0d1767fdec8c27407df56aeda91ea76a9d7ed0c00ff3f07c75a5d31c\"}"
+          ],
+          [
+            "x-identity-auth-chain-2",
+            "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"delete:/entities/foo.dcl.eth:1773500966535:{}\",\"signature\":\"0x0960e824d8826655726387329ce97fb512a7a62b8b21acf876db6154f7af6de95032dee97fbde30108ed81b81434f6d3f141636cffe9297270e3d8254597af181c\"}"
+          ],
+          ["x-identity-metadata", "{}"],
+          ["x-identity-timestamp", "1773500966535"]
+        ],
+        "body": ""
+      }
+    }
+  ]
+}

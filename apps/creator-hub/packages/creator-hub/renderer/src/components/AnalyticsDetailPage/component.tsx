@@ -1,16 +1,12 @@
-import { type SyntheticEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import DownloadIcon from '@mui/icons-material/FileDownloadOutlined';
-import {
-  Box,
-  Button,
-  MenuItem,
-  type SelectChangeEvent,
-  Tab,
-  Tabs,
-  Tooltip,
-  Typography,
-} from 'decentraland-ui2';
+import Button from '@ui/atoms/Button';
+import { SelectOption } from '@ui/atoms/Select';
+import { Tab, Tabs } from '@ui/atoms/Tabs';
+import Text from '@ui/atoms/Text';
+import Tooltip from '@ui/atoms/Tooltip';
+
+import { FileDownloadOutlinedIcon as DownloadIcon } from '@ui/atoms/icons-material';
 
 import { MetricsWindow, PlaceAccess } from '/shared/types/place-analytics';
 
@@ -29,7 +25,7 @@ import { useAuth } from '/@/hooks/useAuth';
 import { Container } from '../Container';
 import { Loader } from '../Loader';
 import { Navbar, NavbarItem } from '../Navbar';
-import { Select } from '../Select';
+import { ToolbarSelect } from '../ToolbarSelect';
 import { SignInCard } from '../SignInCard';
 import { Title } from '../Title';
 import { formatExportDate } from '../AnalyticsPage/utils';
@@ -84,15 +80,15 @@ export function AnalyticsDetailPage() {
   const handleBack = useCallback(() => navigate('/analytics'), [navigate]);
 
   const handleTabChange = useCallback(
-    (_e: SyntheticEvent, value: TabValue) => {
-      setTab(value);
+    (value: string) => {
+      setTab(value as TabValue);
     },
     [setTab],
   );
 
   const handleWindowChange = useCallback(
-    (e: SelectChangeEvent<MetricsWindow>) => {
-      dispatch(placeAnalyticsActions.setWindow(e.target.value as MetricsWindow));
+    (value: MetricsWindow) => {
+      dispatch(placeAnalyticsActions.setWindow(value));
     },
     [dispatch],
   );
@@ -119,35 +115,43 @@ export function AnalyticsDetailPage() {
     <main className="AnalyticsDetailPage">
       <Navbar active={NavbarItem.ANALYTICS} />
       <Container>
-        <Box className="DetailHeader">
-          <Box className="HeaderTitle">
+        <div className="DetailHeader">
+          <div className="HeaderTitle">
             <Title
               value={title}
               onBack={handleBack}
             />
             {exportedAt && (
-              <Typography
+              <Text
                 variant="body2"
                 className="ExportedAt"
               >
                 {t('analytics.exported_at', { date: formatExportDate(exportedAt) })}
-              </Typography>
+              </Text>
             )}
-          </Box>
-          {/* Enabled once there is an analytics API to export from. */}
-          <Tooltip title={t('analytics.actions.export_unavailable')}>
-            <span className="ExportAction">
-              <Button
-                variant="outlined"
-                color="secondary"
-                startIcon={<DownloadIcon />}
-                disabled
-              >
-                {t('analytics.actions.export')}
-              </Button>
-            </span>
+          </div>
+          {/* Enabled once there is an analytics API to export from. Until then the button stays
+              focusable and takes the pointer, so its tip says why it does nothing. */}
+          <Tooltip
+            className="ExportAction"
+            label={t('analytics.actions.export_unavailable')}
+            side="bottom"
+            portal
+            keepInViewport
+            snap
+            tipClassName="AnalyticsTip"
+          >
+            <Button
+              variant="outline"
+              tone="neutral"
+              startIcon={<DownloadIcon />}
+              className="is-disabled"
+              aria-disabled="true"
+            >
+              {t('analytics.actions.export')}
+            </Button>
           </Tooltip>
-        </Box>
+        </div>
         {/* Before the loading branch: with nothing in flight, `idle` is not a wait. */}
         {!isSignedIn && !isSigningIn ? (
           <SignInCard
@@ -157,17 +161,17 @@ export function AnalyticsDetailPage() {
         ) : isLoading ? (
           <Loader size={70} />
         ) : status === 'failed' ? (
-          <Box className="ErrorContainer">
-            <Typography variant="h5">{t('analytics.detail.error.title')}</Typography>
-            <Typography variant="body1">{error}</Typography>
-          </Box>
+          <div className="ErrorContainer">
+            <Text variant="h5">{t('analytics.detail.error.title')}</Text>
+            <Text variant="body1">{error}</Text>
+          </div>
         ) : !place || !projections ? (
-          <Box className="ErrorContainer">
-            <Typography variant="h5">{t('analytics.detail.not_found.title')}</Typography>
-            <Typography variant="body1">{t('analytics.detail.not_found.description')}</Typography>
-          </Box>
+          <div className="ErrorContainer">
+            <Text variant="h5">{t('analytics.detail.not_found.title')}</Text>
+            <Text variant="body1">{t('analytics.detail.not_found.description')}</Text>
+          </div>
         ) : (
-          <Box className="Content">
+          <div className="Content">
             <PlaceCard
               place={{
                 placeId,
@@ -181,54 +185,56 @@ export function AnalyticsDetailPage() {
                 lastUpdatedAt: place.lastUpdatedAt,
               }}
             />
-            <Box className="Metrics">
-              <Box className="TabsBar">
+            <div className="Metrics">
+              <div className="TabsBar">
                 <Tabs
+                  className="Tabs"
                   value={tab}
                   onChange={handleTabChange}
                 >
                   {TABS.map(option => (
                     <Tab
-                      disableFocusRipple
+                      className="Tab"
                       key={option.value}
                       value={option.value}
                       label={option.label}
                     />
                   ))}
                 </Tabs>
-                <Box className="DateRange">
-                  <Typography
+                <div className="DateRange">
+                  <Text
                     variant="body1"
+                    className="DateRangeLabel"
                     id={WINDOW_LABEL_ID}
                   >
                     {t('analytics.detail.window.title')}
-                  </Typography>
-                  <Select
-                    labelId={WINDOW_LABEL_ID}
+                  </Text>
+                  <ToolbarSelect
+                    aria-labelledby={WINDOW_LABEL_ID}
                     value={metricsWindow}
                     onChange={handleWindowChange}
                   >
                     {WINDOW_OPTIONS.map(option => (
-                      <MenuItem
+                      <SelectOption
                         key={option.value}
                         value={option.value}
                       >
                         {option.label}
-                      </MenuItem>
+                      </SelectOption>
                     ))}
-                  </Select>
-                </Box>
-              </Box>
+                  </ToolbarSelect>
+                </div>
+              </div>
               {/*
                * An empty bag means either "no rows in today's export" or "this
                * wallet may not read it" — deliberately indistinguishable, and
                * never an error.
                */}
               {projections.isEmpty ? (
-                <Box className="EmptyContainer">
-                  <Typography variant="h5">{t('analytics.no_data_yet')}</Typography>
-                  <Typography variant="body1">{t('analytics.no_data_yet_description')}</Typography>
-                </Box>
+                <div className="EmptyContainer">
+                  <Text variant="h5">{t('analytics.no_data_yet')}</Text>
+                  <Text variant="body1">{t('analytics.no_data_yet_description')}</Text>
+                </div>
               ) : (
                 <>
                   {tab === 'overview' && <OverviewTab overview={projections.overview} />}
@@ -242,8 +248,8 @@ export function AnalyticsDetailPage() {
                   {tab === 'engagement' && <EngagementTab engagement={projections.engagement} />}
                 </>
               )}
-            </Box>
-          </Box>
+            </div>
+          </div>
         )}
       </Container>
     </main>

@@ -93,22 +93,31 @@ fn below_generated_half(row: u32, size: u32, face: u32) -> bool {
     return constants.authored_lower == 0u && face != 2u && row > size / 2u;
 }
 
+// The reflection map holds nothing brighter than 1, while the sky is drawn brighter than that
+// (the clouds up to 4, the horizon and the sun beyond). Reflected at that strength, the smooth
+// and metallic patches of a material shine out of the shade as if wet. The brightest channel is
+// brought down to 1, keeping the hue.
+fn sky_as_reflected(sky: vec3<f32>) -> vec3<f32> {
+    return sky / max(max(sky.r, max(sky.g, sky.b)), 1.0);
+}
+
 fn sample_sky(dir: vec3<f32>, lod: f32) -> vec3<f32> {
 #ifdef RAW_SKY
+    // the sky itself rather than the mirrored, tinted downsample: limit, mirror and tint here.
+    // a scene's own lower sky is limited too, and read as it is
     if constants.authored_lower != 0u {
-        return textureSampleLevel(source_cube, source_sampler, dir, 0.0).rgb;
+        return sky_as_reflected(textureSampleLevel(source_cube, source_sampler, dir, 0.0).rgb);
     }
-    // the sky itself rather than the mirrored, tinted downsample: mirror and tint here
     let tint = select(vec3<f32>(1.0), sky_envmap_ground_tint(dir), dir.y < 0.0);
-    return textureSampleLevel(source_cube, source_sampler, vec3<f32>(dir.x, abs(dir.y), dir.z), 0.0).rgb * tint;
+    return sky_as_reflected(textureSampleLevel(source_cube, source_sampler, vec3<f32>(dir.x, abs(dir.y), dir.z), 0.0).rgb) * tint;
 #else
     return textureSampleLevel(source_cube, source_sampler, dir, lod).rgb;
 #endif
 }
 
 // first downsample, from the sky cube: box-filter each output texel's block of sky texels (one
-// bilinear tap per 2x2), taking below-horizon texels from their mirror image above, tinted
-// towards the ground. the sky fades to black below the horizon; the mirror stands in for light
+// bilinear tap per 2x2), each limited to what a reflection holds, taking below-horizon texels
+// from their mirror image above, tinted towards the ground. the sky fades to black below the horizon; the mirror stands in for light
 // coming back up off the ground, so the filter lobes and irradiance hemispheres that cross the
 // horizon see sky on both sides.
 @compute
@@ -132,7 +141,7 @@ fn downsample_sky(@builtin(global_invocation_id) id: vec3<u32>) {
             let authored = constants.authored_lower != 0u;
             let mirrored = select(vec3<f32>(dir.x, abs(dir.y), dir.z), dir, authored);
             let tint = select(vec3<f32>(1.0), sky_envmap_ground_tint(dir), dir.y < 0.0 && !authored);
-            sum += textureSampleLevel(source_cube, source_sampler, mirrored, 0.0).rgb * tint;
+            sum += sky_as_reflected(textureSampleLevel(source_cube, source_sampler, mirrored, 0.0).rgb) * tint;
         }
     }
     textureStore(output_texture, id.xy, id.z, vec4<f32>(sum / f32(taps * taps), 1.0));
