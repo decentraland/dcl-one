@@ -69,6 +69,21 @@ impl ImplApp for BrowserProcessAppBuilder {
         // that helper failed to launch outright on some setups (error_code=1002 ×3 →
         // FATAL "GPU process isn't usable. Goodbye." kills the app).
         command_line.append_switch(Some(&"in-process-gpu".into()));
+        // Chromium's own services (GCM push registration, component and variations fetches) have
+        // nothing to do in an embedded HUD; without this they phone Google on every start.
+        command_line.append_switch(Some(&"disable-background-networking".into()));
+        // Ozone defaults to X11 and exits without a server. Follow winit, which builds the engine
+        // window on Wayland whenever the session offers it, so a Wayland-only session works.
+        #[cfg(target_os = "linux")]
+        {
+            let platform = if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+                "wayland"
+            } else {
+                "x11"
+            };
+            command_line
+                .append_switch_with_value(Some(&"ozone-platform".into()), Some(&platform.into()));
+        }
     }
 
     fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {
