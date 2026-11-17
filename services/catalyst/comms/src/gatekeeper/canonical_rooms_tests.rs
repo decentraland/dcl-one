@@ -1568,10 +1568,18 @@ async fn a_failed_scene_lookup_keeps_that_room_and_the_pass_goes_on() {
         Vec::<(String, serde_json::Value)>::new(),
     ));
     let capture = requests.clone();
-    let everyone: Vec<serde_json::Value> = [&owner, &denied]
+    let mut everyone: Vec<serde_json::Value> = [&owner, &denied]
         .iter()
         .map(|a| serde_json::json!({"identity": a.as_str(), "sid": "PA", "metadata": "{}"}))
         .collect();
+    // Cast watchers: the world policy reaches them through their token's wallet.
+    let (denied_watcher, owner_watcher) = ("watch:mixed:denied", "watch:mixed:owner");
+    for (identity, wallet) in [(denied_watcher, &denied), (owner_watcher, &owner)] {
+        everyone.push(
+            serde_json::json!({"identity": identity, "sid": "PA", "metadata": "{}",
+            "attributes": {"dcl.castWatcher": wallet.as_str()}}),
+        );
+    }
     let fixture = axum::Router::new().route(
         "/twirp/livekit.RoomService/{method}",
         axum::routing::post(
@@ -1631,10 +1639,16 @@ async fn a_failed_scene_lookup_keeps_that_room_and_the_pass_goes_on() {
         .collect();
     assert_eq!(
         removed,
-        vec![(
-            "w1:d:mixed.dcl.ethSceneA".to_string(),
-            denied.as_str().to_string()
-        )]
+        vec![
+            (
+                "w1:d:mixed.dcl.ethSceneA".to_string(),
+                denied.as_str().to_string()
+            ),
+            (
+                "w1:d:mixed.dcl.ethSceneA".to_string(),
+                denied_watcher.to_string()
+            )
+        ]
     );
     server.abort();
 }

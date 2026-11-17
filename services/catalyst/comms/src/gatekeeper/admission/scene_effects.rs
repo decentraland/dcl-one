@@ -304,7 +304,13 @@ pub(crate) async fn readmit_world_rooms_in_inventory(
             false
         };
         for participant in participants {
-            let Ok(address) = Address::parse(&participant.identity) else {
+            // A Cast watcher's identity is synthetic; its token carries the wallet.
+            let Some(address) = Address::parse(&participant.identity).ok().or_else(|| {
+                crate::gatekeeper::streaming::cast::watcher_wallet(
+                    &participant.identity,
+                    &participant.attributes,
+                )
+            }) else {
                 continue;
             };
             let remove = if missing_scene || !matches!(admission, WorldAdmission::Open(_)) {

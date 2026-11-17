@@ -11,7 +11,9 @@ use serde_json::{Value, json};
 use super::*;
 use crate::access::Ban;
 use crate::gatekeeper::moderation::test_support::StubBanStatus;
-use crate::gatekeeper::streaming::cast::{build_stream_links, is_valid_presenter_identity};
+use crate::gatekeeper::streaming::cast::{
+    build_stream_links, is_valid_presenter_identity, watcher_wallet,
+};
 use crate::rooms::{ActiveDeployment, ResolvedRoom};
 use crate::world_identity::{Parcel, RealmId, SceneId, WorldName};
 
@@ -424,6 +426,22 @@ fn stream_links_name_the_cast_app_with_upstreams_default() {
             "https://cast.example/w/foo.dcl.eth".to_owned()
         )
     );
+}
+
+#[test]
+fn a_watchers_wallet_comes_from_its_signed_attribute() {
+    let wallet = address_of(KEY);
+    let attributes: std::collections::BTreeMap<String, String> =
+        [("dcl.castWatcher".to_owned(), wallet.clone())].into();
+    assert_eq!(
+        watcher_wallet("watch:scene:main:x:1", &attributes).map(|a| a.as_str().to_owned()),
+        Some(wallet)
+    );
+    // Only for a watcher's identity, and only a wallet.
+    assert_eq!(watcher_wallet("stream:p:1", &attributes), None);
+    let junk: std::collections::BTreeMap<String, String> =
+        [("dcl.castWatcher".to_owned(), "Moderator".to_owned())].into();
+    assert_eq!(watcher_wallet("watch:scene:main:x:1", &junk), None);
 }
 
 #[test]
@@ -1120,6 +1138,8 @@ async fn a_viewer_watches_a_parcel_or_world_stream_unless_banned() {
     let claims = claims(&body["token"]);
     assert_eq!(claims["sub"], identity);
     assert_eq!(claims["name"], "Viewer #1");
+    // The viewer's wallet rides in a signed attribute, for the ban sweeps.
+    assert_eq!(claims["attributes"]["dcl.castWatcher"], address_of(&key));
     assert_eq!(
         claims["metadata"],
         // JSON.stringify's insertion order.
