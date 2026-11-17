@@ -16,7 +16,7 @@ import { pageLoader } from "@/core/lib/telemetry/page-loader";
 
 import CreateCommunity from "@/features/social/create-community/CreateCommunity";
 
-import type { Route } from "./+types/landings.create-community";
+import type { Route } from "./+types/communities.new";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 
 const STORY: StoryId = "landings/create-community";

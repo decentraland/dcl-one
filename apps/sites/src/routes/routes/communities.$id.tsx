@@ -4,16 +4,12 @@ import StSocialCommunityDetail from "@ui/web/pages/StSocialCommunityDetail";
 import "@ui/web/pages/stsocialcommunitydetail.css";
 import FreshnessNotice from "@ui/components/FreshnessNotice";
 
-import {
-  loadCommunity,
-  loadDefaultCommunity,
-  type CommunityDetail,
-} from "@/data/lib/catalyst/social/communities";
+import { loadCommunity, type CommunityDetail } from "@/data/lib/catalyst/social/communities";
 import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
 import { pageLoaderWith } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
 
-import type { Route } from "./+types/landings.community-detail";
+import type { Route } from "./+types/communities.$id";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 
@@ -31,9 +27,9 @@ const FALLBACK: PageDefaults = {
   variant: "full_profile",
 };
 
-export async function loader({ request, context }: Route.LoaderArgs) {
+export async function loader({ request, context, params }: Route.LoaderArgs) {
   const url = new URL(request.url);
-  let id = url.searchParams.get("id")?.trim() || "";
+  const id = params.id.trim();
   const tab = parseTab(url.searchParams.get("tab"));
   const forcePrivate = url.searchParams.get("gate") === "private";
 
@@ -42,10 +38,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     context,
     FALLBACK,
     async () => {
-      if (!id) {
-        const def = await loadDefaultCommunity({ signal: request.signal });
-        id = def?.id ?? "";
-      }
       let detail: CommunityDetail | null = null;
       if (id) {
         try {
@@ -54,12 +46,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           detail = null;
         }
       }
-      return { id, detail };
+      return detail;
     },
   );
-  id = data.id;
 
-  const payload = { id, tab, forcePrivate, detail: data.detail, sid, now: Date.now() };
+  const payload = { id, tab, forcePrivate, detail: data, sid, now: Date.now() };
   return wrap(payload);
 }
 
