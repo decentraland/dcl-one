@@ -2116,9 +2116,6 @@ impl IpfsIo {
             let cache_key =
                 cache_key.filter(|_| !url::Url::parse(&remote).is_ok_and(|url| url.is_loopback()));
 
-            // on web the service worker's cache (`web_cache`) is the content cache: anything with
-            // a cache key (content by hash, and urls by their digest) is looked up there once,
-            // here; the download that follows a miss does not ask the worker again
             #[cfg(target_arch = "wasm32")]
             let sw_caches = cache_key.is_some();
 
