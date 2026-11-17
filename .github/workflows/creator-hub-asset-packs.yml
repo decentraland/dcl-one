@@ -127,7 +127,7 @@ jobs:
         working-directory: apps/creator-hub/packages/asset-packs
         run: cp -r bin dist
 
-      - name: npm version
+      - name: version
         working-directory: apps/creator-hub/packages/asset-packs
         run: |
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
@@ -135,14 +135,15 @@ jobs:
           else
             VERSION="${{ needs.version.outputs.version }}-commit-${{ github.sha }}"
           fi
-          npm version "$VERSION" --force --no-git-tag-version --allow-same-version
+          # pnpm has no --force; skipping its git checks is what --force did for npm.
+          pnpm version "$VERSION" --no-git-checks --no-git-tag-version --allow-same-version
 
-      - name: npm pack
+      - name: pack
         working-directory: apps/creator-hub/packages/asset-packs
         id: npm-pack
         run: |
-          PACK_OUTPUT=$(npm pack --json)
-          PACK_FILENAME=$(echo "$PACK_OUTPUT" | jq -r '.[0].filename')
+          PACK_OUTPUT=$(pnpm pack --json)
+          PACK_FILENAME=$(echo "$PACK_OUTPUT" | jq -r '.filename')
           echo "pack-filename=$PACK_FILENAME" >> $GITHUB_OUTPUT
 
       - name: upload package to S3
