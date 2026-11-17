@@ -1473,6 +1473,7 @@
         "title": "Engagement",
         "description": "Understand how users engage with your place.",
         "minutes": "min",
+        "hours": "h",
         "delta": "{value} min",
         "vs_last_week": "{value} vs. last week",
         "daily": {
@@ -1818,6 +1819,7 @@
           "playtime_info": "Total time players spent in your place over the last 30 days.",
           "playtime_info_label": "About Total Playtime",
           "minutes": "{value} {minutes, plural, one {minute} other {minutes}}",
+          "hours": "{value} {hours, plural, one {hour} other {hours}}",
           "no_data": "No data"
         },
         "empty_body": "Once you publish a scene, it shows up here with its performance for the current cycle.",

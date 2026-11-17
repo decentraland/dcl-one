@@ -2,6 +2,7 @@ import { Box } from 'decentraland-ui2';
 
 import type { PlaceOverviewMetrics } from '/shared/types/place-analytics';
 
+import { playtimeAmount } from '/@/lib/playtime';
 import { t } from '/@/modules/store/translation/utils';
 
 import {
@@ -26,11 +27,17 @@ function minutes(value: number | null) {
   };
 }
 
-/** A total in whole minutes, compact like the other counts: `5 min`, `8.83K min`. */
-function wholeMinutes(value: number | null) {
+/** A total playtime, compact like the other counts: `45 min` up to an hour, then `147.2 h`. */
+function totalPlaytime(value: number | null) {
+  if (value === null) return { value: formatCount(null) };
+  const amount = playtimeAmount(value);
   return {
-    value: formatCount(value === null ? null : Math.round(value)),
-    unit: value === null ? undefined : t('analytics.detail.engagement.minutes'),
+    value: formatCount(amount.value),
+    unit: t(
+      amount.unit === 'hours'
+        ? 'analytics.detail.engagement.hours'
+        : 'analytics.detail.engagement.minutes',
+    ),
   };
 }
 
@@ -52,7 +59,7 @@ export function OverviewTab({ overview }: Props) {
             {
               label: t('analytics.metrics.total_playtime.label'),
               tooltip: t('analytics.metrics.total_playtime.tooltip'),
-              ...wholeMinutes(overview.totalPlaytime),
+              ...totalPlaytime(overview.totalPlaytime),
             },
             {
               label: t('analytics.metrics.unique_visits.label'),

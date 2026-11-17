@@ -28,6 +28,10 @@ export const formatUsdc = (amount: string, locale: string) => {
 export const formatCount = (value: number, locale: string) =>
   new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(value);
 
+/** A number with grouping and at most one decimal, as `1,234.5`. */
+export const formatTenths = (value: number, locale: string) =>
+  new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value);
+
 /** A 0–1 ratio as `10.2%`. */
 export const formatRatio = (value: number, locale: string) =>
   new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 1 }).format(value);

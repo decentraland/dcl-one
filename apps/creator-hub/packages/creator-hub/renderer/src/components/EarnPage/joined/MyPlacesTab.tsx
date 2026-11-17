@@ -5,6 +5,7 @@ import type { CreatorFundPlace } from '/shared/types/creator-fund';
 import { analytics } from '#preload';
 import { useDispatch, useSelector } from '#store';
 import type { LocationMetrics } from '/@/lib/metricsApi';
+import { playtimeAmount } from '/@/lib/playtime';
 import { actions, selectors } from '/@/modules/store/creatorFund';
 import { formatCycleLabel } from '/@/modules/store/creatorFund/utils';
 import { t } from '/@/modules/store/translation/utils';
@@ -14,6 +15,7 @@ import { MapPinIcon, NewPlayersIcon, PlaytimeIcon, RetentionIcon } from '../icon
 import {
   formatCount,
   formatRatio,
+  formatTenths,
   formatTime,
   metricValue,
   placeLocation,
@@ -106,11 +108,11 @@ function PlaceStats({ reading, locale }: { reading: PlaceMetricsReading; locale:
             tooltip: t('earn.joined.my_places.metrics.playtime_info'),
           }}
           reading={readStat(totalPlaytimeSeconds30d, seconds => {
-            const minutes = Math.round(seconds / SECONDS_PER_MINUTE);
-            return t('earn.joined.my_places.metrics.minutes', {
-              minutes,
-              value: formatCount(minutes, locale),
-            });
+            const amount = playtimeAmount(seconds / SECONDS_PER_MINUTE);
+            const value = formatTenths(amount.value, locale);
+            return amount.unit === 'hours'
+              ? t('earn.joined.my_places.metrics.hours', { hours: amount.value, value })
+              : t('earn.joined.my_places.metrics.minutes', { minutes: amount.value, value });
           })}
         />
       </StatsList>

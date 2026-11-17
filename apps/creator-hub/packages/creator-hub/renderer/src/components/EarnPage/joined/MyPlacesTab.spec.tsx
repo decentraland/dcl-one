@@ -358,7 +358,7 @@ describe('MyPlacesTab', () => {
       expect(within(entry).getByText('5,7')).toBeTruthy();
       expect(await within(entry).findByText('1,234')).toBeTruthy();
       expect(within(entry).getByText('10.2%')).toBeTruthy();
-      expect(within(entry).getByText('5,120 minutes')).toBeTruthy();
+      expect(within(entry).getByText('85.3 hours')).toBeTruthy();
       expect(within(entry).getByText('New Players Attributable')).toBeTruthy();
       expect(within(entry).queryByText('Ranking Position')).toBeNull();
     });
@@ -442,6 +442,11 @@ describe('MyPlacesTab', () => {
       [95.4, 3, '5 minutes'],
       [50, 1, '1 minute'],
       [20, 1, '0 minutes'],
+      [60, 60, '60 minutes'],
+      [61, 60, '1 hour'],
+      [90, 60, '1.5 hours'],
+      [412.6, 1284, '147.2 hours'],
+      [3600, 1500, '1,500 hours'],
     ])(
       'should show Total Playtime for an average of %ss over %s visits as %j',
       async (average, visits, shown) => {

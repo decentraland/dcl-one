@@ -1470,6 +1470,7 @@
         "title": "互动",
         "description": "了解用户如何与你的 Place 互动。",
         "minutes": "分钟",
+        "hours": "小时",
         "delta": "{value} 分钟",
         "vs_last_week": "{value}（对比上周）",
         "daily": {
@@ -1818,6 +1819,7 @@
           "playtime_info": "过去 30 天内玩家在你的地点停留的总时长。",
           "playtime_info_label": "关于总游玩时长",
           "minutes": "{value} {minutes, plural, other {分钟}}",
+          "hours": "{value} {hours, plural, other {小时}}",
           "no_data": "无数据"
         },
         "empty_body": "发布场景后，它会显示在这里，并附上本周期的表现。",

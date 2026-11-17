@@ -1470,6 +1470,7 @@
         "title": "Interacción",
         "description": "Entendé cómo interactúan los usuarios con tu place.",
         "minutes": "min",
+        "hours": "h",
         "delta": "{value} min",
         "vs_last_week": "{value} vs. la semana pasada",
         "daily": {
@@ -1818,6 +1819,7 @@
           "playtime_info": "Tiempo total que los jugadores pasaron en tu lugar en los últimos 30 días.",
           "playtime_info_label": "Acerca del tiempo de juego total",
           "minutes": "{value} {minutes, plural, one {minuto} other {minutos}}",
+          "hours": "{value} {hours, plural, one {hora} other {horas}}",
           "no_data": "Sin datos"
         },
         "empty_body": "Cuando publiques una escena, aparecerá aquí con su rendimiento en el ciclo actual.",

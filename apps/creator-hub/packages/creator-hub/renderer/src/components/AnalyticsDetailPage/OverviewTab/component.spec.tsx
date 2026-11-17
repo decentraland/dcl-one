@@ -36,9 +36,13 @@ describe('OverviewTab', () => {
 
   describe('when showing the total playtime', () => {
     it.each([
-      [8829.64, '8.83K min'],
       [4.77, '5 min'],
       [0.83, '1 min'],
+      [60.4, '60 min'],
+      [61, '1 h'],
+      [90, '1.5 h'],
+      [8829.64, '147.2 h'],
+      [204072, '3.4K h'],
     ])('should show %s minutes as %j', (totalPlaytime, shown) => {
       render(<OverviewTab overview={{ ...OVERVIEW, totalPlaytime }} />);
 
