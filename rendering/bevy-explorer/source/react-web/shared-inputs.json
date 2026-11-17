@@ -8679,7 +8679,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/preview/textureOptimizationToast.ts",
-      "sha256": "0f97a4b3230677b78ec192d36d46064cc6cb61d9b5453d041de45ed83fb326b0"
+      "sha256": "9fdbb884a0cf784d5f0aaed23bb9988af597e19df9bd60094ad048d2569b7989"
     },
     {
       "path": "library/ui/apps/hud/features/profile/NameEditModal.module.css",
@@ -9491,7 +9491,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/textureOptimization.test.tsx",
-      "sha256": "fbb3bd76e7b98edd7c01943878a6bd6a6a29a1e29ed00d37cbe2abe66a43b85f"
+      "sha256": "97048bb11827e332f4bbf987f7380d5227412789a10e54da40d910faadbef8f3"
     },
     {
       "path": "library/ui/foundations/colors/colors.css",
