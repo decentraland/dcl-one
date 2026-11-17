@@ -49,7 +49,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/profiles/metadata", post(metadata))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .layer(axum::middleware::from_fn(
-            crate::explore::api::registry::cors,
+            crate::shared::cors::registry_cors,
         ))
         .with_state(state)
 }

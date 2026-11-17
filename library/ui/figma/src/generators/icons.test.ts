@@ -68,12 +68,56 @@ describe('generateIcons', () => {
     })
   })
 
-  describe('when an icon mixes colors and has a mask', () => {
+  describe('when a single-color icon draws through a clip path', () => {
+    const svg =
+      '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g clip-path="url(#c)"><path d="M1 1h10v10H1z" fill="#FCFCFC"/><path d="M12 12h10v10H12z" fill="#FCFCFC"/></g><defs><clipPath id="c"><rect width="24" height="24" fill="white"/></clipPath></defs></svg>'
+
+    it('should ignore the clip geometry paint and follow currentColor', () => {
+      const { files, meta } = generateIcons([icon({ svg })], context)
+      const source = contentOf(files, 'icons/general.tsx')
+
+      expect(meta[0]?.monochrome).toBe(true)
+      expect(source).toContain('currentColor')
+      expect(source).not.toContain('#fcfcfc')
+    })
+  })
+
+  describe('when an icon mixes colors inside a clip path', () => {
+    it('should keep its original colors', () => {
+      const svg =
+        '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g clip-path="url(#c)"><path d="M1 1h10v10H1z" fill="#FF2D55"/><path d="M12 12h10v10H12z" fill="#FCFCFC"/></g><defs><clipPath id="c"><rect width="24" height="24" fill="white"/></clipPath></defs></svg>'
+      const { files, meta } = generateIcons([icon({ svg })], context)
+
+      expect(meta[0]?.monochrome).toBe(false)
+      expect(contentOf(files, 'icons/general.tsx')).toContain('#ff2d55')
+    })
+  })
+
+  describe('when a single-color icon draws through a black and white mask', () => {
+    it('should keep the mask luminance and follow currentColor outside it', () => {
+      const svg =
+        '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><mask id="m" fill="#000"><path d="M0 0h24v24H0z" fill="#fff"/><path d="M1 1h10v10H1z"/></mask><path d="M0 0h24v24H0z" fill="#FCFCFC" mask="url(#m)"/><circle cx="16" cy="16" r="4" stroke="#FCFCFC"/></svg>'
+      const { files, meta } = generateIcons([icon({ svg })], context)
+      const source = contentOf(files, 'icons/general.tsx')
+      const mask = source.slice(source.indexOf('<mask'), source.indexOf('</mask>'))
+      const outside = source.slice(source.indexOf('</mask>'))
+
+      expect(meta[0]?.monochrome).toBe(true)
+      expect(mask).toContain('fill="#000"')
+      expect(mask).toContain('fill="#fff"')
+      expect(outside).not.toContain('#fcfcfc')
+      expect(outside).toContain('stroke="currentColor"')
+    })
+  })
+
+  describe('when an icon mixes colors outside its mask', () => {
     it('should keep every original color, inside and outside the mask', () => {
       const svg =
-        '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><mask id="m" fill="#fff"><path d="M1 1h10v10H1z"/></mask><path d="M0 0h24v24H0z" fill="#FF2D55" mask="url(#m)"/></svg>'
-      const source = contentOf(generateIcons([icon({ svg })], context).files, 'icons/general.tsx')
+        '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><mask id="m" fill="#fff"><path d="M1 1h10v10H1z"/></mask><path d="M0 0h24v24H0z" fill="#FF2D55" mask="url(#m)"/><path d="M12 12h10v10H12z" fill="#FCFCFC"/></svg>'
+      const { files, meta } = generateIcons([icon({ svg })], context)
+      const source = contentOf(files, 'icons/general.tsx')
 
+      expect(meta[0]?.monochrome).toBe(false)
       expect(source).toContain('fill="#fff"')
       expect(source).toContain('fill="#ff2d55"')
       expect(source).not.toContain('currentColor')

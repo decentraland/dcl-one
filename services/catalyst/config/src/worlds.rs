@@ -80,9 +80,9 @@ pub struct WorldsConfig {
     // surface, catalyrst-world-storage, catalyrst-scene-state, archipelago's
     // ws-connector and the worlds federation mirror). A world publish, a
     // permission or settings edit and a storage value are local authority
-    // peer sync does not back up, so every worlds write answers 503 until a
-    // backup restore has been demonstrated (DATABASE.md, "Bootstrap, schema versions and
-    // local writes"); the reads, the admission mints and the sockets serve.
+    // peer sync does not back up, so every worlds write answers 503 until it
+    // is turned on; back up first (DATABASE.md, "Bootstrap, schema versions
+    // and local writes"); the reads, the admission mints and the sockets serve.
     #[arg(long, env = "WORLDS_WRITES_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub worlds_writes_enabled: bool,
 
@@ -460,6 +460,15 @@ pub struct WorldsConfig {
     #[arg(long, env = "WS_MAX_SOCKETS", default_value_t = 3000, value_parser = clap::value_parser!(u32).range(1..))]
     pub ws_max_sockets: u32,
 
+    /// Connector sockets that have not completed the handshake, counted inside `WS_MAX_SOCKETS`;
+    /// 0 keeps a quarter of it. When full, a new socket evicts the oldest pending one.
+    #[arg(long, env = "WS_MAX_PENDING_HANDSHAKES", default_value_t = 0)]
+    pub ws_max_pending_handshakes: u32,
+
+    /// Pending handshakes one client address may hold; 0 is unlimited.
+    #[arg(long, env = "WS_MAX_PENDING_HANDSHAKES_PER_IP", default_value_t = 8)]
+    pub ws_max_pending_handshakes_per_ip: u32,
+
     /// Connector sockets one client address may hold, pending handshakes included; 0 is unlimited.
     #[arg(long, env = "WS_MAX_SOCKETS_PER_IP", default_value_t = 64)]
     pub ws_max_sockets_per_ip: u32,
@@ -474,9 +483,14 @@ pub struct WorldsConfig {
     )]
     pub ban_sweep_interval_ms: u64,
 
-    /// Handshake deadline, ms; 0 keeps the default.
+    /// Signed-challenge deadline, ms, from the challenge; 0 keeps the default.
     #[arg(long, env = "HANDSHAKE_TIMEOUT", default_value_t = 60_000)]
     pub handshake_timeout: u64,
+
+    /// Challenge-request deadline, ms, from the socket opening, at most `HANDSHAKE_TIMEOUT`; 0
+    /// keeps the default.
+    #[arg(long, env = "CHALLENGE_REQUEST_TIMEOUT", default_value_t = 10_000)]
+    pub challenge_request_timeout: u64,
 
     /// The wallet denylist document; unset disarms the external denylist.
     /// `NODE_POSTURE=mirror` defaults it to Decentraland's, as upstream's
@@ -897,10 +911,7 @@ mod tests {
     fn worlds_defaults_are_the_old_binaries_values_and_writes_are_off() {
         let cli = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
         let c = cli;
-        assert!(
-            !c.worlds.worlds_writes_enabled,
-            "worlds writes are opt-in; a restore must be demonstrated first"
-        );
+        assert!(!c.worlds.worlds_writes_enabled, "worlds writes are opt-in");
         assert!(
             c.worlds.worlds_forward_upstream_url.is_none(),
             "nothing is forwarded until an operator names an upstream"

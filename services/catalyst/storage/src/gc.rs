@@ -217,6 +217,8 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
     ("shop.disputes.trade_hash", "an order digest"),
     ("shop.admin_audit.target_hash", "an order digest"),
     ("shop.chain_cursor.last_block_hash", "a block hash"),
+    ("land_authz.index_cursor.last_block_hash", "a block hash"),
+    ("land_authz.index_cursor.checkpoint_hash", "a block hash"),
     ("shop.trade_event.hashed_signature", "an order digest"),
     ("shop.trade_event.tx_hash", "a transaction hash"),
     ("shop.sale_event.tx_hash", "a transaction hash"),
@@ -655,7 +657,16 @@ pub async fn published_among(
     keys: &[String],
 ) -> Result<HashSet<String>, GcError> {
     let mut conn = pool.acquire().await?;
-    references_among(&mut conn, pins, keys, false).await
+    published_among_on(&mut conn, pins, keys).await
+}
+
+/// Published references using the caller's existing session.
+pub async fn published_among_on(
+    conn: &mut sqlx::PgConnection,
+    pins: Pins<'_>,
+    keys: &[String],
+) -> Result<HashSet<String>, GcError> {
+    references_among(conn, pins, keys, false).await
 }
 
 async fn references_among(

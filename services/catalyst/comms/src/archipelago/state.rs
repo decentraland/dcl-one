@@ -9,8 +9,14 @@ use crate::deny_list::DenyList;
 use std::sync::Arc;
 
 pub struct AppStateInner {
+    #[cfg(feature = "test-support")]
+    pub ws_ping_gate: super::ws::assignment_test_support::PingGate,
     pub settings: Settings,
     pub sockets: Arc<tokio::sync::Semaphore>,
+    /// Sockets that have not completed the handshake; released at the welcome.
+    pub pending_handshakes: Arc<PendingHandshakes>,
+    /// Pending handshakes per client source, so a few sources cannot hold the whole pending share.
+    pub pending_handshakes_per_ip: Arc<IpSlots>,
     pub sockets_per_ip: Arc<IpSlots>,
     pub handlers: Arc<tokio::sync::Semaphore>,
     pub restart: tokio_util::sync::CancellationToken,
@@ -37,6 +43,83 @@ pub struct AppStateInner {
 }
 
 pub type AppState = Arc<AppStateInner>;
+
+/// A socket's hold on the pending-handshake share, global and per source; released at the
+/// welcome or when the socket ends.
+pub(crate) struct PendingHandshake {
+    pub(crate) global: PendingSlot,
+    pub(crate) _source: Option<IpSlot>,
+}
+
+/// Sockets that have not completed the handshake, at most `max`. When the share is full a new
+/// socket evicts the oldest one instead of being refused, so handshakes held open cannot refuse
+/// new joins: a client that completes its handshake promptly is never the oldest for long.
+pub struct PendingHandshakes {
+    max: usize,
+    inner: std::sync::Mutex<PendingInner>,
+}
+
+#[derive(Default)]
+struct PendingInner {
+    next: u64,
+    held: std::collections::BTreeMap<u64, tokio_util::sync::CancellationToken>,
+}
+
+/// One socket's place in the pending share; `evicted` fires when a newer socket takes it.
+pub struct PendingSlot {
+    set: Arc<PendingHandshakes>,
+    id: u64,
+    pub evicted: tokio_util::sync::CancellationToken,
+}
+
+impl PendingHandshakes {
+    pub fn new(max: usize) -> Arc<Self> {
+        Arc::new(Self {
+            max: max.max(1),
+            inner: Default::default(),
+        })
+    }
+
+    /// Takes a place for a new socket, evicting the oldest pending socket when the share is full.
+    pub fn admit(self: &Arc<Self>) -> PendingSlot {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if inner.held.len() >= self.max
+            && let Some((_, oldest)) = inner.held.pop_first()
+        {
+            oldest.cancel();
+            crate::gatekeeper::admission::cluster::metrics::ws_pending_eviction();
+            tracing::debug!("evicting the oldest pending /ws handshake: the pending share is full");
+        }
+        let id = inner.next;
+        inner.next += 1;
+        let evicted = tokio_util::sync::CancellationToken::new();
+        inner.held.insert(id, evicted.clone());
+        crate::gatekeeper::admission::cluster::metrics::ws_pending_handshakes(inner.held.len());
+        PendingSlot {
+            set: Arc::clone(self),
+            id,
+            evicted,
+        }
+    }
+
+    /// Sockets currently holding a place.
+    pub fn held(&self) -> usize {
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .held
+            .len()
+    }
+}
+
+impl Drop for PendingSlot {
+    fn drop(&mut self) {
+        let mut inner = self.set.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if inner.held.remove(&self.id).is_some() {
+            crate::gatekeeper::admission::cluster::metrics::ws_pending_handshakes(inner.held.len());
+        }
+    }
+}
 
 /// Sockets held per client source (an IPv4 address or an IPv6 /64); a request
 /// that cannot be attributed to one client is not counted.
@@ -93,6 +176,30 @@ impl Drop for IpSlot {
                 held.remove(&self.source);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod pending_tests {
+    use super::PendingHandshakes;
+
+    #[test]
+    fn a_full_share_evicts_its_oldest_socket_and_frees_places_on_drop() {
+        let set = PendingHandshakes::new(2);
+        let oldest = set.admit();
+        let middle = set.admit();
+        assert_eq!(set.held(), 2);
+        let newest = set.admit();
+        assert!(oldest.evicted.is_cancelled());
+        assert!(!middle.evicted.is_cancelled());
+        assert_eq!(set.held(), 2);
+        // An evicted socket ending later does not free a place it no longer holds.
+        drop(oldest);
+        assert_eq!(set.held(), 2);
+        drop(middle);
+        assert_eq!(set.held(), 1);
+        let _next = set.admit();
+        assert!(!newest.evicted.is_cancelled());
     }
 }
 

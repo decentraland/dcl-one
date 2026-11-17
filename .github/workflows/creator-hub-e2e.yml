@@ -47,7 +47,7 @@ jobs:
 
       # chromium only: it is the sole engine the suite launches (playwright.config.ts).
       - name: install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps chromium
 
       # The UI Designer code-mode e2e needs the wasm parser that --production drops, so
       # e2e rebuilds a dev bundle (~74s) instead of reusing download-build's production
@@ -64,7 +64,7 @@ jobs:
             apps/creator-hub/packages/inspector/public/bundle.js
             apps/creator-hub/packages/inspector/public/bundle.css
           # Single line on purpose: newlines inside a ${{ }} expression are brittle.
-          key: inspector-e2e-devbundle-${{ runner.os }}-${{ hashFiles('apps/creator-hub/packages/inspector/src/**', 'apps/creator-hub/packages/inspector/build.js', 'apps/creator-hub/packages/inspector/bevy-agent-realm.js', 'apps/creator-hub/packages/inspector/package.json', 'apps/creator-hub/packages/asset-packs/src/**', 'apps/creator-hub/packages/asset-packs/package.json', 'apps/creator-hub/package-lock.json') }}
+          key: inspector-e2e-devbundle-${{ runner.os }}-${{ hashFiles('apps/creator-hub/packages/inspector/src/**', 'apps/creator-hub/packages/inspector/build.js', 'apps/creator-hub/packages/inspector/bevy-agent-realm.js', 'apps/creator-hub/packages/inspector/package.json', 'apps/creator-hub/packages/asset-packs/src/**', 'apps/creator-hub/packages/asset-packs/package.json', 'apps/creator-hub/pnpm-lock.yaml') }}
 
       - name: build inspector
         if: steps.inspector-dev-bundle.outputs.cache-hit != 'true'
@@ -72,9 +72,10 @@ jobs:
 
       - name: start inspector server
         shell: bash
+        # http-server is a dependency of the app package, so it runs from there.
         run: |
-          cd packages/inspector
-          npx http-server public -p 8000 --cors -a localhost &
+          cd packages/creator-hub
+          pnpm exec http-server ../inspector/public -p 8000 --cors -a localhost &
           sleep 5
 
       - name: e2e
@@ -114,7 +115,7 @@ jobs:
           include-creator-hub: 'true'
 
       - name: install playwright chromium
-        run: cd packages/creator-hub && npx playwright install chromium
+        run: pnpm exec playwright install chromium
 
       - name: e2e
         run: make test-creator-hub-e2e-ci

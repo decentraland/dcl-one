@@ -17,7 +17,7 @@ vi.hoisted(() => {
     $RefreshReg$: () => {},
   });
 });
-const net = vi.hoisted(() => ({ fetchProfile: vi.fn(), fetchMyCommunities: vi.fn(), track: vi.fn() }));
+const net = vi.hoisted(() => ({ fetchProfile: vi.fn(), fetchMyCommunities: vi.fn(), fetchProfilePlaces: vi.fn(), track: vi.fn() }));
 const auth = vi.hoisted(() => ({
   state: { isConnected: false, address: null as string | null, identity: null as unknown },
 }));
@@ -26,6 +26,11 @@ vi.mock("@/data/lib/catalyst/social/profile", async (original) => ({
   fetchProfile: net.fetchProfile,
 }));
 vi.mock("@/data/lib/catalyst/social/profile-communities", () => ({ fetchMyCommunities: net.fetchMyCommunities }));
+vi.mock("@/data/lib/catalyst/places/profile-places", async (original) => ({
+  ...(await original<typeof import("@/data/lib/catalyst/places/profile-places")>()),
+  fetchProfilePlaces: net.fetchProfilePlaces,
+}));
+vi.mock("@/data/lib/catalyst/social/badges", () => ({ fetchUserBadges: () => Promise.resolve([]) }));
 vi.mock("@/core/lib/telemetry/track", () => ({ track: net.track }));
 vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => auth.state }));
 
@@ -42,7 +47,6 @@ const { stub } = vi.hoisted(() => ({
 }));
 vi.mock("@ui/web/pages/StProfileOverviewTab", () => stub("overview"));
 vi.mock("@ui/web/pages/StProfileCreationsTab", () => stub("creations"));
-vi.mock("@ui/web/pages/StProfilePlacesTab", () => stub("places"));
 vi.mock("@ui/web/pages/StProfilePhotosTab", () => stub("photos"));
 vi.mock("@ui/web/pages/StProfileCommunitiesTab", () => stub("communities"));
 vi.mock("@ui/web/pages/StProfileMyAssetsTab", () => stub("assets"));
@@ -321,8 +325,11 @@ describe("profile route, client navigation", () => {
     mount(`/profile/${A}`);
 
     expect(await unavailable()).toBeTruthy();
-    screen.getByRole("button", { name: "Try again" }).click();
-    expect(await screen.findByRole("heading", { name: "Alice" })).toBeTruthy();
+    await act(async () => {
+      screen.getByRole("button", { name: "Try again" }).click();
+    });
+    // The retry is a navigation plus a fresh read; allow for a loaded test machine.
+    expect(await screen.findByRole("heading", { name: "Alice" }, { timeout: 3000 })).toBeTruthy();
     expect(net.fetchProfile).toHaveBeenCalledTimes(2);
   });
 
@@ -375,6 +382,26 @@ describe("profile route, client navigation", () => {
     const router = mount(`/profile/${A}/assets`);
 
     await waitFor(() => expect(router.state.location.pathname).toBe(`/profile/${A}`));
+  });
+});
+
+describe("profile route, places", () => {
+  it("keeps the owner's empty state when a background profile re-read fails", async () => {
+    auth.state = { isConnected: true, address: A, identity };
+    net.fetchProfile.mockResolvedValueOnce(avatar("Alice")).mockRejectedValueOnce(new CatalystError("down", "/lambdas", 503));
+    net.fetchProfilePlaces.mockResolvedValue({ places: [], total: 0 });
+    mount(`/profile/${A}/places`);
+    expect(await screen.findByText("Nothing here yet, but that's easy to change", { selector: "p" })).toBeTruthy();
+
+    await act(async () => {
+      await client.refetchQueries({ queryKey: profileKeys.profile(A) });
+      // Query observers notify on the next tick; let the page render the failed re-read.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(client.getQueryState(profileKeys.profile(A))?.status).toBe("error");
+    expect(screen.getByText("Nothing here yet, but that's easy to change", { selector: "p" })).toBeTruthy();
+    expect(screen.queryByText("Loading places")).toBeNull();
   });
 });
 

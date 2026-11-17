@@ -5,6 +5,10 @@ understand the change in one sitting.
 
 ## Scope
 
+- Before implementation planning, apply the repository's
+  [design feasibility gate](../../../../docs/design-feasibility.md) to runtime
+  features and resource policies. Validate the requested outcome on each supported
+  platform before choosing implementation structure.
 - One problem per PR, fixed at the sentence that names it. If the fix wants new state or
   plumbing the problem didn't mention, that is a second PR and a conversation first. Give
   independently useful diagnostics their own PR and verification.
@@ -126,8 +130,6 @@ this engine's design using its requirements and tests.
 ## Before pushing
 
 - Merge main first. CI tests the merge, not the branch.
-- `python3 ../../../tooling/patched-sources.py materialise` after the merge and before the cargo
-  commands: Cargo reads the [rebuilt trees](bevy-fork.md#changing-bevy).
 - `cargo fmt --all`, `cargo clippy --locked -- -D warnings`, `cargo test --all`. Clippy warnings
   are errors in CI.
 - The wasm build, only if the change has platform-sensitive code: `#[cfg]` branches,
@@ -152,7 +154,9 @@ this engine's design using its requirements and tests.
   `{ workspace = true }` at the call site, even for a crate used in one place. Convert existing
   inline uses of the same crate in the same change.
 - A change to bevy or to a forked crate is one more patch file under
-  `rendering/bevy-explorer/patches/<name>/series`: see [the bevy fork](bevy-fork.md#changing-bevy).
+  `rendering/bevy-explorer/patches/<name>/series` and a new `rev` in `source.toml` and both Cargo
+  files. The tool writes all of them. Push the `rev` to your fork with `publish --remote`, and CI
+  publishes it here after the merge: see [the bevy fork](bevy-fork.md#changing-bevy).
 
 ## Review
 
@@ -193,6 +197,6 @@ on unrelated callers. Give changes with independent consumers or failure modes t
 PR and test evidence.
 
 For browser forwarding changes, run
-`npx vitest run src/test/serviceWorkerCache.test.ts src/test/previewRealm.test.ts` from
+`pnpm exec vitest run src/test/serviceWorkerCache.test.ts src/test/previewRealm.test.ts` from
 `rendering/bevy-explorer/source/react-web`. Check abort propagation, streamed requests,
 referrer policy and disposal of unread response bodies.

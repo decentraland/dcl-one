@@ -6,7 +6,7 @@ workspace and `target/`); artifacts go to this app's ignored `dist/`.
 ## Build locally
 
 Prerequisites: the [Explorer README](../../rendering/bevy-explorer/source/readme.md)'s platform
-libraries, Rust, protoc, Node 24, npm. Web also needs `nightly-2026-04-15` with `rust-src` and
+libraries, Rust, protoc, Node 24, pnpm (`corepack enable`). Web also needs `nightly-2026-04-15` with `rust-src` and
 `wasm32-unknown-unknown`, and wasm-pack (CI takes 0.15.1 from the flake's `bevy-tools` package);
 desktop needs FFmpeg and the pinned CEF.
 
@@ -14,8 +14,12 @@ CI uses `build-web.py --shared-build`: Cargo compiles the engine and scene runti
 then the lockfile-matched wasm-bindgen emits two separate modules. `install-web-tools.py`
 checks the release archives' SHA-256 and the binding generator's version against Cargo.lock.
 Optimized builds retain the release compilation settings and run wasm-opt. Unoptimized PR
-builds use 16 codegen units; the larger modules trade download size for compilation speed, and
-they skip the wasm target cache, which main's optimized builds fill with 1-unit artifacts.
+builds use 16 codegen units; the larger modules trade download size for compilation speed. The
+two settings give every crate a different hash, so each has its own wasm target cache. Main
+fills the unoptimized one in the job `web-pr-target`, which runs `build-web.py --no-opt
+--target-only` (the Cargo steps alone: the two modules and the bindings test build) and saves
+one entry for each set of engine inputs. A PR restores main's entry; when main has none for the
+PR's dependencies, the PR saves one entry of its own, once; a PR from a fork saves none.
 Linux web CI takes protoc, clang 21, pkg-config and ALSA/udev development outputs from
 the flake's cached `bevy-web-tools` package and installs no apt build dependencies. Its
 pkg-config search path points to that package. Native Linux packaging retains distribution
@@ -123,7 +127,7 @@ per writer:
 
 | Section | Written by | Holds |
 | --- | --- | --- |
-| *Build* | `bevy-explorer-ci-status.yml` | The web app and the headless engine with their artifacts, the web app's PR preview on the zone services (published only for a PR with the `ci:preview` label; label, then push or reopen), and the `benchmark` runner per platform |
+| *Build* | `bevy-explorer-ci-status.yml` | The web app and the headless engine with their artifacts, the web app's PR preview on the zone services (a row with the publish job's time, for a PR from this repository), and the `benchmark` runner per platform |
 | *Tests* | `bevy-explorer-ci-status.yml` | *Test Suite* per platform and *Headless Smoke*, with job times |
 | *Performance* | `bevy-explorer-benchmark.yml` | After each passed CI run that built the web app: running, not run and why, cancelled, or the report with a badge from its *Overall* line |
 
@@ -133,9 +137,11 @@ base context with write permission, and checks out only the action. It resolves 
 commit) and whether the run's *Changes* job selected an explorer job (`explorer-run-selected.sh`:
 *Test Suite*, *Headless Smoke*, *Clippy* or the web build not skipped). A run that selected none,
 such as a backend-only change, leaves the pull request without a comment. When the run is
-requested, both sections go to pending; when its test jobs end while the run goes on
-(`explorer-tests-ended.sh`, a wait with a limit in a job without write permission), the tests
-section is written from the jobs; when the run completes, both sections are
+requested, both sections go to pending; when its test jobs, or its build jobs, end while the run
+goes on (`explorer-section-ended.sh`, a wait with a limit in a job without write permission),
+that section is written from the jobs. The build section does not wait for the preview
+publication: its row says publishing until the completed run links the preview. When the run
+completes, both sections are
 composed from its jobs and artifacts (`explorer-ci-sections.sh`). A completed run that ran no test
 job reads the newer runs of this workflow for the head commit of an open pull request: while one
 has not ended, the tests section links it as pending; when one has ended, the run writes no tests
@@ -268,7 +274,6 @@ windows through OTLP; receive-timed legacy observations cannot establish CPU
 utilization. Metrics serialization, execution baselines and CPU bucket tests run with:
 
 ```sh
-python3 tooling/patched-sources.py materialise # from the repository root: the trees cargo reads
 cd rendering/bevy-explorer/source
 cargo test --locked --no-default-features --features headless --lib headless::stats
 ```

@@ -6,7 +6,8 @@ origin     = "https://github.com/robtfm/winit"
 origin_rev = "b7ec4cf9cd448f68e9ddc10d01e93a92a7177b63"
 license    = "Apache-2.0"
 paths      = ["."]
-exclude    = []
-base_tree  = "8547ad98883505588aee1fe9be0c13c1c4f0535b"
-tree       = "807cb91c78b09d626d5d2350825d284c3e00e5da"
+exclude    = [".github"]
+base_tree  = "a3504c72002e60061bbb3e56de50326c6769dfe6"
+tree       = "1a9c6faaac1aeaf65ddfe51e98d980b6861d5b19"
+rev        = "ee0414e120eb9837c1f5892a325791dddb586cc2"
 nix_hash   = "sha256-aCiK+X7Ic7+zn8b+z0x2rlRAy+2N50zMXUD3i99q3Uc="

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { heroEventCards, parseHomeContent, withLiveEvents, type HomeContent } from "../landings/home";
 import { eventDetailToMarkdown, whatsOnToMarkdown } from "../../agent/markdown";
-import { eventOccurrence, effectiveStartAt, formatEventTime, formatEventWhen, toUpcomingCard, type Event } from "./events";
+import { eventOccurrence, effectiveStartAt, formatEventTime, formatEventWhen, type Event } from "./events";
 
 describe("when a recurring event has a series end months after its next occurrence", () => {
   let event: Event;
@@ -13,9 +13,8 @@ describe("when a recurring event has a series end months after its next occurren
   it("should export only the duration of the next occurrence", () => {
     expect(eventOccurrence(event)).toEqual({ start: "2099-06-01T18:00:00Z", finish: "2099-06-01T20:00:00.000Z" });
   });
-  it("should use the same occurrence in upcoming cards and both agent markdown surfaces", () => {
+  it("should use the same occurrence in the home rail and both agent markdown surfaces", () => {
     expect(effectiveStartAt(event)).toBe(event.next_start_at);
-    expect(toUpcomingCard(event).time).toBe(formatEventTime(event.next_start_at));
     expect(heroEventCards(withLiveEvents(content, [event]))?.[0].when).toBe(formatEventTime(event.next_start_at));
     expect(eventDetailToMarkdown(event)).toContain(formatEventWhen(event.next_start_at));
     expect(whatsOnToMarkdown({ upcoming: [event] })).toContain(formatEventWhen(event.next_start_at));

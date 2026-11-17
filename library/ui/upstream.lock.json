@@ -904,9 +904,12 @@
           "deviation": "capture-removed"
         },
         "library/ui/figma/review/scripts/browser-args.mjs": {
-          "sha256": "2cacbe2440374e77d00d8e7f23246fbed170ea0751ad0c8e4a50e7593bf8d6db",
+          "sha256": "f6099150a0faf2cfe1199d45ff5db093e129b9fda866f3d628bd92a651ddff3d",
           "fds": null,
-          "deviation": "evidence-removed"
+          "deviation": [
+            "evidence-removed",
+            "headless-desktop-pointer"
+          ]
         },
         "library/ui/figma/review/scripts/capture-browser.d.mts": {
           "sha256": "b72ded8f482da4a137ddcf77c080c74a4d2da8627c6fc99be2e3d3e6e8790ed7",
@@ -918,7 +921,7 @@
           ]
         },
         "library/ui/figma/review/scripts/capture-browser.mjs": {
-          "sha256": "3e5e558d08242f14f56825e49b3382a17445a3eab91d2810ce99fe864e1731e5",
+          "sha256": "6ea566de496ee5b90d88ea27befe10aad27fb8593e9810cd9721635b8bcdf834",
           "fds": null,
           "deviation": [
             "bot-review-279-b",
@@ -926,7 +929,8 @@
             "navigation-settle",
             "request-scope-hardening",
             "start-time-limit",
-            "startup-diagnostics"
+            "startup-diagnostics",
+            "capture-port-readiness"
           ]
         },
         "library/ui/figma/review/scripts/capture-teardown.mjs": {
@@ -1941,7 +1945,7 @@
           "deviation": "generated"
         },
         "library/ui/figma/review/src/generated/icons/chat.tsx": {
-          "sha256": "c849e519b1f16d12fb837933217ad1a59c94f04a60142f8b3f8fdf284c67f4dd",
+          "sha256": "105b1a03d9ccae4eae235dae82d4eb5a8d9ba447f4c2a1f5e698729fba4f5138",
           "fds": {
             "path": "dcl-ui-review/src/generated/icons/chat.tsx",
             "sha256": "afc16ed9a73129e92f85c153a94c38c7e52b485969dd5384b1aee7073a523fff"
@@ -1963,7 +1967,7 @@
           ]
         },
         "library/ui/figma/review/src/generated/icons/editor.tsx": {
-          "sha256": "d839402b39a04f1136bd3f497b5bb0fc46fba004e3f95a4c7e366d738b0b7167",
+          "sha256": "6ec7ddc6d6ed9302a23a6d1d90fbd31e05f7c42e66e8862e2f41863586bc0a50",
           "fds": {
             "path": "dcl-ui-review/src/generated/icons/editor.tsx",
             "sha256": "71ce4ea0fe5f681bf907015bfff929216b673832517fa4b1c44fe3c3a588aec4"
@@ -1982,7 +1986,7 @@
           "deviation": "generated"
         },
         "library/ui/figma/review/src/generated/icons/general.tsx": {
-          "sha256": "fbe5bfcee0e8169e52be176f29a8693c037e727947d51fe06477a011dfdfc645",
+          "sha256": "258c25b18c60219457637e1952b8213e9b052228f991e7d4e551fb5b84fa7921",
           "fds": {
             "path": "dcl-ui-review/src/generated/icons/general.tsx",
             "sha256": "964782299011bdbce6b0801ab8f0a6c02a7f758c5eb1a1e04ffc553e983560cf"
@@ -1993,7 +1997,7 @@
           ]
         },
         "library/ui/figma/review/src/generated/icons/iconMeta.ts": {
-          "sha256": "03d71c6e092ce4e19772a598fd5dfb48694b16c755e3f74aebbd51055a9f1e34",
+          "sha256": "b4c9dbfe1ff62fe86194f11735672f2786970af7a9b608d600e45c1decca21a8",
           "fds": {
             "path": "dcl-ui-review/src/generated/icons/iconMeta.ts",
             "sha256": "98e62052e237496bada0a52389217f1d359495ff10d101acee91f02a4843801f"
@@ -2056,7 +2060,7 @@
           ]
         },
         "library/ui/figma/review/src/generated/icons/profile.tsx": {
-          "sha256": "fa722613657aab1c35151cfa2b6b108d754212ee96c7f2a6bc465a5175d89d29",
+          "sha256": "0293fa770e5028345a2eab52233b98faad4abe00f9cf7f316e7c05e3f37c59f7",
           "fds": {
             "path": "dcl-ui-review/src/generated/icons/profile.tsx",
             "sha256": "bbddc52c1659882a8ad6cfacc6189f92f4f743458bc4e1431f62add9eb6fabce"
@@ -2244,13 +2248,15 @@
           }
         },
         "library/ui/figma/review/test/capture-browser.test.ts": {
-          "sha256": "cd75de8981153e2a80b03f569774163948c3c32f5c5910e80dc0053ef9feafef",
+          "sha256": "84d942796f76bb459fbbe9185a4b6f2af58d5f995b8e85fb56f9f5f6b7334618",
           "fds": null,
           "deviation": [
-            "dcl-one-only",
             "bot-review-279-b",
-            "startup-diagnostics",
-            "start-time-limit"
+            "capture-port-readiness",
+            "dcl-one-only",
+            "headless-desktop-pointer",
+            "start-time-limit",
+            "startup-diagnostics"
           ]
         },
         "library/ui/figma/review/test/capture-teardown.test.ts": {
@@ -2804,14 +2810,15 @@
           "deviation": "port:15940fd7"
         },
         "library/ui/figma/src/generators/icons.test.ts": {
-          "sha256": "d2a80ff11f36675aa45768b8c7ac189a6d88a01e2ac521b2882d925b6de2f93b",
+          "sha256": "1a1bd4429d2dd4cfcdc1ae6581e4abd9ccd1f4017731b77cf890185bbf2f3558",
           "fds": {
             "path": "dcl-mcp-figma/src/generators/icons.test.ts",
             "sha256": "9c32353083f5a1b0335c5ade9cfcd1d0247f73e68e1f997906da5c0b7edfbd05"
           },
           "deviation": [
             "capture-removed",
-            "port:15940fd7"
+            "port:15940fd7",
+            "icon-paint-scope"
           ]
         },
         "library/ui/figma/src/generators/icons.ts": {
@@ -2905,12 +2912,15 @@
           ]
         },
         "library/ui/figma/src/generators/svg-to-jsx.ts": {
-          "sha256": "c80b8175eab95535cd80ceac232b5eac3beda505ac4235c5b0b25543b2be75eb",
+          "sha256": "832761fbdacd4dd2e36284829ae78943721ee79a10457e2f466cdd0f0cc95f22",
           "fds": {
             "path": "dcl-mcp-figma/src/generators/svg-to-jsx.ts",
             "sha256": "615b1bb290ec41ea530f1251abb575240f0fba5dcd99ff9b777abc3ea589e310"
           },
-          "deviation": "port:15940fd7"
+          "deviation": [
+            "port:15940fd7",
+            "icon-paint-scope"
+          ]
         },
         "library/ui/figma/src/generators/tokens.test.ts": {
           "sha256": "fc3d0878a5cd6e303e48f82fb6a14917048f4b8c9deb7a5c44e4782088d1d06b",
@@ -4417,6 +4427,7 @@
         "bot-review-279-b": "Bot review follow-up on the capture-free head: the fetch-source cache swap moves the previous cache back when the rename of the staged cache fails, so a failed swap keeps the verified cache; fetch-source and lock-digests accept only the exact repository https://github.com/decentraland/figma-design-system, so a lock edit cannot point the port at a fork; image fills and the safe-SVG rules share one raster rule, any data: image that is not SVG in any letter case, instead of a fixed PNG, JPEG, GIF and WebP list; the privileged key scan reads its url allowlist from the default branch checked out in trusted/, never from the scanned head; a Review capture command sent after the session closed, or on a socket that is no longer open, is rejected at once instead of waiting out the CDP timeout; and retired components are dropped before component name resolution, so a live namesake of a retired component keeps its published name and the retired one is never validated.",
         "bot-review-279-c": "Bot review follow-up on the review build server: check-build answers a malformed percent-encoded path with 400 instead of throwing URIError, and serves only files inside the build directory (path.relative containment, 403 otherwise) so a sibling directory sharing the prefix is not disclosed; the key-scan workflow test drops a dead SKIP_CONCLUSION assignment.",
         "cache-hardening": "A capture marker that is not a JSON object is an FdsCacheError; the Figma token comes from the environment only, with no .env file; retire refuses a config whose snapshotDir is not the figma/figma-snapshot it reads; retirement writing stays (figma-design-system is retired after the POC) and runs only on a staged copy of a cache that runSync or retire verified first, proven by retirement-verified.test.ts.",
+        "capture-port-readiness": "Capture startup polls empty, partial and invalid DevTools port records with 100 ms waits within the 30-second elapsed deadline, configurable through startTimeoutMs, and reaches the endpoint only after a complete numeric port in 1..65535. Fake process and CDP regressions check readiness, exhaustion, cancellation identity and profile cleanup.",
         "capture-removed": "The Figma capture and everything derived from its imagery leave this tree (owner decision): figma/figma-snapshot, the frozen test copy figma/test/fixtures/figma-snapshot, the Review evidence (references, renders, Figma icon exports, fidelity.json), the generated image-fill assets, references.json and promotion.json. Two pins: revision stays the code base the ported files and their deviations are compared against, and snapshot.revision is the capture commit. pnpm figma fetch-source (figma/src/sources/fds-source.ts) fetches the capture commit into a temporary repository, rewrites each capture file keyless (stripFileKey, stripImageMetadata, encodePageFileName, this tree's paths), overlays this tree's orphan ledger figma/ledger/orphaned-assets.json, and accepts the result only when it matches the snapshot digest table above; at 9c6dfbe6 it reproduces the removed capture byte for byte except pages.json, which differs only in how it escapes non-ASCII text, and orphaned-assets.json, which fetch-source takes from this tree, and regeneration from it changes nothing but the image fills. Generated components take imageFills from figma.config.json: the Review uses a neutral placeholder instead of an exported image fill. The Review is a gallery of the generated components; its icons render through the generated icon components. Relocated guard, both halves named: lock-digests.mjs fails on any tracked file under figma/ that differs from, is missing from or is not pinned in files; port-verification.mjs requires library/ui/port-verification.json, the record of the real-capture checks (fetch-source, diff, check-mappings, review-manifest, navbar-bounds) for this exact lock, FDS commit and figma/ tree, whenever the lock changes. figma diff, figma guard against the base, check-mappings, promotion-verify, review-manifest and review:check no longer run in this repository's CI; they run where the capture lives. Follow-up: figma-design-system CI publishes a verdict per candidate commit and replaces the local record. Removed with the evidence they produced or checked: capture-review.mjs, capture-scope.mjs (so the aad3791 port above no longer applies), capture-animations.mjs, check-evidence.mjs, check-review.mjs, review-signature.mjs, scripts/freeze-test-snapshot.mjs, capture-retry.mjs (the staged renders/fidelity publisher) and their tests; capture-browser.mjs (which now defines its own CaptureTimeout), browser-args.mjs and capture-teardown.mjs stay for the build checks. Promotion is reduced to its eligibility rule (figma/src/promotion/eligibility.ts, used by check-mappings): the seal, its verification, promote-reviewed, their mappings and scope modules, the CLI commands promotion-manifest, promotion-verify and promote-reviewed, the guard's seal check and their tests are removed, because their input lives in figma-design-system. Unit tests read the hand-written figma/test/fixtures/synthetic-snapshot.",
         "component-install-integrity": "Install components through the verified-cache transaction and check emitted output provenance, complete input identities, CSS Modules exports and internal registry lifecycle.",
         "consumer-skill": "dcl-one owns the consumer skill and the agent kit (owner decision). The skill leads a contributor from a Figma link to library code with the CLI first and the MCP optional, both with --mapping-only: preflight, read the design without persisting the link or key, resolve each instance, follow each diagnostic's action, stop and report a missing mapping to the contributor with name, code, variant properties, library version and capture revision, compose per docs/ui-standards.md, repeat limits, and report the screenshot comparison as non-blocking and relative to the pinned capture. The kit installs the skill into the repository root (committed, checked in CI); the .agents/skills link is opt-in, an existing entry that is not the kit's link is a conflict refused before any write (--force replaces only a foreign symlink, never a directory), check reports agents-link-mismatch, and a repeated install leaves matching skills untouched. Review follow-up: check reports agents-link-mismatch only when an install asked for the link (recorded as agentsLink in the manifest), so a consumer-owned .agents/skills never fails it; the link is compared by resolved path, and an .agents that is a symlink or a file is a conflict. The skill reports any failure in one Unresolved component form filled from context, names the result fields under resolved, uses component set ids, and points at the mappings for the supported set.",
@@ -4428,6 +4439,8 @@
         "generation-import-closure": "components/generation.json binds the import closure of the install process instead of every tooling module (docs/adr/2026-11-11-generation-binds-installer-import-closure.md). module-graph.mjs computes the closure without dependencies and fails closed on any import it cannot resolve to one tracked file or a sanctioned package; componentModulePaths selects the fixed inputs, that closure and non-code files under figma/src from lock-verified bytes, and the generation record is schema 2. dcl-figma install runs in its own process (src/install-main.ts), so the modules it loads are the closure; createApp moves to src/app-context.ts so that process does not load the sync tooling. The install and offline inventories still require every candidate module to be tracked and pinned.",
         "hand-written-components": "Hand-written public components are plain tracked source in library/ui/components: a top-level directory the public component table does not name. The installer carries them into the published tree byte for byte and refuses a plan that writes into one; the common inspector checks them as tracked, materialized TypeScript and CSS with no Figma URL or key-shaped value, LFS pointer or known generator marker (a mapping header is not one), and the lock never pins them. lock-digests --write regenerates the public foundation and component tables from the staged manifests, keeps a table whose manifest does not validate and then exits 1.",
         "hand-written-public-components": "Public library components are written by hand from templates/component/ per docs/ui-standards.md; generation backs the Review previews only. The maintainer skill covers the Figma pipeline (port and Review) and sends a new public component to the template instead of components/promotion.json or promotion.include, the consumer skill attributes a difference to the capture the mappings follow, and MAINTENANCE.md describes components/ as hand-written components and previews as not public components.",
+        "headless-desktop-pointer": "Headless captures initialize a desktop pointer independently of physical input devices on the runner; explicit touch emulation overrides it. Browser tests assert the primary and restored input capabilities without changing component styles or hover assertions.",
+        "icon-paint-scope": "Local fix, not yet in figma-design-system: paint inside a clipPath or a mask no longer counts as an icon color when the generator decides whether an icon is monochrome. A clip path uses only geometry and a mask only luminance, so a single-color icon drawn through either now follows currentColor instead of keeping a fixed #fcfcfc (17 foundations icons, among them general/secondary-bar-wearables and general/controls, which kept their white fill on a dark-labelled TitleBar section). Paint inside a mask is still written unchanged. The public foundations icons and foundations/source.json are regenerated through the supported installer.",
         "install-file-ownership": "The component install owns files, not directories: it removes or overwrites only generation.json, promotion.json and an output the lock's public component table or the installed generation record pins, while its bytes match that pin. Every other file in a component directory, including a committed edit over a generated file, is carried over byte for byte; a plan that would write over such a file or into a component directory holding one is refused with the file's name, and so is an unowned top-level file. A dirty target is reported before an ownership refusal. The maintenance notes and the maintain-figma-library skill describe moving a generated component to hand-written in that order.",
         "internal-components": "Keep incomplete generated components internal, omit their public mappings, and derive CSS declarations from selectors only. Public export waits for source controls and semantic data props.",
         "key-download-identity": "Key jobs download each artifact under its one name and from its one run: the scan inputs only from the run itself, the Review build only from the triggering run. The root checkout key step template, not yet used by a workflow, runs against the real guard.",
@@ -4463,6 +4476,34 @@
         "startup-diagnostics": "Local capture startup diagnostics retain bounded sanitized stderr, executable basename and available version, pre-cleanup process status and port-file observations. The existing polling budget, launch flags, abort behavior and primary failure are unchanged. After collection, the drained stderr stream is unreferenced so inherited helper writers cannot pin the caller event loop; the pipe remains open for browser writes.",
         "verified-install": "Verified installation binds lock bytes before cache verification and compares them after every verification and source initialization. Tests reject invalid cache reads through a bypass App, preserve ignored target files and retain both errors and the previous tree when rollback fails."
       }
+    },
+    {
+      "repository": "https://github.com/decentraland/unity-explorer",
+      "revision": "59c3766303b02b8e4f776b5f11d5b97b565c0cb3",
+      "license": {
+        "spdx": "Apache-2.0",
+        "status": "The repository's license. The shader is not shipped: one image rendered from it is. Its water model is not original to the repository and its origin is unknown: the shader's header keeps a Shadertoy-style note ('V1.1 - added real water height', 'CLICK and MOVE the MOUSE to: X -> Change water height') with no author, and attributes two functions, 'hash' and 'noise' by iq, to CC BY-NC-SA 3.0. Those two are not in the render: the shader calls them only in a branch its USETEXTUREHEIGHT switch compiles out, and the bake reads the noise texture instead. Whether the water model's own licence allows the rendered image is unresolved until its origin is found."
+      },
+      "imported": {
+        "Explorer/Assets/DCL/MapRenderer/OceanShader/MapOcean.shader": "library/ui/apps/hud/assets/map/sea.webp, with DCLMap_basecolor2.png, DCLMap_height2.png and OceanNoise.png: the shader's texture-height path with the constants of MapOcean.mat, ported to GLSL and rendered once at time 0 over the 24000 map units square centred on the map's origin, at 4096 px, scaled to 2048 px (Lanczos) and encoded with cwebp 1.6.0 -q 80. The water does not move."
+      },
+      "files": {
+        "Explorer/Assets/DCL/MapRenderer/OceanShader/MapOcean.shader": {
+          "sha256": "230f0360beb3fc1fce344aa3db3532417162bd9a5eb66262fc226cc2d59fdf3c"
+        },
+        "Explorer/Assets/DCL/MapRenderer/OceanShader/DCLMap_basecolor2.png": {
+          "sha256": "4d17c5fc6a87f8bb7b971dd557e5925c9a4294fd2678d30235e0aa602b6a78ed"
+        },
+        "Explorer/Assets/DCL/MapRenderer/OceanShader/DCLMap_height2.png": {
+          "sha256": "969161ac76e2eb5797b3ca6688e4ba7aa9c592e04c4fe87fc11a78b4ffce86c4"
+        },
+        "Explorer/Assets/DCL/MapRenderer/OceanShader/OceanNoise.png": {
+          "sha256": "de293e005d398faea2fe03b886d9332889a63799c4b98ecb060f88588d8eb3ce"
+        },
+        "library/ui/apps/hud/assets/map/sea.webp": {
+          "sha256": "d2a732d4e2c3113b1fb32d79e304355b0bf9d76ec0e06d62a9eb49ccaab2089c"
+        }
+      }
     }
   ],
   "publicFoundations": {
@@ -4496,7 +4537,7 @@
         }
       },
       "icons/chat.tsx": {
-        "sha256": "c849e519b1f16d12fb837933217ad1a59c94f04a60142f8b3f8fdf284c67f4dd",
+        "sha256": "105b1a03d9ccae4eae235dae82d4eb5a8d9ba447f4c2a1f5e698729fba4f5138",
         "origin": {
           "kind": "generated",
           "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
@@ -4510,7 +4551,7 @@
         }
       },
       "icons/editor.tsx": {
-        "sha256": "d839402b39a04f1136bd3f497b5bb0fc46fba004e3f95a4c7e366d738b0b7167",
+        "sha256": "6ec7ddc6d6ed9302a23a6d1d90fbd31e05f7c42e66e8862e2f41863586bc0a50",
         "origin": {
           "kind": "generated",
           "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
@@ -4524,14 +4565,14 @@
         }
       },
       "icons/general.tsx": {
-        "sha256": "fbe5bfcee0e8169e52be176f29a8693c037e727947d51fe06477a011dfdfc645",
+        "sha256": "258c25b18c60219457637e1952b8213e9b052228f991e7d4e551fb5b84fa7921",
         "origin": {
           "kind": "generated",
           "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
         }
       },
       "icons/iconMeta.ts": {
-        "sha256": "03d71c6e092ce4e19772a598fd5dfb48694b16c755e3f74aebbd51055a9f1e34",
+        "sha256": "b4c9dbfe1ff62fe86194f11735672f2786970af7a9b608d600e45c1decca21a8",
         "origin": {
           "kind": "generated",
           "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
@@ -4573,7 +4614,7 @@
         }
       },
       "icons/profile.tsx": {
-        "sha256": "fa722613657aab1c35151cfa2b6b108d754212ee96c7f2a6bc465a5175d89d29",
+        "sha256": "0293fa770e5028345a2eab52233b98faad4abe00f9cf7f316e7c05e3f37c59f7",
         "origin": {
           "kind": "generated",
           "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa"
@@ -4622,7 +4663,7 @@
         }
       },
       "source.json": {
-        "sha256": "aa62059bc2565664aa7e60a8e226024b013ff5859531a6d33ff114d6fde39b78",
+        "sha256": "f1da10a019a5dc58a6849a68d3e6ef8649acd0a1daf913fd8daef5562ff167f6",
         "origin": {
           "kind": "source",
           "repository": "https://github.com/decentraland/dcl-one"
@@ -4769,7 +4810,7 @@
   "publicComponents": {
     "files": {
       "generation.json": {
-        "sha256": "3b4ecd1b0120b32b73e13b17f2340961a9d1e54b4d1d765573948d94996f577d",
+        "sha256": "718ddf637826593c3d47d94c23b3f59fa0491d72eb41abea36cd83dd0c9c1044",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",

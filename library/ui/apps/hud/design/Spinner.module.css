@@ -16,6 +16,51 @@
   stroke: var(--black-40);
 }
 
+/* chase: the head runs round in the first third of each second, the tail after it in the next half */
+.chase svg {
+  animation: none;
+  transform: rotate(-90deg);
+}
+.chase .arc {
+  stroke-dasharray: 0 100;
+  animation:
+    chase 1s linear infinite,
+    chase-colour 3s steps(1, end) infinite;
+}
+@keyframes chase {
+  0% {
+    stroke-dasharray: 0 100;
+    stroke-dashoffset: 0;
+  }
+  33.3% {
+    stroke-dasharray: 100 0;
+    stroke-dashoffset: 0;
+  }
+  50% {
+    stroke-dasharray: 100 0;
+    stroke-dashoffset: 0;
+  }
+  83.3% {
+    stroke-dasharray: 0 100;
+    stroke-dashoffset: -100;
+  }
+  100% {
+    stroke-dasharray: 0 100;
+    stroke-dashoffset: -100;
+  }
+}
+@keyframes chase-colour {
+  0% {
+    stroke: var(--signin-spinner-1);
+  }
+  33.33% {
+    stroke: var(--brand);
+  }
+  66.67% {
+    stroke: var(--brand-purple);
+  }
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);

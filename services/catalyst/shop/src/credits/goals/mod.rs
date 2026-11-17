@@ -144,7 +144,7 @@ async fn gate(state: &SharedState, conn: &mut PgConnection) -> Result<Gate, ApiE
     }
     let explorer = explorer
         .ok_or_else(|| ApiError::service_unavailable("credits explorer flags unavailable"))?;
-    let snapshot = crate::explore::api::feature_flags::Snapshot::from_document(explorer);
+    let snapshot = crate::shared::feature_flags::Snapshot::from_document(explorer);
     let allowlist = snapshot
         .variant_values("explorer", "alfa-marketplace-credits")
         .map(|list| {
@@ -357,18 +357,18 @@ fn goal_completed_notification(
     completed: &Completed<'_>,
     cdn_url: &str,
     now: NaiveDateTime,
-) -> Result<(String, catalyst_social::notifications::NewNotification), ApiError> {
+) -> Result<(String, crate::shared::notifications::NewNotification), ApiError> {
     let key = format!(
         "{address}-{}-{}-{}",
         completed.goal, completed.season.id, completed.week
     );
-    let image = catalyst_social::notifications::cdn_asset(
+    let image = crate::shared::notifications::cdn_asset(
         cdn_url,
         super::admin_store::CREDITS_NOTIFICATION_ICON_PATH,
     );
-    let notification = catalyst_social::notifications::NewNotification {
+    let notification = crate::shared::notifications::NewNotification {
         id: Uuid::new_v5(&NOTIFICATION_NAMESPACE, key.as_bytes()),
-        address: catalyst_social::Address::parse(address)
+        address: crate::shared::identity::Address::parse(address)
             .map_err(|_| ApiError::Internal("invalid goal owner".into()))?,
         kind: "credits_goal_completed".into(),
         occurred_at: now,
@@ -445,8 +445,7 @@ async fn grant(
         &state.settings.notifications_cdn_url,
         now,
     )?;
-    catalyst_social::notifications::store::insert_keyed_notification(conn, &key, &notification)
-        .await?;
+    crate::shared::notifications::insert_keyed_notification(conn, &key, &notification).await?;
     Ok(())
 }
 
@@ -533,7 +532,7 @@ pub fn spawn_job(state: &SharedState, jobs: &Jobs) {
             let state = state.clone();
             let last_sample = last_sample.clone();
             async move {
-                if crate::shared::writes::ops_refusal(state.settings.writes_enabled).is_some() {
+                if !state.settings.writes_enabled {
                     return Ok(());
                 }
                 let (n, sample) = process_pass(&state, &last_sample).await?;

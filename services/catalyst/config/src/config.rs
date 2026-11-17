@@ -558,55 +558,6 @@ impl Config {
         Ok(())
     }
 
-    /// The write switches that are on, by their `WRITES=` names (local.sh),
-    /// in that list's order.
-    pub fn write_switches_on(&self) -> Vec<&'static str> {
-        [
-            ("content", self.writes.content_writes_enabled),
-            ("create", self.create.create_writes_enabled),
-            ("data", self.writes.data_writes_enabled),
-            ("social", self.writes.social_writes_enabled),
-            ("worlds", self.worlds.worlds_writes_enabled),
-            ("ops", self.ops.ops_writes_enabled),
-        ]
-        .into_iter()
-        .filter_map(|(name, on)| on.then_some(name))
-        .collect()
-    }
-
-    /// `WRITES_RESTORE_STAMP_DIR`, trimmed; blank is unset.
-    pub fn restore_stamp_dir(&self) -> Option<&str> {
-        self.writes
-            .writes_restore_stamp_dir
-            .as_deref()
-            .map(str::trim)
-            .filter(|d| !d.is_empty())
-    }
-
-    /// For a preset that requires the restore stamps (mirror, island): with
-    /// any write switch on, `WRITES_RESTORE_STAMP_DIR` must be set and both
-    /// budgets positive, or startup fails naming the switches. A node with
-    /// every switch off has nothing to vouch for.
-    pub fn require_restore_stamps(&self) -> anyhow::Result<()> {
-        let on = self.write_switches_on();
-        if on.is_empty() {
-            return Ok(());
-        }
-        if self.restore_stamp_dir().is_none() {
-            anyhow::bail!(
-                "write switches are on ({}) but WRITES_RESTORE_STAMP_DIR is unset: this preset lets a write through only while a backup stamp is under WRITES_BACKUP_MAX_AGE_HOURS and a restore-drill stamp under WRITES_DRILL_MAX_AGE_DAYS",
-                on.join(",")
-            );
-        }
-        if self.writes.writes_backup_max_age_hours == 0 {
-            anyhow::bail!("WRITES_BACKUP_MAX_AGE_HOURS=0 would hold every write");
-        }
-        if self.writes.writes_drill_max_age_days == 0 {
-            anyhow::bail!("WRITES_DRILL_MAX_AGE_DAYS=0 would hold every write");
-        }
-        Ok(())
-    }
-
     /// The warning for a price staleness budget a healthy poll cannot meet:
     /// the snapshot's age reaches one poll interval plus the upstream's own
     /// lag (`PRICE_UPSTREAM_LAG_SECS`) before the next poll lands.
@@ -1117,21 +1068,12 @@ mod tests {
             "true",
             "--first-wear-enabled",
             "true",
-            "--badges-presence-enabled",
-            "true",
         ])
         .unwrap();
         assert!(
             cli.writes.social_writes_enabled
                 && cli.social.livekit_allow_dev_creds
                 && cli.social.first_wear_enabled
-                && cli.social.badges_presence_enabled
-        );
-        assert!(
-            !parse(&["x", "--database-url", "postgres:///catalyst"])
-                .unwrap()
-                .social
-                .badges_presence_enabled
         );
     }
 
