@@ -1072,7 +1072,6 @@ mod tests {
         };
 
         let (mut world, mut receiver) = world();
-        world.init_resource::<ButtonInput<Key>>();
         world.init_resource::<Events<KeyboardInput>>();
         world.init_resource::<Events<KeyboardFocusLost>>();
         let mut schedule = Schedule::default();
