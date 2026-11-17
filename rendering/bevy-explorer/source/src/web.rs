@@ -600,16 +600,12 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
         filter,
         custom_layer: |_| {
             use bevy::log::tracing_subscriber::{Layer, Registry};
-            // the browser console, the benchmark log when the page streams it, and the scope
-            // profiler's layer
+            // the benchmark log when the page streams it, and the scope profiler's layer
             let benchmark_log = perf_output::stream::log_sink().map(PerfLogLayer::new);
-            Some(Box::new(
-                <Option<PerfLogLayer> as Layer<Registry>>::and_then(
-                    benchmark_log,
-                    crate::perf::profiled_scopes::profiled_scopes_layer(),
-                )
-                .and_then(console_layer()),
-            ) as BoxedLayer)
+            Some(Box::new(<Option<PerfLogLayer> as Layer<Registry>>::and_then(
+                benchmark_log,
+                crate::perf::profiled_scopes::profiled_scopes_layer(),
+            )) as BoxedLayer)
         },
     });
 
@@ -827,45 +823,6 @@ impl Drop for PerfStreamEnd {
 /// Pings the JS watchdog each frame so it can detect a stalled engine loop.
 fn engine_heartbeat_system(_js: JsThread) {
     engine_heartbeat();
-}
-
-/// The browser console as a log layer: a line per event through `console.log`, whatever the
-/// level, with the level and target in the text and no timestamp (`SystemTime` is unavailable
-/// on wasm). For every wasm entry's `LogPlugin`, the fork's `bevy_log` installing no layer of
-/// its own on the web.
-pub(crate) fn console_layer<S>() -> impl bevy::log::tracing_subscriber::Layer<S> + Send + Sync
-where
-    S: bevy::log::tracing::Subscriber
-        + for<'a> bevy::log::tracing_subscriber::registry::LookupSpan<'a>,
-{
-    bevy::log::tracing_subscriber::fmt::layer()
-        .with_writer(ConsoleMakeWriter)
-        .with_ansi(false)
-        .without_time()
-}
-
-/// The layer's writer: one `console.log` per write.
-struct ConsoleMakeWriter;
-
-struct ConsoleWriter;
-
-impl std::io::Write for ConsoleWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        web_sys::console::log_1(&JsValue::from_str(String::from_utf8_lossy(buf).trim_end()));
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<'a> bevy::log::tracing_subscriber::fmt::MakeWriter<'a> for ConsoleMakeWriter {
-    type Writer = ConsoleWriter;
-
-    fn make_writer(&'a self) -> ConsoleWriter {
-        ConsoleWriter
-    }
 }
 
 /// The browser page's focus and the engine viewport's activity.

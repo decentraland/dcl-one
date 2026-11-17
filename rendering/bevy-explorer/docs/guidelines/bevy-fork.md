@@ -231,15 +231,6 @@ across workers:
   bad vertices for a frame on second mesh load, sparse index warning, `embedded_asset!` paths
   from a Windows build host (`file!()` backslashes on a non-Windows target such as wasm).
 
-## Logging
-
-- `bevy_log` installs its `tracing-wasm` layer on the web only behind a `tracing-wasm` feature,
-  off: that layer marks and measures every span on the page's performance timeline, entries
-  nothing clears, so with `trace` on it grows without bound. The explorer writes the console
-  lines with its own layer (`source/src/web.rs`).
-- `bevy_internal/trace` no longer enables `bevy_log/trace` (`tracing-error`'s `ErrorLayer` and
-  the span-trace panic hook): the explorer's `performance-profiler` feature wants the spans only.
-
 ## Changing bevy
 
 The same steps change any source under `rendering/bevy-explorer/patches`; use its name in place

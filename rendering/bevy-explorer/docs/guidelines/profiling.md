@@ -114,9 +114,10 @@ apps/bevy-explorer/build-web.py --performance-profiler` or
 `WASM_FEATURES=livekit,social,performance-profiler just wasm` on the web. `/profile_top` reports
 `profilerBuild`; a build without the feature says so in its empty table, and its rows are the
 explorer's own spans and Bevy's unconditional ones (`present_frames`, `entity_sync`). On the web
-the engine's log reaches the browser console through the explorer's own layer, not Bevy's
-`tracing-wasm` layer, which would mark and measure every span on the page's performance
-timeline ([the bevy fork](bevy-fork.md#logging)). With the feature, a native session-log line
+Bevy's `tracing-wasm` layer, which writes the engine's log to the browser console, also marks and
+measures every span on the page's performance timeline, entries nothing clears: in a web build
+with the feature, the page's memory and main-thread time grow over the session, and the table's
+times include that cost. With the feature, a native session-log line
 logged inside a system carries its spans (`schedule{name=Update}:system{name=...}:`).
 
 A row is one scope since the last reset: its kind (`ecs_system`, `schedule`, `render_graph_node`,
