@@ -163,7 +163,10 @@ impl Plugin for SkyEnvmapPlugin {
         ))
         .add_systems(
             Update,
-            (attach_sky_envmap, write_sky_ambient).after(crate::apply_global_light),
+            (
+                attach_sky_envmap,
+                write_sky_ambient.after(crate::apply_global_light),
+            ),
         );
 
         app.add_console_command::<EnvmapConsoleCommand, _>(envmap_console_command);
@@ -305,17 +308,12 @@ fn attach_sky_envmap(
     mut commands: Commands,
     envmap: Res<SkyEnvmap>,
     config: Res<AppConfig>,
-    environment: Res<crate::environment::SceneEnvironment>,
     mut settings: ResMut<SkyEnvmapSettings>,
     mut cameras: Query<
         (Entity, Option<&Exposure>, Option<&mut EnvironmentMapLight>),
         With<AtmosphereCamera>,
     >,
 ) {
-    let authored_lower = environment.nadir.is_some();
-    if settings.authored_lower_hemisphere != authored_lower {
-        settings.authored_lower_hemisphere = authored_lower;
-    }
     let quality = config.graphics.sky_reflections;
     if settings.quality != quality {
         settings.quality = quality;

@@ -326,7 +326,11 @@ pub async fn insert_events(
 /// a contract still owed a backfill does not read (the walk has not seen every
 /// transfer before the bid: the row waits with no seller and is revisited once
 /// the walk passes it and the backfill is done). An
-/// unchanged row is left alone.
+/// unchanged row is left alone. The latest event is one backward probe of
+/// `sale_event_bidder_idx` per bid (`LATERAL … LIMIT 1`), not a join of two
+/// key sets: the planner estimates `created` at one row, and as a join it
+/// rescanned every key per key, which a full fold of Polygon's history
+/// (about 66k bids) did not finish within the hour.
 const FOLD_BIDS_SQL: &str = "
 WITH touched AS (
     SELECT contract_address, token_id, buyer AS bidder FROM shop.sale_event
@@ -351,14 +355,6 @@ WITH touched AS (
     JOIN shop.sale_event e ON e.network = $1 AND e.contract_address = t.contract_address
         AND e.token_id = t.token_id AND e.buyer = t.bidder AND e.kind = 'bid_created'
     ORDER BY e.contract_address, e.token_id, e.buyer, e.block_number DESC, e.log_index DESC
-), latest AS (
-    SELECT DISTINCT ON (c.contract_address, c.token_id, c.bidder)
-        c.contract_address, c.token_id, c.bidder, e.kind, e.seller, e.block_number, e.log_index, e.block_time
-    FROM created c
-    JOIN shop.sale_event e ON e.network = $1 AND e.contract_address = c.contract_address
-        AND e.token_id = c.token_id AND e.buyer = c.bidder AND e.kind <> 'mint'
-        AND (e.block_number, e.log_index) >= (c.block_number, c.log_index)
-    ORDER BY c.contract_address, c.token_id, c.bidder, e.block_number DESC, e.log_index DESC
 )
 INSERT INTO shop.nft_bid (network, contract_address, token_id, bidder, bid_id, seller, price, expires_at, status,
     created_block, created_log_index, created_at, updated_block, updated_log_index, updated_at)
@@ -381,7 +377,16 @@ SELECT $1, c.contract_address, c.token_id, c.bidder, c.bid_id,
               AND a.kind = 'bid_accepted' AND (a.block_number, a.log_index) > (c.block_number, c.log_index)) THEN 'invalidated'
          ELSE 'open' END,
     c.block_number, c.log_index, c.block_time, l.block_number, l.log_index, l.block_time
-FROM created c JOIN latest l USING (contract_address, token_id, bidder)
+FROM created c
+CROSS JOIN LATERAL (
+    SELECT e.kind, e.seller, e.block_number, e.log_index, e.block_time
+    FROM shop.sale_event e
+    WHERE e.network = $1 AND e.contract_address = c.contract_address
+      AND e.token_id = c.token_id AND e.buyer = c.bidder AND e.kind <> 'mint'
+      AND (e.block_number, e.log_index) >= (c.block_number, c.log_index)
+    ORDER BY e.block_number DESC, e.log_index DESC
+    LIMIT 1
+) l
 ON CONFLICT (network, contract_address, token_id, bidder) DO UPDATE SET
     bid_id = EXCLUDED.bid_id, seller = EXCLUDED.seller, price = EXCLUDED.price, expires_at = EXCLUDED.expires_at,
     status = EXCLUDED.status, created_block = EXCLUDED.created_block, created_log_index = EXCLUDED.created_log_index,

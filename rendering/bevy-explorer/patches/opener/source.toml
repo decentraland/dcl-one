@@ -8,5 +8,6 @@ license    = "(MIT OR Apache-2.0) AND MIT"
 paths      = ["."]
 exclude    = []
 base_tree  = "8deaa3cf81a500dbcfde9b0ee18239453fd1a8ba"
-tree       = "5d17479415a540477f8eed7e0c16a18d6c8eeeba"
+tree       = "87b26e05614bb60b54a6ff2adfdd6a8155ee92c9"
+rev        = "7e2656a2cd87242823e523e8758402d3a5d604ef"
 nix_hash   = "sha256-OcsNiHBN0I18Rc0uT575xrLm6dIRdGA7t9V6Q3rdgig="

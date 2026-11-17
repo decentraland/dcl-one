@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use super::super::{CommsState, errors::ApiError};
 use crate::Address;
-use crate::explore::places::removed::{PlaceContext, RemovedPlaces};
+use crate::gatekeeper::removed_places::{PlaceContext, RemovedPlaces};
 use crate::interfaces::{StreamingNotification, StreamingNotificationKind};
 use crate::jobs::{Jobs, PeriodicCfg};
 

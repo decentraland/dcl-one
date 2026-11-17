@@ -26,6 +26,9 @@ to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` 
 `source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs; there
 `CEF_PATH` takes a Windows path, and `just` runs from Git Bash (see [Platforms](platforms.md#native)).
 
+With Nix, `nix develop .#explorer` from the repository root has the tools and libraries of this
+loop on Linux and macOS, and one Cargo build directory for every worktree (see `source/readme.md`).
+
 ### Gateway routing
 
 For a deployment serving the APIs on one origin, run `just native-debug --gateway https://example.org`.
@@ -78,10 +81,10 @@ pinned Rust, protoc, CEF and platform libraries, including `CEF_PATH`. With thos
 
 ```sh
 sh scripts/gen-ts-bindings.sh
-corepack pnpm@11.27.0 --dir react-web install --frozen-lockfile --ignore-scripts
-corepack pnpm@11.27.0 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
-corepack pnpm@11.27.0 --dir react-web/bridge-scene --filter @dcl/hashing build
-corepack pnpm@11.27.0 --dir react-web run bundle:native
+corepack pnpm@12.21.0 --dir react-web install --frozen-lockfile --ignore-scripts
+corepack pnpm@12.21.0 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
+corepack pnpm@12.21.0 --dir react-web/bridge-scene --filter @dcl/hashing build
+corepack pnpm@12.21.0 --dir react-web run bundle:native
 cargo build --release --locked --package dcl_deno_ipc
 cargo build --release --locked
 ```
@@ -211,9 +214,6 @@ web and on the standalone, with no Playwright
 
 State, in every build:
 
-- `/legacy_social`: `subscribedScenes`, `queuedEvents`, `resyncScenes` and `trackedPeers`.
-  Each scene's legacy avatar queue holds at most 1024 events. Overflow schedules a current-state
-  recovery on the next pull. The Legacy avatar events debug section reads these counts.
 - `/world_state`: JSON with `inWorld` and its parts (signed in, world hold, realm connected, out
   of world), the position, and `arrivals`, the player's returns to the world. Every teleport and
   realm change takes the player out of world first, so a test reads `arrivals` before one and
@@ -234,6 +234,19 @@ State, in every build:
 - `/voice_state`: the mic (`available`, `enabled`, and `sceneBlocked` while the scene the player
   stands in turns nearby voice off) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
+- `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown` and
+  `hidden` (the players' tags that show, and those that don't), `atlas` (the glyph atlas' distance-field and colour page sizes, in
+  pixels), `bubbles` (the chat bubble setting) and `tags`, one per shown tag: `player` (an
+  address, `local`, or null for an avatar with no wallet), `name`, `suffix`, `verified`,
+  `official`, `voice` (`off`, `idle`, `speaking`, `hushed`), `distance` from the camera in metres,
+  `opacity`, `scale` (metres per tag unit), `position` (all four as the shader works them out), `headOffset` (metres over the head bone;
+  null until the avatar is built) and `bubble` (null, or its `kind`,
+  `mention` and message `length`; never the message).
+  `/nametag_bubble <local|all|address> <nearby|community|dm> <message>` shows a message in a chat
+  bubble over the nametags it names, locally only; `/chat_bubble_text <message id> <message>`
+  replaces the text of the bubble showing that message, for tests (the HUD's translations come
+  through `SystemApi::SetChatBubbleText`); `/nametag_official <address> [bool]`
+  reads or sets, for the session, whether a wallet's nametag carries the official badge.
 - `/nearby_mutes`: the wallets whose nearby voice the account muted (`muted`, the first 32 of
   `count`), the `account` and where its saved list stands (`load`: `idle` signed out, `loading`,
   `loaded`, `failed`). `/nearby_mute on|off <address>` mutes or unmutes one, as the profile
@@ -255,9 +268,9 @@ State, in every build:
   variant formats this build takes and those it does not), `manifestCounts` (manifests loaded,
   none, failed, not eligible and pending), `manifests` (each entity's manifest state: scene,
   wearable or emote), `served` (variants downloaded and read from the cache), `servedByFormat`
-  (the same per format: `ktx2-bc`, and `glb-br` on web), `fallbacks` (files that loaded their
-  original instead) and `recentFallbacks` (the last 20, with the file, its entity and the
-  reason).
+  (the same per format: `ktx2-bc`, `glb`, and `glb-br` on web), `fallbacks` (files that loaded
+  their original instead), `fallbacksByFormat` (those whose chosen variant failed, per format)
+  and `recentFallbacks` (the last 20, with the file, its entity and the reason).
 - `/ban_block_state [address]`: the ban and block status as JSON: the local user's address, the
   social blocks (`state` live or unavailable with its `reason`, `blocked`, `blockedBy`), the
   platform ban (`state` unknown, checked or failed, `isBanned`, `source`, `reason`,
