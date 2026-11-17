@@ -1535,17 +1535,41 @@ fn update_listener_aoi(
     realm: Res<CurrentRealm>,
     states: Query<&GlobalCrdtState>,
     existing: Query<(Entity, &Transport), With<PulseSink>>,
+    added_states: Query<(), Added<GlobalCrdtState>>,
     mut announced_default: Local<Option<String>>,
+    mut scene_definitions: Local<HashSet<AssetId<EntityDefinition>>>,
     mut rebuild_pending: Local<bool>,
 ) {
-    // The whole map is rebuilt from scratch below, so only do it when one of its four inputs moved:
-    // the loaded definitions, the scene→context registry, the orchestrator's scene→realm map, or
-    // the realm a scene without one of its own falls back to. Drained unconditionally — leaving
-    // events unread just means reading a bigger backlog next frame.
-    let definitions_changed = definition_events.read().count() > 0;
-    // kept until a complete rebuild: changes seen without a listener, or a context without its state
-    *rebuild_pending |=
-        definitions_changed || crdt_contexts.is_changed() || scene_realms.is_changed();
+    // The whole map is rebuilt from scratch below, so only do it when one of its inputs moved: the
+    // loaded scene definitions, the scene→context registry, a context's state landing (spawned by
+    // deferred commands after its registration), the orchestrator's scene→realm map, or the realm a
+    // scene without one of its own falls back to. Drained unconditionally — leaving events unread
+    // just means reading a bigger backlog next frame.
+    let mut definitions_changed = false;
+    for event in definition_events.read() {
+        definitions_changed |= match *event {
+            AssetEvent::Added { id } | AssetEvent::Modified { id } => {
+                // profiles and wearables have no parcel pointers and never touch the map
+                if definitions
+                    .get(id)
+                    .is_some_and(|d| definition_parcels(d).next().is_some())
+                {
+                    scene_definitions.insert(id);
+                    true
+                } else {
+                    scene_definitions.remove(&id)
+                }
+            }
+            // the asset is already gone, so only the record of what it was is left to ask
+            AssetEvent::Removed { id } => scene_definitions.remove(&id),
+            AssetEvent::Unused { .. } | AssetEvent::LoadedWithDependencies { .. } => false,
+        };
+    }
+    // kept until a complete rebuild, so a change seen before the listener exists is not lost
+    *rebuild_pending |= definitions_changed
+        || crdt_contexts.is_changed()
+        || scene_realms.is_changed()
+        || !added_states.is_empty();
 
     let Some(session) = session else {
         return;
@@ -1580,10 +1604,7 @@ fn update_listener_aoi(
     let mut context_by_parcel: HashMap<String, HashMap<IVec2, Entity>> = HashMap::default();
     let mut live_contexts: HashSet<Entity> = HashSet::default();
     for (_, definition) in definitions.iter() {
-        let mut parcels = definition.pointers.iter().filter_map(|pointer| {
-            let (x, z) = pointer.split_once(',')?;
-            Some(IVec2::new(x.trim().parse().ok()?, z.trim().parse().ok()?))
-        });
+        let mut parcels = definition_parcels(definition);
         let Some(first) = parcels.next() else {
             continue;
         };
@@ -1629,8 +1650,7 @@ fn update_listener_aoi(
             continue;
         }
         let Ok(state) = states.get(context) else {
-            // spawned this frame by deferred commands
-            *rebuild_pending = true;
+            // spawned by deferred commands: `added_states` brings it back once the state lands
             continue;
         };
         // A whole transport, both halves, exactly like a client's: inbound state for this context
@@ -1694,6 +1714,15 @@ fn update_listener_aoi(
     aoi.sort_by(|a, b| a.realm.cmp(&b.realm));
 
     set_listener_aoi(session, aoi);
+}
+
+/// The parcels a definition points at. Only scenes have any: profiles and wearables point at
+/// addresses and urns.
+fn definition_parcels(definition: &EntityDefinition) -> impl Iterator<Item = IVec2> + '_ {
+    definition.pointers.iter().filter_map(|pointer| {
+        let (x, z) = pointer.split_once(',')?;
+        Some(IVec2::new(x.trim().parse().ok()?, z.trim().parse().ok()?))
+    })
 }
 
 /// Record the AoI we want observed. Before the handshake it decides what the handshake carries,
@@ -2252,3 +2281,6 @@ mod tests {
 
 #[cfg(test)]
 mod connection_tests;
+
+#[cfg(test)]
+mod listener_aoi_tests;
