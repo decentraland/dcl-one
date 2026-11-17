@@ -24,14 +24,11 @@ type Variant =
   | 'inverse'
   | 'iconOnly'
 type NativeProps =
-  | (Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children' | 'dangerouslySetInnerHTML'> & {
+  | (Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> & {
       href?: never
       ref?: Ref<HTMLButtonElement>
     })
-  | (Omit<
-      AnchorHTMLAttributes<HTMLAnchorElement>,
-      'children' | 'type' | 'dangerouslySetInnerHTML'
-    > & {
+  | (Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'children' | 'type'> & {
       href: string
       disabled?: boolean
       type?: never
@@ -40,6 +37,10 @@ type NativeProps =
 
 export type ButtonProps = NativeProps &
   Content & {
+    /**
+     * Button owns its content, so native HTML cannot replace it. Omit this key before spreading a
+     * typed `ButtonHTMLAttributes` or `AnchorHTMLAttributes` object into Button.
+     */
     dangerouslySetInnerHTML?: never
     children?: ReactNode
     label?: ReactNode
@@ -73,8 +74,6 @@ export function Button({
   disabled = false,
   ...native
 }: ButtonProps) {
-  // Button owns its content, including when an untyped caller supplies native HTML props.
-  Reflect.deleteProperty(native, 'dangerouslySetInnerHTML')
   const layout = contentLayout === 'fill' ? 'fill' : 'intrinsic'
   const compact = iconOnly || variant === 'iconOnly'
   const unavailable =
@@ -146,6 +145,7 @@ export function Button({
       <a
         {...anchor}
         {...common}
+        dangerouslySetInnerHTML={undefined}
         href={unavailable ? undefined : href}
         target={target}
         rel={secureRel(target, rel)}
@@ -170,6 +170,7 @@ export function Button({
     <button
       {...button}
       {...common}
+      dangerouslySetInnerHTML={undefined}
       type={type}
       disabled={disabled}
       onClick={guardClick(onClick)}
