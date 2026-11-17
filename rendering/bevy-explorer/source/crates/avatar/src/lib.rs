@@ -1650,6 +1650,7 @@ fn process_avatar(
         // wearable_instances is built from the wearables with models, in order
         let wearable_models = def.wearables.iter().filter_map(|(_, w)| w.model.as_ref());
         let mut spring_chains = Vec::new();
+        let mut moved_branches = HashSet::new();
         for (instance, model) in loaded_avatar.wearable_instances.iter().zip(wearable_models) {
             let Some(instance) = instance else {
                 warn!("failed to load instance for wearable");
@@ -1754,19 +1755,22 @@ fn process_avatar(
                 }
             }
 
-            // the wearable's first skin says which of its bones swing, in the order it lists them
-            if let Some(skin) = scene_spawner
+            // the joints of all the wearable's skins say which of its bones swing. The chains
+            // follow the bones' parents, so the order the meshes and joints come in is no matter.
+            let mut seen = HashSet::new();
+            let skin_joints: Vec<Entity> = scene_spawner
                 .iter_instance_entities(*instance)
-                .find_map(|scene_ent| skins.get(scene_ent).ok())
-            {
-                spring_chains.extend(spring_bones::wearable_chains(
-                    &skin.joints,
-                    &name_and_parent,
-                    &transforms,
-                    |joint| armature_map.get(&joint).map(|target| **target),
-                    model.spring_bones.as_deref(),
-                ));
-            }
+                .filter_map(|scene_ent| skins.get(scene_ent).ok())
+                .flat_map(|skin| skin.joints.iter().copied())
+                .filter(|joint| seen.insert(*joint))
+                .collect();
+            spring_chains.extend(spring_bones::wearable_chains(
+                &skin_joints,
+                &name_and_parent,
+                &transforms,
+                |joint| armature_map.get(&joint).map(|target| **target),
+                model.spring_bones.as_deref(),
+            ));
 
             // remap bones
             for scene_ent in scene_spawner.iter_instance_entities(*instance) {
@@ -1777,7 +1781,9 @@ fn process_avatar(
                         .map(|joint| {
                             *armature_map.get(joint).unwrap_or_else(|| {
                                 // a bone of the wearable's own. Keep the branch it is on by
-                                // moving the branch under the body bone it hangs off.
+                                // moving the branch under the body bone it hangs off. A branch
+                                // that starts at an `avatar_*` bone the body lacks is kept the
+                                // same way and stays rigid: no chain hangs off that bone.
                                 let mut top = *joint;
                                 for _ in 0..spring_bones::MAX_BRANCH_DEPTH {
                                     let Ok((name, parent)) = name_and_parent.get(top) else {
@@ -1790,13 +1796,16 @@ fn process_avatar(
                                     if let Some(body_bone) =
                                         target_armature_entities.get(&parent_name)
                                     {
-                                        commands.entity(top).try_insert(ChildOf(*body_bone));
-                                        break;
-                                    }
-                                    if parent_name.starts_with("avatar_") {
-                                        warn!(
-                                            "wearable bone {name:?} hangs off {parent_name:?}, which the body lacks"
-                                        );
+                                        // once for a branch, however many joints and meshes
+                                        // lead to it
+                                        if moved_branches.insert(top) {
+                                            commands.entity(top).try_insert(ChildOf(*body_bone));
+                                            if name.to_lowercase().starts_with("avatar_") {
+                                                warn!(
+                                                    "the body has no bone {name:?}: the wearable's bones under it stay rigid under {parent_name:?}"
+                                                );
+                                            }
+                                        }
                                         break;
                                     }
                                     // nodes under the armature itself moved to the body's above

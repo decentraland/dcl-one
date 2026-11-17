@@ -230,8 +230,9 @@ State, in every build:
   It shows the completed model while a replacement loads and explains missing readings.
 - `/spring_bones`: the spring chains of the player's built avatar: `chains`, `joints` (spring
   bones in them) and `longest_chain`, each `null` with a reason in `unavailable` until the avatar
-  is built. A wearable's own bones (hair, tails, capes) form the chains, each hanging off a body
-  bone. The Spring bones debug section reads it.
+  is built. A wearable's own bones (hair, tails, capes) form the chains, each running from parent
+  to child off a body bone, or off the bone it forks from. The Spring bones debug section reads
+  it.
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.

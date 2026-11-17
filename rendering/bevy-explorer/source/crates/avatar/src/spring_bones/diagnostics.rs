@@ -45,22 +45,21 @@ fn spring_bones_command(
         .iter()
         .find(|(_, parent)| Some(parent.parent()) == player)
         .map(|(chains, _)| &chains.0);
-    let unavailable = if player.is_none() {
-        "no primary player"
-    } else {
-        "the player's avatar is not built yet"
-    };
-    cmd.reply_ok(
-        serde_json::json!({
-            "chains": chains.map(|chains| chains.len()),
-            "joints": chains.map(|chains| {
-                chains.iter().map(|chain| chain.joints.len()).sum::<usize>()
-            }),
-            "longest_chain": chains.map(|chains| {
-                chains.iter().map(|chain| chain.joints.len()).max().unwrap_or(0)
-            }),
-            "unavailable": { "": unavailable },
-        })
-        .to_string(),
-    );
+    let mut report = serde_json::json!({
+        "chains": chains.map(|chains| chains.len()),
+        "joints": chains.map(|chains| {
+            chains.iter().map(|chain| chain.joints.len()).sum::<usize>()
+        }),
+        "longest_chain": chains.map(|chains| {
+            chains.iter().map(|chain| chain.joints.len()).max().unwrap_or(0)
+        }),
+    });
+    if chains.is_none() {
+        report["unavailable"] = serde_json::json!({ "": if player.is_none() {
+            "no primary player"
+        } else {
+            "the player's avatar is not built yet"
+        } });
+    }
+    cmd.reply_ok(report.to_string());
 }
