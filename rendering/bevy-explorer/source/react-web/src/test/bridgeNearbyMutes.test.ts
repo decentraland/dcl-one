@@ -5,7 +5,7 @@ vi.mock('../../bridge-scene/src/system-helpers', () => ({ relay }))
 const api = vi.hoisted(() => ({ setNearbyMuted: vi.fn() as ReturnType<typeof vi.fn> | undefined, getNearbyMuteStream: vi.fn() }))
 vi.mock('../../bridge-scene/src/bevy-api', () => ({ BevyApi: api }))
 
-const { isHushed, registerNearbyMutes } = await import('../../bridge-scene/src/domains/nearbyMutes')
+const { registerNearbyMutes } = await import('../../bridge-scene/src/domains/nearbyMutes')
 
 type Sent = { kind: string; addresses?: string[] }
 
@@ -29,14 +29,12 @@ describe('saved mutes for nearby voice (bridge)', () => {
     api.setNearbyMuted = vi.fn()
   })
 
-  it("relays the engine's list to the page and to the nametags", () => {
+  it("relays the engine's list to the page", () => {
     const b = bridge()
     b.engine([ADDR.toUpperCase().replace('0X', '0x')])
     expect(b.sent).toEqual([{ kind: 'nearbyMutes', addresses: [ADDR] }])
-    expect(isHushed(ADDR.toUpperCase().replace('0X', '0x'))).toBe(true)
     // whole on every change: what the next list leaves out is no longer hushed
     b.engine([])
-    expect(isHushed(ADDR)).toBe(false)
     expect(b.sent[1]).toEqual({ kind: 'nearbyMutes', addresses: [] })
   })
 

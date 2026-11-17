@@ -471,6 +471,21 @@ struct FakeRealmLease {
 
 #[async_trait]
 impl AssignmentFence for FakeAssignmentFence {
+    async fn lock_selected(
+        &self,
+        snapshot: &PeerClusterSnapshot,
+    ) -> Result<
+        Box<dyn crate::gatekeeper::admission::cluster::fence::RealmAssignmentLease>,
+        crate::gatekeeper::admission::cluster::fence::FenceError,
+    > {
+        use crate::gatekeeper::admission::cluster::fence::FenceError;
+        let floor = snapshot.token_not_before.ok_or(FenceError::Invalid)?;
+        if !PulseAdmissionStamp::from_snapshot(snapshot, floor).is_some_and(|stamp| stamp.valid()) {
+            return Err(FenceError::Invalid);
+        }
+        self.lock_realm(&snapshot.wallet, &snapshot.session).await
+    }
+
     async fn lock_realm(
         &self,
         _wallet: &str,
@@ -853,6 +868,21 @@ struct UnownedFence;
 
 #[async_trait]
 impl AssignmentFence for UnownedFence {
+    async fn lock_selected(
+        &self,
+        snapshot: &PeerClusterSnapshot,
+    ) -> Result<
+        Box<dyn crate::gatekeeper::admission::cluster::fence::RealmAssignmentLease>,
+        crate::gatekeeper::admission::cluster::fence::FenceError,
+    > {
+        use crate::gatekeeper::admission::cluster::fence::FenceError;
+        let floor = snapshot.token_not_before.ok_or(FenceError::Invalid)?;
+        if !PulseAdmissionStamp::from_snapshot(snapshot, floor).is_some_and(|stamp| stamp.valid()) {
+            return Err(FenceError::Invalid);
+        }
+        self.lock_realm(&snapshot.wallet, &snapshot.session).await
+    }
+
     async fn lock_realm(
         &self,
         _wallet: &str,
@@ -869,6 +899,21 @@ struct RejectedFence(crate::gatekeeper::admission::cluster::fence::FenceError);
 
 #[async_trait]
 impl AssignmentFence for RejectedFence {
+    async fn lock_selected(
+        &self,
+        snapshot: &PeerClusterSnapshot,
+    ) -> Result<
+        Box<dyn crate::gatekeeper::admission::cluster::fence::RealmAssignmentLease>,
+        crate::gatekeeper::admission::cluster::fence::FenceError,
+    > {
+        use crate::gatekeeper::admission::cluster::fence::FenceError;
+        let floor = snapshot.token_not_before.ok_or(FenceError::Invalid)?;
+        if !PulseAdmissionStamp::from_snapshot(snapshot, floor).is_some_and(|stamp| stamp.valid()) {
+            return Err(FenceError::Invalid);
+        }
+        self.lock_realm(&snapshot.wallet, &snapshot.session).await
+    }
+
     async fn lock_realm(
         &self,
         _wallet: &str,
@@ -3397,4 +3442,53 @@ async fn durable_hard_queue_expiry_keeps_unknown_and_releases_original_owned_lan
     subscriber.stop().await;
     responder.abort();
     liveness_drop_pool(&pool, &admin, &name).await;
+}
+
+struct ShutdownSettlementFence(AtomicUsize);
+#[async_trait]
+impl AssignmentFence for ShutdownSettlementFence {
+    async fn lock_selected(
+        &self,
+        snapshot: &PeerClusterSnapshot,
+    ) -> Result<
+        Box<dyn crate::gatekeeper::admission::cluster::fence::RealmAssignmentLease>,
+        crate::gatekeeper::admission::cluster::fence::FenceError,
+    > {
+        use crate::gatekeeper::admission::cluster::fence::FenceError;
+        let floor = snapshot.token_not_before.ok_or(FenceError::Invalid)?;
+        if !PulseAdmissionStamp::from_snapshot(snapshot, floor).is_some_and(|stamp| stamp.valid()) {
+            return Err(FenceError::Invalid);
+        }
+        self.lock_realm(&snapshot.wallet, &snapshot.session).await
+    }
+
+    fn selected_reconciliation_targets(&self) -> Vec<(String, String)> {
+        (0..256)
+            .map(|index| (format!("0x{index:040x}"), SESSION_A.into()))
+            .collect()
+    }
+    async fn selected_reconciliation_batch(&self, _: usize, _: usize) -> Vec<(String, String)> {
+        Vec::new()
+    }
+    async fn settle_idle(&self, _: &str) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+    async fn lock_realm(
+        &self,
+        _: &str,
+        _: &str,
+    ) -> Result<
+        Box<dyn crate::gatekeeper::admission::cluster::fence::RealmAssignmentLease>,
+        crate::gatekeeper::admission::cluster::fence::FenceError,
+    > {
+        Err(crate::gatekeeper::admission::cluster::fence::FenceError::Unavailable)
+    }
+}
+
+#[tokio::test]
+async fn shutdown_settles_all_selected_targets_independently_of_due_maintenance_filter() {
+    let fence = Arc::new(ShutdownSettlementFence(AtomicUsize::new(0)));
+    let h = harness_with_fence(config(), Some(fence.clone()));
+    h.subscriber.stop().await;
+    assert_eq!(fence.0.load(Ordering::SeqCst), 256);
 }

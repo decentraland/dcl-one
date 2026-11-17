@@ -99,6 +99,8 @@ pub async fn build_state(
     let statistics_subscription = statistics.subscribe(gatekeeper.bus.as_ref());
     let observations = observations::Observations::new(gatekeeper.bus.clone(), jobs);
     let state = Arc::new(AppStateInner {
+        #[cfg(feature = "test-support")]
+        ws_ping_gate: Default::default(),
         statistics,
         _statistics_subscription: statistics_subscription,
         observations,

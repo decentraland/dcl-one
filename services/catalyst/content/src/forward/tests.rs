@@ -636,14 +636,9 @@ async fn a_local_deploy_is_forwarded_unchanged_and_accepted() {
 }
 
 /// A requeue is a content write: it answers the content 503 while the
-/// switch is off and while the restore stamps hold it, before it looks the
-/// record up.
+/// switch is off, before it looks the record up.
 #[tokio::test]
-async fn a_requeue_waits_for_the_content_switch_and_the_restore_stamps() {
-    use crate::shared::writes::restore::{
-        lab::{HOUR, StampLab},
-        scoped,
-    };
+async fn a_requeue_waits_for_the_content_switch() {
     let Some(lab) = Lab::new(5).await else { return };
     let retry = "/content/forwarding/bafynothing/retry";
     let (status, body) = call(
@@ -655,23 +650,13 @@ async fn a_requeue_waits_for_the_content_switch_and_the_restore_stamps() {
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body["error"], super::super::writes::DISABLED_MESSAGE);
-    let app = lab.admin_app(true);
-    let stamps = StampLab::fresh();
-    scoped(stamps.stamps.clone(), async {
-        assert_eq!(
-            call(&app, "POST", retry, Some("forward-admin")).await.0,
-            StatusCode::NOT_FOUND,
-            "fresh stamps let the requeue look the record up"
-        );
-        stamps.advance(30 * HOUR);
-        let (status, body) = call(&app, "POST", retry, Some("forward-admin")).await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(
-            body["error"],
-            "content writes are held on this node: the last complete backup (backup.json) is 31 h old, past WRITES_BACKUP_MAX_AGE_HOURS=26"
-        );
-    })
-    .await;
+    assert_eq!(
+        call(&lab.admin_app(true), "POST", retry, Some("forward-admin"))
+            .await
+            .0,
+        StatusCode::NOT_FOUND,
+        "the switch on lets the requeue look the record up"
+    );
     lab.cleanup().await;
 }
 

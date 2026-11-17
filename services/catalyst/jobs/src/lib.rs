@@ -664,6 +664,36 @@ impl LeaseGuard {
         &self.lost
     }
 
+    /// Runs a bounded control operation on the session that actually holds this lease.
+    /// A local liveness check followed by an unrelated pooled write cannot provide this fence.
+    pub async fn with_connection<T, F>(&self, operation: F) -> sqlx::Result<T>
+    where
+        T: Send,
+        F: for<'connection> FnOnce(
+                &'connection mut PgConnection,
+            ) -> std::pin::Pin<
+                Box<dyn std::future::Future<Output = sqlx::Result<T>> + Send + 'connection>,
+            > + Send,
+    {
+        let mut slot = self.leases.conn.lock().await;
+        if self.released
+            || self.lost.is_cancelled()
+            || !self.leases.held.lock().contains_key(&self.name)
+        {
+            return Err(sqlx::Error::PoolClosed);
+        }
+        let Some(connection) = slot.as_mut() else {
+            return Err(sqlx::Error::PoolClosed);
+        };
+        let result = operation(connection).await;
+        if result.is_err() {
+            *slot = None;
+            self.leases
+                .lose_all("a lease-held control operation failed");
+        }
+        result
+    }
+
     pub async fn release(mut self) {
         self.released = true;
         self.leases.release(&self.name).await;
@@ -1394,7 +1424,16 @@ mod lease_tests {
         let Some(pool) = catalyst_db::scratch::pool(6).await else {
             return;
         };
-        let settings = settings("failover");
+        // The keeper waits one keepalive before its first check, so with a
+        // keepalive far beyond the 10 s `wait_until` bound it never checks
+        // during this test, and no lease statement or connect can time out
+        // under CI load. The lease-loss path is covered by the keeper tests
+        // below.
+        const KEEPALIVE_BEYOND_THE_WAITS: Duration = Duration::from_secs(300);
+        let settings = LeaseSettings {
+            keepalive: KEEPALIVE_BEYOND_THE_WAITS,
+            ..settings("failover")
+        };
         let a = Jobs::with_leases(pool.clone(), settings.clone());
         let b = Jobs::with_leases(pool.clone(), settings.clone());
         let (runs_a, runs_b) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));

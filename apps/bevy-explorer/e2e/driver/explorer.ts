@@ -48,13 +48,6 @@ export interface WorldState {
   keyboardClaimed?: boolean | null
 }
 
-export interface LegacySocialState {
-  subscribedScenes: number
-  queuedEvents: number
-  resyncScenes: number
-  trackedPeers: number
-}
-
 /**
  * What `/hover_entity` and `/click_entity` report. A hit on an avatar or on another scene's
  * entity reports `entity` and `container` as 4294967295.
@@ -158,6 +151,37 @@ export interface ChatMessage {
 export interface ChatHistory {
   total: number
   messages: ChatMessage[]
+}
+
+/** A nametag on show (`/nametag_state` `tags`). `bubble` never carries the message. */
+export interface NametagTag {
+  /** An address, `local`, or null for an avatar with no wallet. */
+  player: string | null
+  name: string
+  suffix: string
+  verified: boolean
+  official: boolean
+  voice: 'off' | 'idle' | 'speaking' | 'hushed'
+  /** Metres from the camera; null until the tag is first placed. */
+  distance: number | null
+  opacity: number
+  /** Metres per tag unit. */
+  scale: number
+  position: [number, number, number]
+  /** Metres over the head bone; null until the avatar is built. */
+  headOffset: number | null
+  bubble: { kind: 'nearby' | 'community' | 'dm'; mention: boolean; length: number } | null
+}
+
+export interface NametagState {
+  visible: boolean
+  shown: number
+  /** Tags of players whose names don't show: out of range, blocked, or hidden by the scene or a setting. */
+  hidden: number
+  /** The glyph atlas' distance-field and colour page sizes, in pixels. */
+  atlas: [number, number]
+  bubbles: 'All' | 'NearbyOnly' | 'None'
+  tags: NametagTag[]
 }
 
 /** A participant of the voice call or community stream the player is in (`/voice_state` `call`). */
@@ -432,8 +456,8 @@ export interface ExplorerOptions {
 
 /** The catalyst takes one deployment of a profile per window: the reference catalyst's rate limit,
  *  3 s per address, which zone's peers apply (a second one inside it fails with `Entity rate
- *  limited`, and the HUD shows "failed to deploy"), with a margin after the engine confirms
- *  completion. The local profile version changes before the network request completes. */
+ *  limited`, and the HUD shows "failed to deploy"), with a margin for the deployment going out
+ *  after the engine reports the new version. */
 export const PROFILE_DEPLOY_WINDOW_MS = 4_000
 
 /** How long the engine may take to hand the keyboard to a HUD text field, or to take it back once
@@ -469,10 +493,9 @@ export class Explorer {
   readonly #listeners = new Set<CommandListener>()
   readonly #allowSynthetic: boolean
   readonly #deployWindowMs: number
-  /** The own profile's last observed version, and an edit not yet confirmed as deployed. */
+  /** The own profile's version as last read, and when it was last seen to change. */
   #ownVersion: number | undefined
-  #unconfirmedOwnVersion: number | undefined
-  #profileDeployedAt = 0
+  #ownVersionChangedAt = 0
   /** The credentials the lines run so far carried (`secretsOf`), for text that may quote them. */
   readonly #secrets = new Set<string>()
 
@@ -532,10 +555,6 @@ export class Explorer {
 
   worldState(): Promise<WorldState> {
     return this.json<WorldState>('/world_state')
-  }
-
-  legacySocial(): Promise<LegacySocialState> {
-    return this.json<LegacySocialState>('/legacy_social')
   }
 
   // --- photo mode ---------------------------------------------------------------------------
@@ -673,9 +692,7 @@ export class Explorer {
     if (!match) throw new Error(`unparseable get_user_data: ${reply}`)
     const data = { name: match[1]!, address: match[2]!, version: Number(match[3]), web3: match[4] === 'true' }
     if (address === undefined) {
-      if (this.#ownVersion !== undefined && data.version !== this.#ownVersion) {
-        this.#unconfirmedOwnVersion = Math.max(this.#unconfirmedOwnVersion ?? 0, this.#ownVersion, data.version)
-      }
+      if (this.#ownVersion !== undefined && data.version !== this.#ownVersion) this.#ownVersionChangedAt = Date.now()
       this.#ownVersion = data.version
     }
     return data
@@ -684,35 +701,15 @@ export class Explorer {
   /** Count a deployment of the own profile from now that no version change showed: the sign-in,
    *  whose first login deploys a new profile before any version was read. */
   profileDeployed(): void {
-    this.#profileDeployedAt = Date.now()
+    this.#ownVersionChangedAt = Date.now()
   }
 
   /** Before a step that deploys the own profile (closing the Backpack on a changed look, saving
-   *  the passport): wait for the previous deployment to finish, then wait out the catalyst's
-   *  window. Local version changes are drafts until the engine exposes them as peerVersion. */
+   *  the passport): wait out the catalyst's window since the profile was last seen to change, a
+   *  deployment of its own. A change since the last read counts from now. */
   async profileDeployWindow(): Promise<void> {
-    const observed = await this.userData()
-    const expected = this.#unconfirmedOwnVersion ?? observed.version
-    let pending = false
-    const settled = await until(
-      () => this.json<{ ownVersion: number | null; peerVersion: number | null; deployPending: boolean }>('/profile_requests'),
-      (state) => {
-        pending ||= state.deployPending === true
-        return state.deployPending === false && state.ownVersion !== null &&
-          Number.isSafeInteger(state.ownVersion) && state.ownVersion >= 0 && state.ownVersion === state.peerVersion
-      },
-      { timeoutMs: 60_000, intervalMs: 250, what: 'the previous profile deployment to finish' }
-    )
-    const version = settled.ownVersion!
-    if (version < expected) {
-      throw new Error(`the previous profile deployment rolled back from v${expected} to v${version}; refusing another profile write`)
-    }
-    if (pending || this.#unconfirmedOwnVersion !== undefined || version !== observed.version) {
-      this.#profileDeployedAt = Date.now()
-    }
-    this.#ownVersion = version
-    this.#unconfirmedOwnVersion = undefined
-    const left = this.#profileDeployedAt + this.#deployWindowMs - Date.now()
+    await this.userData()
+    const left = this.#ownVersionChangedAt + this.#deployWindowMs - Date.now()
     if (left > 0) await sleep(left)
   }
 
@@ -782,6 +779,17 @@ export class Explorer {
 
   voiceState(): Promise<VoiceState> {
     return this.json<VoiceState>('/voice_state')
+  }
+
+  nametags(): Promise<NametagState> {
+    return this.json<NametagState>('/nametag_state')
+  }
+
+  /** Shows `message` in a chat bubble over the named nametags, on this client only; how many
+   *  bubbles were asked for. */
+  async nametagBubble(target: 'local' | 'all' | string, kind: 'nearby' | 'community' | 'dm', message: string): Promise<number> {
+    const reply = await this.json<{ bubbles: number }>(`/nametag_bubble ${target} ${kind} ${message}`)
+    return reply.bubbles
   }
 
   connectivity(): Promise<ConnectivityState> {

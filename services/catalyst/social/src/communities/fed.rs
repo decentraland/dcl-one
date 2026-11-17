@@ -112,6 +112,11 @@ fn ec(buf: &mut Vec<u8>, s: &str) {
     buf.push(0);
 }
 
+// The stored payload of a role message (join, leave, role, ban, unban) is
+// projected onto the public `/federation/communities/changes` feed through
+// `feeds::public_role_payload`, which publishes only the fields it names. A
+// new field on one of these messages stays out of the feed until it is added
+// there.
 macro_rules! message {
     ($name:ident { $($field:ident : $ty:ty),* $(,)? } => |$s:ident, $b:ident| $body:block) => {
         #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1741,6 +1746,64 @@ mod tests {
     }
 
     #[test]
+    fn role_feed_publishes_only_named_payload_fields() {
+        let (c, a) = ("c1".to_string(), "0xa".to_string());
+        let public = |stored: Value| feeds::public_role_payload(&stored);
+        let cases = [
+            (
+                payload(&CommunityJoin {
+                    community_id: c.clone(),
+                }),
+                json!({ "community_id": c }),
+            ),
+            (
+                payload(&CommunityLeave {
+                    community_id: c.clone(),
+                    member: a.clone(),
+                }),
+                json!({ "community_id": c, "member": a }),
+            ),
+            (
+                payload(&CommunityRoleUpdate {
+                    community_id: c.clone(),
+                    target: a.clone(),
+                    role: "mod".into(),
+                }),
+                json!({ "community_id": c, "target": a, "role": "mod" }),
+            ),
+            (
+                payload(&CommunityBan {
+                    community_id: c.clone(),
+                    target: a.clone(),
+                    reason: Some("spam".into()),
+                }),
+                json!({ "community_id": c, "target": a }),
+            ),
+            (
+                payload(&CommunityUnban {
+                    community_id: c.clone(),
+                    target: a.clone(),
+                }),
+                json!({ "community_id": c, "target": a }),
+            ),
+        ];
+        for (stored, expected) in cases {
+            // Every field the stored payload publishes keeps its value.
+            assert_eq!(public(stored.clone()), expected, "{stored}");
+            // A field the projection does not name stays out of the feed.
+            let mut extended = stored.clone();
+            extended["note"] = json!("local");
+            assert_eq!(public(extended), expected, "{stored}");
+        }
+        assert_eq!(public(Value::Null), Value::Null);
+        // An object of no known shape publishes only the community field.
+        assert_eq!(
+            public(json!({ "reason": "spam", "note": "local" })),
+            json!({ "community_id": null })
+        );
+    }
+
+    #[test]
     fn routes_and_messages_keep_the_old_wire() {
         assert_eq!(
             FedRoute::of(&Method::POST, "/v1/communities"),
@@ -2662,6 +2725,16 @@ mod tests {
             mine[0]["payload"],
             json!({ "type": "CommunityCreate", "community_id": hex_id, "creator": address(&owner), "role": "owner" })
         );
+        // A ban travels with its target; its free-text reason stays local.
+        let banned = mine.iter().find(|r| r["role"] == json!("banned")).unwrap();
+        assert_eq!(
+            (banned["target"].clone(), banned["payload"].clone()),
+            (
+                json!(address(&member)),
+                json!({ "community_id": hex_id, "target": address(&member) })
+            )
+        );
+        assert!(!feed.to_string().contains("\"reason\""), "{feed}");
         let posts: Vec<&Value> = feed["posts"]
             .as_array()
             .unwrap()
