@@ -136,16 +136,16 @@
   /* Figma "Hover": the cover drops from 260 to 206 of the 280px card and the description takes the room;
      without a description the cover stays. Keyboard focus does the same on any device, so a keyboard on a
      hover-less tablet still reveals the description; pointer hover only where it exists and from 768px. */
-  .card:has(.description):focus-within .media {
+  .card:has(.description):has(:focus-visible) .media {
     height: 73.571cqw;
   }
 
-  .card:focus-within .description {
+  .card:has(:focus-visible) .description {
     max-height: 4.5em;
     opacity: 1;
   }
 
-  .card:focus-within .cta {
+  .card:has(:focus-visible) .cta {
     background: var(--dcl-transparencies-white-20);
   }
 

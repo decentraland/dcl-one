@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { CommunityCard, type CommunityCardLinkProps } from './CommunityCard'
@@ -111,6 +113,26 @@ describe('CommunityCard', () => {
       const placeholder = screen.getByRole('progressbar', { name: 'Loading communities' })
       expect(placeholder).toHaveAttribute('aria-busy', 'true')
       expect(screen.queryByText('Hidden')).not.toBeInTheDocument()
+    })
+  })
+
+  describe('when the card styles reveal the details', () => {
+    const css = readFileSync(join(process.cwd(), 'components/CommunityCard/CommunityCard.module.css'), 'utf8')
+    const hoverQuery = css.slice(css.indexOf('@media (hover: hover)'))
+    const outsideHover = css.slice(0, css.indexOf('@media (hover: hover)'))
+
+    it('reveals them on keyboard focus outside the hover-only query', () => {
+      expect(outsideHover).toMatch(/\.card:has\(:focus-visible\) \.description \{\s*max-height: 4\.5em;\s*opacity: 1;/)
+      expect(outsideHover).toMatch(/\.card:has\(\.description\):has\(:focus-visible\) \.media \{\s*height: 73\.571cqw;/)
+    })
+
+    it('does not reveal them on a pointer focus, which is not focus-visible', () => {
+      expect(css).not.toMatch(/:focus-within/)
+    })
+
+    it('keeps the hover animation for devices that hover', () => {
+      expect(hoverQuery).toMatch(/\.card:hover \.description \{\s*max-height: 4\.5em;/)
+      expect(css).toMatch(/transition:\s*max-height 200ms,\s*opacity 200ms;/)
     })
   })
 })

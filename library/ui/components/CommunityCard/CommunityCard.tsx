@@ -50,8 +50,8 @@ function Anchor(props: CommunityCardLinkProps) {
 
 /**
  * A community in a grid: its cover, name, owner, privacy and member count, and a VIEW call to action.
- * On a device that hovers, hover or keyboard focus inside the card shrinks the cover and reveals the
- * description. The name is the card's link (its hit area covers the card); VIEW repeats it visually.
+ * Keyboard focus inside the card, and hover on a device that hovers from 768px, shrinks the cover and
+ * reveals the description. The name is the card's link (its hit area covers the card); VIEW repeats it visually.
  */
 export function CommunityCard({
   loading = false,

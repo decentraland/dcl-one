@@ -40,16 +40,17 @@ export type CommunitiesPage = {
 
 const PageEnvelope = dataOf(z.object({ results: z.array(z.unknown()), total: z.number() }));
 
-/**
- * One page of `GET /v1/communities`, in the node's order (editor's choice, then ranking). Read without a
- * signature, so every visitor gets the same public list. A row without an id or a name is left out; a
- * body that is not a page fails the read, so the page shows its error instead of an empty grid.
- */
+/** A row's cover, or null when it names none (empty, or the "N/A" some rows carry). */
 function coverOf(value: string | null | undefined): string | null {
   const url = value?.trim() ?? "";
   return url && url !== "N/A" ? url : null;
 }
 
+/**
+ * One page of `GET /v1/communities`, in the node's order (editor's choice, then ranking). Read without a
+ * signature, so every visitor gets the same public list. A row without an id or a name is left out; a
+ * body that is not a page fails the read, so the page shows its error instead of an empty grid.
+ */
 export async function fetchCommunitiesPage(
   params: { offset: number; search: string; limit?: number },
   opts: { signal?: AbortSignal; base?: string } = {},
