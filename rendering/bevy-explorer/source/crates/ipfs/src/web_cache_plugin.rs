@@ -75,10 +75,7 @@ impl Plugin for WebCachePlugin {
                 ("Last trim: entries evicted", "evictedEntries"),
                 ("Last trim: evicted (MiB)", "evictedMiB"),
                 ("Last trim: content cache size (MiB)", "contentMiB"),
-                (
-                    "Last trim: entries ordered by recorded use",
-                    "indexedEntries",
-                ),
+                ("Last trim: entries with a use", "entriesWithUse"),
                 ("Storage persisted", "persisted"),
             ],
             actions: &[],

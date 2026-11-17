@@ -106,8 +106,9 @@ pub struct TrimReport {
     /// The content cache's measured bytes; `None` when the usage bound was under the cap and
     /// nothing was sized.
     pub content_bytes: Option<f64>,
-    /// Entries the worker ordered by recorded use; `None` when it did not enumerate the cache.
-    pub indexed_entries: Option<f64>,
+    /// Entries with a use, recorded or sent with the trim; `None` when the worker did not
+    /// enumerate the cache.
+    pub entries_with_use: Option<f64>,
 }
 
 /// The service worker's answer to a trim request.
@@ -147,7 +148,7 @@ pub struct WorkerTrimReport {
     /// null when nothing was sized
     content_bytes: Option<f64>,
     /// absent when the cache was not enumerated, and from a worker without the last-use record
-    indexed_entries: Option<f64>,
+    entries_with_use: Option<f64>,
     #[serde(default)]
     preempted: bool,
 }
@@ -172,7 +173,7 @@ impl From<WorkerTrimReply> for TrimReply {
             evicted_bytes: report.evicted_bytes,
             persisted: report.persisted,
             content_bytes: report.content_bytes,
-            indexed_entries: report.indexed_entries,
+            entries_with_use: report.entries_with_use,
         })
     }
 }
@@ -227,7 +228,7 @@ pub fn state_json(state: &WebCacheState) -> serde_json::Value {
         "persisted": last.map(|r| r.persisted),
         "contentMiB": last.and_then(|r| r.content_bytes.map(mib)),
         "pendingUses": state.pending_uses,
-        "indexedEntries": last.and_then(|r| r.indexed_entries),
+        "entriesWithUse": last.and_then(|r| r.entries_with_use),
         "unavailable": {
             "overrideMiB": "No override: the configured cap applies.",
             "workerCapMiB": reason, "usageMiB": reason, "quotaMiB": quota_reason, "cachesMiB": reason,
@@ -237,7 +238,7 @@ pub fn state_json(state: &WebCacheState) -> serde_json::Value {
             } else {
                 reason
             },
-            "indexedEntries": "No trim has enumerated the cache yet: it has stayed under its cap.",
+            "entriesWithUse": "No trim has enumerated the cache yet: it has stayed under its cap.",
         },
     })
 }
@@ -810,7 +811,7 @@ mod tests {
         let reply = serde_json::json!({
             "capBytes": 1000.0, "usage": 900.0, "quota": 1e9, "cachesUsage": 800.0,
             "evictedEntries": 3.0, "evictedBytes": 300.0, "persisted": true,
-            "contentBytes": 750.0, "preempted": false, "indexedEntries": 7,
+            "contentBytes": 750.0, "preempted": false, "entriesWithUse": 7,
         });
         assert_eq!(
             read_reply(reply),
@@ -823,7 +824,7 @@ mod tests {
                 evicted_bytes: 300.0,
                 persisted: true,
                 content_bytes: Some(750.0),
-                indexed_entries: Some(7.0),
+                entries_with_use: Some(7.0),
             })
         );
     }
@@ -865,7 +866,7 @@ mod tests {
         let TrimReply::Done(report) = read_reply(reply) else {
             panic!("not a report");
         };
-        assert_eq!(report.indexed_entries, None);
+        assert_eq!(report.entries_with_use, None);
         assert_eq!(report.evicted_entries, 2.0);
     }
 
@@ -964,11 +965,11 @@ mod tests {
     }
 
     #[test]
-    fn state_counts_waiting_uses_and_reports_ordered_entries() {
+    fn state_counts_waiting_uses_and_entries_with_a_use() {
         let state = WebCacheState {
             pending_uses: 3,
             last: Some(TrimReport {
-                indexed_entries: Some(7.0),
+                entries_with_use: Some(7.0),
                 ..Default::default()
             }),
             ..Default::default()
@@ -976,7 +977,7 @@ mod tests {
         let json: serde_json::Value =
             serde_json::from_str(&state_json(&state).to_string()).unwrap();
         assert_eq!(json["pendingUses"], 3);
-        assert_eq!(json["indexedEntries"], 7.0);
+        assert_eq!(json["entriesWithUse"], 7.0);
 
         let state = WebCacheState {
             last: Some(TrimReport::default()),
@@ -984,8 +985,8 @@ mod tests {
         };
         let json: serde_json::Value =
             serde_json::from_str(&state_json(&state).to_string()).unwrap();
-        assert!(json["indexedEntries"].is_null());
-        assert!(json["unavailable"]["indexedEntries"].is_string());
+        assert!(json["entriesWithUse"].is_null());
+        assert!(json["unavailable"]["entriesWithUse"].is_string());
     }
 
     #[test]

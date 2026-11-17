@@ -170,7 +170,7 @@ describe('content cache trim message', () => {
       persisted: false,
       contentBytes: 1000,
       preempted: false,
-      indexedEntries: 0
+      entriesWithUse: 0
     })
   })
 
@@ -446,7 +446,7 @@ describe('content cache last use', () => {
     await sw.touch([entryUrl(0)])
     const { port } = await sw.trim({ capBytes: 300 })
     expect(sw.remaining()).toEqual(['bafkrei0', 'bafkrei3'])
-    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 2, indexedEntries: 1 }))
+    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 2, entriesWithUse: 1 }))
   })
 
   it('ranks uses recorded later later', async () => {
@@ -479,7 +479,7 @@ describe('content cache last use', () => {
     const { port } = await sw.trim({ capBytes: 300 })
     expect(sw.remaining()).toEqual(['bafkrei2', 'bafkrei3'])
     const report = port.postMessage.mock.calls[0][0]
-    expect(report).toMatchObject({ evictedEntries: 2, indexedEntries: 0 })
+    expect(report).toMatchObject({ evictedEntries: 2, entriesWithUse: 0 })
     expect(report.error).toBeUndefined()
   })
 
@@ -494,7 +494,7 @@ describe('content cache last use', () => {
       // a quarter of the 400-byte cap: one entry
       const { port } = await sw.trim({ capBytes: 400, quotaError: true, usedNow: [entryUrl(0), 42, 'ftp://x.example/y'] })
       expect(sw.remaining()).toEqual(['bafkrei0', 'bafkrei2', 'bafkrei3'])
-      expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 1, indexedEntries: 4 }))
+      expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 1, entriesWithUse: 4 }))
       // only a touch records a use
       expect(await recordedKeys(sw.indexedDB as IDBFactory)).toEqual([entryUrl(2), entryUrl(3)].sort())
     } finally {
@@ -519,7 +519,7 @@ describe('content cache last use', () => {
     expect(remaining).toHaveLength(190)
     expect(remaining).toContain('bafkrei0')
     for (let n = 100; n < 110; n++) expect(remaining).not.toContain(`bafkrei${n}`)
-    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 10, evictedBytes: 1000, indexedEntries: 100 }))
+    expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({ evictedEntries: 10, evictedBytes: 1000, entriesWithUse: 100 }))
   })
 
   it('ignores the uses a regular trim carries', async () => {
@@ -623,7 +623,7 @@ describe('content cache index that does not answer', () => {
       const { port } = await trimmed
       expect(sw.remaining()).toEqual(['bafkrei2', 'bafkrei3'])
       const report = port.postMessage.mock.calls[0][0]
-      expect(report).toMatchObject({ evictedEntries: 2, indexedEntries: 0 })
+      expect(report).toMatchObject({ evictedEntries: 2, entriesWithUse: 0 })
       expect(report.error).toBeUndefined()
     } finally {
       vi.useRealTimers()
@@ -642,7 +642,7 @@ describe('content cache index that does not answer', () => {
       await vi.advanceTimersByTimeAsync(1)
       // a quarter of the 400-byte cap, oldest written first
       expect(sw.remaining()).toEqual(['bafkrei1', 'bafkrei2', 'bafkrei3'])
-      expect(sw.replies.map(({ message }) => message)).toEqual([expect.objectContaining({ evictedEntries: 1, indexedEntries: 0 })])
+      expect(sw.replies.map(({ message }) => message)).toEqual([expect.objectContaining({ evictedEntries: 1, entriesWithUse: 0 })])
       // the worker is kept alive for the prune, which gives up on the index the same way
       let settled = false
       void done.then(() => (settled = true))

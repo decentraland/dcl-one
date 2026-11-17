@@ -376,7 +376,7 @@ async function trimContentCache(capBytes, quotaError, usedNow = [], keepAlive = 
     const now = Date.now();
     for (const key of usedNow) ranked.set(key, now);
     const ordered = contentCacheEvictionOrder(requests, ranked);
-    report.indexedEntries = requests.filter((r) => ranked.has(r.url)).length;
+    report.entriesWithUse = requests.filter((r) => ranked.has(r.url)).length;
     // a regular trim sizes it all: other storage in the bound must not decide how much content goes.
     // A quota-error trim sizes in eviction order and stops at the least recently used content worth
     // its quarter of the cap.
