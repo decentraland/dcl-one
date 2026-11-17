@@ -81,9 +81,12 @@ creates any other wallet with `has_started_program = false`, as the node does.
 `dcl_migration.credit_wallet_loaded` records the flag each wallet was given; a
 wallet whose flag no longer matches started the program on the node and keeps
 it. A wallet with no record only goes from `false` to `true` (the node never
-sets `false`). The record moves only for wallets the import still owns, so a
-node start that upstream later matches stays the node's even if upstream then
-goes back to `false`.
+sets `false`), and an unrecorded `true` is never recorded: a start the node
+made, even one upstream also shows, stays the node's when upstream later opts
+out. The record moves only for wallets the import still owns, so a node start
+that upstream later matches is kept the same way. A wallet imported as `true`
+before this record existed is unrecorded too and does not follow a later
+upstream opt-out.
 `is_blocked_for_claiming` is the node operator's block (it refuses spends too)
 and is never imported.
 

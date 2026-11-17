@@ -34,19 +34,13 @@ ON CONFLICT (address) DO UPDATE SET
 WHERE w.has_started_program IS DISTINCT FROM EXCLUDED.has_started_program
    OR EXCLUDED.created_at < w.created_at;
 
--- Record upstream's flag for the wallets this load owns, and first-record an unrecorded wallet
--- that already holds it; an existing record the node diverged from is left as it is.
+-- Record upstream's flag for the wallets this load owns. An unrecorded `true` is never recorded,
+-- so it stays the node's even when upstream holds the same value.
 INSERT INTO dcl_migration.credit_wallet_loaded AS l (address, has_started_program)
 SELECT s.address, s.has_started_program
 FROM stage s
 JOIN credit_wallet_owned o ON o.address = s.address
 ON CONFLICT (address) DO UPDATE SET has_started_program = EXCLUDED.has_started_program
 WHERE l.has_started_program IS DISTINCT FROM EXCLUDED.has_started_program;
-
-INSERT INTO dcl_migration.credit_wallet_loaded (address, has_started_program)
-SELECT s.address, s.has_started_program
-FROM stage s
-JOIN credits.wallets w ON w.address = s.address AND w.has_started_program = s.has_started_program
-ON CONFLICT (address) DO NOTHING;
 
 DROP TABLE credit_wallet_owned;

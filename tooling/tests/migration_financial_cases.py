@@ -161,6 +161,14 @@ class FinancialMigrationCases:
         self.credits_load(db, 'wallet', [f"'{address}', false, '2024-01-01', '2026-03-01'"])
         self.assertEqual(self.sql(db, 'SELECT has_started_program FROM credits.wallets;\n').strip(), 't')
 
+    def test_when_a_node_start_predates_an_import_that_matches_it_and_upstream_later_reverts_it_should_keep_it(self):
+        db = self.catalyst_db('credits_wallet_node_first_matched')
+        address = '0x' + 'e' * 40
+        self.sql(db, f"INSERT INTO credits.wallets (address, has_started_program) VALUES ('{address}', true);\n")
+        self.credits_load(db, 'wallet', [f"'{address}', true, '2025-01-01', '2026-01-01'"])
+        self.credits_load(db, 'wallet', [f"'{address}', false, '2025-01-01', '2026-02-01'"])
+        self.assertEqual(self.sql(db, 'SELECT has_started_program FROM credits.wallets;\n').strip(), 't')
+
     def test_when_a_wallet_started_on_the_node_before_any_import_it_should_keep_it(self):
         db = self.catalyst_db('credits_wallet_node_first')
         address = '0x' + 'c' * 40
