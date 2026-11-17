@@ -96,42 +96,39 @@ pub fn process_outfits(
     ipfas: IpfsAssetServer,
 ) {
     for request in requests.read() {
-        match request {
-            SystemApi::DeployOutfits(expected, outfits, sender) => {
-                let account = match expected_account(expected, &wallet, &current) {
-                    Ok(account) => account,
-                    Err(e) => {
-                        sender.send(Err(e));
-                        continue;
-                    }
-                };
-                if let Err(e) = check_outfits(outfits) {
+        if let SystemApi::DeployOutfits(expected, outfits, sender) = request {
+            let account = match expected_account(expected, &wallet, &current) {
+                Ok(account) => account,
+                Err(e) => {
                     sender.send(Err(e));
                     continue;
                 }
-                let metadata = match serde_json::to_value(outfits) {
-                    Ok(metadata) => metadata,
-                    Err(e) => {
-                        sender.send(Err(e.to_string()));
-                        continue;
-                    }
-                };
-                let ipfs = Arc::clone(ipfas.ipfs());
-                let wallet = wallet.clone();
-                let task = IoTaskPool::get().spawn_compat(async move {
-                    deploy_entity(
-                        ipfs,
-                        wallet,
-                        "outfits",
-                        format!("{account}:outfits"),
-                        metadata,
-                    )
-                    .await
-                    .map_err(|e| e.to_string())
-                });
-                state.deploys.push((task, sender.clone()));
+            };
+            if let Err(e) = check_outfits(outfits) {
+                sender.send(Err(e));
+                continue;
             }
-            _ => (),
+            let metadata = match serde_json::to_value(outfits) {
+                Ok(metadata) => metadata,
+                Err(e) => {
+                    sender.send(Err(e.to_string()));
+                    continue;
+                }
+            };
+            let ipfs = Arc::clone(ipfas.ipfs());
+            let wallet = wallet.clone();
+            let task = IoTaskPool::get().spawn_compat(async move {
+                deploy_entity(
+                    ipfs,
+                    wallet,
+                    "outfits",
+                    format!("{account}:outfits"),
+                    metadata,
+                )
+                .await
+                .map_err(|e| e.to_string())
+            });
+            state.deploys.push((task, sender.clone()));
         }
     }
 
