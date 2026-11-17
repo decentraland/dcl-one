@@ -378,19 +378,46 @@ async function clickControl(selector: string) {
 }
 for (const variant of ['shop', 'places', 'backpack'])
   describe('when the ' + variant + ' search field receives focus', () => {
-    it('should draw exactly one focus ring, on the search box and not on the inner input', async () => {
-      await navigate(variant, 1920, true)
+    async function focusSearch(query = '') {
+      await browser.session.send('Emulation.setDeviceMetricsOverride', {
+        width: 1920,
+        height: 900,
+        deviceScaleFactor: 1,
+        mobile: false
+      })
+      await browser.session.navigate(browser.origin + '?variant=' + variant + '&closed=1' + query)
+      await browser.evaluate(
+        '(async()=>{for(let n=0;n<100&&!document.querySelector("[data-variant]");n++)await new Promise(r=>setTimeout(r,20));await document.fonts.ready})()'
+      )
       await clickControl('[data-control=search] input')
-      const focus = await browser.evaluate<{
+      return browser.evaluate<{
         focused: boolean
         input: { outline: string; shadow: string }
-        box: { outline: string; color: string; shadow: string }
+        box: { outline: string; color: string; offset: string; shadow: string }
       }>(
-        `(()=>{const i=document.querySelector('[data-control=search] input'),b=i.parentElement,a=getComputedStyle(i),c=getComputedStyle(b);return{focused:document.activeElement===i,input:{outline:a.outlineStyle,shadow:a.boxShadow},box:{outline:c.outlineStyle,color:c.outlineColor,shadow:c.boxShadow}}})()`
+        `(()=>{const i=document.querySelector('[data-control=search] input'),a=getComputedStyle(i),c=getComputedStyle(i.parentElement);return{focused:document.activeElement===i,input:{outline:a.outlineStyle,shadow:a.boxShadow},box:{outline:c.outlineStyle,color:c.outlineColor,offset:c.outlineOffset,shadow:c.boxShadow}}})()`
       )
+    }
+    it('should draw one contour flush on the search box and none on the inner input', async () => {
+      const focus = await focusSearch()
       expect(focus.focused).toBe(true)
       expect(focus.input).toEqual({ outline: 'none', shadow: 'none' })
-      expect(focus.box).toEqual({ outline: 'solid', color: 'rgb(252, 252, 252)', shadow: 'none' })
+      expect(focus.box).toEqual({
+        outline: 'solid',
+        color: 'rgba(0, 0, 0, 0)',
+        offset: '0px',
+        shadow: 'color(srgb 1 1 1 / 0.7) 0px 0px 0px 3px'
+      })
+    })
+    it('should keep the earlier offset ring only when the comparison parameter asks for it', async () => {
+      const focus = await focusSearch('&searchfocus=offset')
+      expect(focus.input).toEqual({ outline: 'none', shadow: 'none' })
+      expect(focus.box).toEqual({
+        outline: 'solid',
+        color: 'rgb(252, 252, 252)',
+        offset: '2px',
+        shadow: 'none'
+      })
     })
   })
 const panels = [

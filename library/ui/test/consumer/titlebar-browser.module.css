@@ -41,10 +41,23 @@
     /* The search box's :focus-within ring is the field's one focus indicator. */
     outline: none;
   }
+  /* One contour flush on the field: the explorer InputField focus ring (InputField.module.css), Figma Text
+     Input FocusedEditing's 3px white-70 stroke without its 3px transparent gap. The transparent outline is
+     what forced-colors mode paints once it drops the shadow. */
+  .search:focus-within {
+    outline: 3px solid transparent;
+    outline-offset: 0;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--dcl-neutrals-white) 70%, transparent);
+  }
+  /* ?searchfocus=offset keeps the earlier offset ring so both looks can be compared in one preview. */
+  .search[data-focus='offset']:focus-within {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+    box-shadow: none;
+  }
   .search input::placeholder {
     color: var(--dcl-neutrals-cloudy-sky);
   }
-  .search:focus-within,
   .control:focus-visible,
   .date:focus-visible,
   .create:focus-visible,

@@ -30,6 +30,8 @@ const variant =
   requested === 'shop'
     ? requested
     : 'settings'
+const searchFocus =
+  new URLSearchParams(location.search).get('searchfocus') === 'offset' ? 'offset' : undefined
 const definitions: Record<typeof variant, readonly [string, string, React.ReactNode][]> = {
   backpack: [
     ['wearables', 'Wearables', <GeneralSecondaryBarWearables size={24} />],
@@ -191,7 +193,7 @@ function App() {
   const [collection, setCollection] = useState('Decentraland')
   const sortLabel = sortOptions.find(([value]) => value === sort)![1]
   const search = (
-    <div className={styles.search}>
+    <div className={styles.search} data-focus={searchFocus}>
       <GeneralSearchBold size={20} aria-hidden="true" />
       <input
         aria-label="Fixture search"
