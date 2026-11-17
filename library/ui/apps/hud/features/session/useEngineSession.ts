@@ -903,6 +903,10 @@ const REVEAL_DEBOUNCE_MS = 600
 // how long, back from the auth site, the stored sign-in waits for the catalyst to have the profile
 // How long Verifying waits for a sign-in before giving up.
 const VERIFY_TIMEOUT_MS = 15_000
+// The longest Verifying waits for the bridge scene to answer before its own clock starts anyway:
+// the bridge's ready timeout (30 s) plus VERIFY_TIMEOUT_MS. A bridge that never answers and is never
+// reported unreachable (an engine run that ended on its own) still ends the wait.
+const VERIFY_BRIDGE_WAIT_MS = 45_000
 // how long a checked email code's Success shows before its sign-in starts
 const EMAIL_SUCCESS_MS = 600
 /** The sign-in error a Verifying that gave up leaves: no reason to show the player. */
@@ -4514,11 +4518,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // account's welcome answer (and an existing account's terms, answered for it). It gives up after
   // VERIFY_TIMEOUT_MS, back to the first screen with Connection Error, the stored sign-in kept. The
   // welcome answer is the bridge scene's, so the clock starts once that scene has answered the page
-  // (or is reported unreachable): on a cold, busy boot it can start long after the sign-in.
+  // (or is reported unreachable): on a cold, busy boot it can start long after the sign-in. A bridge
+  // that does neither still gives up after VERIFY_BRIDGE_WAIT_MS.
   const verifying = phase === 'welcome' && welcome == null
   useEffect(() => {
-    if (!verifying || !bridgeAnswered) return
-    const id = setTimeout(() => cancelSignIn(VERIFY_TIMED_OUT), VERIFY_TIMEOUT_MS)
+    if (!verifying) return
+    const wait = bridgeAnswered ? VERIFY_TIMEOUT_MS : VERIFY_BRIDGE_WAIT_MS
+    const id = setTimeout(() => cancelSignIn(VERIFY_TIMED_OUT), wait)
     return () => clearTimeout(id)
   }, [verifying, bridgeAnswered, cancelSignIn])
 
