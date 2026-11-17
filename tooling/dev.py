@@ -340,6 +340,9 @@ def pulse_env(config, certificate, key):
             'PULSE_WT_ENABLED': 'true', 'PULSE_WT_BIND': f'{bind}:{webtransport}',
             'PULSE_WT_CERT_PATH': str(certificate), 'PULSE_WT_KEY_PATH': str(key),
             'PULSE_REPLAY_STATE_PATH': str(STATE / 'pulse/replay.tsv'), 'NO_COLOR': '1',
+            # Root generation ownership uses the stack database after API schema readiness.
+            'DATABASE_URL': database_url(config),
+            'PULSE_V4_AUDIENCE': pulse_about_env(config)['COMMS_V4_PULSE_AUDIENCE'],
             # The cluster feed to the API's archipelago, and its engine.discovery heartbeat.
             'PULSE_NATS_URL': nats_url(config),
             # Pulse polls the API's moderator ban snapshot with the token the API checks.
@@ -367,6 +370,7 @@ def runtime_env(config):
     base = config['port']
     env.update({
         'DATABASE_URL': database_url(config), 'CATALYST_DATABASE_URL': database_url(config),
+        'ARCHIPELAGO_CONTROL_V4_AUDIENCE': pulse_about_env(config)['COMMS_V4_PULSE_AUDIENCE'],
         'HTTP_SERVER_HOST': '127.0.0.1',
         'HTTP_SERVER_PORT': str(base), 'PUBLIC_URL': f'http://127.0.0.1:{base + 2}',
         # In the stack's block, not the binary's default 5006: a second stack on the machine (a testnet
@@ -658,9 +662,11 @@ def project(config, postgres_only=False):
         return {'version': '0.5', 'processes': {'postgres': postgres}}
     api = process('api', {'postgres': 'process_healthy', 'api-build': 'process_completed_successfully',
                           'web-install': 'process_completed_successfully', 'nats': 'process_healthy'})
-    api['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': config['port'], 'path': '/about'},
+    # Process readiness gates Pulse on schema/state/listener setup. /about also needs
+    # Pulse's heartbeat, so it remains the final whole-stack gate in wait_ready.
+    api['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': config['port'], 'path': '/status'},
                              'period_seconds': 2, 'failure_threshold': 1800}
-    pulse = process('pulse', {'api-build': 'process_completed_successfully', 'nats': 'process_healthy'})
+    pulse = process('pulse', {'api': 'process_healthy', 'nats': 'process_healthy'})
     pulse['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': pulse_ports(config)[2], 'path': '/metrics'},
                                 'period_seconds': 1, 'failure_threshold': 60}
     livekit = process('livekit')
@@ -694,9 +700,20 @@ def sql(config, query, database='catalyst'):
                capture_output=True, env=env).stdout.strip()
 
 
+# A CI test cluster holds only scratch databases, so it skips durability: every DROP DATABASE forces a
+# checkpoint, and with fsync on its sync phase stalls the cluster for seconds on a shared runner disk.
+DISPOSABLE_POSTGRES_SETTINGS = ('fsync=off', 'synchronous_commit=off', 'full_page_writes=off',
+                                'wal_level=minimal', 'max_wal_senders=0',
+                                'checkpoint_timeout=1h', 'max_wal_size=2GB')
+# Written into a data directory initialized with FOUNDATION_DEV_DISPOSABLE_POSTGRES=1; only such a cluster runs
+# without durability, so the flag never weakens a cluster that already holds data.
+DISPOSABLE_MARKER = 'foundation-dev-disposable'
+
+
 def postgres(config):
     env = runtime_env(config)
     data = STATE / 'postgres'
+    disposable = os.environ.get('FOUNDATION_DEV_DISPOSABLE_POSTGRES') == '1'
     if not (data / 'PG_VERSION').exists():
         if data.exists() and any(data.iterdir()):
             raise RuntimeError('Incomplete PostgreSQL initialization; data preserved. Inspect .cache/dev/postgres.')
@@ -707,14 +724,23 @@ def postgres(config):
                  '--auth-host=scram-sha-256', '--pwfile', password_file, '--encoding=UTF8', '--locale=en_US.UTF-8'], env=env)
         finally:
             password_file.unlink(missing_ok=True)
+        if disposable:
+            (data / DISPOSABLE_MARKER).write_text('Disposable test cluster: runs with fsync off.\n')
     version = run(['postgres', '--version'], capture_output=True, text=True, env=env).stdout.split()[2].split('.')[0]
     if (data / 'PG_VERSION').read_text().strip() != version:
         raise RuntimeError('PostgreSQL major version changed. Data preserved; migrate it before restarting.')
+    durability = []
+    if disposable and (data / DISPOSABLE_MARKER).exists():
+        print('Disposable test cluster: ' + ', '.join(DISPOSABLE_POSTGRES_SETTINGS), flush=True)
+        durability = [arg for setting in DISPOSABLE_POSTGRES_SETTINGS for arg in ('-c', setting)]
+    elif disposable:
+        print('FOUNDATION_DEV_DISPOSABLE_POSTGRES ignored: this cluster was not created as disposable; '
+              'it keeps full durability.', file=sys.stderr, flush=True)
     os.execvpe('postgres', ['postgres', '-D', str(data), '-h', '127.0.0.1',
                            '-p', str(config['port'] + 3), '-k', '',
                            '-c', 'max_connections=400', '-c', 'shared_buffers=64MB',
                            # Concurrent test binaries apply the schema at once; an apply holds thousands of locks.
-                           '-c', 'max_locks_per_transaction=256'], env)
+                           '-c', 'max_locks_per_transaction=256', *durability], env)
 
 
 def ensure_collation(config, database='catalyst'):
@@ -848,7 +874,11 @@ def watch(*paths):
 
 
 def task(name):
+    if name in ("api-build", "api-run"):
+        print(f"foundation-dev task: {name} settings begin", file=sys.stderr, flush=True)
     config = settings()
+    if name in ("api-build", "api-run"):
+        print(f"foundation-dev task: {name} settings complete", file=sys.stderr, flush=True)
     if name in SERVICES:
         # The PID survives the exec into the service itself.
         (STATE / 'tasks').mkdir(exist_ok=True, mode=0o700)
@@ -889,15 +919,22 @@ def task(name):
         os.execve(binary, [str(binary), 'index'], runtime_env(config))
     elif name in ('api-build', 'api-run'):
         target = BACKEND / 'target'
+        print(f"foundation-dev task: {name} build begin", file=sys.stderr, flush=True)
         run(['cargo', 'build', '--locked', '--bin', 'catalyst', '--target-dir', target], cwd=BACKEND)
+        print(f"foundation-dev task: {name} build complete", file=sys.stderr, flush=True)
         binary = target / 'debug/catalyst'
+        print(f"foundation-dev task: {name} schema begin", file=sys.stderr, flush=True)
         apply_schema(config, binary)
+        print(f"foundation-dev task: {name} schema complete", file=sys.stderr, flush=True)
         if name == 'api-build':
             # Before the index process starts mirroring, so the snapshot's rows are not fetched again.
             seed_trades(config)
             seed_dev_flags(config)
             return
+        print(f"foundation-dev task: {name} catalog begin", file=sys.stderr, flush=True)
         import_asset_catalog(config, binary)
+        print(f"foundation-dev task: {name} catalog complete", file=sys.stderr, flush=True)
+        print(f"foundation-dev task: {name} serve exec", file=sys.stderr, flush=True)
         os.execve(binary, [str(binary), 'serve'], {**runtime_env(config), **pulse_about_env(config)})
 
 

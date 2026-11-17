@@ -302,7 +302,11 @@ pub async fn index_confirms(
                     .unwrap_or(Address::ZERO),
             );
             if land {
-                let Some(mut land) = crate::market::nft_reads::land_snapshot(pool).await else {
+                let Some(net) = chain.land_network() else {
+                    return Ok(Some(false));
+                };
+                let Some(mut land) = crate::market::nft_reads::land_snapshot(pool, net).await
+                else {
                     return Ok(Some(false));
                 };
                 sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM land_authz.token_right WHERE token_address = $1 AND token_id = $2::numeric AND owner = $3 AND updated_block >= $4)")

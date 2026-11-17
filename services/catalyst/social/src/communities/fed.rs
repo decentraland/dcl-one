@@ -112,6 +112,11 @@ fn ec(buf: &mut Vec<u8>, s: &str) {
     buf.push(0);
 }
 
+// The stored payload of a role message (join, leave, role, ban, unban) is
+// projected onto the public `/federation/communities/changes` feed through
+// `feeds::public_role_payload`, which publishes only the fields it names. A
+// new field on one of these messages stays out of the feed until it is added
+// there.
 macro_rules! message {
     ($name:ident { $($field:ident : $ty:ty),* $(,)? } => |$s:ident, $b:ident| $body:block) => {
         #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1741,6 +1746,64 @@ mod tests {
     }
 
     #[test]
+    fn role_feed_publishes_only_named_payload_fields() {
+        let (c, a) = ("c1".to_string(), "0xa".to_string());
+        let public = |stored: Value| feeds::public_role_payload(&stored);
+        let cases = [
+            (
+                payload(&CommunityJoin {
+                    community_id: c.clone(),
+                }),
+                json!({ "community_id": c }),
+            ),
+            (
+                payload(&CommunityLeave {
+                    community_id: c.clone(),
+                    member: a.clone(),
+                }),
+                json!({ "community_id": c, "member": a }),
+            ),
+            (
+                payload(&CommunityRoleUpdate {
+                    community_id: c.clone(),
+                    target: a.clone(),
+                    role: "mod".into(),
+                }),
+                json!({ "community_id": c, "target": a, "role": "mod" }),
+            ),
+            (
+                payload(&CommunityBan {
+                    community_id: c.clone(),
+                    target: a.clone(),
+                    reason: Some("spam".into()),
+                }),
+                json!({ "community_id": c, "target": a }),
+            ),
+            (
+                payload(&CommunityUnban {
+                    community_id: c.clone(),
+                    target: a.clone(),
+                }),
+                json!({ "community_id": c, "target": a }),
+            ),
+        ];
+        for (stored, expected) in cases {
+            // Every field the stored payload publishes keeps its value.
+            assert_eq!(public(stored.clone()), expected, "{stored}");
+            // A field the projection does not name stays out of the feed.
+            let mut extended = stored.clone();
+            extended["note"] = json!("local");
+            assert_eq!(public(extended), expected, "{stored}");
+        }
+        assert_eq!(public(Value::Null), Value::Null);
+        // An object of no known shape publishes only the community field.
+        assert_eq!(
+            public(json!({ "reason": "spam", "note": "local" })),
+            json!({ "community_id": null })
+        );
+    }
+
+    #[test]
     fn routes_and_messages_keep_the_old_wire() {
         assert_eq!(
             FedRoute::of(&Method::POST, "/v1/communities"),
@@ -2127,6 +2190,50 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(places, ["p-1"]);
+
+        // A federated add holds the REST bounds: 1 to 100 ids of at most 256 characters.
+        let actions_sql =
+            "SELECT count(*) FROM social.community_signed_actions WHERE community_uuid = $1";
+        let actions_before: i64 = sqlx::query_scalar(actions_sql)
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        for (place_ids, case) in [
+            (Vec::new(), "no ids"),
+            ((0..101).map(|i| format!("q-{i}")).collect(), "101 ids"),
+            (vec!["q".repeat(257)], "a 257-character id"),
+        ] {
+            let (status, _) = send(
+                &app,
+                &member,
+                "POST",
+                &format!("{base}/places"),
+                &env(
+                    &member,
+                    CommunityPlacesAdd {
+                        community_id: hex_id.clone(),
+                        place_ids,
+                    },
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{case}");
+        }
+        let places: Vec<String> = sqlx::query_scalar(
+            "SELECT place_id FROM social.community_places WHERE community_id = $1",
+        )
+        .bind(id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(places, ["p-1"]);
+        let actions_after: i64 = sqlx::query_scalar(actions_sql)
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(actions_after, actions_before);
 
         // A post whose body was uploaded first lands with its text.
         let (status, _) = call(
@@ -2618,6 +2725,16 @@ mod tests {
             mine[0]["payload"],
             json!({ "type": "CommunityCreate", "community_id": hex_id, "creator": address(&owner), "role": "owner" })
         );
+        // A ban travels with its target; its free-text reason stays local.
+        let banned = mine.iter().find(|r| r["role"] == json!("banned")).unwrap();
+        assert_eq!(
+            (banned["target"].clone(), banned["payload"].clone()),
+            (
+                json!(address(&member)),
+                json!({ "community_id": hex_id, "target": address(&member) })
+            )
+        );
+        assert!(!feed.to_string().contains("\"reason\""), "{feed}");
         let posts: Vec<&Value> = feed["posts"]
             .as_array()
             .unwrap()
@@ -2983,6 +3100,37 @@ mod tests {
         }
         let (status, _) = upload(&app, &poster, "again").await;
         assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "the signer's rate");
+
+        // The bounds are inclusive and count characters, not bytes: 100 ids, one of
+        // them 256 two-byte characters, are accepted.
+        let edge: Vec<String> = (0..99)
+            .map(|i| format!("edge-{i}"))
+            .chain([String::from("é").repeat(256)])
+            .collect();
+        let (status, body) = send(
+            &app,
+            &owner,
+            "POST",
+            &format!("{base}/places"),
+            &env(
+                &owner,
+                CommunityPlacesAdd {
+                    community_id: hex_id.clone(),
+                    place_ids: edge.clone(),
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let added: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM social.community_places WHERE community_id = $1 AND place_id = ANY($2)",
+        )
+        .bind(id)
+        .bind(&edge)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(added, 100);
 
         let (status, _) = send(
             &app,

@@ -48,7 +48,7 @@ The rest of `apps/ui3/src/play` adapts `source/react-web/src` with these changes
   or a sign-out replaces it); `/play` renders its in-world Shop, with the app-wide
   `QueryClientProvider` it uses, until that Shop moves to `react-web`.
 - Tests of the shared HUD live once, in `library/ui/apps/hud` and `library/explorer-core`, and
-  `react-web`'s `npm test` runs them; `/play` keeps the tests of its own files, run with `pnpm test` in `apps/ui3` under
+  `react-web`'s `pnpm test` runs them; `/play` keeps the tests of its own files, run with `pnpm test` in `apps/ui3` under
   `tsconfig.play.json`. `?native=1` is not built.
 - The benchmark's unattended run is not carried. The shared session only knows that a host may
   have an unattended run (`@hud-host`'s `bootMode` and `unattendedRun`); react-web's `host.ts`
@@ -74,12 +74,12 @@ serve; guest sessions work.
 ## Forks and drift
 
 Bevy and 17 forked sources are tracked as an upstream commit and a patch series under
-`patches/<name>/` ([ADR](../../docs/adr/2026-11-14-explorer-sources-as-patches.md)).
-`python3 tooling/patched-sources.py materialise` writes the rebuilt trees at `bevy/` and
-`forks/<name>/`, which git ignores. Run it before any `cargo` command;
-[the bevy fork](docs/guidelines/bevy-fork.md#changing-bevy) has `export`, the options and the
-stale-tree check. `bevy_dui`, `boimp` and `rpc-rust` (package `dcl-rpc`) are exact upstream bytes
-under `vendor/`.
+`patches/<name>/` ([ADR](../../docs/adr/2026-11-14-explorer-sources-as-patches.md)). Cargo takes
+each one as a commit of this repository, pinned by `rev`
+([ADR](../../docs/adr/2026-11-15-explorer-patched-sources-as-git-commits.md)): no step runs
+before `cargo`. [The bevy fork](docs/guidelines/bevy-fork.md#changing-bevy) has `edit`, `export`,
+`publish` and the checks. `bevy_dui`, `boimp` and `rpc-rust` (package `dcl-rpc`) are exact
+upstream bytes under `vendor/`.
 
 Licences: each `patches/<name>/source.toml` records the licence of its source in `license`, and
 each crate under `vendor/` records its own in its `Cargo.toml`.
@@ -103,8 +103,8 @@ or `python3 tooling/fetch-play.py` (main CI artifact); see the
 [container build contract](../../infra/containers/README.md#sites-explorer-build-input).
 
 When the HUD changes: regenerate the bindings and the shared inputs
-(`npm --prefix rendering/bevy-explorer/source/react-web run gen:shared-inputs`), then run both hosts'
-tests and typechecks (`npm test` in react-web, `pnpm test` in `apps/ui3`, whose `play-shared`
+(`pnpm --dir rendering/bevy-explorer/source/react-web run gen:shared-inputs`), then run both hosts'
+tests and typechecks (`pnpm test` in react-web and in `apps/ui3`, whose `play-shared`
 project runs the shared HUD against `/play`'s host). Record browser and multiplayer acceptance evidence for the target
 revision in the task report; a matching fingerprint alone does not establish acceptance.
 

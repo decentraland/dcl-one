@@ -18,12 +18,12 @@ scene_runner = { workspace = true }
 texture_camera = { workspace = true }
 ui_core = { workspace = true }
 input_manager = { workspace = true }
-world_ui = { workspace = true }
 collectibles = { workspace = true }
 scene_material = { workspace = true }
 platform = { workspace = true }
 system_bridge = { workspace = true }
 social = { workspace = true }
+ban_block = { workspace = true }
 
 bevy = { workspace = true }
 bevy_kira_audio = { workspace = true }

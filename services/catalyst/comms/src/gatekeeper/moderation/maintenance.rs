@@ -1,5 +1,5 @@
 //! Periodic removal cleanup and room metadata reconciliation.
-use crate::explore::places::removed::{PlaceContext, RemovedPlace, RemovedPlaces};
+use crate::gatekeeper::removed_places::{PlaceContext, RemovedPlace, RemovedPlaces};
 use crate::gatekeeper::streaming::notifications::{notification, owner};
 use crate::gatekeeper::{CommsState, admission::scene, errors::ApiError};
 use crate::interfaces::StreamingNotificationKind;
@@ -835,6 +835,14 @@ mod tests {
                     "world Place base/positions cannot replace this scene's footprint"
                 );
                 Ok(Default::default())
+            }
+            async fn world_grantees(
+                &self,
+                world: &WorldName,
+                parcels: &ParcelSet,
+            ) -> Result<std::collections::BTreeSet<Address>, crate::AuthorityNotEstablished>
+            {
+                self.protected_addresses(world, parcels).await
             }
         }
         let Some(pool) = crate::db::scratch::pool(4).await else {

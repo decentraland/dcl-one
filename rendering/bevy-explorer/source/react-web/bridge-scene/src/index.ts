@@ -32,6 +32,8 @@ import { registerSettings } from './domains/settings'
 import { registerCommunities } from './domains/communities'
 import { registerEvents } from './domains/events'
 import { registerGallery } from './domains/gallery'
+import { registerPlaces } from './domains/places'
+import { registerMapPlayers } from './domains/mapPlayers'
 import { registerWorld } from './domains/world'
 import { registerVoice } from './domains/voice'
 import { registerVoiceChat } from './domains/voiceChat'
@@ -45,7 +47,6 @@ import { registerPermissions } from './domains/permissions'
 import { registerPortables } from './domains/portables'
 import { registerWorldAccess } from './domains/worldAccess'
 import { registerEditor } from './domains/editor'
-import { initNametags } from './domains/nametags'
 
 export function main(): void {
   const _log = console.log
@@ -77,6 +78,8 @@ export function main(): void {
     registerCommunities(ctx)
     registerEvents(ctx)
     registerGallery(ctx)
+    registerPlaces(ctx)
+    registerMapPlayers(ctx)
     registerWorld(ctx)
     registerPointer(ctx)
     registerProximity(ctx)
@@ -103,7 +106,4 @@ export function main(): void {
   // 0.6..1.3, so they only ever agreed near 1920x1080). `screenInset: 'none'` likewise keeps
   // 0,0 at the screen's top-left, which is the origin those rects are measured from.
   ReactEcsRenderer.setUiRenderer(renderSceneUi, { virtualWidth: 0, virtualHeight: 0, screenInset: 'none' })
-
-  // World-space UI the DOM can't track smoothly: the billboarded nametag above each avatar's head.
-  initNametags()
 }

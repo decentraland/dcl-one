@@ -1,4 +1,3 @@
-#![recursion_limit = "256"]
 //! The explore parity suite: every entry of `tests/fixtures/explore_parity/*.fixture.json`
 //! (what the old places and events services answer, derived from their pinned source)
 //! is sent to the explore router over a seeded scratch database and compared per its
