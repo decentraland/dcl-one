@@ -1,9 +1,9 @@
 import React, { useCallback, useState, useEffect } from 'react';
-import { Loader } from 'decentraland-ui/dist/components/Loader/Loader';
 import { Container } from '../Container';
 import { Block } from '../Block';
 import { TextField } from '../ui/TextField';
 import { Button } from '../Button';
+import { LoadingSpinner } from '../Loading';
 import { useAppDispatch, useAppSelector } from '../../redux/hooks';
 import { selectAssetsTab } from '../../redux/ui';
 import { AssetsTab } from '../../redux/ui/types';
@@ -53,17 +53,18 @@ const CreateCustomAsset: React.FC = () => {
         const files: File[] = await Promise.all(
           resourcesFromModel.map(async path => {
             const { content } = await dataLayer.getFile({ path });
-            return new File([content], path.split('/').pop() || 'model', {
+            return new File([content as BlobPart], path.split('/').pop() || 'model', {
               type: 'model/gltf-binary',
             });
           }),
         );
         setPreviewFile(
-          new File([content], modelFile.split('/').pop() || 'model', { type: 'model/gltf-binary' }),
+          new File([content as BlobPart], modelFile.split('/').pop() || 'model', {
+            type: 'model/gltf-binary',
+          }),
         );
         setResources(files);
       } catch (error) {
-        // eslint-disable-next-line no-console
         console.error('Failed to load preview file:', error);
       }
     };
@@ -118,10 +119,7 @@ const CreateCustomAsset: React.FC = () => {
             <div className="preview-container">
               {isGeneratingThumbnail ? (
                 <div className="loader-container">
-                  <Loader
-                    active
-                    size="small"
-                  />
+                  <LoadingSpinner size="small" />
                 </div>
               ) : thumbnail ? (
                 <div

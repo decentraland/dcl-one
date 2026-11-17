@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { IconButton } from 'decentraland-ui2';
+import IconButton from '@ui/atoms/IconButton';
 
 import { t } from '/@/modules/store/translation/utils';
 

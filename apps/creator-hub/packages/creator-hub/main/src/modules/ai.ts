@@ -21,7 +21,6 @@ import type { ChildProcess } from 'child_process';
 // handles the `.cmd` + quoting correctly and is a transparent drop-in for spawn on macOS/Linux.
 import crossSpawn from 'cross-spawn';
 import log from 'electron-log/main';
-import treeKill from 'tree-kill';
 import { AI_CLI_COMMANDS, apiKeyAlternative } from '/shared/types/ai';
 import type {
   AiAttachmentKind,
@@ -34,6 +33,7 @@ import { DCL_SYSTEM_PROMPT } from './ai-prompt';
 import { CLI_SPECS, getManagedBinDir, isSignedIn as isManagedSignedIn } from './ai-cli-paths';
 import { getAppDataPath, getUserDataPath } from './electron';
 import { getChildEnv, resolveNodeRuntime } from './node-runtime';
+import { killProcessTree } from './process-tree';
 import { getProjectId, track } from './analytics';
 import {
   clearPendingAsks,
@@ -1142,7 +1142,7 @@ function killTree(child: ChildProcess): void {
     }
   };
   if (process.platform === 'win32') {
-    treeKill(child.pid, 'SIGKILL', err => {
+    killProcessTree(child.pid, 'SIGKILL', err => {
       if (!err) return;
       log.warn(`[AI] could not kill the CLI process tree: ${err.message}`);
       killChild();

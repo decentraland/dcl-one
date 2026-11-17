@@ -1,4 +1,4 @@
-import { Box, Typography } from 'decentraland-ui2';
+import Text from '@ui/atoms/Text';
 
 import { type Metric, MetricDisplay } from '../MetricDisplay';
 
@@ -13,23 +13,23 @@ type Props = {
 /** A row of plain figures — no plot, so no hover layer to add. */
 export function StatsRow({ stats, footnote }: Props) {
   return (
-    <Box className="StatsRow">
-      <Box className="Stats">
+    <div className="StatsRow">
+      <div className="Stats">
         {stats.map(stat => (
           <MetricDisplay
             key={stat.label}
             {...stat}
           />
         ))}
-      </Box>
+      </div>
       {footnote && (
-        <Typography
+        <Text
           variant="caption"
           className="Footnote"
         >
           {footnote}
-        </Typography>
+        </Text>
       )}
-    </Box>
+    </div>
   );
 }

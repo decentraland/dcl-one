@@ -113,6 +113,19 @@ pub(super) fn validate_profile_emote_urns(
     Ok(())
 }
 
+/// Whether `avatar.snapshots` is truthy as the reference reads it
+/// (`if (avatar.avatar?.snapshots)`): absent, `null`, `false`, `0` and `""`
+/// are not snapshots, so a profile that serializes `"snapshots": null` passes.
+pub(super) fn avatar_has_snapshots(avatar: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match avatar.get("avatar").and_then(|a| a.get("snapshots")) {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => false,
+        Some(Value::Number(n)) => n.as_f64().is_some_and(|f| f != 0.0 && !f.is_nan()),
+        Some(Value::String(s)) => !s.is_empty(),
+        Some(_) => true,
+    }
+}
+
 pub(super) fn profile_has_emotes(metadata: &serde_json::Value) -> bool {
     if let Some(avatars) = metadata.get("avatars").and_then(|v| v.as_array()) {
         for avatar in avatars {
@@ -196,7 +209,23 @@ fn has_uri_scheme(path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_relative_thumbnail_path;
+    use super::{avatar_has_snapshots, is_relative_thumbnail_path};
+
+    #[test]
+    fn snapshots_count_only_when_truthy() {
+        use serde_json::json;
+        let with = |v| json!({ "avatar": { "snapshots": v } });
+        assert!(!avatar_has_snapshots(&json!({ "avatar": {} })));
+        assert!(!avatar_has_snapshots(&with(json!(null))));
+        assert!(!avatar_has_snapshots(&with(json!(false))));
+        assert!(!avatar_has_snapshots(&with(json!(0))));
+        assert!(!avatar_has_snapshots(&with(json!(""))));
+        assert!(avatar_has_snapshots(&with(json!({}))));
+        assert!(avatar_has_snapshots(&with(
+            json!({ "face256": "Qm1", "body": "Qm2" })
+        )));
+        assert!(avatar_has_snapshots(&with(json!([]))));
+    }
 
     #[test]
     fn relative_thumbnail_accepts_plain_relative_paths() {

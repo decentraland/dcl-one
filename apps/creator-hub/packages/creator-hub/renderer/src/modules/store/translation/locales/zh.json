@@ -383,6 +383,8 @@
         "select_world": {
           "title": "发布到您的世界",
           "description": "选择将发布您的世界的域名。",
+          "domain_type_label": "域名类型",
+          "world_name_label": "世界名称",
           "world_name": "世界（名稱）",
           "placeholder": "選擇名稱",
           "claim_new_name": "索取新名字",
@@ -616,6 +618,9 @@
         "code_editor": {
           "label": "首选代码编辑器",
           "choose_device": "从设备中选择...",
+          "placeholder": "添加或选择默认编辑器",
+          "list": "已添加的代码编辑器",
+          "remove": "移除 {name}",
           "errors": {
             "load": "加载代码编辑器失败",
             "set": "设置默认编辑器失败",
@@ -730,7 +735,6 @@
     },
     "install_client": {
       "title": "要输入，您需要首先安装分散",
-      "download": "下载",
       "download_macos": "下载",
       "download_win": "下载",
       "cancel": "暂不安装"
@@ -797,8 +801,6 @@
       "delete_scene": "删除场景...",
       "delete_scene_failed": "删除场景失败",
       "dependencies_updated": "場景相依性已更新",
-      "multiplayer_sdk_installed": "已安装 Multiplayer Server SDK。",
-      "multiplayer_sdk_uninstalled": "已移除 Multiplayer Server SDK，并安装了最新的 SDK 版本。",
       "updating_sdk_skills": "正在安裝最新的 AI 技能...",
       "sdk_skills_updated": "AI 技能已是最新版本",
       "sdk_skills_update_failed": "無法安裝 AI 技能",
@@ -1471,7 +1473,6 @@
         "title": "互动",
         "description": "了解用户如何与你的 Place 互动。",
         "minutes": "分钟",
-        "delta": "{value} 分钟",
         "vs_last_week": "{value}（对比上周）",
         "daily": {
           "title": "平均每日游玩时长",

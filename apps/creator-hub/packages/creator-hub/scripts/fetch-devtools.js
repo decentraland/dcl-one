@@ -11,7 +11,10 @@
  * so packaging has it even when CI restored node_modules from cache and skipped the install.
  *
  * The performance panel's trace fixtures (~130 MB of test recordings) are left out; the
- * frontend never loads them.
+ * frontend never loads them. Also left out, because nothing that `devtools_app.html` imports
+ * reaches them: the Lighthouse panel, worker and bundle (its `-meta.js` import is commented out
+ * in the fork), the legacy test runner, the TypeScript build configs, and every UI locale but
+ * `en-US`. `en-US` is the default language and the fallback when another locale is missing.
  */
 import path from 'path';
 import fs from 'fs';
@@ -21,7 +24,26 @@ import { fileURLToPath } from 'url';
 
 const REPO = 'https://github.com/decentraland/devtools-frontend.git';
 const COMMIT = '6c29ec99b4136ffc2693a6645dde48c04d5cdf96';
-const EXCLUDED = ['.git', path.join('panels', 'timeline', 'fixtures')];
+const EXCLUDED = [
+  '.git',
+  'panels/timeline/fixtures',
+  'panels/lighthouse',
+  'entrypoints/lighthouse_worker',
+  'third_party/lighthouse',
+  'legacy_test_runner',
+];
+const LOCALES = 'core/i18n/locales';
+const KEPT_LOCALE = 'en-US.json';
+
+function isExcluded(relativePath) {
+  const posixPath = relativePath.split(path.sep).join('/');
+  if (EXCLUDED.includes(posixPath) || posixPath.endsWith('tsconfig.json')) return true;
+  return (
+    path.posix.dirname(posixPath) === LOCALES &&
+    posixPath.endsWith('.json') &&
+    path.posix.basename(posixPath) !== KEPT_LOCALE
+  );
+}
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const target = path.join(packageDir, 'devtools-frontend');
@@ -39,8 +61,18 @@ function isCurrent() {
   }
 }
 
+/** A copy fetched before the exclusion list grew has the right commit and the extra files. */
+function prune(dir = target) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (isExcluded(path.relative(target, full))) fs.rmSync(full, { recursive: true, force: true });
+    else if (entry.isDirectory()) prune(full);
+  }
+}
+
 export default function fetchDevtools() {
   if (isCurrent()) {
+    prune();
     console.log(`devtools-frontend is at ${COMMIT.slice(0, 12)}`);
     return;
   }
@@ -53,7 +85,7 @@ export default function fetchDevtools() {
     fs.rmSync(target, { recursive: true, force: true });
     fs.cpSync(checkout, target, {
       recursive: true,
-      filter: source => !EXCLUDED.includes(path.relative(checkout, source)),
+      filter: source => !isExcluded(path.relative(checkout, source)),
     });
     fs.writeFileSync(marker, `${COMMIT}\n`);
     console.log(`devtools-frontend fetched at ${COMMIT.slice(0, 12)}`);

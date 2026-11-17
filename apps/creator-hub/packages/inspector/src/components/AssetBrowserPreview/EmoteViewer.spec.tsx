@@ -7,7 +7,8 @@ const preview = vi.hoisted(() => ({
   props: null as { onLoad?: () => void; onError?: (error: Error) => void } | null,
 }));
 
-vi.mock('decentraland-ui', () => ({
+vi.mock('../WearablePreview', () => ({
+  isPreviewMessage: () => false,
   WearablePreview: Object.assign(
     (props: { onLoad?: () => void; onError?: (error: Error) => void }) => {
       preview.props = props;

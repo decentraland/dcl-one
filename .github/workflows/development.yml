@@ -363,6 +363,10 @@ jobs:
         if: steps.web-coverage.outputs.run-web-unit-tests != 'false'
         timeout-minutes: 20
         run: nix develop --command pnpm --dir apps/ui3 test
+      - name: Run UI3 browser tests
+        if: steps.web-coverage.outputs.run-web-unit-tests != 'false'
+        timeout-minutes: 10
+        run: nix develop --command pnpm --dir apps/ui3 test:browser
       - name: Run Sites unit tests
         id: sites-tests
         if: steps.web-coverage.outputs.run-web-unit-tests != 'false'

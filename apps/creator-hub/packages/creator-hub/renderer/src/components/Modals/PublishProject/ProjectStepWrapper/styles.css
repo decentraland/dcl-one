@@ -24,6 +24,11 @@
   gap: 6px;
 }
 
+/* The address keeps the font stack it had before the ui3 atom. */
+.ProjectStepWrapper .chip.address span {
+  font-family: Roboto, Helvetica, Arial, sans-serif;
+}
+
 .ProjectStepWrapper .network {
   background-color: #1f87e5;
   text-transform: uppercase;
@@ -83,7 +88,7 @@
   color: var(--dcl-silver);
 }
 
-.ProjectStepWrapper .ProjectContainer .info .text .parcels .MuiSvgIcon-root {
+.ProjectStepWrapper .ProjectContainer .info .text .parcels svg {
   width: 12px;
   height: 12px;
 }

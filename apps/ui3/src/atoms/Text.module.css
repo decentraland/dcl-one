@@ -1,0 +1,22 @@
+.root { margin: 0; font-family: var(--text-font, inherit); font-weight: 400; }
+
+.root[data-variant="h3"] { font-size: 3rem; font-weight: 600; line-height: 1.167; letter-spacing: 0; }
+.root[data-variant="h4"] { font-size: 2.125rem; font-weight: 500; line-height: 1.235; letter-spacing: .00735em; }
+.root[data-variant="h5"] { font-size: 1.5rem; font-weight: 500; line-height: 1.334; letter-spacing: 0; }
+.root[data-variant="h6"] { font-size: 1.25rem; font-weight: 500; line-height: 1.6; letter-spacing: .0075em; }
+.root[data-variant="subtitle1"] { font-size: 1rem; line-height: 1.75; letter-spacing: .00938em; }
+.root[data-variant="subtitle2"] { font-size: .875rem; font-weight: 600; line-height: 1.57; letter-spacing: .00714em; }
+.root[data-variant="body1"] { font-size: 1rem; line-height: 1.5; letter-spacing: .00938em; }
+.root[data-variant="body2"] { font-size: .875rem; line-height: 1.43; letter-spacing: .01071em; }
+.root[data-variant="caption"] { font-size: .75rem; line-height: 1.66; letter-spacing: .03333em; }
+.root[data-variant="overline"] { font-size: .75rem; line-height: 2.66; letter-spacing: .08333em; text-transform: uppercase; }
+
+.root[data-tone="primary"] { color: var(--text-tone-primary, var(--text)); }
+.root[data-tone="secondary"] { color: var(--text-tone-secondary, var(--ink-7)); }
+.root[data-tone="error"] { color: var(--error); }
+.root[data-tone="disabled"] { color: var(--text-tone-disabled, var(--ink-45)); }
+
+.root[data-align="left"] { text-align: left; }
+.root[data-align="center"] { text-align: center; }
+.root[data-align="right"] { text-align: right; }
+.root[data-nowrap] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

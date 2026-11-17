@@ -1,22 +1,24 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
-import { dclColors, useTheme } from 'decentraland-ui2';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { Dropdown } from '.';
 
 describe('Dropdown', () => {
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    document.documentElement.removeAttribute('style');
+  });
 
   describe('when rendered', () => {
     beforeEach(() => {
       render(
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <Dropdown
             label="Options for Plaza"
             options={[{ text: 'Duplicate', handler: () => {} }]}
           />
-        </ThemeProvider>,
+        </TestProviders>,
       );
     });
 
@@ -30,7 +32,7 @@ describe('Dropdown', () => {
   describe('when the menu is opened', () => {
     beforeEach(() => {
       render(
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <Dropdown
             label="Options for Plaza"
             options={[
@@ -38,7 +40,7 @@ describe('Dropdown', () => {
               { text: 'Delete', handler: () => {} },
             ]}
           />
-        </ThemeProvider>,
+        </TestProviders>,
       );
       fireEvent.click(screen.getByRole('button', { name: 'Options for Plaza' }));
     });
@@ -77,7 +79,7 @@ describe('Dropdown', () => {
   describe('when only some options carry a glyph', () => {
     beforeEach(() => {
       render(
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <Dropdown
             label="Options for Plaza"
             options={[
@@ -85,7 +87,7 @@ describe('Dropdown', () => {
               { text: 'Permissions', handler: () => {} },
             ]}
           />
-        </ThemeProvider>,
+        </TestProviders>,
       );
       fireEvent.click(screen.getByRole('button', { name: 'Options for Plaza' }));
     });
@@ -100,12 +102,12 @@ describe('Dropdown', () => {
   describe('when no option carries a glyph', () => {
     beforeEach(() => {
       render(
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <Dropdown
             label="Options for Plaza"
             options={[{ text: 'Unpublish', handler: () => {} }]}
           />
-        </ThemeProvider>,
+        </TestProviders>,
       );
       fireEvent.click(screen.getByRole('button', { name: 'Options for Plaza' }));
     });
@@ -118,6 +120,7 @@ describe('Dropdown', () => {
   });
 
   describe('when it is the filled header trigger', () => {
+    const WHITE_10 = 'rgba(255, 255, 255, 0.1)';
     const paint = (color: string) => {
       const probe = document.createElement('div');
       probe.style.backgroundColor = color;
@@ -128,20 +131,21 @@ describe('Dropdown', () => {
     };
 
     beforeEach(() => {
+      document.documentElement.style.setProperty('--palette-whiteTransparent-subtle', WHITE_10);
       render(
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <Dropdown
             label="Options for Plaza"
             variant="filled"
             options={[{ text: 'Copy URL', handler: () => {} }]}
           />
-        </ThemeProvider>,
+        </TestProviders>,
       );
     });
 
     it('should have no fill at rest, and White 10 while its menu is open', () => {
       const trigger = screen.getByRole('button', { name: 'Options for Plaza' });
-      const white10 = paint(dclColors.whiteTransparent.subtle);
+      const white10 = paint(WHITE_10);
 
       expect(getComputedStyle(trigger).backgroundColor).not.toBe(white10);
 
@@ -152,6 +156,7 @@ describe('Dropdown', () => {
   });
 
   describe('when an option has the danger tone', () => {
+    const ERROR = 'rgb(251, 59, 59)';
     const computedColor = (color: string) => {
       const probe = document.createElement('div');
       probe.style.color = color;
@@ -161,16 +166,10 @@ describe('Dropdown', () => {
       return value;
     };
 
-    let errorMain = '';
-    const ThemeProbe = () => {
-      errorMain = useTheme().palette.error.main;
-      return null;
-    };
-
     beforeEach(() => {
+      document.documentElement.style.setProperty('--error', ERROR);
       render(
-        <ThemeProvider theme={dark}>
-          <ThemeProbe />
+        <TestProviders>
           <Dropdown
             label="Options for Plaza"
             options={[
@@ -183,13 +182,13 @@ describe('Dropdown', () => {
               },
             ]}
           />
-        </ThemeProvider>,
+        </TestProviders>,
       );
       fireEvent.click(screen.getByRole('button', { name: 'Options for Plaza' }));
     });
 
     it('should paint its glyph and label in the error colour, leaving the other items alone', () => {
-      const error = computedColor(errorMain);
+      const error = computedColor(ERROR);
 
       expect(getComputedStyle(screen.getByTestId('danger-glyph')).color).toBe(error);
       expect(getComputedStyle(screen.getByRole('menuitem', { name: 'Unpublish' })).color).toBe(
@@ -202,10 +201,50 @@ describe('Dropdown', () => {
     });
   });
 
+  describe('when the menu is open over a card that opens on a click', () => {
+    let openCard: ReturnType<typeof vi.fn<() => void>>;
+
+    beforeEach(() => {
+      openCard = vi.fn<() => void>();
+      render(
+        <TestProviders>
+          <div onClick={openCard}>
+            <Dropdown
+              label="Options for Plaza"
+              options={[{ text: 'Duplicate', handler: () => {} }]}
+            />
+          </div>
+        </TestProviders>,
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Options for Plaza' }));
+    });
+
+    it('should close the menu on a press outside it and keep that press from the card', () => {
+      // The layer with no paint over the page, before the surface of the menu.
+      const backdrop = screen.getByRole('menu').parentElement
+        ?.previousElementSibling as HTMLElement;
+      expect(backdrop.getAttribute('aria-hidden')).toBe('true');
+
+      fireEvent.pointerDown(backdrop);
+      fireEvent.mouseDown(backdrop);
+      fireEvent.click(backdrop);
+
+      expect(screen.queryByRole('menu')).toBeNull();
+      expect(openCard).not.toHaveBeenCalled();
+    });
+
+    it('should close the menu on a second click of the trigger', () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Options for Plaza' }));
+
+      expect(screen.queryByRole('menu')).toBeNull();
+      expect(openCard).not.toHaveBeenCalled();
+    });
+  });
+
   describe('when the menu is opened with the mouse after earlier keyboard use', () => {
     beforeEach(() => {
       render(
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <Dropdown
             label="Options for Plaza"
             options={[
@@ -213,17 +252,17 @@ describe('Dropdown', () => {
               { text: 'Delete', handler: () => {} },
             ]}
           />
-        </ThemeProvider>,
+        </TestProviders>,
       );
       fireEvent.keyDown(document.body, { key: 'Tab' });
       fireEvent.click(screen.getByRole('button', { name: 'Options for Plaza' }));
     });
 
     it('should highlight no row until an arrow key moves', () => {
-      const menu = screen.getByRole('menu').closest('.MuiPopover-root');
+      const menu = screen.getByRole('menu').parentElement;
 
       expect(menu?.classList.contains('ArrowKeyed')).toBe(false);
-      fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowDown' });
+      fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Duplicate' }), { key: 'ArrowDown' });
       expect(menu?.classList.contains('ArrowKeyed')).toBe(true);
     });
   });
