@@ -695,11 +695,10 @@ mod tests {
         }
         let all = Arc::new(AtomicU64::new(0));
         let aggregate = Arc::new(AtomicU64::new(0));
-        let _subscriber =
-            tracing::subscriber::set_default(tracing_subscriber::registry().with(Warnings {
-                all: all.clone(),
-                aggregate: aggregate.clone(),
-            }));
+        let _capture = crate::test_logs::capture(tracing_subscriber::registry().with(Warnings {
+            all: all.clone(),
+            aggregate: aggregate.clone(),
+        }));
         let jobs = Jobs::new();
         let out = Observations::new(Arc::new(crate::gatekeeper::bus::DisabledBus), &jobs);
         for _ in 0..10_000 {

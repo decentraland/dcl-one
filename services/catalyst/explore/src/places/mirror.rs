@@ -178,8 +178,13 @@ pub struct PassOutcome {
     pub cancelled: bool,
     /// True only when every page fetched and every row upserted cleanly; the
     /// delete sweep is gated on it so a flaky cycle can never wipe rows it
-    /// merely failed to see.
+    /// merely failed to see. A resumed events or worlds pass is never
+    /// complete: what it skipped before the interruption is not persisted.
     pub complete: bool,
+    /// This run fetched every page it asked for and ended at the listing's
+    /// end, not at the offset ceiling; what it cannot know is whether an
+    /// interrupted run before it skipped a page.
+    pub fetched_all: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -372,6 +377,7 @@ pub async fn run_places_pass(
     let start = mirror_state::begin_pass(pool, PLACES_MIRROR, base).await?;
     let mut out = PassOutcome {
         complete: true,
+        fetched_all: true,
         resumed_from: start.resumed.then_some(start.offset),
         upserted: start.rows as usize,
         ..Default::default()
@@ -436,6 +442,7 @@ pub async fn run_places_pass(
                 "places mirror: offset ceiling reached; ending pass incomplete"
             );
             out.complete = false;
+            out.fetched_all = false;
             ceiling_error = Some(format!(
                 "offset ceiling {MAX_OFFSET} reached with upstream total {total}"
             ));
@@ -564,7 +571,10 @@ pub async fn run_worlds_pass(
     reclaim_local(pool).await?;
     let start = mirror_state::begin_pass(pool, WORLDS_MIRROR, base).await?;
     let mut out = PassOutcome {
-        complete: true,
+        // The cursor does not record the pages or rows skipped before the
+        // interruption, so a resumed pass never counts as complete.
+        complete: !start.resumed,
+        fetched_all: true,
         resumed_from: start.resumed.then_some(start.offset),
         upserted: start.rows as usize,
         ..Default::default()
@@ -580,6 +590,7 @@ pub async fn run_worlds_pass(
         if offset >= MAX_OFFSET {
             tracing::warn!(offset, "worlds mirror: offset ceiling reached; ending pass");
             out.complete = false;
+            out.fetched_all = false;
             break;
         }
         let url = format!("{base}/api/worlds?limit={PAGE}&offset={offset}");
@@ -608,6 +619,7 @@ pub async fn run_worlds_pass(
             Err(e) => {
                 out.failed_pages += 1;
                 out.complete = false;
+                out.fetched_all = false;
                 consecutive_failures += 1;
                 tracing::warn!(error = %e, url = %url, "worlds mirror: page fetch failed; skipped");
                 let _ = mirror_state::record_error(pool, WORLDS_MIRROR, &format!("{e:#}")).await;
@@ -634,10 +646,14 @@ pub async fn run_worlds_pass(
             rows: out.upserted as i64,
             swept: out.swept as i64,
             error: (!out.complete).then(|| {
-                format!(
+                let mut reason = format!(
                     "{} failed pages, {} failed rows",
                     out.failed_pages, out.failed_rows
-                )
+                );
+                if let Some(offset) = out.resumed_from {
+                    reason.push_str(&format!("; resumed at offset {offset}"));
+                }
+                reason
             }),
         },
     )

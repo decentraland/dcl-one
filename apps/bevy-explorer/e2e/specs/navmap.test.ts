@@ -5,7 +5,8 @@
 //
 // Port: Unity's chip `Sport` is `Sports` here. `Shop` is also a top-bar tab, so its chip is the
 // match on the row of `All`. Like Unity's, it is a smoke test: a chip is found, actionable and
-// clicked, and never read back (a chip carries no pressed state).
+// clicked, and its pressed state is never read back. Each click searches the chip's category,
+// which opens the results panel to the right of the chip row.
 import { spec, type Explorer, type Selector } from '../driver/index.ts'
 import { PAGE_OPEN_TIMEOUT_MS, closePage, openWithKey } from './pages.ts'
 

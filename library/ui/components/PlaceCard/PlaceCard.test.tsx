@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { PlaceCard, type PlaceCardLinkProps } from './PlaceCard'
@@ -114,7 +116,7 @@ describe('PlaceCard', () => {
           href={to}
           onClick={(event) => {
             event.preventDefault()
-            onClick?.()
+            onClick?.(event)
           }}
         >
           {children}
@@ -172,5 +174,81 @@ describe('PlaceCard', () => {
       rerender(<PlaceCard loading loadingLabel="Loading place" />)
       expect(screen.getByRole('progressbar', { name: 'Loading place' })).toBeInTheDocument()
     })
+  })
+
+  describe('when the caller handles its clicks', () => {
+    it.each(['grid', 'live'] as const)(
+      'hands the %s title click to onOpen, so it can open the place in place',
+      (variant) => {
+        const onOpen = vi.fn((click: { preventDefault: () => void }) => click.preventDefault())
+        setup({ variant, onOpen })
+        expect(fireEvent.click(screen.getByRole('link', { name: 'Genesis Plaza' }))).toBe(false)
+        expect(onOpen).toHaveBeenCalledOnce()
+      }
+    )
+
+    it.each(['grid', 'live'] as const)('hands the %s JUMP IN click to onJumpIn', (variant) => {
+      const onJumpIn = vi.fn((click: { preventDefault: () => void }) => click.preventDefault())
+      setup({ variant, onJumpIn })
+      expect(fireEvent.click(screen.getByRole('link', { name: 'Jump in' }))).toBe(false)
+      expect(onJumpIn).toHaveBeenCalledOnce()
+    })
+
+    it('follows JUMP IN without onJumpIn', () => {
+      setup({ variant: 'live' })
+      expect(fireEvent.click(screen.getByRole('link', { name: 'Jump in' }))).toBe(true)
+    })
+  })
+
+  describe('when it is the page\'s first card', () => {
+    it('preloads the cover at high priority', () => {
+      setup({ variant: 'live', priority: true })
+      const hint = document.head.querySelector('link[rel="preload"][as="image"]')
+      expect(hint).toHaveAttribute('fetchpriority', 'high')
+    })
+  })
+
+  describe('when the presence count has a label', () => {
+    it('names the count for assistive technology and hides the bare number', () => {
+      setup({ variant: 'live', players: 12, playersLabel: '12 online' })
+      expect(screen.getByText('12 online')).toBeInTheDocument()
+      expect(screen.getByText('12')).toHaveAttribute('aria-hidden', 'true')
+    })
+
+    it('shows the bare number without a label', () => {
+      setup({ variant: 'live', players: 12 })
+      expect(screen.getByText('12')).not.toHaveAttribute('aria-hidden')
+      expect(screen.queryByText('12 online')).toBeNull()
+    })
+
+    it('shows no count when it is hidden, even with a label', () => {
+      setup({ variant: 'live', players: 0, showPlayers: false, playersLabel: '0 online' })
+      expect(screen.queryByText('0 online')).toBeNull()
+    })
+  })
+})
+
+// Vitest runs from library/ui (its config's root), where jsdom gives no file URL for this module.
+const css = readFileSync(join(process.cwd(), 'components/PlaceCard/PlaceCard.module.css'), 'utf8')
+const mediaOf = (query: string): string => {
+  const start = css.indexOf(`@media ${query} {`)
+  if (start < 0) throw new Error(`no @media ${query}`)
+  return css.slice(start, css.indexOf('\n  }\n', start))
+}
+
+describe('PlaceCard live motion', () => {
+  it('slides JUMP IN up over the By row on hover and keyboard focus', () => {
+    expect(css).toMatch(/\.liveJump \{[^}]*opacity: 0;\s*transform: translateY\(calc\(100% \+ min\(3\.948cqw, 16px\)\)\)/)
+    expect(css).toMatch(/\.liveCard:hover \.liveJump,\s*\.liveCard:focus-within \.liveJump \{\s*opacity: 1;\s*transform: translateY\(0\)/)
+  })
+
+  it('keeps the By row and JUMP IN shown, unmoved, on a touch screen of any width', () => {
+    const touch = mediaOf('(max-width: 990.98px), (hover: none)')
+    expect(touch).toMatch(/\.liveJump \{[^}]*opacity: 1;[^}]*transform: none;[^}]*pointer-events: auto/)
+    expect(touch).toMatch(/\.liveBy,[^{]*\{[^}]*position: static;[^}]*opacity: 1/)
+  })
+
+  it('drops the slide under reduced motion', () => {
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s*\.liveJump \{\s*transform: none;/)
   })
 })

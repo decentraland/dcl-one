@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::scene_state::crdt::{CrdtEngine, decode_batch};
 use crate::scene_state::runtime::{
@@ -60,8 +61,15 @@ pub struct SharedState {
     pub running: AtomicBool,
 
     /// Bounded, recycled client indices. Shared with the scene thread, which
-    /// releases a slot only once it has reclaimed that client's entity range.
+    /// releases a slot only once it has reclaimed that client's entity range;
+    /// once the runtime stopped, `JsRuntime::on_client_close` releases it. A
+    /// slot is never freed while its client's socket may still be open.
     pub slots: Arc<ClientSlots>,
+
+    /// Each connected client's close request (its `Client::cancel`). A runtime
+    /// that stops cancels them all, so the host closes every socket and frees
+    /// each slot through its normal removal.
+    pub closes: dashmap::DashMap<u32, CancellationToken>,
 
     /// Client bytes queued toward the scene thread and not yet read.
     pub inbound: Arc<InboundBudget>,
@@ -74,6 +82,40 @@ pub struct SharedState {
 
     /// Clients this scene closed after too many dropped frames.
     pub desynced_closes: AtomicU64,
+}
+
+impl SharedState {
+    /// Asks the host to close every client of a stopped runtime. Called after
+    /// `running` is cleared: a client opened concurrently either is seen here
+    /// or sees the runtime stopped (`JsRuntime::on_client_open`).
+    pub(super) fn close_clients(&self) {
+        for close in self.closes.iter() {
+            close.cancel();
+        }
+    }
+}
+
+/// Held by the scene thread: a panic that unwinds out of it stops the
+/// runtime as [`finish`] does (`running` cleared, every client asked to
+/// close), so clients never stay connected to a thread that is gone. A panic
+/// inside a V8 callback aborts the process instead and never reaches it.
+pub(super) struct StopOnPanic {
+    pub(super) shared: Arc<SharedState>,
+    pub(super) watchdog: Arc<Watchdog>,
+    pub(super) scene_hash: String,
+}
+
+impl Drop for StopOnPanic {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            return;
+        }
+        self.shared.running.store(false, Ordering::SeqCst);
+        self.watchdog.stopped.store(true, Ordering::SeqCst);
+        self.shared.close_clients();
+        *self.watchdog.isolate.lock() = None;
+        tracing::error!(scene = %self.scene_hash, "scene JS thread panicked; runtime stopped");
+    }
 }
 
 pub(super) struct Watchdog {
@@ -91,6 +133,17 @@ pub(super) struct Watchdog {
 }
 
 impl Watchdog {
+    fn new() -> Self {
+        Watchdog {
+            deadline_ms: AtomicU64::new(0),
+            tick_active: AtomicBool::new(false),
+            fired: AtomicBool::new(false),
+            stopped: AtomicBool::new(false),
+            epoch: std::time::Instant::now(),
+            isolate: parking_lot::Mutex::new(None),
+        }
+    }
+
     fn now_ms(&self) -> u64 {
         self.epoch.elapsed().as_millis() as u64
     }
@@ -216,20 +269,14 @@ pub fn spawn(
         outbound_meters: dashmap::DashMap::new(),
         running: AtomicBool::new(true),
         slots: Arc::clone(&slots),
+        closes: dashmap::DashMap::new(),
         inbound: Arc::new(InboundBudget::new(&limits)),
         parked: AtomicBool::new(false),
         inbound_drops: AtomicU64::new(0),
         desynced_closes: AtomicU64::new(0),
     });
 
-    let watchdog = Arc::new(Watchdog {
-        deadline_ms: AtomicU64::new(0),
-        tick_active: AtomicBool::new(false),
-        fired: AtomicBool::new(false),
-        stopped: AtomicBool::new(false),
-        epoch: std::time::Instant::now(),
-        isolate: parking_lot::Mutex::new(None),
-    });
+    let watchdog = Arc::new(Watchdog::new());
 
     let (tx, rx) = mpsc::unbounded_channel::<Command>();
 
@@ -255,6 +302,11 @@ pub fn spawn(
     let join = std::thread::Builder::new()
         .name(format!("scene-js-{scene_hash}"))
         .spawn(move || {
+            let _stop_on_panic = StopOnPanic {
+                shared: Arc::clone(&thread_shared),
+                watchdog: Arc::clone(&thread_watchdog),
+                scene_hash: thread_hash.clone(),
+            };
             run_scene_thread(
                 SceneScript {
                     scene_hash: thread_hash,
@@ -366,7 +418,7 @@ unsafe extern "C" fn scene_oom(location: *const std::ffi::c_char, _details: &v8:
             PARKED.add(scene);
             shared.parked.store(true, Ordering::SeqCst);
             shared.running.store(false, Ordering::SeqCst);
-            shared.slots.clear();
+            shared.close_clients();
             watchdog.stopped.store(true, Ordering::SeqCst);
         }
         None => {
@@ -388,7 +440,7 @@ pub(super) fn finish(
     shared.running.store(false, Ordering::SeqCst);
     watchdog.stopped.store(true, Ordering::SeqCst);
 
-    shared.slots.clear();
+    shared.close_clients();
 
     *watchdog.isolate.lock() = None;
     if let Some(j) = wd_thread {
@@ -397,15 +449,25 @@ pub(super) fn finish(
     tracing::info!(scene = %scene_hash, "scene JS loop stopped");
 }
 
+// The watchdog decides and terminates in one critical section on `isolate`:
+// it re-reads `tick_active` and the deadline under the lock, then sets `fired`
+// and terminates before releasing it. `arm` and `disarm` change `tick_active`
+// and the deadline only under the same lock. So every termination falls
+// strictly between an `arm` and its `disarm`, and `was_terminated`, which
+// always follows `disarm`, sees it and cancels it. No termination reaches a
+// later phase. None of these calls takes another lock while holding it.
+// `arm` leaves `fired` to `was_terminated`: only the heap-limit callback can
+// set it outside a phase, and the next phase then reports that request.
 impl Watchdog {
     pub(super) fn arm(&self, budget_ms: u64) {
-        self.fired.store(false, Ordering::SeqCst);
+        let _isolate = self.isolate.lock();
         self.deadline_ms
             .store(self.now_ms().saturating_add(budget_ms), Ordering::SeqCst);
         self.tick_active.store(true, Ordering::SeqCst);
     }
 
     pub(super) fn disarm(&self) {
+        let _isolate = self.isolate.lock();
         self.tick_active.store(false, Ordering::SeqCst);
     }
 
@@ -416,26 +478,40 @@ impl Watchdog {
         }
         fired
     }
+
+    /// One watchdog check: terminates the armed phase once its deadline has
+    /// passed.
+    fn fire_if_due(&self) -> bool {
+        self.fire_if_due_with(|| {})
+    }
+
+    /// [`Self::fire_if_due`], running `decided` between the decision and the
+    /// termination, both under the isolate lock.
+    fn fire_if_due_with(&self, decided: impl FnOnce()) -> bool {
+        let isolate = self.isolate.lock();
+        if !self.tick_active.load(Ordering::SeqCst)
+            || self.now_ms() < self.deadline_ms.load(Ordering::SeqCst)
+        {
+            return false;
+        }
+        decided();
+        self.fired.store(true, Ordering::SeqCst);
+        if let Some(h) = isolate.as_ref() {
+            h.terminate_execution();
+        }
+        true
+    }
 }
 
 pub(super) fn watchdog_loop(watchdog: Arc<Watchdog>) {
     while !watchdog.stopped.load(Ordering::SeqCst) {
-        if watchdog.tick_active.load(Ordering::SeqCst) {
-            let now = watchdog.now_ms();
-            let deadline = watchdog.deadline_ms.load(Ordering::SeqCst);
-            if now >= deadline {
-                watchdog.fired.store(true, Ordering::SeqCst);
-                if let Some(h) = watchdog.isolate.lock().as_ref() {
-                    h.terminate_execution();
-                }
-
-                while watchdog.tick_active.load(Ordering::SeqCst)
-                    && !watchdog.stopped.load(Ordering::SeqCst)
-                {
-                    std::thread::sleep(std::time::Duration::from_millis(2));
-                }
-                continue;
+        if watchdog.fire_if_due() {
+            while watchdog.tick_active.load(Ordering::SeqCst)
+                && !watchdog.stopped.load(Ordering::SeqCst)
+            {
+                std::thread::sleep(std::time::Duration::from_millis(2));
             }
+            continue;
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
@@ -1323,6 +1399,89 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_spinning_on_update_getter_is_terminated() {
+        let js = r#"
+            Object.defineProperty(module.exports, 'onUpdate', {
+              get: function () { for (;;) {} }
+            });
+        "#
+        .to_string();
+        let limits = RuntimeLimits {
+            js_tick_budget_ms: 100,
+            ..RuntimeLimits::default()
+        };
+        let handle = spawn(
+            "getter-spin".into(),
+            js,
+            "dcl-test".into(),
+            limits,
+            Vec::new(),
+            None,
+        );
+        // Bounded well below the hang guard, so the test fails fast if the
+        // lookup runs unwatched.
+        let bound = std::time::Instant::now()
+            + std::time::Duration::from_millis(limits.js_tick_budget_ms * 30);
+        wait_for(|| {
+            !handle.shared.running.load(Ordering::SeqCst) || std::time::Instant::now() >= bound
+        });
+        assert!(
+            !handle.shared.running.load(Ordering::SeqCst),
+            "the watchdog must stop an onUpdate getter that never returns"
+        );
+    }
+
+    /// The watchdog decides a phase is over budget, and the scene disarms
+    /// before the termination lands. The scene must still see it, so it can
+    /// never carry into the next phase.
+    #[test]
+    fn a_termination_decided_before_disarm_is_reported_by_that_phase() {
+        let wd = Arc::new(Watchdog::new());
+        wd.arm(0);
+
+        let (decided_tx, decided_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let fire = std::thread::spawn({
+            let wd = Arc::clone(&wd);
+            move || {
+                wd.fire_if_due_with(|| {
+                    decided_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                })
+            }
+        });
+        decided_rx
+            .recv_timeout(crate::shared::test_wait::HANG_GUARD)
+            .expect("the watchdog decides the phase is over budget");
+
+        let (seen_tx, seen_rx) = std::sync::mpsc::channel();
+        let scene = std::thread::spawn({
+            let wd = Arc::clone(&wd);
+            move || {
+                wd.disarm();
+                seen_tx.send(wd.was_terminated()).unwrap();
+            }
+        });
+        // The scene may report only after the decided termination has landed.
+        let early = seen_rx.recv_timeout(std::time::Duration::from_millis(100));
+        release_tx.send(()).unwrap();
+        assert!(fire.join().unwrap(), "the watchdog fires the decided phase");
+        let seen = early
+            .or_else(|_| seen_rx.recv_timeout(crate::shared::test_wait::HANG_GUARD))
+            .expect("the scene thread reports");
+        scene.join().unwrap();
+
+        assert!(
+            seen,
+            "the phase that was decided must report the termination"
+        );
+        assert!(
+            !wd.fired.load(Ordering::SeqCst),
+            "no termination may remain for the next phase"
+        );
+    }
+
     /// Runs `body` in `onStart` and reports whether it set `ok`, by writing
     /// entity 600 only when it did.
     fn scene_reports(name: &str, body: &str, limits: RuntimeLimits) -> bool {
@@ -1744,5 +1903,40 @@ mod tests {
         parked.add("a");
         parked.add("");
         assert_eq!((parked.count(), parked.contains("a")), (2, true));
+    }
+
+    /// A panic that unwinds out of the scene thread stops the runtime and
+    /// asks every client to close; a normal exit leaves that to `finish`.
+    #[test]
+    fn a_panicking_scene_thread_stops_the_runtime_and_closes_its_clients() {
+        let handle = spawn(
+            "panicking-scene".into(),
+            "registerScene({ reservedLocalEntities: 512, networkEntitiesLimit: { serverLimit: 512, clientLimit: 512 } }, function (ev) {});".into(),
+            "dcl-test".into(),
+            RuntimeLimits::default(),
+            Vec::new(),
+            None,
+        );
+        let close = CancellationToken::new();
+        handle.shared.closes.insert(0, close.clone());
+        let guard = |handle: &JsRuntimeHandle| StopOnPanic {
+            shared: Arc::clone(&handle.shared),
+            watchdog: Arc::clone(&handle.watchdog),
+            scene_hash: handle.scene_hash.clone(),
+        };
+
+        drop(guard(&handle));
+        assert!(handle.shared.running.load(Ordering::SeqCst));
+        assert!(!close.is_cancelled());
+
+        let held = guard(&handle);
+        let thread = std::thread::spawn(move || {
+            let _held = held;
+            panic!("scene thread bug");
+        });
+        assert!(thread.join().is_err());
+        assert!(!handle.shared.running.load(Ordering::SeqCst));
+        assert!(handle.watchdog.stopped.load(Ordering::SeqCst));
+        assert!(close.is_cancelled(), "every client is asked to close");
     }
 }

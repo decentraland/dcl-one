@@ -1,15 +1,17 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { ToastHost } from '../../design'
 import { Sidebar } from '../../features/sidebar/Sidebar'
+import { NEARBY_VOICE_BLOCKED } from '../../features/voice/NearbyVoiceRefusals'
 import { fakeSession } from '../harness'
 
-function renderSidebar(over: { enabled?: boolean; available?: boolean } = {}) {
+function renderSidebar(over: { enabled?: boolean; available?: boolean; sceneBlocked?: boolean } = {}) {
   const s = fakeSession()
   s.mic = { ...s.mic, available: true, enabled: false, toggle: vi.fn(), ...over }
   s.settings = { ...s.settings, list: [{ name: 'Voice Volume', category: 'audio', description: '', minValue: 0, maxValue: 100, namedVariants: [], value: 70, default: 100, stepSize: 1 }], set: vi.fn(), load: vi.fn() }
-  render(<Sidebar session={s} />)
-  return s
+  const view = render(<><Sidebar session={s} /><ToastHost /></>)
+  return Object.assign(s, { rerender: (mic: Partial<typeof s.mic>) => view.rerender(<><Sidebar session={{ ...s, mic: { ...s.mic, ...mic } }} /><ToastHost /></>) })
 }
 
 afterEach(() => localStorage.clear())
@@ -57,5 +59,28 @@ describe('nearby voice', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Nearby Voice' }))
     expect(screen.getByRole('button', { name: 'Speak' })).toBeDisabled()
     expect(screen.getByText('No microphone available')).toBeInTheDocument()
+  })
+
+  it('in a scene that turns nearby voice off, the popover opens with Speak disabled and hearing adjustable', async () => {
+    const s = renderSidebar({ sceneBlocked: true })
+    const button = screen.getByRole('button', { name: 'Nearby Voice' })
+    expect(button).toHaveAttribute('data-voice', 'blocked')
+    expect(button.querySelector('[data-indicator]')).toBeNull()
+    await userEvent.click(button)
+    expect(screen.getByRole('dialog', { name: 'Nearby voice' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Speak' })).toBeDisabled()
+    expect(screen.getByText(NEARBY_VOICE_BLOCKED)).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: 'Hear others' })).toBeEnabled()
+    fireEvent.change(screen.getByRole('slider', { name: 'Voice volume' }), { target: { value: '40' } })
+    expect(vi.mocked(s.settings.set)).toHaveBeenLastCalledWith('Voice Volume', 40)
+  })
+
+  it('walking into a scene that turns nearby voice off keeps the open popover and disables Speak', async () => {
+    const s = renderSidebar()
+    await userEvent.click(screen.getByRole('button', { name: 'Nearby Voice' }))
+    expect(screen.getByRole('button', { name: 'Speak' })).toBeEnabled()
+    s.rerender({ sceneBlocked: true })
+    expect(screen.getByRole('dialog', { name: 'Nearby voice' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Speak' })).toBeDisabled()
   })
 })

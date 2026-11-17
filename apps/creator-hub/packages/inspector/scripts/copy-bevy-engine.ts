@@ -22,7 +22,7 @@ const PACKAGE = '@dcl-regenesislabs/bevy-explorer-web';
 
 console.log(`Copying "${PACKAGE}" into "public/bevy-engine"...`);
 
-// Try to find the engine package at different levels (workspace hoists to root).
+// Try to find the engine package at different levels.
 // `engine/boot.js` marks the react-web layout our host page boots against.
 const possiblePaths = [
   resolve(__dirname, `../node_modules/${PACKAGE}`), // packages/inspector level
@@ -32,7 +32,8 @@ const possiblePaths = [
 let sourceDir: string | null = null;
 for (const path of possiblePaths) {
   if (fs.existsSync(resolve(path, 'engine', 'boot.js'))) {
-    sourceDir = path;
+    // The real folder: copying a linked package folder would copy the link, not the files.
+    sourceDir = fs.realpathSync(path);
     console.log(`Found ${PACKAGE} at: ${path}`);
     break;
   }
@@ -41,7 +42,7 @@ for (const path of possiblePaths) {
 if (!sourceDir) {
   throw new Error(
     `Could not find ${PACKAGE} (with engine/boot.js) at packages/inspector or root ` +
-      'level. Run `npm install`.',
+      'level. Run `pnpm install`.',
   );
 }
 

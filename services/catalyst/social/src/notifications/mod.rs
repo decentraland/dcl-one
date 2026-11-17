@@ -9,7 +9,8 @@
 //! Tables: `social.notifications`, `notification_deliveries`,
 //! `subscriptions`, `unconfirmed_emails`, `subscription_opt_outs`,
 //! `notification_reader_seen`, `broadcast_notifications`, `broadcast_reads`, `worn_history`, `first_wear_baseline`,
-//! `first_wear_cursor`, `land_transfer_cursor`.
+//! `land_transfer_cursor`; the first-wear cursor is the `friend_first_wear`
+//! row of `badge_cursors`.
 //!
 //! Mounted by `serve` as `.nest("/notifications", router(state))` (the old
 //! gateway stripped that prefix in front of the bundle); a per-vhost proxy
@@ -55,17 +56,7 @@ pub use store::{NewNotification, NotificationsStore, insert_notifications};
 
 pub const ADMIN_TOKEN_ENV: &str = "CATALYRST_NOTIFICATIONS_ADMIN_TOKEN";
 
-/// `NOTIFICATIONS_CDN_URL`'s default: upstream's `CDN_URL`.
-pub const DEFAULT_CDN_URL: &str = "https://assets-cdn.decentraland.org";
-
-/// `path` under the notification icons' CDN `base` (upstream `${CDN_URL}<path>`).
-pub fn cdn_asset(base: &str, path: &str) -> String {
-    format!(
-        "{}/{}",
-        base.trim().trim_end_matches('/'),
-        path.trim_start_matches('/')
-    )
-}
+pub use crate::shared::notifications::{DEFAULT_CDN_URL, cdn_asset};
 
 /// The settings `serve` resolves from `Config`; env names are the old
 /// binary's where they map 1:1 (`main.rs` of catalyrst-notifications).

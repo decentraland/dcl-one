@@ -36,7 +36,7 @@ export function resolvePackagedApp(): string {
   }
 
   const distRoot = join(creatorHubDir, 'dist');
-  const hint = 'run `npm run compile` in packages/creator-hub first, or set E2E_APP_PATH';
+  const hint = 'run `pnpm run compile` in packages/creator-hub first, or set E2E_APP_PATH';
 
   if (!existsSync(distRoot)) throw new Error(`e2e: no ${distRoot} — ${hint}`);
 

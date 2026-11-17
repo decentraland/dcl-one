@@ -16,10 +16,11 @@ use prost::Message as _;
 use rand::RngExt;
 use std::time::Duration;
 
-mod control_position;
+pub(crate) mod control_position;
 mod io;
 mod legacy_decode;
 mod legacy_fence;
+pub mod raw_transport;
 
 const MAX_CLIENT_MESSAGE_BYTES: usize = 16 * 1024;
 const AUTHORITY_OPERATION_TIMEOUT: Duration = Duration::from_secs(2);
@@ -35,8 +36,8 @@ pub(super) fn connector_routes(
 ) -> Router<AppState> {
     Router::new().route(
         "/ws",
-        axum::routing::any(move |method, uri, headers, peer, ws, state| {
-            connector_upgrade(method, uri, headers, peer, ws, state, http.clone())
+        axum::routing::any(move |method, uri, headers, peer, ws, raw, state| {
+            connector_upgrade(method, uri, headers, peer, ws, raw, state, http.clone())
         }),
     )
 }
@@ -47,6 +48,7 @@ async fn connector_upgrade(
     headers: axum::http::HeaderMap,
     peer: Peer,
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
+    raw: Option<axum::Extension<raw_transport::Signal>>,
     State(state): State<AppState>,
     http: std::sync::Arc<super::handlers::ConnectorHttp>,
 ) -> axum::response::Response {
@@ -58,7 +60,7 @@ async fn connector_upgrade(
         return http.respond(method, uri, headers).await;
     }
     match ws {
-        Ok(ws) => ws_upgrade(ws, State(state), headers, peer)
+        Ok(ws) => ws_upgrade(ws, State(state), headers, peer, raw)
             .await
             .into_response(),
         Err(error) => error.into_response(),
@@ -70,6 +72,7 @@ async fn ws_upgrade(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
     peer: Peer,
+    raw: Option<axum::Extension<raw_transport::Signal>>,
 ) -> impl IntoResponse {
     let start = std::time::Instant::now();
     let client = crate::shared::client_ip::distinct_client_ip(
@@ -93,7 +96,13 @@ async fn ws_upgrade(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let response = upgrade(ws, state.clone(), protocols, client.as_deref());
+    let response = upgrade(
+        ws,
+        state.clone(),
+        protocols,
+        client.as_deref(),
+        raw.map(|axum::Extension(raw)| raw),
+    );
     state
         .connector_metrics
         .observe_connector(crate::stats::http::Observation {
@@ -111,13 +120,20 @@ fn upgrade(
     state: AppState,
     protocols: Vec<String>,
     client: Option<&str>,
+    raw: Option<raw_transport::Signal>,
 ) -> axum::response::Response {
-    let Ok(ip_slot) = state.sockets_per_ip.try_acquire(client) else {
-        return (
+    let too_many = || {
+        (
             axum::http::StatusCode::TOO_MANY_REQUESTS,
             [(axum::http::header::RETRY_AFTER, "5")],
         )
-            .into_response();
+            .into_response()
+    };
+    let Ok(ip_slot) = state.sockets_per_ip.try_acquire(client) else {
+        return too_many();
+    };
+    let Ok(pending_source) = state.pending_handshakes_per_ip.try_acquire(client) else {
+        return too_many();
     };
     let handler = state.handlers.clone().try_acquire_owned();
     let permit = match state.sockets.clone().try_acquire_owned() {
@@ -130,6 +146,14 @@ fn upgrade(
                 .into_response();
         }
     };
+    // Taken only once the socket is admitted, so a refused upgrade never evicts another socket.
+    let pending = super::state::PendingHandshake {
+        global: state.pending_handshakes.admit(),
+        _source: pending_source,
+    };
+    if let Some(raw) = &raw {
+        raw.arm();
+    }
     let ws = ws.protocols(protocols);
     ws.read_buffer_size(16 * 1024)
         .write_buffer_size(0)
@@ -138,8 +162,8 @@ fn upgrade(
         .max_frame_size(MAX_CLIENT_MESSAGE_BYTES)
         .on_upgrade(move |socket| async move {
             let _ip_slot = ip_slot;
-            let socket = io::WebSocket::new(socket, state.clone(), permit);
-            handle_socket(socket, state).await;
+            let socket = io::WebSocket::new(socket, state.clone(), permit, raw);
+            handle_socket(socket, state, pending).await;
             drop(handler);
         })
         .into_response()
@@ -188,21 +212,6 @@ fn kicked_packet() -> server_packet::Message {
     })
 }
 
-async fn handle_renewal_result(
-    socket: &mut WebSocket,
-    result: Result<(), crate::archipelago::control_v4::V4Error>,
-    link: &PeerLink,
-) -> bool {
-    match result {
-        Ok(()) => true,
-        Err(crate::archipelago::control_v4::V4Error::AuthorityConflict) => {
-            let _ = send_packet(socket, kicked_packet(), Some(link)).await;
-            false
-        }
-        Err(_) => false,
-    }
-}
-
 fn heartbeat_position(
     hb: &crate::protocol::archipelago::archipelago::Heartbeat,
 ) -> Option<[f32; 3]> {
@@ -245,6 +254,7 @@ async fn handshake_operation<F: std::future::Future>(
     socket: &mut WebSocket,
     state: &AppState,
     deadline: tokio::time::Instant,
+    evicted: &tokio_util::sync::CancellationToken,
     signed_pending: bool,
     operation: F,
 ) -> Option<F::Output> {
@@ -254,6 +264,7 @@ async fn handshake_operation<F: std::future::Future>(
             biased;
             _ = state.restart.cancelled() => return None,
             _ = tokio::time::sleep_until(deadline) => return None,
+            _ = evicted.cancelled() => return None,
             incoming = socket.recv() => match incoming {
                 Some(Ok(Message::Ping(payload))) => {
                     if !io::send(socket, Message::Pong(payload), None).await { return None; }
@@ -276,22 +287,29 @@ async fn handshake_operation<F: std::future::Future>(
     }
 }
 
-async fn handle_socket(mut socket: WebSocket, state: AppState) {
+/// `pending` is the socket's pending-handshake hold, released at the welcome.
+async fn handle_socket(
+    mut socket: WebSocket,
+    state: AppState,
+    pending: super::state::PendingHandshake,
+) {
+    let evicted = pending.global.evicted.clone();
+    let mut pending = Some(pending);
     let mut stage = Stage::HandshakeStart;
     let mut challenge_to_sign = String::new();
     let mut issuance = None;
-    let mut authority_epoch = None;
     let mut registration: Option<Registration> = None;
     let mut events: Option<SocketEvents> = None;
     let mut last_island: Option<(Vec<u8>, i64)> = None;
     let mut last_stamp = None;
     let dedup_ms = state.settings.server.island_changed_dedup_ms;
     let handshake_timeout = Duration::from_millis(state.settings.auth.handshake_timeout_ms);
-    let mut handshake_deadline = tokio::time::Instant::now() + handshake_timeout;
+    let challenge_request_timeout = handshake_timeout.min(Duration::from_millis(
+        state.settings.auth.challenge_request_timeout_ms,
+    ));
+    let mut handshake_deadline = tokio::time::Instant::now() + challenge_request_timeout;
     let mut ownership_poll = tokio::time::interval(legacy_fence::POLL_INTERVAL);
     ownership_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut renewal = tokio::time::interval(crate::archipelago::control_v4::OWNER_RENEWAL_INTERVAL);
-    renewal.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
         if let Some(current) = &registration {
@@ -341,17 +359,11 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                     tracing::debug!("rejecting: challengeRequest carries no valid address");
                                     break;
                                 }
-                                let Some(denied) = handshake_operation(&mut socket, &state, handshake_deadline, false, state.deny_list.is_denied(&addr)).await else { break };
+                                let Some(denied) = handshake_operation(&mut socket, &state, handshake_deadline, &evicted, false, state.deny_list.is_denied(&addr)).await else { break };
                                 if denied {
                                     tracing::warn!(addr = %addr, "archipelago ws rejected: deny-listed wallet");
                                     break;
                                 }
-                                authority_epoch = match tokio::time::timeout_at(
-                                    handshake_deadline, legacy_fence::reserve(&state),
-                                ).await {
-                                    Ok(Ok(epoch)) => epoch,
-                                    _ => break,
-                                };
                                 let nonce: [u8; 32] = rand::rng().random();
                                 challenge_to_sign = format!("dcl-{}", nonce.iter().map(|b| format!("{b:02x}")).collect::<String>());
 
@@ -382,7 +394,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                 };
                                 let Some(issued) = issuance.as_ref() else { break };
                                 let Some(verified) = handshake_operation(
-                                    &mut socket, &state, handshake_deadline, true,
+                                    &mut socket, &state, handshake_deadline, &evicted, true,
                                     state.challenges.redeem_and_verify_payload(
                                         issued, &challenge_to_sign, &chain, state.gatekeeper.eip1654(),
                                     ),
@@ -394,12 +406,12 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                             tracing::warn!(addr = %signer, "rejecting: auth chain yields no usable session key");
                                             break;
                                         }
-                                        let Some(denied) = handshake_operation(&mut socket, &state, handshake_deadline, true, state.deny_list.is_denied(&signer)).await else { break };
+                                        let Some(denied) = handshake_operation(&mut socket, &state, handshake_deadline, &evicted, true, state.deny_list.is_denied(&signer)).await else { break };
                                         if denied {
                                             tracing::warn!(addr = %signer, "archipelago ws rejected: deny-listed wallet (post-auth)");
                                             break;
                                         }
-                                        let Some(banned) = handshake_operation(&mut socket, &state, handshake_deadline, true, state.ban_checker.is_banned(&signer)).await else { break };
+                                        let Some(banned) = handshake_operation(&mut socket, &state, handshake_deadline, &evicted, true, state.ban_checker.is_banned(&signer)).await else { break };
                                         if banned {
                                             tracing::warn!(addr = %signer, "archipelago ws rejected: platform-banned wallet");
                                             let _ = send_packet(&mut socket, kicked_packet(), None).await;
@@ -408,23 +420,10 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                         if state.restart.is_cancelled() || tokio::time::Instant::now() >= handshake_deadline {
                                             break;
                                         }
-                                        let admitted = if let Some(epoch) = authority_epoch {
-                                            match tokio::time::timeout_at(
-                                                handshake_deadline,
-                                                legacy_fence::LegacyFence::claim(&state, &signer, &session, epoch),
-                                            ).await {
-                                                Ok(Ok((fence, link, rx))) => Some((link, rx, None, Some(fence))),
-                                                Ok(Err(crate::archipelago::control_v4::V4Error::AuthorityConflict)) => None,
-                                                _ => {
-                                                    tracing::debug!("closing legacy handshake: assignment authority unavailable");
-                                                    break;
-                                                }
-                                            }
-                                        } else {
-                                            // No await between final policy completion and local registration.
-                                            state.registry.begin_admission(&signer).and_then(|ticket| ticket.commit(&session))
-                                                .map(|(link, rx, previous)| (link, rx, previous, None))
-                                        };
+                                        // Final policy completion elects the exact transport synchronously.
+                                        let admitted = state.registry.begin_admission(&signer).and_then(|ticket| ticket.commit(&session))
+                                            .map(|(link, rx, previous)| (link, rx, previous,
+                                                state.gatekeeper.cluster.control_v4_audience.as_ref().map(|_| legacy_fence::LegacyFence::new())));
                                         let Some((link, rx, previous, fence)) = admitted else {
                                             tracing::info!(addr = %signer, session = %session, "rejecting superseded handshake admission");
                                             let _ = send_packet(&mut socket, kicked_packet(), None).await;
@@ -462,6 +461,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                         // standing still is given a room only because of this.
                                         state.gatekeeper.announce_session(&signer, &session);
                                         stage = Stage::Completed;
+                                        drop(pending.take());
                                         handshake_deadline = tokio::time::Instant::now() + handshake_timeout;
                                     }
                                     Err(e) => {
@@ -484,22 +484,13 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                 let Some(position) = heartbeat_position(&hb) else { continue };
                                 let realm = hb.desired_room.unwrap_or_else(|| "catalyrst".into());
                                 if !crate::protocol::bus::control_position::valid_realm(&realm) { continue; }
-                                if let Some(fence) = current.fence.as_ref() {
-                                    match tokio::time::timeout(
-                                        AUTHORITY_OPERATION_TIMEOUT,
-                                    legacy_fence::owns_realm(&state, &fence.owner),
-                                    ).await {
-                                        Ok(Ok(true)) => {
-                                            // Deferred positions recheck this exact owner before application.
-                                        }
-                                        Ok(Ok(false)) => {
-                                            let _ = send_packet(&mut socket, kicked_packet(), None).await;
-                                            break;
-                                        }
-                                        _ => break,
-                                    }
+                                // Selected ownership is reconciled through the bounded local mailbox,
+                                // preserving coalescing without a per-heartbeat owner read.
+                                if current.fence.is_some() {
+                                    state.registry.offer_legacy_position(&current.address, &current.link, &realm, position);
+                                } else {
+                                    socket.position(None, current.link.clone(), realm, position).await;
                                 }
-                                socket.position(current.fence.as_ref().map(|f| f.owner.clone()), current.link.clone(), realm, position).await;
                             }
                         }
                     }
@@ -515,6 +506,10 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
             }
             _ = tokio::time::sleep_until(handshake_deadline), if stage != Stage::Completed => {
                 tracing::debug!("closing socket: the handshake stalled past its timeout");
+                break;
+            }
+            _ = evicted.cancelled(), if stage != Stage::Completed => {
+                tracing::debug!("closing socket: a newer handshake took its pending place");
                 break;
             }
             event = next_event(events.as_mut()) => {
@@ -560,21 +555,15 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                 let current = registration.as_mut().expect("registered fenced socket");
                 if !matches!(tokio::time::timeout(
                     AUTHORITY_OPERATION_TIMEOUT,
-                    current.fence.as_mut().unwrap().poll(&state, &mut socket, &current.link),
+                    current.fence.as_mut().unwrap().poll(&state, &mut socket, &current.link, &current.address, &current.session),
                 ).await, Ok(true)) {
-                    break;
+                    state.registry.detach_selected_realm(&current.link);
+                    state.gatekeeper.announce_session(&current.address, &current.session);
                 }
+                // An exhausted SQL deadline must leave a receive interval before the next poll.
+                ownership_poll.reset();
             }
-            _ = renewal.tick(), if registration.as_ref().is_some_and(|current| current.fence.is_some()) => {
-                let current = registration.as_ref().unwrap();
-                let owner = &current.fence.as_ref().unwrap().owner;
-                let result = tokio::time::timeout(
-                    AUTHORITY_OPERATION_TIMEOUT, state.control_v4.renew(owner),
-                ).await.unwrap_or(Err(crate::archipelago::control_v4::V4Error::AuthorityUnavailable));
-                if !handle_renewal_result(&mut socket, result, &current.link).await {
-                    break;
-                }
-            }
+
         }
     }
 
@@ -584,35 +573,16 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
     }
     if let Some(current) = registration {
         current.link.close();
-        if let Some(fence) = current.fence.as_ref() {
-            control_position::publish(&state, &fence.owner, "", None);
-            state
-                .registry
-                .on_v4_peer_disconnected(&current.address, current.link.id);
-        } else {
-            state.registry.on_peer_disconnected(
-                &current.address,
-                &current.session,
-                current.link.id,
-            );
-        }
+        state.registry.detach_selected_realm(&current.link);
+        state
+            .registry
+            .on_peer_disconnected(&current.address, &current.session, current.link.id);
         state.registry.while_wallet_absent(&current.address, || {
             state.enforcement.remove_peer(&current.address)
         });
         // Statistics backpressure retains handler admission credit without
         // delaying signaling revocation, registry cleanup or durable release.
-        tokio::join!(
-            state.observations.disconnect(current.address.clone()),
-            async {
-                if let Some(fence) = current.fence.as_ref() {
-                    let _ = tokio::time::timeout(
-                        AUTHORITY_OPERATION_TIMEOUT,
-                        state.control_v4.release(&fence.owner),
-                    )
-                    .await;
-                }
-            }
-        );
+        state.observations.disconnect(current.address.clone()).await;
         tracing::info!(addr = %current.address, session = %current.session, "archipelago ws closed");
     }
 }
@@ -622,71 +592,6 @@ mod tests {
     use super::*;
     use crate::protocol::archipelago::Position;
     use crate::protocol::archipelago::archipelago::Heartbeat;
-    use std::time::Duration;
-
-    #[tokio::test]
-    async fn renewal_conflict_sends_kicked_before_close_but_unavailable_only_closes() {
-        use crate::archipelago::control_v4::V4Error;
-        use futures::StreamExt;
-        use std::sync::Arc;
-        use tokio_tungstenite::tungstenite::Message as ClientMessage;
-
-        for conflict in [true, false] {
-            let state = crate::archipelago::test_support::state_over(
-                crate::archipelago::Settings::for_tests(),
-                Arc::new(crate::gatekeeper::bus::DisabledBus),
-            )
-            .await;
-            let app = Router::new().route(
-                "/",
-                get(move |upgrade: WebSocketUpgrade| {
-                    let state = state.clone();
-                    async move {
-                        upgrade.on_upgrade(move |transport| async move {
-                            let permit = state.sockets.clone().acquire_owned().await.unwrap();
-                            let mut socket = WebSocket::new(transport, state.clone(), permit);
-                            let (link, _events, _) =
-                                state.registry.on_peer_connected("wallet", "session");
-                            socket.bind_owner(&link);
-                            let result = Err(if conflict {
-                                V4Error::AuthorityConflict
-                            } else {
-                                V4Error::AuthorityUnavailable
-                            });
-                            assert!(!handle_renewal_result(&mut socket, result, &link).await);
-                            drop(socket);
-                            link.close();
-                        })
-                    }
-                }),
-            );
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let address = listener.local_addr().unwrap();
-            let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-            let (mut client, _) = tokio_tungstenite::connect_async(format!("ws://{address}/"))
-                .await
-                .unwrap();
-            tokio::time::timeout(Duration::from_secs(5), async {
-                if conflict {
-                    let ClientMessage::Binary(bytes) = client.next().await.unwrap().unwrap() else {
-                        panic!("renewal conflict must send Kicked before close");
-                    };
-                    let packet = ServerPacket::decode(bytes.as_ref()).unwrap();
-                    assert!(
-                        matches!(packet.message, Some(server_packet::Message::Kicked(kicked))
-                        if kicked.reason == KickedReason::KrNewSession as i32)
-                    );
-                }
-                assert!(matches!(
-                    client.next().await.unwrap().unwrap(),
-                    ClientMessage::Close(_)
-                ));
-            })
-            .await
-            .expect("renewal failure must close promptly");
-            task.abort();
-        }
-    }
 
     #[test]
     fn positionless_heartbeat_is_ignored() {
