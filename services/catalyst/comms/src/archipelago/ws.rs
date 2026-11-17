@@ -1,10 +1,10 @@
-use crate::archipelago::registry::{MAX_ASSIGNMENT_BYTES, PeerLink, SocketEvent, SocketEvents};
+use crate::archipelago::registry::{MAX_ASSIGNMENT_BYTES, PeerLink, SocketEvent};
 use crate::archipelago::session::{is_address, is_session_key, session_key_of};
 use crate::archipelago::state::AppState;
 use crate::auth::AuthChain;
 use crate::protocol::archipelago::archipelago::{
-    ChallengeResponseMessage, IslandChangedMessage, KickedMessage, KickedReason, ServerPacket,
-    WelcomeMessage, client_packet, server_packet,
+    ChallengeResponseMessage, KickedMessage, KickedReason, ServerPacket, WelcomeMessage,
+    client_packet, server_packet,
 };
 use axum::Router;
 use axum::extract::State;
@@ -233,15 +233,6 @@ fn is_repeat(last: Option<&(Vec<u8>, i64)>, assignment: &[u8], now: i64, dedup_m
     }
 }
 
-/// Never resolves before the handshake completes, which keeps a socket with no registration out of
-/// the select without a second copy of the loop.
-async fn next_event(rx: Option<&mut SocketEvents>) -> Option<SocketEvent> {
-    match rx {
-        Some(rx) => rx.recv().await,
-        None => std::future::pending().await,
-    }
-}
-
 struct Registration {
     address: String,
     session: String,
@@ -299,10 +290,6 @@ async fn handle_socket(
     let mut challenge_to_sign = String::new();
     let mut issuance = None;
     let mut registration: Option<Registration> = None;
-    let mut events: Option<SocketEvents> = None;
-    let mut last_island: Option<(Vec<u8>, i64)> = None;
-    let mut last_stamp = None;
-    let dedup_ms = state.settings.server.island_changed_dedup_ms;
     let handshake_timeout = Duration::from_millis(state.settings.auth.handshake_timeout_ms);
     let challenge_request_timeout = handshake_timeout.min(Duration::from_millis(
         state.settings.auth.challenge_request_timeout_ms,
@@ -315,14 +302,11 @@ async fn handle_socket(
         if let Some(current) = &registration {
             socket.bind_owner(&current.link);
         }
-        if registration
+        if let Some(current) = registration
             .as_ref()
-            .is_some_and(|current| current.link.is_closed())
+            .filter(|current| current.link.is_closed())
         {
-            if matches!(
-                events.as_mut().and_then(|rx| rx.try_recv().ok()),
-                Some(SocketEvent::Kicked)
-            ) {
+            if current.link.was_kicked() {
                 let _ = send_packet(&mut socket, kicked_packet(), None).await;
             }
             break;
@@ -420,8 +404,11 @@ async fn handle_socket(
                                         if state.restart.is_cancelled() || tokio::time::Instant::now() >= handshake_deadline {
                                             break;
                                         }
+                                        // Reserve the welcome before exposing a mailbox to concurrent producers.
+                                        let Some(welcome_credit) = socket.output_budget().reserve() else { break };
+                                        socket.accept_credit(Some(welcome_credit));
                                         // Final policy completion elects the exact transport synchronously.
-                                        let admitted = state.registry.begin_admission(&signer).and_then(|ticket| ticket.commit(&session))
+                                        let admitted = state.registry.begin_admission(&signer).and_then(|ticket| ticket.commit_with_budget(&session, socket.output_budget()))
                                             .map(|(link, rx, previous)| (link, rx, previous,
                                                 state.gatekeeper.cluster.control_v4_audience.as_ref().map(|_| legacy_fence::LegacyFence::new())));
                                         let Some((link, rx, previous, fence)) = admitted else {
@@ -436,7 +423,7 @@ async fn handle_socket(
                                             }
                                             previous.close();
                                         }
-                                        events = Some(rx);
+                                        socket.attach_assignments(link.clone(), rx, fence.is_some());
                                         registration = Some(Registration {
                                             address: signer.clone(),
                                             session: session.clone(),
@@ -495,6 +482,8 @@ async fn handle_socket(
                         }
                     }
                     Message::Ping(p) => {
+                        #[cfg(feature = "test-support")]
+                        socket.pause_ping_for_test().await;
                         if !io::send(&mut socket, Message::Pong(p), registration.as_ref().map(|current| &current.link)).await {
                             break;
                         }
@@ -511,45 +500,6 @@ async fn handle_socket(
             _ = evicted.cancelled(), if stage != Stage::Completed => {
                 tracing::debug!("closing socket: a newer handshake took its pending place");
                 break;
-            }
-            event = next_event(events.as_mut()) => {
-                let Some(event) = event else { break };
-                match event {
-                    SocketEvent::IslandChanged(payload, stamp) => {
-                        if registration.as_ref().is_some_and(|current| current.fence.is_some()) {
-                            continue;
-                        }
-                        let Ok(assignment) = IslandChangedMessage::decode(payload.as_slice()) else {
-                            continue;
-                        };
-                        let now = chrono::Utc::now().timestamp_millis();
-                        if last_stamp == stamp && is_repeat(last_island.as_ref(), &payload, now, dedup_ms) {
-                            state.feed.on_deduplicated();
-                            continue;
-                        }
-                        if !io::send_outgoing(
-                            &mut socket,
-                            io::Outgoing::Assignment {
-                                message: Message::Binary(craft(server_packet::Message::IslandChanged(assignment.clone())).into()),
-                                stamp: stamp.clone(),
-                            },
-                            registration.as_ref().map(|current| &current.link),
-                        )
-                        .await
-                        {
-                            break;
-                        }
-                        // Local queue acceptance is not proof of remote consumption.
-                        last_island = Some((payload, now));
-                        last_stamp = stamp;
-                    }
-                    SocketEvent::Kicked => {
-                        let addr = registration.as_ref().map(|r| r.address.clone()).unwrap_or_default();
-                        tracing::info!(addr = %addr, "session superseded or kicked; closing socket");
-                        let _ = send_packet(&mut socket, kicked_packet(), None).await;
-                        break;
-                    }
-                }
             }
             _ = ownership_poll.tick(), if registration.as_ref().is_some_and(|current| current.fence.is_some()) => {
                 let current = registration.as_mut().expect("registered fenced socket");
@@ -591,7 +541,7 @@ async fn handle_socket(
 mod tests {
     use super::*;
     use crate::protocol::archipelago::Position;
-    use crate::protocol::archipelago::archipelago::Heartbeat;
+    use crate::protocol::archipelago::archipelago::{Heartbeat, IslandChangedMessage};
 
     #[test]
     fn positionless_heartbeat_is_ignored() {
@@ -702,3 +652,6 @@ mod tests {
         ));
     }
 }
+
+#[cfg(feature = "test-support")]
+pub use io::assignment_test_support;

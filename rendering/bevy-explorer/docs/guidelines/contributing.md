@@ -5,6 +5,10 @@ understand the change in one sitting.
 
 ## Scope
 
+- Before implementation planning, apply the repository's
+  [design feasibility gate](../../../../docs/design-feasibility.md) to runtime
+  features and resource policies. Validate the requested outcome on each supported
+  platform before choosing implementation structure.
 - One problem per PR, fixed at the sentence that names it. If the fix wants new state or
   plumbing the problem didn't mention, that is a second PR and a conversation first. Give
   independently useful diagnostics their own PR and verification.
