@@ -2326,6 +2326,7 @@ fn set_avatar_visibility(
         With<AvatarProcessed>,
     >,
     beyond_max: Query<(), With<BeyondMaxAvatars>>,
+    shown: Query<&InheritedVisibility>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
     config: Res<AppConfig>,
 ) {
@@ -2333,11 +2334,16 @@ fn set_avatar_visibility(
         return;
     };
 
+    // an avatar whose player is hidden for another reason (a block or ban, an avatar modifier
+    // area, its scene) draws nothing, so it takes no slot from one that would show. The cap
+    // itself hides the build, below its player, so it never feeds back into this
+    let counts = |player: Entity| shown.get(player).is_ok_and(InheritedVisibility::get);
     let default_layer = RenderLayers::layer(0);
     let mut distances = q
         .iter()
-        .filter(|(_, _, maybe_layer, _)| {
+        .filter(|(_, _, maybe_layer, player)| {
             maybe_layer.is_none_or(|layer| layer.intersects(&default_layer))
+                && counts(player.parent())
         })
         .map(|(t, ..)| (t.translation() - player_pos).length_squared())
         .collect::<Vec<_>>();
