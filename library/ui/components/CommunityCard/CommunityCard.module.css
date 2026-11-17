@@ -1,0 +1,192 @@
+/* Figma: Communities / CommunityCard (View, Hover, Loading). The card is 280px wide in Figma and fills its
+   grid cell here, so the cover's two heights are cqw of that width (260 / 280 and 206 / 280); a cqw
+   length has no token. */
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+@layer dcl.components {
+  .container {
+    container-type: inline-size;
+    width: 100%;
+  }
+
+  .card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: var(--dcl-space-12);
+    box-sizing: border-box;
+    width: 100%;
+    overflow: hidden;
+    border-radius: var(--dcl-radius-lg);
+    background: var(--dcl-transparencies-black-40);
+    color: var(--dcl-neutrals-snow);
+  }
+
+  .card:has(.link:focus-visible) {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+  }
+
+  .media {
+    position: relative;
+    flex: none;
+    height: 92.857cqw;
+    overflow: hidden;
+    border-radius: var(--dcl-radius-lg);
+    transition: height 200ms;
+  }
+
+  .cover {
+    position: absolute;
+    inset: 0;
+  }
+
+  .body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--dcl-space-4);
+    box-sizing: border-box;
+    min-width: 0;
+    padding: 0 var(--dcl-space-16) var(--dcl-space-16);
+  }
+
+  .name {
+    composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+    margin: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  /* The name link covers the card, so the whole card opens the community. */
+  .link {
+    color: inherit;
+    text-decoration: none;
+    outline: none;
+  }
+
+  .link::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+  }
+
+  .owner {
+    composes: text626f64792f7873 from '../../foundations/typography/text-styles.module.css';
+    margin: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  /* Figma tints the privacy row white at 70%; the nearest transparency token is 60%. */
+  .meta {
+    composes: text626f64792f7873 from '../../foundations/typography/text-styles.module.css';
+    display: flex;
+    align-items: center;
+    gap: var(--dcl-space-8);
+    min-height: 20px;
+    margin: 0;
+    color: var(--dcl-transparencies-white-60);
+  }
+
+  .privacy {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--dcl-space-4);
+  }
+
+  .members {
+    padding-left: var(--dcl-space-8);
+    border-left: 1px solid var(--dcl-transparencies-white-20);
+  }
+
+  /* Revealed by hover or focus on a device that hovers; touch and narrow screens never show it. */
+  .description {
+    composes: text626f64792f7873 from '../../foundations/typography/text-styles.module.css';
+    display: -webkit-box;
+    max-height: 0;
+    margin: 0;
+    overflow: hidden;
+    opacity: 0;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    transition:
+      max-height 200ms,
+      opacity 200ms;
+  }
+
+  /* Figma's CardCTA "View": 38px, a 10px corner (the nearest radius token is 12px), white at 10%. */
+  .cta {
+    composes: text626f64792f736d2d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 38px;
+    margin-top: var(--dcl-space-8);
+    border-radius: var(--dcl-radius-md);
+    background: var(--dcl-transparencies-white-10);
+    text-transform: uppercase;
+    transition: background 200ms;
+  }
+
+  /* Figma "Hover": the cover drops from 260 to 206 of the 280px card and the description takes the room;
+     without a description the cover stays. */
+  @media (hover: hover) and (min-width: 768px) {
+    .card:has(.description):hover .media,
+    .card:has(.description):focus-within .media {
+      height: 73.571cqw;
+    }
+
+    .card:hover .description,
+    .card:focus-within .description {
+      max-height: 4.5em;
+      opacity: 1;
+    }
+
+    .card:hover .cta,
+    .card:focus-within .cta {
+      background: var(--dcl-transparencies-white-20);
+    }
+  }
+
+  /* Under reduced motion every state changes at once, in place. */
+  @media (prefers-reduced-motion: reduce) {
+    .media,
+    .description,
+    .cta {
+      transition: none;
+    }
+  }
+
+  /* Figma "Loading": the cover and two text bars on a 20% black card. */
+  .loading {
+    gap: var(--dcl-space-12);
+    padding-bottom: var(--dcl-space-16);
+    background: var(--dcl-transparencies-black-20);
+  }
+
+  .skeletonCover {
+    display: block;
+    width: 100%;
+    height: 92.857cqw;
+    border-radius: var(--dcl-radius-lg);
+  }
+
+  .skeletonName {
+    display: block;
+    width: 71%;
+    height: 22px;
+    margin-left: var(--dcl-space-16);
+    border-radius: var(--dcl-radius-full);
+  }
+
+  .skeletonLine {
+    display: block;
+    width: 50%;
+    height: 16px;
+    margin-left: var(--dcl-space-16);
+    border-radius: var(--dcl-radius-full);
+  }
+}
