@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
-use common::sets::PostUpdateSets;
+use common::{sets::PostUpdateSets, structs::PrimaryUser};
 use console::DoAddConsoleCommand;
 use dcl_component::proto_components::sdk::components::ColliderLayer;
 use scene_runner::{
@@ -20,6 +20,14 @@ const WORLD_CAMERA_LAYER: u32 = 0;
 
 fn is_display_only(layers: Option<&CameraLayers>) -> bool {
     layers.is_some_and(|l| !l.0.contains(&WORLD_CAMERA_LAYER))
+}
+
+/// Whether an avatar at `avatar` plants its feet: the local player's always, another within
+/// `max_distance` of the local player at `player` (every avatar while there is no local player).
+fn plants_feet(is_local: bool, avatar: Vec3, player: Option<Vec3>, max_distance: f32) -> bool {
+    is_local
+        || player
+            .is_none_or(|player| avatar.distance_squared(player) <= max_distance * max_distance)
 }
 
 pub struct FootIkPlugin;
@@ -71,6 +79,10 @@ pub struct FootIkConfig {
     /// and the foot together, leaving the relative offset unchanged).
     /// Snaps on the first engaged frame after a disengaged one.
     pub target_velocity_limit: f32,
+    /// Other avatars plant their feet only within this distance (metres) of the local player:
+    /// further away the correction is too small to see, and each avatar costs two ground
+    /// raycasts and a leg solve per frame. The local player's avatar always plants.
+    pub max_distance: f32,
 }
 
 impl Default for FootIkConfig {
@@ -86,6 +98,7 @@ impl Default for FootIkConfig {
             max_foot_tilt_deg: 30.0,
             engage_transition_seconds: 0.5,
             target_velocity_limit: 1.5,
+            max_distance: 12.0,
         }
     }
 }
@@ -350,9 +363,12 @@ fn apply_foot_ik(
             &mut FootIkRuntime,
             Option<&CameraLayers>,
             Has<PausedAnimation>,
+            &GlobalTransform,
+            Has<PrimaryUser>,
         ),
         With<AvatarShape>,
     >,
+    player: Query<&GlobalTransform, With<PrimaryUser>>,
     containing: ContainingScene,
     mut scenes: Query<&mut SceneColliderData>,
     global_ground: Query<Entity, With<GlobalGroundCollider>>,
@@ -364,16 +380,19 @@ fn apply_foot_ik(
 ) {
     if !config.enabled {
         // Reset all per-avatar runtime state so re-enabling doesn't pop in.
-        for (_, _, _, mut runtime, _, _) in &mut avatars {
+        for (_, _, _, mut runtime, ..) in &mut avatars {
             *runtime = FootIkRuntime::default();
         }
         return;
     }
+    let player_pos = player.single().ok().map(GlobalTransform::translation);
     *log_tick = log_tick.wrapping_add(1);
     let log_now = *log_tick % 60 == 1;
     let dt = time.delta_secs();
 
-    for (avatar_ent, rig, active_emote, mut runtime, layers, paused) in &mut avatars {
+    for (avatar_ent, rig, active_emote, mut runtime, layers, paused, avatar_transform, is_local) in
+        &mut avatars
+    {
         // Display-only avatars (booth/portrait/secondary cameras) shouldn't
         // raycast against world geometry. cache_foot_ik_rig already strips
         // their FootIkRig, but gate here too in case the layers flipped this
@@ -381,6 +400,17 @@ fn apply_foot_ik(
         // solve would compound on; resetting lets the IK ramp back in from
         // the live pose when it shows again, as after any disengagement.
         if paused || is_display_only(layers) {
+            *runtime = FootIkRuntime::default();
+            continue;
+        }
+        // Too far for the correction to show: leave the animated pose, before any transform is
+        // computed or ray cast. The runtime resets, so the feet engage afresh on coming near.
+        if !plants_feet(
+            is_local,
+            avatar_transform.translation(),
+            player_pos,
+            config.max_distance,
+        ) {
             *runtime = FootIkRuntime::default();
             continue;
         }
@@ -773,4 +803,25 @@ fn compute_leg_ik(
         knee_local_rot,
         foot_local_rot,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn feet_are_planted_for_the_local_player_and_avatars_near_them() {
+        let player = Some(Vec3::new(10.0, 0.0, 10.0));
+        let near = Vec3::new(10.0, 0.0, 21.0);
+        let far = Vec3::new(10.0, 0.0, 23.0);
+        assert!(plants_feet(false, near, player, 12.0));
+        assert!(!plants_feet(false, far, player, 12.0));
+        // the local player's own avatar, wherever its transform is read
+        assert!(plants_feet(true, far, player, 12.0));
+        // a distance of nothing leaves only the local player's
+        assert!(!plants_feet(false, near, player, 0.0));
+        assert!(plants_feet(true, near, player, 0.0));
+        // no local player yet: nothing to measure from
+        assert!(plants_feet(false, far, None, 12.0));
+    }
 }
