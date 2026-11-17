@@ -1,4 +1,5 @@
 import { reactRouter } from "@react-router/dev/vite";
+import { spawnSync } from "node:child_process";
 import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -78,6 +79,8 @@ function nodeProxy(): Record<string, ProxyOptions> {
     }),
     "/places/api/": to(),
     "/events/api/": to(),
+    // The Events page reads the event list here from the browser too (`fetchEvents`).
+    "/events/v1/": to(),
     "/shop-api": to(),
     "/marketplace-api": to(),
     "/social-api": to(),
@@ -118,6 +121,9 @@ function nodeProxy(): Record<string, ProxyOptions> {
     "/events-assets-099ac00": to(),
     "/opensea": to(),
     "/comms-gatekeeper": to(),
+    // Cast 2.0: the gateway's `^~ /cast/` alias to the gatekeeper, except the stream and watch
+    // pages (/cast/s/, /cast/w/), which are this app's (infra/gateway/gateway.py).
+    "^/cast/(?!s/|w/)": to({ rewrite: (path) => `/comms-gatekeeper${path}` }),
     "/badges": to(),
     "/profile-images": to(),
     "/signatures-api": to(),
@@ -237,7 +243,14 @@ function icoTypeLikeServe(): Plugin {
   };
 }
 
+// The short commit /play is built from, "" without a git checkout: the sign-in screens show it.
+function playBuild(): string {
+  const out = spawnSync("git", ["rev-parse", "--short", "HEAD"], { encoding: "utf8" });
+  return out.status === 0 ? out.stdout.trim() : "";
+}
+
 export default defineConfig({
+  define: { __PLAY_BUILD__: JSON.stringify(playBuild()) },
   plugins: [icoTypeLikeServe(), separateDevCaches(), servePlayWeb(), reactRouter(), watchUi3(ui), warmServerBuild()],
   server: {
     // A save is often truncate-then-write, and over the NFS home the two reach the

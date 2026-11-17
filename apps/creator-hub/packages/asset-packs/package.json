@@ -16,6 +16,7 @@
   "devDependencies": {
     "@aws-sdk/client-s3": "^3.405.0",
     "@aws-sdk/lib-storage": "^3.405.0",
+    "@dcl/ecs-math": "2.1.0",
     "@dcl/hashing": "^3.0.4",
     "@dcl/js-runtime": "7.29.0",
     "@dcl/react-ecs": "7.29.0",

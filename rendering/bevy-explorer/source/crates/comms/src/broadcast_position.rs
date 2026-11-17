@@ -11,6 +11,7 @@ use dcl_component::{
 use wallet::Wallet;
 
 use crate::{
+    anim_announce::{Announcement, ClipAnnouncer},
     broadcast, broadcast_to,
     global_crdt::GlobalCrdtState,
     movement_compressed::{Movement, Temporal},
@@ -38,10 +39,9 @@ const HEAD_SYNC_EPSILON_DEG: f32 = 10.0;
 
 #[derive(Default)]
 struct LastAnim {
-    // The (scene_hash, content_hash) pair we last broadcast. Tracked as one unit so we
-    // can detect transitions between clips and drive keepalives.
-    hashes: Option<(String, String)>,
-    sent_at: f64,
+    // Decides which sends carry the hash pair or the clear (change, repeats, keepalive). It also
+    // remembers the clip as of the previous send, so clip transitions are detected through it.
+    announcer: ClipAnnouncer,
     // Latched seek from the scene. The scene publishes `seek` for a single frame;
     // we hold it here until a broadcast goes out so we don't miss it between the
     // 10Hz dynamic / 1Hz static broadcast intervals.
@@ -136,7 +136,7 @@ fn broadcast_position(
     let current_hashes = scene_anim
         .and_then(|s| s.active.as_ref())
         .map(|a| (a.scene_hash.clone(), a.content_hash.clone()));
-    let anim_changed = current_hashes != last_anim.hashes;
+    let anim_changed = last_anim.announcer.changed(current_hashes.as_ref());
     // Toggling either enabled flag, or a yaw/pitch delta past the threshold, also
     // breaks the keepalive — same shape as anim_changed. Sub-threshold drift just
     // rides the 1Hz keepalive.
@@ -156,6 +156,7 @@ fn broadcast_position(
         && (dynamics.velocity - last_position.2).length_squared() < 0.01
         && last_anim.pending_seek.is_none()
         && !anim_changed
+        && !last_anim.announcer.repeat_pending()
         && !head_changed
         && !point_at_changed
     {
@@ -184,33 +185,28 @@ fn broadcast_position(
     let movement_compressed = crate::movement_compressed::MovementCompressed { temporal, movement };
 
     // Scene-driven animation carrier. The hash pair is sent on transition (new clip, or
-    // an empty `scene_hash` to clear a prior active anim) and re-sent every
-    // ANIM_URN_KEEPALIVE seconds while active so late joiners pick it up. The other
+    // an empty `scene_hash` to clear a prior active anim), repeated on the next sends so one
+    // lost datagram doesn't leave a stale clip, and re-sent every ANIM_URN_KEEPALIVE seconds
+    // while active so late joiners pick it up (see `ClipAnnouncer`). The other
     // fields ride along whenever an animation is active. `playback_time` is only sent
     // when the scene explicitly requested a seek this frame. The nested message itself
     // is only attached to the packet when there's something anim-related to say —
     // that way a receiver that's not interested (or that never sees us transition out
     // of an inactive state) costs no bytes.
     let active_anim = scene_anim.and_then(|s| s.active.as_ref());
-    let keepalive_due = active_anim.is_some() && time - last_anim.sent_at >= ANIM_URN_KEEPALIVE;
-    let (scene_hash, content_hash) = if anim_changed {
-        match &current_hashes {
-            Some((s, c)) => (Some(s.clone()), Some(c.clone())),
+    let (scene_hash, content_hash) =
+        match last_anim
+            .announcer
+            .announce(time, current_hashes.as_ref(), ANIM_URN_KEEPALIVE)
+        {
+            Announcement::Clip => current_hashes
+                .as_ref()
+                .map(|(s, c)| (Some(s.clone()), Some(c.clone())))
+                .unwrap_or_default(),
             // Transition active → none: signal clear with an empty scene_hash.
-            None => (Some(String::new()), None),
-        }
-    } else if keepalive_due {
-        current_hashes
-            .as_ref()
-            .map(|(s, c)| (Some(s.clone()), Some(c.clone())))
-            .unwrap_or((None, None))
-    } else {
-        (None, None)
-    };
-    if scene_hash.is_some() {
-        last_anim.sent_at = time;
-    }
-    last_anim.hashes = current_hashes;
+            Announcement::Clear => (Some(String::new()), None),
+            Announcement::Nothing => (None, None),
+        };
 
     let speed = active_anim.map(|a| a.speed);
     let transition_seconds = active_anim.map(|a| a.transition_seconds);
@@ -279,7 +275,11 @@ fn broadcast_position(
     let is_glide = anim_src_lower
         .as_deref()
         .is_some_and(|s| s.contains("glide"));
-    let jump_count = if is_double_jump || is_glide { 2 } else { 0 };
+    let jump_count = jump_count(
+        is_double_jump || is_glide,
+        dynamics.ground_height < 0.2,
+        dynamics.jump_time,
+    );
     let glide_state = if is_glide {
         rfc4::movement::GlideState::Gliding as i32
     } else {
@@ -400,4 +400,49 @@ fn broadcast_position(
     *last_head_sync = head_sync;
     *last_point_at = point_at;
     *last_sent = time;
+}
+
+/// The `jump_count` a movement packet carries: 2 for a double jump or glide, 1 while airborne
+/// after a jump, 0 otherwise. `jump_time` is the local player's take-off time, cleared (`<= 0.0`)
+/// on landing.
+fn jump_count(double_jump_or_glide: bool, grounded: bool, jump_time: f64) -> i32 {
+    if double_jump_or_glide {
+        2
+    } else if !grounded && jump_time > 0.0 {
+        1
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `jump_time` of a player who has not jumped since landing, or never has.
+    const NO_JUMP: f64 = -1.0;
+
+    #[test]
+    fn a_first_jump_counts_one_while_airborne() {
+        assert_eq!(jump_count(false, false, 12.5), 1);
+    }
+
+    #[test]
+    fn the_count_resets_on_landing() {
+        assert_eq!(jump_count(false, true, 12.5), 0);
+        assert_eq!(jump_count(false, true, NO_JUMP), 0);
+    }
+
+    #[test]
+    fn falling_without_a_jump_counts_zero() {
+        // walking off a ledge, or the default state of a player who never jumped
+        assert_eq!(jump_count(false, false, NO_JUMP), 0);
+        assert_eq!(jump_count(false, false, 0.0), 0);
+    }
+
+    #[test]
+    fn a_double_jump_or_glide_counts_two() {
+        assert_eq!(jump_count(true, false, 12.5), 2);
+        assert_eq!(jump_count(true, false, NO_JUMP), 2);
+    }
 }

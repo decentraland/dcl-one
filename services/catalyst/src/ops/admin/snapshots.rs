@@ -94,7 +94,7 @@ mod tests {
         writes_enabled: bool,
         generation: bool,
     ) -> (Router, SharedState, Option<Arc<SnapshotGenerator>>) {
-        let admin = Arc::new(admin_state(lazy_pool(), writes_enabled, ADMIN, None).await);
+        let admin = SharedState::from(admin_state(lazy_pool(), writes_enabled, ADMIN, None).await);
         let generator = generation.then(|| {
             SnapshotGenerator::new(
                 admin.content.clone(),

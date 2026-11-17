@@ -128,8 +128,10 @@ class CiLocalTest(unittest.TestCase):
                      'rendering/bevy-explorer/source/crates/scene_runner/src/lib.rs',
                      'rendering/bevy-explorer/source/Cargo.lock', 'rendering/bevy-explorer/source/deploy/headless/launcher/install.js'):
             self.assertTrue(ci.triggered('bevy-explorer-headless.yml', {name}, event='push'), name)
+        # The headless build takes each patched source by the revision that Cargo.lock names.
         for name in ('rendering/bevy-explorer/source/react-web/src/App.tsx', 'rendering/bevy-explorer/source/deploy/web/engine/boot.js',
-                     'apps/bevy-explorer/Dockerfile.web'):
+                     'apps/bevy-explorer/Dockerfile.web', 'tooling/patched-sources.py',
+                     'rendering/bevy-explorer/patches/bevy/series/0001-scene-spawner.patch'):
             self.assertFalse(ci.triggered('bevy-explorer-headless.yml', {name}, event='push'), name)
 
     def test_gateway_edits_select_explorer_contract_but_not_application_images(self):

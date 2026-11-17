@@ -651,6 +651,7 @@ pub fn apply_movement(
                     )
                 });
         dynamic_state.ground_height = ground_height;
+        end_jump_on_landing(&mut dynamic_state);
         return;
     };
 
@@ -742,6 +743,16 @@ pub fn apply_movement(
                 )
             });
     dynamic_state.ground_height = ground_height;
+    end_jump_on_landing(&mut dynamic_state);
+}
+
+/// Forget the take-off time once the player is back on the ground and no longer rising, so that
+/// `jump_time` marks a jump in flight (`<= 0.0` for none): the animation's take-off window and the
+/// `jump_count` this client broadcasts both read it.
+fn end_jump_on_landing(dynamic_state: &mut AvatarDynamicState) {
+    if dynamic_state.ground_height < 0.2 && dynamic_state.velocity.y <= 0.0 {
+        dynamic_state.jump_time = -1.0;
+    }
 }
 
 // (scene entity, collider id) of collider player is standing on
@@ -1121,5 +1132,38 @@ mod tests {
                 run: 20.0
             }
         );
+    }
+}
+
+#[cfg(test)]
+mod jump_tests {
+    use super::*;
+
+    fn state(ground_height: f32, vertical_velocity: f32) -> AvatarDynamicState {
+        AvatarDynamicState {
+            velocity: Vec3::new(0.0, vertical_velocity, 0.0),
+            ground_height,
+            jump_time: 5.0,
+            ..default()
+        }
+    }
+
+    #[test]
+    fn landing_ends_the_jump_in_flight() {
+        let mut landed = state(0.0, 0.0);
+        end_jump_on_landing(&mut landed);
+        assert!(landed.jump_time <= 0.0);
+    }
+
+    #[test]
+    fn the_take_off_frame_and_the_flight_keep_the_jump() {
+        // still within the grounded height on the frame the jump starts, but rising
+        let mut taking_off = state(0.1, 11.0);
+        end_jump_on_landing(&mut taking_off);
+        assert_eq!(taking_off.jump_time, 5.0);
+
+        let mut airborne = state(1.5, -3.0);
+        end_jump_on_landing(&mut airborne);
+        assert_eq!(airborne.jump_time, 5.0);
     }
 }

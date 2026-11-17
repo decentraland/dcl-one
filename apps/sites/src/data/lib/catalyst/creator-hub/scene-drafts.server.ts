@@ -123,8 +123,8 @@ export type CreateWrites = { open: true } | { open: false; reason: string };
 const WRITES_STATUS_TIMEOUT_MS = 10_000;
 
 /**
- * Whether the node takes creator writes now: `CREATE_WRITES_ENABLED` and the
- * restore stamps behind it (`GET /writes`). Deleting a draft here is local
+ * Whether the node takes creator writes now: `CREATE_WRITES_ENABLED`
+ * (`GET /writes`). Deleting a draft here is local
  * authority the node's backups do not hold, so it follows the node's switch;
  * a node that cannot say is closed.
  */

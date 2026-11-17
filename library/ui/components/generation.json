@@ -21,13 +21,13 @@
     "dependencies": [
       {
         "path": "library/ui/package.json",
-        "sha256": "2188253ca647805db83725a1fc1c271061a76ba3ee109ef6b3afc0563780acc8",
-        "indexBlobSha": "babdf674076bffa75729e2d186cff90aea5b996f"
+        "sha256": "fe47d4b95a6c3ca134c3220fffa448966c7cb58b200b29115aab21e36651088b",
+        "indexBlobSha": "126595e6cb7677c9f17301daff22d7a75440d970"
       },
       {
         "path": "library/ui/pnpm-lock.yaml",
-        "sha256": "1ab51d5615eb43620e7084ba62429a1a7b0128096d6bfc899da2702f826927d3",
-        "indexBlobSha": "8a4f3c95998e3a67eb93d7da3e6640689f395437"
+        "sha256": "3a6ff824e14465229e9523d734a261b60a3bae83d76fe1ca0bc4aec18ffd5b89",
+        "indexBlobSha": "fb60fce20cb1a7c8468f96548a606e6069ca5956"
       },
       {
         "path": "library/ui/tsconfig.json",
