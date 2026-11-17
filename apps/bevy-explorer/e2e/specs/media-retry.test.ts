@@ -7,11 +7,11 @@
 // | a video whose source fails twice plays after two reopens        | guest, on the loopback realm | the scene built; web       |
 // | a video whose source always fails gives up after five reopens   | guest, on the loopback realm | the scene built; web       |
 //
-// The loopback realm (`driver/realm.ts`) serves `scenes/video` at its own parcel and answers 503 to
-// the first GETs of its media files: `recover.webm` twice, `broken.webm` every time. The scene logs
-// `video <name> state=<VideoState>` on every reported change, read through `/scene_logs` after
-// `/set_scene` points the scene commands at it, and `/media_state` gives each player's reopen
-// count, last state and last error. The count restarts after 5 s of playback.
+// Each scenario's own loopback realm (`driver/realm.ts`) serves `scenes/video` at its own parcel
+// and answers 503 to the first GETs of its media files: `recover.webm` twice, `broken.webm` every
+// time. The scene logs `video <name> state=<VideoState>` on every reported change, read through
+// `/scene_logs` after `/set_scene` points the scene commands at it, and `/media_state` gives each
+// player's reopen count, last state and last error. The count restarts after 5 s of playback.
 // `/media_retry_delay 100` shortens the schedule to 0.1 to 1.6 s for every source failing from then
 // on; failures before a scenario issues it wait the default 2 s, then 4 s. `retryFailures` counts
 // every failure, so the checks do not depend on when the delay applies. Each scenario closes its
@@ -57,19 +57,24 @@ try {
 const recoverHash = contentHash(await readFile(path.join(SCENE_DIR, 'assets', 'recover.webm')))
 const brokenHash = contentHash(await readFile(path.join(SCENE_DIR, 'assets', 'broken.webm')))
 
-// An ephemeral port: the visual realm holds the configured one in the same process.
-const server = await serveRealm({
-  scenes: scene ? [scene] : [],
-  port: 0,
-  realmName: 'e2e-media-retry',
-  contentFailures: new Map([
-    [recoverHash, RECOVER_FAILURES],
-    [brokenHash, Infinity]
-  ])
-})
-after(() => server.close())
+/** A realm and session of a scenario's own, so its failure counts start from zero whatever ran
+ *  before. An ephemeral port: the visual realm holds the configured one in the same process. */
+async function sessionFor(name: string): Promise<ScenarioOptions['session']> {
+  const server = await serveRealm({
+    scenes: scene ? [scene] : [],
+    port: 0,
+    realmName: `e2e-media-retry-${name}`,
+    contentFailures: new Map([
+      [recoverHash, RECOVER_FAILURES],
+      [brokenHash, Infinity]
+    ])
+  })
+  after(() => server.close())
+  return { realm: server.realm, position: '0,26', signIn: 'guest' }
+}
 
-const SESSION: ScenarioOptions['session'] = { realm: server.realm, position: '0,26', signIn: 'guest' }
+const RECOVER_SESSION = await sessionFor('recover')
+const BROKEN_SESSION = await sessionFor('broken')
 
 async function prepare(explorer: Explorer): Promise<void> {
   if (sceneError) throw sceneError
@@ -111,7 +116,7 @@ scenario(
     assert.equal(row.retryGaveUp, false)
     assert.notEqual(row.lastError, null, 'the failures left no last error')
   },
-  { ...webOnly, session: SESSION, closeSession: true, timeoutMs: GIVE_UP_TIMEOUT_MS + RESTART_TIMEOUT_MS + 30_000 }
+  { ...webOnly, session: RECOVER_SESSION, closeSession: true, timeoutMs: GIVE_UP_TIMEOUT_MS + RESTART_TIMEOUT_MS + 30_000 }
 )
 
 scenario(
@@ -129,5 +134,5 @@ scenario(
     assert.equal(row.retryDelaySeconds, null, 'a reopen is still scheduled after giving up')
     assert.equal(row.lastPlaybackState, 'VS_ERROR')
   },
-  { ...webOnly, session: SESSION, closeSession: true, timeoutMs: GIVE_UP_TIMEOUT_MS + 30_000 }
+  { ...webOnly, session: BROKEN_SESSION, closeSession: true, timeoutMs: GIVE_UP_TIMEOUT_MS + 30_000 }
 )

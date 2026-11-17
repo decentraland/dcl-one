@@ -284,21 +284,30 @@ fn clear_image(gpu_image: &GpuImage, render_queue: &RenderQueue) {
     if gpu_image.texture_descriptor.format.block_copy_size(None) != Some(4) {
         return;
     }
+    // written in strips from one small buffer: a whole 4K image would be 33 MB of wasm memory
+    const STRIP_ROWS: u32 = 16;
     let Extent3d { width, height, .. } = gpu_image.size;
-    let black = [0u8, 0, 0, 255].repeat((width * height) as usize);
-    render_queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: &gpu_image.texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        &black,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(width * 4),
-            rows_per_image: Some(height),
-        },
-        gpu_image.size,
-    );
+    let black = [0u8, 0, 0, 255].repeat((width * STRIP_ROWS.min(height)) as usize);
+    for y in (0..height).step_by(STRIP_ROWS as usize) {
+        let rows = STRIP_ROWS.min(height - y);
+        render_queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &gpu_image.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x: 0, y, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            &black[..(width * rows * 4) as usize],
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(rows),
+            },
+            Extent3d {
+                width,
+                height: rows,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
 }

@@ -261,6 +261,11 @@ impl Source {
             .is_some_and(|attached| attached.live())
     }
 
+    /// The source is or was a live stream: it has no position to resume.
+    fn live_stream(&self) -> bool {
+        self.was_live.get() || self.is_live()
+    }
+
     fn uses_hls(&self) -> bool {
         self.attached
             .borrow()
@@ -321,7 +326,9 @@ impl Source {
     fn opened(&self) {
         self.failed.set(false);
         self.reopen_on_play.set(false);
-        self.cancel_reopen();
+        if self.cancel_reopen() {
+            self.send_retry(None);
+        }
         if let Some(time) = self.resume_at.take() {
             self.media.set_current_time(time);
         }
@@ -351,6 +358,7 @@ impl Source {
         let callback = Closure::<dyn FnMut()>::new(move || {
             if let Some(source) = source.upgrade() {
                 source.timeout.set(None);
+                source.send_retry(None);
                 source.reopen();
             }
         });
@@ -391,7 +399,7 @@ impl Source {
     fn suspend(&self) {
         let time = self.media.current_time();
         // a pending position (a seek while failed) is not yet played past
-        if !self.is_live() && time > 0.0 && self.resume_at.get().is_none() {
+        if !self.live_stream() && time > 0.0 && self.resume_at.get().is_none() {
             self.resume_at.set(Some(time));
         }
         self.detach();
@@ -532,7 +540,7 @@ impl HostMedia {
                     return;
                 }
                 // a live stream only ends when its feed drops
-                if source.was_live.get() || source.is_live() {
+                if source.live_stream() {
                     source.fail("live stream ended");
                     return;
                 }
@@ -581,8 +589,13 @@ impl HostMedia {
                 self.media.pause().report();
                 // a pause cancels a scheduled or loading reopen, keeping the count; the next play
                 // reopens at once
-                self.source.cancel_reopen();
-                if self.source.failed.get() && !self.source.retry.get().gave_up() {
+                let scheduled = self.source.cancel_reopen();
+                let failed = self.source.failed.get() && !self.source.retry.get().gave_up();
+                if failed && !scheduled && !self.source.reopen_on_play.get() {
+                    // a loading reopen detached before it could play counts as a failure, so
+                    // toggling playback still ends a source that never opens
+                    self.source.fail("reopen interrupted by pause");
+                } else if failed {
                     self.source.suspend();
                     self.source.reopen_on_play.set(true);
                     self.source.send_state(VideoState::VsError);
@@ -592,7 +605,9 @@ impl HostMedia {
             AVCommand::Repeat(looping) => self.media.set_loop(looping),
             // a failed source is detached or reopening: the seek applies once it can play
             AVCommand::Seek(time) if self.source.failed.get() => {
-                self.source.resume_at.set(Some(time))
+                if !self.source.live_stream() {
+                    self.source.resume_at.set(Some(time));
+                }
             }
             AVCommand::Seek(time) => self.media.set_current_time(time),
             AVCommand::Volume(volume) => self.media.set_volume(volume.clamp(0.0, 1.0) as f64),
