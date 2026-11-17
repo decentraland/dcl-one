@@ -12,7 +12,7 @@
 // so one write per frame moves all of them. React only re-renders when the tile *set* changes,
 // i.e. on a chunk boundary.
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { DclLogo, Kebab, Minus, Plus, showToast } from '../../design'
 import { DEFAULT_REALM } from '@hud-host'
 import { DoubleChevron, PinOutline } from './icons'
@@ -20,24 +20,27 @@ import tipIcon from '../../assets/donate/tip.png'
 import { useDonate } from '../donate/useDonate'
 import { EngineViewport } from '../engine/EngineViewport'
 import { PARCEL_METERS, atlasPx, chunksInRect, isGenesisSatelliteView, parcelTileFor, type Chunk } from '@explorer-core/features/map/atlas'
-import { MARKER_ART, pinForCategories } from '../map/mapArt'
+import { MARKER_ART, PANEL_ART } from '../map/mapArt'
+import { MaskIcon } from '../../design/MaskIcon'
+import { useMapLayerData } from '../map/useMapLayerData'
+import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
+import { navigation } from '@explorer-core/features/map/navigation'
+import { playerMarkerPosition, type Vec2 } from '@explorer-core/features/map/mapCoords'
+import { destinationOnEdge, edgePoint, mapUnitsToMeters } from '@explorer-core/features/minimap/minimapLayers'
 import { homeOf } from '@explorer-core/features/map/home'
-import { fetchPlaceAt } from '@explorer-core/features/map/mapApi'
+import { fetchPlaceAt, isEmptyPlace, setPlaceFavorite } from '@explorer-core/features/map/mapApi'
 import { minimapJumpLink } from '@explorer-core/features/map/shareLinks'
 import { isStandingInHome, minimapHomeTarget } from '@explorer-core/features/minimap/minimapHome'
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import { BASE_PX_PER_PARCEL, ParcelTiles, SatelliteTiles } from './MinimapTiles'
-import { loadMinimapPlaces, placesNear, type MinimapPlace } from '@explorer-core/features/minimap/minimapPlaces'
 import {
   MAX_VISIBLE_METERS,
   MIN_VISIBLE_METERS,
   ZOOM_STEP,
-  loadMarkers,
   loadOpen,
   loadRotation,
   loadStyle,
   loadZoom,
-  saveMarkers,
   saveOpen,
   saveRotation,
   saveStyle,
@@ -55,13 +58,17 @@ import styles from './Minimap.module.css'
 const MAP_SIZE = 240
 /** Zoom easing, in seconds. Interpolated in log space so each step feels the same. */
 const ZOOM_TIME = 0.2
-/** How far out to mark places, in parcels. Fixed, as in the SDK7 HUD — at the widest zoom the
- *  markers cluster near the middle rather than filling a map you're only glancing at. */
-const MARKER_RADIUS = 10
 
 /** A marker's place in the map layer: the centre of its parcel, not its corner. */
 function atlasPxAt(parcel: { x: number; y: number }): { left: number; top: number } {
   const at = atlasPx(parcel.x * PARCEL_METERS + PARCEL_METERS / 2, parcel.y * PARCEL_METERS + PARCEL_METERS / 2, BASE_PX_PER_PARCEL)
+  return { left: at.x, top: at.y }
+}
+
+/** A full-map position in the map layer; a player's, like the minimap's own, by its corner. */
+function atlasPxOf(pos: Vec2): { left: number; top: number } {
+  const m = mapUnitsToMeters(pos)
+  const at = atlasPx(m.x - PARCEL_METERS / 2, m.z - PARCEL_METERS / 2, BASE_PX_PER_PARCEL)
   return { left: at.x, top: at.y }
 }
 
@@ -87,16 +94,21 @@ export const Minimap = memo(function Minimap({
   const [style, setStyle] = useState<MinimapStyle>(loadStyle)
   const [rotation, setRotation] = useState(loadRotation)
   const [visibleMeters, setVisibleMeters] = useState(loadZoom)
-  const [markerCategories, setMarkerCategories] = useState(loadMarkers)
   // Donate to the creator of the scene the player stands in, shown where the host can sign a tip and the scene
   // has a creator.
   const donate = useDonate(minimap.donatePlace, { keepWhileAsking: true })
-  const [places, setPlaces] = useState<MinimapPlace[]>([])
   // Tiles + coords re-render only on a boundary, not per pose sample.
   const [chunks, setChunks] = useState<Chunk[]>([])
   const [parcelTile, setParcelTile] = useState(() => parcelTileFor(0, 0))
 
   const surfaceRef = useRef<HTMLDivElement>(null)
+  const routeRef = useRef<HTMLSpanElement>(null)
+  const edgePinRef = useRef<HTMLSpanElement>(null)
+  // The full map's layers and route: the Layers panel switches them here too.
+  const layers = useSyncExternalStore(mapLayers.subscribe, mapLayers.getSnapshot)
+  const destination = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot)
+  const destinationRef = useRef(destination)
+  destinationRef.current = destination
   // Wraps the menu button AND its menu: the trigger has to count as "inside", or its own click would
   // close the menu here and immediately reopen it in the button's onClick.
   const settingsRef = useRef<HTMLDivElement>(null)
@@ -122,33 +134,9 @@ export const Minimap = memo(function Minimap({
     setConfig({ style: effectiveStyle, rotation, visibleMeters })
   }, [setConfig, effectiveStyle, rotation, visibleMeters])
 
-  // Place markers. A World's scenes aren't on the Genesis City grid, so there is nothing to mark.
-  useEffect(() => {
-    if (!inGenesis || markerCategories.length === 0) return
-    let alive = true
-    loadMinimapPlaces()
-      .then((p) => {
-        if (alive) setPlaces(p)
-      })
-      .catch((e: unknown) => {
-        // Markers are decoration — a failed pull leaves the map itself perfectly usable.
-        console.warn('[minimap] could not load place markers', e)
-      })
-    return () => {
-      alive = false
-    }
-  }, [inGenesis, markerCategories.length])
-
-  const nearby = useMemo(() => {
-    // Guard here as well as on the fetch: places loaded in Genesis City stay in state when you
-    // travel to a World, and a World's coordinates are local — they sit near the origin, which
-    // is exactly where Genesis City has places. Without this you get Genesis markers on a map
-    // they have nothing to do with. Kept in state rather than cleared so coming back doesn't refetch.
-    if (!inGenesis) return []
-    return placesNear(places, map.x, map.y, MARKER_RADIUS).filter((p) =>
-      p.categories.some((c) => markerCategories.includes(c))
-    )
-  }, [inGenesis, places, map.x, map.y, markerCategories])
+  // The full map's marker layers. A World's scenes aren't on the Genesis City grid, so there is
+  // nothing to mark there; the data is read only while the map is shown in Genesis City.
+  const layerData = useMapLayerData(open && inGenesis, layers, referrer)
 
   useEffect(() => {
     const surface = surfaceRef.current
@@ -177,6 +165,28 @@ export const Minimap = memo(function Minimap({
       const edge = Math.max(Math.abs(Math.sin(north)), Math.abs(Math.cos(north)))
       surface.style.setProperty('--compass-x', String(Math.sin(north) / edge))
       surface.style.setProperty('--compass-y', String(-Math.cos(north) / edge))
+
+      // The route: a line from the player to the destination in the map layer, and, while the
+      // destination is far, its pin on the minimap's edge in its direction.
+      const dest = destinationRef.current
+      const route = routeRef.current
+      const edgePin = edgePinRef.current
+      if (dest != null && route != null && edgePin != null) {
+        const to = atlasPxAt(dest.parcel)
+        const dx = to.left - here.x
+        const dy = to.top - here.y
+        route.style.setProperty('--route-length', String(Math.hypot(dx, dy)))
+        route.style.setProperty('--route-angle', `${Math.atan2(-dy, -dx)}rad`)
+        const onEdge = destinationOnEdge(playerMarkerPosition(p.x, p.z), dest.position)
+        edgePin.hidden = !onEdge
+        if (onEdge) {
+          // the layer's direction, turned with the map (CSS turns clockwise, y down)
+          const yaw = (mapYaw * Math.PI) / 180
+          const at = edgePoint(dx * Math.cos(yaw) - dy * Math.sin(yaw), dx * Math.sin(yaw) + dy * Math.cos(yaw))
+          edgePin.style.setProperty('--edge-x', String(at.x))
+          edgePin.style.setProperty('--edge-y', String(at.y))
+        }
+      }
 
       if (effectiveStyle === 'satellite') {
         // Cull to the square's *rotated* extent — a corner reaches half a diagonal from the
@@ -259,10 +269,6 @@ export const Minimap = memo(function Minimap({
     setRotation(r)
     saveRotation(r)
   }, [])
-  const pickMarkers = useCallback((categories: string[]) => {
-    setMarkerCategories(categories)
-    saveMarkers(categories)
-  }, [])
 
   // A click anywhere on the map opens the full-screen map, so the controls layered on top of
   // it must not bubble — otherwise zooming also navigates away.
@@ -283,25 +289,44 @@ export const Minimap = memo(function Minimap({
   const { changeRealm, setHome } = map
   const { reloadScene } = minimap
 
-  // Home, as the map holds it. In Genesis City the menu reads the place under the player when it
-  // opens, so any parcel of the home place counts as home.
+  // The place under the player, read again on every parcel and realm: Set as Home counts any parcel
+  // of the home place, and the favourite button marks it. In a World, that World's scene.
   const home = useMemo(() => homeOf(map.home), [map.home])
   const [placeHere, setPlaceHere] = useState<{ at: string; place: DiscoverPlace | null } | null>(null)
-  const parcelKey = `${map.x},${map.y}`
+  const parcelKey = `${linkRealm ?? ''}|${map.x},${map.y}`
   useEffect(() => {
-    if (!settingsOpen || linkRealm !== DEFAULT_REALM) return
+    if (linkRealm == null) return
     let alive = true
-    // without the place, home is told by the parcel alone
+    // without the place, home is told by the parcel alone and there is nothing to favourite
     const settle = (place: DiscoverPlace | null): void => {
-      if (alive) setPlaceHere({ at: parcelKey, place })
+      if (alive) setPlaceHere({ at: parcelKey, place: place != null && !isEmptyPlace(place) ? place : null })
     }
-    fetchPlaceAt({ x: map.x, y: map.y }).then(settle, () => settle(null))
+    fetchPlaceAt({ x: map.x, y: map.y }, inWorld ? linkRealm : undefined).then(settle, () => settle(null))
     return () => {
       alive = false
     }
-  }, [settingsOpen, linkRealm, parcelKey, map.x, map.y])
-  const homeHere =
-    linkRealm != null && isStandingInHome(home, linkRealm, { x: map.x, y: map.y }, placeHere?.at === parcelKey ? placeHere.place : null)
+  }, [linkRealm, inWorld, parcelKey, map.x, map.y])
+  const currentPlace = placeHere?.at === parcelKey ? placeHere.place : null
+  const homeHere = linkRealm != null && isStandingInHome(home, linkRealm, { x: map.x, y: map.y }, currentPlace)
+
+  // The favourite button: shown at once, then what the service answers; a refused change goes back.
+  const favouriteRun = useRef(0)
+  const toggleFavourite = useCallback(() => {
+    if (currentPlace == null) return
+    const before = currentPlace
+    const next = before.user_favorite !== true
+    const run = ++favouriteRun.current
+    const at = parcelKey
+    setPlaceHere({ at, place: { ...before, user_favorite: next } })
+    const settle = (favourite: boolean): void => {
+      if (run !== favouriteRun.current) return
+      setPlaceHere((now) => (now?.at === at && now.place != null ? { at, place: { ...now.place, user_favorite: favourite } } : now))
+    }
+    setPlaceFavorite(before.id, next).then(
+      (r) => settle(r.user_favorite),
+      () => settle(before.user_favorite === true)
+    )
+  }, [currentPlace, parcelKey])
   const setHomeHere = useCallback(() => {
     if (linkRealm == null) return
     const target = minimapHomeTarget(linkRealm, { x: map.x, y: map.y })
@@ -337,6 +362,21 @@ export const Minimap = memo(function Minimap({
         <span className={styles.title}>{sceneTitle || 'Empty parcel'}</span>
         <div className={styles.actions}>
           {minimap.restrictions.length > 0 && <SceneRestrictions restrictions={minimap.restrictions} />}
+          {linkRealm != null && (
+            <button
+              type="button"
+              className={styles.iconButton}
+              onClick={toggleFavourite}
+              disabled={currentPlace == null}
+              aria-label="Favorite"
+              aria-pressed={currentPlace?.user_favorite === true}
+            >
+              <MaskIcon
+                src={currentPlace == null ? PANEL_ART.favouriteBlocked : currentPlace.user_favorite === true ? PANEL_ART.favouriteSolid : PANEL_ART.favouriteOutline}
+                size={18}
+              />
+            </button>
+          )}
           {donate.visible && (
             <button
               type="button"
@@ -365,8 +405,6 @@ export const Minimap = memo(function Minimap({
                 style={style}
                 onStyle={pickStyle}
                 hideStyle={!inGenesis}
-                markers={markerCategories}
-                onMarkers={pickMarkers}
                 home={linkRealm != null ? { on: homeHere, onSet: setHomeHere } : undefined}
                 onCopyLink={linkRealm != null ? copyLink : undefined}
                 onReloadScene={reload}
@@ -394,22 +432,27 @@ export const Minimap = memo(function Minimap({
             <div className={styles.rotor}>
               <div className={styles.layer}>
                 {tiles}
-                {nearby.map((p) => {
-                  // Anchor at the centre of the place's parcel, not its corner.
-                  const at = atlasPx(
-                    p.x * PARCEL_METERS + PARCEL_METERS / 2,
-                    p.y * PARCEL_METERS + PARCEL_METERS / 2,
-                    BASE_PX_PER_PARCEL
-                  )
-                  return (
-                    <span key={p.id} className={styles.poi} style={{ left: at.x, top: at.y }}>
-                      <img className={styles.poiPin} src={pinForCategories(p.categories)} alt="" draggable={false} />
-                      {/* Only points of interest are named — labelling every category turns the
-                          map into a wall of text, which is why the SDK7 HUD did the same. */}
-                      {p.categories.includes('poi') && <span className={styles.poiLabel}>{p.title}</span>}
+                {inGenesis && layers.has('people') &&
+                  layerData.people.map((pos, i) => <span key={i} className={styles.person} style={atlasPxOf(pos)} />)}
+                {inGenesis && layers.has('pois') &&
+                  layerData.pois.map((m) => (
+                    <span key={m.id} className={styles.poi} style={atlasPxAt(m.key)}>
+                      <img className={styles.poiPin} src={MARKER_ART.poi} alt="" draggable={false} />
+                      <span className={styles.poiLabel}>{m.title}</span>
                     </span>
-                  )
-                })}
+                  ))}
+                {inGenesis && layers.has('liveEvents') &&
+                  layerData.liveEvents.map((m) => (
+                    <span key={m.id} className={styles.poi} style={atlasPxAt(m.key)}>
+                      <img className={styles.poiPin} src={MARKER_ART.live} alt="" draggable={false} />
+                    </span>
+                  ))}
+                {inGenesis && destination != null && (
+                  <span className={styles.poi} style={atlasPxAt(destination.parcel)} data-marker="destination">
+                    <span ref={routeRef} className={styles.route} />
+                    <img className={styles.poiPin} src={MARKER_ART.destination} alt="" draggable={false} />
+                  </span>
+                )}
                 {/* The home pin, as on the full map. */}
                 {inGenesis && home.parcel != null && (
                   <span className={styles.poi} data-marker="home" style={atlasPxAt(home.parcel)}>
@@ -425,6 +468,13 @@ export const Minimap = memo(function Minimap({
             {effectiveStyle === 'imposters' && (
               <span className={styles.cutoutFill}>
                 <EngineViewport region="map" report={setEngineViewport} />
+              </span>
+            )}
+            {/* The route's destination on the edge while it is far: outside the rotor, it is placed
+                along the turned map by the frame loop. */}
+            {inGenesis && destination != null && (
+              <span ref={edgePinRef} className={styles.edgePin} data-marker="destination-edge" hidden>
+                <img src={MARKER_ART.destination} alt="" draggable={false} />
               </span>
             )}
             {(['N', 'E', 'S', 'W'] as const).map((c) => (

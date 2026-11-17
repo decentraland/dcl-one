@@ -1,18 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { fireEvent, screen } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { DEFAULT_REALM } from '@hud-host'
 import { Minimap } from '../../features/minimap/Minimap'
 import { fakeSession, renderSettled } from '../harness'
+import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
+import { navigation } from '@explorer-core/features/map/navigation'
 
 const placeAt = vi.hoisted(() => ({ place: null as unknown }))
+const layerData = vi.hoisted(() => ({ events: [] as unknown[], favourite: vi.fn() }))
 vi.mock('@explorer-core/features/map/mapApi', async (original) => ({
   ...await original<typeof import('@explorer-core/features/map/mapApi')>(),
-  fetchPlaceAt: vi.fn(async () => placeAt.place)
-}))
-
-vi.mock('@explorer-core/features/minimap/minimapPlaces', async (original) => ({
-  ...await original<typeof import('@explorer-core/features/minimap/minimapPlaces')>(),
-  loadMinimapPlaces: vi.fn(async () => [])
+  fetchPlaceAt: vi.fn(async () => placeAt.place),
+  fetchLiveEvents: vi.fn(async () => layerData.events),
+  fetchPoiParcels: vi.fn(async () => []),
+  fetchPeers: vi.fn(async () => []),
+  setPlaceFavorite: layerData.favourite
 }))
 
 // The minimap header: the scene name comes from the sceneInfo stream (see world.test.tsx for
@@ -25,6 +27,10 @@ async function renderMinimap(sceneTitle: string, restrictions: string[] = []): P
 beforeEach(() => {
   localStorage.clear()
   placeAt.place = null
+  layerData.events = []
+  layerData.favourite.mockReset()
+  mapLayers.set('liveEvents', true)
+  navigation.stop()
 })
 
 describe('minimap header', () => {
@@ -161,3 +167,72 @@ describe('minimap home pin', () => {
     expect(container.querySelector('[data-marker="home"]')).toBeNull()
   })
 })
+
+describe('minimap layers', () => {
+  const live = { id: 'e1', name: 'Party', x: 2, y: 3, live: true, world: false }
+  async function renderAt(): Promise<HTMLElement> {
+    const session = fakeSession()
+    const view = await renderSettled(<Minimap minimap={{ ...session.minimap, linkRealm: DEFAULT_REALM }} map={session.map} sceneTitle="" setEngineViewport={vi.fn()} />)
+    return view.container
+  }
+
+  it("draws the full map's live events, and the Layers panel hides them here too", async () => {
+    layerData.events = [live]
+    const container = await renderAt()
+    await waitFor(() => expect(container.querySelectorAll('img[src*="live"]').length).toBe(1))
+    act(() => mapLayers.set('liveEvents', false))
+    expect(container.querySelectorAll('img[src*="live"]').length).toBe(0)
+  })
+
+  it('has no markers setting of its own any more', async () => {
+    await renderAt()
+    fireEvent.click(screen.getByRole('button', { name: 'Minimap settings' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Minimap settings/ }))
+    expect(screen.queryByText('Markers')).toBeNull()
+    expect(screen.queryByRole('menuitemradio', { name: 'Only POI' })).toBeNull()
+  })
+
+  it('draws the route and its destination while one is set', async () => {
+    const container = await renderAt()
+    expect(container.querySelector('[data-marker="destination"]')).toBeNull()
+    act(() => navigation.start({ id: 'p', title: 'Far', positions: ['40,40'], base_position: '40,40' } as never))
+    expect(container.querySelector('[data-marker="destination"]')).not.toBeNull()
+    expect(container.querySelector('[data-marker="destination-edge"]')).not.toBeNull()
+  })
+})
+
+describe('minimap favourite', () => {
+  const plaza = { id: 'p', title: 'Plaza', positions: ['0,0'], base_position: '0,0', user_favorite: false }
+  async function renderAt(): Promise<void> {
+    const session = fakeSession()
+    await renderSettled(<Minimap minimap={{ ...session.minimap, linkRealm: DEFAULT_REALM }} map={session.map} sceneTitle="" setEngineViewport={vi.fn()} />)
+  }
+
+  it('is off and greyed where no place is under the player', async () => {
+    await renderAt()
+    expect(screen.getByRole('button', { name: 'Favorite' })).toBeDisabled()
+  })
+
+  it('marks the place under the player at once and keeps what the service answers', async () => {
+    placeAt.place = plaza
+    layerData.favourite.mockResolvedValue({ favorites: 1, user_favorite: true })
+    await renderAt()
+    const heart = await screen.findByRole('button', { name: 'Favorite', pressed: false })
+    await waitFor(() => expect(heart).toBeEnabled())
+    fireEvent.click(heart)
+    expect(heart).toHaveAttribute('aria-pressed', 'true')
+    expect(layerData.favourite).toHaveBeenCalledWith('p', true)
+    await waitFor(() => expect(heart).toHaveAttribute('aria-pressed', 'true'))
+  })
+
+  it('goes back when the service refuses', async () => {
+    placeAt.place = plaza
+    layerData.favourite.mockRejectedValue(new Error('refused'))
+    await renderAt()
+    const heart = await screen.findByRole('button', { name: 'Favorite' })
+    await waitFor(() => expect(heart).toBeEnabled())
+    fireEvent.click(heart)
+    await waitFor(() => expect(heart).toHaveAttribute('aria-pressed', 'false'))
+  })
+})
+

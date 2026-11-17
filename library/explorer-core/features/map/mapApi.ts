@@ -158,8 +158,11 @@ export async function fetchPlacesAt(parcels: readonly Vec2[]): Promise<DiscoverP
   return res.places
 }
 
-export async function fetchPlaceAt(parcel: Vec2): Promise<DiscoverPlace | null> {
-  return (await fetchPlacesAt([parcel]))[0] ?? null
+/** The place covering a parcel: Genesis City's, or in `world` that World's scene there (or its first). */
+export async function fetchPlaceAt(parcel: Vec2, world?: string): Promise<DiscoverPlace | null> {
+  if (world == null) return (await fetchPlacesAt([parcel]))[0] ?? null
+  const res = await askFor<PlacesAtMessage>('placesAt', { kind: 'getPlacesAt', positions: [parcelKey(parcel)], world })
+  return res.places[0] ?? null
 }
 
 export type MapSort = PlaceSearchOrder

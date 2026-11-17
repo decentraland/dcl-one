@@ -2639,12 +2639,14 @@ export interface DiscoverPlace {
 // each place carries the signed-in user's own like, dislike and favourite. Every request is
 // answered, a failed one with `failed`.
 
-/** The places covering these `x,y` parcels. */
+/** The places covering these `x,y` parcels: Genesis City's, or `world`'s scenes when given. */
 export interface GetPlacesAtRequest {
   kind: 'getPlacesAt'
   /** Echoed in the answer. */
   request: number
   positions: string[]
+  /** A World's name: its scenes, the ones covering `positions` first. */
+  world?: string
 }
 export interface PlacesAtMessage {
   kind: 'placesAt'

@@ -1,16 +1,12 @@
 // The menu behind the minimap panel's three dots. First the scene's options: Set as Home, a
 // separator, Copy Link and Reload Scene. Then, below a separator, "Minimap
-// settings", which opens the three sections the SDK7 HUD's minimap settings had: rotation mode,
-// visualisation style, and which place categories get markers.
-//
-// Markers are modelled as the full category list even though the menu only offers three
-// presets, so per-category toggles stay a UI change rather than a data change.
+// settings", which opens the rotation mode and the visualisation style. Which markers show is the
+// full map's Layers panel's.
 
 import { useState } from 'react'
 import { Check, ChevronDown, ChevronRight, Toggle } from '../../design'
 import { MaskIcon } from '../../design/MaskIcon'
 import reloadIcon from '../../assets/minimap/reload.png'
-import { ALL_MARKER_CATEGORIES } from '@explorer-core/features/minimap/minimapPrefs'
 import type { MinimapRotation, MinimapStyle } from '@explorer-core/engine/protocol'
 import { LinkMark } from './icons'
 import styles from './MinimapSettings.module.css'
@@ -26,29 +22,12 @@ const STYLE_LABELS: Array<{ value: MinimapStyle; label: string }> = [
   { value: 'imposters', label: 'Camera' }
 ]
 
-type MarkerPreset = 'all' | 'poi' | 'none'
-
-function presetOf(markers: string[]): MarkerPreset | null {
-  if (markers.length === 0) return 'none'
-  if (markers.length === 1 && markers[0] === 'poi') return 'poi'
-  if (markers.length === ALL_MARKER_CATEGORIES.length) return 'all'
-  return null
-}
-
-const MARKER_PRESETS: Array<{ value: MarkerPreset; label: string; categories: string[] }> = [
-  { value: 'all', label: 'All', categories: ALL_MARKER_CATEGORIES },
-  { value: 'poi', label: 'Only POI', categories: ['poi'] },
-  { value: 'none', label: 'None', categories: [] }
-]
-
 export function MinimapSettings({
   rotation,
   onRotation,
   style,
   onStyle,
   hideStyle,
-  markers,
-  onMarkers,
   home,
   onCopyLink,
   onReloadScene
@@ -59,16 +38,14 @@ export function MinimapSettings({
   onStyle: (s: MinimapStyle) => void
   /** True outside Genesis City, where only the Camera style can render anything. */
   hideStyle: boolean
-  markers: string[]
-  onMarkers: (categories: string[]) => void
   /** Set as Home: on where the player stands in their home. Home can be set, not cleared, so the
-   *  switch only turns on (turning it off does nothing, as the place panel's Home); absent where the place has no link (a preview, a local realm). */
+   *  switch only turns on (turning it off does nothing, as the place panel's Home button); absent
+   *  where the place has no link (a preview, a local realm). */
   home?: { on: boolean; onSet: () => void }
   /** Copy the link to the place the player stands in; absent where the place has none. */
   onCopyLink?: () => void
   onReloadScene: () => void
 }): React.JSX.Element {
-  const preset = presetOf(markers)
   const [settingsOpen, setSettingsOpen] = useState(false)
 
   return (
@@ -113,16 +90,6 @@ export function MinimapSettings({
               ))}
             </>
           )}
-
-          <p className={styles.section}>Markers</p>
-          {MARKER_PRESETS.map((o) => (
-            <Option
-              key={o.value}
-              label={o.label}
-              selected={preset === o.value}
-              onSelect={() => onMarkers([...o.categories])}
-            />
-          ))}
         </>
       )}
     </div>

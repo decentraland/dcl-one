@@ -498,11 +498,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   The sea around the city is one image, rendered once from unity-explorer's sea shader and placed
   under the satellite map like its tiles; its water stands still, where unity-explorer animates
   it every frame. Nothing on the map is drawn per frame.
-- **The map's layers are on the full map only, except the home pin.** unity-explorer draws live
-  events, points of interest, players, scene pins and the home pin on the minimap too, and the
-  Layers panel switches both. Here the minimap draws the home pin and keeps its own place markers
-  and settings, so the Layers panel changes the full map alone, and a route shows no pin on the
-  minimap's edge. The minimap has no favourite button for the place the player stands in.
+- **The minimap draws the full map's layers.** As unity-explorer's, it shows live events,
+  points of interest, other players, the home pin and the route, and the full map's Layers panel
+  switches them on both; the minimap has no category pins or markers setting of its own. A far
+  destination's pin stands on the minimap's edge in its direction, as unity-explorer's, once it
+  is more than about eight parcels away; here it is the full map's destination pin, and the
+  minimap being square, it runs along the square's edge rather than a circle. Scene map pins are
+  on neither (below). The header's heart marks the place the player stands in as a favourite; in
+  a World, the World's scene there.
 - **The map draws no scene map pins.** unity-explorer shows the `MapPin`s of every portable
   experience, among them the quests' global one (`globalpx.dcl.eth`, loaded at startup from
   `alfa-global-portable-experiences`), and of any scene under `alfa-map-pins`, with a Quest
