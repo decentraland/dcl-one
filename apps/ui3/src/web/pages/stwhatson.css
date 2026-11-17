@@ -189,9 +189,11 @@
   margin-top: auto;
   min-width: 0;
   overflow: hidden;
-  transition: margin-bottom .35s ease;
+  transition: opacity .35s ease;
 }
-.wo-ln__card:hover .wo-ln__creatorrow { margin-bottom: calc(46px + var(--dcl-space-16)); }
+/* Jump In overlays the by-line at the body's foot, so revealing it never resizes the card or moves its text. */
+.wo-ln__card:hover .wo-ln__creatorrow,
+.wo-ln__card:focus-within .wo-ln__creatorrow { opacity: 0; }
 .wo-ln__avatar { border: 1.4px solid rgba(255, 255, 255, .3); flex-shrink: 0; }
 .wo-ln__creator {
   flex: 1;
@@ -214,7 +216,8 @@
   transform: translateY(calc(100% + var(--dcl-space-16)));
   transition: opacity .35s ease, transform .35s ease;
 }
-.wo-ln__card:hover .wo-ln__jumpwrap { opacity: 1; transform: translateY(0); }
+.wo-ln__card:hover .wo-ln__jumpwrap,
+.wo-ln__card:focus-within .wo-ln__jumpwrap { opacity: 1; transform: translateY(0); }
 /* Not JumpInCTA: the whole card is the link, and the CTA renders a link or a button of its own. */
 .wo-ln__jump {
   display: flex;
@@ -755,7 +758,8 @@ h2.wo-all__title {
   .wo-ln__card:hover { transform: none; box-shadow: none; }
   .wo-ln__media { height: calc(62.5cqw - 62px); }
   .wo-ln__body { min-height: 149px; }
-  .wo-ln__card:hover .wo-ln__creatorrow { margin-bottom: 0; }
+  .wo-ln__card:hover .wo-ln__creatorrow,
+  .wo-ln__card:focus-within .wo-ln__creatorrow { opacity: 1; }
   .wo-ln__jumpwrap { position: relative; opacity: 1; transform: none; bottom: auto; left: auto; right: auto; margin-top: var(--dcl-space-8); }
   .wo-ln__dots { display: flex; }
   .wo-up { margin-left: 0; margin-right: 0; padding: var(--dcl-space-24) var(--dcl-space-16); }
