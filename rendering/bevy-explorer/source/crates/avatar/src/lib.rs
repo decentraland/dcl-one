@@ -1783,7 +1783,9 @@ fn process_avatar(
                                 // a bone of the wearable's own. Keep the branch it is on by
                                 // moving the branch under the body bone it hangs off. A branch
                                 // that starts at an `avatar_*` bone the body lacks is kept the
-                                // same way and stays rigid: no chain hangs off that bone.
+                                // same way, or under the body's armature when that bone sits
+                                // directly under the wearable's, and stays rigid: no chain
+                                // hangs off that bone.
                                 let mut top = *joint;
                                 for _ in 0..spring_bones::MAX_BRANCH_DEPTH {
                                     let Ok((name, parent)) = name_and_parent.get(top) else {
@@ -1808,8 +1810,20 @@ fn process_avatar(
                                         }
                                         break;
                                     }
-                                    // nodes under the armature itself moved to the body's above
                                     if parent_name == "armature" {
+                                        // the wearable's own nodes under the armature moved to
+                                        // the body's above. An `avatar_*` one was set to be
+                                        // despawned instead: keep it, as the skin uses a bone
+                                        // under it.
+                                        if name.to_lowercase().starts_with("avatar_")
+                                            && moved_branches.insert(top)
+                                        {
+                                            wearable_armature_to_despawn.remove(&top);
+                                            commands.entity(top).try_insert(ChildOf(armature_node));
+                                            warn!(
+                                                "the body has no bone {name:?}: the wearable's bones under it stay rigid under the armature"
+                                            );
+                                        }
                                         break;
                                     }
                                     top = parent.parent();

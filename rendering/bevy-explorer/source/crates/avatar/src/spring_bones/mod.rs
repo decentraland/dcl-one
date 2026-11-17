@@ -87,14 +87,6 @@ pub fn wearable_chains(
     let mut kept = HashSet::new();
     let mut chains = Vec::new();
     for chain in plan_chains(&skin, params) {
-        if chain.dropped > 0 {
-            warn!(
-                "spring chain from {:?} is too long: {} bones past its first {} stay at rest",
-                skin[chain.joints[0].0].name,
-                chain.dropped,
-                chain.joints.len()
-            );
-        }
         let anchor = if skin[chain.anchor].avatar_bone {
             body_bone(joints[chain.anchor])
         } else {
@@ -103,6 +95,14 @@ pub fn wearable_chains(
         let Some(anchor) = anchor else {
             continue;
         };
+        if chain.dropped > 0 {
+            warn!(
+                "spring chain from {:?} is too long: {} bones past its first {} stay at rest",
+                skin[chain.joints[0].0].name,
+                chain.dropped,
+                chain.joints.len()
+            );
+        }
         kept.extend(chain.joints.iter().map(|(ix, _)| joints[*ix]));
         chains.push(SpringChain {
             anchor,
