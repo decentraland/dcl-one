@@ -32,7 +32,6 @@ use common::{
     util::{ModifyComponentExt, SceneSpawnerPlus},
 };
 use rapier3d_f64::prelude::*;
-use serde::Deserialize;
 
 use crate::{
     initialize_scene::SceneEntityDefinitionHandle,
@@ -267,18 +266,14 @@ pub(crate) struct GltfProcessing {
     named_nodes: HashMap<String, Entity>,
 }
 
-#[derive(Deserialize)]
-struct DclNodeExtras {
-    dcl_collider_mask: Option<u32>,
-    dcl_collision_mask: Option<u32>,
-}
-
-impl DclNodeExtras {
-    /// ADR-215 reserves `dcl_collider_mask`; a model that carries `dcl_collision_mask` keeps
-    /// its mask.
-    fn collider_mask(&self) -> Option<u32> {
-        self.dcl_collider_mask.or(self.dcl_collision_mask)
-    }
+/// The collider mask in the extras of a node or a primitive, given as their JSON. ADR-215
+/// reserves `dcl_collider_mask`; a model that carries `dcl_collision_mask` keeps its mask. A
+/// value that is not a `u32` is ignored on its own, so the other name still counts.
+fn extras_collider_mask(extras: &str) -> Option<u32> {
+    let extras = serde_json::from_str::<serde_json::Value>(extras).ok()?;
+    ["dcl_collider_mask", "dcl_collision_mask"]
+        .into_iter()
+        .find_map(|name| u32::try_from(extras.get(name)?.as_u64()?).ok())
 }
 
 #[derive(Component)]
@@ -1086,18 +1081,14 @@ impl NodeProcessing<'_, '_> {
             // get specified or default collider bits
             // try mesh node first
             let collider_bits = maybe_extras
-                .and_then(|extras| serde_json::from_str::<DclNodeExtras>(&extras.value).ok())
-                .and_then(|extras| extras.collider_mask())
+                .and_then(|extras| extras_collider_mask(&extras.value))
                 .or_else(|| {
                     // then try parent node
                     gltf_spawned_entities
                         .get(parent.parent())
                         .ok()
                         .and_then(|tpl| tpl.5)
-                        .and_then(|extras| {
-                            serde_json::from_str::<DclNodeExtras>(&extras.value).ok()
-                        })
-                        .and_then(|extras| extras.collider_mask())
+                        .and_then(|extras| extras_collider_mask(&extras.value))
                         .or({
                             //fall back to container-specified default
                             if is_collider || is_trigger {
