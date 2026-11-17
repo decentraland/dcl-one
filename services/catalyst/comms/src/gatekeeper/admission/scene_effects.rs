@@ -212,7 +212,9 @@ pub async fn remove_admin(state: &CommsState, rooms: &[String], address: &Addres
 }
 
 /// Revocation takes effect in the running room: the banned wallet is removed
-/// from every room the mutation named (best-effort, logged).
+/// from every room the mutation named, and so are the Cast watchers it
+/// watches as (their identity is synthetic; the wallet is in their token's
+/// attribute). Best-effort, logged; the sweeps catch what this misses.
 pub(crate) async fn kick(state: &CommsState, rooms: &[String], address: &Address) {
     if !state.livekit.configured || rooms.is_empty() {
         return;
@@ -224,6 +226,25 @@ pub(crate) async fn kick(state: &CommsState, rooms: &[String], address: &Address
             async move {
                 if let Err(error) = client.remove_participant(room, address.as_str()).await {
                     tracing::warn!(%error, room = %room, address = %address, "failed to kick banned participant (best-effort)");
+                }
+                let participants = match client.list_participants(room).await {
+                    Ok(participants) => participants,
+                    Err(error) => {
+                        tracing::warn!(%error, room = %room, "failed to list watchers to kick (best-effort)");
+                        return;
+                    }
+                };
+                for participant in participants {
+                    let watcher = crate::gatekeeper::streaming::cast::watcher_wallet(
+                        &participant.identity,
+                        &participant.attributes,
+                    );
+                    if watcher.as_ref() == Some(address)
+                        && let Err(error) =
+                            client.remove_participant(room, &participant.identity).await
+                    {
+                        tracing::warn!(%error, room = %room, address = %address, "failed to kick a banned watcher (best-effort)");
+                    }
                 }
             }
         })
