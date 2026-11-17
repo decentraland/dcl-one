@@ -1,5 +1,4 @@
 import { isRouteErrorResponse } from "react-router";
-import { ZodError } from "zod";
 
 import { CatalystError } from "@/data/lib/catalyst/client";
 import { CommunityNotFoundError } from "@/data/lib/catalyst/social/community-detail";
@@ -12,7 +11,7 @@ export type CommunityErrorReason = "not-found" | "unavailable";
  * else is a bug and goes to the root boundary.
  */
 export function isRouteFatal(error: unknown): boolean {
-  return error instanceof CommunityNotFoundError || error instanceof CatalystError || error instanceof ZodError;
+  return error instanceof CommunityNotFoundError || error instanceof CatalystError;
 }
 
 export function isCommunityError(error: unknown): boolean {

@@ -1,7 +1,7 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { useEffect, useId, useMemo, useState } from "react";
 
-import { Spinner } from "@dcl/one-ui";
+import { Button, Spinner } from "@dcl/one-ui";
 import { UpcomingCard } from "@dcl/one-ui/apps/sites/events/cards";
 import { GeneralCalendar } from "@dcl/one-ui/foundations/icons";
 
@@ -9,12 +9,11 @@ import { useAuth } from "@/data/lib/auth/context";
 import { eventsQuery } from "@/data/lib/community/queries";
 
 import { openSignIn } from "../../components/auth/signin-store";
-import { creatorWallets, type Zone } from "../../events/view";
+import { creatorWallets, eventHref, upcomingCardProps, type Zone } from "../../events/view";
 import { useCreatorProfiles } from "../../events/useCreatorProfiles";
 import { useEventReminders } from "../../events/useEventReminders";
 import styles from "./CommunityLists.module.css";
 import { useLoadMore } from "./useLoadMore";
-import { eventCard } from "./view";
 
 /**
  * The server renders times in UTC with no calendar link (it has no origin); once hydrated the
@@ -26,7 +25,13 @@ function useViewer(initialNow: number) {
     origin: "",
     now: initialNow,
   });
-  useEffect(() => setViewer({ zone: undefined, origin: window.location.origin, now: Date.now() }), []);
+  useEffect(() => {
+    const read = () => setViewer({ zone: undefined, origin: window.location.origin, now: Date.now() });
+    read();
+    // "Starts in N mins" keeps counting down, as on the events page.
+    const tick = setInterval(read, 60_000);
+    return () => clearInterval(tick);
+  }, []);
   return viewer;
 }
 
@@ -38,7 +43,9 @@ export function CommunityEvents({ communityId, now: initialNow }: { communityId:
   const groups = useMemo(() => [creatorWallets(events)], [events]);
   const profiles = useCreatorProfiles(groups);
   const reminders = useEventReminders(identity, () => openSignIn({ inPlace: true }));
-  const sentinel = useLoadMore(Boolean(query.hasNextPage), query.isFetchingNextPage, () => void query.fetchNextPage());
+  const sentinel = useLoadMore(
+    Boolean(query.hasNextPage) && !query.isFetchNextPageError,
+    query.isFetchingNextPage, () => void query.fetchNextPage());
   const { zone, origin, now } = useViewer(initialNow);
   return (
     <section className={styles.section} aria-labelledby={titleId} aria-busy={query.isPending || undefined}>
@@ -65,7 +72,7 @@ export function CommunityEvents({ communityId, now: initialNow }: { communityId:
             return (
               <li key={event.id}>
                 <UpcomingCard
-                  {...eventCard(event, { now, zone, origin, profiles })}
+                  {...upcomingCardProps(event, { href: eventHref(event.id), now, zone, origin, profiles })}
                   remind={{ active: reminder.active, pending: reminder.pending, onToggle: reminder.toggle }}
                 />
               </li>
@@ -73,7 +80,14 @@ export function CommunityEvents({ communityId, now: initialNow }: { communityId:
           })}
         </ul>
       )}
-      {query.hasNextPage ? (
+      {query.isFetchNextPageError ? (
+        <div className={styles.loadMoreError} role="alert">
+          <p className={styles.empty}>We couldn't load more events.</p>
+          <Button variant="secondary" size="sm" onClick={() => void query.fetchNextPage()}>
+            Try again
+          </Button>
+        </div>
+      ) : query.hasNextPage ? (
         <div ref={sentinel} className={styles.sentinel}>
           {query.isFetchingNextPage ? <Spinner variant="light" label="Loading more events" /> : null}
         </div>

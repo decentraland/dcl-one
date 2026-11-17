@@ -56,6 +56,7 @@ import {
   formatTime,
   heroWhen,
   liveNowItems,
+  upcomingCardProps,
   locationLabel,
   placeCreator,
   placeHref,
@@ -258,17 +259,10 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
 
   const upcomingCards: UpcomingEventCardProps[] = upcomingEvents.map((event) => {
     const href = eventHref(event.id, search);
-    const start = event.next_start_at ?? event.start_at;
     return {
-      id: event.id,
-      title: event.name ?? "Untitled event",
-      image: event.image,
-      href,
+      ...upcomingCardProps(event, { href, now, zone, origin, profiles }),
       onOpen: open(href, event.id),
-      creator: eventCreator(event, profiles),
-      time: start ? { label: relativeStart(start, now, zone), dateTime: start } : { label: "Soon" },
       remind: remindControl(reminders.get(event.id)),
-      calendarHref: calendarHref(event, eventPageShareUrl(origin, event)),
     };
   });
 

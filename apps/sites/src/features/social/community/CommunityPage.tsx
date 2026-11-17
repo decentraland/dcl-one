@@ -3,7 +3,7 @@ import { useId, useState } from "react";
 
 import SitesChrome from "@ui/web/frames/SitesChrome";
 
-import { Button, Skeleton, Tabs, TabsBar } from "@dcl/one-ui";
+import { Button, Skeleton, Spinner, Tabs, TabsBar } from "@dcl/one-ui";
 import { GeneralCheck, GeneralLock, GeneralPlayers, GeneralPrivate } from "@dcl/one-ui/foundations/icons";
 
 import { useAuth } from "@/data/lib/auth/context";
@@ -58,10 +58,20 @@ function CommunityBody({ community: anonymous, now }: { community: Community; no
   // The member's own read adds their role and the freshest count.
   const community = membership.viewer ?? anonymous;
   const visible = canViewContent(community);
+  // A private community waits for the member's own read before deciding they cannot see it.
+  const deciding = !visible && community.privacy === "private" && membership.state.kind === "loading";
   return (
     <>
       <CommunityInfo community={community} membership={membership} showDescription={visible} />
-      {visible ? <CommunitySections community={community} now={now} /> : <PrivateNotice />}
+      {visible ? (
+        <CommunitySections community={community} now={now} />
+      ) : deciding ? (
+        <div className={styles.deciding}>
+          <Spinner variant="light" label="Loading community" />
+        </div>
+      ) : (
+        <PrivateNotice />
+      )}
     </>
   );
 }
@@ -162,6 +172,17 @@ function MembershipAction({ membership }: { membership: Membership }) {
           Loading...
         </Button>
       );
+    case "error":
+      return (
+        <>
+          <Button variant="secondary" size="md" onClick={membership.retry}>
+            Try again
+          </Button>
+          <p className={styles.error} role="alert">
+            We couldn't check your membership right now.
+          </p>
+        </>
+      );
     case "join":
       return (
         <Button size="md" onClick={membership.join} disabled={pending} loading={pending}>
@@ -220,10 +241,10 @@ function CommunitySections({ community, now }: { community: Community; now: numb
         {tab("events", "Upcoming Events")}
       </TabsBar>
       <div className={styles.columns}>
-        <div id={panelId("members")} className={panelClass("members")} aria-labelledby={tabId("members")}>
+        <div id={panelId("members")} role="tabpanel" className={panelClass("members")} aria-labelledby={tabId("members")}>
           <CommunityMembers community={community} />
         </div>
-        <div id={panelId("events")} className={panelClass("events")} aria-labelledby={tabId("events")}>
+        <div id={panelId("events")} role="tabpanel" className={panelClass("events")} aria-labelledby={tabId("events")}>
           <CommunityEvents communityId={community.id} now={now} />
         </div>
       </div>

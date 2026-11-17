@@ -1,4 +1,4 @@
-import { skipToken, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
@@ -11,15 +11,17 @@ import {
   type JoinRequest,
 } from "@/data/lib/catalyst/social/community-detail";
 import {
-  COMMUNITY_STALE_MS,
   communityKeys,
+  invalidateAfterMembershipChange,
   joinRequestsQuery,
   viewerCommunityQuery,
 } from "@/data/lib/community/queries";
 
 import { openSignIn } from "../../components/auth/signin-store";
+import { rememberAction, takeAction } from "./pendingAction";
 import {
   ACTION_PARAM,
+  NONCE_PARAM,
   membershipState,
   readAction,
   signInReturnHref,
@@ -39,6 +41,8 @@ export type Membership = {
   pending: boolean;
   /** The last write failed; the member's standing is what it was before it. */
   failed: boolean;
+  /** Reads the member's standing again after it failed. */
+  retry: () => void;
   join: () => void;
   requestToJoin: () => void;
   cancelRequest: () => void;
@@ -54,17 +58,9 @@ export type Membership = {
 export function useCommunityMembership(community: Community, identity: AuthIdentity | null): Membership {
   const client = useQueryClient();
   const id = community.id;
-  const viewer = useQuery(
-    identity
-      ? viewerCommunityQuery(identity, id)
-      : { queryKey: communityKeys.viewer("", id), queryFn: skipToken, staleTime: COMMUNITY_STALE_MS },
-  );
+  const viewer = useQuery(viewerCommunityQuery(identity, id));
   const wantsRequests = Boolean(identity) && community.privacy === "private";
-  const requests = useQuery(
-    identity && wantsRequests
-      ? joinRequestsQuery(identity)
-      : { queryKey: communityKeys.requests(""), queryFn: skipToken, staleTime: COMMUNITY_STALE_MS },
-  );
+  const requests = useQuery(joinRequestsQuery(wantsRequests ? identity : null));
   const [failed, setFailed] = useState(false);
 
   const mutation = useMutation({
@@ -89,13 +85,7 @@ export function useCommunityMembership(community: Community, identity: AuthIdent
           old?.filter((request) => request.id !== write.requestId),
         );
       }
-      await Promise.all([
-        client.invalidateQueries({ queryKey: communityKeys.viewer(signer, id) }),
-        client.invalidateQueries({ queryKey: communityKeys.detail(id) }),
-        client.invalidateQueries({ queryKey: communityKeys.members(id) }),
-        client.invalidateQueries({ queryKey: communityKeys.viewerMembers(signer, id) }),
-        client.invalidateQueries({ queryKey: communityKeys.requests(signer) }),
-      ]);
+      await invalidateAfterMembershipChange(client, signer, id, write.kind);
     },
   });
 
@@ -105,6 +95,8 @@ export function useCommunityMembership(community: Community, identity: AuthIdent
     privacy: community.privacy,
     requests: wantsRequests ? requests.data : [],
     communityId: id,
+    viewerFailed: viewer.isError,
+    requestsFailed: wantsRequests && requests.isError,
   });
 
   const run = (kind: "join" | "request") => {
@@ -112,10 +104,10 @@ export function useCommunityMembership(community: Community, identity: AuthIdent
   };
   const signIn = () => {
     const action: CommunityAction = community.privacy === "private" ? "requestToJoin" : "join";
-    openSignIn({ redirectTo: signInReturnHref(id, action) });
+    openSignIn({ redirectTo: signInReturnHref(id, action, rememberAction(id, action)) });
   };
 
-  usePendingAction(state, mutation.isPending, (action) => run(action === "join" ? "join" : "request"));
+  usePendingAction(id, state, mutation.isPending, (action) => run(action === "join" ? "join" : "request"));
 
   return {
     state,
@@ -128,32 +120,47 @@ export function useCommunityMembership(community: Community, identity: AuthIdent
       if (identity && state.kind === "cancel") mutation.mutate({ kind: "cancel", identity, requestId: state.requestId });
     },
     signIn,
+    retry: () => {
+      if (viewer.isError) void viewer.refetch();
+      if (wantsRequests && requests.isError) void requests.refetch();
+    },
   };
 }
 
 /**
- * `?action=join|requestToJoin`, set by the sign-in this page started: once the member's standing is
- * known, the action runs if it still applies, and the parameter is dropped either way.
+ * `?action=join|requestToJoin&nonce=`, set by the sign-in this page started. Once the member's
+ * standing is known the parameters are dropped, and the action runs only if this tab recorded it
+ * (a matching, unexpired marker, consumed here) and it still applies. A link that carries the
+ * parameters alone runs nothing: the member has to click.
  */
-function usePendingAction(state: MembershipState, busy: boolean, perform: (action: CommunityAction) => void) {
+function usePendingAction(
+  communityId: string,
+  state: MembershipState,
+  busy: boolean,
+  perform: (action: CommunityAction) => void,
+) {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const done = useRef(false);
   const raw = params.get(ACTION_PARAM);
+  const nonce = params.get(NONCE_PARAM);
   const action = readAction(raw);
   useEffect(() => {
-    if (raw === null || done.current) return;
+    if ((raw === null && nonce === null) || done.current) return;
     const drop = () => {
       done.current = true;
       const next = new URLSearchParams(params);
       next.delete(ACTION_PARAM);
+      next.delete(NONCE_PARAM);
       const query = next.toString();
       void navigate({ search: query ? `?${query}` : "" }, { replace: true, preventScrollReset: true });
     };
     if (!action) return drop();
     if (state.kind === "signed-out" || state.kind === "loading" || busy) return;
-    if (action === "join" && state.kind === "join") perform("join");
-    if (action === "requestToJoin" && state.kind === "request") perform("requestToJoin");
+    // A failed read of the member's standing drops the action: they retry and click themselves.
+    const started = takeAction(communityId, action, nonce);
+    if (started && action === "join" && state.kind === "join") perform("join");
+    if (started && action === "requestToJoin" && state.kind === "request") perform("requestToJoin");
     drop();
-  }, [raw, action, state.kind, busy, params, navigate, perform]);
+  }, [communityId, raw, nonce, action, state.kind, busy, params, navigate, perform]);
 }

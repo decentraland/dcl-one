@@ -180,6 +180,12 @@
   overflow-wrap: anywhere;
 }
 
+.deciding {
+  display: flex;
+  justify-content: center;
+  padding: var(--dcl-space-48) 0;
+}
+
 /* A private community, to someone who is not a member. */
 .private {
   display: flex;

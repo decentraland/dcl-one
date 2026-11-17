@@ -1,4 +1,4 @@
-import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, queryOptions, skipToken, type QueryClient } from "@tanstack/react-query";
 
 import type { AuthIdentity } from "../auth/types";
 import {
@@ -22,7 +22,6 @@ const account = (identity: AuthIdentity) => identity.signer.toLowerCase();
  * private community's members, the member's requests) sits under `["private", account, "community", ...]`.
  */
 export const communityKeys = {
-  all: ["community"] as const,
   detail: (id: string) => ["community", "detail", id] as const,
   members: (id: string) => ["community", "members", id] as const,
   events: (id: string) => ["community", "events", id] as const,
@@ -30,7 +29,31 @@ export const communityKeys = {
   viewerMembers: (signer: string, id: string) =>
     ["private", signer.toLowerCase(), "community", "members", id] as const,
   requests: (signer: string) => ["private", signer.toLowerCase(), "community", "requests"] as const,
+  /** Where a signed-out visitor's disabled reads sit: no account, so nothing under "private". */
+  signedOut: (part: string, id: string) => ["community", "signed-out", part, id] as const,
 };
+
+/**
+ * After a member joins, asks to join or withdraws: their standing, and for a join the community's
+ * count and members, are read again.
+ */
+export function invalidateAfterMembershipChange(
+  client: QueryClient,
+  signer: string,
+  id: string,
+  change: "join" | "request" | "cancel",
+): Promise<unknown> {
+  const keys: readonly (readonly string[])[] =
+    change === "join"
+      ? [
+          communityKeys.viewer(signer, id),
+          communityKeys.detail(id),
+          communityKeys.members(id),
+          communityKeys.viewerMembers(signer, id),
+        ]
+      : [communityKeys.viewer(signer, id), communityKeys.requests(signer)];
+  return Promise.all(keys.map((queryKey) => client.invalidateQueries({ queryKey })));
+}
 
 export const communityQuery = (id: string) =>
   queryOptions({
@@ -39,12 +62,15 @@ export const communityQuery = (id: string) =>
     queryFn: ({ signal }) => fetchCommunity(id, { signal }),
   });
 
-/** The community read as the signed-in member: the same record plus their role. */
-export const viewerCommunityQuery = (identity: AuthIdentity, id: string) =>
+/**
+ * The community read as the signed-in member: the same record plus their role. Signed out it is
+ * disabled, under a key that names no account.
+ */
+export const viewerCommunityQuery = (identity: AuthIdentity | null, id: string) =>
   queryOptions({
-    queryKey: communityKeys.viewer(account(identity), id),
+    queryKey: identity ? communityKeys.viewer(account(identity), id) : communityKeys.signedOut("viewer", id),
     staleTime: COMMUNITY_STALE_MS,
-    queryFn: ({ signal }) => fetchCommunity(id, { identity, signal }),
+    queryFn: identity ? ({ signal }) => fetchCommunity(id, { identity, signal }) : skipToken,
   });
 
 const nextOffset = (size: number) => (last: { hasMore: boolean }, pages: unknown[]) =>
@@ -76,9 +102,10 @@ export const eventsQuery = (id: string) =>
     },
   });
 
-export const joinRequestsQuery = (identity: AuthIdentity) =>
+/** The member's pending requests to join; disabled (`identity` null) when not needed. */
+export const joinRequestsQuery = (identity: AuthIdentity | null) =>
   queryOptions({
-    queryKey: communityKeys.requests(account(identity)),
+    queryKey: identity ? communityKeys.requests(account(identity)) : communityKeys.signedOut("requests", ""),
     staleTime: COMMUNITY_STALE_MS,
-    queryFn: ({ signal }) => fetchJoinRequests(identity, { signal }),
+    queryFn: identity ? ({ signal }) => fetchJoinRequests(identity, { signal }) : skipToken,
   });

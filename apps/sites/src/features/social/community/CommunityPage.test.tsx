@@ -41,6 +41,7 @@ vi.mock("../../events/useEventReminders", () => ({
 import type { Community } from "@/data/lib/catalyst/social/community-detail";
 
 import { CommunityPage } from "./CommunityPage";
+import { PENDING_ACTION_TTL_MS, rememberAction } from "./pendingAction";
 
 const ID = "e99471aa-31c4-4952-abf6-99905445f43b";
 const ME = "0x1111111111111111111111111111111111111111";
@@ -91,7 +92,13 @@ beforeEach(() => {
   net.fetchCommunityEvents.mockResolvedValue({ events: [], total: 0 });
   net.fetchJoinRequests.mockResolvedValue([]);
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  sessionStorage.clear();
+  vi.restoreAllMocks();
+});
+
+const redirectOf = () => new URL(signIn.openSignIn.mock.calls[0]![0].redirectTo, "http://localhost");
 
 describe("CommunityPage", () => {
   it("shows a public community's card, members and events to a signed-out visitor", async () => {
@@ -113,7 +120,10 @@ describe("CommunityPage", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Sign in to join" }));
 
-    expect(signIn.openSignIn).toHaveBeenCalledWith({ redirectTo: `/social/communities/${ID}?action=join` });
+    const back = redirectOf();
+    expect(back.pathname).toBe(`/social/communities/${ID}`);
+    expect(back.searchParams.get("action")).toBe("join");
+    expect(back.searchParams.get("nonce")).toBeTruthy();
   });
 
   it("asks a private community's sign-in to come back with a request to join", async () => {
@@ -122,7 +132,19 @@ describe("CommunityPage", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Sign in to join" }));
 
-    expect(signIn.openSignIn).toHaveBeenCalledWith({ redirectTo: `/social/communities/${ID}?action=requestToJoin` });
+    expect(redirectOf().searchParams.get("action")).toBe("requestToJoin");
+  });
+
+  it("returns to the plain page when the tab cannot record the action", async () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("QuotaExceededError");
+    });
+    serve(community());
+    show();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Sign in to join" }));
+
+    expect(signIn.openSignIn).toHaveBeenCalledWith({ redirectTo: `/social/communities/${ID}` });
   });
 
   it("hides a private community's members, events and description from a non-member", async () => {
@@ -203,9 +225,12 @@ describe("CommunityPage", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Cancel request" }));
 
-    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect((await screen.findByRole("alert")).textContent).toBe("Failed to join community");
     expect(screen.getByRole("button", { name: "Cancel request" })).toHaveProperty("disabled", false);
     expect(net.cancelJoinRequest).toHaveBeenCalledWith(auth.identity, ID, "r1");
+    expect(client.getQueryData(["private", ME, "community", "requests"])).toEqual([
+      { id: "r1", communityId: ID, type: "request_to_join", status: "pending" },
+    ]);
   });
 
   it("cancels a pending request", async () => {
@@ -221,24 +246,81 @@ describe("CommunityPage", () => {
     expect(await screen.findByRole("button", { name: "Request to join" })).toBeTruthy();
   });
 
-  it("runs the join a sign-in came back with, once, and drops it from the URL", async () => {
+  it("runs the join this tab's sign-in came back with, once, and consumes its marker", async () => {
     auth.identity = { signer: ME };
     serve(community(), { role: "none" });
     net.joinCommunity.mockResolvedValue(undefined);
-    const router = show(`/social/communities/${ID}?action=join`);
+    const nonce = rememberAction(ID, "join");
+    const router = show(`/social/communities/${ID}?action=join&nonce=${nonce}`);
 
     await waitFor(() => expect(net.joinCommunity).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(router.state.location.search).toBe(""));
     expect(net.joinCommunity).toHaveBeenCalledTimes(1);
+    expect(sessionStorage.length).toBe(0);
+  });
+
+  it("does not join from a crafted link this tab did not start", async () => {
+    auth.identity = { signer: ME };
+    serve(community(), { role: "none" });
+    const router = show(`/social/communities/${ID}?action=join&nonce=guessed`);
+
+    await waitFor(() => expect(router.state.location.search).toBe(""));
+    expect(net.joinCommunity).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Join" })).toBeTruthy();
+  });
+
+  it("does not join from a link without a nonce", async () => {
+    auth.identity = { signer: ME };
+    serve(community(), { role: "none" });
+    rememberAction(ID, "join");
+    const router = show(`/social/communities/${ID}?action=join`);
+
+    await waitFor(() => expect(router.state.location.search).toBe(""));
+    expect(net.joinCommunity).not.toHaveBeenCalled();
+  });
+
+  it("does not join on an expired marker", async () => {
+    auth.identity = { signer: ME };
+    serve(community(), { role: "none" });
+    const nonce = rememberAction(ID, "join", sessionStorage, Date.now() - PENDING_ACTION_TTL_MS - 1);
+    const router = show(`/social/communities/${ID}?action=join&nonce=${nonce}`);
+
+    await waitFor(() => expect(router.state.location.search).toBe(""));
+    expect(net.joinCommunity).not.toHaveBeenCalled();
+  });
+
+  it("does not join on a marker for another community", async () => {
+    auth.identity = { signer: ME };
+    serve(community(), { role: "none" });
+    const nonce = rememberAction("00000000-0000-0000-0000-000000000000", "join");
+    const router = show(`/social/communities/${ID}?action=join&nonce=${nonce}`);
+
+    await waitFor(() => expect(router.state.location.search).toBe(""));
+    expect(net.joinCommunity).not.toHaveBeenCalled();
+  });
+
+  it("does not join when the tab's storage cannot be read", async () => {
+    auth.identity = { signer: ME };
+    serve(community(), { role: "none" });
+    const nonce = rememberAction(ID, "join");
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("SecurityError");
+    });
+    const router = show(`/social/communities/${ID}?action=join&nonce=${nonce}`);
+
+    await waitFor(() => expect(router.state.location.search).toBe(""));
+    expect(net.joinCommunity).not.toHaveBeenCalled();
   });
 
   it("drops an action that no longer applies without running it", async () => {
     auth.identity = { signer: ME };
     serve(community(), { role: "member" });
-    const router = show(`/social/communities/${ID}?action=join`);
+    const nonce = rememberAction(ID, "join");
+    const router = show(`/social/communities/${ID}?action=join&nonce=${nonce}`);
 
     await waitFor(() => expect(router.state.location.search).toBe(""));
     expect(net.joinCommunity).not.toHaveBeenCalled();
+    expect(sessionStorage.length).toBe(0);
   });
 
   it("drops an unknown action", async () => {
@@ -246,6 +328,128 @@ describe("CommunityPage", () => {
     const router = show(`/social/communities/${ID}?action=leave`);
 
     await waitFor(() => expect(router.state.location.search).toBe(""));
+  });
+
+  it("keeps the request button and the member's requests when asking to join fails", async () => {
+    auth.identity = { signer: ME };
+    serve(community({ privacy: "private" }), { role: "none" });
+    net.requestToJoin.mockRejectedValue(new Error("500"));
+    show();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Request to join" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe("Failed to join community");
+    expect(screen.getByRole("button", { name: "Request to join" })).toHaveProperty("disabled", false);
+    expect(client.getQueryData(["private", ME, "community", "requests"])).toEqual([]);
+  });
+
+  it("offers Try again when the member's own read fails, and recovers", async () => {
+    auth.identity = { signer: ME };
+    const anonymous = community();
+    net.fetchCommunity.mockImplementation(async (_id: string, opts: { identity?: unknown } = {}) => {
+      if (opts.identity) throw new Error("401");
+      return anonymous;
+    });
+    show();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Try again" }));
+    expect(screen.getByRole("alert").textContent).toBe("We couldn't check your membership right now.");
+
+    net.fetchCommunity.mockImplementation(async (_id: string, opts: { identity?: unknown } = {}) =>
+      opts.identity ? { ...anonymous, role: "none" } : anonymous,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("button", { name: "Join" })).toBeTruthy();
+  });
+
+  it("offers Try again when a private community's requests read fails", async () => {
+    auth.identity = { signer: ME };
+    serve(community({ privacy: "private" }), { role: "none" });
+    net.fetchJoinRequests.mockRejectedValue(new Error("502"));
+    show();
+
+    expect(await screen.findByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Request to join" })).toBeNull();
+  });
+
+  it("does not flash the private notice to a member while their read runs", async () => {
+    auth.identity = { signer: ME };
+    const anonymous = community({ privacy: "private" });
+    let release: (value: Community) => void = () => {};
+    net.fetchCommunity.mockImplementation((_id: string, opts: { identity?: unknown } = {}) =>
+      opts.identity ? new Promise<Community>((resolve) => (release = resolve)) : Promise.resolve(anonymous),
+    );
+    show();
+
+    expect(await screen.findByRole("progressbar", { name: "Loading community" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "This is a Private Community" })).toBeNull();
+
+    release({ ...anonymous, role: "member" });
+    expect(await screen.findByText("Alice")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "This is a Private Community" })).toBeNull();
+  });
+
+  it("runs a request to join this tab's sign-in came back with", async () => {
+    auth.identity = { signer: ME };
+    serve(community({ privacy: "private" }), { role: "none" });
+    net.requestToJoin.mockResolvedValue({ id: "r1", communityId: ID, type: "request_to_join", status: "pending" });
+    const nonce = rememberAction(ID, "requestToJoin");
+    show(`/social/communities/${ID}?action=requestToJoin&nonce=${nonce}`);
+
+    await waitFor(() => expect(net.requestToJoin).toHaveBeenCalledTimes(1));
+    expect(net.joinCommunity).not.toHaveBeenCalled();
+  });
+
+  it("keeps a sign-in return's action while the visitor is still signed out", async () => {
+    serve(community());
+    const nonce = rememberAction(ID, "join");
+    const router = show(`/social/communities/${ID}?action=join&nonce=${nonce}`);
+
+    expect(await screen.findByRole("button", { name: "Sign in to join" })).toBeTruthy();
+    expect(router.state.location.search).toBe(`?action=join&nonce=${nonce}`);
+    expect(sessionStorage.length).toBe(1);
+  });
+
+  it("says so inline when the members cannot be read, keeping the card", async () => {
+    serve(community());
+    net.fetchCommunityMembers.mockRejectedValue(new Error("502"));
+    show();
+
+    expect(await screen.findByText("We couldn't load the members right now.")).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Decentraland Foundation" })).toBeTruthy();
+  });
+
+  it("asks once and offers Try again when the next members page fails, keeping the first", async () => {
+    // The sentinel is always on screen here, as on a short list.
+    class Visible {
+      constructor(private readonly cb: IntersectionObserverCallback) {}
+      observe() {
+        this.cb([{ isIntersecting: true } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+      }
+      disconnect() {}
+    }
+    vi.stubGlobal("IntersectionObserver", Visible);
+    serve(community());
+    const first = { memberAddress: ME, role: "owner", name: "Alice", profilePictureUrl: null, hasClaimedName: true };
+    net.fetchCommunityMembers.mockImplementation(async (_id: string, offset: number) => {
+      if (offset === 0) return { members: [first], total: 2, hasMore: true };
+      throw new Error("502");
+    });
+    show();
+
+    expect(await screen.findByText("We couldn't load more members.")).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(net.fetchCommunityMembers).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("Alice")).toBeTruthy();
+
+    net.fetchCommunityMembers.mockImplementation(async (_id: string, offset: number) =>
+      offset === 0
+        ? { members: [first], total: 2, hasMore: true }
+        : { members: [{ ...first, memberAddress: "0x2222222222222222222222222222222222222222", name: "Bob", role: "member" }], total: 2, hasMore: false },
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Bob")).toBeTruthy();
+    vi.unstubAllGlobals();
   });
 
   it("switches between members and events with the tabs", async () => {

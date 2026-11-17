@@ -41,6 +41,24 @@ describe("membershipState", () => {
   });
 });
 
+describe("membershipState after a failed read", () => {
+  it("offers a retry when the member's read of the community fails", () => {
+    expect(membershipState({ ...base, signedIn: true, viewer: undefined, privacy: "public", viewerFailed: true })).toEqual({ kind: "error" });
+  });
+
+  it("still shows a member as joined when only the requests read failed", () => {
+    expect(
+      membershipState({ ...base, signedIn: true, viewer: { role: "member", privacy: "private" }, privacy: "private", requests: undefined, requestsFailed: true }),
+    ).toEqual({ kind: "joined" });
+  });
+
+  it("offers a retry when a non-member's requests read failed", () => {
+    expect(
+      membershipState({ ...base, signedIn: true, viewer: { role: "none", privacy: "private" }, privacy: "private", requests: undefined, requestsFailed: true }),
+    ).toEqual({ kind: "error" });
+  });
+});
+
 describe("canViewContent", () => {
   it("shows a public community to anyone and a private one to members only", () => {
     expect(canViewContent({ privacy: "public", role: null })).toBe(true);
@@ -59,8 +77,12 @@ describe("helpers", () => {
     expect(readAction(null)).toBeNull();
   });
 
-  it("returns the visitor to the community with the chosen action", () => {
-    expect(signInReturnHref(ID, "join")).toBe(`/social/communities/${ID}?action=join`);
+  it("returns the visitor to the community with the chosen action and its nonce", () => {
+    expect(signInReturnHref(ID, "join", "n1")).toBe(`/social/communities/${ID}?action=join&nonce=n1`);
+  });
+
+  it("returns the visitor to the plain page when no marker could be recorded", () => {
+    expect(signInReturnHref(ID, "join", null)).toBe(`/social/communities/${ID}`);
   });
 
   it("formats counts and roles as the source does", () => {

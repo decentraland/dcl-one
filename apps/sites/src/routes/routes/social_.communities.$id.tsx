@@ -1,7 +1,7 @@
 import "@dcl/one-ui/foundations/foundations.css";
 import { HydrationBoundary } from "@tanstack/react-query";
 import { useState } from "react";
-import { useParams } from "react-router";
+import { isRouteErrorResponse, useParams } from "react-router";
 
 import { CommunityErrorView } from "@/features/social/community/CommunityErrorView";
 import { CommunityPage } from "@/features/social/community/CommunityPage";
@@ -17,8 +17,11 @@ export async function clientLoader() {
   return null;
 }
 
-export function meta({ loaderData }: Route.MetaArgs) {
-  if (!loaderData) return [{ title: "Community | Decentraland" }];
+export function meta({ loaderData, error }: Route.MetaArgs) {
+  if (!loaderData) {
+    const notFound = isRouteErrorResponse(error) && error.status === 404;
+    return [{ title: notFound ? "Community not found | Decentraland" : "Community | Decentraland" }];
+  }
   return [
     { title: `${loaderData.title} | Decentraland` },
     ...(loaderData.description ? [{ name: "description", content: loaderData.description }] : []),

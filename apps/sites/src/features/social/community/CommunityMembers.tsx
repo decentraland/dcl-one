@@ -1,7 +1,7 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { useId } from "react";
 
-import { Spinner } from "@dcl/one-ui";
+import { Button, Spinner } from "@dcl/one-ui";
 import { GeneralVerified } from "@dcl/one-ui/foundations/icons";
 
 import { useAuth } from "@/data/lib/auth/context";
@@ -28,7 +28,9 @@ export function CommunityMembers({ community }: { community: Community }) {
   const query = useMembers(community);
   const members = query.data?.pages.flatMap((page) => page.members) ?? [];
   const total = query.data?.pages[0]?.total ?? community.membersCount;
-  const sentinel = useLoadMore(Boolean(query.hasNextPage), query.isFetchingNextPage, () => void query.fetchNextPage());
+  const sentinel = useLoadMore(
+    Boolean(query.hasNextPage) && !query.isFetchNextPageError,
+    query.isFetchingNextPage, () => void query.fetchNextPage());
   return (
     <section className={styles.section} aria-labelledby={titleId} aria-busy={query.isPending || undefined}>
       <h2 id={titleId} className={styles.title}>
@@ -51,7 +53,14 @@ export function CommunityMembers({ community }: { community: Community }) {
           ))}
         </ul>
       )}
-      {query.hasNextPage ? (
+      {query.isFetchNextPageError ? (
+        <div className={styles.loadMoreError} role="alert">
+          <p className={styles.empty}>We couldn't load more members.</p>
+          <Button variant="secondary" size="sm" onClick={() => void query.fetchNextPage()}>
+            Try again
+          </Button>
+        </div>
+      ) : query.hasNextPage ? (
         <div ref={sentinel} className={styles.sentinel}>
           {query.isFetchingNextPage ? <Spinner variant="light" label="Loading more members" /> : null}
         </div>
