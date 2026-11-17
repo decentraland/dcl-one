@@ -66,7 +66,6 @@ pub struct WearableData {
     pub removes_default_hiding: Option<Vec<String>>,
     pub outline_compatible: Option<bool>,
     /// Read by [`spring_bone_models`], which tolerates a block that does not parse.
-    #[serde(default)]
     pub spring_bones: Option<serde_json::Value>,
 }
 

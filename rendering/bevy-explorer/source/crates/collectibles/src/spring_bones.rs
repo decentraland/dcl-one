@@ -62,29 +62,24 @@ fn gravity_dir<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec3, D::Er
 }
 
 impl SpringBoneParams {
-    /// The parameters with every value in the range the simulation may rely on, or `None` when
-    /// one is not finite: JSON `1e39` reads as infinity.
-    fn sanitised(self) -> Option<Self> {
-        let finite = self.stiffness.is_finite()
-            && self.drag.is_finite()
-            && self.gravity_dir.is_finite()
-            && self.gravity_power.is_finite();
-
-        finite.then(|| Self {
+    /// The parameters with every value in the range the simulation may rely on. JSON holds no
+    /// NaN; a number too large for `f32`, such as `1e39`, reads as infinity and is clamped like
+    /// any other value out of range.
+    fn sanitised(self) -> Self {
+        Self {
             stiffness: self.stiffness.clamp(0.0, MAX_FORCE),
             drag: self.drag.clamp(0.0, 1.0),
             gravity_dir: self
                 .gravity_dir
                 .clamp(Vec3::splat(-MAX_FORCE), Vec3::splat(MAX_FORCE)),
             gravity_power: self.gravity_power.clamp(-MAX_FORCE, MAX_FORCE),
-        })
+        }
     }
 }
 
 /// Reads `data.springBones` into one shared map per model content hash. Wearable metadata is
-/// untrusted: a bone that does not parse, or holds a value that is not finite, is left out alone
-/// and takes the defaults, as does every bone of a wearable without the block. Values out of
-/// range are clamped.
+/// untrusted: a bone that does not parse is left out, as if it were not declared, and the bones
+/// beside it are kept. Values out of range are clamped.
 pub fn spring_bone_models(
     spring_bones: Option<&serde_json::Value>,
     wearable: &str,
@@ -122,17 +117,13 @@ pub fn spring_bone_models(
             let model: SpringBoneModel = bones
                 .iter()
                 .filter_map(|(bone, params)| {
-                    let params = match SpringBoneParams::deserialize(params) {
-                        Ok(params) => params.sanitised(),
+                    match SpringBoneParams::deserialize(params) {
+                        Ok(params) => Some((bone.clone(), params.sanitised())),
                         Err(error) => {
                             warn!("ignoring spring bone {bone} of wearable {wearable}: {error}");
-                            return None;
+                            None
                         }
-                    };
-                    if params.is_none() {
-                        warn!("ignoring spring bone {bone} of wearable {wearable}: a value is not finite");
                     }
-                    Some((bone.clone(), params?))
                 })
                 .collect();
 
@@ -279,9 +270,8 @@ mod tests {
     }
 
     #[test]
-    fn a_bone_with_a_value_that_is_not_finite_is_left_out() {
+    fn a_value_too_large_for_f32_is_clamped() {
         let model = model(json!({ "version": 1, "models": { "hash": {
-            "Good": { "stiffness": 1 },
             "Stiffness": { "stiffness": 1e39 },
             "Drag": { "drag": -1e39 },
             "Power": { "gravityPower": 1e39 },
@@ -289,8 +279,15 @@ mod tests {
             "DirName": { "gravityDir": { "z": -1e39 } },
         } } }));
 
-        assert_eq!(model.len(), 1, "{model:?}");
-        assert_eq!(model["Good"].stiffness, 1.0);
+        assert_eq!(model.len(), 5, "{model:?}");
+        assert_eq!(model["Stiffness"].stiffness, MAX_FORCE);
+        assert_eq!(model["Drag"].drag, 0.0);
+        assert_eq!(model["Power"].gravity_power, MAX_FORCE);
+        assert_eq!(model["DirPart"].gravity_dir, Vec3::new(0.0, MAX_FORCE, 0.0));
+        assert_eq!(
+            model["DirName"].gravity_dir,
+            Vec3::new(0.0, 0.0, -MAX_FORCE)
+        );
     }
 
     #[test]
