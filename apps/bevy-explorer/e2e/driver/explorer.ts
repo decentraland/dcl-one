@@ -135,9 +135,12 @@ export interface AvatarReport {
   kind: 'player' | 'otherPlayer' | 'sceneAvatar' | 'preview' | 'other'
   address: string | null
   selected: { bodyShape: string | null; wearables: string[]; emotes: string[]; forceRender: string[]; fromScene: boolean }
-  rendered: { processed: boolean; failed: boolean; bodyShape: string; wearables: RenderedWearable[]; hidden: string[] } | null
+  rendered: { processed: boolean; bodyShape: string; wearables: RenderedWearable[]; hidden: string[] } | null
   emote: EmoteState | null
   upperBodyEmote: EmoteState | null
+  /** The files the avatar could not be built from; `noBody` when neither its body nor the default
+   *  body could be. Absent from builds before it was reported. */
+  loadFailures?: { bodies: string[]; wearables: string[]; noBody: boolean }
 }
 
 export interface ChatMessage {

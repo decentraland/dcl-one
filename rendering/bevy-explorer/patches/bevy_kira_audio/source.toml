@@ -6,8 +6,8 @@ origin     = "https://github.com/robtfm/bevy_kira_audio"
 origin_rev = "a399357a9d8b0a155727086a26ad75970886d52a"
 license    = "MIT OR Apache-2.0"
 paths      = ["."]
-exclude    = []
-base_tree  = "babd5f2a2e45736711e3791fd7712fd14668c129"
-tree       = "20d1d2a216f912c4e7c218c5b5c2fdc2e06e5e37"
-rev        = "787966139b4616afaae2fc63901b1c06a0d60ea5"
+exclude    = [".github"]
+base_tree  = "96de54b71fbc5a64bcfb10ad41d8bf1cb1f4818a"
+tree       = "b93fb6124f96a696dae95cab826903c053816ed3"
+rev        = "343c72eb0e0e4b232aea96a4f5210209d06e113b"
 nix_hash   = "sha256-Ert6kDhCiBWOzZv7vTNiB0MlKl3jWgrpyZ1vhJ2bM7Y="

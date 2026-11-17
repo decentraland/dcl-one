@@ -54,6 +54,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 - Check the current readiness evidence before claiming deployment or compatibility; missing evidence means the claim remains unverified.
 - Write PR descriptions per `.github/PULL_REQUEST_TEMPLATE.md`.
 - For schema, SQL, ingestion, mirrors or caches, apply `DATABASE.md`; state workload and invariants before choosing tables or indexes.
+- A change to a `schemas/` table that a step of the TS import (`tooling/migration/`) writes or reads (its `source.toml` `targets` and load SQL) updates that step's load SQL, `MAPPING.md` and tests in the same change.
 - Record measured performance changes in the task report; follow-ups are candidates until measured.
 - Preserve wire, authorization and crash/resume contracts.
 - Never reset an existing database to fit a changed schema.

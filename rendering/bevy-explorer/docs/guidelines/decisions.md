@@ -509,6 +509,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   show seams between the slices, so here they are radii, borders and gradients with the sprites'
   colours. The canvas scales by the smaller of width and height, as every menu page does, where
   unity-explorer's scales by width.
+- **Jump to Location closes the passport.** unity-explorer's passport does not close itself
+  when its Jump to Location runs; here the passport closes once the friend's parcel or World is
+  known, as it already does for a photo's teleport. A friend found nowhere leaves it open, and
+  nothing is shown, as there. The profile card offers the jump after View Profile, since its rows
+  already follow a different order from unity-explorer's user menu.
 - **The hills follow the Landscape Distance.** The distance is the config's `landscape_distance`
   (default 1000 m), read at startup and held to 500 to 7000 m.
   Unity displaces its whole terrain and its Landscape Distance setting does not drive it. Here the
