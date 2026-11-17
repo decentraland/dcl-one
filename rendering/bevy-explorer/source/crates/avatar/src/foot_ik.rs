@@ -9,7 +9,9 @@ use scene_runner::{
 };
 use texture_camera::CameraLayers;
 
-use crate::{animate::ActiveEmote, two_bone_ik::solve_two_bone, AvatarShape};
+use crate::{
+    animate::ActiveEmote, pause_hidden::PausedAnimation, two_bone_ik::solve_two_bone, AvatarShape,
+};
 
 /// World/default render layer. Avatars whose `CameraLayers` doesn't include
 /// this are display-only (booth/portrait/secondary cameras) and shouldn't
@@ -348,7 +350,8 @@ fn apply_foot_ik(
             &mut FootIkRuntime,
             Option<&CameraLayers>,
         ),
-        With<AvatarShape>,
+        // a paused avatar's bones keep last frame's pose, which the solve would compound on
+        (With<AvatarShape>, Without<PausedAnimation>),
     >,
     containing: ContainingScene,
     mut scenes: Query<&mut SceneColliderData>,

@@ -1,10 +1,16 @@
 //! Hidden avatars stop animating.
 //!
-//! An avatar hidden by the Max Avatars cap, an avatar modifier area or its scene keeps its
-//! animation player running, but its bones leave the animation evaluation: each bone's
-//! `AnimationTarget` is taken off and kept on the built avatar until it shows again. Sampling
-//! every clip for every bone is the per-avatar animation cost, so a crowd beyond the cap no
-//! longer pays it, and unchanged bones skip transform propagation too.
+//! An avatar hidden by the Max Avatars cap, an avatar modifier area, a block or ban, or its
+//! scene keeps its animation player running, but its bones leave the animation evaluation: each
+//! bone's `AnimationTarget` is taken off and kept on the avatar in [`PausedAnimation`] until it
+//! shows again. Sampling every clip for every bone is the per-avatar animation cost, so a crowd
+//! beyond the cap no longer pays it.
+//!
+//! The foot and point-at IK passes skip a paused avatar: they adjust the pose the animation
+//! wrote that frame, so without it they would compound on their own output (feet turning on a
+//! slope, fingers curling further) and the bones, and anything attached to them, would drift.
+//! Skipping them also saves a hidden avatar's foot raycasts. Head IK rests its chain every frame
+//! and keeps running.
 //!
 //! The player, its transitions and the emote logic keep running, so the clock stays in step
 //! with other clients: when the avatar shows again its bones take the current pose.
@@ -27,41 +33,47 @@ impl Plugin for PauseHiddenAvatarsPlugin {
     }
 }
 
-/// The bones of a built avatar taken out of the animation evaluation while it is hidden, with
-/// the target each one had.
+/// On an avatar whose build is hidden: the bones of that build taken out of the animation
+/// evaluation, with the target each one had. Systems that adjust the animated pose skip an avatar
+/// that has it.
 #[derive(Component)]
-pub struct PausedAnimationTargets(Vec<(Entity, AnimationTarget)>);
+pub struct PausedAnimation {
+    /// the build the bones belong to; a rebuild replaces it, leaving this record stale
+    build: Entity,
+    bones: Vec<(Entity, AnimationTarget)>,
+}
 
 #[allow(clippy::type_complexity)]
 fn pause_hidden_avatar_animation(
     mut commands: Commands,
     builds: Query<
-        (
-            Entity,
-            &InheritedVisibility,
-            &ChildOf,
-            Option<&PausedAnimationTargets>,
-        ),
+        (Entity, &InheritedVisibility, &ChildOf),
         (
             With<AvatarProcessed>,
             Or<(Changed<InheritedVisibility>, Added<AvatarProcessed>)>,
         ),
     >,
     primary: Query<(), With<PrimaryUser>>,
+    paused: Query<&PausedAnimation>,
     children: Query<&Children>,
     targets: Query<&AnimationTarget>,
 ) {
-    for (build, visibility, parent, paused) in &builds {
+    for (build, visibility, parent) in &builds {
         let avatar = parent.parent();
+        let paused = paused.get(avatar).ok();
         match (visibility.get(), paused) {
-            // shown again: the bones rejoin the evaluation and take the current pose
-            (true, Some(PausedAnimationTargets(bones))) => {
+            // shown again, or rebuilt shown: the bones rejoin the evaluation and take the current
+            // pose (those of a replaced build are gone, and skipped)
+            (true, Some(PausedAnimation { bones, .. })) => {
                 for (bone, target) in bones {
                     commands.entity(*bone).try_insert(*target);
                 }
-                commands.entity(build).remove::<PausedAnimationTargets>();
+                commands.entity(avatar).try_remove::<PausedAnimation>();
             }
-            (false, None) if !primary.contains(avatar) => {
+            // already paused on this build
+            (false, Some(paused)) if paused.build == build => (),
+            // hidden, or rebuilt hidden while the earlier build was paused
+            (false, _) if !primary.contains(avatar) => {
                 let bones: Vec<_> = children
                     .iter_descendants(build)
                     .filter_map(|bone| {
@@ -79,8 +91,8 @@ fn pause_hidden_avatar_animation(
                     commands.entity(*bone).remove::<AnimationTarget>();
                 }
                 commands
-                    .entity(build)
-                    .try_insert(PausedAnimationTargets(bones));
+                    .entity(avatar)
+                    .try_insert(PausedAnimation { build, bones });
             }
             _ => (),
         }
@@ -141,10 +153,7 @@ mod tests {
 
         set_visible(&mut app, avatar.build, false);
         assert!(app.world().get::<AnimationTarget>(avatar.bone).is_none());
-        assert!(app
-            .world()
-            .get::<PausedAnimationTargets>(avatar.build)
-            .is_some());
+        assert!(app.world().get::<PausedAnimation>(avatar.root).is_some());
 
         set_visible(&mut app, avatar.build, true);
         let target = app
@@ -152,10 +161,51 @@ mod tests {
             .get::<AnimationTarget>(avatar.bone)
             .expect("the bone rejoins the evaluation");
         assert_eq!(target.player, avatar.root);
-        assert!(app
-            .world()
-            .get::<PausedAnimationTargets>(avatar.build)
-            .is_none());
+        assert!(app.world().get::<PausedAnimation>(avatar.root).is_none());
+    }
+
+    /// A build under `root` with one bone `root` animates.
+    fn spawn_build(
+        app: &mut App,
+        root: Entity,
+        visibility: InheritedVisibility,
+    ) -> (Entity, Entity) {
+        let world = app.world_mut();
+        let build = world
+            .spawn((AvatarProcessed, visibility, ChildOf(root)))
+            .id();
+        let bone = world
+            .spawn((
+                ChildOf(build),
+                AnimationTarget {
+                    id: AnimationTargetId::from_name(&Name::new("Avatar_Hips")),
+                    player: root,
+                },
+            ))
+            .id();
+        (build, bone)
+    }
+
+    #[test]
+    fn a_rebuild_replaces_the_paused_record() {
+        let (mut app, avatar) = app_with_avatar(false);
+        set_visible(&mut app, avatar.build, false);
+
+        // rebuilt while hidden: the new build's bones pause in place of the old ones
+        app.world_mut().entity_mut(avatar.build).despawn();
+        let (hidden_build, hidden_bone) =
+            spawn_build(&mut app, avatar.root, InheritedVisibility::HIDDEN);
+        app.update();
+        assert!(app.world().get::<AnimationTarget>(hidden_bone).is_none());
+        let paused = app.world().get::<PausedAnimation>(avatar.root).unwrap();
+        assert_eq!(paused.build, hidden_build);
+
+        // rebuilt shown: nothing is left paused
+        app.world_mut().entity_mut(hidden_build).despawn();
+        let (_, shown_bone) = spawn_build(&mut app, avatar.root, InheritedVisibility::VISIBLE);
+        app.update();
+        assert!(app.world().get::<AnimationTarget>(shown_bone).is_some());
+        assert!(app.world().get::<PausedAnimation>(avatar.root).is_none());
     }
 
     #[test]
