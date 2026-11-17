@@ -4,7 +4,7 @@ import { redirect } from "react-router";
 import { accountHostRedirect, legacyConfirmationRedirect, turnstileSiteKey } from "@/data/lib/account/confirmation";
 import { EmailConfirmationRoute } from "@/features/account/EmailConfirmationRoute";
 
-import type { Route } from "./+types/account.credits-email-confirmed.$code";
+import type { Route } from "./+types/account_.credits-email-confirmed.$code";
 
 export function meta() {
   return [{ title: "Confirm Your Email | Decentraland" }, { name: "robots", content: "noindex" }];

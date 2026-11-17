@@ -42,6 +42,11 @@ export async function putSubscription(
   });
 }
 
+/** A loose shape check before the server's own: one `@`, no spaces, a dot in the domain. */
+export function isEmailAddress(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
 /** Starts an address change; the server mails a confirmation link to `email`. */
 export async function putEmail(
   identity: AuthIdentity,

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { loader as challengeLoader } from "./account.confirm-email-challenge.$code";
-import { loader as accountLinkLoader } from "./account.confirm-email.$code";
-import { loader as creditsLinkLoader } from "./account.credits-email-confirmed.$code";
+import { loader as challengeLoader } from "./account_.confirm-email-challenge.$code";
+import { loader as accountLinkLoader } from "./account_.confirm-email.$code";
+import { loader as creditsLinkLoader } from "./account_.credits-email-confirmed.$code";
 
 const CODE = "a".repeat(32);
 const ADDRESS = "0x" + "ab".repeat(20);

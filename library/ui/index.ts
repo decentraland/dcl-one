@@ -36,3 +36,9 @@ export { textClasses } from './text-styles'
 
 export { InputExplorerNames } from './components/InputExplorerNames/InputExplorerNames'
 export type { InputExplorerNamesProps } from './components/InputExplorerNames/InputExplorerNames'
+
+export { InputWebCreatorTools } from './components/InputWebCreatorTools/InputWebCreatorTools'
+export type { InputWebCreatorToolsProps } from './components/InputWebCreatorTools/InputWebCreatorTools'
+
+export { Switch } from './components/Switch/Switch'
+export type { SwitchProps } from './components/Switch/Switch'

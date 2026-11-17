@@ -1,0 +1,124 @@
+import type { SubscriptionGroupKey } from "@/data/lib/account/notifications";
+
+/** The account settings' wording, as decentraland.org's account pages have it. */
+export const ACCOUNT_COPY = {
+  title: "Account Settings",
+  sections: { notifications: "Notifications", credits: "Credits Settings" },
+  checking: "Checking your session…",
+} as const;
+
+export const NOTIFICATIONS_COPY = {
+  title: "Email Notifications",
+  description:
+    "Don't miss any Decentraland notifications when you're AFK! Sign up to receive email notifications and pick & choose which ones you want to get below.",
+  loading: "Loading your notification settings…",
+  loadError: "We couldn't load your notification settings. Please try again later.",
+  saveError: "We couldn't save your notification settings. Please try again.",
+  confirmFirst: "Confirm your email to choose which notifications you get.",
+  email: {
+    title: "Email Notification",
+    label: "Email address",
+    placeholder: "jane.doe@example.com",
+    invalid: "Invalid email",
+    error: "We couldn't save your email. Please try again.",
+    master: "All email notifications",
+    confirmed: "confirmed",
+    pending: "pending approval",
+    withoutEmail:
+      "Enter your email, then check your inbox for an email with the confirmation link. After confirming, you will be able to customize the notifications below.",
+    withEmail:
+      "If you'd like to update your email address, edit it below. Make sure to check for the confirmation email in your inbox afterwards!",
+    pendingApproval: "Confirmation email sent, check your inbox.",
+    confirmedDescription: "Your email has been confirmed.",
+    submit: "Submit",
+    resend: "Resend",
+    save: "Save",
+  },
+} as const;
+
+export const GROUP_COPY: Record<SubscriptionGroupKey, { label: string; description: string }> = {
+  marketplace: {
+    label: "Marketplace",
+    description: "Get notifications about your bids, sales, royalties and rentals.",
+  },
+  worlds: {
+    label: "Worlds",
+    description:
+      "Get notified if your World has insufficient storage or if you're invited to visit/collaborate on a World.",
+  },
+  credits: {
+    label: "Marketplace Credits",
+    description: "Get notifications about Credit expiration, unclaimed Credits, and incomplete goals.",
+  },
+  streaming: {
+    label: "In-World Streaming",
+    description: "Get notifications about the status of your scene stream keys and streams.",
+  },
+  events: { label: "Events", description: "Get notifications about events you've RSVP'd to." },
+  rewards: {
+    label: "Giveaway and Rewards",
+    description: "Get notifications about free items you receive and your giveaway campaigns.",
+  },
+  dao: {
+    label: "DAO",
+    description: "Get notifications about DAO announcements, your proposals and the votes you cast.",
+  },
+  tips: { label: "Tips", description: "Receive notifications when someone tips your scenes." },
+  referral: {
+    label: "Referrals",
+    description: "Get notifications about your successfully completed referrals and rewards unlocked.",
+  },
+};
+
+export const TYPE_LABELS: Record<string, string> = {
+  item_sold: "Item Sold",
+  bid_accepted: "Bid Accepted",
+  bid_received: "Bid Received",
+  royalties_earned: "Royalties Earned",
+  rental_ended: "LAND Rental Period Ended",
+  rental_started: "LAND Rented",
+  worlds_access_restored: "World Access Restored",
+  worlds_access_restricted: "World Access Restricted Due to Insufficient Storage",
+  worlds_missing_resources: "Insufficient World Storage Warning",
+  worlds_permission_granted: "World Permissions to Visit/Deploy/Stream Granted",
+  worlds_permission_revoked: "World Permissions to Visit/Deploy/Stream Revoked",
+  credits_reminder_complete_goals: "Goals Incomplete",
+  credits_reminder_claim_credits: "Unclaimed Credits",
+  credits_reminder_usage: "Credits About to Expire",
+  credits_reminder_do_not_miss_out: "Goals Not Started",
+  streaming_key_expired: "Stream Key Expired",
+  streaming_key_reset: "Stream Key Reset",
+  streaming_key_revoke: "Stream Key Deactivated",
+  streaming_place_updated: "Stream Scene Altered",
+  streaming_time_exceeded: "Stream Timed Out",
+  events_started: "Event Started",
+  events_starts_soon: "Event Starts Soon",
+  reward_assignment: "Free Item Received",
+  reward_campaign_out_of_funds: "Giveaway Campaign Out of Funds",
+  reward_campaign_out_of_stock: "Giveaway Campaign Out of Stock",
+  governance_announcement: "New DAO Announcement",
+  governance_authored_proposal_finished: "Voting Ended on Your Proposal",
+  governance_coauthor_requested: "Request to Co-Author a Proposal Received",
+  governance_new_comment_on_project_update: "New Comment on Your Project Update",
+  governance_new_comment_on_proposal: "New Comment on Your Proposal",
+  governance_proposal_enacted: "Proposal Enacted",
+  governance_voting_ended_voter: "Voting Ended on a Proposal You Voted On",
+  tip_received: "Tip Received",
+  referral_invited_users_accepted: "Referral Completed",
+  referral_new_tier_reached: "Referral Reward Unlocked",
+};
+
+export const CREDITS_COPY = {
+  title: "Marketplace Credits Program",
+  statusLabel: "Status:",
+  status: { enrolled: "Enrolled", opted_out: "Opted Out", not_registered: "Not Registered" },
+  description: "Earn weekly credits by completing in-world goals.",
+  learnMore: "Learn more",
+  learnMoreHref: "/docs/player/decentraland-in-world/earning-rewards/#weekly-marketplace-credits-rewards",
+  loadError: "We couldn't load your credits status. Please try again later.",
+  leave: "Leave Program",
+  confirmTitle: "Leave Marketplace Credits?",
+  confirmDescription: "You'll stop earning weekly credits. You can rejoin at any time.",
+  cancel: "Cancel",
+  confirm: "Leave Program",
+} as const;

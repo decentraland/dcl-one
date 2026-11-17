@@ -1,0 +1,91 @@
+/* The credits section: one card with the program status and the leave confirmation. */
+.root {
+  display: flex;
+  flex-direction: column;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-12);
+  box-sizing: border-box;
+  max-width: 720px;
+  padding: var(--dcl-space-24);
+  border: 1px solid var(--dcl-border-subtle);
+  border-radius: var(--dcl-radius-lg);
+  background: var(--dcl-bg-surface);
+}
+
+.title {
+  composes: text68656164696e672f35 from '@dcl/one-ui/text-styles.module.css';
+  margin: 0;
+}
+
+.status {
+  composes: text626f64792f6d64 from '@dcl/one-ui/text-styles.module.css';
+  margin: 0;
+}
+
+.statusValue {
+  font-weight: 600;
+}
+
+.enrolled {
+  font-weight: 600;
+  color: var(--dcl-feedback-success);
+}
+
+.description {
+  composes: text626f64792f736d from '@dcl/one-ui/text-styles.module.css';
+  margin: 0;
+  color: var(--dcl-text-secondary);
+}
+
+.link {
+  color: var(--dcl-text-link);
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.error {
+  composes: text626f64792f736d from '@dcl/one-ui/text-styles.module.css';
+  margin: 0;
+  color: var(--dcl-feedback-error);
+}
+
+.skeleton {
+  display: block;
+  width: 180px;
+  height: 24px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dcl-space-12);
+  margin-top: var(--dcl-space-8);
+}
+
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-8);
+  margin-top: var(--dcl-space-8);
+  padding: var(--dcl-space-16);
+  border: 1px solid var(--dcl-border-default);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-bg-surface-raised);
+}
+
+.confirm:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.confirmTitle {
+  composes: text626f64792f6d642d7374726f6e67 from '@dcl/one-ui/text-styles.module.css';
+  margin: 0;
+}

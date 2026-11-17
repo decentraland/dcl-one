@@ -55,3 +55,13 @@ export async function optOutOfCredits(identity: AuthIdentity, opts: CreditsOptio
     if (!isNotFound(error)) throw error;
   }
 }
+
+const CLAIMED_THIS_WEEK = "Cannot unregister with credits claimed this week";
+
+/** The opt-out's refusal, worded for the page; the server's own text is never shown. */
+export function optOutFailureMessage(error: unknown): string {
+  if (error instanceof CatalystError && error.serverMessage && error.message === CLAIMED_THIS_WEEK) {
+    return "You can't leave this week because you've already claimed credits. Please try again next week.";
+  }
+  return "Couldn't leave the program right now. Please try again.";
+}

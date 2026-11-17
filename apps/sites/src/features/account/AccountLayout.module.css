@@ -1,0 +1,47 @@
+/* The account settings frame: a centred column under the Sites top bar, the section navigation and
+ * the active section. */
+.root {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 70vh;
+  padding: var(--dcl-space-24) var(--dcl-space-16) var(--dcl-space-64);
+  background: var(--dcl-bg-page);
+  color: var(--dcl-text-primary);
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-24);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.title {
+  composes: text68656164696e672f33 from '@dcl/one-ui/text-styles.module.css';
+  margin: 0;
+}
+
+.sections {
+  width: 100%;
+}
+
+.section {
+  min-width: 0;
+}
+
+.checking {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  padding: var(--dcl-space-32) 0;
+  color: var(--dcl-text-secondary);
+}
+
+@media (min-width: 1024px) {
+  .root {
+    padding: var(--dcl-space-48) var(--dcl-space-32) var(--dcl-space-96);
+  }
+}

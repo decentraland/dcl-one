@@ -1,4 +1,16 @@
 {
+  "apps/sites/src/features/account/AccountLayout.module.css": {
+    "primitives": 0,
+    "tokens": 12
+  },
+  "apps/sites/src/features/account/CreditsSettings.module.css": {
+    "primitives": 0,
+    "tokens": 19
+  },
+  "apps/sites/src/features/account/NotificationsSettings.module.css": {
+    "primitives": 0,
+    "tokens": 31
+  },
   "apps/sites/src/features/components/chrome/routepending.css": {
     "primitives": 11,
     "tokens": 0
@@ -230,6 +242,10 @@
   "library/ui/components/Spinner/Spinner.module.css": {
     "primitives": 0,
     "tokens": 8
+  },
+  "library/ui/components/Switch/Switch.module.css": {
+    "primitives": 0,
+    "tokens": 19
   },
   "library/ui/components/Tabs/Tabs.module.css": {
     "primitives": 0,
