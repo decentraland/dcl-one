@@ -4,8 +4,8 @@
 //! for the next frame. The spawner stops a little before the slice ends, so processing gets time
 //! even while spawns are queued. Earlier in the frame, in `PostLoop`, the mesh renderer and
 //! materials charge each entity's first mesh and first material to the same slice
-//! ([`InstantiationBudget`]), which then ends that much earlier. Behind the loading backdrop and
-//! on headless everything runs whole.
+//! ([`InstantiationBudget`]), which then ends that much earlier. Behind the loading backdrop, on
+//! headless and in a batch app ([`InstantiateWhole`]) everything runs whole.
 //!
 //! [`SceneSpawnSlicePlugin`] owns the slice: its deadlines, the charges, how long the spawner and
 //! processing take each frame (`spawn_timing`) and the debug panel's Instantiation section.
@@ -40,6 +40,10 @@ pub fn slice(frame_target: Option<Duration>) -> Duration {
 pub fn processing_share(slice: Duration) -> Duration {
     slice / PROCESSING_DIVISOR
 }
+
+/// A batch app inserts this: it has no frame rate to protect, so everything instantiates whole.
+#[derive(Resource)]
+pub struct InstantiateWhole;
 
 /// When glTF processing stops this frame. `None`: it processes whole.
 #[derive(Resource, Default, Clone, Copy, Debug, PartialEq)]
@@ -80,14 +84,16 @@ pub struct InstantiationBudget<'w, 's> {
     charges: ResMut<'w, InstantiationCharges>,
     updates: Res<'w, SceneUpdates>,
     no_render: Option<Res<'w, NoRenderApp>>,
+    batch: Option<Res<'w, InstantiateWhole>>,
     out_of_world: Query<'w, 's, (), (With<PrimaryUser>, With<OutOfWorld>)>,
 }
 
 impl InstantiationBudget<'_, '_> {
-    /// This frame's slice; `None` behind the loading backdrop and on headless, where everything
-    /// instantiates whole.
+    /// This frame's slice; `None` behind the loading backdrop, on headless and in a batch app,
+    /// where everything instantiates whole.
     pub fn slice(&self) -> Option<Duration> {
-        let whole = self.no_render.is_some() || !self.out_of_world.is_empty();
+        let whole =
+            self.no_render.is_some() || self.batch.is_some() || !self.out_of_world.is_empty();
         (!whole).then(|| slice(self.updates.frame_target))
     }
 

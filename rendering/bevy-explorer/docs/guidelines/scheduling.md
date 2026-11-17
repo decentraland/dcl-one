@@ -135,7 +135,8 @@ well, or its writes land a frame late. `crates/avatar/src/point_at_marker.rs` is
     (`SceneUpdates::frame_target`, 60 fps when uncapped) from when it runs, less what
     `PostLoop`'s mesh renderer and materials charged it this frame (`InstantiationCharges`, then
     reset), the spawner's deadline a quarter of the slice before its end and processing's
-    (`ProcessingDeadline`) at its end; none behind the loading backdrop or on headless;
+    (`ProcessingDeadline`) at its end; none behind the loading backdrop, on headless or in a
+    batch app (`InstantiateWhole`);
   - bevy's `scene_spawner_system` writes scene instances up to its deadline;
   - `update_ready_gltfs` processes complete glTF instances a node at a time until its deadline,
     instances already in progress first, and reveals each when its last node is done;

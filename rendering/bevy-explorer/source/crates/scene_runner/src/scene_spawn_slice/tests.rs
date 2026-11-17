@@ -133,6 +133,14 @@ fn a_headless_app_spawns_and_processes_whole() {
 }
 
 #[test]
+fn a_batch_app_spawns_and_processes_whole() {
+    let (mut world, _) = world_with_player();
+    world.insert_resource(InstantiateWhole);
+
+    assert_eq!(deadlines_after_a_run(&mut world), (None, None));
+}
+
+#[test]
 fn arriving_back_in_world_slices_again() {
     let (mut world, player) = world_with_player();
     world.entity_mut(player).insert(OutOfWorld);

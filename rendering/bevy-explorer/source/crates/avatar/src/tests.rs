@@ -137,3 +137,64 @@ fn an_avatar_that_stops_its_emote_releases_the_emotes_downloads() {
         "the emote's hash has no owner once nothing plays it"
     );
 }
+
+/// A definition of a body alone, with no file to draw from.
+fn bare_definition(failed_wearable: Option<String>) -> AvatarDefinition {
+    AvatarDefinition {
+        failed_wearable,
+        render: AvatarRenderDefinition {
+            body: Wearable {
+                category: WearableCategory::BODY_SHAPE,
+                hides: Default::default(),
+                model: None,
+                texture: None,
+                mask: None,
+            },
+            body_shape: String::new(),
+            skin_color: Color::WHITE,
+            hair_color: Color::WHITE,
+            eyes_color: Color::WHITE,
+            wearables: Vec::new(),
+            hides: Default::default(),
+            bounds: Default::default(),
+            disable_dither: false,
+            cel_shading: false,
+            avatar_outline: false,
+        },
+        emote: None,
+    }
+}
+
+#[test]
+fn an_avatars_files_have_failed_when_one_has_and_load_while_one_loads() {
+    assert!(AvatarFiles::Loaded < AvatarFiles::Loading);
+    assert!(AvatarFiles::Loading < AvatarFiles::Failed(String::new()));
+}
+
+#[test]
+fn an_avatars_files_have_failed_when_a_wearable_or_a_file_failed_to_load() {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+        .init_asset::<Image>();
+    let asset_server = app.world().resource::<AssetServer>().clone();
+    let mut whole = bare_definition(None);
+    assert_eq!(whole.files(&asset_server), AvatarFiles::Loaded);
+    assert_eq!(
+        bare_definition(Some("hat".to_owned())).files(&asset_server),
+        AvatarFiles::Failed("wearable hat failed to load".to_owned())
+    );
+
+    // the body draws from a texture in a file that cannot load
+    whole.render.body.texture = Some(asset_server.load("missing.png"));
+    assert_eq!(whole.files(&asset_server), AvatarFiles::Loading);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while whole.files(&asset_server) == AvatarFiles::Loading {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the missing texture did not fail"
+        );
+        app.update();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(matches!(whole.files(&asset_server), AvatarFiles::Failed(_)));
+}
