@@ -277,8 +277,9 @@ describe('session domain', () => {
     await waitFor(() => expect(h.session().login.busy).toBe(false))
     h.driver.sent.length = 0
     act(() => h.session().pickDestination({ kind: 'parcel', x: 10, y: 20 }))
-    // the engine keeps the parcel as the realm's landing target, so it isn't held for playerReady
-    expect(h.driver.sentOf('teleport')).toEqual([{ kind: 'teleport', realm: DEFAULT_REALM, x: 10, y: 20, travelId: 2 }])
+    // the engine keeps the parcel as the realm's landing target, so it isn't held for playerReady;
+    // the sign-out took an id of its own
+    expect(h.driver.sentOf('teleport')).toEqual([{ kind: 'teleport', realm: DEFAULT_REALM, x: 10, y: 20, travelId: 3 }])
   })
 
   it('a runtime crash from the watchdog sets a dismissable fatal; dismiss re-arms the watchdog', async () => {

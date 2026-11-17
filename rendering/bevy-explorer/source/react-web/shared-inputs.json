@@ -5479,7 +5479,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/session.test.tsx",
-      "sha256": "3a571fa1c8c7f60f2cdc9388bf0a19b6caf36c470ade3847f75f500529acab4b"
+      "sha256": "7ee21c73707cc3c2230d14a3ae93b46d802a31bd7d24fcd160854924828ee084"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/setup.ts",
