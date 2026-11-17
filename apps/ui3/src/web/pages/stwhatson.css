@@ -389,11 +389,15 @@
 }
 .wo-sm:hover .wo-sm__actions,
 .wo-sm:focus-within .wo-sm__actions { opacity: 1; visibility: visible; pointer-events: auto; transform: translateY(0); }
+/* Figma Events > card-hover CTAs (16295:37459): 12px between Remind me and Share. */
+.wo-sm__actions { gap: var(--dcl-space-12); }
+/* Figma Remind me (16326:4330) is a fixed 134px instance with its content centred, wider than the label hugs. */
+.wo-sm__remind { min-width: 134px; }
 .wo-sm:hover [data-role="time-pill"],
 .wo-sm:focus-within [data-role="time-pill"] { opacity: 0; }
 
-/* The hover actions are Button (secondary, sm) and CardActionButton from @dcl/one-ui, at the reference's size. */
-.wo-sm__textbtn,
+/* The All Events card's hover actions are Button (secondary, sm) and CardActionButton from @dcl/one-ui, at the
+   reference's size. The Upcoming card's Remind me is the library Button as is: Figma card-hover uses button sm. */
 .wo-fc__textbtn {
   --button-height: 30px; /* reference: the card actions are 30px tall */
   --button-gap: 6px;
@@ -410,21 +414,24 @@
   text-transform: inherit;
   white-space: inherit;
 }
-.wo-sm__textbtn svg,
 .wo-fc__textbtn svg { width: 24px; height: 24px; }
-.wo-sm__textbtn:hover,
 .wo-fc__textbtn:hover,
-.wo-sm__iconbtn:hover,
 .wo-fc__iconbtn:hover { background: rgba(255, 255, 255, .18); }
-.wo-sm__iconbtn,
 .wo-fc__iconbtn {
   width: 30px;
   height: 30px;
   border-radius: var(--dcl-radius-xs);
   color: var(--wo-ink);
 }
-.wo-sm__iconbtn > svg,
 .wo-fc__iconbtn > svg { width: 18px; height: 18px; }
+/* Figma card-hover Share (16338:1066): 32px square, 4px padding, radius sm, a 24px glyph. CardActionButton is 57x46
+   by default and the library has no 32px icon action yet, so the size is set here from tokens. */
+.wo-sm__iconbtn {
+  width: var(--dcl-space-32);
+  height: var(--dcl-space-32);
+  padding: var(--dcl-space-4);
+  border-radius: var(--dcl-radius-sm);
+}
 
 .wo-all {
   --wo-cols: 5;

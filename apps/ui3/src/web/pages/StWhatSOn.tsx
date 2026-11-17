@@ -2,6 +2,7 @@ import { siteUrl } from "../../data/site";
 import type { CSSProperties, ReactNode } from "react";
 import { useState, useSyncExternalStore } from "react";
 import { Button, CardActionButton, Tabs, TabsBar } from "@dcl/one-ui";
+import { GeneralReminderOff, GeneralReminderOn, MenusShare } from "@dcl/one-ui/foundations/icons";
 import { SitesChromeMaybe } from "../frames/SitesChrome";
 import { asset } from "../../asset";
 import CoverImage from "../../components/CoverImage";
@@ -243,10 +244,11 @@ function SmallCard({ event, priority, signedIn = false }: { event: WoUpcomingCar
           <span className="wo-sm__time">{event.time}</span>
         </div>
         <div className="wo-sm__actions" data-role="hover-actions">
-          <Button variant="secondary" size="sm" className="wo-sm__textbtn" href={event.jumpUrl ?? siteUrl("/play/")} target="_blank" rel="noreferrer" leadingIcon={<JumpInIcon />}>
-            Jump in to world
+          {/* Figma Events > card-hover, state=hover, live=false: Remind me and Share; Jump In belongs to a live card only. */}
+          <Button variant="secondary" size="sm" className="wo-sm__remind" href={eventHref(event.id)} leadingIcon={event.attending ? <GeneralReminderOn size={16} /> : <GeneralReminderOff size={16} />}>
+            Remind me
           </Button>
-          <CardActionButton className="wo-sm__iconbtn" aria-label="Copy link" icon={<CopyIcon />} onClick={() => copyEventLink(event.id)} />
+          <CardActionButton className="wo-sm__iconbtn" aria-label="Copy link" icon={<MenusShare size={24} />} onClick={() => copyEventLink(event.id)} />
         </div>
       </div>
     </div>
