@@ -1,0 +1,144 @@
+/* The community's members and upcoming events. Event cards are the events page's Upcoming cards (the
+ * public EventCard); member rows are drawn here, as the design system has no avatar or member row. */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-12);
+}
+
+.title {
+  margin: 0;
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-label-md-caps);
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+/* Below 1024px the tab names the section, so its heading is left to assistive technology, as source. */
+@media (max-width: 1023px) {
+  .title {
+    position: absolute;
+    overflow: hidden;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+.loader,
+.sentinel {
+  display: flex;
+  justify-content: center;
+  padding: var(--dcl-space-16) 0;
+}
+
+.loader {
+  min-height: 200px;
+  align-items: center;
+}
+
+.empty {
+  margin: 0;
+  padding: var(--dcl-space-24) 0;
+  color: var(--dcl-text-secondary);
+  font-size: var(--dcl-font-size-body-sm);
+}
+
+.emptyEvents {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  padding: var(--dcl-space-48) 0;
+  color: var(--dcl-text-secondary);
+  font-size: var(--dcl-font-size-body-md);
+}
+
+.emptyEvents p {
+  margin: 0;
+  color: var(--dcl-text-primary);
+}
+
+.members,
+.events {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.members {
+  gap: var(--dcl-space-4);
+}
+
+.events {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--dcl-space-16);
+}
+
+.member {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  padding: var(--dcl-space-8) 0;
+}
+
+.avatar {
+  display: inline-flex;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 2px solid var(--dcl-border-default);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-brand-violet);
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-body-sm);
+  font-weight: 600;
+  object-fit: cover;
+}
+
+.memberText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.memberName {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-4);
+  min-width: 0;
+}
+
+.memberLabel {
+  overflow: hidden;
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-body-md);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.verified {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.role {
+  color: var(--dcl-text-secondary);
+  font-size: var(--dcl-font-size-body-sm);
+}
+
+@media (min-width: 1440px) {
+  .events {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
