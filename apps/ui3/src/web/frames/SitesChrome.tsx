@@ -5,7 +5,7 @@ import SitesCreditsChip from "./SitesCreditsChip";
 import { useChromeAuth } from "./chrome-auth";
 import { chromeLinkProps, useChromeNav, type ChromeNavigate } from "./chrome-nav";
 import "../../atoms/maskicon.css";
-import wordmark from "../../atoms/assets/decentraland-wordmark.svg?url";
+import wordmark from "@dcl/one-ui/apps/sites/assets/dcl_name.svg?url";
 import { siteHost } from "../../data/site";
 import { docsUrl } from "../../data/docs";
 import "./siteschrome.css";
