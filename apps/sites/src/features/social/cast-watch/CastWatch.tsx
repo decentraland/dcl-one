@@ -1,15 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 
 import StCastWatcher from "@ui/web/pages/StCastWatcher";
 
 import { track, type TrackContext } from "@/core/lib/telemetry/track";
-import { useAuth } from "@/data/lib/auth/index";
-import {
-  requestWatcherCredentials,
-  watchErrorFor,
-  type WatchError,
-  type WatchResult,
-} from "@/data/lib/catalyst/landings/cast-watcher";
+import type { WatchResult } from "@/data/lib/catalyst/landings/cast-watcher";
 
 const JOIN_CLASS = "stcastwatcher__join";
 const LEAVE_CLASS = "stcastwatcher__leave";
@@ -20,26 +14,6 @@ const ICON_MUTE = 0;
 const ICON_CHAT = 1;
 
 type WatcherState = "onboarding" | "joining" | "live" | "waiting";
-
-// The empty-state texts for a join the gatekeeper refused; no_active_stream keeps the page's own.
-const ERROR_TEXT: Partial<Record<WatchError, { title: string; message: string }>> = {
-  access_expired: {
-    title: "This Cast link has expired",
-    message: "Ask the scene's administrators for a new stream link.",
-  },
-  banned: {
-    title: "You can't watch this Cast",
-    message: "This account is banned from this scene or from Decentraland.",
-  },
-  refused: {
-    title: "Your sign-in was not accepted",
-    message: "Sign in again, then join.",
-  },
-  unavailable: {
-    title: "Couldn't join this Cast",
-    message: "Try again in a moment.",
-  },
-};
 
 type CastWatchProps = {
   trackCtx: TrackContext;
@@ -60,62 +34,26 @@ export default function CastWatch({
 }: CastWatchProps) {
   const initialState: WatcherState = watch.status === "live" ? "onboarding" : "waiting";
 
-  const { identity, connect } = useAuth();
   const [state, setState] = useState<WatcherState>(initialState);
-  const [error, setError] = useState<WatchError | undefined>(watch.error);
-  const [roomId, setRoomId] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isTabMuted, setIsTabMuted] = useState(false);
-  const joinAbort = useRef<AbortController | null>(null);
-  useEffect(() => () => joinAbort.current?.abort(), []);
 
+  const roomId = watch.credentials?.roomId ?? "";
   const placeName = watch.placeName;
-  const [streamName, setStreamName] = useState(placeName);
 
-  // The watcher token is the viewer's own signed POST: sign in first when there is no identity.
-  const join = useCallback(async () => {
-    if (joinAbort.current) return;
-    const abort = new AbortController();
-    joinAbort.current = abort;
+  const join = useCallback(() => {
     setState("joining");
-    try {
-      let viewer = identity;
-      if (!viewer) {
-        viewer = await connect().catch(() => null);
-        if (!viewer) {
-          setState("onboarding");
-          return;
-        }
-      }
-      const credentials = await requestWatcherCredentials(watch.location, watch.identity, viewer, {
-        signal: abort.signal,
-      });
-      if (abort.signal.aborted) return;
-      setRoomId(credentials.roomId);
-      if (credentials.placeName) setStreamName(credentials.placeName);
-      setError(undefined);
-      onTrack(
-        "cast_watch_joined",
-        { room_id: credentials.roomId, place_name: credentials.placeName || placeName, stub: true },
-        trackCtx,
-      );
-      setState("live");
-    } catch (err) {
-      if (abort.signal.aborted) return;
-      const reason = watchErrorFor(err);
-      if (reason === "no_active_stream") onTrack("cast_watch_no_stream", { location: watch.location }, trackCtx);
-      if (reason === "access_expired") onTrack("cast_watch_access_expired", { location: watch.location }, trackCtx);
-      setError(reason);
-      setState("waiting");
-    } finally {
-      if (joinAbort.current === abort) joinAbort.current = null;
-    }
-  }, [identity, connect, watch.location, watch.identity, onTrack, placeName, trackCtx]);
+    onTrack(
+      "cast_watch_joined",
+      { room_id: roomId, place_name: placeName, stub: true },
+      trackCtx,
+    );
+    setTimeout(() => setState("live"), 600);
+  }, [onTrack, roomId, placeName, trackCtx]);
 
   const leave = useCallback(() => {
     onTrack("cast_watch_left", {}, trackCtx);
     setSidebarOpen(false);
-    setRoomId("");
     setState("onboarding");
   }, [onTrack, trackCtx]);
 
@@ -142,7 +80,7 @@ export default function CastWatch({
       if (!btn) return;
 
       if (btn.classList.contains(JOIN_CLASS)) {
-        void join();
+        join();
         return;
       }
       if (btn.classList.contains(LEAVE_CLASS)) {
@@ -173,14 +111,11 @@ export default function CastWatch({
     sidebarOpen?: boolean;
     isTabMuted?: boolean;
     chatFooter?: string;
-    watcherTitle?: string;
-    watcherMessage?: string;
     participantCount?: number;
     unreadCount?: number;
   }>;
 
-  const chatFooter = `Jump into ${streamName} in Decentraland to participate in the chat.`;
-  const errorText = error ? ERROR_TEXT[error] : undefined;
+  const chatFooter = `Jump into ${placeName} in Decentraland to participate in the chat.`;
 
   return (
     <div
@@ -188,18 +123,14 @@ export default function CastWatch({
       data-state={state}
       data-status={watch.status}
       data-location={watch.location}
-      data-error={error}
-      data-room={roomId || undefined}
       onClickCapture={onClickCapture}
     >
       <Watcher
-        streamName={streamName}
+        streamName={placeName}
         state={state}
         sidebarOpen={state === "live" && sidebarOpen}
         isTabMuted={isTabMuted}
         chatFooter={chatFooter}
-        watcherTitle={errorText?.title}
-        watcherMessage={errorText?.message}
         participantCount={participantCount}
         unreadCount={state === "live" && !sidebarOpen ? unreadCount : 0}
       />
