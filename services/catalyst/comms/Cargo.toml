@@ -16,7 +16,6 @@ catalyst-config = { path = "../config" }
 catalyst-chain-index = { path = "../chain-index" }
 catalyst-content = { path = "../content" }
 catalyst-storage = { path = "../storage" }
-catalyst-explore = { path = "../explore" }
 tokio.workspace = true
 axum.workspace = true
 tower = { version = "0.5", features = ["util"] }
@@ -62,15 +61,14 @@ prost-types.workspace = true
 protox.workspace = true
 
 [features]
-ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-config/ts", "catalyst-chain-index/ts", "catalyst-content/ts", "catalyst-explore/ts"]
-test-support = ["catalyst-shared/test-support", "catalyst-config/test-support", "catalyst-chain-index/test-support", "catalyst-content/test-support", "catalyst-explore/test-support"]
+ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-config/ts", "catalyst-chain-index/ts", "catalyst-content/ts"]
+test-support = ["catalyst-shared/test-support", "catalyst-config/test-support", "catalyst-chain-index/test-support", "catalyst-content/test-support"]
 
 [dev-dependencies]
 catalyst-shared = { path = "../shared", features = ["test-support"] }
 catalyst-config = { path = "../config", features = ["test-support"] }
 catalyst-chain-index = { path = "../chain-index", features = ["test-support"] }
 catalyst-content = { path = "../content", features = ["test-support"] }
-catalyst-explore = { path = "../explore", features = ["test-support"] }
 catalyst-db = { path = "../db", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }

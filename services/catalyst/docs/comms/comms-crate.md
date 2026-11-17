@@ -29,14 +29,14 @@ separate from the current runtime described here.
 | `archipelago` | primary `serve` | `/ws`, authenticated observations, socket registrations and enforcement room assignments |
 | `stats` | every `serve` | complete read-only Pulse statistics snapshots, HTTP projections, `CommsCore` and archive views; uncached enrichment through the existing content pool |
 | `gatekeeper::admission` | `serve` | scene, server-scene, world (`world_mint`) and island tokens; the Pulse room authority (`relay_authority`) |
-| `gatekeeper::moderation`, `removal` | `serve` | bans, warnings, scene admins, durable ban kicks, disabled-place cleanup, room metadata repair |
+| `gatekeeper::moderation`, `removal`, `removed_places` | `serve` | bans, warnings, scene admins, durable ban kicks, disabled-place cleanup (reading Explore's removal feed by shared SQL, `DATABASE.md` "Place removal feed"), room metadata repair |
 | `gatekeeper::voice`, `streaming`, `streaming_jobs`, `streaming::cast` | `serve` | private and community voice; stream access, LiveKit Ingress, streaming expiry; Cast 2.0 (`/cast/*`): stream links, streamer, watcher and presentation-bot tokens over the same stream credential, presenters in the scene room's metadata |
 | `gatekeeper::reports` | `serve` | the player report intake at `/report-user` (`/api/reports/players/presign`, the evidence `PUT`s, `/api/reports/players`); the moderator token reads `/api/reports` |
 | `gatekeeper::webhook`, `events` | `serve` | the one LiveKit webhook; a typed nine-field `RoomEvent` to `RoomEventSink` and `RoomEventStore` |
 | `gatekeeper::bus` | `serve` | `serve`'s one NATS link |
 | `presence`, `topology` | every `serve` | `/live-data`, `/wallet/{w}/connected-world`, capacity counts from LiveKit occupancy; social online from Pulse's topology |
 | `protocol` | all | Pulse proto, legacy archipelago, `bus`, `room_authority`: the only module the services share |
-| `rooms`, `world_identity`, `access`, `limits`, `worlds_envelope`, `writes`, `signed_fetch`, `deny_list` | library | the vocabulary worlds, social and shop use |
+| `rooms`, `world_identity`, `access`, `limits` (from `shared`), `worlds_envelope`, `writes`, `signed_fetch`, `deny_list` | library | the vocabulary worlds and social use |
 
 Outside: access, room resolution and storage (worlds); privacy, friendships, roles, notification
 records and `/mls/*` (social); the scene runtime; LiveKit. Dropped: the relay to Decentraland's
@@ -53,7 +53,7 @@ the player report routes under the gatekeeper's own mount (the intake is the
 | `interfaces::AccessPolicy` | `worlds::policy::Policy` | may this wallet enter this world, scene or parcel |
 | `interfaces::SceneIdentity` | `worlds::rooms::SceneResolver` | a world's active scene and the resolved room; room names are `comms::rooms` |
 | `interfaces::SocialDirectory` | `social::comms_directory::Directory` | privacy, friendships, community roles; notices inserted on the caller's transaction |
-| `interfaces::NameOwnerReader` | shop `MarketplaceState` | name ownership for Admin Toolkit targets |
+| `interfaces::NameOwnerReader` | root `serve_adapters::ShopNameOwners` over shop `MarketplaceState::name_owner` | name ownership for Admin Toolkit targets |
 | `gatekeeper::events::RoomEventSink` | `worlds::core::CoreState` | worlds' join/leave access log |
 | `gatekeeper::events::RoomEventStore` | `social::badges::presence::EventSink` | every verified join/leave, stored before the webhook answers (503 on failure) |
 | `interfaces::PulseGeneration` | root `pulse_generation`, using `jobs::Leases` | immutable committed audience/epoch/source UUID and local lease-loss cancellation; no assignment persistence |
@@ -62,7 +62,7 @@ the player report routes under the gatekeeper's own mount (the intake is the
 | Comms offers | Consumers |
 |---|---|
 | `CommsState::revoke(RoomRevocation)`, the one revocation entry point | worlds permission edits |
-| `explore::places::live::Participants` for `CommsState` | explore live counts, the presence archive |
+| `CommsState::live_participants`, as Explore's `places::live::Participants` through root `serve_adapters::CommsParticipants` | explore live counts, the presence archive |
 | ban status, presence, voice rooms | worlds policy and publish; social, `/worlds/status`; social call signalling |
 | signed `POST /get-server-scene-adapter`, `GET /scene-participants` | scene hosts |
 
@@ -77,7 +77,7 @@ comms room-name contracts remain unchanged. The periodic catalogue job refreshes
 metadata; it does not own identity lifecycle.
 
 `comms = 8` in `docs/module-layers.toml` (above explore, below worlds, social and shop), enforced by
-the repository structure checks. Higher crates implement comms' traits, keeping V8 and worlds out of comms builds.
+the repository structure checks. Comms links no Explore code: it reads Explore's tables by shared SQL and the root adapts its participants to Explore. Higher crates implement comms' traits, keeping V8 and worlds out of comms builds.
 
 ## Deployment generation ownership
 
@@ -152,9 +152,16 @@ within `HANDSHAKE_TIMEOUT` (default 60 s, as the pinned upstream ws-connector) o
 attributable through `HTTP_TRUSTED_PROXY_CIDRS`, beyond it 429; an unattributable upgrade (a gateway peer outside that
 list, or no `X-Real-IP`) is not counted, logs one warning and increments
 `comms_ws_unattributed_upgrades_total` (registered at 0, exported with the other `comms_` series on `SERVE_METRICS_BIND`); positions coalesce
-for ownership control to one per 500 ms; statistical observations retain every decoded position; a flooding socket closes with 1008; a 64-frame send queue in which a newer
-`island_changed` replaces the queued one and `kicked` is never dropped, full for 10 s closes
-with 1013; undecodable frames 1007; restart closes every socket with 1012.
+for ownership control to one per 500 ms; statistical observations retain every decoded position; a flooding socket closes with 1008; one 64-item output budget across assignment mailboxes, validation and the physical writer;
+accepted assignments retain arrival order, exhaustion rejects new mailbox assignments, and
+`kicked` has a separate terminal slot. Full for 10 s closes
+with 1013, including when accepted mailbox work cannot advance during handler stalls,
+not only when the wire is slow. Direct output waiting for credit advances accepted mailbox
+work into the writer without taking another credit. Rejected assignments remain eligible
+for the short reconciliation rounds even after older accepted assignments flush.
+`/stats/health` appends `feed_assignment_full`, counting rejected mailbox assignments;
+`feed_assignment_coalesced` remains zero for response compatibility.
+Undecodable frames close with 1007; restart closes every socket with 1012.
 
 **Deployment.**
 - One primary is a release gate. Every API replica sets `FLEET_JOBS_ENABLED=false` (default true). Only the primary serves WebSockets; every serve supplies read-only statistics, about and realms from its retained complete snapshot. Stop the primary before its successor starts.

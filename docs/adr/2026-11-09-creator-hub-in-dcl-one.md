@@ -15,12 +15,13 @@ that loaded the web Creator Hub and that nothing shipped.
 ## Decision
 
 `apps/creator-hub` is a first-party snapshot of `decentraland/creator-hub` `main` (`7a68e6a`,
-2026-11-11) and replaces the Tauri shell. It keeps its npm layout (one root `package-lock.json`,
+2026-11-11) and replaces the Tauri shell. It keeps its layout (one root lockfile,
 `packages/asset-packs`, `packages/inspector`, `packages/creator-hub`, `file:` links between
 them), its `Makefile` and its agent files, and is run from that folder: like
-`library/js-sdk-toolchain`, it is its own npm project and dcl-one has no JavaScript workspace at
+`library/js-sdk-toolchain`, it is its own JavaScript project and dcl-one has no JavaScript workspace at
 its root. Splitting the three packages across `apps/` and `library/` waits until a second
-deliverable builds one of them from source.
+deliverable builds one of them from source. It installs with pnpm
+([decision](2026-11-13-pnpm-default-package-manager.md)).
 
 Three changes were made in the snapshot:
 

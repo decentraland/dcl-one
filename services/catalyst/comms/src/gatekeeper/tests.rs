@@ -3812,7 +3812,6 @@ async fn participant_consumers_share_room_spelling_addresses_and_livekit_failure
         .unwrap();
         assert_eq!(addresses, expected);
     }
-    use crate::explore::places::live::Participants;
     state.scenes = Arc::new(StubScenes {
         room: Ok(crate::rooms::ResolvedRoom {
             realm: crate::world_identity::RealmId::Shared("main".into()),
@@ -3823,10 +3822,13 @@ async fn participant_consumers_share_room_spelling_addresses_and_livekit_failure
         scene: Ok(None),
     });
     assert_eq!(
-        state.participants(false, "0,0").await,
+        state.live_participants(false, "0,0").await,
         Some(expected.clone())
     );
-    assert_eq!(state.participants(true, "Foo.eth").await, Some(expected));
+    assert_eq!(
+        state.live_participants(true, "Foo.eth").await,
+        Some(expected)
+    );
     assert_eq!(
         *observed.lock().unwrap(),
         vec![

@@ -5026,7 +5026,7 @@
     },
     {
       "path": "library/ui/package.json",
-      "sha256": "78fe4a7f4b89da83e358db8697c80a0eacf0f90e3a232052385b7e5e338555c9"
+      "sha256": "fe47d4b95a6c3ca134c3220fffa448966c7cb58b200b29115aab21e36651088b"
     },
     {
       "path": "library/ui/tsconfig.json",
@@ -5070,7 +5070,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/package.json",
-      "sha256": "325946e1110b2758f2d172f0c6676117458b965f9f22ce09907d9f50e8d27ef8"
+      "sha256": "8ce84e6da787401a836d4b986d60b7fcc9c3232d121fad20a15661ef73e1dcc4"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
@@ -5190,11 +5190,11 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/package.json",
-      "sha256": "915298c4c41811c8c6d029cd6a40b01861506a22ece4cbf9ce9bd5b42075d0e5"
+      "sha256": "6e0db434ad50f8f2aec7a3a479bfe6952dc4f083ca06c49f63d30f1e2cff8881"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/pnpm-lock.yaml",
-      "sha256": "d9455d0665084e10809a0975c53a9eeb6932bf17979f7ca8457cca85331c0103"
+      "sha256": "3b1fc0d307360f1c36afe197506d9b3dde158514586c2b2666072ac62b21ded3"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/scripts/shared-inputs.d.mts",
