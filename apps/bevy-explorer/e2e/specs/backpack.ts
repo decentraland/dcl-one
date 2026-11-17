@@ -649,9 +649,14 @@ export async function restoreEmoteSlots(explorer: Explorer, record: EmoteSlotsRe
   }
   await closePage(explorer, 'backpack')
   if (stale.length === 0) return
+  // What the HUD can put back: a slot it showed empty comes back empty, even where the engine held
+  // an emote there. The HUD lists an emote in one slot only, and a profile an earlier run deployed
+  // can hold one emote in two slots.
+  const expected = record.selected.map((urn, index) =>
+    record.slots.find((slot) => slot.slot === index)?.emote === 'None' ? '' : (urn ?? ''))
   await waitForPlayer(
     explorer,
-    (avatar) => record.selected.every((urn, index) => sameUrn(urn ?? '', avatar.selected.emotes[index] ?? '')),
+    (avatar) => expected.every((urn, index) => sameUrn(urn, avatar.selected.emotes[index] ?? '')),
     COMMIT_TIMEOUT_MS,
     'the engine to select the emotes it did before the scenario'
   )
