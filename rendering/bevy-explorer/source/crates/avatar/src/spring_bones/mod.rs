@@ -5,7 +5,9 @@
 //! starts with fresh ones and a removed avatar takes its own with it.
 
 use bevy::{
-    ecs::system::ParamSet, platform::collections::HashMap, prelude::*,
+    ecs::system::ParamSet,
+    platform::collections::{HashMap, HashSet},
+    prelude::*,
     transform::helper::TransformHelper,
 };
 use collectibles::spring_bones::{SpringBoneModel, SpringBoneParams};
@@ -19,15 +21,12 @@ mod diagnostics;
 pub mod sim;
 
 use chains::{plan_chains, SkinJoint};
-use sim::{AnchorPose, ChainState, FramePlan, JointConfig, Stepper, TIP_LENGTH};
+use sim::{AnchorPose, ChainState, FramePlan, JointConfig, Shown, Stepper, TIP_LENGTH};
 
 use crate::{avatar_texture::BoothAvatar, AvatarProcessed};
 
 /// Most avatars simulated at once. The rest keep their spring bones at rest.
 pub const MAX_SIMULATED_AVATARS: usize = 10;
-
-/// How far up a wearable's own bones a branch is followed to the body bone it hangs off.
-pub const MAX_BRANCH_DEPTH: usize = 64;
 
 pub struct SpringBonesPlugin;
 
@@ -42,15 +41,18 @@ impl Plugin for SpringBonesPlugin {
     }
 }
 
-/// The spring chains of a built avatar, on the entity that holds its model.
+/// The spring chains of a built avatar, on the entity that holds its model. A chain that branches
+/// from another comes after it, so solving them in order places every anchor before the chain
+/// that hangs off it.
 #[derive(Component, Debug, Default)]
 pub struct SpringChains(pub Vec<SpringChain>);
 
 #[derive(Debug)]
 pub struct SpringChain {
-    /// the body bone the chain hangs off
+    /// the bone the chain hangs off: a body bone, or the joint of an earlier chain that this one
+    /// branches from
     pub anchor: Entity,
-    /// from the anchor outwards
+    /// from the anchor outwards, each the child of the one before it
     pub joints: Vec<SpringJoint>,
 }
 
@@ -86,8 +88,44 @@ struct SimulatedChain {
     configs: Vec<JointConfig>,
     /// what each joint's local rotation is written against
     parents: Vec<JointParent>,
+    /// for a chain that branches from an earlier one, the joint it hangs off: chain, then joint
+    anchor_joint: Option<(usize, usize)>,
+    /// the anchor's pose as last given to `state`
+    anchor: AnchorPose,
     rest_anchor_scale: Vec3,
     state: ChainState,
+}
+
+impl SimulatedChain {
+    /// Where a joint stands after the last step, as the anchor of a chain that branches from it.
+    fn joint_pose(&self, joint_ix: usize, rest_scale: Vec3) -> AnchorPose {
+        let mut parent_rotation = self.anchor.rotation;
+        let mut matrix = Mat4::from_scale_rotation_translation(
+            self.anchor.scale,
+            self.anchor.rotation,
+            self.anchor.translation,
+        );
+        for (config, joint) in self
+            .configs
+            .iter()
+            .zip(&self.state.joints)
+            .take(joint_ix + 1)
+        {
+            matrix *= Mat4::from_scale_rotation_translation(
+                config.local_scale,
+                (parent_rotation.inverse() * joint.rotation).normalize(),
+                config.local_translation,
+            );
+            parent_rotation = joint.rotation;
+        }
+        let (scale, _, translation) = matrix.to_scale_rotation_translation();
+        AnchorPose {
+            translation,
+            rotation: parent_rotation,
+            scale,
+            scale_factor: sim::scale_factor(scale, rest_scale),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -132,10 +170,14 @@ fn measure(
         })
     };
 
-    chains
-        .0
-        .iter()
-        .map(|chain| {
+    let mut measured: Vec<Option<SimulatedChain>> = Vec::with_capacity(chains.0.len());
+    for chain in &chains.0 {
+        let chain = (|| {
+            // a branch hangs off a joint of an earlier chain, and is left out with it
+            let anchor_joint = place(chain.anchor);
+            if let Some((chain_ix, _)) = anchor_joint {
+                measured.get(chain_ix)?.as_ref()?;
+            }
             let anchor = anchor_pose(helper, chain.anchor, None)?;
             let mut configs = Vec::with_capacity(chain.joints.len());
             let mut parents = Vec::with_capacity(chain.joints.len());
@@ -149,10 +191,10 @@ fn measure(
                     .to_scale_rotation_translation();
                 poses.push((translation, rotation));
 
-                parents.push(if parent.parent() == chain.anchor {
-                    JointParent::Anchor
-                } else if let Some((chain_ix, joint_ix)) = place(parent.parent()) {
+                parents.push(if let Some((chain_ix, joint_ix)) = place(parent.parent()) {
                     JointParent::Joint(chain_ix, joint_ix)
+                } else if parent.parent() == chain.anchor {
+                    JointParent::Anchor
                 } else {
                     JointParent::Other(parent.parent())
                 });
@@ -190,11 +232,15 @@ fn measure(
             Some(SimulatedChain {
                 configs,
                 parents,
+                anchor_joint,
+                anchor,
                 rest_anchor_scale: anchor.scale,
                 state: ChainState::snapped(anchor, poses),
             })
-        })
-        .collect()
+        })();
+        measured.push(chain);
+    }
+    measured
 }
 
 /// Picks the avatars to simulate, steps their chains and writes the bones' rotations.
@@ -289,26 +335,35 @@ fn simulate_spring_bones(
             continue;
         }
 
+        let moved = simulation.snapped;
         if !simulation.snapped {
             simulation.chains = measure(chains, &helper, &nodes);
             simulation.snapped = true;
-        } else {
-            for (chain, simulated) in chains.0.iter().zip(&mut simulation.chains) {
-                let Some(simulated) = simulated else {
-                    continue;
-                };
-                match anchor_pose(&helper, chain.anchor, Some(simulated.rest_anchor_scale)) {
-                    Some(anchor) => simulated.state.set_anchor(anchor),
-                    None => continue,
-                }
-            }
         }
 
-        let mut blend = None;
-        for simulated in simulation.chains.iter_mut().flatten() {
-            blend = simulated.state.simulate(&simulated.configs, &plan);
+        // in order: a branch's anchor is a joint its earlier chain has already stepped
+        let mut shown = Shown::Hold;
+        for (chain_ix, chain) in chains.0.iter().enumerate() {
+            let (earlier, rest) = simulation.chains.split_at_mut(chain_ix);
+            let Some(Some(simulated)) = rest.first_mut() else {
+                continue;
+            };
+            if moved {
+                let anchor = match simulated.anchor_joint {
+                    Some((anchor_chain, joint_ix)) => earlier
+                        .get(anchor_chain)
+                        .and_then(Option::as_ref)
+                        .map(|anchor| anchor.joint_pose(joint_ix, simulated.rest_anchor_scale)),
+                    None => anchor_pose(&helper, chain.anchor, Some(simulated.rest_anchor_scale)),
+                };
+                if let Some(anchor) = anchor {
+                    simulated.anchor = anchor;
+                    simulated.state.set_anchor(anchor);
+                }
+            }
+            shown = simulated.state.simulate(&simulated.configs, &plan);
         }
-        let Some(blend) = blend else {
+        let Shown::Blend(blend) = shown else {
             continue;
         };
 
@@ -351,13 +406,15 @@ fn simulate_spring_bones(
     }
 }
 
-/// The chains of one wearable, from its skin's joints as loaded. `body_bone` gives the body's
-/// bone for a wearable joint that names one.
+/// The chains of one wearable, from the joints of its skins as loaded, each joint once.
+/// `body_bone` gives the body's bone for a wearable joint that names one, and `rest_rotation` a
+/// joint's local rotation as authored. A chain off a bone the body lacks is left out, with the
+/// chains that branch from it.
 pub fn wearable_chains(
     joints: &[Entity],
     nodes: &Query<(&Name, &ChildOf)>,
-    transforms: &Query<&Transform>,
     body_bone: impl Fn(Entity) -> Option<Entity>,
+    rest_rotation: impl Fn(Entity) -> Option<Quat>,
     params: Option<&SpringBoneModel>,
 ) -> Vec<SpringChain> {
     let mut places = HashMap::new();
@@ -382,31 +439,41 @@ pub fn wearable_chains(
         })
         .collect();
 
-    plan_chains(&skin, params)
-        .into_iter()
-        .filter_map(|chain| {
-            if chain.dropped > 0 {
-                warn!(
-                    "spring chain from {:?} is too long: its last {} bones stay at rest",
-                    skin[chain.joints[0].0].name, chain.dropped
-                );
-            }
-            Some(SpringChain {
-                anchor: body_bone(joints[chain.anchor])?,
-                joints: chain
-                    .joints
-                    .into_iter()
-                    .map(|(ix, params)| SpringJoint {
-                        entity: joints[ix],
-                        params,
-                        rest_rotation: transforms
-                            .get(joints[ix])
-                            .map_or(Quat::IDENTITY, |transform| transform.rotation),
-                    })
-                    .collect(),
-            })
-        })
-        .collect()
+    // the joints of the chains kept so far, which a later chain may branch from
+    let mut kept = HashSet::new();
+    let mut chains = Vec::new();
+    for chain in plan_chains(&skin, params) {
+        let anchor = if skin[chain.anchor].avatar_bone {
+            body_bone(joints[chain.anchor])
+        } else {
+            kept.get(&joints[chain.anchor]).copied()
+        };
+        let Some(anchor) = anchor else {
+            continue;
+        };
+        if chain.dropped > 0 {
+            warn!(
+                "spring chain from {:?} is too long: {} bones past its first {} stay at rest",
+                skin[chain.joints[0].0].name,
+                chain.dropped,
+                chain.joints.len()
+            );
+        }
+        kept.extend(chain.joints.iter().map(|(ix, _)| joints[*ix]));
+        chains.push(SpringChain {
+            anchor,
+            joints: chain
+                .joints
+                .into_iter()
+                .map(|(ix, params)| SpringJoint {
+                    entity: joints[ix],
+                    params,
+                    rest_rotation: rest_rotation(joints[ix]).unwrap_or(Quat::IDENTITY),
+                })
+                .collect(),
+        });
+    }
+    chains
 }
 
 #[cfg(test)]
@@ -433,8 +500,8 @@ mod tests {
         planned.0 = wearable_chains(
             &skin.joints,
             &nodes,
-            &transforms,
             |joint| (joint == skin.wearable_head).then_some(skin.body_head),
+            |joint| transforms.get(joint).map(|t| t.rotation).ok(),
             None,
         );
     }
@@ -477,7 +544,48 @@ mod tests {
     }
 
     #[test]
-    fn a_chain_off_a_bone_the_body_lacks_is_left_out() {
+    fn a_branch_hangs_off_the_joint_it_forks_from() {
+        let mut world = World::new();
+        let body_head = world.spawn(Name::new("Avatar_Head")).id();
+        let armature = world.spawn(Name::new("Armature")).id();
+        let wearable_head = world
+            .spawn((Name::new("Avatar_Head"), ChildOf(armature)))
+            .id();
+        let hair_01 = world
+            .spawn((Name::new("Hair_01"), ChildOf(wearable_head)))
+            .id();
+        let hair_02 = world.spawn((Name::new("Hair_02"), ChildOf(hair_01))).id();
+        let hair_fork = world.spawn((Name::new("Hair_fork"), ChildOf(hair_01))).id();
+        world.insert_resource(Skin {
+            joints: vec![hair_fork, wearable_head, hair_02, hair_01],
+            body_head,
+            wearable_head,
+        });
+        world.init_resource::<Planned>();
+
+        world.run_system_once(plan).unwrap();
+
+        let planned = &world.resource::<Planned>().0;
+        let chains: Vec<(Entity, Vec<Entity>)> = planned
+            .iter()
+            .map(|chain| {
+                (
+                    chain.anchor,
+                    chain.joints.iter().map(|j| j.entity).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            chains,
+            [
+                (body_head, vec![hair_01, hair_02]),
+                (hair_01, vec![hair_fork])
+            ]
+        );
+    }
+
+    #[test]
+    fn a_chain_off_a_bone_the_body_lacks_is_left_out_with_its_branches() {
         let mut world = World::new();
         let armature = world.spawn(Name::new("Armature")).id();
         let wearable_tail = world
@@ -486,8 +594,10 @@ mod tests {
         let tail_01 = world
             .spawn((Name::new("Tail_01"), ChildOf(wearable_tail)))
             .id();
+        let tail_02 = world.spawn((Name::new("Tail_02"), ChildOf(tail_01))).id();
+        let tail_fork = world.spawn((Name::new("Tail_fork"), ChildOf(tail_01))).id();
         world.insert_resource(Skin {
-            joints: vec![wearable_tail, tail_01],
+            joints: vec![wearable_tail, tail_01, tail_02, tail_fork],
             body_head: armature,
             wearable_head: armature,
         });
@@ -609,6 +719,47 @@ mod tests {
                 tick(app, FRAME);
             }
             assert!(swing(app, avatar) > 0.2, "{}", swing(app, avatar));
+        }
+
+        #[test]
+        fn a_branch_swings_with_the_joint_it_forks_from() {
+            let mut app = app();
+            let from = Vec3::NEG_Z * 3.0;
+            let avatar = spawn_avatar(&mut app, from);
+            // a second bone under the first, placed as the chain's own second bone is
+            let world = app.world_mut();
+            let fork = world
+                .spawn((
+                    ChildOf(avatar.joints[0]),
+                    Transform::from_xyz(0.0, 0.2, 0.0),
+                ))
+                .id();
+            world
+                .get_mut::<SpringChains>(avatar.model)
+                .unwrap()
+                .0
+                .push(SpringChain {
+                    anchor: avatar.joints[0],
+                    joints: vec![SpringJoint {
+                        entity: fork,
+                        params: chains::DEFAULT_PARAMS,
+                        rest_rotation: Quat::IDENTITY,
+                    }],
+                });
+
+            swing_avatar(&mut app, &avatar, from);
+
+            let local = |entity| app.world().get::<Transform>(entity).unwrap().rotation;
+            let second = local(avatar.joints[1]);
+            // the second bone bends against the first, and the fork bends as it does
+            assert!(second.angle_between(Quat::IDENTITY) > 1e-3);
+            assert!(
+                local(fork).angle_between(second) < 1e-4,
+                "{}",
+                local(fork).angle_between(second)
+            );
+            let simulation = app.world().get::<SpringSimulation>(avatar.model).unwrap();
+            assert_eq!(simulation.simulated_chains(), 2);
         }
 
         #[test]

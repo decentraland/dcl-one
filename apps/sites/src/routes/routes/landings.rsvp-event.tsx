@@ -82,7 +82,7 @@ export default function LandingsRsvpEvent({ loaderData }: Route.ComponentProps) 
     jumpHref:
       e?.url ??
       (e ? eventJumpUrl(e) : null) ??
-      `/whats-on/${encodeURIComponent(eventId)}`,
+      `/events?id=${encodeURIComponent(eventId)}`,
   };
 
   return (

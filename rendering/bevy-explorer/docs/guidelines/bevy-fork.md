@@ -2,11 +2,11 @@
 
 bevy-explorer builds bevy from upstream bevy 0.16.1 plus our changes. The repository tracks the
 upstream commit and one patch file per change in `rendering/bevy-explorer/patches/bevy`, and
-`tooling/patched-sources.py` writes the rebuilt tree at `rendering/bevy-explorer/bevy` (see the
-[ADR](../../../../docs/adr/2026-11-14-explorer-sources-as-patches.md)). Seventeen other sources
-are tracked the same way and rebuilt under `rendering/bevy-explorer/forks`; this page is only
-about bevy, because that is where behaviour differs from stock and where a reader who knows bevy
-will otherwise be wrong.
+Cargo takes the patched source as a commit of this repository (ADRs:
+[patches](../../../../docs/adr/2026-11-14-explorer-sources-as-patches.md),
+[commits](../../../../docs/adr/2026-11-15-explorer-patched-sources-as-git-commits.md)). Seventeen
+other sources are tracked the same way; this page is only about bevy, because that is where
+behaviour differs from stock and where a reader who knows bevy will otherwise be wrong.
 
 If a change belongs in bevy, make it a patch (see [Changing bevy](#changing-bevy)). Changes marked **throwaway** are 0.16
 adaptations of work that is already upstream in a later bevy and are dropped, not ported,
@@ -133,9 +133,10 @@ across workers:
 - Every compressed decode (basis, dds, ktx2) gets the caller's asset usage, which upstream
   leaves at the default: a cached dds loads with `RENDER_WORLD` as its first load did.
 - The patched crates' tests (`bevy_image`, `bevy_gltf`) run in the explorer's CI ("Test the
-  patched Bevy crates"): they are path dependencies, so `cargo test --all` never
-  compiles them. From `source`, seed the fork's workspace with this lock file and run them there:
-  `cp Cargo.lock ../bevy/Cargo.lock`, then `cargo test --manifest-path ../bevy/Cargo.toml -p
+  patched Bevy crates"): they are git dependencies, so `cargo test --all` never runs them. Write
+  the tree with `python3 tooling/patched-sources.py materialise bevy`. Then, from `source`, seed
+  its workspace with this lock file and run them there: `cp Cargo.lock ../bevy/Cargo.lock`, then
+  `cargo test --manifest-path ../bevy/Cargo.toml -p
   bevy_image -p bevy_gltf --lib --features bevy_gltf/dds,bevy_image/ktx2,bevy_image/zstd`.
 - Accessors with no `bufferView` are accepted (zero-filled per spec; Blender morph targets).
 - Texture decode is skipped when `load_materials` is empty, with a 1x1 placeholder under the
@@ -237,53 +238,72 @@ of `bevy`. The commands are `python3 tooling/patched-sources.py <command>`, with
 repository root.
 
 - **Files.** `patches/<name>/source.toml` records the upstream repository and commit, the licence
-  of the source (`license`), the git tree ids before and after the series, and `nix_hash`.
-  `patches/<name>/series` holds the patches in order. The rebuilt tree is
-  `rendering/bevy-explorer/bevy` for `bevy` and `rendering/bevy-explorer/forks/<name>` for every
-  other source. Git ignores it.
-- **`materialise`** writes each rebuilt tree that is missing or stale, also one that lost all its
-  files. Run it after a checkout, a pull or a rebase, before any `cargo` command. The `just`
-  recipes, the build scripts under `apps/bevy-explorer` and CI run it.
-  - Edits in a rebuilt tree stay. When the series changed below them, `materialise` rebuilds the
-    tree, applies the edits again and prints each step. On a conflict it stops, names the files
-    and changes nothing in the tree. In both cases it saves the edits as a patch file under
-    `edits/` in its cache (`~/.cache/dcl-one/patched-sources`) and prints the path.
-  - `--strict` fails on an edited tree.
-  - `--force` drops the edits.
-- **`export bevy -m "subject"`** writes the edits in the rebuilt tree as the next patch file and
-  updates the tree id in `source.toml`. Edit the rebuilt tree in place and build as usual first.
-  Commit both files, and update this page in the same PR.
-- **`status`** says which trees are missing, current, stale or edited. **`verify`** rebuilds each
-  source and checks the tree ids.
-- **Stale trees.** The build script of the `common` crate fails with one line that names
-  `materialise` when a rebuilt tree is not the one the tracked files describe. Only packages that
-  depend on `common` have this check. With no rebuilt tree at all Cargo fails earlier, when it
-  loads the manifests: ``patch location `...` does not contain packages matching `bevy` ``.
+  of the source (`license`), the git tree ids before and after the series, `rev` and `nix_hash`.
+  `patches/<name>/series` holds the patches in order.
+- **`rev`** is a commit with no parent and a fixed author, time and message. Its tree is the
+  patched source, so its id follows from the upstream commit and the series alone. This
+  repository holds it at `refs/patched-sources/<name>/<rev>`, and both Cargo files name each
+  source as `git` + `rev`: a fresh checkout builds with `cargo build --locked` and no other step.
+- **`edit bevy`** writes the tree at `rendering/bevy-explorer/bevy`
+  (`rendering/bevy-explorer/forks/<name>` for every other source; git ignores both) and makes
+  both Cargo files read that path. Edit the tree in place and build as usual. When the series
+  changed below the edits, `edit` applies them again; on a conflict it names the files and
+  changes nothing. `edit bevy --stop` names the `rev` again.
+- **`export bevy -m "subject"`** writes the edits as the next patch file, records the new tree id
+  and `rev`, and names that `rev` in both Cargo files. Commit the patch, `source.toml` and the
+  Cargo files, and update this page in the same PR.
+- **`repin bevy`** rebuilds the source from its upstream commit and series, records the tree ids
+  and `rev`, and names that `rev` in both Cargo files. Use it after a change of `commit`, after a
+  change of the series by hand, and after an `export` that stopped before its last write.
+- **No workflow files.** A tree must hold nothing under `.github/workflows/`: GitHub refuses
+  the push of such a commit from the CI job's token. A source whose upstream has a `.github`
+  directory lists it in `exclude`; the tool fails a tree that still holds a workflow file.
+- **Upgrade.** Set `commit` and `ref` in `source.toml` to the new upstream commit and run
+  `repin bevy`. It stops at the first patch that does not apply: correct that patch and run it
+  again until it passes. Then record `nix_hash` as the Nix entry below says.
+- **`publish --remote https://github.com/<you>/dcl-one`** pushes each new `rev` to your fork.
+  GitHub serves a fork's commits through this repository by id, so Cargo fetches the `rev` from
+  this repository's URL before the merge, in CI and locally. After the merge the
+  `bevy-explorer-publish-sources` workflow runs `publish` on `main`: it rebuilds each `rev` that
+  this repository lacks and pushes its ref ([ADR](../../../../docs/adr/2026-11-17-explorer-patched-sources-published-by-ci.md)).
+  A manual run of that workflow repairs a failed run. Never delete a ref: older revisions build
+  from it.
+- **Checks.** `pins` works offline, in the CI job that every build job needs. It fails when a
+  `rev` in a Cargo file is not the one in `source.toml`, when a Cargo file names a git source
+  that is not this repository or one in `OTHER_GIT` of the tool, and while a source is in edit
+  mode. A new git dependency needs an entry there, with its commit.
+  `publish --check --fetchable` runs in the same job and proves that this repository serves each
+  `rev`, with a ref or from a fork; the daily drift workflow runs `publish --check`, which needs
+  the ref. `verify` rebuilds
+  a source from upstream and proves the tree ids and `rev`: CI runs it on each source that a PR
+  or a push to `main` changes, and the daily drift workflow runs it on all of them. `materialise`
+  fails when the tree it wrote is not `rev`.
+- **`status`** says which trees are missing, current, stale or edited. `materialise --force bevy`
+  drops the edits.
 - **Nix.** `infra/packages/bevy-explorer.nix` fetches `commit` with `nix_hash` and runs the same
   tool. CI does not build the Nix package, so nothing there proves `nix_hash`: after a change of
   `commit`, run `nix build .#bevy-explorer.sources`, which fails with the hash to record.
 - `.gitattributes` sets `-text -whitespace` on `patches/**`, so patch bytes stay exact on every
   platform. Never reformat a patch file.
-- `source/Cargo.toml` points its patch tables at the rebuilt trees. `[patch.crates-io]` lists
-  each bevy subcrate an ecosystem crate names by crates.io version (18 today) and every forked
-  crate. `[patch."https://github.com/robtfm/bevy"]` catches `bevy_dui`, `bevy_ecss` and `boimp`,
-  whose manifests name a former fork by git. With `Cargo.lock` nothing fetches that repository.
-  A resolve without it reads the branch once.
-- The rebuilt trees are not workspace members, so the explorer's Clippy and Rustfmt gates never
-  reach them. Cargo doesn't cap a path dependency's rustc warnings: bevy's root `Cargo.toml`
-  allows `dead_code` (code our feature set leaves unused) and `mismatched_lifetime_syntaxes` (a
-  lint newer than bevy 0.16); other warnings stay visible. Don't run Clippy inside bevy's own
-  workspace: its code predates this toolchain's lints.
-- Backport an upstream change: `git fetch https://github.com/bevyengine/bevy <sha>`, then
-  `git format-patch -1 --stdout <sha> | git apply --directory=rendering/bevy-explorer/bevy`, then
-  `export`. Name the upstream PR on this page, as the entries above do.
+- The `git` + `rev` entries are in the patch tables of `source/Cargo.toml`. `[patch.crates-io]`
+  lists the crates that the workspace or an ecosystem crate names by crates.io version (five of
+  bevy); the other crates of a source follow from the same checkout. Three
+  `[patch."https://github.com/robtfm/..."]` tables catch the manifests that name a former fork by
+  git. With `Cargo.lock` nothing fetches those repositories.
+- The patched sources are not workspace members, so the explorer's Clippy and Rustfmt gates
+  never reach them. Cargo caps the rustc warnings of a git dependency; a source in edit mode
+  shows its own. Bevy's root `Cargo.toml` allows `dead_code` (code our feature set leaves unused)
+  and `mismatched_lifetime_syntaxes` (a lint newer than bevy 0.16). Don't run Clippy inside
+  bevy's own workspace: its code predates this toolchain's lints.
+- Backport an upstream change: `edit bevy`, `git fetch https://github.com/bevyengine/bevy <sha>`,
+  then `git format-patch -1 --stdout <sha> | git apply --directory=rendering/bevy-explorer/bevy`,
+  then `export`. Name the upstream PR on this page, as the entries above do.
 - Our delta over upstream, for a migration: `python3 tooling/patched-sources.py divergence bevy` lists
   files and lines changed by crate, and the series is the delta itself.
-- CI reuses cached Bevy and engine builds until their inputs change: Cargo would otherwise rebuild a path
+- CI reuses cached engine builds until their inputs change: Cargo would otherwise rebuild a path
   dependency after every checkout, since a checkout makes every file new.
-  `tooling/bevy-mtimes.py` records the Bevy, fork, engine and protocol files' blob ids and times with
-  the cache and gives
-  unchanged files their times back; every job that caches the explorer's target runs it.
-- Never share a `target/` directory with a checkout that builds a different bevy.
+  `tooling/bevy-mtimes.py` records the engine, in-tree crate and protocol files' blob ids and
+  times with the cache and gives unchanged files their times back; every job that caches the
+  explorer's target runs it.
 - The lockfile is edited by hand, never with `cargo update`: see the dependencies section of
   [contributing](contributing.md).

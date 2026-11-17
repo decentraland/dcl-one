@@ -1,5 +1,5 @@
 use bevy::{
-    ecs::{component::ComponentIdFor, entity::EntityHashSet},
+    ecs::{component::ComponentIdFor, entity::EntityHashSet, system::SystemParam},
     prelude::*,
 };
 use bevy_console::{AddConsoleCommand, ConsoleCommand};
@@ -115,45 +115,68 @@ fn start_clock(mut commands: Commands) {
         .observe(check_new_skybox_time);
 }
 
+/// Which scene a root-only component `C` comes from for the primary player: of the scenes
+/// containing the player that have it, the parcel scene before portables, then the earliest
+/// started.
+#[derive(SystemParam)]
+pub(crate) struct RootComponentSource<'w, 's, C: Component> {
+    primary_player: Res<'w, PrimaryPlayerRes>,
+    containing_scene: ContainingScene<'w, 's>,
+    scenes: Query<'w, 's, (Entity, &'static RendererSceneContext), With<C>>,
+    added: Query<'w, 's, (), Added<C>>,
+    removed: RemovedComponents<'w, 's, C>,
+    last_player_state: Local<'s, Option<Option<(IVec2, bool)>>>,
+}
+
+impl<C: Component> RootComponentSource<'_, '_, C> {
+    /// The scene to read `C` from, or `None` while nothing it depends on has changed: the scene
+    /// layout, the player's parcel, or a scene adding or removing `C`.
+    pub(crate) fn changed_pick(&mut self) -> Option<Option<Entity>> {
+        let player_state = self
+            .containing_scene
+            .transforms
+            .get(self.primary_player.0)
+            .ok()
+            .map(|(gt, oow)| (scene_runner::vec3_to_parcel(gt.translation()), oow));
+        let any_removed = self.removed.read().next().is_some();
+        self.removed.clear();
+        let dirty = self.containing_scene.scene_layout_changed()
+            || !self.added.is_empty()
+            || any_removed
+            || self.last_player_state.as_ref() != Some(&player_state);
+        *self.last_player_state = Some(player_state);
+        if !dirty {
+            return None;
+        }
+
+        let containing_primary_player = self.containing_scene.get(self.primary_player.0);
+        Some(
+            self.scenes
+                .iter_many_unique(EntityHashSet::from_iter(containing_primary_player))
+                .min_by_key(|(_, renderer_scene_context)| {
+                    (
+                        renderer_scene_context.is_portable,
+                        renderer_scene_context.start_tick,
+                    )
+                })
+                .map(|(entity, _)| entity),
+        )
+    }
+}
+
 #[expect(clippy::type_complexity, reason = "Queries are complex")]
-#[allow(clippy::too_many_arguments)]
 fn fetch_time_from_scene(
     mut commands: Commands,
-    primary_player: Res<PrimaryPlayerRes>,
-    containing_scene: ContainingScene,
-    scenes: Query<(Entity, &RendererSceneContext, &SceneTime)>,
+    mut source: RootComponentSource<SceneTime>,
+    scenes: Query<&SceneTime>,
     time_keeper: Single<(Entity, Option<&SceneTime>, Option<&SceneTimeSource>), With<TimeKeeper>>,
-    added_times: Query<(), Added<SceneTime>>,
-    mut removed_times: RemovedComponents<SceneTime>,
-    mut last_player_state: Local<Option<Option<(IVec2, bool)>>>,
 ) {
     // only recompute the time source when the scenes at the player position may have changed
-    let player_state = containing_scene
-        .transforms
-        .get(primary_player.0)
-        .ok()
-        .map(|(gt, oow)| (scene_runner::vec3_to_parcel(gt.translation()), oow));
-    let any_removed = removed_times.read().next().is_some();
-    removed_times.clear();
-    let dirty = containing_scene.scene_layout_changed()
-        || !added_times.is_empty()
-        || any_removed
-        || last_player_state.as_ref() != Some(&player_state);
-    *last_player_state = Some(player_state);
-    if !dirty {
+    let Some(pick) = source.changed_pick() else {
         return;
-    }
-
-    let containing_primary_player = containing_scene.get(primary_player.0);
-    let maybe_scene_time = scenes
-        .iter_many_unique(EntityHashSet::from_iter(containing_primary_player))
-        .min_by_key(|(_, renderer_scene_context, _)| {
-            (
-                renderer_scene_context.is_portable,
-                renderer_scene_context.start_tick,
-            )
-        })
-        .map(|(entity, _, scene_time)| (entity, scene_time));
+    };
+    let maybe_scene_time =
+        pick.and_then(|entity| scenes.get(entity).ok().map(|time| (entity, time)));
 
     let (time_keeper, time_keeper_scene_time, scene_time_source) = time_keeper.into_inner();
     if let Some((entity, scene_time)) = maybe_scene_time {
@@ -178,46 +201,20 @@ fn fetch_time_from_scene(
 }
 
 #[expect(clippy::type_complexity, reason = "Queries are complex")]
-#[allow(clippy::too_many_arguments)]
 fn fetch_time_from_skybox(
     mut commands: Commands,
-    primary_player: Res<PrimaryPlayerRes>,
-    containing_scene: ContainingScene,
-    scenes: Query<(Entity, &RendererSceneContext, Ref<SkyboxTime>)>,
+    mut source: RootComponentSource<SkyboxTime>,
+    scenes: Query<Ref<SkyboxTime>>,
     time_keeper: Single<(Entity, Option<&SkyboxTime>, Option<&SkyboxTimeSource>), With<TimeKeeper>>,
     scene_time_component_id: ComponentIdFor<SceneTime>,
-    added_times: Query<(), Added<SkyboxTime>>,
-    mut removed_times: RemovedComponents<SkyboxTime>,
-    mut last_player_state: Local<Option<Option<(IVec2, bool)>>>,
 ) {
     // only recompute the time source when the scenes at the player position may have changed.
     // SkyboxTime is an immutable component so value updates re-insert it (-> Added fires).
-    let player_state = containing_scene
-        .transforms
-        .get(primary_player.0)
-        .ok()
-        .map(|(gt, oow)| (scene_runner::vec3_to_parcel(gt.translation()), oow));
-    let any_removed = removed_times.read().next().is_some();
-    removed_times.clear();
-    let dirty = containing_scene.scene_layout_changed()
-        || !added_times.is_empty()
-        || any_removed
-        || last_player_state.as_ref() != Some(&player_state);
-    *last_player_state = Some(player_state);
-    if !dirty {
+    let Some(pick) = source.changed_pick() else {
         return;
-    }
-
-    let containing_primary_player = containing_scene.get(primary_player.0);
-    let maybe_skybox_time = scenes
-        .iter_many_unique(EntityHashSet::from_iter(containing_primary_player))
-        .min_by_key(|(_, renderer_scene_context, _)| {
-            (
-                renderer_scene_context.is_portable,
-                renderer_scene_context.start_tick,
-            )
-        })
-        .map(|(entity, _, skybox_time)| (entity, skybox_time));
+    };
+    let maybe_skybox_time =
+        pick.and_then(|entity| scenes.get(entity).ok().map(|time| (entity, time)));
 
     let (time_keeper, time_keeper_skybox_time, skybox_time_source) = time_keeper.into_inner();
     if let Some((entity, skybox_time)) = maybe_skybox_time {

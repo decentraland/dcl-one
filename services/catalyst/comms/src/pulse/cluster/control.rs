@@ -160,6 +160,18 @@ impl ControlPositions {
         self.snapshot_at(Instant::now())
     }
 
+    /// Ingestion can precede the next completed selection pass. Do not retire
+    /// that wallet's retry obligation while any new candidate waits for it.
+    pub(crate) fn has_candidate(&self, wallet: &str) -> bool {
+        self.entries.get(wallet).is_some_and(|entry| {
+            entry
+                .heads
+                .iter()
+                .flatten()
+                .any(|head| !head.closed && head.position.is_some())
+        })
+    }
+
     // No production common allocator attestation exists yet. Both heads are
     // retained, but neither can supply mixed authority by audience text alone.
     fn winner(entry: &Entry) -> Option<(usize, &Head)> {

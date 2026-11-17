@@ -433,6 +433,33 @@ pub struct PrimaryCamera {
     pub scene_override: Option<CameraOverride>,
 }
 
+/// Where the camera sits relative to the player, with a scene's override applied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CameraView {
+    FirstPerson,
+    ThirdPerson,
+    Cinematic,
+}
+
+impl PrimaryCamera {
+    /// The camera is in first person when it is this close behind the player.
+    pub const FIRST_PERSON_DISTANCE: f32 = 0.05;
+
+    /// The view in effect: a scene's override wins over the player's own zoom.
+    pub fn view(&self) -> CameraView {
+        let distance = match self.scene_override {
+            Some(CameraOverride::Cinematic(_)) => return CameraView::Cinematic,
+            Some(CameraOverride::Distance(distance)) => distance,
+            None => self.distance,
+        };
+        if distance <= Self::FIRST_PERSON_DISTANCE {
+            CameraView::FirstPerson
+        } else {
+            CameraView::ThirdPerson
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CinematicSettings {
     pub origin: Entity,
@@ -597,6 +624,7 @@ pub struct AppConfig {
     pub scene_permissions: HashMap<String, HashMap<PermissionType, PermissionValue>>,
     pub inputs: InputMapSerialized,
     pub point_at_marker_visibility: PointAtMarkerVisibility,
+    pub chat_bubble_visibility: ChatBubbleVisibility,
     /// Who may DM the local user. Owned by the social service, so never persisted here: the
     /// slot mirrors the server value and the social crate upserts user changes to it. `None`
     /// until either the user or the server has set it.
@@ -665,6 +693,7 @@ impl Default for AppConfig {
             scene_permissions: Default::default(),
             inputs: Default::default(),
             point_at_marker_visibility: Default::default(),
+            chat_bubble_visibility: Default::default(),
             dm_privacy: None,
             camera_smoothing: Default::default(),
             language: None,
@@ -1598,7 +1627,7 @@ pub struct EngineMovementControl {
     pub penetration_bounds: (DVec3, DVec3),
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MoveKind {
     #[default]
     Idle,
@@ -1731,6 +1760,8 @@ pub struct SceneGlobalLight {
     /// setting unless a scene overrides it, as a tint and a multiplier
     pub ambient_color: Color,
     pub ambient_brightness: f32,
+    /// a scene hid the sun and moon discs (not their light)
+    pub sun_hidden: bool,
     pub layers: RenderLayers,
 }
 
@@ -2068,6 +2099,15 @@ pub enum PointAtMarkerVisibility {
     #[default]
     All,
     Friends,
+    None,
+}
+
+/// Which chat messages open a bubble over their sender's nametag.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChatBubbleVisibility {
+    #[default]
+    All,
+    NearbyOnly,
     None,
 }
 

@@ -27,7 +27,7 @@ flowchart LR
   end
   subgraph PostUpdate
     direction LR
-    ETP[EarlyTransformPropagate] --> EBB[EarlyBillboard] --> CU[ColliderUpdate] --> PU[PlayerUpdate] --> CAM[CameraUpdate] --> IK[InverseKinematics] --> NT[Nametag] --> AS[AttachSync] --> BB[Billboard] --> TP[bevy TransformPropagate]
+    ETP[EarlyTransformPropagate] --> EBB[EarlyBillboard] --> CU[ColliderUpdate] --> PU[PlayerUpdate] --> CAM[CameraUpdate] --> IK[InverseKinematics] --> SB[SpringBones] --> NT[Nametag] --> AS[AttachSync] --> BB[Billboard] --> TP[bevy TransformPropagate]
   end
   Update --> PostUpdate
 ```
@@ -108,6 +108,7 @@ index of every ordering point around the avatar, camera and collider transform p
 | `PlayerUpdate` | Player movement and ground resolution |
 | `CameraUpdate` | Camera follow and modes |
 | `InverseKinematics` | Foot and head IK, plus a propagate of the avatar subtree |
+| `SpringBones` | Spring-bone simulation of wearables' own bones, from post-IK poses computed from local transforms |
 | `Nametag` | Nametag positioning from post-IK globals |
 | `AttachSync` | Avatar-attach and scene-proxy position sync |
 | `Billboard` | Billboard orientation, facing this frame's camera |
@@ -130,6 +131,8 @@ well, or its writes land a frame late. `crates/avatar/src/point_at_marker.rs` is
 - **`First`**: pumps for the comms and social tokio runtimes, sysinfo counters.
 - **`PreUpdate`**: `UiActionSet` (system-UI actions; interact sounds before it, text links
   after), the web livekit page-event dispatch, media source serving, the headless supervisor.
+  The input manager's readers (bindings, the system-action stream, native input) run after
+  bevy's `InputSystem`, so each reads the frame's input once.
 - **`SpawnScene`** (bevy's, between `Update` and `PostUpdate`), in order:
   - `slice_scene_spawning` sets this frame's instantiation slice: a quarter of the target frame
     (`SceneUpdates::frame_target`, 60 fps when uncapped) from when it runs, less what
