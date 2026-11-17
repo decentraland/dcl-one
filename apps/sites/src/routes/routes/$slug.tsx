@@ -32,7 +32,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
 
   const { sid, wrap } = await pageLoader(request, context, FALLBACK);
 
-  // Only the requested document reaches the client, not all nine.
+  // Only the requested document reaches the client, not every one.
   const payload = { doc: key, legal: LEGAL_DOCS[key], sid };
   return wrap(payload);
 }

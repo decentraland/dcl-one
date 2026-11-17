@@ -99,10 +99,11 @@ class ConfigurationTest(unittest.TestCase):
     def test_sites_routes_keep_api_exceptions_and_prefix_boundaries(self):
         self.assertEqual(gateway.site_prefixes([
             "_index.tsx", "$slug.tsx", "places_.$id.tsx", "api.screens.v1.play.ts",
-            "api.marketplace-screen.ts", "internal.pair.tsx", "profile.$id.tsx",
+            "api.marketplace-screen.ts", "internal.pair.tsx", "profile.$id.tsx", "robots[.]txt.ts",
+            "play_.app[.]html.tsx", "a[$b].tsx", "[_]x.tsx",
             "download.tsx", "download_success.tsx", "download_.success.tsx",
-        ]), ["/api/marketplace-screen", "/api/screens", "/download", "/download_success", "/internal", "/places",
-             "/profile"])
+        ]), ["/_x", "/a$b", "/api/marketplace-screen", "/api/screens", "/download", "/download_success",
+             "/internal", "/places", "/play", "/profile", "/robots.txt"])
 
     def test_sites_cannot_claim_internal_api_paths(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
@@ -516,6 +517,14 @@ class ConfigurationTest(unittest.TestCase):
                     (kind, prefix) for kind, prefix in sites_locations
                     if (path == prefix if kind == "= " else path.startswith(prefix)) and prefix != "/"
                 ])
+
+    def test_robots_txt_routes_to_sites(self):
+        root = Path(__file__).parents[3]
+        sites = sorted(path.name for path in (root / "apps/sites/src/routes/routes").iterdir())
+        table = {"sites": sites, "internal": [], "aliases": [], "node": [], "deploy": []}
+        config = gateway.render(table, gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"}), "/mime.types")
+        self.assertIn("location = /robots.txt {\nproxy_pass http://sites;", config)
+        self.assertNotIn("location = /robots[ {", config)
 
     def test_content_page_is_sites_only_on_the_apex_host(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test",
