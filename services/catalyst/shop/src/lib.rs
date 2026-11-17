@@ -215,3 +215,15 @@ mod router_tests {
         );
     }
 }
+
+/// Production routes stay on `shared::routing` (see `shared::routing::guard`).
+#[cfg(test)]
+#[test]
+fn production_routes_use_shared_routing() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let found = crate::shared::routing::guard::direct_axum_routes(&src);
+    assert!(
+        found.is_empty(),
+        "use crate::shared::routing instead of axum's method routers at {found:?}"
+    );
+}

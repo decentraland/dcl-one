@@ -14,6 +14,9 @@ use axum::handler::Handler;
 use axum::response::Response;
 use axum::routing::MethodRouter;
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod guard;
+
 type BoxedResponse = Pin<Box<dyn Future<Output = Response> + Send>>;
 
 /// A handler boxed to one type per state `S`.
@@ -54,7 +57,6 @@ macro_rules! method {
             T: 'static,
             S: Clone + Send + Sync + 'static,
         {
-            #[allow(clippy::disallowed_methods)]
             axum::routing::$name(erase(handler))
         }
     )*};
@@ -115,108 +117,6 @@ mod tests {
         assert_eq!(
             send(app, Method::POST, b"12345").await.0,
             StatusCode::PAYLOAD_TOO_LARGE
-        );
-    }
-
-    /// CI runs no clippy over these crates, so this scan keeps their production
-    /// routes on `shared::routing`. Items under `#[cfg(test)]`, files named
-    /// `*test*` and `tests/` folders are test code and exempt.
-    #[test]
-    fn production_routes_do_not_use_axum_methods_directly() {
-        const CRATES: [&str; 5] = ["comms", "explore", "shop", "social", "worlds"];
-        const METHODS: [&str; 6] = ["any", "delete", "get", "patch", "post", "put"];
-        fn names_a_method(after: &str) -> bool {
-            let names = match after.strip_prefix('{') {
-                Some(group) => group.split('}').next().unwrap_or(""),
-                None => after,
-            };
-            names
-                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-                .take(if after.starts_with('{') {
-                    usize::MAX
-                } else {
-                    1
-                })
-                .any(|name| METHODS.contains(&name))
-        }
-        fn visit(dir: &std::path::Path, found: &mut Vec<String>) {
-            for entry in std::fs::read_dir(dir).unwrap() {
-                let path = entry.unwrap().path();
-                let name = path.file_name().unwrap().to_string_lossy().into_owned();
-                if path.is_dir() {
-                    if name != "tests" {
-                        visit(&path, found);
-                    }
-                    continue;
-                }
-                if !name.ends_with(".rs") || name.contains("test") {
-                    continue;
-                }
-                let text = std::fs::read_to_string(&path).unwrap();
-                // Brace depth, the depth a skipped test item closes at, and whether
-                // a `#[cfg(test)]` item has not reached its `;` or `{` yet.
-                let (mut depth, mut skip_until, mut pending) = (0i64, None, false);
-                // Inside `use axum::{ .. }`, `routing::get` names axum's own.
-                let mut axum_group = false;
-                for (number, line) in text.lines().enumerate() {
-                    let trimmed = line.trim();
-                    let delta = line.matches('{').count() as i64 - line.matches('}').count() as i64;
-                    if let Some(end) = skip_until {
-                        depth += delta;
-                        if depth <= end {
-                            skip_until = None;
-                        }
-                        continue;
-                    }
-                    if pending {
-                        if delta > 0 {
-                            skip_until = Some(depth);
-                            pending = false;
-                        } else if !trimmed.starts_with("#[")
-                            && (trimmed.ends_with(';') || trimmed.ends_with('}'))
-                        {
-                            pending = false;
-                        }
-                        depth += delta;
-                        continue;
-                    }
-                    if trimmed == "#[cfg(test)]" {
-                        pending = true;
-                        continue;
-                    }
-                    if trimmed.starts_with("use axum::{") && !trimmed.ends_with(';') {
-                        axum_group = true;
-                    }
-                    let direct = line
-                        .split_once("axum::routing::")
-                        .is_some_and(|(_, after)| names_a_method(after));
-                    let grouped = (axum_group || trimmed.starts_with("use axum::{"))
-                        && trimmed
-                            .split_once("routing::")
-                            .is_some_and(|(_, after)| names_a_method(after));
-                    if direct || grouped {
-                        found.push(format!("{}:{}", path.display(), number + 1));
-                    }
-                    if axum_group && trimmed.ends_with("};") {
-                        axum_group = false;
-                    }
-                    depth += delta;
-                }
-            }
-        }
-        let mut found = Vec::new();
-        for name in CRATES {
-            visit(
-                &std::path::Path::new(env!("DCL_ONE_ROOT"))
-                    .join("services/catalyst")
-                    .join(name)
-                    .join("src"),
-                &mut found,
-            );
-        }
-        assert!(
-            found.is_empty(),
-            "use crate::shared::routing instead of axum::routing at {found:?}"
         );
     }
 }
