@@ -49,8 +49,10 @@ function BanLines({ ban }: { ban: PlatformBanNotice }): React.JSX.Element {
   )
 }
 
+const helpUrl = (): string => siteUrl('/help/')
+
 const openHelpPage = (): void => {
-  window.open(siteUrl('/help/'), '_blank', 'noopener')
+  window.open(helpUrl(), '_blank', 'noopener')
 }
 
 /** Opens the notice. With `signOut` it blocks: Escape and the scrim do nothing. `openSupport`
@@ -114,7 +116,7 @@ export function usePlatformBanNotices(input: {
 }): void {
   const { phase, notice, travelRefused } = input
   // the native HUD has no browser tabs of its own: the engine opens the help page
-  const openSupport = isNativeHud() ? () => void input.openExternalUrl(siteUrl('/help/')) : undefined
+  const openSupport = isNativeHud() ? () => void input.openExternalUrl(helpUrl()) : undefined
   // an in-world travel passes through `entering` too
   const [reachedWorld, setReachedWorld] = useState(false)
   useEffect(() => {

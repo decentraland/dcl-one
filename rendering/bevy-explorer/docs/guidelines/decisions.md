@@ -318,7 +318,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   so a device ban shows only as a platform-scoped refusal of the scene adapter: that refusal
   marks the platform ban. The endpoint's "not banned" does not lift it while the refusal stands:
   it asks the gatekeeper for that scene's room again, and the gatekeeper's admission lifts it, so
-  a ban that expired or was lifted ends without a scene or realm change. The local user's scene
+  a ban that expired or was lifted ends without a scene or realm change. Until then the notice
+  shows the refusal's ban, which carries no reason or period. The local user's scene
   ban is the refusal of the
   scene adapter, read from its status and body (the gatekeeper's 403 for a platform or scene
   ban, the worlds server's 401 for a platform or world ban), where unity-explorer treats any 401
