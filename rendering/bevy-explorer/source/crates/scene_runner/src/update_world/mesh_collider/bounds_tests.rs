@@ -134,6 +134,36 @@ fn a_thin_collider_may_overhang_by_less() {
 }
 
 #[test]
+fn a_thin_collider_on_the_edge_line_stays() {
+    let mut colliders = scene(&[(0, 0)]);
+    let id = add_box(&mut colliders, 0);
+    // a fence a centimetre thick, along the scene's edge at x = 16 and at x = 0
+    let size = Vec3::new(0.01, 2.0, 16.0);
+
+    place(&mut colliders, &id, Vec3::new(16.0, 1.0, -8.0), size);
+    assert!(hit_at(&mut colliders, 16.0, -8.0));
+    place(&mut colliders, &id, Vec3::new(0.0, 1.0, -8.0), size);
+    assert!(hit_at(&mut colliders, 0.0, -8.0));
+}
+
+#[test]
+fn a_thin_collider_keeps_the_allowance_across_its_thin_side() {
+    let mut colliders = scene(&[(0, 0)]);
+    let id = add_box(&mut colliders, 0);
+    // 0.1 m thick: it may reach a quarter of that plus 0.05 m past the edge
+    let size = Vec3::new(0.1, 2.0, 4.0);
+
+    // centred a centimetre outside either edge, so 0.06 m past it
+    place(&mut colliders, &id, Vec3::new(16.01, 1.0, -8.0), size);
+    assert!(hit_at(&mut colliders, 16.01, -8.0));
+    place(&mut colliders, &id, Vec3::new(-0.01, 1.0, -8.0), size);
+    assert!(hit_at(&mut colliders, -0.01, -8.0));
+    // centred 0.1 m outside, so 0.15 m past it
+    place(&mut colliders, &id, Vec3::new(16.1, 1.0, -8.0), size);
+    assert!(!hit_at(&mut colliders, 16.1, -8.0));
+}
+
+#[test]
 fn a_collider_above_the_height_limit_is_off() {
     // one parcel: 20 m
     let mut colliders = scene(&[(0, 0)]);
