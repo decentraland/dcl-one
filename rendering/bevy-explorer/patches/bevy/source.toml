@@ -7,7 +7,8 @@ origin_rev = "dac1ac9ce08aa610e6f2aa7eef1e4e99130c196a"
 # origin_rev is the head of branch release-0.16-dcl; the series continues with commits of this repository.
 license    = "(MIT OR Apache-2.0) AND Zlib"
 paths      = ["."]
-exclude    = [".gitattributes", "assets", "examples/wasm/assets"]
-base_tree  = "74df77ad8b0921487f08765d713ca70f506a33a3"
-tree       = "c90725e3f39f6dee49fc5c2862154b36e6f0620d"
+exclude    = [".gitattributes", ".github", "assets", "examples/wasm/assets"]
+base_tree  = "4f1453a1670d25c35dad4580cbdc46e8233638cc"
+tree       = "dda064a273d7b33a92657f6cf559825d1106d4c8"
+rev        = "41206da6742824e4fc3396d10a6b2002baa8bc8a"
 nix_hash   = "sha256-KZ11CKJEIO/fpAJZSnytxaP/X7GSjvPNT0l1RXyg3zU="

@@ -11,7 +11,7 @@ export function JumpInvalidRoute({ kind }: { kind: "place" | "event" }) {
         <JumpInvalid
           kind={kind}
           jumpInHref={jumpTravelHref({ coordinates: [0, 0], realm: undefined })}
-          eventsHref="/whats-on"
+          eventsHref="/events"
           homeHref="/"
         />
       </JumpPage>

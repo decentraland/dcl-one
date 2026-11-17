@@ -7,7 +7,6 @@ pub fn ops() -> Vec<OpDecl> {
     vec![
         op_crdt_send_to_renderer(),
         op_crdt_recv_from_renderer(),
-        op_crdt_recv_ready(),
         op_is_server(),
     ]
 }
@@ -26,10 +25,4 @@ fn op_crdt_send_to_renderer(op_state: Rc<RefCell<OpState>>, #[buffer] messages: 
 #[serde]
 async fn op_crdt_recv_from_renderer(op_state: Rc<RefCell<OpState>>) -> Vec<Vec<u8>> {
     dcl_js::engine::op_crdt_recv_from_renderer(op_state).await
-}
-
-#[op2(async)]
-#[serde]
-async fn op_crdt_recv_ready(op_state: Rc<RefCell<OpState>>) -> Vec<Vec<u8>> {
-    dcl_js::engine::op_crdt_recv_ready(op_state).await
 }

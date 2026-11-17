@@ -116,10 +116,13 @@ python3 tooling/image-smoke.py
   Unrelated cache families are excluded from image retention.
 - The Rust test and release-proof jobs cache dependency artifacts only
   (`Swatinem/rust-cache`): first attempts on main save, pull requests read, and the
-  workspace crates rebuild on each run. The Explorer's native jobs key their pruned
-  `target` trees on the compiler, the tool environment and the Cargo inputs
-  (`tooling/bevy-target-cache.py`), fall back to the newest cache of the same compiler
-  and save from main's first attempts. The smoke job keeps its full `target` snapshot.
+  workspace crates rebuild on each run. The Explorer's native jobs key their
+  `target` trees on the compiler, the tool environment, the Cargo inputs and the
+  workspace tree (`tooling/bevy-target-cache.py`). The trees hold the workspace crates,
+  so a job compiles only what a change reaches. The jobs fall back to the newest cache
+  of the same dependencies, then of the same compiler. First attempts on main save an
+  entry for each change of the workspace; a pull request of this repository saves one
+  entry only when main has none for its dependencies. The smoke job keeps its full `target` snapshot.
   Cache pressure is logged by the sweep; quota and idle eviction still apply between sweeps.
 - Imports use `--no-check-sigs`. GitHub cache scopes are shared across workflows;
   exact keys limit fallback but do not authenticate the writer. Publishing refs
@@ -148,6 +151,23 @@ with the administrative role before starting the new binaries.
 Keep the pre-migration database backup: old binaries cannot read stable world ban
 keys, so rollback must restore the matching backup. See `DATABASE.md` for the
 retention and token-remint behavior.
+
+### Pulse generation ownership
+
+`catalyst pulse` requires `DATABASE_URL` and a deployment audience in
+`ARCHIPELAGO_CONTROL_V4_AUDIENCE` or `PULSE_V4_AUDIENCE`, matching serve's audience.
+Apply the schema before starting Pulse. Its root process holds a PostgreSQL session
+lease and commits a fresh UUID/epoch binding before opening admissions; another Pulse
+for that audience cannot acquire the lease concurrently. Database errors fail closed.
+The local development launcher waits for the schema-ready API before starting Pulse.
+
+Upgrade Pulse and every Gatekeeper writer together while admissions are stopped;
+older binaries do not enforce generation guards and cannot safely share this deployment.
+A database restore also requires stopped writers and closed admissions. Start a fresh
+Pulse acquisition after restore; a restored generation row alone is never permission
+to resume an old process. Existing issued credentials retain their finite validity.
+Lease-loss detection cancels local source work; it does not synchronously retract bytes
+already delivered or fence statistics publication through SQL on every message.
 
 ### Notification email settings
 

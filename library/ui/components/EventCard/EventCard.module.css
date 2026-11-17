@@ -1,0 +1,384 @@
+/* Hand-written from decentraland.org/events' event cards (the Upcoming row and the All Events day
+   column). No FDS capture of an event card exists, so the values are the reference page's, through the
+   foundations tokens. */
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+@layer dcl.components {
+  .card {
+    position: relative;
+    display: flex;
+    box-sizing: border-box;
+    overflow: hidden;
+    border-radius: var(--dcl-radius-lg);
+    background: var(--dcl-transparencies-black-40);
+    color: var(--dcl-neutrals-snow);
+    /* The reference card lifts and glows over 200ms. */
+    transition:
+      transform 200ms,
+      box-shadow 200ms;
+  }
+
+  .card:has(.link:focus-visible) {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+  }
+
+  /* The title link covers the card, so the whole card opens the event. */
+  .link {
+    color: inherit;
+    text-decoration: none;
+    outline: none;
+  }
+
+  .link::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+  }
+
+  .media {
+    position: relative;
+    flex: none;
+    overflow: hidden;
+    background: var(--dcl-neutrals-onix);
+  }
+
+  .cover {
+    position: absolute;
+    inset: 0;
+  }
+
+  .body {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--dcl-space-4);
+    min-width: 0;
+  }
+
+  .title {
+    composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+    flex: none;
+    margin: 0;
+    overflow: hidden;
+  }
+
+  /* Upcoming: the cover takes 42% of the width; the body grows for a two-line title. */
+  .compact {
+    container-type: inline-size;
+    min-height: 140px;
+  }
+
+  .compact .media {
+    width: 42%;
+  }
+
+  .compact .body {
+    padding: var(--dcl-space-12);
+  }
+
+  .compact .title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  /* A day column: a 16:9 cover above the text. A live event is marked on its leading edge. */
+  .day {
+    flex-direction: column;
+  }
+
+  .day .media {
+    aspect-ratio: 16 / 9;
+  }
+
+  .day .body {
+    padding: var(--dcl-space-8) var(--dcl-space-12);
+  }
+
+  .day .title {
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .day.isLive {
+    box-shadow: inset 4px 0 0 var(--dcl-system-red);
+  }
+
+  /* Badges over the cover */
+
+  .badges {
+    position: absolute;
+    top: var(--dcl-space-16);
+    left: var(--dcl-space-16);
+    display: flex;
+    gap: var(--dcl-space-8);
+  }
+
+  .badge {
+    composes: text6c6162656c2f746167 from '../../foundations/typography/text-styles.module.css';
+    display: inline-flex;
+    align-items: center;
+    gap: var(--dcl-space-4);
+    height: var(--dcl-space-24);
+    padding: 0 var(--dcl-space-8);
+    border-radius: var(--dcl-radius-sm);
+    color: var(--dcl-neutrals-white);
+  }
+
+  .live {
+    composes: badge;
+    background: var(--dcl-system-red);
+    text-transform: uppercase;
+  }
+
+  .players {
+    composes: badge;
+    background: var(--dcl-neutrals-shadow);
+  }
+
+  .dot {
+    width: var(--dcl-space-8);
+    height: var(--dcl-space-8);
+    border-radius: var(--dcl-radius-full);
+    background: var(--dcl-system-green);
+  }
+
+  .visuallyHidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* Host */
+
+  .creator {
+    display: flex;
+    align-items: center;
+    gap: var(--dcl-space-8);
+    min-width: 0;
+  }
+
+  .avatar {
+    composes: text626f64792f736d2d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: var(--dcl-space-24);
+    height: var(--dcl-space-24);
+    border-radius: var(--dcl-radius-full);
+    background: var(--dcl-brand-lavender);
+    color: var(--dcl-neutrals-white);
+    object-fit: cover;
+  }
+
+  .by {
+    composes: text626f64792f7873 from '../../foundations/typography/text-styles.module.css';
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .name {
+    position: relative;
+    z-index: 1;
+    color: var(--dcl-brand-ruby);
+    text-decoration: none;
+  }
+
+  a.name:hover {
+    text-decoration: underline;
+  }
+
+  a.name:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+  }
+
+  /* Start time and actions. At rest (a touch or narrow screen) the actions sit under the time. */
+
+  .footer {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--dcl-space-8);
+    margin-top: auto;
+    /* Empty footer space opens the card: only the actions themselves take the pointer. */
+    pointer-events: none;
+  }
+
+  .time {
+    composes: text626f64792f736d2d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+    display: inline-flex;
+    align-items: center;
+    gap: var(--dcl-space-8);
+    max-width: 100%;
+    margin: 0;
+    padding: var(--dcl-space-4) var(--dcl-space-8);
+    overflow: hidden;
+    border-radius: var(--dcl-radius-sm);
+    background: var(--dcl-transparencies-black-40);
+    white-space: nowrap;
+  }
+
+  .time time {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: var(--dcl-space-4);
+  }
+
+  .action {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    flex: none;
+    place-items: center;
+    box-sizing: border-box;
+    width: 44px;
+    height: 44px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--dcl-radius-sm);
+    background: var(--dcl-neutrals-snow);
+    color: var(--dcl-neutrals-charcoal);
+    text-decoration: none;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+
+  .action:hover:not(:disabled) {
+    background: var(--dcl-neutrals-pearl);
+  }
+
+  .action:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+  }
+
+  .action:disabled {
+    cursor: progress;
+    opacity: 0.6;
+  }
+
+  .action[aria-pressed='true'] {
+    color: var(--dcl-brand-ruby);
+  }
+
+  .labelled {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--dcl-space-4);
+    width: auto;
+    padding-inline: var(--dcl-space-8);
+  }
+
+  .actionLabel {
+    composes: text627574746f6e2f736d from '../../foundations/typography/text-styles.module.css';
+    white-space: nowrap;
+  }
+
+  @container (max-width: 399px) {
+    .compact .actionLabel {
+      display: none;
+    }
+
+    .compact .labelled {
+      width: 44px;
+      padding-inline: 0;
+      justify-content: center;
+    }
+  }
+
+  /* A device that hovers, from tablet width: the actions wait, hidden, over the time. Hover or focus
+     inside the card lifts it (4px, with the reference's 30% white glow), fades the time out and fades
+     and slides the actions up 8px into its place, all over 200ms. Hidden by opacity only, the actions
+     stay in the accessibility tree and in reverse Tab order. */
+  @media (hover: hover) and (min-width: 768px) {
+    .card:hover,
+    .card:focus-within {
+      transform: translateY(-4px);
+      box-shadow: 0 2px 12px 12px color-mix(in srgb, var(--dcl-neutrals-white) 30%, transparent);
+    }
+
+    .hasActions .footer {
+      position: relative;
+      flex-direction: row;
+      align-items: center;
+      min-height: 32px;
+    }
+
+    .hasActions .time {
+      transition: opacity 200ms;
+    }
+
+    .hasActions:hover .time,
+    .hasActions:focus-within .time {
+      opacity: 0;
+    }
+
+    .hasActions .actions {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      transform: translateY(8px);
+      transition:
+        opacity 200ms,
+        transform 200ms;
+    }
+
+    .hasActions .action {
+      width: 32px;
+      height: 32px;
+      pointer-events: none;
+    }
+
+    .hasActions .labelled {
+      width: auto;
+    }
+
+    .hasActions:hover .actions,
+    .hasActions:focus-within .actions {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .hasActions:hover .action,
+    .hasActions:focus-within .action {
+      pointer-events: auto;
+    }
+  }
+
+  /* Under reduced motion every state changes at once, in place. */
+  @media (prefers-reduced-motion: reduce) {
+    .card,
+    .hasActions .time,
+    .hasActions .actions {
+      transition: none;
+    }
+
+    .card:hover,
+    .card:focus-within,
+    .hasActions .actions,
+    .hasActions:hover .actions,
+    .hasActions:focus-within .actions {
+      transform: none;
+    }
+  }
+
+  /* A touch or narrow screen shows the time and the 44px actions under it, so the row is taller. */
+  @media (hover: none), (max-width: 767px) {
+    .compact {
+      min-height: 176px;
+    }
+  }
+}

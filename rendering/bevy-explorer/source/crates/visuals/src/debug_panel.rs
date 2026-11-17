@@ -9,16 +9,17 @@ use bevy::{
     window::PrimaryWindow,
 };
 use bevy_console::ConsoleCommand;
-use common::structs::{AppConfig, PrimaryCamera, SceneLoadDistance, SessionGraphics, TimeOfDay};
+use common::structs::{
+    AppConfig, LandscapeDistance, PrimaryCamera, SceneLoadDistance, SessionGraphics, TimeOfDay,
+};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use serde_json::json;
 
 use crate::{
-    cloud_motion::CloudMotion,
     shell_texturing::{Ground, ParcelGrass},
     trees::Tree,
     upscale::{Compositor, SceneTarget},
-    CloudCover, ShadowBiasOverride, SUN_SHADOW_BIAS,
+    user_cover, CloudCover, ShadowBiasOverride, SUN_SHADOW_BIAS,
 };
 
 const fn toggle(
@@ -93,6 +94,7 @@ impl Plugin for VisualsDebugPanelPlugin {
             query: "/landscape",
             fields: &[
                 ("Scene load distance (m)", "loadDistance"),
+                ("Landscape distance (m)", "landscapeDistance"),
                 ("Loaded trees", "treeCount"),
                 ("Grass parcels", "grassParcels"),
             ],
@@ -151,7 +153,6 @@ impl Plugin for VisualsDebugPanelPlugin {
             actions: &[("Resume sky clock", "/time --resume")],
             inputs: &[
                 slider("Fixed hour", "hour", "/time {value} 0", 0.0, 23.99, 0.01),
-                toggle("Cloud motion", "cloudMotion", "/cloud_motion {value}"),
                 slider("Cloud cover", "cover", "/cloud {value}", 0.0, 1.0, 0.01),
                 slider(
                     "Cloud density",
@@ -273,6 +274,7 @@ fn landscape_command(
     preview: Option<Res<common::structs::PreviewMode>>,
     mut layers: ResMut<LandscapeLayers>,
     load: Res<SceneLoadDistance>,
+    landscape: Res<LandscapeDistance>,
     trees: Query<(), With<Tree>>,
     grass: Query<(), With<ParcelGrass>>,
 ) {
@@ -289,7 +291,7 @@ fn landscape_command(
         }
     }
     cmd.reply_ok(json!({"ground":layers.ground, "trees":layers.trees, "grass":layers.grass,
-        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load}).to_string());
+        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load, "landscapeDistance":landscape.0}).to_string());
 }
 
 type LandscapeObjects = Or<(With<Ground>, With<Tree>, With<ParcelGrass>)>;
@@ -330,14 +332,9 @@ fn apply_landscape_visibility(
 #[command(name = "/sky_state")]
 struct SkyState;
 
-fn sky_state(
-    mut cmd: ConsoleCommand<SkyState>,
-    time: Res<TimeOfDay>,
-    clouds: Res<CloudCover>,
-    motion: Option<Res<CloudMotion>>,
-) {
+fn sky_state(mut cmd: ConsoleCommand<SkyState>, time: Res<TimeOfDay>, clouds: Res<CloudCover>) {
     if let Some(Ok(_)) = cmd.take() {
-        cmd.reply_ok(json!({"cloudMotion": motion.is_none_or(|motion| motion.enabled()), "hour":time.time / 3600., "cover":(clouds.cover - 0.2) / 0.5, "density":clouds.density_cap,
+        cmd.reply_ok(json!({"hour":time.time / 3600., "cover":user_cover(clouds.cover), "density":clouds.density_cap,
             "shadow":clouds.shadow, "scale":clouds.scale, "steps":clouds.steps, "lacunarity":clouds.lacunarity, "sharpness":clouds.sharpness}).to_string());
     }
 }
