@@ -1,0 +1,47 @@
+name: Bevy Explorer / Dependency gate
+# cargo deny over the Explorer workspace: a second v8 crate, or a RustSec advisory missing from the
+# baseline in rendering/bevy-explorer/source/deny.toml, fails the pull request; the weekly run
+# surfaces newly published advisories without waiting for a Cargo change.
+'on':
+  pull_request:
+    paths:
+      - rendering/bevy-explorer/source/Cargo.lock
+      - rendering/bevy-explorer/source/**/Cargo.toml
+      - rendering/bevy-explorer/source/deny.toml
+      - .github/workflows/bevy-explorer-deny.yml
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: bevy-explorer-deny-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CARGO_DENY_VERSION: 0.20.2
+      CARGO_DENY_SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+    defaults:
+      run:
+        working-directory: rendering/bevy-explorer/source
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: 1.99.1
+      - name: Install cargo-deny
+        run: |
+          archive="cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl"
+          curl -fsSL -o "$RUNNER_TEMP/$archive.tar.gz" \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/$archive.tar.gz"
+          echo "$CARGO_DENY_SHA256  $RUNNER_TEMP/$archive.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive.tar.gz" -C "$RUNNER_TEMP"
+          install -m 755 "$RUNNER_TEMP/$archive/cargo-deny" "$HOME/.cargo/bin/cargo-deny"
+      - name: Check advisories and bans
+        run: cargo deny --locked --workspace check advisories bans

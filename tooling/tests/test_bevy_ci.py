@@ -121,12 +121,13 @@ class WorkflowTest(unittest.TestCase):
 
     def test_the_daily_upstream_run_only_reads_the_repository(self):
         # Publishing a revision writes a ref. The daily run only reads the repository: the publish-sources workflow
-        # publishes on a push to main. The one permission to write is for issues, on the job that reports a failure.
+        # publishes on a push to main. The one permission to write is for issues, on the jobs that report a failure
+        # or a stale scene runtime V8.
         daily = (ci.ROOT / '.github/workflows/bevy-explorer-upstream.yml').read_text()
         self.assertEqual(re.findall(r'^permissions:\n((?:  .+\n)+)', daily, re.M), ['  contents: read\n'])
         jobs = dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)', daily.split('\njobs:\n', 1)[1]))
         self.assertEqual({name: re.findall(r'^    permissions:\n((?:      .+\n)+)', job, re.M) for name, job in jobs.items()},
-                         {'drift': [], 'report': ['      issues: write\n']})
+                         {'drift': [], 'v8-issue': ['      issues: write\n'], 'report': ['      issues: write\n']})
 
     def test_a_failed_daily_run_on_main_opens_one_issue_or_adds_a_comment_to_it(self):
         daily = (ci.ROOT / '.github/workflows/bevy-explorer-upstream.yml').read_text()
