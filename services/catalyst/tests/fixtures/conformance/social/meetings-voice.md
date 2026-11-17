@@ -100,11 +100,10 @@ the mic, hanging up, raising a hand, promoting, demoting, kicking and ending a s
   (`B/crates/livestream_manager/src/plugin.rs:345-400`, `B/crates/av/src/video_player.rs:151`).
 - It publishes only the microphone (`B/crates/comms/src/livekit/mic.rs:706`); scene tokens allow only
   the microphone, as upstream. Screen sharing is meant to go through the Cast web app.
-- `apps/sites` `/landings/cast-stream` simulates the token and the screen share
-  (`apps/sites/src/features/social/cast-stream/machine.ts:140-175`); `sites` has no `livekit-client`.
-  `/landings/cast-watch` calls `GET /cast/stream-info/{location}` and `GET /cast/watcher-token/{location}`
-  (`apps/sites/src/data/lib/catalyst/landings/cast-watcher.server.ts:24-41`), which is not the upstream
-  contract (stream-info takes a key; watcher-token is a signed POST).
+- `apps/sites` serves the streamer at `/cast/s/:token` and the watcher at `/cast/w/:location`
+  (`apps/sites/src/features/social/cast-live`), which join the room with `livekit-client` through
+  `GET /cast/stream-info/{streamingKey}`, `POST /cast/streamer-token` and the signed
+  `POST /cast/watcher-token` (`apps/sites/src/data/lib/catalyst/cast.ts`).
 - The Creator Hub Admin Toolkit Cast UI points at upstream production
   (`apps/creator-hub/packages/asset-packs/src/admin-toolkit-ui/VideoControl/api.ts:11-16`).
 

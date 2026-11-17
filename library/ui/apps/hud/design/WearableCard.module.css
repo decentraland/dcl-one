@@ -199,3 +199,30 @@
 .unequip:active {
   background: var(--black);
 }
+/* The gift picker's tile: a smaller lift on hover, the ring marks the selection and stays on hover. */
+.pick:hover {
+  transform: scale(1.05);
+}
+.pick:hover .ring {
+  display: block;
+}
+.pick:not(.equipped):hover .ring {
+  display: none;
+}
+.count {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  background: var(--scrim-40);
+  color: var(--text);
+  font-size: var(--type-13);
+  font-weight: var(--fw-bold);
+}
+.shownNote {
+  opacity: 1;
+}
+.card[aria-disabled='true'] {
+  cursor: default;
+}

@@ -276,7 +276,7 @@ function SubmitHangoutInner({
         {value === "submitted" && !needsSignIn && (
           <div role="status">
             <p>{mode === "edit" ? "Your hangout was updated." : "Your hangout was created."}{state.context.result?.approved ? "" : " It is pending review."}</p>
-            {state.context.result?.id && <Link to={`/landings/submit-hangout?mode=edit&id=${encodeURIComponent(state.context.result.id)}`}>Edit hangout</Link>}
+            {state.context.result?.id && <Link to={`/events/edit-event/${encodeURIComponent(state.context.result.id)}`}>Edit hangout</Link>}
           </div>
         )}
 
