@@ -1492,6 +1492,7 @@ dependencies = [
  "common",
  "comms",
  "console 0.1.0",
+ "ipfs",
  "platform",
  "reqwest",
  "serde",

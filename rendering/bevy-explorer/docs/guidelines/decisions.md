@@ -331,7 +331,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   answer; one learnt after the realm's own fetch has started does not stop that change. The
   HUD reads the same ban from one stream: before the world it covers the lobby, welcome page,
   picker or loader with a blocking notice that only a sign-out leaves (B1); a refused in-world
-  travel shows the same notice, dismissible, and the player stays put (B5). Differences from
+  travel shows the same notice, dismissible, and the player stays put (B5). A ban learnt after the
+  first world entry opens nothing until a travel is refused, and the notice words the period
+  when it opens. Differences from
   unity-explorer, which checks once in its login flow and ends on a terminal blocked screen with
   Exit and Support:
   - Entering does not wait for the first check: an unknown or failed check lets the player in,

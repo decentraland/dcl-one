@@ -7,7 +7,7 @@ use bevy::{
     ecs::{
         change_detection::DetectChanges,
         event::{Event, EventReader, EventWriter},
-        schedule::{common_conditions::resource_changed, IntoScheduleConfigs},
+        schedule::{common_conditions::resource_changed, Condition, IntoScheduleConfigs},
         system::{Local, Res, ResMut},
     },
     log::{info, warn},
@@ -144,7 +144,14 @@ impl Plugin for PlatformBanPlugin {
             )
             .add_systems(
                 PostUpdate,
-                cross_feed_admission_refusal.run_if(resource_changed::<SceneAdmission>),
+                // before the realm change, so a refusal learnt this frame refuses it; also on a
+                // status change, so a refusal still standing returns once another ban is lifted
+                cross_feed_admission_refusal
+                    .run_if(
+                        resource_changed::<SceneAdmission>
+                            .or(resource_changed::<PlatformBanStatus>),
+                    )
+                    .before(ipfs::change_realm),
             );
     }
 }

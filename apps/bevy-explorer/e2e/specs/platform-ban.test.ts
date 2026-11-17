@@ -28,6 +28,8 @@ const STUB_PORT = Number(process.env.DCL_E2E_GATEKEEPER_PORT ?? 18745)
 const target = readTarget()
 const native = target.transport === 'native'
 const BANNED_REFUSAL = /You are banned from Decentraland/
+// another realm than the one the session is in; refused before it is ever contacted
+const OTHER_REALM = 'e2e-elsewhere.dcl.eth'
 const webOnly = { todo: 'web: a loopback service override stops at the launch gate' }
 const stubSession = { session: { nativeArgs: ['--comms-gatekeeper', `http://127.0.0.1:${STUB_PORT}`] } }
 
@@ -123,7 +125,7 @@ scenario(
     try {
       await stateAfterRefresh(explorer, (s) => s.platformBan.isBanned === true, 'the ban to be known')
       const before = await explorer.worldState()
-      await assert.rejects(explorer.run(`/changerealm ${target.realm}`), BANNED_REFUSAL)
+      await assert.rejects(explorer.run(`/changerealm ${OTHER_REALM}`), BANNED_REFUSAL)
       const after = await explorer.worldState()
       assert.equal(after.realm, before.realm)
       assert.equal(after.arrivals, before.arrivals)
@@ -165,7 +167,7 @@ scenario(
         what: 'the ban to be known for the new sign-in'
       })
       assert.equal(state.platformBan.source, 'ban_status_endpoint')
-      await assert.rejects(explorer.run(`/changerealm ${target.realm}`), BANNED_REFUSAL)
+      await assert.rejects(explorer.run(`/changerealm ${OTHER_REALM}`), BANNED_REFUSAL)
     } finally {
       stub.banStatus(NOT_BANNED)
     }

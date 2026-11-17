@@ -4134,10 +4134,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     portableStates.current = null
     portableToasts.current = false
     // no ban or refused travel carries over to the next account; a travel still in flight
-    // answers an id no longer awaited
+    // answers an id no longer awaited, and its loader goes with it
     setPlatformBan(null)
     setBanRefusedTravel(false)
     travelSeq.current++
+    setTravellingTo(null)
   }, [closeAllPanels])
   const logout = useCallback(() => signOut(true), [signOut])
   // Cancel on Verifying, or a sign-in that took too long (`error`): the first screen, the stored

@@ -782,6 +782,9 @@ pub fn change_realm(
     mut target: ResMut<RealmInitialLocation>,
     mut in_flight: Local<Vec<InFlightRealmChange>>,
     mut issued: Local<u64>,
+    // the latest request's id; a stand-down issues an id of its own
+    mut latest_request: Local<u64>,
+    mut was_banned: Local<bool>,
     // the latest issued id, watched by the issued changes so the earlier ones stand down
     mut latest_issued: Local<Option<tokio::sync::watch::Sender<world_access::Issued>>>,
     world_hold: Option<Res<WorldHold>>,
@@ -794,7 +797,7 @@ pub fn change_realm(
     // Polled before the realm watch: a change's result is sent after its realm config, so a
     // success seen here is applied below in this same run.
     let mut released = false;
-    let latest = *issued;
+    let latest = *latest_request;
     in_flight.retain_mut(|change| {
         let result = match change.result.poll_once() {
             Ok(None) => return true,
@@ -866,14 +869,11 @@ pub fn change_realm(
     }
 
     let platform_ban = platform_ban.filter(|status| status.ban().is_some());
+    let newly_banned = platform_ban.is_some() && !*was_banned;
+    *was_banned = platform_ban.is_some();
     // a platform ban learnt while changes are in flight stops those still waiting on world access
-    if platform_ban
-        .as_ref()
-        .is_some_and(|status| status.is_changed())
-        && !in_flight.is_empty()
-    {
+    if newly_banned && !in_flight.is_empty() {
         *issued += 1;
-        *target = RealmInitialLocation::None;
         if let Some(latest_issued) = latest_issued.as_ref() {
             latest_issued.send_replace(world_access::Issued {
                 id: *issued,
@@ -906,6 +906,7 @@ pub fn change_realm(
             let response = request.response.clone();
             let (sx, rx) = RpcResultSender::channel();
             *issued += 1;
+            *latest_request = *issued;
             let latest_issued = latest_issued.get_or_insert_with(|| {
                 tokio::sync::watch::channel(world_access::Issued {
                     id: 0,

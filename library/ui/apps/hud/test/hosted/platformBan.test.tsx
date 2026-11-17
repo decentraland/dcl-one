@@ -69,6 +69,7 @@ describe('platform ban domain', () => {
     h.driver.emit({ kind: 'travelResult', travelId: go.travelId!, realm: go.realm, ok: false, message: PLATFORM_BANNED_REFUSAL })
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(h.session().platformBan.travelRefused).toBe(false)
+    expect(h.session().travellingTo).toBeNull()
   })
 
   it('an in-world travel refused for the ban is not a travel error', async () => {
