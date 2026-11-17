@@ -540,3 +540,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Bevy stays on the 0.16 fork for now.** Security-relevant dependencies (V8 and deno,
   libwebrtc, ffmpeg, wgpu) get bumped inside it. Whether to ever move the bevy version is an
   open discussion, not a decision.
+- **The embedded assets stay in plain git, not Git LFS.** `crates/assets/build.rs` embeds whatever
+  is on disk, so an LFS pointer would compile and be wrong at runtime, and an LFS checkout would
+  have to be pulled by every Explorer build and matched by every check that hashes the build's
+  inputs. The build fails on a file that is an LFS pointer. Revisit if the landscape folder
+  (`crates/assets/src/assets/landscape`) reaches tens of MB.
