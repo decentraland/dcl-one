@@ -404,7 +404,9 @@ preview socket; the engine relays it (`textureOptimization`, from `getTextureOpt
 `library/ui/apps/hud/features/preview/textureOptimizationToast.ts` shows it as one toast per scene, under its own key. Expectations:
 
 - With the project's setting on: `running` updates one busy progress toast in place, with no
-  Dismiss (the next update would bring it back); `ready` shows
+  Dismiss (the next update would bring it back), until 60 s pass with no update (the CLI stopped,
+  the socket dropped or the player left the realm), when it goes and the scene's progress is
+  forgotten; `ready` shows
   the size saved and **Reload** (accessible name "Reload scene to see optimized textures"), which
   posts `reloadScene` with the status's scene id; `failed` says how many textures stay PNG, or that
   the import failed, with Dismiss and no action. With it off, nothing shows.
@@ -413,7 +415,8 @@ preview socket; the engine relays it (`textureOptimization`, from `getTextureOpt
   socket was down. Otherwise it leaves the toast as it is: the scene was loaded from those files.
 - `?mock=1&textures=1` plays a run and the Reload offer.
 - Tests: `library/ui/apps/hud/test/textureOptimization.test.tsx` (the Toast primitive's keyed, persistent and action
-  toasts; each state; the replay rule; one toast per scene; Reload through the session),
+  toasts; each state; the replay rule; the stale progress timeout; one toast per scene; Reload
+  through the session),
   `src/test/bridgeTextureOptimization.test.ts` (the relay).
 
 ## Gallery (camera reel)

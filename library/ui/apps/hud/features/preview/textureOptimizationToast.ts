@@ -4,7 +4,9 @@
 // place:
 //
 // - running, enabled: "Optimizing textures… done / total", until the run ends (no Dismiss: the next
-//   update, every 500 ms, would bring it back);
+//   update would bring it back). The CLI sends one as textures finish, at most every 500 ms; after
+//   PROGRESS_STALE_MS with none (the CLI stopped, the socket dropped, the player left the realm) the
+//   toast goes and the scene's progress is forgotten;
 // - ready, enabled: the size saved and a Reload button (the scene's reload, as on a file save);
 // - failed: how many textures stay PNG, or that the import failed; dismissible, no action;
 // - enabled false: nothing (and a toast still up goes).
@@ -72,16 +74,38 @@ export function textureNotice(msg: TextureOptimizationMessage, sawProgress = fal
   }
 }
 
+/** How long a progress toast stays with no update. Long enough for one large texture's encode,
+ *  during which the CLI has no new count to send. */
+export const PROGRESS_STALE_MS = 60_000
+
 // the scenes whose toast was last shown as progress
 const progressShown = new Set<string>()
+// each shown progress toast's staleness timer
+const staleTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+function forgetProgress(sceneId: string): void {
+  const timer = staleTimers.get(sceneId)
+  if (timer != null) clearTimeout(timer)
+  staleTimers.delete(sceneId)
+  progressShown.delete(sceneId)
+}
 
 /** Show (or take down) the toast for a status. `reload` reloads the scene the status is for. */
 export function showTextureOptimization(msg: TextureOptimizationMessage, reload: (scene: string) => void): void {
   const key = textureToastKey(msg.sceneId)
   const notice = textureNotice(msg, progressShown.has(msg.sceneId))
   if (notice === undefined) return
-  if (notice?.kind === 'progress') progressShown.add(msg.sceneId)
-  else progressShown.delete(msg.sceneId)
+  forgetProgress(msg.sceneId)
+  if (notice?.kind === 'progress') {
+    progressShown.add(msg.sceneId)
+    staleTimers.set(
+      msg.sceneId,
+      setTimeout(() => {
+        forgetProgress(msg.sceneId)
+        dismissToast(key)
+      }, PROGRESS_STALE_MS)
+    )
+  }
   if (notice === null) {
     dismissToast(key)
     return

@@ -4,6 +4,7 @@ import { dismissToast, showToast, ToastHost } from '../design'
 import type { TextureOptimizationMessage } from '@explorer-core/engine/protocol'
 import {
   formatBytes,
+  PROGRESS_STALE_MS,
   showTextureOptimization,
   textureNotice
 } from '../features/preview/textureOptimizationToast'
@@ -134,6 +135,31 @@ describe('texture optimization toast', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Reload scene to see optimized textures' }))
     expect(reload).toHaveBeenCalledWith('scene-1')
     expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('takes a progress toast down when its updates stop, and forgets the progress', () => {
+    vi.useFakeTimers()
+    render(<ToastHost />)
+    show(status({ done: 1 }))
+    act(() => vi.advanceTimersByTime(PROGRESS_STALE_MS - 1000))
+    // an update restarts the wait
+    show(status({ done: 2 }))
+    act(() => vi.advanceTimersByTime(PROGRESS_STALE_MS - 1000))
+    expect(screen.getByRole('status')).toHaveTextContent('Optimizing textures… 2 / 5')
+    act(() => vi.advanceTimersByTime(1000))
+    expect(screen.queryByRole('status')).toBeNull()
+    // a later replayed READY is no longer news to this HUD
+    show(status({ state: 'ready', replay: true }))
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('keeps a READY that follows the progress past the staleness wait', () => {
+    vi.useFakeTimers()
+    render(<ToastHost />)
+    show(status())
+    show(status({ state: 'ready' }))
+    act(() => vi.advanceTimersByTime(PROGRESS_STALE_MS * 2))
+    expect(screen.getByRole('button', { name: 'Reload scene to see optimized textures' })).toBeInTheDocument()
   })
 
   it('reports a failure with Dismiss and no action', () => {
