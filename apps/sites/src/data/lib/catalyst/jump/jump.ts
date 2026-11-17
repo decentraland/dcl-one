@@ -153,7 +153,7 @@ export type JumpEventRecord = {
 
 /** A World event travels to its server; a Genesis City one to its parcel. */
 /** Held to the same rule as a link's realm: only a World name travels as a realm. */
-function eventRealm(event: Pick<JumpEventRecord, "world" | "server">): string | undefined {
+export function eventRealm(event: { world?: boolean; server?: string | null }): string | undefined {
   const realm = event.world && event.server ? event.server.toLowerCase() : undefined;
   return isEnsRealm(realm) ? realm : undefined;
 }

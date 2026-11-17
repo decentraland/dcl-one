@@ -214,8 +214,6 @@ pub async fn accepting_users(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, header};
     use serde_json::Value;
@@ -229,7 +227,7 @@ mod tests {
     const ADMIN: &str = "0x00000000000000000000000000000000000000aa";
 
     async fn harness(pool: PgPool, writes_enabled: bool) -> (Router, SharedState) {
-        let admin = Arc::new(admin_state(pool, writes_enabled, ADMIN, None).await);
+        let admin = SharedState::from(admin_state(pool, writes_enabled, ADMIN, None).await);
         (router(admin.clone()), admin)
     }
 

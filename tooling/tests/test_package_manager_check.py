@@ -20,7 +20,9 @@ class PackageManagerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write(root, 'apps/x/pnpm-lock.yaml')
-            write(root, 'apps/x/package.json', '{"packageManager": "pnpm@%s+sha512.abc"}' % check.PNPM_VERSION)
+            write(root, 'apps/x/package.json', '{"packageManager": "pnpm@%s+sha512.%s"}' % (check.PNPM_VERSION, check.PNPM_SHA512))
+            write(root, 'apps/w/pnpm-lock.yaml')
+            write(root, 'apps/w/package.json', '{"packageManager": "pnpm@%s"}' % check.PNPM_VERSION)
             write(root, 'apps/x/pnpm-workspace.yaml', 'ignoreScripts: true\nsaveExact: true\n')
             write(root, 'infra/dev/service-test/fixture/apps/x/pnpm-lock.yaml')
             write(root, 'apps/creator-hub/pnpm-lock.yaml')
@@ -38,7 +40,7 @@ class PackageManagerTest(unittest.TestCase):
                 '      # npm run build is what this used to call',
                 "      paths: ['**/yarn.lock', '**/package-lock.json']",
                 '      - run: corepack enable && pnpm install --frozen-lockfile && pnpm run build',
-                '      - run: corepack pnpm@11.28.12 install --frozen-lockfile',
+                '      - run: corepack pnpm@12.21.0 install --frozen-lockfile',
                 '      - run: npm pack && npm publish "$tgz" --access public && npm whoami',
                 '      - run: npm --registry https://registry.npmjs.org view "$pkg" version && npm pkg set x=1',
                 '      - run: npm view "$pkg" dist-tags --json && npx --yes npm@11.21.1 dist-tag rm "$pkg" "$TAG"')))
@@ -53,11 +55,13 @@ class PackageManagerTest(unittest.TestCase):
             write(root, 'apps/p/package.json', '{"packageManager": "pnpm@10.19.0"}')
             write(root, 'apps/q/pnpm-lock.yaml')
             write(root, 'apps/q/package.json', '{}')
+            write(root, 'apps/r/pnpm-lock.yaml')
+            write(root, 'apps/r/package.json', '{"packageManager": "pnpm@%s+sha512.abc"}' % check.PNPM_VERSION)
             write(root, 'apps/z/.npmrc', '\n'.join((
                 'ignore-scripts=true', 'save-exact = true', 'allow-builds=esbuild', 'minimum-release-age=0', 'fund=false')))
             commands = (
                 'npm ci', 'cd app && npm run build', 'npx tsc', 'npm --prefix app ci', 'npm -w pkg run build',
-                'npm --silent install', 'npx --yes npm@11.21.1 ci', 'npx --yes pnpm@11.28.12 install', 'yarn install',
+                'npm --silent install', 'npx --yes npm@11.21.1 ci', 'npx --yes pnpm@12.21.0 install', 'yarn install',
                 'cd app && yarnpkg add thing', 'corepack pnpm@11.0.0 install')
             write(root, '.github/workflows/x.yml', ''.join(f'      - run: {command}\n' for command in commands))
             write(root, '.github/actions/a/run.sh', 'npm install --global thing\n')
@@ -68,6 +72,7 @@ class PackageManagerTest(unittest.TestCase):
                 f'.github/workflows/x.yml:{len(commands)}: fetches pnpm 11.0.0; the projects pin {check.PNPM_VERSION}',
                 f'apps/p/package.json: pins `pnpm@10.19.0`; set packageManager to pnpm@{check.PNPM_VERSION}',
                 f'apps/q/package.json: pins `nothing`; set packageManager to pnpm@{check.PNPM_VERSION}',
+                f'apps/r/package.json: pins pnpm {check.PNPM_VERSION} with another integrity; use sha512.{check.PNPM_SHA512}',
                 'apps/x/package-lock.json: npm or yarn lockfile; convert it with `pnpm import` and delete it',
                 'apps/y/yarn.lock: npm or yarn lockfile; convert it with `pnpm import` and delete it',
                 *(f'apps/z/.npmrc: pnpm does not read `{key}` here; move it to pnpm-workspace.yaml or delete it'

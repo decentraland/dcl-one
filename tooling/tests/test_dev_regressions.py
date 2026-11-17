@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from unittest import mock
 
@@ -106,7 +107,7 @@ class InventoryTests(unittest.TestCase):
 
     def test_selected_retirement_catalog_resolves_source_and_started_runtime_cases(self):
         cases = [
-            ("tests/pulse_cluster_lookup.rs", "", [
+            ("tests/pulse_cluster_lookup.rs", "pulse_cluster_lookup::", [
                 "real_selection_retirement_exchange_requires_complete_absence_and_exact_source",
             ]),
             ("comms/src/protocol/bus/cluster.rs", "protocol::bus::cluster::tests::", [
@@ -116,7 +117,7 @@ class InventoryTests(unittest.TestCase):
                 "retirement_requires_complete_absence_and_survives_record_and_control_gc",
                 "retirement_withholds_blocked_pending_and_successor_current_evidence",
             ]),
-            ("tests/comms_v4_assignment_fence/recovery.rs", "recovery::", [
+            ("tests/comms_v4_assignment_fence/recovery.rs", "comms_v4_assignment_fence::recovery::", [
                 "started_selected_periodic_retirement_reclaims_capacity_across_native_and_legacy_churn",
                 "started_selected_retirement_rejects_a_delayed_negative_after_native_reconnect_or_successor",
                 "started_selected_retirement_retains_uncertain_attempt_credit_until_exact_sql_settlement",
@@ -124,7 +125,7 @@ class InventoryTests(unittest.TestCase):
             ]),
         ]
         for path, prefix, names in cases:
-            target = ("pulse_cluster_lookup", "test") if path == "tests/pulse_cluster_lookup.rs" else (("comms_v4_assignment_fence", "test") if path.startswith("tests/") else ("catalyst_comms", "lib"))
+            target = ("sockets_2", "test") if path == "tests/pulse_cluster_lookup.rs" else (("node_2", "test") if path.startswith("tests/") else ("catalyst_comms", "lib"))
             required = guard.MANDATORY_ARCHIPELAGO[target]
             source = (ROOT / "services/catalyst" / path).read_text(encoding="utf-8")
             bodies = re.findall(r"#\[(?:tokio::)?test(?:\([^\]]*\))?\]\s*(?:async\s+)?fn\s+(\w+)", source)
@@ -134,9 +135,10 @@ class InventoryTests(unittest.TestCase):
                     self.assertEqual(bodies.count(name), 1)
 
     def test_configured_socket_catalog_and_guards_resolve_current_source_names(self):
-        target = "archipelago_control_extensions_websocket"
+        target, group = "archipelago_control_extensions_websocket", "sockets_2"
         catalog = json.loads((ROOT / "tooling/dev-regressions.json").read_text(encoding="utf-8"))
-        required = set(catalog["catalyst"][target]) | set(guard.MANDATORY_ARCHIPELAGO[(target, "test")])
+        selected = set(catalog["catalyst"][group]) | set(guard.MANDATORY_ARCHIPELAGO[(group, "test")])
+        required = {name.removeprefix(target + "::") for name in selected if name.startswith(target + "::")}
         source = (ROOT / "services/catalyst/tests" / (target + ".rs")).read_text(encoding="utf-8")
         bodies = re.findall(r"#\[(?:tokio::)?test(?:\([^\]]*\))?\]\s*(?:async\s+)?fn\s+(\w+)", source)
         for name in sorted(required):
@@ -174,8 +176,8 @@ class InventoryTests(unittest.TestCase):
             ("catalyst_content", "lib"): [
                 "write_path_tests::a_profile_with_nul_metadata_preserves_the_write_error_and_active_profile",
             ],
-            ("pulse_nats_live", "test"): [
-                "cancelled_terminal_disconnect_is_not_replayed_after_real_broker_reconnect",
+            ("sockets_2", "test"): [
+                "pulse_nats_live::cancelled_terminal_disconnect_is_not_replayed_after_real_broker_reconnect",
             ],
         }
         for target, names in bodies.items():
@@ -219,8 +221,7 @@ class InventoryTests(unittest.TestCase):
                         guard.verify(required, changed, ignored, str(target))
 
     def test_selected_reader_bodies_cannot_disappear_from_the_ordinary_inventory(self):
-        for target in [("catalyst_comms", "lib"), ("pulse_cluster_lookup", "test"),
-                       ("comms_v4_assignment_fence", "test")]:
+        for target in [("catalyst_comms", "lib"), ("sockets_2", "test"), ("node_2", "test")]:
             required = guard.MANDATORY_ARCHIPELAGO[target]
             normal = "".join(f"{name}: test\n" for name in required)
             guard.verify(required, normal, "", str(target))
@@ -334,10 +335,10 @@ class InventoryTests(unittest.TestCase):
         import json
         artifacts = [
             {"reason": "compiler-artifact", "executable": "unit", "profile": {"test": True}, "target": {"name": "catalyst_comms", "kind": ["lib"]}},
-            {"reason": "compiler-artifact", "executable": "socket", "profile": {"test": True}, "target": {"name": "archipelago_socket_bounds", "kind": ["test"]}},
+            {"reason": "compiler-artifact", "executable": "socket", "profile": {"test": True}, "target": {"name": "sockets_3", "kind": ["test"]}},
             {"reason": "compiler-artifact", "executable": "config", "profile": {"test": True}, "target": {"name": "catalyst_config", "kind": ["lib"]}},
             {"reason": "compiler-artifact", "executable": "auth", "profile": {"test": True}, "target": {"name": "dcl_auth", "kind": ["lib"]}},
-            {"reason": "compiler-artifact", "executable": "owner", "profile": {"test": True}, "target": {"name": "archipelago_control_extensions_websocket", "kind": ["test"]}},
+            {"reason": "compiler-artifact", "executable": "owner", "profile": {"test": True}, "target": {"name": "sockets_2", "kind": ["test"]}},
             {"reason": "compiler-artifact", "executable": "content", "profile": {"test": True}, "target": {"name": "catalyst_content", "kind": ["lib"]}},
             {"reason": "compiler-artifact", "executable": "root", "profile": {"test": True}, "target": {"name": "catalyst", "kind": ["lib"]}},
             {"reason": "compiler-artifact", "executable": "root-bin", "profile": {"test": True}, "target": {"name": "catalyst", "kind": ["bin"]}},
@@ -405,7 +406,7 @@ class InventoryTests(unittest.TestCase):
         import json
         artifacts = [{"reason": "compiler-artifact", "executable": executable, "profile": {"test": True},
                       "target": {"name": name, "kind": [kind]}}
-                     for executable, name, kind in [("unit", "catalyst_comms", "lib"), ("socket", "archipelago_socket_bounds", "test")]]
+                     for executable, name, kind in [("unit", "catalyst_comms", "lib"), ("socket", "sockets_3", "test")]]
         output = "\n".join(map(json.dumps, artifacts))
         names = [entry[2] for entry in guard.EXTERNAL]
 
@@ -652,7 +653,7 @@ class InventoryTests(unittest.TestCase):
                 )
                 executable.chmod(0o755)
             result = subprocess.run(
-                [shutil.which("bash"), "-c", 'logs="$1"; receipts="$1"; shift; run() {\n' + body
+                [shutil.which("bash"), "-c", 'logs="$1"; receipts="$1"; group_threads=1; socket_threads=1; shift; run() {\n' + body
                  + '\n}; printf "%s\\n" "$@" | run 1', "_", directory.as_posix(),
                  *(executable.as_posix() for executable in executables)],
                 capture_output=True, text=True, check=True,
@@ -687,7 +688,7 @@ class InventoryTests(unittest.TestCase):
         if github_actions:
             env["GITHUB_ACTIONS"] = "true"
         return subprocess.run(
-            [shutil.which("bash"), "-c", 'set -euo pipefail; logs="$1"; receipts="$1"; failures="$1/failures"; shift; '
+            [shutil.which("bash"), "-c", 'set -euo pipefail; logs="$1"; receipts="$1"; failures="$1/failures"; group_threads=1; socket_threads=1; shift; '
              ': > "$failures"; phase="running the test binaries"; report() {\n' + report + '\n}; trap report EXIT; '
              'run() {\n' + body + '\n}; printf "%s\\n" "$@" | run 3', "_", directory.as_posix(),
              *(str(directory / name) for name in fixtures)],
@@ -797,7 +798,6 @@ class InventoryTests(unittest.TestCase):
                     script.replace("set -euo pipefail", "set -uo pipefail"),
                     script.replace('"$@" --no-run', '"$@" --test unrelated --no-run'),
                     script.replace('"$1" > "$log"', '"$1" --skip required > "$log"'),
-                    script.replace('run "$jobs" < "$logs/shard"', 'run "$jobs" < <(head -n 1 "$logs/shard")'),
                     script.replace("'NR % n == i % n'", "'NR == 1'"),
                     script.replace('${CATALYST_TEST_SHARD:-1/1}', '${CATALYST_TEST_SHARD:-1/2}'),
                     script.replace('[[ "$shard" =~ ^[1-9][0-9]*/[1-9][0-9]*$ ]] && ', ''),
@@ -876,6 +876,39 @@ class InventoryTests(unittest.TestCase):
                 guard.verify_targets({"removed": ["required"]}, targets)
         with self.assertRaisesRegex(ValueError, "missing required target"):
             guard.verify_targets({"renamed": ["required"]}, {"old": "unused"})
+
+
+class IntegrationTargetTests(unittest.TestCase):
+    """The node's integration tests link as a few grouped binaries (autotests = false)."""
+
+    def setUp(self):
+        self.node = ROOT / "services/catalyst"
+        self.manifest = tomllib.loads((self.node / "Cargo.toml").read_text())
+        self.targets = {target["name"]: target["path"] for target in self.manifest["test"]}
+
+    def test_every_file_under_tests_runs_in_exactly_one_target(self):
+        self.assertIs(self.manifest["package"]["autotests"], False)
+        tests = self.node / "tests"
+        roots = {(self.node / path).resolve() for path in self.targets.values()}
+        modules = []
+        for root in roots:
+            for path, name in re.findall(r'^#\[path = "([^"/]+)\.rs"\]\nmod (\w+);$', root.read_text(), re.M):
+                self.assertEqual(path, name, f"{root.name}: a module is named after its file")
+                modules.append(path)
+        self.assertEqual(len(modules), len(set(modules)), "a file runs in one target only")
+        files = {path.stem for path in tests.glob("*.rs") if path.resolve() not in roots}
+        self.assertEqual(set(modules), files, "every tests/*.rs file is a module of one grouped target")
+        mains = {f"tests/{path.parent.name}/main.rs" for path in tests.glob("*/main.rs")}
+        self.assertLessEqual(mains, set(self.targets.values()), "every tests/<dir>/main.rs is a [[test]] target")
+
+    def test_each_shard_of_three_takes_one_group_of_each_kind(self):
+        # catalyst-test.sh cuts the byte-sorted list round robin. No other crate's test path starts with
+        # "tests/", so these targets are adjacent there and any three adjacent ones reach three shards.
+        paths = sorted(self.targets.values())
+        self.assertTrue(all(path.startswith("tests/") for path in paths))
+        for kind in ("node_", "sockets_"):
+            places = [index % 3 for index, path in enumerate(paths) if path.startswith("tests/" + kind)]
+            self.assertEqual(sorted(places), [0, 1, 2], f"{kind}* groups must fall in three shards")
 
 
 class DevScriptTests(unittest.TestCase):
