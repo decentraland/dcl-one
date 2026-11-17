@@ -139,7 +139,15 @@ def prune_target(target, removed):
 
 
 def size(directory):
-    return sum(path.stat().st_size for path in directory.rglob('*') if path.is_file()) if directory.is_dir() else 0
+    """Bytes of the files below directory. A symbolic link is not followed; an entry that cannot be read counts as 0."""
+    total = 0
+    for parent, _, files in os.walk(directory):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(parent, name)).st_size
+            except OSError:
+                pass
+    return total
 
 
 def main():

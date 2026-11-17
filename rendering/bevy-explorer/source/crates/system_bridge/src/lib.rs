@@ -101,6 +101,9 @@ pub enum SystemApi {
     LoginLocalGuest(RpcResultSender<Result<(), String>>),
     LoginCancel,
     Logout,
+    /// Drop the stored login, so the next start opens on sign-in: a person signing out. A guest
+    /// account stays reachable through the wallet session the bridge scene keeps.
+    ForgetLogin,
     GetSettings(RpcResultSender<Vec<SettingInfo>>),
     SetSetting(String, f32),
     /// Sign a request with the engine wallet, with caller-supplied metadata. Scene-originated

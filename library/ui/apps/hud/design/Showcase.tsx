@@ -40,6 +40,7 @@ import { Bag, Close, People, Pin, VerifiedBadge } from './Glyphs'
 import { TextArea } from './TextArea'
 import { DateField } from './DateField'
 import { Panel } from './Panel'
+import { MenuPanel, MenuList, MenuRow, MenuDivider } from './MenuPanel'
 import { DclLogo } from './DclLogo'
 import { Avatar } from './Avatar'
 import { WearableCard, type Rarity } from './WearableCard'
@@ -430,6 +431,10 @@ export function Showcase(): React.JSX.Element {
             <Slider value={vol} onChange={setVol} aria-label="Volume" />
             <span style={{ fontSize: 13, color: 'var(--ink-45)', width: 32 }}>{vol}</span>
           </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, height: 28 }}>
+            <span style={{ fontSize: 14, width: 60 }}>Rail</span>
+            <Slider variant="rail" value={vol} onChange={setVol} aria-label="Volume (navigation popover)" />
+          </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <span style={{ fontSize: 14 }}>Display name</span>
             <TextInput value={name} onChange={setName} placeholder="Your name" maxLength={15} />
@@ -491,13 +496,13 @@ export function Showcase(): React.JSX.Element {
       <Section title="DPI · HUD scale (Unity CanvasScaler)">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 560 }}>
           <p style={{ fontSize: 13, color: 'var(--ink-7)', margin: 0, lineHeight: 1.5 }}>
-            The HUD scales with viewport height against a 1080 reference, clamped 0.6–1.3 — the same
+            The HUD scales by the smaller of width ÷ 1920 and height ÷ 1080, with no clamp — the same
             curve as Unity&apos;s “Scale With Screen Size”. <code>innerHeight</code> is logical px
             (device px ÷ DPR), so a Retina panel scales identically to Unity on the same display.
           </p>
           <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
             {['720', '900', '1080', '1440'].map((h) => {
-              const s = Math.min(1.3, Math.max(0.6, Number(h) / 1080))
+              const s = Number(h) / 1080
               const sel = h === res
               return (
                 <div key={h} style={{ textAlign: 'center' }}>
@@ -526,13 +531,26 @@ export function Showcase(): React.JSX.Element {
             })}
           </div>
           <div style={{ fontSize: 12, color: 'var(--ink-45)', fontFamily: 'var(--font-mono)' }}>
-            Live viewport: {window.innerHeight}px → ×{Math.min(1.3, Math.max(0.6, window.innerHeight / 1080)).toFixed(3)}
+            Live viewport: {window.innerWidth}×{window.innerHeight}px → ×{Math.min(window.innerWidth / 1920, window.innerHeight / 1080).toFixed(3)}
           </div>
         </div>
       </Section>
 
-      <Section title="IconButton (sidebar rail)">
-        <Panel style={{ width: 60, padding: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <Section title="MenuPanel (a navigation button's panel)">
+        <MenuPanel label="Discover" title="DISCOVER">
+          <MenuList>
+            <MenuRow icon={<Icon name="events" size={24} />} label="Events" hint="X" trailing={<CountBadge count={3} />} />
+            <MenuRow icon={<Icon name="places" size={24} />} label="Places" hint="Z" />
+          </MenuList>
+          <MenuDivider />
+          <MenuList>
+            <MenuRow icon={<Icon name="communities" size={24} />} label="Communities" hint="O" disabled />
+          </MenuList>
+        </MenuPanel>
+      </Section>
+
+      <Section title="IconButton (navigation bar)">
+        <Panel style={{ width: 60, padding: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
           {NAV.map((n, i) => (
             <IconButton key={n.icon} icon={n.icon} label={n.label} active={i === 8} badge={i === 1 ? 3 : undefined} />
           ))}

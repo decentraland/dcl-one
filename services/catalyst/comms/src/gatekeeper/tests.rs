@@ -72,8 +72,12 @@ fn state_with(pool: PgPool, settings: Settings) -> SharedState {
     Arc::new(comms_state(pool, settings))
 }
 
+/// Every acquire fails; sqlx retries the refused connect until the acquire
+/// timeout, so the default 30 s would be spent on each closed-store query.
 fn lazy_pool() -> PgPool {
-    PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
+    sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(500))
+        .connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
         .expect("a lazy pool never connects")
 }
 

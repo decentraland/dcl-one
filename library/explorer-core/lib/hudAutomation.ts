@@ -672,7 +672,8 @@ export async function clickAt(x: number, y: number, button: MouseButtonName = 'l
  * the way Jump In reuses one, with a first login's pick, and go where a link's destination would
  * from the lobby. The sign-in stands for the terms a new account ticks on its name screen; a first
  * login (an account with no profile yet) needs the pick, which names the profile it deploys, in
- * place of its look and name screens. The session provides the sign-in with `provideHudLogin` while it is mounted.
+ * place of its look and name screens. The identity stays in the session: nothing is written to the
+ * browser's storage. The session provides the sign-in with `provideHudLogin` while it is mounted.
  */
 export interface HudLoginRequest {
   identity: AuthIdentity
@@ -804,7 +805,9 @@ export function loginThroughHud(request: HudLoginRequest): Promise<HudLoginReply
   return hudLogin(request)
 }
 
-/** Sign out as the HUD's own sign-out does, the engine included, back to the start page; a
+/** Sign out as the start lobby's sign-out does after its question, the engine included, back to
+ *  the start page (the Me panel's Sign Out in world asks too and loads the page again; this does
+ *  neither); a
  *  pending `/hud_login` fails with that. Only for a test runner driving the browser, as
  *  `/hud_login` is. */
 export function logoutThroughHud(): string {
@@ -959,7 +962,7 @@ export const LOGIN_COMMANDS: Record<string, PageCommand> = {
   },
   '/hud_logout': {
     args: [],
-    help: "Sign out through the HUD's own flow, the engine included, back to the HUD's start page, as its Sign Out does; a /hud_login still waiting for its answer fails with \"signed out\". /hud_login then takes a sign-in again, once the engine has answered any it still held. The engine's /logout never reaches the HUD, which stays signed in. Web only, under a test runner driving the browser",
+    help: "Sign out through the HUD's own flow, the engine included, back to the HUD's start page, as the start lobby's sign-out does after its question (the Me panel's Sign Out in world asks too and loads the page again; this does neither); a /hud_login still waiting for its answer fails with \"signed out\". /hud_login then takes a sign-in again, once the engine has answered any it still held. The engine's /logout never reaches the HUD, which stays signed in. Web only, under a test runner driving the browser",
     run: (rest) => {
       if (rest.trim() !== '') throw new Error('/hud_logout takes no arguments')
       return logoutThroughHud()
