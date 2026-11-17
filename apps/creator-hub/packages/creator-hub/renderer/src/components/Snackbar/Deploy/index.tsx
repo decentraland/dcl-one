@@ -1,8 +1,8 @@
 import { useCallback, useMemo, useState } from 'react';
-import { CloseIcon } from '/@/components/Icons/material';
-import Button from '@ui/atoms/HubButton';
+import { CloseIcon } from '@ui/atoms/icons-material';
+import Button from '@ui/atoms/Button';
 import IconButton from '@ui/atoms/IconButton';
-import Spinner from '@ui/atoms/HubSpinner';
+import Spinner from '@ui/atoms/Spinner';
 
 import { t } from '/@/modules/store/translation/utils';
 import { useDeploy } from '/@/hooks/useDeploy';
@@ -53,11 +53,10 @@ function Pending({ path, title, onClose }: { path: string; title: string; onClos
           {t('snackbar.deploy.pending.actions.view')}
         </Button>
         <IconButton
-          className="MuiIconButton-root"
           aria-label={t('modal.close')}
           onClick={onClose}
         >
-          <CloseIcon color="secondary" />
+          <CloseIcon tone="secondary" />
         </IconButton>
       </>
     ),
@@ -113,11 +112,10 @@ function Success({ path, title, onClose }: { path: string; title: string; onClos
           {t('snackbar.deploy.success.actions.view')}
         </Button>
         <IconButton
-          className="MuiIconButton-root"
           aria-label={t('modal.close')}
           onClick={onClose}
         >
-          <CloseIcon color="secondary" />
+          <CloseIcon tone="secondary" />
         </IconButton>
       </>
     ),
@@ -166,11 +164,10 @@ function Error({ path, title, onClose }: { path: string; title: string; onClose:
           {t('snackbar.deploy.error.actions.retry')}
         </Button>
         <IconButton
-          className="MuiIconButton-root"
           aria-label={t('modal.close')}
           onClick={onClose}
         >
-          <CloseIcon color="secondary" />
+          <CloseIcon tone="secondary" />
         </IconButton>
       </>
     ),

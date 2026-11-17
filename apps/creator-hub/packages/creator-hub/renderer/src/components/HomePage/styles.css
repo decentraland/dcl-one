@@ -87,7 +87,7 @@
   color: var(--dcl);
 }
 
-.HomePage .HomeCardIcon .MuiSvgIcon-root {
+.HomePage .HomeCardIcon svg {
   font-size: 28px;
 }
 

@@ -90,10 +90,10 @@ What else changes:
   source through the `@ui` alias like Sites does, on React 18. It installs no CSS-in-JS library,
   and neither the renderer nor the inspector installs `decentraland-ui`, `decentraland-ui2` or MUI.
   `renderer/src/themes/ui3-bridge.css` defines the tokens the atoms read and the renderer theme
-  does not. The shared `Button` and `Spinner` and their style sheets stay as the other apps use
-  them: what the renderer needs beyond them is in the variation components `HubButton` and
-  `HubSpinner` beside them, and Creator Hub code imports only the variations, so a Creator Hub
-  look never changes another app. The inspector uses the same spinner, the logomark and the
+  does not. What the renderer needs beyond the looks other apps use is an opt-in variant of the
+  shared atom (for example the `text` and `outline` looks of `Button` and the `wide` ring of
+  `Spinner`), so a component that asks for none of them keeps its markup and looks in every other
+  app. The inspector uses the same spinner, the logomark and the
   tooltip, and keeps one plain stylesheet per component, as part of the renderer's style sheets
   still do, both against [the UI standards](../ui-standards.md).
   `tooling/ui-standards-imported.txt` lists the files that broke the standard when they were

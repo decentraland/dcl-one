@@ -42,7 +42,7 @@
   padding-block: 6px;
 }
 
-/* A disabled field paints each text of its value in the disabled text colour, as before. */
+/* A disabled field paints each text of its value in the disabled text colour. */
 .field.field[data-disabled] > [role="combobox"] {
   -webkit-text-fill-color: var(--text-tone-disabled);
 }
@@ -98,7 +98,7 @@
   font-size: 1rem;
 }
 
-/* The option the keys point at has no paint of its own, as before: only the pointer and the choice have one. */
+/* The option the keys point at has no paint of its own: only the pointer and the choice have one. */
 .menu.menu > [role="option"][aria-selected="true"],
 .menu.menu > [role="option"]:hover {
   background-color: var(--dark-gray);

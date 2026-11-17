@@ -1,9 +1,9 @@
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cx } from '/@/lib/cx';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import Text from '@ui/atoms/Text';
-import { ChevronLeftOutlinedIcon as ChevronLeftOutlined } from '/@/components/Icons/material';
+import { ChevronLeftOutlinedIcon as ChevronLeftOutlined } from '@ui/atoms/icons-material';
 import { t } from '/@/modules/store/translation/utils';
 import { useAuth } from '/@/hooks/useAuth';
 import { Row } from '../Row';

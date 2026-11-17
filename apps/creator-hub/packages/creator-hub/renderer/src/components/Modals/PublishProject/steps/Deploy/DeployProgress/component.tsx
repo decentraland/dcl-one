@@ -7,7 +7,7 @@ import type { TranslationPath } from '/@/modules/store/translation/types';
 import { t } from '/@/modules/store/translation/utils';
 import { formatSize } from '/@/modules/file';
 
-import { Button } from '/@/components/Button';
+import Button from '@ui/atoms/Button';
 
 import './styles.css';
 
@@ -110,9 +110,8 @@ export function DeployProgress({ upload, cancel }: Props) {
             </span>
           )}
           <Button
-            size="medium"
-            variant="outlined"
-            color="secondary"
+            variant="outline"
+            className="hub-button hub-button--secondary hub-button--outlined"
             disabled={cancelling || cancel.kind === 'unsupported'}
             onClick={handleCancel}
           >

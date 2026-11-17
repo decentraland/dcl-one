@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
-import { NotificationImportantIcon, CloseIcon } from '/@/components/Icons/material';
-import Button from '@ui/atoms/HubButton';
+import { NotificationImportantIcon, CloseIcon } from '@ui/atoms/icons-material';
+import Button from '@ui/atoms/Button';
 import IconButton from '@ui/atoms/IconButton';
 
 import type { Project } from '/shared/types/projects';
@@ -27,7 +27,7 @@ export function SdkSkills({
 
   return (
     <SnackbarAlert
-      icon={<NotificationImportantIcon color="secondary" />}
+      icon={<NotificationImportantIcon tone="secondary" />}
       severity="info"
       action={
         <>
@@ -40,11 +40,10 @@ export function SdkSkills({
               : t('snackbar.sdk_skills.missing.action')}
           </Button>
           <IconButton
-            className="MuiIconButton-root"
             aria-label={t('modal.close')}
             onClick={onClose}
           >
-            <CloseIcon color="secondary" />
+            <CloseIcon tone="secondary" />
           </IconButton>
         </>
       }

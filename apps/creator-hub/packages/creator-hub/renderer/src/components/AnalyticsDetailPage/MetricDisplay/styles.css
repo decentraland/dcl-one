@@ -53,7 +53,7 @@
   font-weight: var(--type-h6-regular-weight);
 }
 
-/* The tip sits 14px from the button, as before; the atom places it at 12px. */
+/* The tip sits 14px from the button; the atom places it at 12px. */
 .tt__tip.MetricTooltip {
   display: block;
   margin-top: -2px;
@@ -74,7 +74,7 @@
   margin-top: 2px;
 }
 
-/* The arrow keeps its shape of before: a 22px by 15.62px box turned about the corner on the tip edge. */
+/* The arrow is a 22px by 15.62px box turned about the corner on the tip edge. */
 .tt__tip.MetricTooltip.tt__tip--arrow::before {
   left: calc(50% - 11px);
   width: 22px;

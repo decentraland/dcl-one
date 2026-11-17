@@ -1,8 +1,8 @@
 import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cx } from '/@/lib/cx';
-import Button from '@ui/atoms/HubButton';
-import { CloseIcon } from '/@/components/Icons/material';
+import Button from '@ui/atoms/Button';
+import { CloseIcon } from '@ui/atoms/icons-material';
 
 import { analytics } from '#preload';
 import artwork from '/assets/images/earn/home-banner.webp';

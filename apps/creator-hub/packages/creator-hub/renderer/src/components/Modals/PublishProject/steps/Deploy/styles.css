@@ -77,18 +77,18 @@
   align-items: center;
 }
 
-.Deploy .scene .files .Button .deploy-icon {
+.Deploy .scene .files .hub-button .deploy-icon {
   width: 24px;
   height: 24px;
   background: center no-repeat url(images/deploy.svg);
   margin-left: 8px;
 }
 
-.Deploy .scene .files .Button .Loader {
+.Deploy .scene .files .hub-button .Loader {
   margin-left: 12px;
 }
 
-.Deploy .scene .Button {
+.Deploy .scene .hub-button {
   font-size: 15px;
   padding: 8px 22px;
   max-height: 40px;
@@ -274,7 +274,7 @@
   justify-content: flex-end;
 }
 
-.Deploy .scene .Button .jump-in-icon {
+.Deploy .scene .hub-button .jump-in-icon {
   width: 24px;
   height: 24px;
   background: center no-repeat url(images/jump-in.svg);

@@ -1,5 +1,5 @@
 import { cx } from '../../lib/utils/cx';
-import Spinner from '@ui/atoms/HubSpinner';
+import Spinner from '@ui/atoms/Spinner';
 
 import type { Props, SpinnerProps, SpinnerSize } from './types';
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import Checkbox from '@ui/atoms/Checkbox';
 import { ExpandMoreIcon, InfoOutlinedIcon, OpenInNewIcon } from '@ui/atoms/icons-material';
 import ProgressBar from '@ui/atoms/ProgressBar';

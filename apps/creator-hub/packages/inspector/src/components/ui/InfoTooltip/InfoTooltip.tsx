@@ -12,6 +12,8 @@ import './InfoTooltip.css';
 type Side = 'top' | 'bottom' | 'left' | 'right';
 
 const MAX_WIDTH = 250;
+// The spacing of the Semantic UI popup this tooltip replaces: 0.714em of its 11px text.
+const GAP = 8;
 
 const getSide = (position: Position): Side => position.split(' ')[0] as Side;
 
@@ -100,6 +102,7 @@ const InfoTooltip: React.FC<Props> = ({
         interactive={hoverable}
         closeOnScroll={hideOnScroll}
         maxWidth={MAX_WIDTH}
+        gap={GAP}
         keepInViewport
       />
     </>

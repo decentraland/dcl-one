@@ -3,14 +3,14 @@ import {
   AddIcon,
   InsertDriveFileOutlinedIcon as FileIcon,
   SearchIcon,
-} from '/@/components/Icons/material';
+} from '@ui/atoms/icons-material';
 import { Tab, Tabs } from '@ui/atoms/Tabs';
 
 import { useAuth } from '/@/hooks/useAuth';
 import communities, { getCommunityThumbnailUrl, type CommunityMinimal } from '/@/lib/communities';
 import { t } from '/@/modules/store/translation/utils';
 
-import { Button } from '../../../Button';
+import Button from '@ui/atoms/Button';
 import { RecipientField, type Recipient } from '../../../ManagePage/RecipientField';
 import { FormTextInput } from '../../../TextInput';
 import { parseCsv, type CsvResult } from './csv';
@@ -32,8 +32,7 @@ type Props = {
 function AddButton({ disabled, onClick }: { disabled: boolean; onClick: () => void }) {
   return (
     <Button
-      variant="contained"
-      color="primary"
+      className="hub-button hub-button--primary"
       startIcon={<AddIcon />}
       disabled={disabled}
       onClick={onClick}

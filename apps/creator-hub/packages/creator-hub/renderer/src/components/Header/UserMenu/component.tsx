@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import AvatarFace from '@ui/atoms/AvatarFace';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import { Menu, MenuItem } from '@ui/atoms/Menu';
 import Tooltip from '@ui/atoms/Tooltip';
 import { t } from '/@/modules/store/translation/utils';

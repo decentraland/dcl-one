@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import Spinner from '@ui/atoms/HubSpinner';
+import Spinner from '@ui/atoms/Spinner';
 import Text from '@ui/atoms/Text';
 import TextField from '@ui/atoms/TextField';
 
@@ -7,7 +7,7 @@ import { t } from '/@/modules/store/translation/utils';
 import { getBaseName, isValidFolderName } from '/shared/utils';
 
 import { Modal } from '..';
-import { Button } from '../../Button';
+import Button from '@ui/atoms/Button';
 
 import type { Props } from './types';
 
@@ -68,12 +68,15 @@ export function RenameFolder({ open, project, onClose, onSubmit }: Props) {
       actions={
         <>
           <Button
-            color="secondary"
+            variant="text"
+            className="hub-button hub-button--secondary"
             onClick={onClose}
           >
             {t('modal.cancel')}
           </Button>
           <Button
+            variant="text"
+            className="hub-button hub-button--primary"
             onClick={handleSubmit}
             disabled={loading || isEmpty || isUnchanged || isInvalid}
           >

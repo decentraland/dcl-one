@@ -16,7 +16,7 @@
 }
 
 /* The title is 16px text with its own space between letters, not the space of the 14px notice text. */
-.detailed [class~="MuiAlertTitle-root"] {
+.detailed .title {
   letter-spacing: 0.00938em;
 }
 

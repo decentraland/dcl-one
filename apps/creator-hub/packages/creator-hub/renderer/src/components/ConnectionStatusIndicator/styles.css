@@ -20,7 +20,7 @@
   opacity: 0.8;
 }
 
-/* The ui2 button drew its round hover fill only for a pointer that can hover. */
+/* The round hover fill shows only for a pointer that can hover. */
 @media (hover: none) {
   .ConnectionStatusIndicator .connection-status-offline.connection-status-offline:hover {
     background: transparent;
@@ -32,7 +32,7 @@
   font-size: 20px;
 }
 
-/* This tip keeps the font list of the ui2 tooltip, which does not start with Inter, and its line height. */
+/* This tip uses a font list that does not start with Inter, and its own line height. */
 .ConnectionStatusTip.tt__tip {
   font-family: Roboto, Helvetica, Arial, sans-serif;
   line-height: 1.5;

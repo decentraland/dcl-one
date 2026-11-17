@@ -44,7 +44,7 @@
   line-height: 1.5rem;
 }
 
-.emptyThumbnail.emptyThumbnail.emptyThumbnail :global(.Button) {
+.emptyThumbnail.emptyThumbnail.emptyThumbnail :global(.hub-button) {
   position: relative;
   z-index: 1;
   width: 160px;

@@ -15,8 +15,7 @@ const crash = { enabled: true };
 vi.mock('@sentry/electron/renderer', () => ({ captureException: vi.fn() }));
 vi.mock('#store', () => ({ useDispatch: () => vi.fn() }));
 vi.mock('/@/modules/store/ens', () => ({ fetchENSList: vi.fn() }));
-// ui2's Modal reads theme breakpoints that don't resolve under happy-dom; the step specs
-// stub it the same way.
+// The modal shell is not under test here; the step specs stub it the same way.
 vi.mock('./PublishModal', () => ({
   PublishModal: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
     open ? <div>{children}</div> : null,

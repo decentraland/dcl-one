@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
-import { FolderIcon } from '/@/components/Icons/material';
-import Button from '@ui/atoms/HubButton';
+import { FolderIcon } from '@ui/atoms/icons-material';
+import Button from '@ui/atoms/Button';
 import IconButton from '@ui/atoms/IconButton';
 import Radio, { RadioGroup } from '@ui/atoms/Radio';
 import Text from '@ui/atoms/Text';

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import Text from '@ui/atoms/Text';
 import TextField from '@ui/atoms/TextField';
 

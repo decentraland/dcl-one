@@ -2,7 +2,7 @@ import {
   CloseIcon,
   FileDownloadOutlinedIcon as DownloadIcon,
   GridViewOutlinedIcon as GridIcon,
-} from '/@/components/Icons/material';
+} from '@ui/atoms/icons-material';
 import IconButton from '@ui/atoms/IconButton';
 import Tooltip from '@ui/atoms/Tooltip';
 

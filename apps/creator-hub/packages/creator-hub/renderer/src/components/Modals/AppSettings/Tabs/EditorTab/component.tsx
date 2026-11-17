@@ -1,17 +1,20 @@
-import { useCallback, useId, useState } from 'react';
+import { useCallback, useId } from 'react';
 import Checkbox from '@ui/atoms/Checkbox';
 import IconButton from '@ui/atoms/IconButton';
 import Select, { SelectOption } from '@ui/atoms/Select';
-import Spinner from '@ui/atoms/HubSpinner';
+import Spinner from '@ui/atoms/Spinner';
 import Text from '@ui/atoms/Text';
 
-import { CheckIcon, DeleteIcon } from '/@/components/Icons/material';
+import { CheckIcon, DeleteIcon } from '@ui/atoms/icons-material';
 
 import type { EditorConfig } from '/shared/types/config';
 import { t } from '/@/modules/store/translation/utils';
 import type { EditorTabProps } from '../../types';
 
 import './styles.css';
+
+/** The value of the option that adds an editor from the device: no file path starts with a colon. */
+const ADD_EDITOR = ':add';
 
 const EditorTab: React.FC<EditorTabProps> = ({
   settings,
@@ -24,16 +27,7 @@ const EditorTab: React.FC<EditorTabProps> = ({
   onSelectEditorPath,
 }) => {
   const editorLabelId = useId();
-  const [selectOpen, setSelectOpen] = useState(false);
-
-  const handleEditorChange = useCallback(
-    (selectedPath: string) => {
-      if (selectedPath) {
-        onSetDefaultEditor(selectedPath);
-      }
-    },
-    [onSetDefaultEditor],
-  );
+  const placeholder = t('modal.app_settings.fields.code_editor.placeholder');
 
   const handleAddCustomEditor = useCallback(async () => {
     const editorPath = await onSelectEditorPath();
@@ -41,6 +35,17 @@ const EditorTab: React.FC<EditorTabProps> = ({
       onAddEditor(editorPath);
     }
   }, [onSelectEditorPath, onAddEditor]);
+
+  const handleEditorChange = useCallback(
+    (selectedPath: string) => {
+      if (selectedPath === ADD_EDITOR) {
+        void handleAddCustomEditor();
+      } else {
+        onSetDefaultEditor(selectedPath);
+      }
+    },
+    [onSetDefaultEditor, handleAddCustomEditor],
+  );
 
   const handlePreviewOptionChange = useCallback(
     (option: keyof typeof settings.previewOptions, checked: boolean) => {
@@ -73,59 +78,57 @@ const EditorTab: React.FC<EditorTabProps> = ({
             role="progressbar"
           />
         ) : (
-          <Select
-            fullWidth
-            className="CodeEditorSelect"
-            menuClassName="CodeEditorMenu"
-            aria-labelledby={editorLabelId}
-            open={selectOpen}
-            onOpenChange={setSelectOpen}
-            placeholder="Add or select a default editor"
-            value={(editors && editors.find(e => e.isDefault)?.path) || ''}
-            renderValue={value =>
-              (editors && editors.find(e => e.path === value)?.name) ||
-              'Add or select a default editor'
-            }
-            onChange={handleEditorChange}
-          >
-            {(editors || []).map((editor: EditorConfig) => (
-              <SelectOption
-                key={editor.path}
-                value={editor.path}
-                label={editor.name}
-                className="editor-select"
-              >
-                <span>{editor.name}</span>
-                <div className="EditorActionsBox">
-                  {editor.isDefault && <CheckIcon className="default-icon menu-only" />}
-                  <IconButton
-                    size="small"
-                    aria-label={t('modal.app_settings.fields.code_editor.remove', {
-                      name: editor.name,
-                    })}
-                    onClick={e => {
-                      e.stopPropagation();
-                      onRemoveEditor(editor.path);
-                    }}
-                  >
-                    <DeleteIcon fontSize="small" />
-                  </IconButton>
-                </div>
-              </SelectOption>
-            ))}
-            <div
-              role="option"
-              aria-selected={false}
-              className="custom-editor"
-              onMouseDown={async (e: React.MouseEvent) => {
-                e.preventDefault();
-                await handleAddCustomEditor();
-              }}
-              onClick={() => setSelectOpen(false)}
+          <>
+            <Select
+              fullWidth
+              className="CodeEditorSelect"
+              menuClassName="CodeEditorMenu"
+              aria-labelledby={editorLabelId}
+              placeholder={placeholder}
+              value={(editors && editors.find(e => e.isDefault)?.path) || ''}
+              renderValue={value =>
+                (editors && editors.find(e => e.path === value)?.name) || placeholder
+              }
+              onChange={handleEditorChange}
             >
-              {t('modal.app_settings.fields.code_editor.choose_device')}
-            </div>
-          </Select>
+              {(editors || []).map((editor: EditorConfig) => (
+                <SelectOption
+                  key={editor.path}
+                  value={editor.path}
+                  label={editor.name}
+                  className="editor-select"
+                >
+                  <span>{editor.name}</span>
+                  {editor.isDefault && <CheckIcon className="default-icon menu-only" />}
+                </SelectOption>
+              ))}
+              <SelectOption
+                value={ADD_EDITOR}
+                label={t('modal.app_settings.fields.code_editor.choose_device')}
+              />
+            </Select>
+            {editors && editors.length > 0 && (
+              <ul
+                className="EditorList"
+                aria-label={t('modal.app_settings.fields.code_editor.list')}
+              >
+                {editors.map(editor => (
+                  <li key={editor.path}>
+                    <span>{editor.name}</span>
+                    <IconButton
+                      size="small"
+                      aria-label={t('modal.app_settings.fields.code_editor.remove', {
+                        name: editor.name,
+                      })}
+                      onClick={() => onRemoveEditor(editor.path)}
+                    >
+                      <DeleteIcon fontSize="small" />
+                    </IconButton>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
         )}
       </div>
       <div className="FormGroup PreviewOptionsFormGroup">

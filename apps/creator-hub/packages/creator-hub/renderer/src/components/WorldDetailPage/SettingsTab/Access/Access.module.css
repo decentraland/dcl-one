@@ -9,7 +9,7 @@
   margin-top: -10px;
 }
 
-.section.section > .changePassword :global(.Button.btn) {
+.section.section > .changePassword :global(.hub-button.btn) {
   width: 192px;
   height: 40px;
   padding: 8px 24px;
@@ -89,7 +89,7 @@
   color: var(--palette-neutral-softWhite);
 }
 
-/* A tab in the disabled block keeps its look, as before; the block stops the click. */
+/* A tab in the disabled block keeps its look; the block stops the click. */
 .tabs.tabs > [role="tab"]:disabled {
   opacity: 1;
 }
@@ -135,7 +135,7 @@
   gap: 10px;
 }
 
-.addButtons.addButtons.addButtons :global(.Button.btn) {
+.addButtons.addButtons.addButtons :global(.hub-button.btn) {
   gap: 6px;
   min-width: 95px;
   height: 46px;
@@ -145,11 +145,11 @@
   font-weight: 600;
 }
 
-.addButtons.addButtons.addButtons :global(.Button + .Button) {
+.addButtons.addButtons.addButtons :global(.hub-button + .hub-button) {
   margin-left: 0;
 }
 
-.addButtons.addButtons.addButtons :global(.Button:disabled) {
+.addButtons.addButtons.addButtons :global(.hub-button:disabled) {
   opacity: 0.2;
 }
 
@@ -342,7 +342,7 @@
   background: var(--lavender);
 }
 
-/* The picture has the size and the ring of its frame, as before. */
+/* The picture has the size and the ring of its frame. */
 .who .avatar > span > img {
   box-sizing: border-box;
   flex-shrink: 0;

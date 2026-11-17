@@ -2,7 +2,7 @@ import { useEffect, useId, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cx } from '/@/lib/cx';
 
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 
 import type { Events } from '/shared/types/analytics';
 import type { Project } from '/shared/types/projects';

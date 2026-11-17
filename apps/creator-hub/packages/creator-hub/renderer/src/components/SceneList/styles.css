@@ -22,16 +22,16 @@
   border: 1px solid white;
 }
 
-.SceneList .projects-menu .actions .action-button[data-variant="text"][data-color="secondary"],
+.SceneList .projects-menu .actions .action-button.hub-button--secondary,
 .SceneList
   .projects-menu
   .actions
-  .action-button[data-variant="text"][data-color="secondary"]:hover {
+  .action-button.hub-button--secondary:hover {
   background-color: transparent !important;
 }
 
-.SceneList .projects-menu .actions .action-button[data-variant="text"][data-color="primary"],
-.SceneList .projects-menu .actions .action-button[data-variant="text"][data-color="primary"]:hover {
+.SceneList .projects-menu .actions .action-button.hub-button--primary,
+.SceneList .projects-menu .actions .action-button.hub-button--primary:hover {
   background-color: white !important;
   color: black !important;
 }

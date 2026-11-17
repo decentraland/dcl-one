@@ -1,7 +1,7 @@
 import {
   ArrowDownwardIcon as ArrowDownIcon,
   ArrowUpwardIcon as ArrowUpIcon,
-} from '/@/components/Icons/material';
+} from '@ui/atoms/icons-material';
 import Text from '@ui/atoms/Text';
 
 import './styles.css';

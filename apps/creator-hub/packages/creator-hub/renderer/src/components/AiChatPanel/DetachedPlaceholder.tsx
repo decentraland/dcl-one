@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
-import { OpenInNewIcon } from '/@/components/Icons/material';
-import Button from '@ui/atoms/HubButton';
+import { OpenInNewIcon } from '@ui/atoms/icons-material';
+import Button from '@ui/atoms/Button';
 
 import { t } from '/@/modules/store/translation/utils';
 

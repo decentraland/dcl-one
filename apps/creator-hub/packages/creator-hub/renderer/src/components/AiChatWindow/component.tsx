@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import Spinner from '@ui/atoms/HubSpinner';
+import Spinner from '@ui/atoms/Spinner';
 
 import type { AiAssetMention, AiAttachment, AiMirrorState, AiProvider } from '/shared/types/ai';
 

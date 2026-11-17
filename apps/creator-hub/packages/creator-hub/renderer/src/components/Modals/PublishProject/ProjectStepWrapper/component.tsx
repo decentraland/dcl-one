@@ -1,9 +1,6 @@
 import React, { useMemo } from 'react';
 import { cx } from '/@/lib/cx';
-import {
-  PlaceIcon as PinIcon,
-  GridViewRoundedIcon as ParcelsIcon,
-} from '/@/components/Icons/material';
+import { PlaceIcon as PinIcon, GridViewRoundedIcon as ParcelsIcon } from '@ui/atoms/icons-material';
 import { ChainId } from '@dcl/schemas';
 import Address from '@ui/atoms/Address';
 import Text from '@ui/atoms/Text';

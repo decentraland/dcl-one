@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import TextField from '@ui/atoms/TextField';
 
 import type { EnrollmentRequest } from '/shared/types/creator-fund';

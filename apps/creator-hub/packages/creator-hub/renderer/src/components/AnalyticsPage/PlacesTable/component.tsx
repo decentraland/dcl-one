@@ -1,10 +1,7 @@
 import { useCallback } from 'react';
 import Text from '@ui/atoms/Text';
 
-import {
-  PushPinIcon,
-  FileDownloadOutlinedIcon as DownloadIcon,
-} from '/@/components/Icons/material';
+import { PushPinIcon, FileDownloadOutlinedIcon as DownloadIcon } from '@ui/atoms/icons-material';
 
 import type { PlaceAnalyticsSummary } from '/shared/types/place-analytics';
 
@@ -104,7 +101,7 @@ export function PlacesTable({ places, pinnedPlaceIds, onTogglePin, onSelectPlace
                   <PushPinIcon
                     className="PinnedIcon"
                     fontSize="small"
-                    titleAccess={t('analytics.list.pinned')}
+                    title={t('analytics.list.pinned')}
                   />
                 )}
               </div>

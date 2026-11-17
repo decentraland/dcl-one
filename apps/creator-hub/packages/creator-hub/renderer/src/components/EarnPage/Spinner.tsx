@@ -1,4 +1,4 @@
-import UiSpinner from '@ui/atoms/HubSpinner';
+import UiSpinner from '@ui/atoms/Spinner';
 
 import styles from './EarnModal.module.css';
 

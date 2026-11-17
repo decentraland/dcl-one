@@ -1,19 +1,18 @@
 import React, { useMemo } from 'react';
-import ButtonText from '@ui/atoms/HubButton';
 import Text from '@ui/atoms/Text';
 
 import {
   CheckCircleIcon,
   OpenInNewIcon,
   InfoOutlinedIcon as InfoIcon,
-} from '/@/components/Icons/material';
+} from '@ui/atoms/icons-material';
 import { t } from '/@/modules/store/translation/utils';
 import type { WorldsWalletStats } from '/@/lib/worlds';
 import { formatSize } from '/@/modules/file';
 import { getMbsFromAccountHoldings, type AccountHoldings } from '/@/lib/account';
 import { analytics, misc } from '#preload';
 import { Modal } from '..';
-import { Button } from '../../Button';
+import Button from '@ui/atoms/Button';
 import './styles.css';
 
 type Props = {
@@ -38,6 +37,8 @@ const LinkButton = ({
   trackingAction: string;
 }) => (
   <Button
+    variant="text"
+    className="hub-button hub-button--primary"
     endIcon={<OpenInNewIcon />}
     onClick={() => {
       analytics.track('Worlds Your Storage Modal Action', { action: trackingAction });
@@ -134,7 +135,7 @@ const WorldsYourStorageModal: React.FC<Props> = React.memo(
         <Text className="Proposal">
           <InfoIcon className="InfoIcon" />
           <span>{t('modal.worlds_storage.proposal')}</span>{' '}
-          <ButtonText
+          <Button
             className="LearnMore"
             variant="text"
             onClick={() => {
@@ -143,7 +144,7 @@ const WorldsYourStorageModal: React.FC<Props> = React.memo(
             }}
           >
             {t('modal.worlds_storage.learn_more')}
-          </ButtonText>
+          </Button>
         </Text>
       </Modal>
     );

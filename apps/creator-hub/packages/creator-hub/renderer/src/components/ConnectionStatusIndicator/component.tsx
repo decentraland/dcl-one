@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import IconButton from '@ui/atoms/IconButton';
 import Tooltip from '@ui/atoms/Tooltip';
-import { SignalWifiOffIcon } from '/@/components/Icons/material';
+import { SignalWifiOffIcon } from '@ui/atoms/icons-material';
 
 import { useConnectionStatus } from '/@/hooks/useConnectionStatus';
 import { ConnectionStatus } from '/@/lib/connection';

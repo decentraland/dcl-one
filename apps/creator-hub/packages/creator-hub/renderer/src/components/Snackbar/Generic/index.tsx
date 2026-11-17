@@ -1,4 +1,4 @@
-import Spinner from '@ui/atoms/HubSpinner';
+import Spinner from '@ui/atoms/Spinner';
 
 import { type GenericNotification } from '/@/modules/store/snackbar/types';
 
@@ -33,8 +33,7 @@ export function Generic({ severity, message, description, onClose }: Props) {
         {...props}
         className={styles.detailed}
         data-testid={testId}
-        // The capture scenarios find the title by this class name.
-        title={<span className="MuiAlertTitle-root">{message}</span>}
+        title={<span className={styles.title}>{message}</span>}
         onClose={onClose}
       >
         <pre className={styles.description}>{description}</pre>

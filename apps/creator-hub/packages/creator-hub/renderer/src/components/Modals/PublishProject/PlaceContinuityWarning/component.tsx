@@ -1,6 +1,6 @@
 import Text from '@ui/atoms/Text';
 
-import { InfoOutlinedIcon, WarningAmberIcon } from '/@/components/Icons/material';
+import { InfoOutlinedIcon, WarningAmberIcon } from '@ui/atoms/icons-material';
 
 import { t } from '/@/modules/store/translation/utils';
 

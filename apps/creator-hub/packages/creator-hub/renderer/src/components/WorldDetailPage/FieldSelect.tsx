@@ -1,5 +1,5 @@
 import { cx } from '/@/lib/cx';
-import { CheckIcon } from '/@/components/Icons/material';
+import { CheckIcon } from '@ui/atoms/icons-material';
 import { Select, type SelectProps } from '@ui/atoms/Select';
 
 import { ChevronDownIcon } from '../Icons';

@@ -38,7 +38,7 @@
   box-shadow: 0 1px 8px rgb(0 0 0 / 30%);
 }
 
-/* The buttons keep the default button font of the browser, as before. */
+/* The buttons use the default button font of the browser. */
 .map :global(.shop-landmap__zoom) button {
   position: relative;
   width: 40px;

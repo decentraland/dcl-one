@@ -1,4 +1,4 @@
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import Text from '@ui/atoms/Text';
 
 import { t } from '/@/modules/store/translation/utils';

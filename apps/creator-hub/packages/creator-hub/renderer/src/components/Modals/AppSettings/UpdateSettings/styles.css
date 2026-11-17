@@ -34,7 +34,7 @@
   color: var(--ctl-disabled-ink);
 }
 
-.update-settings__button-area .btn--primary[data-color="inherit"]:disabled {
+.update-settings__button-area .update-settings__progress.btn--primary:disabled {
   background: rgba(255, 255, 255, 0.12);
 }
 

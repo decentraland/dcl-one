@@ -1,29 +1,22 @@
 import type { ComponentPropsWithoutRef } from 'react';
-import Spinner from '@ui/atoms/HubSpinner';
+import Spinner from '@ui/atoms/Spinner';
 
 import styles from './component.module.css';
 
 import './styles.css';
 
 type Props = Omit<ComponentPropsWithoutRef<'span'>, 'color'> & {
-  size?: number | string;
+  size?: number;
   color?: string;
   overlay?: boolean;
 };
 
-const DEFAULT_SIZE = 40;
-
-function toPixels(size: number | string | undefined): number {
-  if (size === undefined) return DEFAULT_SIZE;
-  const pixels = typeof size === 'number' ? size : Number.parseFloat(size);
-  return Number.isFinite(pixels) ? pixels : DEFAULT_SIZE;
-}
-
-export function Loader({ overlay, size, color = 'primary', ...props }: Props) {
+/** A spinner centred in the box of its parent, or over it with `overlay`. */
+export function Loader({ overlay, size = 40, color = 'primary', ...props }: Props) {
   const spinner = (
     <Spinner
       role="progressbar"
-      size={toPixels(size)}
+      size={size}
       color={color}
       {...props}
     />

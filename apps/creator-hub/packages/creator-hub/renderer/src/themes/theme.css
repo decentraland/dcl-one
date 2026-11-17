@@ -377,8 +377,3 @@ footer {
 a {
   color: var(--white);
 }
-
-/* Temp: make disabled buttons look disabled */
-.Button.btn:disabled {
-  opacity: 0.2;
-}

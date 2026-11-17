@@ -26,7 +26,7 @@ vi.mock('#store', async () => {
   return { useDispatch, useSelector };
 });
 
-/** The ui2 modal shell reads breakpoints this environment does not populate. */
+/** The flow under test lives in the step, not in the modal shell. */
 vi.mock('../../PublishModal', () => ({
   PublishModal: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));

@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { cx } from '/@/lib/cx';
 
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import TextField from '@ui/atoms/TextField';
 
 import { analytics } from '#preload';

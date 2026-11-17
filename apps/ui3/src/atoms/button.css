@@ -17,14 +17,18 @@
   cursor: default;
 }
 .btn.is-disabled { pointer-events: none; }
+/* A host that sets --ctl-caps: 1 gets upper-case labels on a 24px line. Without the token nothing changes. */
+@container style(--ctl-caps: 1) {
+  .btn { line-height: 24px; text-transform: uppercase; }
+}
 .btn:focus-visible {
   outline: var(--focus-ring-width) solid var(--focus-ring-color);
   outline-offset: var(--focus-ring-offset);
 }
 
-.btn--sm { font-size: var(--fs-12); padding: var(--ctl-pad-sm, 7px 16px); }
-.btn--md { font-size: var(--fs-13); padding: var(--ctl-pad-md, 10px 22px); }
-.btn--lg { font-size: var(--fs-15); padding: var(--ctl-pad-lg, 13px 30px); }
+.btn--sm { font-size: var(--ctl-fs-sm, var(--fs-12)); padding: var(--ctl-pad-sm, 7px 16px); }
+.btn--md { font-size: var(--ctl-fs-md, var(--fs-13)); padding: var(--ctl-pad-md, 10px 22px); }
+.btn--lg { font-size: var(--ctl-fs-lg, var(--fs-15)); padding: var(--ctl-pad-lg, 13px 30px); }
 
 .btn--primary { background: var(--brand-cta); color: var(--on-brand); }
 .btn--primary:not(:disabled):not(.is-disabled):hover { background: var(--brand-hover); }

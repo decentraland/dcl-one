@@ -1,6 +1,6 @@
 import { useId, useRef, useState } from 'react';
 
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import Tooltip from '@ui/atoms/Tooltip';
 
 import type { Enrollment, PayoutWallet } from '/shared/types/creator-fund';

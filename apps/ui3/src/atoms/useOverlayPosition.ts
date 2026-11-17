@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { useLayoutEffect, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 export type OverlaySide = "top" | "bottom" | "left" | "right";
 export type OverlayPlacement = OverlaySide | `${OverlaySide}-start` | `${OverlaySide}-end`;
@@ -55,20 +55,24 @@ export function computeOverlayPosition(
 }
 
 /**
- * Fixed position of a floating surface next to its anchor. It is measured before paint and again when the
- * page scrolls, the window changes size, or the anchor or the surface change size.
+ * Fixed position of a floating surface next to its anchor. It is measured before paint after each render, and
+ * again when the page scrolls, the window changes size, or the anchor or the surface change size. An anchor that
+ * is not an element (a point for a context menu) can be a new object on each render.
  */
 export function useOverlayPosition(
   open: boolean, anchor: OverlayAnchor, floating: RefObject<HTMLElement | null>,
   { placement = "bottom-start", offset = 0, crossOffset = 0, flip = true, edge = 8 }: OverlayPositionOptions = {},
 ): OverlayPosition {
   const [position, setPosition] = useState<OverlayPosition>(UNPLACED);
+  const measure = useRef(() => {});
+  const anchored = open && !!anchor;
+  const element = anchor instanceof Element ? anchor : null;
 
+  // The same position keeps the same state object, so a measure after a render does not render again.
   useLayoutEffect(() => {
-    if (!open || !anchor) return;
-    const measure = () => {
+    measure.current = () => {
       const surface = floating.current;
-      if (!surface) return;
+      if (!surface || !anchor) return;
       const rect = anchor.getBoundingClientRect();
       const own = surface.getBoundingClientRect();
       const next = computeOverlayPosition(
@@ -80,19 +84,28 @@ export function useOverlayPosition(
           ? prev
           : { ...next, anchorWidth: rect.width, ready: true });
     };
-    measure();
-    window.addEventListener("scroll", measure, true);
-    window.addEventListener("resize", measure);
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    if (anchored) measure.current();
+  });
+
+  useLayoutEffect(() => {
+    if (!anchored) return;
+    return () => setPosition(UNPLACED);
+  }, [anchored]);
+
+  useLayoutEffect(() => {
+    if (!anchored) return;
+    const remeasure = () => measure.current();
+    window.addEventListener("scroll", remeasure, true);
+    window.addEventListener("resize", remeasure);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(remeasure);
     if (observer && floating.current) observer.observe(floating.current);
-    if (observer && anchor instanceof Element) observer.observe(anchor);
+    if (observer && element) observer.observe(element);
     return () => {
-      window.removeEventListener("scroll", measure, true);
-      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", remeasure, true);
+      window.removeEventListener("resize", remeasure);
       observer?.disconnect();
-      setPosition(UNPLACED);
     };
-  }, [open, anchor, floating, placement, offset, crossOffset, flip, edge]);
+  }, [anchored, element, floating]);
 
   return position;
 }

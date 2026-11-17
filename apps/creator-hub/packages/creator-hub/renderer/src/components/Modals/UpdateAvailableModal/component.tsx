@@ -1,4 +1,4 @@
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import IconButton from '@ui/atoms/IconButton';
 import { CloseIcon, InfoOutlinedIcon } from '@ui/atoms/icons-material';
 import Text from '@ui/atoms/Text';

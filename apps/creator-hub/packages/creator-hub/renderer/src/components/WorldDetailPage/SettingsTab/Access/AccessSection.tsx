@@ -7,7 +7,7 @@ import { fetchWorldPermissions } from '/@/modules/store/management/slice';
 import type { TranslationPath } from '/@/modules/store/translation/types';
 import { t } from '/@/modules/store/translation/utils';
 
-import { Button } from '../../../Button';
+import Button from '@ui/atoms/Button';
 import { FieldTitle } from '../../../LandDetailPage/DetailsTab/DetailsTab.styled';
 import { DefaultModal } from '../../../Modals/DefaultModal';
 import { FieldSelect, OptionCheck, SelectOption } from '../../FieldSelect';
@@ -164,8 +164,7 @@ export function AccessSection({ worldName }: { worldName: string }) {
       {current === WorldPermissionType.SharedSecret && (
         <span className={cx('ChangePassword', styles.changePassword)}>
           <Button
-            variant="contained"
-            color="primary"
+            className="hub-button hub-button--primary"
             onClick={() => setPassword('change')}
           >
             {t('world_detail.settings.password.change_password')}

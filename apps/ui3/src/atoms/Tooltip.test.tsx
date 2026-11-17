@@ -478,6 +478,27 @@ describe("Tooltip", () => {
     expect(tip.style.top).toBe(top);
   });
 
+  test.each([
+    ["top", { keepInViewport: true }, "272px"],
+    ["bottom", { keepInViewport: true }, "338px"],
+    ["top", { portal: true }, "292px"],
+    ["bottom", { portal: true }, "338px"],
+  ] as const)("a tip on the %s with a gap of 8 (%o) sits 8 pixels from the anchor", async (side, mode, top) => {
+    const user = userEvent.setup();
+    layout(box(400, 300, 100, 30), box(0, 0, 60, 20));
+    render(<Tooltip label="Move" side={side} gap={8} {...mode}><button>Tool</button></Tooltip>);
+
+    await user.hover(screen.getByRole("button", { name: "Tool" }));
+
+    expect(screen.getByRole("tooltip").style.top).toBe(top);
+  });
+
+  test("a tip in the page takes its gap from a custom property", () => {
+    render(<Tooltip label="Rare" side="top" gap={8}><button>Rarity</button></Tooltip>);
+
+    expect(screen.getByRole("tooltip").style.getPropertyValue("--tt-gap")).toBe("8px");
+  });
+
   test("a tip with no alignment is centred on the anchor", async () => {
     const user = userEvent.setup();
     layout(box(400, 300, 100, 30), box(0, 0, 60, 20));

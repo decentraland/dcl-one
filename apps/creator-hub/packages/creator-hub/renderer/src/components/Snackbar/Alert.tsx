@@ -2,7 +2,7 @@ import { cx } from '/@/lib/cx';
 import Alert, { type AlertProps, type AlertSeverity } from '@ui/atoms/Alert';
 import IconButton from '@ui/atoms/IconButton';
 
-import { CloseIcon } from '/@/components/Icons/material';
+import { CloseIcon } from '@ui/atoms/icons-material';
 
 import styles from './Alert.module.css';
 
@@ -13,13 +13,6 @@ const GLYPHS: Record<AlertSeverity, string> = {
   warning: 'M12 5.99L19.53 19H4.47L12 5.99M12 2L1 21h22L12 2zm1 14h-2v2h2v-2zm0-6h-2v4h2v-4z',
   error:
     'M11 15h2v2h-2zm0-8h2v6h-2zm.99-5C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8z',
-};
-
-const SEVERITY_CLASS: Record<AlertSeverity, string> = {
-  success: 'MuiAlert-colorSuccess',
-  info: 'MuiAlert-colorInfo',
-  warning: 'MuiAlert-colorWarning',
-  error: 'MuiAlert-colorError',
 };
 
 type Props = Omit<AlertProps, 'role' | 'variant' | 'closeLabel'>;
@@ -45,7 +38,6 @@ export function SnackbarAlert({
   );
   const close = onClose && (
     <IconButton
-      className="MuiIconButton-root"
       size="small"
       tone="inherit"
       aria-label="Close"
@@ -64,8 +56,7 @@ export function SnackbarAlert({
       severity={severity}
       icon={glyph}
       action={action ?? (close || undefined)}
-      // The capture scenarios find a snackbar alert and its severity by these two class names.
-      className={cx('MuiPaper-root', SEVERITY_CLASS[severity], styles.alert, className)}
+      className={cx(styles.alert, className)}
     />
   );
 }

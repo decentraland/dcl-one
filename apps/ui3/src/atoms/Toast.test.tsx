@@ -539,3 +539,45 @@ describe("createToastStore", () => {
     expect(two.get()).toEqual([]);
   });
 });
+
+describe("Toast live region", () => {
+  test("a toast opens into a live region that was in the page while it was closed", () => {
+    const { rerender } = render(<Toast open={false}>Copied</Toast>);
+    const region = document.body.querySelector("[aria-live]");
+    expect(region).not.toBeNull();
+    expect(region).toBeEmptyDOMElement();
+
+    rerender(<Toast open>Copied</Toast>);
+
+    expect(region).toContainElement(screen.getByRole("status"));
+    expect(region).toHaveTextContent("Copied");
+  });
+
+  test("a host is a live region before its first toast", () => {
+    const store = createToastStore();
+    render(<ToastHost store={store} />);
+    const region = document.body.querySelector("[aria-live]");
+    expect(region).not.toBeNull();
+
+    act(() => { store.show({ children: "Saved" }); });
+
+    expect(region).toHaveTextContent("Saved");
+  });
+});
+
+describe("ToastHost show again", () => {
+  test("showing a toast again with its id starts its time to close again", async () => {
+    const store = createToastStore();
+    render(<ToastHost store={store} />);
+    act(() => { store.show({ id: "saved", duration: 5000, children: "Saved" }); });
+
+    await wait(4000);
+    act(() => { store.show({ id: "saved", duration: 5000, children: "Saved again" }); });
+    await wait(4000);
+
+    expect(screen.getByRole("status")).toHaveTextContent("Saved again");
+
+    await wait(1100);
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+});

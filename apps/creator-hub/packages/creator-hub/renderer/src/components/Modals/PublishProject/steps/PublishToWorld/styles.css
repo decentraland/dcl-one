@@ -35,8 +35,8 @@
   opacity: 1;
 }
 
-/* Focus and open: a line of 2px in the same colour. The top line grows half a pixel up, as the
-   line of the old field did. The content stays in place. */
+/* Focus and open: a line of 2px in the same colour. The top line grows half a pixel up and the
+   content stays in place. */
 [role="dialog"] .SelectWorld-ENSProvider > div:is([data-open], :focus-within),
 [role="dialog"] .SelectWorld-WorldName > div:is([data-open], :focus-within) {
   margin-top: -0.5px;
@@ -285,7 +285,7 @@
   font-weight: 500;
 }
 
-[role="dialog"] .SelectWorld .WorldInfoItem .MuiSvgIcon-root {
+[role="dialog"] .SelectWorld .WorldInfoItem svg {
   width: 16px;
   height: 16px;
 }
@@ -373,7 +373,7 @@
   margin-left: auto;
 }
 
-[role="dialog"] .SelectLocation .SelectedParcelInfo .MuiSvgIcon-root {
+[role="dialog"] .SelectLocation .SelectedParcelInfo svg {
   width: 16px;
   height: 16px;
   color: var(--text-on-secondary);

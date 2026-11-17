@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 
 import { ErrorBoundary } from './component';
 import { ErrorFallback, fallbackText } from './ErrorFallback';

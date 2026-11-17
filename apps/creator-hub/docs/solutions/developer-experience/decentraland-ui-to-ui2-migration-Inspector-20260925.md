@@ -6,7 +6,7 @@ The Inspector no longer depends on `decentraland-ui` v6 (the Semantic UI library
 
 | Before (`decentraland-ui`) | Now |
 | --- | --- |
-| `Loader`, `Dimmer` | The ui3 `HubSpinner` (`@ui/atoms/HubSpinner`, the Creator Hub variation of the shared `Spinner`), wrapped by `components/Loading`. |
+| `Loader`, `Dimmer` | The ui3 `Spinner` (`@ui/atoms/Spinner`), wrapped by `components/Loading`. |
 | `Popup`, `PopupContent` | The shared ui3 `Tooltip` (`@ui/atoms/Tooltip`). |
 | `WearablePreview` | `components/WearablePreview`, a local component. |
 | `lib/styles.css`, `lib/dark-theme.css` | `theme/base.css` and seven custom properties in `theme/vars.css`. |

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { cx } from '/@/lib/cx';
 
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 
 import type { Events } from '/shared/types/analytics';
 

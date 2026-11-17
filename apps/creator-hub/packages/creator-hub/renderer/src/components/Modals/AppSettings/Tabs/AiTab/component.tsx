@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import Checkbox from '@ui/atoms/Checkbox';
 import IconButton from '@ui/atoms/IconButton';
-import Spinner from '@ui/atoms/HubSpinner';
+import Spinner from '@ui/atoms/Spinner';
 import Text from '@ui/atoms/Text';
 import TextField from '@ui/atoms/TextField';
 import Tooltip from '@ui/atoms/Tooltip';
@@ -12,7 +12,7 @@ import { ai, misc } from '#preload';
 
 import { cliSetup, type AiProviderInfo } from '/shared/types/ai';
 import { t } from '/@/modules/store/translation/utils';
-import { ContentCopyIcon, KeyboardArrowDownIcon } from '/@/components/Icons/material';
+import { ContentCopyIcon, KeyboardArrowDownIcon } from '@ui/atoms/icons-material';
 import { useCliSignIn } from '/@/hooks/useCliSignIn';
 import { SignInCodeField } from '/@/components/SignInCodeField';
 import { ToggleRow } from '../../ToggleRow';
@@ -78,7 +78,7 @@ function CommandField({ label, value }: { label?: string; value: string }) {
         >
           <ContentCopyIcon
             fontSize="small"
-            color={copied ? 'primary' : 'inherit'}
+            tone={copied ? 'primary' : 'inherit'}
           />
         </IconButton>
       </div>

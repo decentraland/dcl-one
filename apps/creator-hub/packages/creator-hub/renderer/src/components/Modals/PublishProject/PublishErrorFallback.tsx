@@ -1,5 +1,5 @@
 import { cx } from '/@/lib/cx';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 
 import { Actions, Description } from '/@/components/ErrorBoundary';
 import { t } from '/@/modules/store/translation/utils';

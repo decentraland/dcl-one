@@ -63,6 +63,30 @@ const chevron = (
 );
 
 /** A modal dialog in a portal on `document.body`: focus stays inside it and goes back to the opener on close. */
+// How many open dialogs hold each element inert. An element is inert while any dialog holds it, whatever order
+// the dialogs close in; one that was inert before the first dialog opened stays inert.
+const inertHolds = new Map<Element, number>();
+function holdInert(element: Element) {
+  const holds = inertHolds.get(element);
+  if (holds === undefined) {
+    if (element.hasAttribute("inert")) return;
+    element.setAttribute("inert", "");
+    inertHolds.set(element, 1);
+  } else {
+    inertHolds.set(element, holds + 1);
+  }
+}
+function releaseInert(element: Element) {
+  const holds = inertHolds.get(element);
+  if (holds === undefined) return;
+  if (holds > 1) {
+    inertHolds.set(element, holds - 1);
+  } else {
+    inertHolds.delete(element);
+    element.removeAttribute("inert");
+  }
+}
+
 export default function Dialog({
   open, onClose, title, titleAs: Title = "h2", subtitle, header, actions, onBack, size = "medium", width,
   closeIcon = cross, backIcon = chevron, closeLabel = "close", backLabel = "back",
@@ -80,6 +104,21 @@ export default function Dialog({
   const [opened, setOpened] = useState<{ open: boolean; opener: Element | null }>({ open: false, opener: null });
   if (opened.open !== open) setOpened({ open, opener: open && typeof document !== "undefined" ? document.activeElement : null });
   const opener = opened.opener;
+
+  // The page behind the dialog is inert while it is open: no focus, no pointer, out of the accessibility tree.
+  // A dialog over another one makes the lower one inert and gives it back on close. Live regions stay readable,
+  // and layers that open after the dialog (a select, a menu) come into the page after this and stay usable.
+  useEffect(() => {
+    const backdrop = paper.current?.parentElement;
+    if (!open || !backdrop) return;
+    const held: Element[] = [];
+    for (const element of Array.from(document.body.children)) {
+      if (element === backdrop || element.hasAttribute("aria-live")) continue;
+      holdInert(element);
+      held.push(element);
+    }
+    return () => { for (const element of held) releaseInert(element); };
+  }, [open]);
 
   const firstFocus = useRef(initialFocus);
   useEffect(() => { firstFocus.current = initialFocus; });

@@ -1,7 +1,7 @@
 import Text from '@ui/atoms/Text';
 import Tooltip from '@ui/atoms/Tooltip';
 
-import { InfoOutlinedIcon } from '/@/components/Icons/material';
+import { InfoOutlinedIcon } from '@ui/atoms/icons-material';
 
 import './styles.css';
 

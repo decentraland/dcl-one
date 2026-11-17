@@ -27,8 +27,7 @@ vi.mock('#store', async () => {
   return { useDispatch, useSelector };
 });
 
-/** The ui2 modal shell and the wallet summary read theme slices this environment does
- * not populate; the flow under test lives in the step, not the chrome. */
+/** The flow under test lives in the step, not in the modal shell or the wallet summary. */
 vi.mock('../../PublishModal', () => ({
   PublishModal: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));

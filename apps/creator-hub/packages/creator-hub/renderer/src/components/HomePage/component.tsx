@@ -10,8 +10,8 @@ import {
   CodeIcon,
   AccountTreeOutlinedIcon,
   WidgetsOutlinedIcon,
-} from '/@/components/Icons/material';
-import Spinner from '@ui/atoms/HubSpinner';
+} from '@ui/atoms/icons-material';
+import Spinner from '@ui/atoms/Spinner';
 import Text from '@ui/atoms/Text';
 
 import { misc } from '#preload';

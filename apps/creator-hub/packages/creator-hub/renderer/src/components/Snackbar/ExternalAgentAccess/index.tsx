@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
-import { SmartToyOutlinedIcon } from '/@/components/Icons/material';
-import Button from '@ui/atoms/HubButton';
+import { SmartToyOutlinedIcon } from '@ui/atoms/icons-material';
+import Button from '@ui/atoms/Button';
 
 import { t } from '/@/modules/store/translation/utils';
 import { useSettings } from '/@/hooks/useSettings';
@@ -19,7 +19,7 @@ export function ExternalAgentAccess({ onClose }: { onClose: () => void }) {
 
   return (
     <SnackbarAlert
-      icon={<SmartToyOutlinedIcon color="secondary" />}
+      icon={<SmartToyOutlinedIcon tone="secondary" />}
       severity="info"
       action={
         <>

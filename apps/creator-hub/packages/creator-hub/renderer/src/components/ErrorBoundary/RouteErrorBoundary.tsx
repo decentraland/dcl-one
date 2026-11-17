@@ -1,6 +1,6 @@
 import { type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 
 import { t } from '/@/modules/store/translation/utils';
 

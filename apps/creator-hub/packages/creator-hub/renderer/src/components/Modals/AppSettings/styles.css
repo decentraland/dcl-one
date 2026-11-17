@@ -81,7 +81,7 @@
   letter-spacing: 0.00938em;
 }
 
-/* A switch row: 38px high, the track 1px and the text 47px from the left, as before. */
+/* A switch row: 38px high, the track 1px and the text 47px from the left. */
 .AppSettingsModal .SettingsToggleRow {
   display: flex;
   align-items: center;
@@ -149,7 +149,7 @@
   color: var(--white);
 }
 
-/* The icon of a small button is 18px and starts 2px before the content box (--btn-icon-margin), as before. */
+/* The icon of a small button is 18px and starts 2px before the content box (--btn-icon-margin). */
 .AppSettingsModal .AiCopyButton.btn svg {
   font-size: 18px;
 }

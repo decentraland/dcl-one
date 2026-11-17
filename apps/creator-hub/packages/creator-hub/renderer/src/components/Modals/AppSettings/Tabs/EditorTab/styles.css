@@ -12,20 +12,6 @@
   display: flex;
 }
 
-[role="listbox"] .custom-editor {
-  display: flex;
-  align-items: center;
-  min-height: 36px;
-  box-sizing: border-box;
-  padding: 6px 16px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-[role="listbox"] .custom-editor:hover {
-  background: var(--fill-3);
-}
-
 .CodeEditorFormGroup {
   gap: 16px;
 }
@@ -70,8 +56,24 @@
   align-items: flex-start;
 }
 
-.EditorActionsBox {
-  display: flex;
-  gap: 8px;
+.default-icon {
   margin-left: auto;
+}
+
+/* The added editors, each with its remove button. */
+.EditorList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.EditorList li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-left: 13px;
 }

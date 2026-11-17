@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo } from 'react';
-import { GridViewRoundedIcon as ParcelsIcon } from '/@/components/Icons/material';
+import { GridViewRoundedIcon as ParcelsIcon } from '@ui/atoms/icons-material';
 import Text from '@ui/atoms/Text';
 import type { WorldScene } from '/@/lib/worlds';
 import { coordsToId } from '/@/lib/land';

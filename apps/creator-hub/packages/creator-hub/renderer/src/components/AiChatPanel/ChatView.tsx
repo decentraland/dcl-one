@@ -17,14 +17,14 @@ import {
   ContentCopyIcon,
   OpenInNewIcon,
   DeleteOutlineIcon,
-} from '/@/components/Icons/material';
+} from '@ui/atoms/icons-material';
 import { cx } from '/@/lib/cx';
 import Markdown, { type MarkdownToJSX } from 'markdown-to-jsx';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import IconButton from '@ui/atoms/IconButton';
 import { Menu, MenuItem, MenuSeparator } from '@ui/atoms/Menu';
 import { Select, SelectOption } from '@ui/atoms/Select';
-import Spinner from '@ui/atoms/HubSpinner';
+import Spinner from '@ui/atoms/Spinner';
 import TextField from '@ui/atoms/TextField';
 import Tooltip from '@ui/atoms/Tooltip';
 
@@ -321,7 +321,7 @@ function ClearMentionButton({ label, onClick }: { label: string; onClick: () => 
         className={styles.clearMention}
         onClick={onClick}
       >
-        <CloseIcon sx={{ fontSize: 13 }} />
+        <CloseIcon className={styles.clearMentionIcon} />
       </IconButton>
     </Tooltip>
   );
@@ -387,6 +387,18 @@ export function ChatView(props: ChatViewProps) {
   // Anchor for the "New Chat" dropdown (new chat + recent sessions), replacing the old
   // full-panel history view.
   const [chatMenuAnchor, setChatMenuAnchor] = useState<null | HTMLElement>(null);
+  // Deletes a saved chat from its menu item and keeps the focus in the menu, on the next item
+  // or, after the last one, on the item before.
+  const deleteSessionByKey = (item: HTMLElement, id: string) => {
+    const items = Array.from(
+      item
+        .closest('[role="menu"]')
+        ?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)') ?? [],
+    );
+    const at = items.indexOf(item);
+    (items[at + 1] ?? items[at - 1])?.focus();
+    onDeleteSession(id);
+  };
 
   // Saved conversations for the history menu (the current not-yet-used session isn't listed).
   const savedSessions = useMemo(() => sessions.filter(s => s.title !== ''), [sessions]);
@@ -887,13 +899,13 @@ export function ChatView(props: ChatViewProps) {
               setChatMenuAnchor(prev => (prev === null ? pill : null));
             }}
           >
-            <AddCommentOutlinedIcon sx={{ fontSize: 16 }} />
+            <AddCommentOutlinedIcon className={styles.menuIcon} />
             <span className={styles.ellipsis}>
               {currentSession !== undefined ? currentSession.title : t('editor.ai.new_chat')}
             </span>
             <KeyboardArrowDownIcon
               fontSize="small"
-              sx={{ marginLeft: 'auto' }}
+              className={styles.pillChevron}
             />
           </button>
           <Menu
@@ -912,7 +924,7 @@ export function ChatView(props: ChatViewProps) {
                 setChatMenuAnchor(null);
               }}
             >
-              <AddCommentOutlinedIcon sx={{ fontSize: 16 }} />
+              <AddCommentOutlinedIcon className={styles.menuIcon} />
               {t('editor.ai.new_chat')}
             </MenuItem>
             {savedSessions.length > 0 && (
@@ -930,24 +942,30 @@ export function ChatView(props: ChatViewProps) {
                 <MenuItem
                   className={styles.sessionItem}
                   selected={s.id === currentSessionId}
+                  aria-keyshortcuts="Delete"
+                  onKeyDown={event => {
+                    if (event.key === 'Delete' || event.key === 'Backspace') {
+                      event.preventDefault();
+                      deleteSessionByKey(event.currentTarget, s.id);
+                    }
+                  }}
                   onClick={() => {
                     onSwitchSession(s.id);
                     setChatMenuAnchor(null);
                   }}
                 >
                   <CheckIcon
-                    sx={{
-                      fontSize: 16,
-                      visibility: s.id === currentSessionId ? 'visible' : 'hidden',
-                    }}
+                    className={cx(styles.menuIcon, s.id !== currentSessionId && styles.hiddenMark)}
                   />
                   <span className={styles.sessionText}>
                     <span className={styles.ellipsis}>{s.title}</span>
                     <span className={styles.sessionWhen}>{formatWhen(s.updatedAt)}</span>
                   </span>
                 </MenuItem>
+                {/* The keyboard deletes from the item above with the Delete key. */}
                 <IconButton
                   size="small"
+                  tabIndex={-1}
                   aria-label={t('editor.ai.history.delete')}
                   onClick={() => onDeleteSession(s.id)}
                 >
@@ -993,7 +1011,7 @@ export function ChatView(props: ChatViewProps) {
                 >
                   <CheckIcon
                     fontSize="small"
-                    sx={{ visibility: p.id === provider ? 'visible' : 'hidden' }}
+                    className={p.id === provider ? undefined : styles.hiddenMark}
                   />
                   <span className={styles.providerOption}>
                     <span>{p.label}</span>

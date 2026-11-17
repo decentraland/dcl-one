@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { cx } from '/@/lib/cx';
-import { ChevronRightIcon } from '/@/components/Icons/material';
+import { ChevronRightIcon } from '@ui/atoms/icons-material';
 import Checkbox from '@ui/atoms/Checkbox';
 import Radio from '@ui/atoms/Radio';
 import Text from '@ui/atoms/Text';
@@ -100,8 +100,8 @@ export function PreviewOptions({
       setSubmenuAlign(null);
       return;
     }
-    // Measured a frame late (rAF) on purpose: the outer Popper (popper.js) applies its own
-    // position transform in its own effect, and ordering against that isn't guaranteed —
+    // Measured a frame late (rAF) on purpose: the outer popover places itself
+    // in its own effect, and ordering against that isn't guaranteed —
     // measuring in the same layout-effect pass can read the row's pre-positioned rect. The
     // flyout stays unrendered (submenuAlign is null) until this resolves, so there's nothing
     // to flash on the wrong side in the meantime.

@@ -177,3 +177,37 @@ describe('ChatView asset mentions', () => {
     });
   });
 });
+
+describe('ChatView chat history menu', () => {
+  beforeAll(() => {
+    setCurrentLocale('en', flatten(en));
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  describe('when a saved chat is deleted with the keyboard', () => {
+    it('should delete that chat from its menu item and keep the focus in the menu', () => {
+      const onDeleteSession = vi.fn();
+      const now = Date.now();
+      renderChat({
+        sessions: [
+          { id: 's1', title: 'Door', updatedAt: now },
+          { id: 's2', title: 'Window', updatedAt: now },
+        ],
+        onDeleteSession,
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'New chat' }));
+      const door = screen.getByRole('menuitem', { name: /Door/ });
+      const window = screen.getByRole('menuitem', { name: /Window/ });
+
+      expect(door.getAttribute('aria-keyshortcuts')).toBe('Delete');
+      door.focus();
+      fireEvent.keyDown(door, { key: 'Delete' });
+
+      expect(onDeleteSession).toHaveBeenCalledExactlyOnceWith('s1');
+      expect(document.activeElement).toBe(window);
+    });
+  });
+});

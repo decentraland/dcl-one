@@ -88,7 +88,7 @@
   color: var(--dcl-silver);
 }
 
-.ProjectStepWrapper .ProjectContainer .info .text .parcels .MuiSvgIcon-root {
+.ProjectStepWrapper .ProjectContainer .info .text .parcels svg {
   width: 12px;
   height: 12px;
 }

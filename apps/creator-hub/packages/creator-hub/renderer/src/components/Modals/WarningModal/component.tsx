@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import Checkbox from '@ui/atoms/Checkbox';
 import Text from '@ui/atoms/Text';
 

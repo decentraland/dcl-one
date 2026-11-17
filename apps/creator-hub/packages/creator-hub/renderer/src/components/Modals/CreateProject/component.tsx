@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import IconButton from '@ui/atoms/IconButton';
 import { FolderIcon } from '@ui/atoms/icons-material';
-import Spinner from '@ui/atoms/HubSpinner';
+import Spinner from '@ui/atoms/Spinner';
 import Text from '@ui/atoms/Text';
 import TextField from '@ui/atoms/TextField';
 
@@ -10,7 +10,7 @@ import { t } from '/@/modules/store/translation/utils';
 import { useWorkspace } from '/@/hooks/useWorkspace';
 
 import { PublishModal as Modal } from '../PublishProject/PublishModal';
-import { Button } from '../../Button';
+import Button from '@ui/atoms/Button';
 
 import type { Props, Value } from './types';
 
@@ -69,13 +69,16 @@ export function CreateProject({ open, initialValue, onClose, onSubmit }: Props) 
       actions={
         <>
           <Button
-            color="secondary"
+            variant="text"
+            className="hub-button hub-button--secondary"
             data-testid="create-project-modal-cancel-button"
             onClick={onClose}
           >
             {t('modal.cancel')}
           </Button>
           <Button
+            variant="text"
+            className="hub-button hub-button--primary"
             data-testid="create-project-modal-create-button"
             onClick={handleSubmit}
             disabled={loading || !!error}

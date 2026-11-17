@@ -35,12 +35,12 @@ import { formatSize } from '/@/modules/file';
 
 import { PublishModal } from '/@/components/Modals/PublishProject/PublishModal';
 import { ConnectedSteps } from '/@/components/Step';
-import { Button } from '/@/components/Button';
+import Button from '@ui/atoms/Button';
 import { Loader } from '/@/components/Loader';
 import { ExpandMore } from '/@/components/ExpandMore';
 import { ReportIssue } from '/@/components/Modals/ReportIssue';
 import { ExternalLink } from '/@/components/ExternalLink';
-import { CheckBoxIcon, CheckBoxOutlineBlankIcon } from '/@/components/Icons/material';
+import { CheckBoxIcon, CheckBoxOutlineBlankIcon } from '@ui/atoms/icons-material';
 
 import type { Step } from '/@/components/Step/types';
 import type { Props } from '/@/components/Modals/PublishProject/types';
@@ -327,15 +327,15 @@ export function Deploy(props: Props) {
               </Checkbox>
               <span className="buttons">
                 <Button
-                  color="secondary"
-                  variant="outlined"
-                  size="medium"
+                  variant="outline"
+                  className="hub-button hub-button--secondary hub-button--outlined"
                   onClick={handleBack}
                 >
                   {t('modal.publish_project.deploy.warning.back')}
                 </Button>
                 <Button
-                  size="medium"
+                  variant="text"
+                  className="hub-button hub-button--primary"
                   data-testid="publish-modal-deploy-warning-continue-button"
                   onClick={handlePublish}
                 >
@@ -496,7 +496,9 @@ export function Idle({
       <div className="actions">
         <p className="error">{errorMessage}</p>
         <Button
-          size="large"
+          variant="text"
+          size="lg"
+          className="hub-button hub-button--primary"
           onClick={onClick}
           disabled={!!error || exceedsSceneSize || isSceneSizeLimitLoading}
         >
@@ -595,15 +597,17 @@ function Error({
           {t('modal.report_issue.help_center')}
         </ExternalLink>
         <Button
-          size="large"
-          variant="outlined"
-          color="secondary"
+          variant="outline"
+          size="lg"
+          className="hub-button hub-button--secondary hub-button--outlined"
           onClick={onReportIssue}
         >
           {t('modal.publish_project.deploy.deploying.actions.report_issue')}
         </Button>
         <Button
-          size="large"
+          variant="text"
+          size="lg"
+          className="hub-button hub-button--primary"
           data-testid="publish-modal-deploy-error-retry"
           onClick={onRetry}
         >
@@ -651,7 +655,9 @@ export function Success({ info, url, worldName, onClick, onClose }: SuccessProps
       </div>
       <div className="actions">
         <Button
-          size="large"
+          variant="text"
+          size="lg"
+          className="hub-button hub-button--primary"
           onClick={onClick}
         >
           {t('modal.publish_project.deploy.success.jump_in')}

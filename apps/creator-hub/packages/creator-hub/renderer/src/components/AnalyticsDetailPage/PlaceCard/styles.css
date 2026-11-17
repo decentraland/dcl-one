@@ -85,7 +85,7 @@
   min-width: 0;
 }
 
-/* The actions keep the grey text button of before: its ink, its spacing and no hover fill. */
+/* The actions are grey text buttons: their ink, their spacing and no hover fill. */
 .PlaceCard .Action.Action {
   display: flex;
   flex-direction: column;
@@ -106,7 +106,7 @@
   color: var(--ctl-disabled-ink);
 }
 
-/* Jump In keeps the brand button of before: its fill, its hover and its 20px end icon. */
+/* Jump In is a brand button with its own fill, hover and 20px end icon. */
 .PlaceCard .JumpIn.JumpIn {
   --btn-icon-margin: 0 -4px 0 0;
 

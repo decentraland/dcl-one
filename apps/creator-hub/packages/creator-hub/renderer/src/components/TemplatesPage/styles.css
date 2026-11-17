@@ -12,7 +12,7 @@
   line-height: 18px;
 }
 
-/* The font and the outline of the ui2 chip. */
+/* The font and the outline of the filter and tag chips. */
 .TemplatesPage .filter-chip,
 .TemplatesPage .tag-chip {
   font-family: Roboto, Helvetica, Arial, sans-serif;

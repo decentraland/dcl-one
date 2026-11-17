@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ClearAllIcon, OpenInNewIcon } from '/@/components/Icons/material';
+import { ClearAllIcon, OpenInNewIcon } from '@ui/atoms/icons-material';
 import { AnsiLine } from '@dcl/inspector/dist/ansi-entrypoint';
 import IconButton from '@ui/atoms/IconButton';
 import Tooltip from '@ui/atoms/Tooltip';

@@ -6,7 +6,7 @@ import {
   GridOnIcon as ParcelsIcon,
   GridViewOutlinedIcon as OutlinedParcelsIcon,
   LocationOnIcon as LocationIcon,
-} from '/@/components/Icons/material';
+} from '@ui/atoms/icons-material';
 import type { SceneParcels, WorldConfiguration } from '@dcl/schemas';
 import { Select, SelectOption } from '@ui/atoms/Select';
 import Text from '@ui/atoms/Text';
@@ -42,7 +42,7 @@ import LogoDCLSVG from '/assets/images/logo-dcl.svg';
 import LogoENSSVG from '/assets/images/logo-ens.svg';
 
 import { Row } from '/@/components/Row';
-import { Button } from '/@/components/Button';
+import Button from '@ui/atoms/Button';
 import { Loader } from '/@/components/Loader';
 import { Image } from '/@/components/Image';
 import { type AtlasScene, WorldAtlas, WorldAtlasColors } from '/@/components/WorldAtlas';
@@ -259,9 +259,9 @@ export function PublishToWorld(props: Props) {
                 {t('modal.publish_project.worlds.select_world.load_error')}
               </Text>
               <Button
-                variant="outlined"
-                color="secondary"
-                size="small"
+                variant="outline"
+                size="sm"
+                className="hub-button hub-button--secondary hub-button--outlined"
                 onClick={handleRetryLoadWorld}
               >
                 {t('modal.publish_project.worlds.select_world.actions.retry')}
@@ -466,7 +466,8 @@ function SelectWorld({
               menuClassName={menuClassName}
               onOpenChange={handleMenuOpenChange}
               icon={selectArrow}
-              aria-labelledby={descriptionId}
+              aria-label={t('modal.publish_project.worlds.select_world.domain_type_label')}
+              aria-describedby={descriptionId}
               value={ensProvider}
               onChange={handleChangeSelectProvider}
               renderValue={provider => <ENSProviderLabel provider={provider} />}
@@ -498,12 +499,13 @@ function SelectWorld({
               menuClassName={menuClassName}
               onOpenChange={handleMenuOpenChange}
               icon={selectArrow}
-              aria-labelledby={descriptionId}
+              aria-label={t('modal.publish_project.worlds.select_world.world_name_label')}
+              aria-describedby={descriptionId}
               value={name}
               onChange={handleChangeSelectName}
               disabled={listNames.length === 0}
               placeholder={<em>{t('modal.publish_project.worlds.select_world.placeholder')}</em>}
-              endAdornment={worldSettings.status === 'loading' ? <Loader size="20px" /> : null}
+              endAdornment={worldSettings.status === 'loading' ? <Loader size={20} /> : null}
               renderValue={selected => selected}
             >
               <SelectOption
@@ -604,9 +606,11 @@ function SelectWorld({
       )}
       <div className="actions">
         <Button
+          variant="text"
+          size="lg"
+          className="hub-button hub-button--primary"
           data-testid="publish-modal-publish-to-world-select-world-action"
           onClick={handleNext}
-          size="large"
           disabled={!projectIsReady || !name || worldLoadFailed || worldLoading}
           endIcon={<ArrowForwardIcon />}
         >
@@ -874,9 +878,9 @@ function SelectLocation({
 
         {placement && (
           <Button
-            variant="outlined"
-            color="secondary"
-            size="large"
+            variant="outline"
+            size="lg"
+            className="hub-button hub-button--secondary hub-button--outlined"
             onClick={handleReset}
           >
             {t('modal.publish_project.worlds.select_world.actions.reset')}
@@ -892,7 +896,9 @@ function SelectLocation({
           </Text>
         )}
         <Button
-          size="large"
+          variant="text"
+          size="lg"
+          className="hub-button hub-button--primary"
           onClick={handleNext}
           disabled={!placement || noParcelsFit}
           endIcon={<ArrowForwardIcon />}
@@ -984,15 +990,18 @@ function ConfirmOverwrite({
       )}
       <div className="actions">
         <Button
-          color="secondary"
-          size="large"
+          variant="text"
+          size="lg"
+          className="hub-button hub-button--secondary"
           fullWidth
           onClick={onCancel}
         >
           {t('modal.publish_project.worlds.select_world.actions.cancel')}
         </Button>
         <Button
-          size="large"
+          variant="text"
+          size="lg"
+          className="hub-button hub-button--primary"
           fullWidth
           onClick={onConfirm}
         >
@@ -1043,6 +1052,8 @@ function NamesError({ onRetry }: { onRetry: () => void }) {
         {t('modal.publish_project.worlds.names_error.description')}
       </Text>
       <Button
+        variant="text"
+        className="hub-button hub-button--primary"
         data-testid="publish-modal-names-error-retry"
         onClick={onRetry}
       >
@@ -1089,14 +1100,17 @@ function EmptyNames() {
       </Text>
       <div className="actions">
         <Button
-          size="small"
+          variant="text"
+          size="sm"
+          className="hub-button hub-button--primary"
           onClick={handleClick}
         >
           {t('modal.publish_project.worlds.empty_names.action')}
         </Button>
         <Button
-          size="small"
-          color="secondary"
+          variant="text"
+          size="sm"
+          className="hub-button hub-button--secondary"
           onClick={handleClickLearnMore}
         >
           {t('option_box.learn_more')}

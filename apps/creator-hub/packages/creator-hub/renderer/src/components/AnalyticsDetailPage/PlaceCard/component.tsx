@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import Text from '@ui/atoms/Text';
 import Tooltip from '@ui/atoms/Tooltip';
 
@@ -12,7 +12,7 @@ import {
   PlaceIcon,
   PublicIcon,
   ThumbUpAltIcon as ThumbUpIcon,
-} from '/@/components/Icons/material';
+} from '@ui/atoms/icons-material';
 
 import type { PlaceDetails } from '/shared/types/place-analytics';
 import { PlaceAccess } from '/shared/types/place-analytics';

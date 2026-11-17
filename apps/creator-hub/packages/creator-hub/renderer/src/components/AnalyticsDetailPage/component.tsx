@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import { SelectOption } from '@ui/atoms/Select';
 import { Tab, Tabs } from '@ui/atoms/Tabs';
 import Text from '@ui/atoms/Text';
 import Tooltip from '@ui/atoms/Tooltip';
 
-import { FileDownloadOutlinedIcon as DownloadIcon } from '/@/components/Icons/material';
+import { FileDownloadOutlinedIcon as DownloadIcon } from '@ui/atoms/icons-material';
 
 import { MetricsWindow, PlaceAccess } from '/shared/types/place-analytics';
 
@@ -25,8 +25,7 @@ import { useAuth } from '/@/hooks/useAuth';
 import { Container } from '../Container';
 import { Loader } from '../Loader';
 import { Navbar, NavbarItem } from '../Navbar';
-import { Select } from '../Select';
-import type { SelectChangeEvent } from '../Select/component';
+import { ToolbarSelect } from '../ToolbarSelect';
 import { SignInCard } from '../SignInCard';
 import { Title } from '../Title';
 import { formatExportDate } from '../AnalyticsPage/utils';
@@ -88,8 +87,8 @@ export function AnalyticsDetailPage() {
   );
 
   const handleWindowChange = useCallback(
-    (e: SelectChangeEvent<MetricsWindow>) => {
-      dispatch(placeAnalyticsActions.setWindow(e.target.value as MetricsWindow));
+    (value: MetricsWindow) => {
+      dispatch(placeAnalyticsActions.setWindow(value));
     },
     [dispatch],
   );
@@ -131,7 +130,8 @@ export function AnalyticsDetailPage() {
               </Text>
             )}
           </div>
-          {/* Enabled once there is an analytics API to export from. */}
+          {/* Enabled once there is an analytics API to export from. Until then the button stays
+              focusable and takes the pointer, so its tip says why it does nothing. */}
           <Tooltip
             className="ExportAction"
             label={t('analytics.actions.export_unavailable')}
@@ -145,7 +145,8 @@ export function AnalyticsDetailPage() {
               variant="outline"
               tone="neutral"
               startIcon={<DownloadIcon />}
-              disabled
+              className="is-disabled"
+              aria-disabled="true"
             >
               {t('analytics.actions.export')}
             </Button>
@@ -208,8 +209,8 @@ export function AnalyticsDetailPage() {
                   >
                     {t('analytics.detail.window.title')}
                   </Text>
-                  <Select
-                    labelId={WINDOW_LABEL_ID}
+                  <ToolbarSelect
+                    aria-labelledby={WINDOW_LABEL_ID}
                     value={metricsWindow}
                     onChange={handleWindowChange}
                   >
@@ -221,7 +222,7 @@ export function AnalyticsDetailPage() {
                         {option.label}
                       </SelectOption>
                     ))}
-                  </Select>
+                  </ToolbarSelect>
                 </div>
               </div>
               {/*

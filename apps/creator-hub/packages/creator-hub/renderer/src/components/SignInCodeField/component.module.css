@@ -9,7 +9,7 @@
   gap: 8px;
 }
 
-/* The field outline is dark, as in the ui2 text field. */
+/* The field outline is dark. */
 .field.field {
   --field-border: rgba(0, 0, 0, 0.23);
 }
@@ -18,7 +18,7 @@
   opacity: 0.42;
 }
 
-/* Without a hover pointer the ui2 field keeps the dark outline when pressed, in the settings
+/* Without a hover pointer the field keeps the dark outline when pressed, in the settings
    modal too. With a mouse the field shows the light hover outline of the atom. */
 @media (hover: none) {
   .field.field > div:hover:not(:focus-within) {

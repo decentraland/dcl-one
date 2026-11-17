@@ -152,7 +152,7 @@
   color: inherit;
 }
 
-/* The font the address had: the default of the old theme, not the app font. */
+/* The address uses Roboto, not the app font. */
 .deployer > .address {
   font-family: "Roboto", "Helvetica", "Arial", sans-serif;
 }

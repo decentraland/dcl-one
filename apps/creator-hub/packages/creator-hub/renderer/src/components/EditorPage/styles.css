@@ -74,36 +74,36 @@
   gap: 10px;
 }
 
-/* the shared Button sheet adds margin-left between adjacent buttons/groups; the title bar spaces
+/* the hub-button sheet adds margin-left between adjacent buttons/groups; the title bar spaces
    its controls with the flex gap above, so that margin would double up between two buttons */
-.Editor .Header .actions .Button + .Button,
-.Editor .Header .actions .Button + .ButtonGroup,
-.Editor .Header .actions .ButtonGroup + .Button,
-.Editor .Header .actions .ButtonGroup + .ButtonGroup {
+.Editor .Header .actions .hub-button + .hub-button,
+.Editor .Header .actions .hub-button + .SplitButton,
+.Editor .Header .actions .SplitButton + .hub-button,
+.Editor .Header .actions .SplitButton + .SplitButton {
   margin-left: 0;
 }
 
-.Editor .Header .actions .ButtonGroup {
+.Editor .Header .actions .SplitButton {
   height: 32px;
 }
 
-.Editor .Header .actions .ButtonGroup .Button {
+.Editor .Header .actions .SplitButton .hub-button {
   height: 32px;
 }
 
 /* every title-bar control shares an 8px radius; a group rounds only its outer corners (the
-   shared Button sheet squares the inner edges where the main button meets its dropdown) */
-.Editor .Header .actions .Button.btn:not(.ButtonGroup .Button) {
+   hub-button sheet squares the inner edges where the main button meets its dropdown) */
+.Editor .Header .actions .hub-button.btn:not(.SplitButton .hub-button) {
   border-radius: 8px;
 }
 
-.Editor .Header .actions .ButtonGroup .Button.btn:not(.extra-button) {
+.Editor .Header .actions .SplitButton .hub-button.btn:not(.SplitButton-menu) {
   border-top-left-radius: 8px;
   border-bottom-left-radius: 8px;
   border-right: 1px solid rgba(255, 255, 255, 0.2);
 }
 
-.Editor .Header .actions .Button.extra-button {
+.Editor .Header .actions .hub-button.SplitButton-menu {
   border-top-right-radius: 8px;
   border-bottom-right-radius: 8px;
 }
@@ -145,12 +145,12 @@
    than replacing it — over the black header a bare rgba(255,255,255,0.1) would read darker
    than the idle state. A pseudo-element (not background-image) so it fades, and so the
    grouped Preview buttons' own background rules can't cancel it. */
-.Editor .Header .actions .Button.btn[data-color="secondary"] {
+.Editor .Header .actions .hub-button.btn.hub-button--secondary {
   position: relative;
   background-color: var(--title-bar-button) !important;
 }
 
-.Editor .Header .actions .Button.btn[data-color="secondary"]::after {
+.Editor .Header .actions .hub-button.btn.hub-button--secondary::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -161,25 +161,25 @@
   transition: opacity 0.15s ease-in-out;
 }
 
-.Editor .Header .actions .Button.btn[data-color="secondary"]:hover::after {
+.Editor .Header .actions .hub-button.btn.hub-button--secondary:hover::after {
   opacity: 1;
 }
 
-.Editor .Header .actions .Button.btn[data-color="primary"]:hover {
+.Editor .Header .actions .hub-button.btn.hub-button--primary:hover {
   background-color: var(--dcl-hover) !important;
 }
 
 /* Title-bar design: Optimize / Code are square icon-only buttons whose label lives in the
    tooltip. The icon is the content of the button (not a startIcon), so no icon gap is added. */
-.Editor .Header .actions .Button.icon-only,
-.Editor .Header .actions .Button.extra-button {
+.Editor .Header .actions .hub-button.icon-only,
+.Editor .Header .actions .hub-button.SplitButton-menu {
   width: 32px;
   min-width: 32px !important;
   height: 32px;
   padding: 0 !important;
 }
 
-.Editor .Header .actions .Button.icon-only svg {
+.Editor .Header .actions .hub-button.icon-only svg {
   width: 20px;
   height: 20px;
 }

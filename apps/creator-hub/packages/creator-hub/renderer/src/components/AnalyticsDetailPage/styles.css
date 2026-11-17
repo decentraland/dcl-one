@@ -21,7 +21,7 @@
   height: 48px;
 }
 
-/* The export button keeps the outlined button of before: its disabled ink and its 20px start icon. */
+/* The export button: an outlined button with the disabled ink and a 20px start icon. */
 .AnalyticsDetailPage .DetailHeader .ExportAction .btn {
   --btn-icon-margin: 0 0 0 -4px;
 
@@ -29,7 +29,7 @@
   letter-spacing: 0.4px;
 }
 
-.AnalyticsDetailPage .DetailHeader .ExportAction .btn:disabled {
+.AnalyticsDetailPage .DetailHeader .ExportAction .btn[aria-disabled="true"] {
   padding: 5px 15px;
   border: 1px solid var(--fill-5);
   box-shadow: none;
@@ -166,7 +166,7 @@
   text-align: center;
 }
 
-/* The tip keeps its type of before and sits 14px from its anchor; the atom places it at 12px. */
+/* The tip has its own type and sits 14px from its anchor; the atom places it at 12px. */
 .tt__tip.AnalyticsTip {
   display: block;
   font-family: Roboto, Helvetica, Arial, sans-serif;

@@ -4,7 +4,7 @@ import Checkbox from '@ui/atoms/Checkbox';
 import { t } from '/@/modules/store/translation/utils';
 
 import { Modal } from '..';
-import { Button } from '../../Button';
+import Button from '@ui/atoms/Button';
 
 import type { Props } from './types';
 
@@ -26,12 +26,19 @@ export function DeleteProject({ open, project, onClose, onSubmit }: Props) {
       actions={
         <>
           <Button
-            color="secondary"
+            variant="text"
+            className="hub-button hub-button--secondary"
             onClick={onClose}
           >
             {t('modal.cancel')}
           </Button>
-          <Button onClick={handleSubmit}>{t('modal.confirm')}</Button>
+          <Button
+            variant="text"
+            className="hub-button hub-button--primary"
+            onClick={handleSubmit}
+          >
+            {t('modal.confirm')}
+          </Button>
         </>
       }
     >

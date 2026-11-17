@@ -18,18 +18,24 @@ type DismissOptions = {
  * Returns a function that tells whether the surface is the top layer now.
  */
 export function useDismiss(open: boolean, { surface, anchor, onEscape, onOutside, modal = false }: DismissOptions) {
-  const handlers = useRef({ onEscape, onOutside });
-  useEffect(() => { handlers.current = { onEscape, onOutside }; });
+  const options = useRef({ anchor, onEscape, onOutside, modal });
+  useEffect(() => { options.current = { anchor, onEscape, onOutside, modal }; });
 
-  const closesOnEscape = onEscape !== undefined;
+  // The layer is pushed once per opening and reads its options when it is used: a change of an option keeps its
+  // place under the layers opened after it.
   const own = useRef<OverlayLayer | null>(null);
   useEffect(() => {
     if (!open) return;
     const layer: OverlayLayer = {
-      modal,
-      contains: (target) => !!surface.current?.contains(target) || (anchor instanceof Element && anchor.contains(target)),
-      onEscape: closesOnEscape ? () => handlers.current.onEscape?.() : undefined,
-      onOutside: (event) => handlers.current.onOutside?.(event),
+      get modal() { return options.current.modal; },
+      contains: (target) => {
+        const { anchor } = options.current;
+        return !!surface.current?.contains(target) || (anchor instanceof Element && anchor.contains(target));
+      },
+      get onEscape() {
+        return options.current.onEscape && (() => options.current.onEscape?.());
+      },
+      onOutside: (event) => options.current.onOutside?.(event),
     };
     own.current = layer;
     const remove = pushLayer(layer);
@@ -37,7 +43,7 @@ export function useDismiss(open: boolean, { surface, anchor, onEscape, onOutside
       remove();
       own.current = null;
     };
-  }, [open, surface, anchor, modal, closesOnEscape]);
+  }, [open, surface]);
 
   return useCallback(() => own.current !== null && isTopLayer(own.current), []);
 }

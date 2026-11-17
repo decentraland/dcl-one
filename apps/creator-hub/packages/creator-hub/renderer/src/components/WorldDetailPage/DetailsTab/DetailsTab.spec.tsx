@@ -321,7 +321,7 @@ describe('World DetailsTab', () => {
       const option = (name: string) =>
         within(screen.getByRole('listbox')).getByRole('option', { name });
 
-      const tick = (name: string) => within(option(name)).queryByTestId('CheckIcon');
+      const tick = (name: string) => option(name).querySelector('svg');
       const slotWidth = (slot: Element | null | undefined) => slot && getComputedStyle(slot).width;
 
       expect(option('👥 Social').getAttribute('aria-selected')).toBe('true');

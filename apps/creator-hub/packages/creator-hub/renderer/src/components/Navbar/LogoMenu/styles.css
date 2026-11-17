@@ -33,7 +33,7 @@
   font-weight: 600 !important;
 }
 
-/* This tip keeps the font list of the ui2 tooltip, which does not start with Inter, and its line height. */
+/* This tip uses a font list that does not start with Inter, and its own line height. */
 .MainMenuTooltip.tt__tip {
   font-family: Roboto, Helvetica, Arial, sans-serif;
   line-height: 1.5;
@@ -51,17 +51,9 @@
   --popover-min-width: 200px;
 }
 
-/*
- * A box with no layout around the items, with the class the capture scenarios wait for.
- * It takes the opacity of the surface, so a reader sees when the surface is fully shown.
- */
-.LogoMenu [role="menu"],
-.LogoMenu .MuiPaper-root {
+/* The list takes the opacity of the surface, so a reader sees when the surface is fully shown. */
+.LogoMenu [role="menu"] {
   opacity: inherit;
-}
-
-.LogoMenu .MuiPaper-root {
-  display: contents;
 }
 
 .LogoMenu [role="menuitem"] {

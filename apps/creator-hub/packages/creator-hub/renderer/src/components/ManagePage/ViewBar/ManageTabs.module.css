@@ -9,7 +9,7 @@
   box-shadow: inset 0 0 0 0.5px var(--palette-whiteTransparent-subtle);
   background-color: transparent;
   color: var(--palette-whiteTransparent-backdrop);
-  /* The font the tabs had: the default of the old theme, not the app font. */
+  /* The tabs use Roboto, not the app font. */
   font-family: "Roboto", "Helvetica", "Arial", sans-serif;
   font-size: 0.875rem;
   font-weight: 600;

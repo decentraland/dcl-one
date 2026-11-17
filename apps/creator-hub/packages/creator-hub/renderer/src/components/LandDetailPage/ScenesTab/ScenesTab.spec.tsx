@@ -127,7 +127,7 @@ function renderTab(
 const twoScenes = [deployment('a', 'Scene A', 1000), deployment('b', 'Scene B', 2000)];
 
 const selectStylesheetSelectors = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), '../../Select/styles.css'),
+  join(dirname(fileURLToPath(import.meta.url)), '../../ToolbarSelect/styles.css'),
   'utf8',
 )
   .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -168,7 +168,7 @@ describe('ScenesTab', () => {
       expect(screen.getByRole('button', { name: 'Unpublish selected' })).toBeTruthy();
     });
 
-    it('should leave the table out of the global Select stylesheet', () => {
+    it('should leave the table out of the toolbar select stylesheet', () => {
       const table = screen.getByRole('table');
 
       expect(

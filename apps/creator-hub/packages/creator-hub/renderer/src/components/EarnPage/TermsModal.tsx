@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import Checkbox from '@ui/atoms/Checkbox';
 import Dialog from '@ui/atoms/Dialog';
 import IconButton from '@ui/atoms/IconButton';

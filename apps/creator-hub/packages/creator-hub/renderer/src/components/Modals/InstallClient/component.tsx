@@ -5,7 +5,7 @@ import { actions } from '/@/modules/store/editor';
 import { useDispatch } from '#store';
 import { t } from '/@/modules/store/translation/utils';
 import { Modal } from '..';
-import { Button } from '../../Button';
+import Button from '@ui/atoms/Button';
 import LogoDCLSVG from '/assets/images/logo-dcl.svg';
 import type { Props } from './types';
 
@@ -78,16 +78,15 @@ export function InstallClient({ open, onClose }: Props) {
         </Text>
         <div className="Actions">
           <Button
-            variant="contained"
-            color="primary"
+            className="hub-button hub-button--primary"
             onClick={handleDownload}
             startIcon={icon}
           >
             {text}
           </Button>
           <Button
-            variant="outlined"
-            color="secondary"
+            variant="outline"
+            className="hub-button hub-button--secondary hub-button--outlined"
             fullWidth
             onClick={onClose}
           >

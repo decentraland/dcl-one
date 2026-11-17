@@ -67,7 +67,7 @@
   font-weight: 600 !important;
 }
 
-/* This tip keeps the font list of the ui2 tooltip, which does not start with Inter, and its line height. */
+/* This tip uses a font list that does not start with Inter, and its own line height. */
 .AccountTooltip.tt__tip {
   font-family: Roboto, Helvetica, Arial, sans-serif;
   line-height: 1.5;
@@ -86,7 +86,7 @@
   margin-left: -8px;
 }
 
-/* The ui2 menu had no least width. */
+/* The menu has no least width. */
 #UserMenu {
   min-width: 0;
 }

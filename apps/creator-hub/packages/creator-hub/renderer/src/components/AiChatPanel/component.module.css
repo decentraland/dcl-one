@@ -889,3 +889,21 @@
 .providerMenu .providerRow[aria-selected="true"]:hover {
   background-color: var(--ai-selected-hover);
 }
+
+/* Icon sizes and places. Two classes outweigh the size rule of the icon. */
+.clearMentionIcon.clearMentionIcon {
+  font-size: 13px;
+}
+
+.menuIcon.menuIcon {
+  font-size: 16px;
+}
+
+.pillChevron.pillChevron {
+  margin-left: auto;
+}
+
+/* The mark keeps its place in the row while the row is not the current one. */
+.hiddenMark {
+  visibility: hidden;
+}

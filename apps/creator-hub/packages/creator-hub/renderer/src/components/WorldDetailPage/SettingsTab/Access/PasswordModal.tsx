@@ -3,7 +3,7 @@ import {
   VisibilityOutlinedIcon as VisibilityIcon,
   VisibilityOffOutlinedIcon as VisibilityOffIcon,
   WarningAmberIcon as WarningIcon,
-} from '/@/components/Icons/material';
+} from '@ui/atoms/icons-material';
 import IconButton from '@ui/atoms/IconButton';
 
 import { t } from '/@/modules/store/translation/utils';

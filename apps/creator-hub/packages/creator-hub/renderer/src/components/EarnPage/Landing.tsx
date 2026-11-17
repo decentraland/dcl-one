@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 
 import { analytics, misc } from '#preload';
 

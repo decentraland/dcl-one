@@ -1,5 +1,5 @@
-/* Two classes: over the rules of the Button wrapper. */
-.addButton.addButton :global(.Button.btn[data-size="small"]) {
+/* Two classes: over the hub-button rules. */
+.addButton.addButton :global(.hub-button.btn.btn--sm) {
   height: 26px;
   min-width: 0;
   padding: 2px 6px;
@@ -10,11 +10,11 @@
   letter-spacing: 0;
 }
 
-.addButton.addButton :global(.Button):disabled {
+.addButton.addButton :global(.hub-button):disabled {
   opacity: 0.2;
 }
 
-.addButton.addButton :global(.Button.btn) svg {
+.addButton.addButton :global(.hub-button.btn) svg {
   font-size: 23.14px;
   margin: -2.57px;
 }
@@ -143,8 +143,8 @@
   justify-self: end;
 }
 
-/* The avatar of the old library, and the face of the AvatarFace atom. */
-.row :global(.Who .MuiAvatar-root),
+/* The AvatarFace atom of the profile and its face. */
+.row :global(.Who .Avatar) > span[data-size],
 .row :global(.Who .Avatar) > span[data-size] > span {
   width: 28px;
   height: 28px;
@@ -187,7 +187,7 @@
   background-color: var(--palette-whiteTransparent-subtle);
 }
 
-/* An open select keeps the focus on its field; the old one moved it to the list, out of the row. */
+/* An open select keeps the focus on its field, inside the row. */
 .row:hover,
 .row:focus-within:not(:has([data-open])) {
   background-color: var(--palette-whiteTransparent-subtle);

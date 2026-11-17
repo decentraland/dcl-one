@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import Spinner from '@ui/atoms/HubSpinner';
+import Spinner from '@ui/atoms/Spinner';
 
 import { TestProviders } from '../../tests/utils/TestProviders';
 import { mountThemeStyles } from '../../tests/utils/themeStyles';

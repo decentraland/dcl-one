@@ -67,8 +67,8 @@ export function SnackbarComponent() {
     <>
       {isInstallingDependencies && (
         <div
-          // The capture scenarios find the backdrop by the second class name.
-          className={`${styles.backdrop} MuiBackdrop-root`}
+          className={styles.backdrop}
+          data-testid="install-backdrop"
           aria-hidden="true"
         />
       )}
@@ -79,16 +79,15 @@ export function SnackbarComponent() {
 
           return (
             <div
-              // The capture scenarios find each notice by the second class name and read its bottom.
-              className={`${styles.slot} MuiSnackbar-root`}
+              className={styles.slot}
               style={{ bottom: `${bottom}px` }}
               key={notification.id}
             >
               <Toast
                 role="presentation"
                 duration={duration}
-                // As the ui2 notice: the time stops while the window is not active, and a stop that ends
-                // gives half of the duration again.
+                // The time stops while the window is not active, and a stop that ends gives half of the
+                // duration again.
                 holdOnWindowBlur
                 resumeDuration={duration === null ? undefined : duration / 2}
                 onClose={dismiss(notification.id, idx)}

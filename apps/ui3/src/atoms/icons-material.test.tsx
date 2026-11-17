@@ -3,10 +3,11 @@ import { render, screen } from "@testing-library/react";
 
 import * as icons from "./icons-material";
 import { CloseIcon, InfoOutlinedIcon } from "./icons-material";
+import stylesheet from "./icons-material.module.css?raw";
 
 describe("material icons", () => {
-  test("the file exports the 62 icons the Creator Hub uses", () => {
-    expect(Object.keys(icons)).toHaveLength(62);
+  test("the file exports the 64 icons the Creator Hub uses", () => {
+    expect(Object.keys(icons)).toHaveLength(64);
   });
 
   test("an icon is decorative by default", () => {
@@ -42,5 +43,12 @@ describe("material icons", () => {
       expect(svg?.querySelector("path, circle")).not.toBeNull();
       unmount();
     }
+  });
+
+  test("the size and tone rules weigh one class, so a caller rule with a class and an element wins", () => {
+    const selectors = [...stylesheet.matchAll(/^([^\s/{}][^{}]*)\{/gm)].map((match) => (match[1] ?? "").trim());
+    const sizeAndTone = selectors.filter((selector) => selector.includes("data-"));
+    expect(sizeAndTone).toHaveLength(8);
+    for (const selector of sizeAndTone) expect(selector).toMatch(/^\.root:where\(\[data-(size|tone)="[a-z]+"\]\)$/);
   });
 });

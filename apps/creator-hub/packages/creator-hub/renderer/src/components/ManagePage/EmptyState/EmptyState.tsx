@@ -5,7 +5,7 @@ import EmptyWorlds from '/assets/images/empty-worlds.svg';
 
 import { t } from '/@/modules/store/translation/utils';
 
-import { Button } from '../../Button';
+import Button from '@ui/atoms/Button';
 import { ExternalLink } from '../../ExternalLink';
 import { InfoTip } from '../InfoTip';
 
@@ -24,9 +24,12 @@ type EmptyStateInfo = { label: string; text: string; readMoreUrl: string };
 const EMPTY_STATE_ICONS = { wave: EmptySignedOut, world: EmptyWorlds, land: EmptyLands };
 
 const BUTTON_BY_VARIANT = {
-  primary: { variant: 'contained', color: 'primary' },
-  secondary: { variant: 'contained', color: 'secondary' },
-  tertiary: { variant: 'outlined', color: 'secondary' },
+  primary: { variant: 'primary', className: 'hub-button hub-button--primary' },
+  secondary: { variant: 'primary', className: 'hub-button hub-button--secondary' },
+  tertiary: {
+    variant: 'outline',
+    className: 'hub-button hub-button--secondary hub-button--outlined',
+  },
 } as const;
 
 type Props = {
@@ -65,7 +68,7 @@ export function EmptyState({ icon, title, info, description, action }: Props) {
       {description && <p className={styles.body}>{description}</p>}
       {action && (
         <Button
-          size="large"
+          size="lg"
           {...BUTTON_BY_VARIANT[action.variant]}
           onClick={action.onClick}
         >

@@ -1,7 +1,7 @@
 import { useId } from 'react';
 import { cx } from '/@/lib/cx';
 import { SelectOption } from '@ui/atoms/Select';
-import { CheckIcon, SearchIcon } from '/@/components/Icons/material';
+import { CheckIcon, SearchIcon } from '@ui/atoms/icons-material';
 
 import { t } from '/@/modules/store/translation/utils';
 import type { TranslationPath } from '/@/modules/store/translation/types';
@@ -10,7 +10,7 @@ import { FilterBy, type ManageTab, SortBy } from '/shared/types/manage';
 import { ChevronDownIcon } from '../../Icons';
 import { useArrowKeyed } from '../../Dropdown/useArrowKeyed';
 import { Search } from '../../Search';
-import { Select } from '../../Select';
+import { ToolbarSelect } from '../../ToolbarSelect';
 import { Bar } from './Bar';
 import { ManageTabs } from './ManageTabs';
 
@@ -84,15 +84,15 @@ export function SelectField<T extends string>({
       >
         {t(label)}
       </span>
-      <Select
+      <ToolbarSelect
         className={styles.viewSelect}
-        labelId={labelId}
+        aria-labelledby={labelId}
         value={value}
-        IconComponent={ChevronDownIcon}
-        renderValue={selected => labelOf(selected as T)}
-        onChange={event => onChange(event.target.value as T)}
-        onOpen={resetArrowKeyed}
-        MenuProps={{ className: cx(styles.menu, arrowKeyedClass) }}
+        icon={<ChevronDownIcon />}
+        renderValue={labelOf}
+        onChange={onChange}
+        onOpenChange={open => open && resetArrowKeyed()}
+        menuClassName={cx(styles.menu, arrowKeyedClass)}
       >
         {options.map(option => (
           <SelectOption
@@ -103,7 +103,7 @@ export function SelectField<T extends string>({
             {t(option.label)}
           </SelectOption>
         ))}
-      </Select>
+      </ToolbarSelect>
     </div>
   );
 }

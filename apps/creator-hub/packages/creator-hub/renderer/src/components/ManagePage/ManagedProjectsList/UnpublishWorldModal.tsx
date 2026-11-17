@@ -5,7 +5,7 @@ import { useDispatch } from '#store';
 import { unpublishEntireWorld } from '/@/modules/store/management';
 import { t } from '/@/modules/store/translation/utils';
 
-import { Button } from '../../Button';
+import Button from '@ui/atoms/Button';
 import { Loader } from '../../Loader';
 import { Modal } from '../../Modals';
 
@@ -40,12 +40,15 @@ export function UnpublishWorldModal({
       actions={
         <>
           <Button
-            color="secondary"
+            variant="text"
+            className="hub-button hub-button--secondary"
             onClick={onClose}
           >
             {t('modal.cancel')}
           </Button>
           <Button
+            variant="text"
+            className="hub-button hub-button--primary"
             onClick={unpublish}
             disabled={loading}
           >

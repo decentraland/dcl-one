@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
-import { NotificationImportantIcon, CloseIcon } from '/@/components/Icons/material';
-import Button from '@ui/atoms/HubButton';
+import { NotificationImportantIcon, CloseIcon } from '@ui/atoms/icons-material';
+import Button from '@ui/atoms/Button';
 import IconButton from '@ui/atoms/IconButton';
 
 import { t } from '/@/modules/store/translation/utils';
@@ -32,11 +32,10 @@ export function NewDependencyVersion({ onClose }: { onClose: () => void }) {
           {t('snackbar.new_dependency_version.actions.update')}
         </Button>
         <IconButton
-          className="MuiIconButton-root"
           aria-label={t('modal.close')}
           onClick={onClose}
         >
-          <CloseIcon color="secondary" />
+          <CloseIcon tone="secondary" />
         </IconButton>
       </>
     ),
@@ -45,7 +44,7 @@ export function NewDependencyVersion({ onClose }: { onClose: () => void }) {
 
   return (
     <SnackbarAlert
-      icon={<NotificationImportantIcon color="secondary" />}
+      icon={<NotificationImportantIcon tone="secondary" />}
       severity="info"
       action={renderActions()}
     >

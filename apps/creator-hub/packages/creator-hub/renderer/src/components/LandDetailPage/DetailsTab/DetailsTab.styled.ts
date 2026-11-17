@@ -11,7 +11,7 @@ import styles from './DetailsTab.module.css';
 
 type InputProps = ComponentProps<typeof FormTextInput>;
 
-// A component of the old library outside this folder still builds its link from these values.
+// A component outside this folder builds its link from these values.
 type LinkTheme = {
   palette: { primary: { main: string }; info: { light: string } };
   typography: { pxToRem: (size: number) => string };

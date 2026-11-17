@@ -10,7 +10,7 @@ import { selectors as landSelectors } from '/@/modules/store/land';
 import { Lands } from '/@/lib/land';
 import { useEditor } from '/@/hooks/useEditor';
 import { useWorkspace } from '/@/hooks/useWorkspace';
-import { Button } from '/@/components/Button';
+import Button from '@ui/atoms/Button';
 import { Atlas } from '/@/components/WorldAtlas/Atlas';
 import { useMultiplayerStorage } from '/@/hooks/useMultiplayerStorage';
 import { COLORS, type Props, type Coordinate } from '../../types';
@@ -234,22 +234,20 @@ export function PublishToLand(props: Props) {
           />
           <div className={styles.warningActions}>
             <Button
-              color="secondary"
-              variant="outlined"
-              size="large"
+              variant="outline"
+              size="lg"
               fullWidth
               onClick={handleCancelWarning}
-              className={styles.cancel}
+              className={`hub-button hub-button--secondary hub-button--outlined ${styles.cancel}`}
             >
               {t('modal.publish_project.place_continuity.cancel')}
             </Button>
             <Button
-              variant="contained"
-              size="large"
+              size="lg"
               fullWidth
               disabled={isPublishing}
               onClick={handleConfirmWarning}
-              className={styles.action}
+              className={`hub-button hub-button--primary ${styles.action}`}
             >
               {t('modal.publish_project.place_continuity.confirm')}
             </Button>
@@ -297,23 +295,21 @@ export function PublishToLand(props: Props) {
             {placement && (
               <Button
                 variant="text"
-                size="small"
+                size="sm"
                 onClick={handleClearPlacement}
                 data-testid="publish-modal-publish-to-land-reset"
-                className={styles.reset}
+                className={`hub-button hub-button--primary ${styles.reset}`}
               >
                 {t('modal.publish_project.land.select_parcel.actions.reset')}
               </Button>
             )}
           </div>
           <Button
-            variant="contained"
-            color="primary"
-            size="large"
+            size="lg"
             onClick={handleNext}
             disabled={!placement || isChecking || isPublishing}
             data-testid="publish-modal-publish-to-land-action"
-            className={`${styles.publish} ${styles.action}`}
+            className={`hub-button hub-button--primary ${`${styles.publish} ${styles.action}`}`}
           >
             {isChecking
               ? t('modal.publish_project.place_continuity.checking')

@@ -1,6 +1,6 @@
 /* A snackbar alert: the card surface, white text and a centred row.
-   The clear gradient changes no colour. A centred notice can start on a part of a pixel, and the browser places
-   the edges of a surface that has a background image as the ui2 notice had them. */
+   The clear gradient changes no colour: a centred notice can start on a part of a pixel, and a surface with a
+   background image keeps its edges sharp there. */
 .alert.alert {
   align-items: center;
   border: 0;
@@ -30,12 +30,12 @@
   color: var(--dcl);
 }
 
-.alert [class~="btn"]:not([class~="Button"]) {
+.alert [class~="btn"]:not([class~="hub-button"]) {
   min-width: 64px;
 }
 
 /* The medium button of the notices: the brand fill and 0.4px between letters. */
-.alert [class~="btn--md"]:not([class~="Button"]) {
+.alert [class~="btn--md"]:not([class~="hub-button"]) {
   --brand-cta: var(--dcl);
 
   letter-spacing: 0.4px;
@@ -47,6 +47,6 @@
 }
 
 /* A button without a fill: the text button of the notices. */
-.alert [class~="btn"]:not([class~="btn--primary"]):not([class~="Button"]) {
+.alert [class~="btn"]:not([class~="btn--primary"]):not([class~="hub-button"]) {
   padding: 6px 8px;
 }

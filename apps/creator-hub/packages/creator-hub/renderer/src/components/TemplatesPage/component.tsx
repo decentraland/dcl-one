@@ -1,6 +1,5 @@
 import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { cx } from '/@/lib/cx';
 import Chip from '@ui/atoms/Chip';
 import { SelectOption } from '@ui/atoms/Select';
 import Text from '@ui/atoms/Text';
@@ -16,8 +15,7 @@ import { misc } from '#preload';
 import { Container } from '../Container';
 import { FiltersBar } from '../FiltersBar';
 import { Navbar, NavbarItem } from '../Navbar';
-import { Select } from '../Select';
-import type { SelectChangeEvent } from '../Select/component';
+import { ToolbarSelect } from '../ToolbarSelect';
 import { Title } from '../Title';
 import { TutorialsWrapper } from '../Tutorials';
 import { CreateProject } from '../Modals/CreateProject';
@@ -193,9 +191,7 @@ function Filters({
       {DIFFICULTY_FILTERS.map(filter => (
         <Chip
           key={filter.value}
-          className={cx('filter-chip', 'MuiChip-root', {
-            'MuiChip-filled': value === filter.value,
-          })}
+          className="filter-chip"
           label={t(filter.label)}
           size="medium"
           variant={value === filter.value ? 'filled' : 'outlined'}
@@ -207,15 +203,14 @@ function Filters({
 }
 
 function Sort({ value, onChange }: { value: SortBy; onChange: (value: SortBy) => void }) {
-  const handleSort = useCallback((e: SelectChangeEvent<SortBy>) => {
-    onChange(e.target.value as SortBy);
+  const handleSort = useCallback((value: SortBy) => {
+    onChange(value);
   }, []);
 
   return (
     <>
       <p>{t('templates.sort.title')}</p>
-      <Select
-        variant="standard"
+      <ToolbarSelect
         value={value}
         onChange={handleSort}
       >
@@ -231,7 +226,7 @@ function Sort({ value, onChange }: { value: SortBy; onChange: (value: SortBy) =>
         >
           {t('templates.sort.newest')}
         </SelectOption>
-      </Select>
+      </ToolbarSelect>
     </>
   );
 }

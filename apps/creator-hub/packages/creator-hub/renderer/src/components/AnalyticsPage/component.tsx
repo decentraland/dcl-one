@@ -18,8 +18,7 @@ import { FiltersBar } from '../FiltersBar';
 import { Loader } from '../Loader';
 import { Navbar, NavbarItem } from '../Navbar';
 import { Search } from '../Search';
-import { Select } from '../Select';
-import type { SelectChangeEvent } from '../Select/component';
+import { ToolbarSelect } from '../ToolbarSelect';
 import { SignInCard } from '../SignInCard';
 
 import { PlacesTable } from './PlacesTable';
@@ -59,8 +58,8 @@ export function AnalyticsPage() {
   }, [wallet, dispatch]);
 
   const handleSortChange = useCallback(
-    (e: SelectChangeEvent<SortBy>) => {
-      dispatch(placeAnalyticsActions.setSortBy(e.target.value as SortBy));
+    (value: SortBy) => {
+      dispatch(placeAnalyticsActions.setSortBy(value));
     },
     [dispatch],
   );
@@ -144,7 +143,7 @@ export function AnalyticsPage() {
                 >
                   {t('analytics.list.sort.title')}
                 </Text>
-                <Select
+                <ToolbarSelect
                   value={sortBy}
                   onChange={handleSortChange}
                 >
@@ -156,7 +155,7 @@ export function AnalyticsPage() {
                       {option.label}
                     </SelectOption>
                   ))}
-                </Select>
+                </ToolbarSelect>
                 <Search
                   placeholder={t('analytics.list.search')}
                   defaultValue={searchQuery}

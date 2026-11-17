@@ -1,6 +1,6 @@
 import React from 'react';
 import { cx } from '/@/lib/cx';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import Text from '@ui/atoms/Text';
 
 import { misc } from '#preload';

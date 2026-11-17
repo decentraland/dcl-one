@@ -13,13 +13,16 @@ const outsidePresses = new WeakSet<Event>();
 
 // Escape goes to the top layer only, and stops there: a select inside a dialog closes alone, and no other
 // Escape handler on the page (an older modal, another component kit) closes its own surface for the same key.
+// A modal top layer stops Escape also when it does not close on it: the page behind it does not get the key.
+// An Escape that ends a text composition (an input method for Chinese, Japanese or Korean) is for the field.
 function onKeyDown(event: KeyboardEvent) {
-  if (event.key !== "Escape") return;
+  if (event.key !== "Escape" || event.isComposing) return;
   const top = layers[layers.length - 1];
-  if (!top?.onEscape) return;
+  const onEscape = top?.onEscape;
+  if (!onEscape && !top?.modal) return;
   event.stopPropagation();
   event.preventDefault();
-  top.onEscape();
+  onEscape?.();
 }
 
 // A press inside a layer is also inside every layer under it, because the upper one opened from the lower one.

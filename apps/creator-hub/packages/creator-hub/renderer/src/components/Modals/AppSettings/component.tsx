@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { SettingsIcon } from '/@/components/Icons/material';
+import { SettingsIcon } from '@ui/atoms/icons-material';
 import { deepEqual as equal } from '/shared/deep-equal';
 import {
   loadEditors,

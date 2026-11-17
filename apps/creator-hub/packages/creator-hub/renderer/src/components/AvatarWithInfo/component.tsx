@@ -8,45 +8,29 @@ import { CopyToClipboard } from '/@/components/CopyToClipboard';
 import styles from './component.module.css';
 import './styles.css';
 
-export type Props = {
+type Props = {
   isLoading?: boolean;
   value: string;
   size?: AvatarFaceProps['size'];
-  icon?: React.ReactNode;
-  name?: string;
-  subtitle?: string;
 };
 
 export const AvatarWithInfo: React.FC<Props> = React.memo(
-  ({ value, isLoading: externalIsLoading, size = 'small', icon, name, subtitle }) => {
-    const skipProfile = !!icon;
-    const { avatar, isLoading: isFetchingProfile } = useProfile(skipProfile ? '' : value);
-    const isLoading = !skipProfile && (!value || externalIsLoading || isFetchingProfile);
+  ({ value, isLoading: externalIsLoading, size = 'small' }) => {
+    const { avatar, isLoading: isFetchingProfile } = useProfile(value);
+    const isLoading = !value || externalIsLoading || isFetchingProfile;
 
     if (isLoading) {
       return (
         <Row className="Avatar">
           <AvatarFace
-            className="MuiAvatar-root"
+            className={styles.face}
             size={size}
             inline
           />
           <span
-            className={`MuiSkeleton-root ${styles.skeleton}`}
+            className={styles.skeleton}
             aria-hidden="true"
           />
-        </Row>
-      );
-    }
-
-    if (icon) {
-      return (
-        <Row className="Avatar">
-          {icon}
-          <Text className="Paragraph">
-            {name && <span className="Name">{name}</span>}
-            {subtitle && <span>{subtitle}</span>}
-          </Text>
         </Row>
       );
     }
@@ -54,7 +38,7 @@ export const AvatarWithInfo: React.FC<Props> = React.memo(
     return (
       <Row className="Avatar">
         <AvatarFace
-          className="MuiAvatar-root"
+          className={styles.face}
           avatar={avatar}
           size={size}
           inline
@@ -64,7 +48,7 @@ export const AvatarWithInfo: React.FC<Props> = React.memo(
           showPopup
         >
           <Text className="Paragraph">
-            {(name ?? avatar?.name) && <span className="Name">{name ?? avatar?.name}</span>}
+            {avatar?.name && <span className="Name">{avatar.name}</span>}
             <Address
               value={value}
               shorten

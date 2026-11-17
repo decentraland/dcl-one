@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import { useSnackbar } from '/@/hooks/useSnackbar';
 import { t } from '/@/modules/store/translation/utils';
 import { type ManagedProject } from '/shared/types/manage';

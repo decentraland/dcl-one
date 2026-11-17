@@ -8,7 +8,7 @@ import { getCurrentLocale, t } from '/@/modules/store/translation/utils';
 import { getWorldDimensions } from '/@/modules/world';
 import { WorldAtlas } from '/@/components/WorldAtlas';
 
-import { Button } from '../../Button';
+import Button from '@ui/atoms/Button';
 import { LayersIcon, LayoutOutlineIcon } from '../../Icons';
 import type { RowMode } from '../../LandDetailPage/ScenesTab/SceneRow';
 import { ScenesView } from '../../LandDetailPage/ScenesTab/ScenesView';
@@ -110,9 +110,8 @@ export function ScenesTab({ worldName, mode }: Props) {
               </span>
             )}
             <Button
-              variant="contained"
-              color="secondary"
-              size="small"
+              size="sm"
+              className="hub-button hub-button--secondary"
               startIcon={<LayoutOutlineIcon />}
               aria-pressed={map}
               onClick={() => setMap(open => !open)}

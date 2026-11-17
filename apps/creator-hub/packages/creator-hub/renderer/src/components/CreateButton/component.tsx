@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import { Menu, MenuItem } from '@ui/atoms/Menu';
 import Tooltip from '@ui/atoms/Tooltip';
 import { AddIcon, FileDownloadOutlinedIcon } from '@ui/atoms/icons-material';

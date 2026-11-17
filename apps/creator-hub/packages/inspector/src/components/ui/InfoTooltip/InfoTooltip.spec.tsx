@@ -307,16 +307,16 @@ describe('InfoTooltip', () => {
       });
     });
 
-    it('should place the tooltip to the right of the trigger by default', () => {
+    it('should place the tooltip 8px to the right of the trigger by default', () => {
       const { container } = render(<InfoTooltip text="Sets the size." />);
 
       pointerEnters(container.firstElementChild!);
 
-      expect(screen.getByRole('tooltip').style.left).toBe('432px');
+      expect(screen.getByRole('tooltip').style.left).toBe('428px');
       expect(screen.getByRole('tooltip').style.top).toBe('295px');
     });
 
-    it('should place a top center tooltip above the trigger', () => {
+    it('should place a top center tooltip 8px above the trigger', () => {
       const { container } = render(
         <InfoTooltip
           text="Sets the size."
@@ -327,7 +327,7 @@ describe('InfoTooltip', () => {
       pointerEnters(container.firstElementChild!);
 
       expect(screen.getByRole('tooltip').style.left).toBe('360px');
-      expect(screen.getByRole('tooltip').style.top).toBe('258px');
+      expect(screen.getByRole('tooltip').style.top).toBe('262px');
     });
   });
 });

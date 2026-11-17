@@ -7,7 +7,7 @@ import { useProfile } from '/@/hooks/useProfile';
 import { t } from '/@/modules/store/translation/utils';
 
 import { AvatarWithInfo } from '../AvatarWithInfo';
-import { Button } from '../Button';
+import Button from '@ui/atoms/Button';
 import { Container } from '../Container';
 import { useDisplayName } from '../LandDetailPage/access/useDisplayName';
 import { EmptyState } from '../ManagePage/EmptyState';
@@ -174,15 +174,13 @@ export function DetailShell({ title, basePath, people, menu, tabs, activeTab, ch
           {draft?.dirty && (
             <>
               <Button
-                variant="contained"
-                color="secondary"
+                className="hub-button hub-button--secondary"
                 onClick={draft.onCancel}
               >
                 {t('modal.cancel')}
               </Button>
               <Button
-                variant="contained"
-                color="primary"
+                className="hub-button hub-button--primary"
                 disabled={!draft.valid}
                 onClick={draft.onSave}
               >

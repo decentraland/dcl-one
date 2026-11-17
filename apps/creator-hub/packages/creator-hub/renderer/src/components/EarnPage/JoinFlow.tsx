@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { cx } from '/@/lib/cx';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import Dialog from '@ui/atoms/Dialog';
 import IconButton from '@ui/atoms/IconButton';
 

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { cx } from '/@/lib/cx';
 
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import { Select, SelectOption } from '@ui/atoms/Select';
 import Tooltip from '@ui/atoms/Tooltip';
 

@@ -27,6 +27,8 @@ export type ToastProps = {
   /** Replaces the role: `alert` for error and warning, `status` for the rest. */
   role?: AriaRole;
   closeLabel?: string;
+  /** A new value starts the time to close again, as when the same toast is shown again. */
+  restartKey?: unknown;
   className?: string;
   children?: ReactNode;
 };
@@ -36,7 +38,7 @@ const InHost = createContext(false);
 /** A short message over the page. The time to close stops while the pointer or focus is on the toast. */
 export function Toast({
   open = true, onClose, duration = 5000, holdOnWindowBlur = false, resumeDuration, severity, variant, title, icon, action, placement = "bottom-left", role, closeLabel,
-  className, children,
+  restartKey, className, children,
 }: ToastProps) {
   const inHost = useContext(InHost);
   const close = useRef(onClose);
@@ -87,7 +89,7 @@ export function Toast({
       window.removeEventListener("blur", onAway);
       window.removeEventListener("focus", onBack);
     };
-  }, [open, duration, holdOnWindowBlur]);
+  }, [open, duration, holdOnWindowBlur, restartKey]);
 
   // A closed toast leaves the page with the pointer and focus on it: no leave event comes, and the next open starts free.
   useEffect(() => {
@@ -98,9 +100,9 @@ export function Toast({
     };
   }, [open]);
 
-  if (!open || typeof document === "undefined") return null;
+  if (typeof document === "undefined" || (inHost && !open)) return null;
 
-  const toast = (
+  const toast = open && (
     <div
       className={styles.toast + (className ? " " + className : "")}
       role={severity ? undefined : role ?? "status"}
@@ -126,10 +128,12 @@ export function Toast({
     </div>
   );
   if (inHost) return toast;
-  return createPortal(<div className={styles.viewport} data-placement={placement}>{toast}</div>, document.body);
+  // The live region stays in the page while the toast is closed: a screen reader reads a message that comes into a
+  // region it already knows, and can miss one that comes in with its region.
+  return createPortal(<div className={styles.viewport} data-placement={placement} aria-live="polite">{toast}</div>, document.body);
 }
 
-export type ToastItem = Omit<ToastProps, "open" | "placement"> & { id: string };
+export type ToastItem = Omit<ToastProps, "open" | "placement" | "restartKey"> & { id: string };
 
 export type ToastStore = {
   /** Adds a toast to the stack. Returns its id. */
@@ -181,12 +185,14 @@ export function ToastHost({ placement = "bottom-left", store, className, childre
   const items = useSyncExternalStore(store?.subscribe ?? noSubscription, store?.get ?? noItems, store?.get ?? noItems);
   if (typeof document === "undefined") return null;
   return createPortal(
-    <div className={styles.viewport + (className ? " " + className : "")} data-placement={placement}>
+    <div className={styles.viewport + (className ? " " + className : "")} data-placement={placement} aria-live="polite">
       <InHost.Provider value={true}>
         {children}
-        {items.map(({ id, onClose, ...toast }) => (
-          <Toast key={id} {...toast} onClose={(reason) => { onClose?.(reason); store?.dismiss(id); }} />
-        ))}
+        {/* Each `show` stores a new item: the same id shown again starts its time to close again. */}
+        {items.map((item) => {
+          const { id, onClose, ...toast } = item;
+          return <Toast key={id} {...toast} restartKey={item} onClose={(reason) => { onClose?.(reason); store?.dismiss(id); }} />;
+        })}
       </InHost.Provider>
     </div>,
     document.body,

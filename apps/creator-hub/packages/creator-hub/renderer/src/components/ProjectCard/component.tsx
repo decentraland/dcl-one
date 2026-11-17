@@ -1,5 +1,5 @@
 import { type MouseEvent, useCallback } from 'react';
-import Spinner from '@ui/atoms/HubSpinner';
+import Spinner from '@ui/atoms/Spinner';
 import Text from '@ui/atoms/Text';
 
 import { t } from '/@/modules/store/translation/utils';

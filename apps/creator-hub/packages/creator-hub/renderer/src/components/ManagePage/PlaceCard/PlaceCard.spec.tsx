@@ -130,7 +130,7 @@ describe('PlaceCard', () => {
         );
 
         expect(css).toMatch(/trigger[^{]*:hover/);
-        expect(css).not.toMatch(/:(hover|focus-within)\s+\.(MuiIconButton-root|[\w-]*trigger)/);
+        expect(css).not.toMatch(/:(hover|focus-within)\s+\.[\w-]*trigger/);
       });
     });
 

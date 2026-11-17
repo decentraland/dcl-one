@@ -227,6 +227,17 @@ describe('PublishToWorld', () => {
     it('should not show the load error', () => {
       expect(screen.queryByText(LOAD_ERROR)).toBeNull();
     });
+
+    it('should name each select on its own and describe both with the step description', () => {
+      const domainType = screen.getByRole('combobox', { name: 'Domain type' });
+      const worldName = screen.getByRole('combobox', { name: 'World name' });
+      const description = screen.getByText('Choose the domain where your world will be published.');
+
+      for (const select of [domainType, worldName]) {
+        expect(select.getAttribute('aria-describedby')).toBe(description.id);
+        expect(select.hasAttribute('aria-labelledby')).toBe(false);
+      }
+    });
   });
 
   describe('when the list of names is open', () => {

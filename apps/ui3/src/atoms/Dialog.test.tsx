@@ -293,6 +293,83 @@ describe("Dialog", () => {
     expect(document.body.style.overflow).toBe("");
   });
 
+  test("the page behind an open dialog is inert, and it is not once the dialog closes", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<Harness />);
+    await user.click(opener());
+
+    expect(container).toHaveAttribute("inert");
+    expect(backdrop()).not.toHaveAttribute("inert");
+
+    await user.keyboard("{Escape}");
+
+    expect(container).not.toHaveAttribute("inert");
+    expect(opener()).toHaveFocus();
+  });
+
+  test("a dialog over another makes the lower one inert and gives it back on close", async () => {
+    function Nested() {
+      const [inner, setInner] = useState(false);
+      return (
+        <Dialog open title="Outer" onClose={() => {}}>
+          <button onClick={() => setInner(true)}>Open inner</button>
+          <Dialog open={inner} title="Inner" onClose={() => setInner(false)}>Inner content</Dialog>
+        </Dialog>
+      );
+    }
+    const user = userEvent.setup();
+    const { container } = render(<Nested />);
+    const outer = () => screen.getByRole("dialog", { name: "Outer" }).parentElement as HTMLElement;
+    await user.click(screen.getByRole("button", { name: "Open inner" }));
+
+    expect(outer()).toHaveAttribute("inert");
+    expect(container).toHaveAttribute("inert");
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog", { name: "Inner" })).toBeNull();
+    expect(outer()).not.toHaveAttribute("inert");
+    expect(container).toHaveAttribute("inert");
+  });
+
+  test("the page stays inert until the last open dialog closes, whatever order they close in", () => {
+    const { container, rerender } = render(<><Dialog open title="First">One</Dialog><Dialog open title="Second">Two</Dialog></>);
+    expect(container).toHaveAttribute("inert");
+
+    rerender(<><Dialog open={false} title="First">One</Dialog><Dialog open title="Second">Two</Dialog></>);
+    expect(container).toHaveAttribute("inert");
+
+    rerender(<><Dialog open={false} title="First">One</Dialog><Dialog open={false} title="Second">Two</Dialog></>);
+    expect(container).not.toHaveAttribute("inert");
+  });
+
+  test("an element that was inert before a dialog opened stays inert after it closes", () => {
+    const outside = document.createElement("div");
+    outside.setAttribute("inert", "");
+    document.body.append(outside);
+    try {
+      const { rerender } = render(<Dialog open title="Only">Body</Dialog>);
+      rerender(<Dialog open={false} title="Only">Body</Dialog>);
+      expect(outside).toHaveAttribute("inert");
+    } finally {
+      outside.remove();
+    }
+  });
+
+  test("Escape in a dialog that does not close on it does not reach the page behind", async () => {
+    const page = vi.fn();
+    document.addEventListener("keydown", page);
+    try {
+      const user = await openDialog({ closable: false });
+      await user.keyboard("{Escape}");
+
+      expect(dialog()).toBeInTheDocument();
+      expect(page).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener("keydown", page);
+    }
+  });
+
   test("a bare dialog draws only its children", async () => {
     await openDialog({ bare: true, "aria-label": "Preview", subtitle: "Hidden subtitle" });
 

@@ -1,9 +1,9 @@
 import { useCallback, useState, useEffect, useRef } from 'react';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import IconButton from '@ui/atoms/IconButton';
-import Spinner from '@ui/atoms/HubSpinner';
+import Spinner from '@ui/atoms/Spinner';
 import Text from '@ui/atoms/Text';
-import { SignalWifiOffIcon, RefreshIcon, CloseIcon } from '/@/components/Icons/material';
+import { SignalWifiOffIcon, RefreshIcon, CloseIcon } from '@ui/atoms/icons-material';
 
 import { t } from '/@/modules/store/translation/utils';
 import { useConnectionStatus } from '/@/hooks/useConnectionStatus';

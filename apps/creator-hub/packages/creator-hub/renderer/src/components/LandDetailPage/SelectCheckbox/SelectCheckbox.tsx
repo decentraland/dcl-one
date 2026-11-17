@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, InputHTMLAttributes, ReactNode } from 'react';
 import { cx } from '/@/lib/cx';
-import { CheckIcon } from '/@/components/Icons/material';
+import { CheckIcon } from '@ui/atoms/icons-material';
 
 import styles from './SelectCheckbox.module.css';
 

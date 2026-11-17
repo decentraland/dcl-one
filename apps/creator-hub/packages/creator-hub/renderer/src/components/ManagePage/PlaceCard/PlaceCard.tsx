@@ -6,7 +6,7 @@ import { t } from '/@/modules/store/translation/utils';
 import FallbackThumbnail from '/assets/images/scene-thumbnail-fallback.png';
 import type { LandPlace } from '/shared/types/manage';
 
-import { Button } from '../../Button';
+import Button from '@ui/atoms/Button';
 import { Dropdown } from '../../Dropdown';
 import type { Option } from '../../Dropdown';
 import { MapPinIcon, ScenesIcon } from '../../Icons';
@@ -89,9 +89,8 @@ export function PlaceCard(props: Props) {
           <div className={styles.emptyThumbnail}>
             {t('manage.cards.no_scene.title')}
             <Button
-              variant="contained"
-              color="secondary"
-              size="large"
+              size="lg"
+              className="hub-button hub-button--secondary"
               onClick={props.onViewScenes}
             >
               {t('manage.cards.no_scene.view_scenes')}

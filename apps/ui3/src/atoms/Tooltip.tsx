@@ -45,6 +45,8 @@ type TooltipProps = {
   align?: TooltipAlign;
   /** Put the tip edge that faces the anchor, and the edge the tip starts at on the other axis, on a whole device pixel. Needs `keepInViewport`. */
   snap?: boolean;
+  /** Distance between the tip and the anchor, in pixels. */
+  gap?: number;
 };
 
 type TipPosition = { left: number; top: number; side?: TooltipSide; ready?: boolean };
@@ -60,14 +62,14 @@ function toDevicePixel(value: number): number {
   return Math.round(value * ratio) / ratio;
 }
 
-function placeInViewport(side: TooltipSide, rect: DOMRect, width: number, height: number, align: TooltipAlign = "center"): TipPosition {
+function placeInViewport(side: TooltipSide, rect: DOMRect, width: number, height: number, align: TooltipAlign, gap: number): TipPosition {
   const maxLeft = window.innerWidth - EDGE - width;
   const maxTop = window.innerHeight - EDGE - height;
   const along = (start: number, length: number, own: number) =>
     align === "start" ? start : align === "end" ? start + length - own : start + length / 2 - own / 2;
   const at = (s: TooltipSide) => ({
-    left: s === "right" ? rect.right + GAP : s === "left" ? rect.left - GAP - width : along(rect.left, rect.width, width),
-    top: s === "bottom" ? rect.bottom + GAP : s === "top" ? rect.top - GAP - height : along(rect.top, rect.height, height),
+    left: s === "right" ? rect.right + gap : s === "left" ? rect.left - gap - width : along(rect.left, rect.width, width),
+    top: s === "bottom" ? rect.bottom + gap : s === "top" ? rect.top - gap - height : along(rect.top, rect.height, height),
   });
   const fits = (s: TooltipSide) => {
     const p = at(s);
@@ -81,7 +83,7 @@ function placeInViewport(side: TooltipSide, rect: DOMRect, width: number, height
 export default function Tooltip({
   label, content, shortcut, side = "right", className, tipClassName, children, portal = false,
   open: openProp, onOpenChange, anchor, interactive = false, maxWidth, keepInViewport = false, closeOnScroll = false,
-  disabled = false, bare = false, arrow = false, enterDelay, labelChild = false, align = "center", snap = false,
+  disabled = false, bare = false, arrow = false, enterDelay, labelChild = false, align = "center", snap = false, gap = GAP,
 }: TooltipProps) {
   const ref = useRef<HTMLSpanElement>(null);
   const tipRef = useRef<HTMLSpanElement>(null);
@@ -198,7 +200,7 @@ export default function Tooltip({
       if (keepInViewport) {
         const tip = tipRef.current?.getBoundingClientRect();
         if (!tip) return;
-        const place = placeInViewport(side, rect, tip.width, tip.height, align);
+        const place = placeInViewport(side, rect, tip.width, tip.height, align, gap);
         setPosition(snap ? {
           ...place,
           left: place.side === "left" ? toDevicePixel(place.left + tip.width) - tip.width : toDevicePixel(place.left),
@@ -206,9 +208,9 @@ export default function Tooltip({
         } : place);
         return;
       }
-      setPosition(side === "right" ? { left: rect.right + 12, top: rect.top + rect.height / 2 }
-        : side === "left" ? { left: rect.left - 12, top: rect.top + rect.height / 2 }
-        : { left: rect.left + rect.width / 2, top: side === "top" ? rect.top - 12 : rect.bottom + 12 });
+      setPosition(side === "right" ? { left: rect.right + gap, top: rect.top + rect.height / 2 }
+        : side === "left" ? { left: rect.left - gap, top: rect.top + rect.height / 2 }
+        : { left: rect.left + rect.width / 2, top: side === "top" ? rect.top - gap : rect.bottom + gap });
     };
     measure();
     window.addEventListener("scroll", measure, true);
@@ -221,14 +223,19 @@ export default function Tooltip({
       resize?.disconnect();
       if (keepInViewport) setPosition(UNPLACED);
     };
-  }, [floating, open, side, align, anchored, anchor, keepInViewport, snap]);
+  }, [floating, open, side, align, anchored, anchor, keepInViewport, snap, gap]);
 
   const placed = (keepInViewport && position.side) || side;
   const transform = side === "right" ? "translateY(-50%)" : side === "left" ? "translate(-100%, -50%)" : side === "top" ? "translate(-50%, -100%)" : "translateX(-50%)";
   const fixed: CSSProperties | undefined = !floating ? undefined
     : keepInViewport ? { position: "fixed", left: position.left, top: position.top, right: "auto", bottom: "auto", transform: "none", opacity: 1, visibility: position.ready ? undefined : "hidden" }
     : { position: "fixed", left: position.left, top: position.top, right: "auto", bottom: "auto", transform, opacity: 1 };
-  const style = maxWidth === undefined ? fixed : ({ ...fixed, "--tt-max-width": maxWidth + "px" } as CSSProperties);
+  // The tip in the page (not floating) is placed by the stylesheet, which reads the gap from `--tt-gap`.
+  const style = maxWidth === undefined && gap === GAP ? fixed : ({
+    ...fixed,
+    ...(maxWidth === undefined ? null : { "--tt-max-width": maxWidth + "px" }),
+    ...(gap === GAP ? null : { "--tt-gap": gap + "px" }),
+  } as CSSProperties);
   const tipClass = "tt__tip tt__tip--" + placed
     + (content !== undefined ? " tt__tip--rich" : "")
     + (maxWidth !== undefined ? " tt__tip--wrap" : "")

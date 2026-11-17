@@ -7,12 +7,11 @@ import { SortBy } from '/shared/types/projects';
 import { t } from '/@/modules/store/translation/utils';
 import { useWorkspace } from '/@/hooks/useWorkspace';
 
-import { Button } from '../Button';
+import Button from '@ui/atoms/Button';
 import { Column } from '../Column';
 import { FiltersBar } from '../FiltersBar';
 import { Row } from '../Row';
-import { Select } from '../Select';
-import type { SelectChangeEvent } from '../Select/component';
+import { ToolbarSelect } from '../ToolbarSelect';
 import { Projects } from './Projects';
 import type { Props } from './types';
 
@@ -30,16 +29,15 @@ export function SceneList({ projects, sortBy, onSort }: Props) {
   );
 
   const handleDropdownChange = useCallback(
-    (e: SelectChangeEvent<SortBy>) => {
-      sort(e.target.value as SortBy);
+    (value: SortBy) => {
+      sort(value);
     },
     [sort],
   );
 
   const renderSortDropdown = () => {
     return (
-      <Select
-        variant="standard"
+      <ToolbarSelect
         value={sortBy}
         onChange={handleDropdownChange}
       >
@@ -61,7 +59,7 @@ export function SceneList({ projects, sortBy, onSort }: Props) {
         >
           {t('scene_list.sort.size')}
         </SelectOption>
-      </Select>
+      </ToolbarSelect>
     );
   };
 
@@ -72,18 +70,18 @@ export function SceneList({ projects, sortBy, onSort }: Props) {
           <Text variant="h3">{t('scene_list.my_scenes')}</Text>
           <Row className="actions">
             <Button
-              className="action-button import-button"
+              variant="text"
+              className="hub-button hub-button--secondary action-button import-button"
               startIcon={<i className="icon import-icon" />}
-              color="secondary"
               data-testid="scene-list-import-button"
               onClick={importProject}
             >
               {t('scene_list.import_scene')}
             </Button>
             <Button
-              className="action-button templates-button"
+              variant="text"
+              className="hub-button hub-button--primary action-button templates-button"
               startIcon={<i className="icon template-icon" />}
-              color="primary"
               data-testid="scene-list-templates-button"
               onClick={() => navigate('/templates')}
             >

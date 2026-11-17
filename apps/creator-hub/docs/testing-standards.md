@@ -456,7 +456,6 @@ runs ever hit this.
 
 ### Wait out the install `Backdrop` before driving the inspector iframe
 
-The app shows a backdrop over a freshly created scene while it installs (`Snackbar/component.tsx`;
-the element keeps the `MuiBackdrop-root` class name). It swallows clicks routed to the in-iframe file
-input. Gate on
-`.MuiBackdrop-root:visible` reaching count 0 instead.
+The app shows a backdrop over a freshly created scene while it installs (`Snackbar/component.tsx`,
+test id `install-backdrop`). It swallows clicks routed to the in-iframe file input. Gate on
+`[data-testid="install-backdrop"]:visible` reaching count 0 instead.

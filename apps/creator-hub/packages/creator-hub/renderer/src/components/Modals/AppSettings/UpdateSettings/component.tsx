@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import Button from '@ui/atoms/HubButton';
+import Button from '@ui/atoms/Button';
 import Text from '@ui/atoms/Text';
-import { InfoOutlinedIcon as InfoOutlined } from '/@/components/Icons/material';
+import { InfoOutlinedIcon as InfoOutlined } from '@ui/atoms/icons-material';
 import { t } from '/@/modules/store/translation/utils';
 import { useDispatch, useSelector } from '#store';
 import { checkForUpdates, downloadUpdate, installUpdate } from '/@/modules/store/settings/slice';
@@ -15,7 +15,8 @@ interface UpdateButtonProps {
   action: () => void;
   text: string;
   disabled?: boolean;
-  color: 'primary' | 'secondary' | 'inherit';
+  /** `progress` is the disabled button that shows the download. */
+  look: 'primary' | 'neutral' | 'progress';
 }
 
 export const UpdateSettings: React.FC<{ className?: string; autoCheck?: boolean }> = ({
@@ -74,7 +75,7 @@ export const UpdateSettings: React.FC<{ className?: string; autoCheck?: boolean 
         action: () => {},
         text: t('editor.loading.title'),
         disabled: true,
-        color: 'secondary',
+        look: 'neutral',
       };
     }
 
@@ -83,7 +84,7 @@ export const UpdateSettings: React.FC<{ className?: string; autoCheck?: boolean 
         action: () => {},
         text: t('modal.app_settings.update.downloading', { progress }),
         disabled: true,
-        color: 'inherit',
+        look: 'progress',
       };
     }
 
@@ -91,7 +92,7 @@ export const UpdateSettings: React.FC<{ className?: string; autoCheck?: boolean 
       return {
         action: handleCheckForUpdates,
         text: t('modal.app_settings.update.check'),
-        color: 'secondary',
+        look: 'neutral',
       };
     }
 
@@ -103,14 +104,14 @@ export const UpdateSettings: React.FC<{ className?: string; autoCheck?: boolean 
       return {
         action: updateInfo.isDownloaded ? handleInstallUpdate : handleDownloadUpdate,
         text: buttonText,
-        color: 'primary',
+        look: 'primary',
       };
     }
 
     return {
       action: handleCheckForUpdates,
       text: t('modal.app_settings.update.check'),
-      color: 'secondary',
+      look: 'neutral',
     };
   }, [
     checkForUpdatesStatus,
@@ -197,8 +198,8 @@ export const UpdateSettings: React.FC<{ className?: string; autoCheck?: boolean 
       <div className="update-settings__button-area">
         <Button
           variant="primary"
-          tone={buttonProps.color === 'primary' ? undefined : 'neutral'}
-          data-color={buttonProps.color}
+          tone={buttonProps.look === 'primary' ? undefined : 'neutral'}
+          className={buttonProps.look === 'progress' ? 'update-settings__progress' : undefined}
           onClick={buttonProps.action}
           disabled={buttonProps.disabled}
           fullWidth
