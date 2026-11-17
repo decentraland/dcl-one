@@ -119,10 +119,6 @@
     "primitives": 0,
     "tokens": 18
   },
-  "apps/ui3/src/web/pages/StCreatorHubDownloadSuccess.module.css": {
-    "primitives": 0,
-    "tokens": 38
-  },
   "apps/ui3/src/web/pages/siteshome.css": {
     "primitives": 22,
     "tokens": 0

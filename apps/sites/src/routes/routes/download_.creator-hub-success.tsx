@@ -1,6 +1,9 @@
 import { useEffect, useRef } from "react";
 
-import StCreatorHubDownloadSuccess from "@ui/web/pages/StCreatorHubDownloadSuccess";
+import { DownloadSuccess } from "@dcl/one-ui/apps/sites/download/DownloadSuccess";
+import SitesChrome from "@ui/web/frames/SitesChrome";
+
+import { CREATOR_HUB_RELEASES, CREATOR_HUB_STEPS } from "@/features/download/creator-hub-steps";
 
 import { loadDownloadFixture, resolveDownload } from "@/core/lib/landings/creator-hub-download.server";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
@@ -29,5 +32,22 @@ export default function CreatorHubDownloadSuccessRoute({ loaderData }: Route.Com
     fired.current = true;
     track("lp_creatorhub_download_success", { os }, { sid, story: STORY });
   }, [sid, os]);
-  return <StCreatorHubDownloadSuccess os={os} retryUrl={retryUrl} />;
+  const steps = CREATOR_HUB_STEPS[os === "windows" ? "windows" : "macos"];
+  return (
+    <SitesChrome active="none" overlayNav>
+      <DownloadSuccess
+        title="You're almost done!"
+        subtitle="Open the file you just downloaded to finish installing Decentraland and start creating"
+        stepsLabel="Install steps"
+        stepLabel={(n) => `Step ${n}`}
+        steps={steps}
+        footerLines={[
+          {
+            text: (link) => <>Trouble with the download? Let&apos;s try that again: {link}</>,
+            link: { label: "Download Decentraland Creator Hub", href: retryUrl || CREATOR_HUB_RELEASES },
+          },
+        ]}
+      />
+    </SitesChrome>
+  );
 }
