@@ -7,17 +7,13 @@
 // | a video whose source fails twice plays after two reopens        | guest, on the loopback realm | the scene built; web       |
 // | a video whose source always fails gives up after five reopens   | guest, on the loopback realm | the scene built; web       |
 //
-// Each scenario's own loopback realm (`driver/realm.ts`) serves `scenes/video` at its own parcel
-// and answers 503 to the first GETs of its media files: `recover.webm` twice, `broken.webm` every
-// time. The scene logs `video <name> state=<VideoState>` on every reported change, read through
-// `/scene_logs` after `/set_scene` points the scene commands at it, and `/media_state` gives each
-// player's reopen count, last state and last error. The count restarts after 5 s of playback.
-// `/media_retry_delay 100` shortens the schedule to 0.1 to 1.6 s for every source failing from then
-// on; failures before a scenario issues it wait the default 2 s, then 4 s. `retryFailures` counts
-// every failure, so the checks do not depend on when the delay applies. Each scenario closes its
-// client, so the short delay and the looping video end with it. Only the web backend reopens
-// (native FFmpeg ends at its first error), so on the standalone both are todos. One video plays at
-// a time, the nearest: the spawn is nearest `recover`, and the second scenario walks to `broken`.
+// Each scenario boots a guest on a loopback realm of its own (`driver/realm.ts`) that serves
+// `scenes/video` and answers 503 to the first GETs of its media files: `recover.webm` twice,
+// `broken.webm` every time. It sets `/media_retry_delay 100`, points the scene commands at the
+// scene with `/set_scene`, and reads the scene's `video <name> state=<VideoState>` lines through
+// `/scene_logs` and each player's reopen state through `/media_state`; the failure checks use
+// `retryFailures`, which does not depend on when the delay was set. The second scenario walks to
+// `broken` first. Each scenario closes its client. Web only: on the standalone both are todos.
 // Build the scene first: `pnpm run build-scenes video`.
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
@@ -36,7 +32,7 @@ const FIRST_DELAY_MS = 100
 /** The longest wait: a first failure before the delay is shortened (2 s), the shortened rest
  *  (3.1 s), the scene's boot and each load, with room for a slow runner. */
 const GIVE_UP_TIMEOUT_MS = 60_000
-/** 5 s of playback restart the count; the looped 2 s file loses a moment at each loop. */
+/** The wait for the reopen count to restart once the recover screen plays. */
 const RESTART_TIMEOUT_MS = 20_000
 /** The scene's base parcel, `0,26`, in DCL world metres. */
 const BASE = { x: 0, z: 26 * 16 }
@@ -57,8 +53,8 @@ try {
 const recoverHash = contentHash(await readFile(path.join(SCENE_DIR, 'assets', 'recover.webm')))
 const brokenHash = contentHash(await readFile(path.join(SCENE_DIR, 'assets', 'broken.webm')))
 
-/** A realm and session of a scenario's own, so its failure counts start from zero whatever ran
- *  before. An ephemeral port: the visual realm holds the configured one in the same process. */
+/** A realm, with failure counts of its own, and a guest session on it for one scenario, on an
+ *  ephemeral port. */
 async function realmFor(name: string): Promise<{ server: RealmServer; session: ScenarioOptions['session'] }> {
   const server = await serveRealm({
     scenes: scene ? [scene] : [],
@@ -104,8 +100,7 @@ scenario(
   async ({ explorer, restore }) => {
     restore(() => explorer.setScene())
     await prepare(explorer)
-    // a new player is paused until it is chosen to play, so a failure in that window reports
-    // VS_ERROR before the reopen's VS_LOADING: only the outcome is checked
+    // checks the outcome only: a VS_ERROR logged before VS_PLAYING is allowed
     await until(() => explorer.sceneLogs(100), (lines) => stateLines(lines, 'recover').some((line) => line.endsWith('state=VS_PLAYING')), {
       timeoutMs: GIVE_UP_TIMEOUT_MS,
       what: 'the recover screen to log VS_PLAYING'
@@ -136,8 +131,7 @@ scenario(
     assert.equal(row.retryFailures, 1 + MAX_REOPENS, `the broken screen failed ${row.retryFailures} times, not one open and five reopens`)
     const gets = BROKEN.server.contentGets.get(brokenHash) ?? 0
     assert.ok(gets >= 1 + MAX_REOPENS, `broken.webm was requested ${gets} times, fewer than one open and five reopens`)
-    // the reopens report VS_LOADING and only the give-up ends on VS_ERROR (a VS_ERROR before the
-    // walk is a failure while paused)
+    // waits for the logged give-up, then checks that VS_LOADING was logged before it
     const logs = await until(() => explorer.sceneLogs(200), (lines) => stateLines(lines, 'broken').at(-1)?.endsWith('state=VS_ERROR') ?? false, {
       timeoutMs: 10_000,
       what: 'the broken screen to log its give-up'

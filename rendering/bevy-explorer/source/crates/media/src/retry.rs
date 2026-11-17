@@ -22,7 +22,7 @@ pub fn first_reopen_delay() -> Duration {
     Duration::from_millis(FIRST_REOPEN_DELAY_MS.load(Ordering::Relaxed))
 }
 
-/// Sets [`first_reopen_delay`] (`/media_retry_delay`); later waits double from it.
+/// Sets [`first_reopen_delay`]; later waits double from it.
 pub fn set_first_reopen_delay(delay: Duration) {
     FIRST_REOPEN_DELAY_MS.store(delay.as_millis() as u64, Ordering::Relaxed);
 }
@@ -96,7 +96,7 @@ impl MediaRetry {
     }
 }
 
-/// A source's reopen state, for the `/media_state` rows.
+/// A source's reopen state.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct MediaRetryStatus {
     /// Reopens since the source last played for [`HEALTHY_PLAYBACK`].

@@ -16,9 +16,9 @@ import { Vector3 } from '@dcl/sdk/math'
  *
  * Two planes facing the spawn, each playing (looped) one file of `assets/` into its own basic
  * material: `recover` (`assets/recover.webm`, at (5, 2, 8)), nearest the spawn, and `broken`
- * (`assets/broken.webm`, at (11, 2, 15)), nearest (11, 0, 12). With one video playing at a time,
- * the nearer screen plays. Each logs `video <name> state=<VideoState name>` whenever its reported
- * state changes, and `video ready` once both exist.
+ * (`assets/broken.webm`, at (11, 2, 15)), nearest (11, 0, 12). Each logs
+ * `video <name> state=<VideoState name>` whenever its reported state changes, and `video ready`
+ * once both exist.
  */
 
 function screen(name: string, src: string, x: number, z: number): Entity {

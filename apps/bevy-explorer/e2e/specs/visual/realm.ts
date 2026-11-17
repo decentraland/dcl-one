@@ -1,6 +1,5 @@
 // The one loopback realm of the specs under this folder: every scene of `scenes/dcl-workspace.json`
-// but `video`, which `specs/media-retry.test.ts` serves from a realm of its own, built and served
-// at its own parcel. `visualRealm()` starts it once per process, on the realm
+// but `video`, built and served at its own parcel. `visualRealm()` starts it once per process, on the realm
 // port, and registers its close for the end of the run; the spec files share the process
 // (`--test-isolation=none`), so a second server on that port would fail.
 import path from 'node:path'

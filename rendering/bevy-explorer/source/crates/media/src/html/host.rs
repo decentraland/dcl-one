@@ -43,7 +43,7 @@ extern "C" {
     #[wasm_bindgen(method, getter)]
     fn live(this: &AttachedSource) -> bool;
 
-    /// The source plays through hls.js, which reports its own failures to `on_fatal`.
+    /// The source plays through hls.js.
     #[wasm_bindgen(method, getter)]
     fn hls(this: &AttachedSource) -> bool;
 }
@@ -191,8 +191,8 @@ struct Source {
     retry: Cell<MediaRetry>,
     /// Failures counted since the source was created.
     failures: Cell<u32>,
-    /// The source has played as a live stream: its end is a dropped feed even once the browser
-    /// gives it a finite duration.
+    /// The source has played as a live stream; stays set after a detach and after its duration
+    /// turns finite.
     was_live: Cell<bool>,
     last_error: Cell<Option<&'static str>>,
     /// Failed and not playable since: the element's own states are not reported.
@@ -308,7 +308,7 @@ impl Source {
                     self.id
                 );
                 self.reopen_on_play.set(true);
-                // a failed source left attached could still raise canplay and clear the above
+                // detached: the failed source raises no further events
                 self.suspend();
                 self.send_state(VideoState::VsError);
                 self.send_retry(None);
@@ -321,7 +321,7 @@ impl Source {
             }
             RetryStep::GiveUp => {
                 warn!("media {}: {error}; giving up", self.id);
-                // buffered media would otherwise go on playing and drawing over the cleared screen
+                // stops the buffered media before the screen is cleared
                 self.media.pause().report();
                 self.detach();
                 self.send_state(VideoState::VsError);
@@ -331,9 +331,8 @@ impl Source {
         }
     }
 
-    /// The source can play. The count restarts only once it has played long enough
-    /// ([`Self::played`]). Never runs while a reopen is scheduled (the state filter drops that
-    /// `canplay`); the cancel is a guard.
+    /// The source can play: cancels a scheduled reopen and seeks to the pending position. The
+    /// count restarts only once it has played long enough ([`Self::played`]).
     fn opened(&self) {
         if self.is_live() {
             self.was_live.set(true);
@@ -543,8 +542,7 @@ impl HostMedia {
         media.set_onerror(Some(&register({
             let source = source.clone();
             Box::new(move || {
-                // with hls.js attached, engine.js handles the element's error and reports it to
-                // `on_fatal`
+                // ignored while hls.js is attached: only `on_fatal` counts its failures
                 if !source.uses_hls() {
                     source.fail(media_error_label(&source.media));
                 }
@@ -556,8 +554,8 @@ impl HostMedia {
                 if source.failed.get() {
                     return;
                 }
-                // a live stream only ends when its feed drops; hls.js knows when a playlist
-                // ended for good (`EXT-X-ENDLIST`), the element alone only that it was live
+                // the end of a live source counts as a failure; under hls.js liveness is the
+                // attached source's current one, otherwise whether the source was ever live
                 let live = if source.uses_hls() {
                     source.is_live()
                 } else {
@@ -568,7 +566,7 @@ impl HostMedia {
                     return;
                 }
                 source.send_state(VideoState::VsPaused);
-                // `play()` on an ended element restarts it: only the engine may ask
+                // cleared so a gesture does not restart the ended element
                 source.wants_play.set(false);
                 source.clear_screen();
             })
@@ -599,9 +597,8 @@ impl HostMedia {
                 self.source.wants_play.set(true);
                 self.source.paused.set(false);
                 if self.source.reopen_on_play.get() && self.source.timeout.get().is_none() {
-                    // the scene last saw VsError; the reopen waits out the rest of the current
-                    // delay since the last failure or reopen, so toggling playback cannot reopen
-                    // faster than the schedule
+                    // reports VsLoading and reopens once the current delay has passed since the
+                    // last failure or reopen
                     let elapsed = js_sys::Date::now() - self.source.last_attempt_at.get();
                     let delay =
                         reopen_delay(first_reopen_delay(), self.source.retry.get().attempts())

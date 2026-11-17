@@ -131,7 +131,7 @@ fn serve_av_sources(mut sources: ResMut<AvSources>, mut receiver: ResMut<MediaEv
                 duration,
             } => {
                 if let Some(source) = sources.0.get_mut(&id) {
-                    // an element without a source (not loaded yet, or detached) has no duration
+                    // a NaN duration (no source attached) is not recorded
                     if !duration.is_nan() && source.duration != duration {
                         source.duration = duration;
                         source.send_info();

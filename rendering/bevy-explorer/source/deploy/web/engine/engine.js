@@ -315,7 +315,7 @@ export async function initEngine() {
 
     function attachHls() {
       hls = new Hls();
-      // a recovery that fails again at once would otherwise loop without reaching `onFatal`
+      // at most one in-place recovery per interval; any other error goes to `onFatal`
       const RECOVERY_INTERVAL_MS = 10000;
       let lastRecovery = -Infinity;
       const mayRecover = () => {
@@ -344,7 +344,7 @@ export async function initEngine() {
           onFatal(data.type);
         }
       });
-      // hls.js only logs the element's error (a decode error), so it is handled as a media error
+      // the element's own error is handled like an hls.js media error
       onElementError = () => {
         if (destroyed) return;
         if (manifestParsed && mayRecover()) {
