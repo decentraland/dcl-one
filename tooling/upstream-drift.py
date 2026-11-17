@@ -2,8 +2,10 @@
 """The pinned sources of the Explorer against their upstreams.
 
 The pinned sources are every rendering/bevy-explorer/patches/<name>/source.toml (an upstream commit
-and the patch series this repository keeps on it) and every git source of
-rendering/bevy-explorer/source/Cargo.lock. Nothing here writes a tracked file.
+and the patch series this repository keeps on it) and every other git source of
+rendering/bevy-explorer/source/Cargo.lock. The lock takes each patched source from this repository:
+that entry has no upstream of its own, and the source.toml names the one to watch. Nothing here
+writes a tracked file.
 
 `check [NAME ...]` asks GitHub, per source (every source, or the named ones), how many commits the
 watched ref has past the pinned commit: the `ref` of source.toml, the branch or tag the lock names,
@@ -41,7 +43,9 @@ PIN = ROOT / 'rendering/bevy-explorer'
 CACHE = ROOT / '.cache/upstream-drift'
 API_CACHE = CACHE / 'api'
 DATA = CACHE / 'data.json'
-USER_AGENT = 'dcl-one upstream-drift (https://github.com/decentraland/dcl-one)'
+# Where Cargo takes the patched sources from: MIRROR of tooling/patched-sources.py.
+REPOSITORY = 'https://github.com/decentraland/dcl-one'
+USER_AGENT = f'dcl-one upstream-drift ({REPOSITORY})'
 EXPLORER = 'decentraland/bevy-explorer'
 
 
@@ -177,10 +181,19 @@ def harvest_reasons(manifest_text, urls):
     return reasons
 
 
+def canonical(url):
+    """A git URL without what GitHub does not read, as `pins` of tooling/patched-sources.py compares it."""
+    url = url.lower()
+    while url.endswith(('/', '.git')):
+        url = url.removesuffix('/').removesuffix('.git')
+    return url
+
+
 def pinned_sources(pin=PIN):
-    """The patched sources, then the git sources the lock keeps with the manifests' reasons."""
+    """The patched sources, then the other git sources the lock keeps with the manifests' reasons."""
     source_dir = pin / 'source'
-    locked = lock_git_sources((source_dir / 'Cargo.lock').read_text(encoding='utf-8'))
+    locked = [source for source in lock_git_sources((source_dir / 'Cargo.lock').read_text(encoding='utf-8'))
+              if canonical(source['upstream']) != canonical(REPOSITORY)]
     reasons = harvest_reasons('\n'.join(m.read_text(encoding='utf-8') for m in manifests(source_dir) if m.exists()),
                               {s['upstream'] for s in locked})
     for source in locked:

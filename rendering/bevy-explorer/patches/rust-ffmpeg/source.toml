@@ -8,5 +8,6 @@ license    = "WTFPL"
 paths      = ["."]
 exclude    = []
 base_tree  = "cc8e9fe1be3ed49b686ce8dcb226b540b95f06c1"
-tree       = "f3ac38881507cdf5a7f7a989428a497effd216bc"
+tree       = "b4fad481e5833efdcdc3142816623c8a609da0e8"
+rev        = "44b05f2e3e9b2dd5729beae8e5f9decb2e347523"
 nix_hash   = "sha256-nYSBlqgeE+hU+3X9t0qUivSo/ZGiVHwcQ7Y1duNQvSc="

@@ -2047,19 +2047,26 @@ mod bounds_tests {
         held_readiness: bool,
         selected_transport: bool,
     ) {
-        use crate::gatekeeper::admission::cluster::{
-            ClusterConfig, fence::PulseAdmissionStamp, safety::SafetyStore,
-        };
+        use crate::gatekeeper::admission::cluster::{ClusterConfig, fence::PulseAdmissionStamp};
         use crate::gatekeeper::bus::InProcessBus;
         use crate::interfaces::test_support::{StubDirectory, StubPolicy, StubScenes};
-        use crate::protocol::pulse::decentraland::pulse::{PeerClusterSnapshot, PendingTakeover};
+        use crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot;
         use prost::Message as _;
         let pool = crate::db::scratch::pool(4).await.unwrap();
         let wallet = format!("0x00000000{}", uuid::Uuid::new_v4().simple());
         let session = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let store = SafetyStore::unfenced_test(pool.clone());
-        let safety = store.snapshot(&wallet).await.unwrap();
-        assert!(safety.generation > 0);
+        // Seed the admission fence under the pool's statement budget. The
+        // safety store's 1.5 s budget is the writer's to exercise; a shared
+        // database stall during fixture setup must not fail the case before it
+        // starts.
+        let (generation, token_floor): (i64, i64) = sqlx::query_as(
+            "INSERT INTO social.island_admission_fences(wallet) VALUES ($1) RETURNING generation,token_floor",
+        )
+        .bind(&wallet)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((generation, token_floor), (1, 0));
         let token_fence = fenced.then(|| TokenFence {
             audience: "queued-committed-fence".into(),
             lane: "realm".into(),
@@ -2086,8 +2093,8 @@ mod bounds_tests {
             pending_takeovers: vec![],
         };
         let mut stamp = PulseAdmissionStamp::from_snapshot(&plan, 0).unwrap();
-        stamp.safety_generation = safety.generation;
-        stamp.safety_token_floor = safety.token_floor;
+        stamp.safety_generation = generation as u64;
+        stamp.safety_token_floor = token_floor as u64;
         let bus = Arc::new(InProcessBus::new());
         bus.respond_to_requests(Arc::new(move |_, _| Ok(plan.encode_to_vec())));
         let gatekeeper = Arc::new(
@@ -2216,21 +2223,20 @@ mod bounds_tests {
                 .unwrap();
             }
             "hazard" => {
-                let op = PendingTakeover {
-                    takeover_id: "queued".into(),
-                    displaced_session: session.into(),
-                    displaced_cluster_id: "old".into(),
-                    displaced_realm: "realm".into(),
-                };
-                store
-                    .prepare_takeover(&wallet, "other-source", session, &op)
-                    .await
-                    .unwrap();
-                store
-                    .begin_takeover(&wallet, "other-source", &op, 0)
-                    .await
-                    .unwrap()
-                    .unwrap();
+                // The rows `SafetyStore::prepare_takeover` and `begin_takeover`
+                // leave for a fresh wallet: an open takeover receipt, its
+                // dispatched cleanup, and two fence generation advances.
+                let dispatch = uuid::Uuid::new_v4();
+                let mut tx = pool.begin().await.unwrap();
+                sqlx::query("INSERT INTO social.island_cleanup_dispatches(dispatch_id,wallet,purpose,pulse_source,pulse_takeover_id,room_name,participant_identity,cutoff,fence_generation,phase,state) VALUES ($1,$2,'pulse_takeover','other-source','queued',$3,$2,floor(extract(epoch FROM timezone('UTC',clock_timestamp())))::bigint+5,$4,'initial','dispatched')")
+                    .bind(dispatch).bind(&wallet).bind(crate::rooms::island_room_name("old")).bind(generation + 2)
+                    .execute(&mut *tx).await.unwrap();
+                sqlx::query("INSERT INTO social.island_takeover_receipts(wallet,source_incarnation,takeover_id,predecessor_session,predecessor_cluster,predecessor_realm,last_successor_session,latest_dispatch) VALUES ($1,'other-source','queued',$2,'old','realm',$2,$3)")
+                    .bind(&wallet).bind(session).bind(dispatch)
+                    .execute(&mut *tx).await.unwrap();
+                sqlx::query("UPDATE social.island_admission_fences SET generation=generation+2,updated_at=timezone('UTC',clock_timestamp()) WHERE wallet=$1")
+                    .bind(&wallet).execute(&mut *tx).await.unwrap();
+                tx.commit().await.unwrap();
             }
             "revision" => {
                 sqlx::query("UPDATE social.archipelago_v4_assignments SET assignment_revision=assignment_revision+1 WHERE owner_address=$1").bind(&wallet).execute(&pool).await.unwrap();

@@ -242,6 +242,25 @@ class ConfigurationTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertFalse(any("64m" in body for regex, body in regexes if regex.search(path)))
 
+    def test_badges_asset_cap_matches_the_route_limit(self):
+        source = (Path(__file__).parents[3] / "services/catalyst/social/src/badges/mod.rs").read_text()
+        expr = re.search(r"const MAX_ASSET_BODY_BYTES: usize = ([^;]+);", source)[1]
+        self.assertRegex(expr, r"^[\d\s*]+$")
+        self.assertEqual(gateway.BADGES_ASSET_CAP, f"{eval(expr) // (1024 * 1024)}m")
+        _, regexes = self.worlds_locations()
+        body = next(body for regex, body in regexes if regex.search("/badges/assets/traveler/starter/2d/normal.png"))
+        self.assertIn(f"client_max_body_size {gateway.BADGES_ASSET_CAP};", body)
+        # public reads share no upload budget: only PUTs are keyed
+        self.assertNotIn("deploy_uploads", body)
+        self.assertIn("limit_conn badge_asset_uploads", body)
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        text = gateway.render({"sites": [], "internal": [], "node": [], "aliases": [], "deploy": []},
+                              cfg, "/mime.types")
+        self.assertIn('map $request_method $badge_asset_upload_key { PUT $binary_remote_addr; default ""; }', text)
+        self.assertIn("limit_conn_zone $badge_asset_upload_key zone=badge_asset_uploads:10m;", text)
+        self.assertFalse(any(regex.search("/x/badges/assets/a.png") for regex, _ in regexes
+                             if f"client_max_body_size {gateway.BADGES_ASSET_CAP};" in _))
+
     def test_the_content_deploy_cap_reaches_the_apps_route_limit(self):
         root = Path(__file__).parents[3] / "services/catalyst"
         source = (root / "content/src/create_entity.rs").read_text()

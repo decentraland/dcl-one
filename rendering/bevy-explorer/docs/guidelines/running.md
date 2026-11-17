@@ -26,6 +26,9 @@ to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` 
 `source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs; there
 `CEF_PATH` takes a Windows path, and `just` runs from Git Bash (see [Platforms](platforms.md#native)).
 
+With Nix, `nix develop .#explorer` from the repository root has the tools and libraries of this
+loop on Linux and macOS, and one Cargo build directory for every worktree (see `source/readme.md`).
+
 ### Gateway routing
 
 For a deployment serving the APIs on one origin, run `just native-debug --gateway https://example.org`.
@@ -78,10 +81,10 @@ pinned Rust, protoc, CEF and platform libraries, including `CEF_PATH`. With thos
 
 ```sh
 sh scripts/gen-ts-bindings.sh
-corepack pnpm@11.27.0 --dir react-web install --frozen-lockfile --ignore-scripts
-corepack pnpm@11.27.0 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
-corepack pnpm@11.27.0 --dir react-web/bridge-scene --filter @dcl/hashing build
-corepack pnpm@11.27.0 --dir react-web run bundle:native
+corepack pnpm@12.21.0 --dir react-web install --frozen-lockfile --ignore-scripts
+corepack pnpm@12.21.0 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
+corepack pnpm@12.21.0 --dir react-web/bridge-scene --filter @dcl/hashing build
+corepack pnpm@12.21.0 --dir react-web run bundle:native
 cargo build --release --locked --package dcl_deno_ipc
 cargo build --release --locked
 ```

@@ -18,21 +18,52 @@ const css = [
 let session: Awaited<ReturnType<typeof openSession>>;
 let startup: ReturnType<typeof openSession> | undefined;
 const startupController = new AbortController();
+// This suite runs beside every other Sites test file. On a loaded CI runner some launches of
+// Chrome stayed alive without writing their DevTools port for the whole 30-second limit, at times
+// after every other test file had finished. A launch that is not ready within openSession's start
+// limit is stopped and replaced, up to START_ATTEMPTS launches in all; only the browser start is
+// repeated, never an assertion. Any other startup failure, such as a browser that exits, fails at
+// once.
+const START_ATTEMPTS = 3;
+const START_LIMIT_MS = 30_000;
+// Per launch: the port file, up to 10 seconds each for the DevTools endpoint and socket, and up to
+// 7 seconds of teardown.
+const START_BUDGET_MS = START_ATTEMPTS * (START_LIMIT_MS + 27_000);
+
+async function startBrowser(signal: AbortSignal) {
+  const executable = await findBrowser([
+    process.env.BROWSER_PATH,
+    process.env.CHROME_PATH,
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium",
+  ]);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await openSession(executable, {
+        signal,
+        startTimeoutMs: START_LIMIT_MS,
+      });
+    } catch (error) {
+      if (
+        signal.aborted ||
+        attempt === START_ATTEMPTS ||
+        (error as Error).message !== "Capture browser did not start"
+      )
+        throw error;
+      // openSession has already stopped this browser and printed its startup diagnostics.
+      console.warn(
+        `Capture browser launch ${attempt} of ${START_ATTEMPTS} was not ready; launching another`,
+      );
+    }
+  }
+}
+
 // Teardown also owns a startup that outlives this fixture's integration budget.
 beforeAll(async () => {
-  startup = (async () =>
-    openSession(
-      await findBrowser([
-        process.env.BROWSER_PATH,
-        process.env.CHROME_PATH,
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        "/usr/bin/google-chrome",
-        "/usr/bin/chromium",
-      ]),
-      { signal: startupController.signal },
-    ))();
+  startup = startBrowser(startupController.signal);
   session = await startup;
-}, 40_000);
+}, START_BUDGET_MS + 10_000);
 afterAll(async () => {
   startupController.abort(new Error("Header geometry fixture disposed"));
   const opened = await startup?.catch(() => undefined);

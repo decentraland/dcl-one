@@ -55,9 +55,8 @@ for (const Field of [InputExplorerNames, SharedWebField]) {
       await user.click(screen.getByRole('button', { name: 'Show password' }))
       expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'text')
       expect(screen.getByLabelText('Password')).toHaveValue('secret')
-      expect(screen.getByRole('button', { name: 'Hide password' })).toHaveAttribute(
-        'aria-pressed',
-        'true'
+      expect(screen.getByRole('button', { name: 'Hide password' })).not.toHaveAttribute(
+        'aria-pressed'
       )
       expect(submit).not.toHaveBeenCalled()
     })

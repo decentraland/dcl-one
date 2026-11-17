@@ -185,7 +185,7 @@
   },
   "library/ui/components/InputField/InputField.module.css": {
     "primitives": 0,
-    "tokens": 38
+    "tokens": 42
   },
   "library/ui/components/JumpInCTA/JumpInCTA.module.css": {
     "primitives": 0,
@@ -237,6 +237,6 @@
   },
   "library/ui/components/TabsBar/TabsBar.module.css": {
     "primitives": 0,
-    "tokens": 5
+    "tokens": 23
   }
 }
