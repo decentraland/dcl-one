@@ -54,6 +54,7 @@ pub mod nametag;
 pub mod npc_dynamics;
 pub mod point_at_ik;
 pub mod point_at_marker;
+pub mod spring_bones;
 mod two_bone_ik;
 
 #[cfg(test)]
