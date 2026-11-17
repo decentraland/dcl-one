@@ -269,7 +269,16 @@ pub(crate) struct GltfProcessing {
 
 #[derive(Deserialize)]
 struct DclNodeExtras {
+    dcl_collider_mask: Option<u32>,
     dcl_collision_mask: Option<u32>,
+}
+
+impl DclNodeExtras {
+    /// ADR-215 reserves `dcl_collider_mask`; a model that carries `dcl_collision_mask` keeps
+    /// its mask.
+    fn collider_mask(&self) -> Option<u32> {
+        self.dcl_collider_mask.or(self.dcl_collision_mask)
+    }
 }
 
 #[derive(Component)]
@@ -1078,7 +1087,7 @@ impl NodeProcessing<'_, '_> {
             // try mesh node first
             let collider_bits = maybe_extras
                 .and_then(|extras| serde_json::from_str::<DclNodeExtras>(&extras.value).ok())
-                .and_then(|extras| extras.dcl_collision_mask)
+                .and_then(|extras| extras.collider_mask())
                 .or_else(|| {
                     // then try parent node
                     gltf_spawned_entities
@@ -1088,8 +1097,8 @@ impl NodeProcessing<'_, '_> {
                         .and_then(|extras| {
                             serde_json::from_str::<DclNodeExtras>(&extras.value).ok()
                         })
-                        .map(|extras| extras.dcl_collision_mask)
-                        .unwrap_or({
+                        .and_then(|extras| extras.collider_mask())
+                        .or({
                             //fall back to container-specified default
                             if is_collider || is_trigger {
                                 definition.0.invisible_meshes_collision_mask.or(

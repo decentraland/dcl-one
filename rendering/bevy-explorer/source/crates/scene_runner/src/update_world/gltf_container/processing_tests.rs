@@ -455,3 +455,124 @@ fn a_model_with_nothing_to_process_does_not_wait_behind_one_in_progress() {
     assert!(is_processed(&app, empty));
     assert!(!is_processed(&app, busy));
 }
+
+/// Gives the spawned node named `name` a mesh: only a mesh gets a collider.
+fn give_mesh(app: &mut App, name: &str) {
+    let triangle = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_POSITION,
+        vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+    );
+    let mesh = app.world_mut().resource_mut::<Assets<Mesh>>().add(triangle);
+    let node = node(app, name);
+    app.world_mut().entity_mut(node).insert(Mesh3d(mesh));
+}
+
+/// Gives the spawned node named `name` the glTF extras `json`.
+fn give_extras(app: &mut App, name: &str, json: &str) {
+    let node = node(app, name);
+    app.world_mut().entity_mut(node).insert(GltfExtras {
+        value: json.to_owned(),
+    });
+}
+
+/// The mask of the collider processing gave the node named `name`.
+fn collider_mask(app: &mut App, name: &str) -> Option<u32> {
+    let node = node(app, name);
+    app.world()
+        .get::<MeshCollider<CtCollider>>(node)
+        .map(|collider| collider.collision_mask)
+}
+
+#[test]
+fn a_meshs_collider_mask_extra_is_its_colliders_mask() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    spawn_container(&mut app, root, &["group", "floor_collider"]);
+    // spawned whole, not processed: no context yet
+    app.update();
+    give_mesh(&mut app, "floor_collider");
+    give_extras(&mut app, "floor_collider", r#"{"dcl_collider_mask":256}"#);
+    give_context(&mut app, root);
+
+    app.update();
+
+    assert_eq!(collider_mask(&mut app, "floor_collider"), Some(256));
+}
+
+#[test]
+fn a_mesh_without_the_extra_takes_its_parents_collider_mask() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    spawn_container(&mut app, root, &["group", "floor_collider"]);
+    // spawned whole, not processed: no context yet
+    app.update();
+    give_mesh(&mut app, "floor_collider");
+    give_extras(&mut app, "group", r#"{"dcl_collider_mask":256}"#);
+    give_context(&mut app, root);
+
+    app.update();
+
+    assert_eq!(collider_mask(&mut app, "floor_collider"), Some(256));
+}
+
+#[test]
+fn the_extra_spelled_collision_mask_is_read_too() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    spawn_container(&mut app, root, &["group", "floor_collider"]);
+    // spawned whole, not processed: no context yet
+    app.update();
+    give_mesh(&mut app, "floor_collider");
+    give_extras(&mut app, "floor_collider", r#"{"dcl_collision_mask":256}"#);
+    give_context(&mut app, root);
+
+    app.update();
+
+    assert_eq!(collider_mask(&mut app, "floor_collider"), Some(256));
+}
+
+#[test]
+fn a_mesh_naming_its_mask_both_ways_gets_the_collider_mask_one() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    spawn_container(&mut app, root, &["group", "floor_collider"]);
+    // spawned whole, not processed: no context yet
+    app.update();
+    give_mesh(&mut app, "floor_collider");
+    give_extras(
+        &mut app,
+        "floor_collider",
+        r#"{"dcl_collider_mask":256,"dcl_collision_mask":512}"#,
+    );
+    give_context(&mut app, root);
+
+    app.update();
+
+    assert_eq!(collider_mask(&mut app, "floor_collider"), Some(256));
+}
+
+#[test]
+fn a_parent_with_other_extras_leaves_the_containers_mask() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    let (container, _) = spawn_container(&mut app, root, &["group", "wall"]);
+    let pointer_only = ColliderLayer::ClPointer as u32;
+    app.world_mut()
+        .get_mut::<GltfDefinition>(container)
+        .expect("the container")
+        .0
+        .visible_meshes_collision_mask = Some(pointer_only);
+    // spawned whole, not processed: no context yet
+    app.update();
+    give_mesh(&mut app, "wall");
+    give_extras(&mut app, "group", r#"{"author":"someone"}"#);
+    give_context(&mut app, root);
+
+    app.update();
+
+    assert_eq!(collider_mask(&mut app, "wall"), Some(pointer_only));
+}
