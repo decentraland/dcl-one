@@ -363,6 +363,11 @@ mod tests {
         for metadata in [
             json!({ "signer": crate::gatekeeper::auth::SCENE_SIGNER }),
             json!({ "Signer": crate::gatekeeper::auth::SCENE_SIGNER }),
+            json!({ "signer": " decentraland-kernel-scene" }),
+            json!({ "signer": "Decentraland-Kernel-Scene" }),
+            json!({ "signer": 1 }),
+            json!({ "signer": true }),
+            json!({ "signer": {} }),
         ] {
             let headers = owner.headers(&metadata.to_string()).await;
             let refused = refresh_bounded(

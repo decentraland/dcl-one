@@ -1136,11 +1136,19 @@ async fn the_scene_adapter_mints_for_a_clean_wallet_and_refuses_platform_and_sce
 async fn the_scene_adapter_refuses_the_scene_signer() {
     let state = lazy_state(Settings::for_tests());
     let key = random_key();
-    for metadata in [
-        r#"{"signer":"decentraland-kernel-scene","realmName":"main","sceneId":"bafkreiscene"}"#,
-        r#"{"Signer":"decentraland-kernel-scene","realmName":"main","sceneId":"bafkreiscene"}"#,
+    let target = serde_json::json!({ "realmName": "main", "sceneId": "bafkreiscene" });
+    for (key_name, signer) in [
+        ("signer", serde_json::json!("decentraland-kernel-scene")),
+        ("Signer", serde_json::json!("decentraland-kernel-scene")),
+        ("signer", serde_json::json!(" decentraland-kernel-scene")),
+        ("signer", serde_json::json!("Decentraland-Kernel-Scene")),
+        ("signer", serde_json::json!(1)),
+        ("signer", serde_json::json!(true)),
+        ("signer", serde_json::json!({})),
     ] {
-        let headers = signed(&key, "post", "/get-scene-adapter", metadata).await;
+        let mut metadata = target.clone();
+        metadata[key_name] = signer;
+        let headers = signed(&key, "post", "/get-scene-adapter", &metadata.to_string()).await;
         let err = handlers::get_scene_adapter(
             State(state.clone()),
             at("/get-scene-adapter"),
@@ -1171,7 +1179,9 @@ async fn the_scene_adapter_room_comes_from_signed_metadata_not_the_body() {
             r#"{"realm":{"serverName":"main"},"sceneId":"bafkreisigned"}"#,
             401,
         ),
+        (r#"{"realmName":"","sceneId":"bafkreisigned"}"#, 401),
         (r#"{"realmName":"main"}"#, 400),
+        (r#"{"realmName":"main","sceneId":""}"#, 400),
     ];
     for (metadata, code) in cases {
         let headers = signed(&key, "post", "/get-scene-adapter", metadata).await;
