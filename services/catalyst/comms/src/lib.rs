@@ -9,6 +9,10 @@
 //! envelope (`worlds_envelope`), the switch a side write asks (`writes`) and
 //! the worlds signed-fetch verifier (`signed_fetch`).
 
+// Production routes go through `shared::routing` (comms/clippy.toml); test routers may use axum's.
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
 pub(crate) use catalyst_content as content;
