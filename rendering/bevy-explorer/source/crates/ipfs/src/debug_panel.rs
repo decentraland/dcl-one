@@ -26,7 +26,7 @@ impl Plugin for WebRequestsDebugPanelPlugin {
                         "Content files answered as missing for the session",
                         "missingForSession",
                     ),
-                    ("Failed loads checked against the cache", "cacheChecks"),
+                    ("Cache entries checked after a failed load", "cacheChecks"),
                     ("Cached entries dropped for bad bytes", "cacheDrops"),
                     #[cfg(not(target_arch = "wasm32"))]
                     ("IPFS connection failures (native)", "connectFailed"),
