@@ -338,7 +338,7 @@ pub(super) enum Outgoing {
         message: Message,
         stamp: crate::gatekeeper::admission::cluster::fence::PulseAdmissionStamp,
         token_fence: TokenFence,
-        owner: V4Owner,
+        permit: crate::archipelago::registry::ControlPositionPermit,
     },
     Kick(Message),
 }
@@ -686,7 +686,7 @@ pub(super) async fn send_outgoing(
     if socket.queue.peer_close.is_cancelled() {
         return false;
     }
-    let (message, assignment, pulse_admission, island_token_fence, fence) = match outgoing {
+    let (message, assignment, pulse_admission, island_token_fence, permit) = match outgoing {
         Outgoing::Kick(message) => {
             socket.queue.terminal(Terminal::Kick(message));
             return !socket.queue.peer_close.is_cancelled();
@@ -697,8 +697,8 @@ pub(super) async fn send_outgoing(
             message,
             stamp,
             token_fence,
-            owner,
-        } => (message, true, Some(stamp), Some(token_fence), Some(owner)),
+            permit,
+        } => (message, true, Some(stamp), Some(token_fence), Some(permit)),
     };
     if let Message::Close(frame) = &message {
         socket.queue.terminal(Terminal::Close(
@@ -709,15 +709,7 @@ pub(super) async fn send_outgoing(
         ));
         return !socket.queue.peer_close.is_cancelled();
     }
-    let fence_bound = fence.is_some();
-    let permit = fence.as_ref().and_then(|owner| {
-        socket.state.registry.control_position_permit(
-            &owner.address,
-            &owner.session,
-            owner.epoch,
-            false,
-        )
-    });
+    let fence_bound = island_token_fence.is_some();
     let mut frame = Some(Frame {
         message,
         owner: owner.cloned(),
@@ -1005,6 +997,14 @@ async fn write_frame<S: Sink<Message> + Unpin>(
         if !frame_authorized(frame, state).await {
             return FrameWrite::Dropped;
         }
+        let generation = if let Some(stamp) = frame.pulse_admission.as_ref() {
+            match state.gatekeeper.generation_grant(stamp).await {
+                Ok(grant) => grant,
+                Err(_) => return FrameWrite::Dropped,
+            }
+        } else {
+            None
+        };
         // Reading can queue an automatic control reply during authorization.
         // If readiness was lost, discard this unstarted frame; only assignment
         // frames have a reconciliation retry. Never loop remote authorization.
@@ -1022,6 +1022,14 @@ async fn write_frame<S: Sink<Message> + Unpin>(
                 || pending.terminal.is_some()
                 || state.restart.is_cancelled()
             {
+                return;
+            }
+            if generation.as_ref().is_some_and(|grant| {
+                frame
+                    .pulse_admission
+                    .as_ref()
+                    .is_none_or(|stamp| !grant.consume(stamp))
+            }) {
                 return;
             }
             pending.write_phase = WritePhase::Active;
@@ -2008,20 +2016,57 @@ mod bounds_tests {
             durable_writer_case(change, true, true).await;
         }
     }
+    #[tokio::test]
+    async fn durable_selected_transport_delivery_retains_exact_binding_and_socket_generation() {
+        if !durable_writer_pg_available() {
+            return;
+        }
+        for held_readiness in [false, true] {
+            for change in [
+                "unchanged",
+                "binding-detached",
+                "binding-revision",
+                "same-session",
+                "revision",
+                "epoch",
+                "token",
+                "generation",
+                "floor",
+                "hazard",
+            ] {
+                durable_writer_case_with_binding(change, true, held_readiness, true).await;
+            }
+        }
+    }
     async fn durable_writer_case(change: &str, fenced: bool, held_readiness: bool) {
-        use crate::gatekeeper::admission::cluster::{
-            ClusterConfig, fence::PulseAdmissionStamp, safety::SafetyStore,
-        };
+        durable_writer_case_with_binding(change, fenced, held_readiness, false).await;
+    }
+    async fn durable_writer_case_with_binding(
+        change: &str,
+        fenced: bool,
+        held_readiness: bool,
+        selected_transport: bool,
+    ) {
+        use crate::gatekeeper::admission::cluster::{ClusterConfig, fence::PulseAdmissionStamp};
         use crate::gatekeeper::bus::InProcessBus;
         use crate::interfaces::test_support::{StubDirectory, StubPolicy, StubScenes};
-        use crate::protocol::pulse::decentraland::pulse::{PeerClusterSnapshot, PendingTakeover};
+        use crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot;
         use prost::Message as _;
         let pool = crate::db::scratch::pool(4).await.unwrap();
         let wallet = format!("0x00000000{}", uuid::Uuid::new_v4().simple());
         let session = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let store = SafetyStore::new(pool.clone());
-        let safety = store.snapshot(&wallet).await.unwrap();
-        assert!(safety.generation > 0);
+        // Seed the admission fence under the pool's statement budget. The
+        // safety store's 1.5 s budget is the writer's to exercise; a shared
+        // database stall during fixture setup must not fail the case before it
+        // starts.
+        let (generation, token_floor): (i64, i64) = sqlx::query_as(
+            "INSERT INTO social.island_admission_fences(wallet) VALUES ($1) RETURNING generation,token_floor",
+        )
+        .bind(&wallet)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((generation, token_floor), (1, 0));
         let token_fence = fenced.then(|| TokenFence {
             audience: "queued-committed-fence".into(),
             lane: "realm".into(),
@@ -2048,8 +2093,8 @@ mod bounds_tests {
             pending_takeovers: vec![],
         };
         let mut stamp = PulseAdmissionStamp::from_snapshot(&plan, 0).unwrap();
-        stamp.safety_generation = safety.generation;
-        stamp.safety_token_floor = safety.token_floor;
+        stamp.safety_generation = generation as u64;
+        stamp.safety_token_floor = token_floor as u64;
         let bus = Arc::new(InProcessBus::new());
         bus.respond_to_requests(Arc::new(move |_, _| Ok(plan.encode_to_vec())));
         let gatekeeper = Arc::new(
@@ -2064,7 +2109,7 @@ mod bounds_tests {
                 Arc::new(crate::presence::Presence::new()),
                 Arc::new(StubDirectory::default()),
             )
-            .with_cluster(ClusterConfig {
+            .with_cluster_for_test(ClusterConfig {
                 nats_url: Some("nats://fixture".into()),
                 control_v4_audience: token_fence.as_ref().map(|fence| fence.audience.clone()),
                 ..Default::default()
@@ -2081,7 +2126,7 @@ mod bounds_tests {
         )
         .await
         .unwrap();
-        let (owner, _events) = if fenced {
+        let (owner, _events) = if fenced && !selected_transport {
             state.registry.on_v4_peer_connected_with_realm_epoch(
                 &wallet,
                 session,
@@ -2096,12 +2141,21 @@ mod bounds_tests {
         let queue = Arc::new(Queue::default());
         let mut credential = frame(Some(owner.clone()), true);
         credential.message = Message::Binary(vec![9].into());
-        credential.pulse_admission = Some(stamp);
+        credential.pulse_admission = Some(stamp.clone());
         if fenced {
             credential.fence_bound = change != "missing-fence-bound";
-            credential.permit = state
-                .registry
-                .control_position_permit(&wallet, session, 7, false);
+            credential.permit = if selected_transport {
+                state.registry.bind_selected_realm(
+                    &wallet,
+                    &owner,
+                    token_fence.clone().unwrap(),
+                    stamp.clone(),
+                )
+            } else {
+                state
+                    .registry
+                    .control_position_permit(&wallet, session, 7, false)
+            };
             if change != "missing-fence" {
                 credential.island_token_fence = token_fence.clone();
             }
@@ -2142,6 +2196,20 @@ mod bounds_tests {
             assert!(wire.lock().messages.is_empty());
         }
         match change {
+            "binding-detached" => state.registry.detach_selected_realm(&owner),
+            "binding-revision" => {
+                let mut next = token_fence.clone().unwrap();
+                next.assignment_revision += 1;
+                assert!(
+                    state
+                        .registry
+                        .bind_selected_realm(&wallet, &owner, next, stamp.clone())
+                        .is_some()
+                );
+            }
+            "same-session" => {
+                state.registry.on_peer_connected(&wallet, session);
+            }
             "generation" => {
                 sqlx::query("UPDATE social.island_admission_fences SET generation=generation+1 WHERE wallet=$1").bind(&wallet).execute(&pool).await.unwrap();
             }
@@ -2155,21 +2223,20 @@ mod bounds_tests {
                 .unwrap();
             }
             "hazard" => {
-                let op = PendingTakeover {
-                    takeover_id: "queued".into(),
-                    displaced_session: session.into(),
-                    displaced_cluster_id: "old".into(),
-                    displaced_realm: "realm".into(),
-                };
-                store
-                    .prepare_takeover(&wallet, "other-source", session, &op)
-                    .await
-                    .unwrap();
-                store
-                    .begin_takeover(&wallet, "other-source", &op, 0)
-                    .await
-                    .unwrap()
-                    .unwrap();
+                // The rows `SafetyStore::prepare_takeover` and `begin_takeover`
+                // leave for a fresh wallet: an open takeover receipt, its
+                // dispatched cleanup, and two fence generation advances.
+                let dispatch = uuid::Uuid::new_v4();
+                let mut tx = pool.begin().await.unwrap();
+                sqlx::query("INSERT INTO social.island_cleanup_dispatches(dispatch_id,wallet,purpose,pulse_source,pulse_takeover_id,room_name,participant_identity,cutoff,fence_generation,phase,state) VALUES ($1,$2,'pulse_takeover','other-source','queued',$3,$2,floor(extract(epoch FROM timezone('UTC',clock_timestamp())))::bigint+5,$4,'initial','dispatched')")
+                    .bind(dispatch).bind(&wallet).bind(crate::rooms::island_room_name("old")).bind(generation + 2)
+                    .execute(&mut *tx).await.unwrap();
+                sqlx::query("INSERT INTO social.island_takeover_receipts(wallet,source_incarnation,takeover_id,predecessor_session,predecessor_cluster,predecessor_realm,last_successor_session,latest_dispatch) VALUES ($1,'other-source','queued',$2,'old','realm',$2,$3)")
+                    .bind(&wallet).bind(session).bind(dispatch)
+                    .execute(&mut *tx).await.unwrap();
+                sqlx::query("UPDATE social.island_admission_fences SET generation=generation+2,updated_at=timezone('UTC',clock_timestamp()) WHERE wallet=$1")
+                    .bind(&wallet).execute(&mut *tx).await.unwrap();
+                tx.commit().await.unwrap();
             }
             "revision" => {
                 sqlx::query("UPDATE social.archipelago_v4_assignments SET assignment_revision=assignment_revision+1 WHERE owner_address=$1").bind(&wallet).execute(&pool).await.unwrap();

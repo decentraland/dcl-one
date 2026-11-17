@@ -358,8 +358,10 @@ fn main(@builtin(global_invocation_id) original_invocation_id: vec3<u32>, @built
     let original_ray = normalize(ray);
     var initial_y = original_ray.y;
     let scene_bands = max(max(nishita.scene_zenith.a, nishita.scene_horizon.a), max(nishita.scene_nadir.a, nishita.scene_rim.a));
+    // a scene's nadir colour replaces the ground fade below the horizon
+    let lower_authored = nishita.scene_nadir.a > 0.0;
     // the store below blends fully to black at and under -0.5: nothing to evaluate
-    if initial_y <= -0.5 && scene_bands == 0.0 {
+    if initial_y <= -0.5 && !lower_authored {
         textureStore(
             image,
             vec2<i32>(invocation_id.xy),
@@ -383,7 +385,8 @@ fn main(@builtin(global_invocation_id) original_invocation_id: vec3<u32>, @built
 
     let multiplier = 1.0 + saturate(nishita.dir_light_intensity / 11000.0);
 
-    if nishita.dir_light_intensity > 0.0 {
+    // at and under -0.5 an authored lower sky is the scene's colours alone
+    if nishita.dir_light_intensity > 0.0 && initial_y > -0.5 {
         render_base = render_nishita(
             ray,
             nishita.ray_origin,
@@ -405,12 +408,12 @@ fn main(@builtin(global_invocation_id) original_invocation_id: vec3<u32>, @built
 
     }
 
-    let disc_ray = select(ray, original_ray, scene_bands > 0.0);
+    let disc_ray = select(ray, original_ray, lower_authored);
 
     // Each missing band retains the procedural color in that direction.
     // Authored colors also feed ambient lighting when an image replaces the visible sky.
     if scene_bands > 0.0 {
-        let fallback = render_base * smoothstep(-0.5, 0.0, initial_y);
+        let fallback = select(render_base, render_base * smoothstep(-0.5, 0.0, initial_y), lower_authored);
         let pole_weight = smoothstep(0.0, 1.0, abs(initial_y));
         let pole = select(nishita.scene_nadir, nishita.scene_zenith, initial_y >= 0.0);
         let horizon_weight = (1.0 - pole_weight) * nishita.scene_horizon.a;
@@ -457,10 +460,10 @@ fn main(@builtin(global_invocation_id) original_invocation_id: vec3<u32>, @built
     let angle = nishita.scene_cloud_rotation;
     let cloud_ray = vec3<f32>(cos(angle) * ray.x - sin(angle) * ray.z, ray.y, sin(angle) * ray.x + cos(angle) * ray.z);
     var render = render_cloud(render_base, vec3<f32>(0.0), cloud_ray);
-    if initial_y < 0.0 && scene_bands > 0.0 {
+    if initial_y < 0.0 && lower_authored {
         render = vec4<f32>(render_base, 0.0);
     }
-    let ground_fade = (1.0 - smoothstep(-0.5, 0.0, initial_y)) * (1.0 - scene_bands);
+    let ground_fade = (1.0 - smoothstep(-0.5, 0.0, initial_y)) * (1.0 - nishita.scene_nadir.a);
     let store_value = mix(render.rgb, vec3(0.0), ground_fade);
 
     textureStore(
