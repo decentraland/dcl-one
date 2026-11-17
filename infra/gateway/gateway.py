@@ -105,7 +105,9 @@ def upstream(value):
 def site_prefixes(files):
     prefixes = set()
     for name in files:
-        parts = re.sub(r"\.tsx?$", "", name).split(".")
+        # A bracketed segment is literal (robots[.]txt.ts serves /robots.txt): its dots do not split.
+        stem = re.sub(r"\[([^\]]*)\]", lambda m: m.group(1).replace(".", "\0"), re.sub(r"\.tsx?$", "", name))
+        parts = [part.replace("\0", ".") for part in stem.split(".")]
         if parts[0].startswith(("$", "_")):
             continue
         parts = parts[:2] if parts[0] == "api" else parts[:1]
@@ -323,7 +325,8 @@ def render(table, cfg, mime):
         locations += location("= /cast", proxy("sites")) if prefix == "/cast" else pair(prefix, "sites")
     for path in ("/", "/favicon.ico", "/dcl-sdk-types.json", "/docs/index.md", "/_root.data",
                  "/terms", "/privacy", "/content-policy", "/ethics", "/rewards", "/rewards-terms",
-                 "/referral", "/referral-terms", "/credits-terms", "/security", "/brand"):
+                 "/creator-fund-terms", "/referral", "/referral-terms", "/credits-terms", "/security",
+                 "/brand"):
         locations += location("= " + path, proxy("sites"))
     # The Content Policy page on the apex host; on every other host (peer., worlds., content.)
     # /content stays the content server's.

@@ -52,11 +52,11 @@ function heading(level: number, text: string): string {
   return `${prefix}${clean(text)}`;
 }
 
-function bulletList(items: string[]): string {
+function bulletList(items: string[], ordered = false): string {
   return items
     .map((i) => clean(i))
     .filter((i) => i.length > 0)
-    .map((i) => `- ${i}`)
+    .map((i, n) => `${ordered ? `${n + 1}.` : "-"} ${i}`)
     .join("\n");
 }
 
@@ -225,8 +225,8 @@ function legalBlockToMarkdown(block: AgentLegalBlock): string {
   const type = block.type;
   if (type === "h3") return heading(3, reactNodeToMarkdown(block.content ?? block.heading));
   if (type === "h4") return heading(4, reactNodeToMarkdown(block.content ?? block.heading));
-  if (type === "ul") {
-    return bulletList((block.items ?? []).map(reactNodeToMarkdown));
+  if (type === "ul" || type === "ol") {
+    return bulletList((block.items ?? []).map(reactNodeToMarkdown), type === "ol");
   }
   const text = clean(reactNodeToMarkdown(block.content ?? block.heading ?? ""));
   return text;
