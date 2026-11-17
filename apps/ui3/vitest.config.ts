@@ -23,8 +23,9 @@ export default defineConfig({
     // harness imports resolve to ui3's copies.
     dedupe: ["viem", "react", "react-dom", "@noble/curves", "@noble/hashes", "@testing-library/react", "@testing-library/user-event", "@testing-library/dom", "@testing-library/jest-dom"],
   },
-  // The HUD UI lives outside this app; its assets load through the dev server like ui3's own.
-  server: { fs: { allow: [".", fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url)), fileURLToPath(new URL("../../library/explorer-core", import.meta.url))] } },
+  // The HUD UI and the Sites assets (the bar's wordmark) live outside this app; their assets load through the dev
+  // server like ui3's own.
+  server: { fs: { allow: [".", fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url)), fileURLToPath(new URL("../../library/explorer-core", import.meta.url)), fileURLToPath(new URL("../../library/ui/apps/sites/assets", import.meta.url))] } },
   plugins: [react()],
   test: {
     environment: "jsdom",

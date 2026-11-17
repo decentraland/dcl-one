@@ -540,6 +540,17 @@ async fn dispatch(state: &CommsState, event: &ValidatedEvent) -> Result<(), ApiE
             .await?;
         }
         EventKind::ParticipantJoined(participant) => {
+            // A revoked Cast key's publisher token stays valid for its TTL:
+            // refuse it on join. Logged, never a webhook failure.
+            if let Err(error) = super::streaming::cast::refuse_revoked_publisher(
+                state,
+                &participant.room,
+                &participant.identity,
+            )
+            .await
+            {
+                tracing::warn!(room = %participant.room, ?error, "cast join guard failed");
+            }
             if let Some(call_id) = private_call_id_from_room_name(&participant.room) {
                 handle_private_participant_joined(state, &participant.voice_address, call_id)
                     .await?;

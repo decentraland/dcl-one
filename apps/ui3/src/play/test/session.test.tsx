@@ -110,7 +110,7 @@ describe('session domain', () => {
       await waitFor(() => expect(driver.launches).toHaveLength(1))
       expect(h.session().phase).toBe('entering')
       expect(driver.launches[0]).toEqual(['http://127.0.0.1:8000', '0,0'])
-      expect(fetchSpy).toHaveBeenCalledWith('http://127.0.0.1:8000/about')
+      expect(fetchSpy).toHaveBeenCalledWith('http://127.0.0.1:8000/about', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     } finally {
       fetchSpy.mockRestore()
       history.replaceState(null, '', url.pathname + url.search)
@@ -175,7 +175,7 @@ describe('session domain', () => {
         })
       )
       expect(driver.launches).toHaveLength(0)
-      expect(fetchSpy).toHaveBeenCalledWith('https://worlds-content-server.decentraland.org/world/nope.dcl.eth/about')
+      expect(fetchSpy).toHaveBeenCalledWith('https://worlds-content-server.decentraland.org/world/nope.dcl.eth/about', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     } finally {
       fetchSpy.mockRestore()
       history.replaceState(null, '', url.pathname + url.search)
@@ -368,6 +368,18 @@ describe('embedded auto-boot (?guest=1 / ?systemScene=)', () => {
     // No exploreAsGuest() call in the test — the flag alone drives it. With no
     // URL destination it lands in the lobby (a positioned embed skips that too).
     await waitFor(() => expect(h.session().phase).toBe('lobby'))
+  })
+
+  it('offers the boot guest no Sign Out: a reload would only sign it in again', async () => {
+    window.history.replaceState(null, '', '/?guest=1')
+    const h = renderSession({ userId: null })
+    await waitFor(() => expect(h.session().phase).toBe('lobby'))
+    // once the sign-in has landed (its promise chain settled), it still offers none
+    await waitFor(() => expect(h.session().login.busy).toBe(false))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(h.session().login.signedInAs).toBeNull()
   })
 
   it('with a ?position, drives a guest straight into the world', async () => {

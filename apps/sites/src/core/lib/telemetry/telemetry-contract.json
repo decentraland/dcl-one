@@ -2704,7 +2704,7 @@
           "optional": false
         },
         "file_name": {
-          "kind": "unknown",
+          "kind": "string",
           "optional": false
         },
         "kind": {
@@ -3000,6 +3000,7 @@
           "values": [
             "brand",
             "content",
+            "creatorFund",
             "credits",
             "ethics",
             "privacy",
@@ -3024,6 +3025,7 @@
           "values": [
             "brand",
             "content",
+            "creatorFund",
             "credits",
             "ethics",
             "privacy",
@@ -3392,7 +3394,7 @@
         },
         "report_id": {
           "kind": "string",
-          "optional": true
+          "optional": false
         }
       }
     },
@@ -3419,7 +3421,7 @@
       "props": {
         "reason": {
           "kind": "string",
-          "optional": true
+          "optional": false
         }
       }
     },

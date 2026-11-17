@@ -6,6 +6,18 @@ import '../../foundations/foundations.css'
 
 const live = new URLSearchParams(location.search).has('live')
 
+// The site layout gives pages the height of its header in --site-header-h; the Places page starts
+// under the fixed bar and pads by that height. This fixture measures its NavBar the same way.
+function setHeaderHeight() {
+  const nav = document.querySelector('nav')
+  if (nav)
+    document.documentElement.style.setProperty(
+      '--site-header-h',
+      `${nav.getBoundingClientRect().height}px`
+    )
+}
+new ResizeObserver(setHeaderHeight).observe(document.getElementById('root')!)
+
 createRoot(document.getElementById('root')!).render(
   <>
     <NavBar sections={[{ label: 'Places', href: '/places' }]} signIn={{ href: '/sign-in' }} />

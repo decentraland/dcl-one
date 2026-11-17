@@ -7,12 +7,100 @@ import type {
   FunctionParameter,
   ClassMethod,
   TSParameterProperty,
+  CallExpression,
 } from '@babel/types';
 import { engine } from '@dcl/ecs';
+import { Color3, Color4 } from '@dcl/ecs-math';
 
-import type { ScriptParamUnion, ScriptAction } from './types';
+import type { ScriptParamUnion, ScriptAction, ScriptColor, ScriptStringFormat } from './types';
+import { isColorValue, toColorOfKind } from './color';
 
 const SLIDER_DEFAULT_STEP = 1;
+
+type ColorKind = 'Color3' | 'Color4';
+
+// The Color3/Color4 helpers a default value may call, e.g. `Color3.fromHexString('#ff8800')`.
+// Only these run, and only with literal arguments, so parsing never executes script code.
+const COLOR_FACTORIES: Record<ColorKind, Record<string, (...args: any[]) => ScriptColor>> = {
+  Color3: {
+    create: Color3.create,
+    fromHexString: Color3.fromHexString,
+    fromInts: Color3.fromInts,
+    Black: Color3.Black,
+    Blue: Color3.Blue,
+    Gray: Color3.Gray,
+    Green: Color3.Green,
+    Magenta: Color3.Magenta,
+    Purple: Color3.Purple,
+    Red: Color3.Red,
+    Teal: Color3.Teal,
+    White: Color3.White,
+    Yellow: Color3.Yellow,
+  },
+  Color4: {
+    create: Color4.create,
+    fromHexString: Color4.fromHexString,
+    fromInts: Color4.fromInts,
+    Black: Color4.Black,
+    Blue: Color4.Blue,
+    Clear: Color4.Clear,
+    Gray: Color4.Gray,
+    Green: Color4.Green,
+    Magenta: Color4.Magenta,
+    Purple: Color4.Purple,
+    Red: Color4.Red,
+    Teal: Color4.Teal,
+    White: Color4.White,
+    Yellow: Color4.Yellow,
+  },
+};
+
+const isColorKind = (name: string): name is ColorKind => name === 'Color3' || name === 'Color4';
+
+function evaluateColorCall(expression: CallExpression): ScriptColor | undefined {
+  const callee = expression.callee;
+  if (
+    callee.type !== 'MemberExpression' ||
+    callee.computed ||
+    callee.object.type !== 'Identifier' ||
+    callee.property.type !== 'Identifier' ||
+    !isColorKind(callee.object.name)
+  ) {
+    return undefined;
+  }
+  // Own keys only: `Color3.constructor` or `Color3.toString` must not reach Object.prototype.
+  const factories = COLOR_FACTORIES[callee.object.name];
+  if (!Object.hasOwn(factories, callee.property.name)) return undefined;
+  const factory = factories[callee.property.name];
+  const args: unknown[] = [];
+  for (const argument of expression.arguments) {
+    const value =
+      argument.type === 'SpreadElement' || argument.type === 'ArgumentPlaceholder'
+        ? undefined
+        : evaluateLiteralExpression(argument as Expression);
+    if (typeof value !== 'number' && typeof value !== 'string') return undefined;
+    args.push(value);
+  }
+  try {
+    const { r, g, b, a } = factory(...args);
+    return a === undefined ? { r, g, b } : { r, g, b, a };
+  } catch {
+    return undefined;
+  }
+}
+
+function getColorKind(typeAnnotation: TSType): ColorKind | undefined {
+  if (typeAnnotation.type !== 'TSTypeReference') return undefined;
+  const typeName = typeAnnotation.typeName;
+  // `Color3` itself, or one of its namespace types such as `Color3.Mutable`
+  const name =
+    typeName.type === 'Identifier'
+      ? typeName.name
+      : typeName.type === 'TSQualifiedName' && typeName.left.type === 'Identifier'
+        ? typeName.left.name
+        : undefined;
+  return name && isColorKind(name) ? name : undefined;
+}
 
 // Recursively evaluate a constructor default expression into the plain JSON value it
 // denotes: numbers (incl. negatives), booleans, strings, and nested object/array literals.
@@ -56,6 +144,8 @@ function evaluateLiteralExpression(expression: Expression): unknown {
       }
       return arr;
     }
+    case 'CallExpression':
+      return evaluateColorCall(expression);
   }
   return undefined;
 }
@@ -84,6 +174,8 @@ function inferParamFromValue(value: unknown): ScriptParamUnion {
 function getValueAndTypeFromExpression(expression: Expression): ScriptParamUnion {
   const value = evaluateLiteralExpression(expression);
   if (value === undefined) return { type: 'string', value: '' };
+  // An unannotated `Color3.Red()` default still gets the colour picker, not an {r, g, b} editor.
+  if (expression.type === 'CallExpression' && isColorValue(value)) return { type: 'color', value };
   return inferParamFromValue(value);
 }
 
@@ -122,6 +214,10 @@ function getSliderParam(
 function getValueAndTypeFromType(
   typeAnnotation: TSTypeAnnotation['typeAnnotation'],
 ): ScriptParamUnion {
+  const colorKind = getColorKind(typeAnnotation);
+  if (colorKind) {
+    return { type: 'color', value: toColorOfKind({ r: 1, g: 1, b: 1 }, colorKind === 'Color4') };
+  }
   switch (typeAnnotation.type) {
     case 'TSNumberKeyword':
       return { type: 'number', value: 0 };
@@ -212,8 +308,15 @@ type Comments = { type: string; value: string }[] | undefined | null;
 //   @components <name> …  an Entity picks only entities with one of these components
 //   @actionsOf <key>      a string picks one of the actions of the entity in sibling `<key>`
 //   @format wallet        a string holds an Ethereum address
-// On a list, the hint applies to each element.
-type ParamTags = { components?: string[]; actionsOf?: string; format?: 'wallet' };
+//   @format image         a string holds the path of a scene image (also audio, video, model)
+//   @enabledIf [!]<key>   the field is locked unless the sibling field `<key>` is on (off with !)
+// On a list, the hint applies to each element, except @enabledIf, which locks the whole list.
+type ParamTags = {
+  components?: string[];
+  actionsOf?: string;
+  format?: ScriptStringFormat;
+  enabledIf?: string;
+};
 
 function extractParamTags(comments: Comments): ParamTags {
   const tags: ParamTags = {};
@@ -231,14 +334,26 @@ function extractParamTags(comments: Comments): ParamTags {
         tags.actionsOf = actionsOf[1];
         continue;
       }
-      if (/^@format\s+wallet\b/.test(line)) tags.format = 'wallet';
+      const enabledIf = line.match(/^@enabledIf\s+(!?\s*[A-Za-z_$][\w$]*)/);
+      if (enabledIf) {
+        tags.enabledIf = enabledIf[1].replace(/\s+/g, '');
+        continue;
+      }
+      const format = line.match(/^@format\s+(wallet|image|audio|video|model)\b/);
+      if (format) tags.format = format[1] as ScriptStringFormat;
     }
   }
   return tags;
 }
 
 function applyParamTags(param: ScriptParamUnion, tags: ParamTags): ScriptParamUnion {
-  if (param.type === 'array') return { ...param, item: applyParamTags(param.item, tags) };
+  const { enabledIf, ...typeTags } = tags;
+  const tagged = applyTypeTags(param, typeTags);
+  return enabledIf ? { ...tagged, enabledIf } : tagged;
+}
+
+function applyTypeTags(param: ScriptParamUnion, tags: ParamTags): ScriptParamUnion {
+  if (param.type === 'array') return { ...param, item: applyTypeTags(param.item, tags) };
   if (param.type === 'entity' && tags.components?.length) {
     return { ...param, components: tags.components };
   }
@@ -387,6 +502,11 @@ function withDefaultValue(
   }
   if (typeInfo.type === 'array') {
     return { ...typeInfo, value: valueInfo.type === 'array' ? valueInfo.value : typeInfo.value };
+  }
+  if (typeInfo.type === 'color') {
+    // the declared type decides Color3 vs Color4, the default only supplies the channels
+    if (!isColorValue(valueInfo.value)) return typeInfo;
+    return { ...typeInfo, value: toColorOfKind(valueInfo.value, typeInfo.value.a !== undefined) };
   }
   return { ...typeInfo, value: valueInfo.value } as ScriptParamUnion;
 }

@@ -8,6 +8,8 @@
 //! the two upstream hardcodes in its observers (3 wearables of a rarity, a
 //! height of 500).
 
+use std::collections::HashSet;
+
 use serde_json::{Map, Value, json};
 
 use super::Progress;
@@ -349,14 +351,13 @@ pub fn creator(p: &mut Progress, badge_id: &str, items: &[(String, i64)]) {
         return;
     }
     let list = array(p, published_key(badge_id));
+    let mut known: HashSet<String> = list
+        .iter()
+        .filter_map(|v| v.get("itemId").and_then(Value::as_str))
+        .map(item_key)
+        .collect();
     for (item_id, created_at_ms) in items {
-        let item = item_key(item_id);
-        let known = list.iter().any(|v| {
-            v.get("itemId")
-                .and_then(Value::as_str)
-                .is_some_and(|i| item_key(i) == item)
-        });
-        if !known {
+        if known.insert(item_key(item_id)) {
             list.push(json!({ "itemId": item_id, "createdAt": created_at_ms }));
         }
     }
@@ -366,13 +367,20 @@ pub fn creator(p: &mut Progress, badge_id: &str, items: &[(String, i64)]) {
 
 /// A creator list item id as `<contract>-<item>` lowercased, from that form
 /// or a collections URN (`urn:decentraland:<network>:collections-v2:<contract>:<item>`).
-fn item_key(id: &str) -> String {
+pub(crate) fn item_key(id: &str) -> String {
     let id = id.to_ascii_lowercase();
-    let parts: Vec<&str> = id.split(':').collect();
-    match parts.as_slice() {
-        ["urn", "decentraland", _, _, contract, item, ..] => format!("{contract}-{item}"),
-        _ => id,
-    }
+    let urn = id
+        .strip_prefix("urn:decentraland:")
+        .and_then(|rest| rest.split_once(':'))
+        .and_then(|(_, rest)| rest.strip_prefix("collections-v2:"))
+        .and_then(|rest| rest.split_once(':'))
+        .map(|(contract, rest)| {
+            format!(
+                "{contract}-{}",
+                rest.split_once(':').map_or(rest, |(item, _)| item)
+            )
+        });
+    urn.unwrap_or(id)
 }
 
 /// The buyers' purchase list key (`emotionista.ts`, `fashionista.ts`).
@@ -710,6 +718,27 @@ mod tests {
         assert_eq!(
             w.state["published_wearables"][0]["itemId"],
             json!("0xdef-3")
+        );
+    }
+
+    #[test]
+    fn item_keys_collapse_only_collections_v2_urns() {
+        assert_eq!(
+            item_key("urn:decentraland:matic:collections-v2:0xAB:3"),
+            "0xab-3"
+        );
+        assert_eq!(
+            item_key("urn:decentraland:matic:collections-v2:0xab:3:42"),
+            "0xab-3"
+        );
+        assert_eq!(item_key("0xAB-3"), "0xab-3");
+        assert_eq!(
+            item_key("urn:decentraland:off-chain:base-avatars:bear"),
+            "urn:decentraland:off-chain:base-avatars:bear"
+        );
+        assert_eq!(
+            item_key("urn:decentraland:ethereum:collections-v1:halloween:hat"),
+            "urn:decentraland:ethereum:collections-v1:halloween:hat"
         );
     }
 

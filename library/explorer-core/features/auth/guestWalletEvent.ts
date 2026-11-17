@@ -3,6 +3,7 @@
 // hands back a message, not a response.
 
 import { track } from '../../lib/analytics'
+import type { GuestWalletStep } from './guest'
 
 export type GuestWalletFailure = { failure_reason: string; http_status?: number }
 
@@ -19,13 +20,15 @@ export function guestWalletFailure(error: unknown): GuestWalletFailure {
   return { failure_reason: 'bad_response' }
 }
 
-// A fresh session id always mints a new thirdweb guest, so success is always a new user.
-export async function trackGuestWalletCreation<T>(create: () => Promise<T>): Promise<T> {
+// Only a fresh session id mints a new thirdweb guest; the kept one reaches the same guest, and a kept
+// guest whose sign-in still runs makes no wallet call, so it reports nothing. A shell that does not
+// say (`wallet` absent) always mints a new one.
+export async function trackGuestWalletCreation<T extends { wallet?: GuestWalletStep }>(create: () => Promise<T>): Promise<T> {
   const started = performance.now()
   const duration = (): number => Math.round(performance.now() - started)
   try {
     const result = await create()
-    track('Guest Wallet Creation', { outcome: 'success', is_new_user: true, duration_ms: duration() })
+    if (result.wallet !== null) track('Guest Wallet Creation', { outcome: 'success', is_new_user: result.wallet !== 'existing', duration_ms: duration() })
     return result
   } catch (e) {
     track('Guest Wallet Creation', { outcome: 'failure', is_new_user: false, ...guestWalletFailure(e), duration_ms: duration() })
