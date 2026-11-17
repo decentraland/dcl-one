@@ -11,6 +11,11 @@ name: Creator Hub / CI
 # label, and for Linux alone with the `ci:linux` label: add the label, then push or reopen. Main
 # builds all three; a manual run on another branch builds macOS and Windows.
 #
+# A pull request's test builds do not wait for the checks: its packages start after `changes` and
+# the pending comment, and its desktop build after its inspector package. Main and manual runs publish
+# to npm and can release, so there the packages and the desktop build wait for the checks and the
+# pre-release drop. Job dependencies cannot change with the event, so each path has its own jobs.
+#
 # A run publishes the installers as a pre-release only on main, and only when it is asked to: a
 # push whose pull request has the `release:creator-hub` label, or a manual run with `release` set.
 # Every other run builds the unsigned test installers and publishes nothing, so it needs no signing
@@ -150,7 +155,7 @@ jobs:
         run: bash .github/actions/creator-hub-test-builds/status.sh
   test_builds_ended:
     name: test builds ended
-    needs: [ test_builds_pending, asset-packs, inspector, creator-hub ]
+    needs: [ test_builds_pending, asset-packs-pr, inspector-pr, creator-hub-pr ]
     # Also after a cancelled run or a failed pending job: no later run is sure to write the comment.
     # The script writes only over the pending state of its own run.
     if: ${{ always() && needs.test_builds_pending.result != 'skipped' }}
@@ -176,8 +181,8 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          INSPECTOR_CHANGED: ${{ needs.inspector.outputs.changed }}
-          ASSET_PACKS_CHANGED: ${{ needs.asset-packs.outputs.changed }}
+          INSPECTOR_CHANGED: ${{ needs.inspector-pr.outputs.changed }}
+          ASSET_PACKS_CHANGED: ${{ needs.asset-packs-pr.outputs.changed }}
         run: bash .github/actions/creator-hub-test-builds/status.sh
   build:
     needs: [ changes ]
@@ -194,7 +199,7 @@ jobs:
     needs: [ build ]
     uses: ./.github/workflows/creator-hub-tests.yml
   e2e:
-    needs: [ build, tests ]
+    needs: [ build ]
     uses: ./.github/workflows/creator-hub-e2e.yml
     secrets:
       E2E_LAND: ${{ secrets.E2E_LAND }}
@@ -214,6 +219,7 @@ jobs:
       unfinished-only: true
   asset-packs:
     needs: [ drop_pre_release ]
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/creator-hub-asset-packs.yml
     secrets:
       BUILDER_ITEMS_S3_BUCKET_PRD: ${{ secrets.BUILDER_ITEMS_S3_BUCKET_PRD }}
@@ -233,8 +239,8 @@ jobs:
       asset_packs_changed: ${{ needs.asset-packs.outputs.changed == 'true' }}
   creator-hub:
     needs: [ changes, inspector ]
-    # The macOS, Windows and Linux builds, and the test builds they attach to a pull request.
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:desktop') || contains(github.event.pull_request.labels.*.name, 'ci:linux')
+    # The builds of main (macOS, Windows and Linux) and of manual runs (macOS and Windows).
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/creator-hub-desktop.yml
     secrets:
       CREATOR_HUB_RELEASES_APP_PRIVATE_KEY: ${{ secrets.CREATOR_HUB_RELEASES_APP_PRIVATE_KEY }}
@@ -261,8 +267,54 @@ jobs:
       inspector_s3_bucket_key: ${{ needs.inspector.outputs.s3_bucket_key }}
       inspector_version: ${{ needs.inspector.outputs.version }}
       inspector_changed: ${{ needs.inspector.outputs.changed == 'true' }}
-      macos-windows: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:desktop') }}
-      linux: ${{ github.ref == 'refs/heads/main' || contains(github.event.pull_request.labels.*.name, 'ci:desktop') || contains(github.event.pull_request.labels.*.name, 'ci:linux') }}
+      macos-windows: true
+      linux: ${{ github.ref == 'refs/heads/main' }}
+  # The pull request path (see the top). The `ci:desktop` label builds macOS, Windows and Linux;
+  # the `ci:linux` label builds Linux alone.
+  asset-packs-pr:
+    name: asset-packs
+    # After the pending comment, so that a fast build never writes its result under it. A pending
+    # job that was skipped or that failed does not stop the builds.
+    needs: [ changes, test_builds_pending ]
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.creator-hub == 'true' }}
+    uses: ./.github/workflows/creator-hub-asset-packs.yml
+    secrets:
+      SDK_TEAM_AWS_REGION: ${{ secrets.SDK_TEAM_AWS_REGION }}
+      SDK_TEAM_S3_BASE_URL: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
+      SDK_TEAM_S3_BUCKET: ${{ secrets.SDK_TEAM_S3_BUCKET }}
+  inspector-pr:
+    name: inspector
+    needs: [ asset-packs-pr ]
+    uses: ./.github/workflows/creator-hub-inspector.yml
+    secrets:
+      SDK_TEAM_AWS_REGION: ${{ secrets.SDK_TEAM_AWS_REGION }}
+      SDK_TEAM_S3_BASE_URL: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
+      SDK_TEAM_S3_BUCKET: ${{ secrets.SDK_TEAM_S3_BUCKET }}
+    with:
+      asset_packs_s3_bucket_key: ${{ needs.asset-packs-pr.outputs.s3_bucket_key }}
+      asset_packs_version: ${{ needs.asset-packs-pr.outputs.version }}
+      asset_packs_changed: ${{ needs.asset-packs-pr.outputs.changed == 'true' }}
+  creator-hub-pr:
+    name: creator-hub
+    needs: [ inspector-pr ]
+    if: github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'ci:desktop') || contains(github.event.pull_request.labels.*.name, 'ci:linux'))
+    uses: ./.github/workflows/creator-hub-desktop.yml
+    secrets:
+      SDK_TEAM_AWS_REGION: ${{ secrets.SDK_TEAM_AWS_REGION }}
+      SDK_TEAM_S3_BASE_URL: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
+      SDK_TEAM_S3_BUCKET: ${{ secrets.SDK_TEAM_S3_BUCKET }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      VITE_ALLOWED_EXTERNAL_ORIGINS: ${{ secrets.VITE_ALLOWED_EXTERNAL_ORIGINS }}
+      VITE_SEGMENT_CREATORS_HUB_API_KEY: ${{ secrets.VITE_SEGMENT_CREATORS_HUB_API_KEY }}
+      VITE_SEGMENT_INSPECTOR_API_KEY: ${{ secrets.VITE_SEGMENT_INSPECTOR_API_KEY }}
+    with:
+      dry-run: true
+      inspector_s3_bucket_key: ${{ needs.inspector-pr.outputs.s3_bucket_key }}
+      inspector_version: ${{ needs.inspector-pr.outputs.version }}
+      inspector_changed: ${{ needs.inspector-pr.outputs.changed == 'true' }}
+      macos-windows: ${{ contains(github.event.pull_request.labels.*.name, 'ci:desktop') }}
+      linux: true
   # Older finished pre-releases go only once the new one is fully published, which is kept. A run
   # that fails part-way leaves the previous pre-release in place, still promotable.
   prune_pre_releases:
@@ -275,14 +327,14 @@ jobs:
       dry-run: ${{ needs.changes.outputs.release != 'true' }}
       keep: ${{ needs.creator-hub.outputs.version }}
   # The one required check. It stands for lint, typecheck, unit tests, both e2e suites and the
-  # macOS and Windows builds (the checks decentraland/creator-hub required), plus the package jobs
-  # those builds wait on: it fails if any of them failed or was cancelled, and passes when they
-  # passed or were skipped (`changes` skips them all; a pull request without the `ci:desktop`
-  # or `ci:linux` label skips the builds and the prune that needs them).
+  # macOS and Windows builds (the checks decentraland/creator-hub required), plus the package jobs:
+  # it fails if any of them failed or was cancelled, and passes when they passed or were skipped
+  # (`changes` skips them all; each event skips the other path; a pull request without the
+  # `ci:desktop` or `ci:linux` label skips the builds).
   result:
     name: Creator Hub CI
     if: always()
-    needs: [ changes, build, lint, typechecking, tests, e2e, drop_pre_release, asset-packs, inspector, creator-hub, prune_pre_releases ]
+    needs: [ changes, build, lint, typechecking, tests, e2e, drop_pre_release, asset-packs, inspector, creator-hub, asset-packs-pr, inspector-pr, creator-hub-pr, prune_pre_releases ]
     runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     permissions: {}
     steps:
