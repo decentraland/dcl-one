@@ -378,7 +378,9 @@ impl Jobs {
                         tracing::warn!(job = %lease_name, "lease lost; stopping and standing by");
                         ctx.error("lease lost: the lease connection dropped");
                         ctx.progress("lease lost; stopping");
-                        let _ = fut.await;
+                        if let Err(err) = fut.await {
+                            tracing::warn!(job = %lease_name, error = %format!("{err:#}"), "run ended with an error after the lease was lost");
+                        }
                         drop(guard);
                     }
                 }
@@ -1617,9 +1619,12 @@ mod lease_tests {
         let settings = settings("panic");
         let jobs = Jobs::with_leases(pool.clone(), settings.clone());
         let runs = Arc::new(AtomicUsize::new(0));
+        let starts = Arc::new(Mutex::new(Vec::new()));
         jobs.spawn_leased("panicky", {
             let runs = runs.clone();
+            let starts = starts.clone();
             move |ctx: JobContext| {
+                starts.lock().push(std::time::Instant::now());
                 let n = runs.fetch_add(1, Ordering::SeqCst);
                 async move {
                     if n == 0 {
@@ -1631,6 +1636,12 @@ mod lease_tests {
             }
         });
         wait_until("second run", || runs.load(Ordering::SeqCst) == 2).await;
+        let starts = starts.lock().clone();
+        assert!(
+            starts[1] - starts[0] >= settings.poll * 2,
+            "retried before the backoff: {:?}",
+            starts[1] - starts[0]
+        );
         let report = jobs
             .report()
             .into_iter()
@@ -1646,6 +1657,44 @@ mod lease_tests {
             "{report:?}"
         );
         assert_eq!(jobs.leases().unwrap().held(), vec!["panicky".to_string()]);
+        let aborted = jobs.shutdown(Duration::from_secs(5)).await;
+        assert!(aborted.is_empty(), "{aborted:?}");
+    }
+
+    #[tokio::test]
+    async fn a_leased_body_that_panics_before_returning_its_future_is_retried() {
+        let Some(pool) = catalyst_db::scratch::pool(6).await else {
+            return;
+        };
+        let jobs = Jobs::with_leases(pool.clone(), settings("panic-sync"));
+        let runs = Arc::new(AtomicUsize::new(0));
+        jobs.spawn_leased("panicky-sync", {
+            let runs = runs.clone();
+            move |ctx: JobContext| {
+                if runs.fetch_add(1, Ordering::SeqCst) == 0 {
+                    panic!("closure panics");
+                }
+                async move {
+                    ctx.cancel.cancelled().await;
+                    Ok(())
+                }
+            }
+        });
+        wait_until("second run", || runs.load(Ordering::SeqCst) == 2).await;
+        let report = jobs
+            .report()
+            .into_iter()
+            .find(|j| j.name == "panicky-sync")
+            .unwrap();
+        assert_eq!(report.state, JobState::Running);
+        assert!(
+            report
+                .last_error
+                .as_deref()
+                .unwrap_or("")
+                .contains("panic: closure panics"),
+            "{report:?}"
+        );
         let aborted = jobs.shutdown(Duration::from_secs(5)).await;
         assert!(aborted.is_empty(), "{aborted:?}");
     }
