@@ -294,27 +294,51 @@ fn environment_command(
     let Some(Ok(_)) = command.take() else { return };
     let sun_scene = light.source.filter(|scene| suns.contains(*scene));
     let sun = sun_scene.and_then(|scene| suns.get(scene).ok());
-    command.reply_ok(
-        serde_json::json!({
-            "scene": state.skybox.or(state.fog).or(sun_scene).map(|e| e.to_bits().to_string()),
-            "textureState": if state.texture_state.is_empty() { "unset" } else { state.texture_state },
-            "sunVisible": sun.and_then(|sun| sun.visible).unwrap_or(true),
-            "sunIntensity": sun.and_then(|sun| sun.intensity).unwrap_or(1.0),
-            "sunDirection": sun.and_then(|sun| sun.direction).map(|d| d.to_array()),
-            "sunColor": sun.is_some_and(|sun| sun.color.is_some()).then(|| light.dir_color.to_linear().to_vec3().to_array()),
-            "fogDensity": state.fog_density,
-            "zenith": state.zenith.map(|c| c.to_array()),
-            "horizon": state.horizon.map(|c| c.to_array()),
-            "nadir": state.nadir.map(|c| c.to_array()),
-            "rim": state.rim.map(|c| c.to_array()),
-            "fogColor": state.fog_color.map(|c| c.to_array()),
-            "cloudColor": state.cloud_color.map(|c| c.to_array()),
-            "cloudSpeed": state.cloud_speed,
-            "cloudOpacity": state.cloud_opacity,
-            "starsBrightness": state.star_brightness,
-        })
-        .to_string(),
-    );
+    let mut report = serde_json::json!({
+        "scene": state.skybox.or(state.fog).or(sun_scene).map(|e| e.to_bits().to_string()),
+        "textureState": if state.texture_state.is_empty() { "unset" } else { state.texture_state },
+        "sunVisible": sun.and_then(|sun| sun.visible).unwrap_or(true),
+        "sunIntensity": sun.and_then(|sun| sun.intensity).unwrap_or(1.0),
+        "sunDirection": sun.and_then(|sun| sun.direction).map(|d| d.to_array()),
+        "sunColor": sun.is_some_and(|sun| sun.color.is_some()).then(|| light.dir_color.to_linear().to_vec3().to_array()),
+        "fogDensity": state.fog_density,
+        "zenith": state.zenith.map(|c| c.to_array()),
+        "horizon": state.horizon.map(|c| c.to_array()),
+        "nadir": state.nadir.map(|c| c.to_array()),
+        "rim": state.rim.map(|c| c.to_array()),
+        "fogColor": state.fog_color.map(|c| c.to_array()),
+        "cloudColor": state.cloud_color.map(|c| c.to_array()),
+        "cloudSpeed": state.cloud_speed,
+        "cloudOpacity": state.cloud_opacity,
+        "starsBrightness": state.star_brightness,
+    });
+    explain_unset(&mut report);
+    command.reply_ok(report.to_string());
+}
+
+/// A null reading means no scene the player is in sets it: says so under `unavailable`, which
+/// the debug panel shows in its place.
+fn explain_unset(report: &mut serde_json::Value) {
+    let Some(fields) = report.as_object() else {
+        return;
+    };
+    let unavailable: serde_json::Map<String, serde_json::Value> = fields
+        .iter()
+        .filter(|(_, value)| value.is_null())
+        .map(|(field, _)| (field.clone(), unset_reason(field).into()))
+        .collect();
+    if !unavailable.is_empty() {
+        report["unavailable"] = serde_json::Value::Object(unavailable);
+    }
+}
+
+fn unset_reason(field: &str) -> &'static str {
+    match field {
+        "scene" => "No scene here sets a skybox, fog or sun.",
+        "sunDirection" | "sunColor" => "No scene here sets the sun; the day cycle's applies.",
+        "fogDensity" | "fogColor" => "No scene here sets fog; the graphics setting's applies.",
+        _ => "No scene here sets it; the procedural sky's applies.",
+    }
 }
 
 #[cfg(test)]
@@ -340,6 +364,32 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn every_unset_reading_is_explained() {
+        let mut report = serde_json::json!({
+            "scene": null,
+            "textureState": "unset",
+            "sunDirection": null,
+            "fogDensity": null,
+            "zenith": null,
+            "sunVisible": true,
+        });
+        explain_unset(&mut report);
+        let unavailable = report["unavailable"].as_object().unwrap();
+        for field in ["scene", "sunDirection", "fogDensity", "zenith"] {
+            assert!(
+                unavailable[field].as_str().is_some_and(|s| !s.is_empty()),
+                "{field}"
+            );
+        }
+        assert!(!unavailable.contains_key("textureState"));
+        assert!(!unavailable.contains_key("sunVisible"));
+
+        let mut set = serde_json::json!({ "scene": "1", "textureState": "ready" });
+        explain_unset(&mut set);
+        assert!(set.get("unavailable").is_none());
     }
 
     #[test]

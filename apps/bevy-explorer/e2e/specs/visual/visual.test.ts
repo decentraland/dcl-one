@@ -29,6 +29,9 @@ const SCENE_LIVE_TIMEOUT_MS = 60_000
  *  own limit is above their sum, so a stuck wait reports itself. */
 const SCENARIO_TIMEOUT_MS = 600_000
 const WINDOW_SIZE: [number, number] = [960, 540]
+/** `/cloud`'s cover and drift speed at boot (the engine's `CloudCover`), restored after the frame. */
+const DEFAULT_CLOUD_COVER = 0.35
+const DEFAULT_CLOUD_SPEED = 5
 
 const server = await visualRealm()
 
@@ -56,15 +59,21 @@ for (const scene of SCENES) {
       // The frame is to agree with the next. The scene hides avatars, not the nametag over the
       // hidden player, whose name is the session's fresh guest's: off for the frame. The
       // landscape's trees and bushes around the scene sway in the wind, so no two frames of them
-      // agree: held still for the frame.
+      // agree: held still for the frame. The clouds drift from boot and their noise is seeded by
+      // the day of the month: cover 0 clears the sky, which then reads the same on any day. The
+      // sky eases to a new cover over a few seconds, less than the teleport and settle take.
       restore(async () => {
         await explorer.json('/nametags true')
         await explorer.json('/tree_wind true')
+        await explorer.run(`/cloud ${DEFAULT_CLOUD_COVER} ${DEFAULT_CLOUD_SPEED}`)
       })
       const nametags = await explorer.json<{ visible: boolean }>('/nametags false')
       assert.equal(nametags.visible, false, 'the nametags should be off for the frame')
       const wind = await explorer.json<{ enabled: boolean }>('/tree_wind false')
       assert.equal(wind.enabled, false, "the landscape's trees should hold still for the frame")
+      await explorer.run('/cloud 0 0')
+      const sky = await explorer.json<{ cover: number }>('/sky_state')
+      assert.equal(sky.cover, 0, 'the sky should have no cloud for the frame')
       await explorer.teleport(x, y)
       await until(() => explorer.sceneEntities(), (entities) => entities.length > RESERVED_ENTITIES, {
         timeoutMs: SCENE_LIVE_TIMEOUT_MS,

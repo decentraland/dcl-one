@@ -31,6 +31,11 @@ describe('serveWebApp', () => {
     await rm(dir, { recursive: true, force: true })
   })
 
+  test('the app is served at localhost, the host the services admit to a signed read', async () => {
+    assert.equal(server.url, `http://localhost:${server.port}/`)
+    assert.equal((await fetch(server.url)).status, 200)
+  })
+
   test('the common headers are on every response', async () => {
     for (const route of ['/', '/app.html', '/engine/engine.js', '/missing']) {
       const response = await fetch(server.url + route.slice(1))

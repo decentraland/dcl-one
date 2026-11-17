@@ -32,7 +32,8 @@ per source. `--base-dir DIR` reads an exported base from DIR/<name>/ and needs n
 
 A dest holds plain files only. A link in the tree is written as a copy of the file it names, or as
 its target text when it names no file of the tree. Each `[[submodule]]` path is filled from its url
-and commit. `.git` and `target` at the top of a dest are never read, written or removed.
+and commit, and the tree must hold a gitlink to that commit at the path. `.git` and `target` at the
+top of a dest are never read, written or removed.
 
 materialise writes a dest only when base_tree and tree of source.toml reproduce and, when it has a
 rev, the files to write make the commit with that id.
@@ -499,6 +500,11 @@ def is_license(text):
     return len(tokens) <= 64 and expression(0) == len(tokens)
 
 
+def is_ref(value):
+    """A tag or branch name. A commit id or a name under refs/ or pull/ is on no branch that upstream owns."""
+    return bool(REF.fullmatch(value)) and ".." not in value and not OID.fullmatch(value) and not value.startswith(("refs/", "pull/"))
+
+
 def is_url(value):
     return value.startswith(URL_SCHEMES) and not re.search(r"[\s\\\x00-\x1f\x7f]", value)
 
@@ -534,7 +540,7 @@ class Source:
         check(data.get("name") == name, f"name is {data.get('name')!r}")
         self.upstream = text(data, "upstream", is_url, url)
         self.commit = text(data, "commit", OID.fullmatch, "a full commit id")
-        text(data, "ref", lambda value: REF.fullmatch(value) and ".." not in value, "a tag or branch name")
+        text(data, "ref", is_ref, "a tag or branch name")
         text(data, "origin", is_url, url)
         text(data, "origin_rev", OID.fullmatch, "a full commit id")
         text(data, "license", is_license, "an SPDX licence expression")
@@ -692,9 +698,8 @@ def layout(source, repo, index, offline=False, base_dir=None):
     groups = [("", rows)]
     for submodule in source.submodules:
         path = submodule["path"]
-        require(rows.get(path, ("160000", submodule["commit"])) == ("160000", submodule["commit"])
-                and not any(name.startswith(path + "/") for name in rows),
-                f"{source.name}: the tree has {rows.get(path, ('', 'files'))[1]} at {path}, "
+        require(rows.get(path) == ("160000", submodule["commit"]),
+                f"{source.name}: the tree has {rows.get(path, ('', 'no gitlink'))[1]} at {path}, "
                 f"[[submodule]] has {submodule['commit']}")
         groups.append((path + "/", {name: (mode, oid) for mode, oid, name in
                                     submodule_rows(source, repo, submodule, offline, base_dir)}))

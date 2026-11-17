@@ -172,7 +172,9 @@ async function serveFile(root: string, origin: () => string, request: IncomingMe
   pipeline(createReadStream(file), response, () => {})
 }
 
-/** Serve `root` on `http://127.0.0.1:<port>/` (port 0 picks a free one). */
+/** Serve `root` on loopback, at `http://localhost:<port>/` (port 0 picks a free one). The page's
+ *  host is `localhost`, not the bound `127.0.0.1`: the services' CORS allowlists (events, places)
+ *  admit `http://localhost:<port>` to the preflight of a signed read, and not `127.0.0.1`. */
 export async function serveWebApp(root: string, port: number): Promise<StaticServer> {
   const absoluteRoot = path.resolve(root)
   // the origin the realm document names: known once the server listens, before any request comes
@@ -184,8 +186,9 @@ export async function serveWebApp(root: string, port: number): Promise<StaticSer
     })
   })
   const listening = await listen(server, port)
-  origin = listening.url.replace(/\/$/, '')
-  return listening
+  const served = { ...listening, url: `http://localhost:${listening.port}/` }
+  origin = served.url.replace(/\/$/, '')
+  return served
 }
 
 export function listen(server: Server, port: number): Promise<StaticServer> {
