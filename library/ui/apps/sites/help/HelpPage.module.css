@@ -4,14 +4,15 @@
  * and moves from the right column (from 1280px) to the top right above the section (tablets) and beside the title
  * (phones).
  *
- * From 768px up the page is one viewport high (never under 640px, where the page scrolls instead): the chat banner
- * keeps its height at the bottom and the active section's list fills the rest, scrolling on its own.
+ * From 768px up the page is at least one viewport high (never under 640px): the chat banner keeps its height at the
+ * bottom and the active section's list fills the rest, scrolling on its own. When the viewport cannot fit the section
+ * with its list at the minimum height, the page grows and scrolls instead, so the section never runs under the banner.
  */
 .root {
   display: flex;
   box-sizing: border-box;
-  height: max(640px, calc(100vh - var(--site-header-h, 64px)));
-  height: max(640px, calc(100svh - var(--site-header-h, 64px)));
+  min-height: max(640px, calc(100vh - var(--site-header-h, 64px)));
+  min-height: max(640px, calc(100svh - var(--site-header-h, 64px)));
   flex-direction: column;
   padding: var(--dcl-space-32) 20px 20px;
   background: var(--dcl-bg-page);
@@ -23,8 +24,7 @@
 
 .layout {
   display: grid;
-  min-height: 0;
-  flex: 1 1 auto;
+  flex: 1 0 auto;
   grid-template-areas:
     'title panel status'
     'description panel status'
@@ -85,7 +85,7 @@
       'tabs panel'
       '. panel';
     grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
-    /* Without the status column the section would run past the header's and the banner's right edge. */
+    /* Without the status column the section would run to the page's edge; this lines it up with the header. */
     padding-right: var(--dcl-space-48);
   }
 

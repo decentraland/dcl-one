@@ -1,6 +1,8 @@
 import { createRoot } from 'react-dom/client'
+import { HelpChatBanner } from '../../apps/sites/help/HelpChatBanner'
 import { HelpPage } from '../../apps/sites/help/HelpPage'
 import { HelpSection } from '../../apps/sites/help/HelpSection'
+import { HelpStatus } from '../../apps/sites/help/HelpStatus'
 import '../../foundations/foundations.css'
 
 const tabs = [
@@ -9,21 +11,44 @@ const tabs = [
   { id: 'support-updates', label: 'Support Updates', icon: 'supportUpdates' }
 ] as const
 
+// The tallest section the page renders (Creator Fund): a description, a list longer than the space and a footer.
 createRoot(document.getElementById('root')!).render(
   <HelpPage
     title="Help Center"
     description="Browse through FAQs and Support Updates or speak with the Support Team directly using the chat box on the bottom right."
     tabs={tabs}
-    activeTab="faq"
+    activeTab="creator-fund"
     onTabChange={() => {}}
     status={
-      <span data-status style={{ display: 'block', width: 140, height: 37 }}>
-        System Status
-      </span>
+      <HelpStatus
+        label="System Status"
+        report={{
+          overall: 'ok',
+          overallText: 'All systems operational',
+          services: [
+            { name: 'Catalyst', state: 'ok' },
+            { name: 'Marketplace', state: 'ok' }
+          ]
+        }}
+        detailsLabel="See details"
+        detailsHref="https://status.example.com"
+      />
+    }
+    banner={
+      <HelpChatBanner
+        title="Need more help?"
+        subtitle="Our Support Team is here to help."
+        actionLabel="Chat now"
+        onAction={() => {}}
+      />
     }
   >
-    <HelpSection title="Frequently Asked Questions">
-      <div data-questions style={{ height: 300 }} />
+    <HelpSection
+      title="Creator Fund"
+      description="Answers about the Creator Fund program and its payouts."
+      footer="Write to the Creator Fund team for anything else."
+    >
+      <div data-questions style={{ height: 1200 }} />
     </HelpSection>
   </HelpPage>
 )

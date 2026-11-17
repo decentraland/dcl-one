@@ -15,6 +15,9 @@ type Geometry = {
   tabs: Box
   panel: Box
   tabTops: number[]
+  /** Scrolled to the end of the page, where the sticky banner rests in its own place. */
+  contentBottom: number
+  bannerTop: number
 }
 
 async function evaluate<T>(expression: string): Promise<T> {
@@ -31,27 +34,43 @@ async function evaluate<T>(expression: string): Promise<T> {
   return result.result.value
 }
 
-async function layoutAt(width: number): Promise<Geometry> {
+async function open(width: number, height: number) {
   await session.send('Emulation.setDeviceMetricsOverride', {
     width,
-    height: 1024,
+    height,
     deviceScaleFactor: 1,
     mobile: false
   })
   await session.navigate(`${server.resolvedUrls!.local[0]}`)
-  return evaluate<Geometry>(`(async()=>{
+  await evaluate(`(async()=>{
     for(let n=0;!document.querySelector('[data-questions]');n++) {
       if(n===100)throw new Error('Help layout fixture did not render')
       await new Promise(resolve=>setTimeout(resolve,50))
     }
     await document.fonts.ready
     await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
+  })()`)
+}
+
+async function layoutAt(width: number, height = 1024): Promise<Geometry> {
+  await open(width, height)
+  return evaluate<Geometry>(`(async()=>{
     const box=(element)=>{const b=element.getBoundingClientRect();return {left:b.left,top:b.top,right:b.right,bottom:b.bottom,width:b.width}}
+    const status=box(document.querySelector('main [aria-controls]').parentElement)
+    window.scrollTo(0,document.documentElement.scrollHeight)
+    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
+    const section=document.querySelector('[role="tabpanel"] section')
+    const contentBottom=Math.max(...[...section.children].map((part)=>part.getBoundingClientRect().bottom))
+    const bannerTop=document.querySelector('main aside').getBoundingClientRect().top
+    window.scrollTo(0,0)
+    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
     return {
+      contentBottom,
+      bannerTop,
+      status,
       viewport:document.documentElement.clientWidth,
       scrollWidth:document.documentElement.scrollWidth,
       title:box(document.querySelector('main h1')),
-      status:box(document.querySelector('[data-status]')),
       tabs:box(document.querySelector('[role="tablist"]')),
       panel:box(document.querySelector('[role="tabpanel"]')),
       tabTops:[...document.querySelectorAll('[role="tab"]')].map((tab)=>Math.round(tab.getBoundingClientRect().top))
@@ -140,6 +159,44 @@ describe('when the help center renders', () => {
     expect(geometry.status.left).toBeGreaterThanOrEqual(geometry.panel.right)
     expect(geometry.status.top).toBeLessThan(geometry.panel.top)
   })
+
+  it.each([
+    [844, 390],
+    [932, 430],
+    [1024, 640],
+    [1280, 640],
+    [768, 1024],
+    [1440, 900]
+  ])('should end the section above the chat banner at %ix%i', async (width, height) => {
+    const geometry = await layoutAt(width, height)
+    expect(geometry.contentBottom).toBeLessThanOrEqual(geometry.bannerTop)
+  })
+
+  it.each([390, 768, 1032, 1440])(
+    'should open the system status inside the viewport and return focus on Escape at %ipx',
+    async (width) => {
+      await open(width, 1024)
+      const result = await evaluate<{
+        left: number
+        right: number
+        viewport: number
+        focused: boolean
+        closed: boolean
+      }>(`(async()=>{
+        const toggle=document.querySelector('main [aria-controls]')
+        toggle.click()
+        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
+        const popover=document.getElementById(toggle.getAttribute('aria-controls')).getBoundingClientRect()
+        document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))
+        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
+        return {left:popover.left,right:popover.right,viewport:document.documentElement.clientWidth,focused:document.activeElement===toggle,closed:toggle.getAttribute('aria-expanded')==='false'}
+      })()`)
+      expect(result.left).toBeGreaterThanOrEqual(0)
+      expect(result.right).toBeLessThanOrEqual(result.viewport)
+      expect(result.closed).toBe(true)
+      expect(result.focused).toBe(true)
+    }
+  )
 
   it('should keep the status beside the title on a 390px phone', async () => {
     const geometry = await layoutAt(390)
