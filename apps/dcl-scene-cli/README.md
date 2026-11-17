@@ -668,14 +668,17 @@ files, never part of a run. A model you edit is served from your file, with the 
 until the import stages its new copy. Rewritten models are staged under names taken from their bytes, so a run
 never rewrites a file the preview is serving. `start` sends no reload when an import finishes. Each
 import sends its status on the live-reload socket instead, as a JSON text frame only:
-`{"type":"TEXTURE_OPTIMIZATION","payload":{sceneId,state,done,total,failed,bytesBefore,bytesAfter,enabled}}`.
+`{"type":"TEXTURE_OPTIMIZATION","payload":{sceneId,state,done,total,failed,bytesBefore,bytesAfter,enabled,replay}}`.
 There is no binary `WsSceneMessage` for it: the Unity explorer's preview socket treats every binary
 frame other than `UpdateModel` as a scene update, so a binary status would reload the scene each time,
 and it ignores text frames.
 `state` is `RUNNING` while textures are encoded (at most every 500 ms), then `READY` or `FAILED` once.
 `READY` is sent only when the optimized files or the setting changed. A client connecting later gets
-the last status first. The next reload, from a save or from the client, serves the new files.
-Offering that reload when `READY` arrives is up to the client; the explorer does not yet show it.
+each project's last status first, marked `replay`. The next reload, from a save or from the client, serves the new files.
+The Bevy Explorer's HUD shows the status as one toast per scene: the progress while textures are encoded, then
+the size saved with a **Reload** button, or how many textures stay PNG. It shows nothing when the
+setting is off. A replayed `READY` offers Reload only when the HUD showed that scene's progress
+before the socket dropped.
 
 `deploy`, `pack` and `export-static` with the setting on finish in the foreground whatever the cache
 lacks, with a progress line, before they read the payload; a warm cache costs nothing. They read

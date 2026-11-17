@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { screen } from '@testing-library/react'
+import { fireEvent, screen } from '@testing-library/react'
+import { DEFAULT_REALM } from '@hud-host'
 import { Minimap } from '../../features/minimap/Minimap'
 import { fakeSession, renderSettled } from '../harness'
 
@@ -37,5 +38,34 @@ describe('minimap header', () => {
   it('shows no restrictions icon where the scene turns nothing off', async () => {
     await renderMinimap('Genesis Plaza')
     expect(screen.queryByRole('img', { name: /Scene restrictions/ })).toBeNull()
+  })
+})
+
+describe('minimap menu', () => {
+  // the place has no scene (no `donatePlace`) in each case: the realm alone tells
+  async function openMenu(linkRealm: string | null): Promise<ReturnType<typeof fakeSession>> {
+    const session = fakeSession()
+    await renderSettled(<Minimap minimap={{ ...session.minimap, linkRealm }} map={session.map} sceneTitle="" setEngineViewport={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Minimap settings' }))
+    return session
+  }
+
+  it('offers Copy Link where the place has a link', async () => {
+    await openMenu(DEFAULT_REALM)
+    expect(screen.getByRole('menuitem', { name: 'Copy Link' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Jump back to Genesis City' })).toBeNull()
+  })
+
+  it('in a World, on a parcel with no scene too, offers the link and the way back to Genesis City', async () => {
+    const session = await openMenu('boedo.dcl.eth')
+    expect(screen.getByRole('menuitem', { name: 'Copy Link' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Jump back to Genesis City' }))
+    expect(session.map.changeRealm).toHaveBeenCalledWith(DEFAULT_REALM)
+  })
+
+  it('leaves Copy Link out where the place has none', async () => {
+    await openMenu(null)
+    expect(screen.getByRole('menu', { name: 'Minimap settings' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Copy Link' })).toBeNull()
   })
 })

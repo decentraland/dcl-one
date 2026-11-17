@@ -54,16 +54,20 @@ is byte-for-byte what it was.
 - **Status.** Each run reports on the live-reload socket with one JSON text frame,
   `{"type":"TEXTURE_OPTIMIZATION","payload":{...}}`. The payload carries the scene id, the state
   (`RUNNING`, `READY`, `FAILED`), the textures done, total and failed, the source and KTX2 bytes of
-  the converted images, and whether the setting is on. There is no binary `WsSceneMessage` case:
+  the converted images, whether the setting is on, and `replay`, set on the last status sent again
+  to a client as it connects. There is no binary `WsSceneMessage` case:
   the Unity explorer's preview socket reuses one `WsSceneMessage` and treats every binary frame
   other than `UpdateModel` as `UpdateScene`, so a new case would reload the scene on every status
   (or end its receive loop when the status is the first frame). It ignores text frames, and so do
   Bevy builds that predate reading it. `RUNNING` goes out while textures
   are encoded, at most every 500 ms. `READY` or `FAILED` goes out once per run, and `READY` only
   when the overlay or the setting changed or `RUNNING` went out. A run that changes nothing sends
-  nothing. A client that connects later receives the last status first. The client decides when to
-  reload; offering that reload in the explorer needs an explorer change that is not part of this
-  decision.
+  nothing. A client that connects later receives each project's last status first, marked `replay`. The
+  client decides when to reload. The Bevy Explorer routes the message from its preview socket to
+  the HUD (the `getTextureOptimizationStream` system API); the HUD shows one toast per scene and
+  offers **Reload**, which drops the live scene as a save's `UpdateScene` does. A replayed `READY`
+  offers it only when the HUD showed that scene's progress, so the run ended while the socket was
+  down; otherwise the freshly loaded scene already reflects it.
 - **Deploy.** With the setting on, `deploy` runs over the release payload after the build, encoding
   in the foreground, with a progress line, whatever the cache lacks; `pack` and `export-static` do
   the same, so every payload agrees. A warm cache costs nothing. The command reads its payload

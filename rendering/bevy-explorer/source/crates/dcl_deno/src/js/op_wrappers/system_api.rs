@@ -15,7 +15,8 @@ use system_bridge::{
     FriendshipEventUpdate, HomeScene, HoverEvent, ListenedCommunity, LiveSceneInfo,
     PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PortableInfo,
     ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
-    VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
+    TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
+    WorldAccessEvent,
 };
 
 // list of op declarations
@@ -100,6 +101,8 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_read_scene_loading_ui_stream(),
             op_get_analytics_event_stream(),
             op_read_analytics_event_stream(),
+            op_get_texture_optimization_stream(),
+            op_read_texture_optimization_stream(),
             op_get_avatar_modifiers(),
             // Social / Friends
             op_get_friendship_event_stream(),
@@ -691,6 +694,20 @@ pub async fn op_read_analytics_event_stream(
     rid: u32,
 ) -> Result<Option<AnalyticsEvent>, deno_core::anyhow::Error> {
     dcl_js::system_api::op_read_analytics_event_stream(state, rid).await
+}
+
+#[op2(async)]
+pub async fn op_get_texture_optimization_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_texture_optimization_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_texture_optimization_stream(
+    state: Rc<RefCell<OpState>>,
+    rid: u32,
+) -> Result<Option<TextureOptimizationStatus>, deno_core::anyhow::Error> {
+    dcl_js::system_api::op_read_texture_optimization_stream(state, rid).await
 }
 
 #[op2(async)]

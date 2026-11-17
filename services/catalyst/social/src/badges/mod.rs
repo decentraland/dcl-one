@@ -40,10 +40,10 @@ pub mod types;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::routing::{erase, get, post};
 use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::json;
 use sqlx::PgPool;
@@ -147,8 +147,8 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/badges/{badge_id}",
             get(handlers::get_badge)
-                .put(handlers::put_badge)
-                .patch(handlers::patch_badge),
+                .put(erase(handlers::put_badge))
+                .patch(erase(handlers::patch_badge)),
         )
         .route("/badges/{badge_id}/tiers", get(handlers::get_badge_tiers))
         .route(
@@ -162,13 +162,13 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/users/{address}/badges/{badge_id}",
             get(handlers::get_user_badge)
-                .post(handlers::grant_user_badge)
-                .delete(handlers::revoke_user_badge),
+                .post(erase(handlers::grant_user_badge))
+                .delete(erase(handlers::revoke_user_badge)),
         )
         .route(
             "/assets/{*path}",
             get(handlers::get_asset)
-                .put(handlers::put_asset)
+                .put(erase(handlers::put_asset))
                 .layer(DefaultBodyLimit::max(MAX_ASSET_BODY_BYTES)),
         )
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))

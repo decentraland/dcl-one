@@ -54,8 +54,14 @@ export function dayLabel(day: Date, now: Date = new Date()): string {
   return shortDay(day)
 }
 
+/** What an event's links and their analytics read of it: the lobby's cards carry this much of an event. */
+export type EventLinkSource = Pick<
+  EventData,
+  'id' | 'name' | 'description' | 'live' | 'world' | 'server' | 'x' | 'y' | 'next_start_at' | 'next_finish_at' | 'duration' | 'highlighted'
+>
+
 /** When the event next starts, or null when the service gave no date. */
-export function eventStart(event: EventData): Date | null {
+export function eventStart(event: Pick<EventData, 'next_start_at'>): Date | null {
   const at = event.next_start_at != null ? Date.parse(event.next_start_at) : NaN
   return Number.isNaN(at) ? null : new Date(at)
 }
@@ -139,23 +145,23 @@ export function createEventUrl(): string {
 }
 
 /** The link that drops a visitor at the event's place, crediting `referrer` (the sharer's address). */
-export function eventJumpLink(event: EventData, referrer: string | null): string {
+export function eventJumpLink(event: EventLinkSource, referrer: string | null): string {
   const link = event.world ? `https://${BASE_DOMAIN}/jump/?realm=${encodeURIComponent(event.server ?? '')}` : `https://${BASE_DOMAIN}/jump/?position=${event.x},${event.y}`
   return referrer != null && referrer !== '' ? `${link}&referrer=${encodeURIComponent(referrer)}` : link
 }
 
 /** What "Copy link" copies: the jump link while the event is live, else its page. */
-export function eventCopyLink(event: EventData, referrer: string | null): string {
+export function eventCopyLink(event: EventLinkSource, referrer: string | null): string {
   return event.live ? eventJumpLink(event, referrer) : `https://${BASE_DOMAIN}/whats-on/?id=${encodeURIComponent(event.id)}`
 }
 
-export function eventShareUrl(event: EventData, referrer: string | null): string {
+export function eventShareUrl(event: EventLinkSource, referrer: string | null): string {
   return out(`https://twitter.com/intent/tweet?text=${encodeURIComponent(event.name)}&hashtags=DCLPlace&url=${encodeURIComponent(eventCopyLink(event, referrer))}`)
 }
 
 const calendarStamp = (date: Date): string => `${date.toISOString().slice(0, 19).replace(/[-:]/g, '')}Z`
 
-export function eventCalendarUrl(event: EventData, referrer: string | null, start?: Date): string | null {
+export function eventCalendarUrl(event: EventLinkSource, referrer: string | null, start?: Date): string | null {
   const from = start ?? eventStart(event)
   if (from == null) return null
   const finish = event.next_finish_at != null ? Date.parse(event.next_finish_at) : NaN
@@ -173,6 +179,6 @@ export function eventPlaceText(event: EventData, place: EventPlace | undefined):
 }
 
 
-export function eventAnalytics(event: EventData): Record<string, unknown> {
+export function eventAnalytics(event: EventLinkSource): Record<string, unknown> {
   return { event_id: event.id, event_name: event.name, event_coords: `(${event.x}, ${event.y})`, highlighted: event.highlighted }
 }
