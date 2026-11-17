@@ -120,7 +120,7 @@ class WorkflowTest(unittest.TestCase):
                       "&& github.ref == 'refs/heads/main' }}\n", daily)
 
     def test_the_daily_upstream_run_only_reads_the_repository(self):
-        # Publishing a revision writes a ref. The daily run only reads the repository: the CI workflow
+        # Publishing a revision writes a ref. The daily run only reads the repository: the publish-sources workflow
         # publishes on a push to main. The one permission to write is for issues, on the job that reports a failure.
         daily = (ci.ROOT / '.github/workflows/bevy-explorer-upstream.yml').read_text()
         self.assertEqual(re.findall(r'^permissions:\n((?:  .+\n)+)', daily, re.M), ['  contents: read\n'])
@@ -184,13 +184,18 @@ class WorkflowTest(unittest.TestCase):
 
     def test_a_push_to_main_publishes_the_pinned_revisions(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
-        jobs = dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)', workflow.split('\njobs:\n', 1)[1]))
-        # The only job that writes a ref: on main alone, after the guards, with the tool and the series of main.
-        writers = [name for name, job in jobs.items() if 'contents: write' in job]
-        self.assertEqual(writers, ['publish-sources'])
-        job = jobs['publish-sources']
-        self.assertIn("    if: github.event_name == 'push' && github.ref == 'refs/heads/main'\n", job)
-        self.assertIn('    needs: source\n', job)
+        # The CI workflow only reads the repository: its pending runs on main can be cancelled.
+        self.assertNotIn('contents: write', workflow)
+        publish = (ci.ROOT / '.github/workflows/bevy-explorer-publish-sources.yml').read_text()
+        # One run for each push to main that changes a source, and none is cancelled: a cancelled run would leave
+        # the `rev` of its push without a ref.
+        self.assertIn("on:\n  push:\n    branches:\n      - main\n    paths:\n      - rendering/bevy-explorer/patches/**\n", publish)
+        self.assertNotIn('concurrency', publish.replace('# No concurrency group', ''))
+        self.assertEqual(re.findall(r'^permissions:\n((?:  .+\n)+)', publish, re.M), ['  contents: read\n'])
+        jobs = dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)', publish.split('\njobs:\n', 1)[1]))
+        self.assertEqual(list(jobs), ['publish'])
+        job = jobs['publish']
+        self.assertIn("    if: github.ref == 'refs/heads/main'\n", job)
         self.assertEqual(re.findall(r'^    permissions:\n((?:      .+\n)+)', job, re.M), ['      contents: write\n'])
         # The token is in the environment of the publish step alone, not in the checkout's configuration.
         self.assertIn('          persist-credentials: false\n', job)
@@ -200,8 +205,8 @@ class WorkflowTest(unittest.TestCase):
         daily = (ci.ROOT / '.github/workflows/bevy-explorer-upstream.yml').read_text()
         self.assertEqual(self.upstream_commit_cache(job), self.upstream_commit_cache(daily))
         self.assertIn('      DCL_PATCHED_SOURCES_CACHE: ${{ github.workspace }}/.cache/patched-sources\n', job)
-        publish = job.index('python3 tooling/patched-sources.py publish\n')
-        self.assertLess(job.index('actions/cache/restore@'), publish)
+        run = job.index('python3 tooling/patched-sources.py publish\n')
+        self.assertLess(job.index('actions/cache/restore@'), run)
         self.assertNotIn('--remote', job)
         self.assertNotIn('--check', job)
 
@@ -232,7 +237,7 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn('        id: bases\n        working-directory: .\n', job)
         # Only the daily run saves the directory: each step of this workflow that names it restores it.
         self.assertEqual(re.findall(r'uses: (actions/cache\S*)@\S+ # v[\d.]+\n +with:\n +path: \.cache/patched-sources\n', workflow),
-                         ['actions/cache/restore'] * 3)
+                         ['actions/cache/restore'] * 2)
         # The rebuilt workspace has no lock file: it starts from the explorer's.
         self.assertIn('          cp Cargo.lock ../bevy/Cargo.lock\n          cargo test --manifest-path ../bevy/Cargo.toml ', job[tests:])
 

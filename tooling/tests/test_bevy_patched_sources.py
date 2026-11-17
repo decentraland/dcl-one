@@ -1549,6 +1549,28 @@ class PublishTest(PatchedSourcesCase):
         self.assertEqual(self.publish(), ((0, f"winit: pushed {self.ref}\n", ""), [self.push]))
         self.assertEqual(self.publish("--check", "--fetchable"), ((0, "winit: published\n", ""), []))
 
+    def test_fetchable_fails_when_the_remote_gives_no_answer(self):
+        """Only `not our ref` means that the remote lacks a rev: a failed or slow fetch is no answer, and says so."""
+        real = tool.Repo.run
+        url = f"https://user:secret@example.invalid/{self.remote.path.name}"
+
+        def answers(failure):
+            def run(command, **options):
+                if "--filter=tree:0" not in command:
+                    return real([self.remote.path if part == url else part for part in command], **options)
+                if isinstance(failure, tool.Failure):
+                    raise failure
+                return subprocess.CompletedProcess(command, 128, b"", failure.replace(b"URL", url.encode()))
+            return run
+        shown = f"https://example.invalid/{self.remote.path.name}"
+        for failure, problem in (
+                (b"warning: x\nfatal: unable to access 'URL/': Could not resolve host: example.invalid\n",
+                 f"fatal: unable to access '{shown}/': Could not resolve host: example.invalid"),
+                (tool.Failure("git exceeded 60 seconds"), "git exceeded 60 seconds")):
+            with self.subTest(problem), mock.patch.object(tool.Repo, "run", staticmethod(answers(failure))):
+                self.assertEqual(self.run_tool("publish", "--remote", url, "--check", "--fetchable"),
+                                 (1, "", f"patched-sources: publish: {shown}: cannot check {self.rev}: {problem}\n"))
+
     def test_fetchable_needs_check(self):
         self.assertEqual(self.publish("--fetchable"), ((1, "", "patched-sources: publish: --fetchable needs --check\n"), []))
         self.assertEqual(self.remote.refs(), {})
@@ -1596,6 +1618,16 @@ class PublishTest(PatchedSourcesCase):
         config = self.work / "caller.gitconfig"
         config.write_text(f'[url "{self.remote.url}"]\n\tinsteadOf = {mirror}\n')
         with mock.patch.object(tool, "MIRROR", mirror), mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(config)}):
+            self.assertEqual(self.ok("publish"), f"winit: pushed {self.ref}\n")
+            self.assertEqual(self.ok("publish", "--check"), "winit: published\n")
+        self.assertEqual(self.remote.refs(), {self.ref: self.rev})
+
+    def test_publish_reads_git_configuration_from_the_environment(self):
+        """The CI job hands git the token's header through GIT_CONFIG_COUNT, KEY and VALUE, not a file."""
+        mirror = "https://mirror.invalid/dcl-one"
+        environment = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": f"url.{self.remote.url}.insteadOf", "GIT_CONFIG_VALUE_0": mirror}
+        with mock.patch.object(tool, "MIRROR", mirror), mock.patch.dict(os.environ, environment):
+            self.assertEqual(self.run_tool("publish", "--check", "--fetchable"), (1, f"winit: missing {self.ref}\n", ""))
             self.assertEqual(self.ok("publish"), f"winit: pushed {self.ref}\n")
             self.assertEqual(self.ok("publish", "--check"), "winit: published\n")
         self.assertEqual(self.remote.refs(), {self.ref: self.rev})

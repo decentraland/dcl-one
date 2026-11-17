@@ -143,6 +143,8 @@ URL_SCHEMES = ("https://",)
 FETCH_SECONDS = 300
 FETCH_ATTEMPTS = 3
 FETCH_PAUSE = 5
+# The fetch of one commit without its tree that `publish --check --fetchable` makes for each source without a ref.
+PROBE_SECONDS = 60
 PUSH_SECONDS = 1200
 LOCK_SECONDS = 1200
 
@@ -1527,14 +1529,26 @@ def pins(root, _options):
     return 1 if wrong else 0
 
 
-def served(remote, rev):
-    """Whether the remote serves the commit rev by id, with or without a ref: Cargo fetches a rev that way."""
+def served(remote, shown, rev):
+    """Whether the remote serves the commit rev by id, with or without a ref: Cargo fetches a rev that way.
+
+    Only the answer `not our ref` means that it does not: any other failure is no answer, and fails the run.
+    """
     with tempfile.TemporaryDirectory(prefix="patched-sources-") as directory:
         repo = Repo(directory)
-        # The commit alone, without its tree. A server that lacks it answers `not our ref`.
+        # The commit alone, without its tree.
         fetch = repo.command(["fetch", "-q", "--no-tags", "--depth", "1", "--filter=tree:0", "--end-of-options", remote, rev])
-        fetched = Repo.run(fetch, environment=remote_environment(), timeout=FETCH_SECONDS, ok=None).returncode == 0
-        return fetched and repo.has(rev, "commit")
+        try:
+            result = Repo.run(fetch, environment=remote_environment(), timeout=PROBE_SECONDS, ok=None)
+        except Failure as error:
+            raise Failure(f"publish: {shown}: cannot check {rev}: {error}") from error
+        if result.returncode == 0:
+            return repo.has(rev, "commit")
+        error = result.stderr.decode("utf-8", "replace")
+        if "not our ref" in error:
+            return False
+        lines = [line for line in error.replace(remote, shown).strip().splitlines() if not line.startswith(("hint:", "warning:"))]
+        raise Failure(f"publish: {shown}: cannot check {rev}: {'; '.join(lines[-3:]) or f'git exit {result.returncode}'}")
 
 
 def publish(root, options):
@@ -1561,7 +1575,7 @@ def publish(root, options):
     missing = 0
     for source in sources:
         name, present = source.name, source.ref in there
-        if not present and options.fetchable and served(remote, source.rev):
+        if not present and options.fetchable and served(remote, shown, source.rev):
             print(f"{name}: fetchable, no ref")
             continue
         missing += not present

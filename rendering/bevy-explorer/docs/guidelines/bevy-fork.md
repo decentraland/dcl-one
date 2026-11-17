@@ -264,10 +264,10 @@ repository root.
 - **`publish --remote https://github.com/<you>/dcl-one`** pushes each new `rev` to your fork.
   GitHub serves a fork's commits through this repository by id, so Cargo fetches the `rev` from
   this repository's URL before the merge, in CI and locally. After the merge the
-  `publish-sources` CI job runs `publish` on `main`: it rebuilds each `rev` that this repository
-  lacks and pushes its ref ([ADR](../../../../docs/adr/2026-11-17-explorer-patched-sources-published-by-ci.md)).
-  A maintainer runs `publish` by hand only when that job failed. Never delete a ref: older
-  revisions build from it.
+  `bevy-explorer-publish-sources` workflow runs `publish` on `main`: it rebuilds each `rev` that
+  this repository lacks and pushes its ref ([ADR](../../../../docs/adr/2026-11-17-explorer-patched-sources-published-by-ci.md)).
+  A manual run of that workflow repairs a failed run. Never delete a ref: older revisions build
+  from it.
 - **Checks.** `pins` works offline, in the CI job that every build job needs. It fails when a
   `rev` in a Cargo file is not the one in `source.toml`, when a Cargo file names a git source
   that is not this repository or one in `OTHER_GIT` of the tool, and while a source is in edit

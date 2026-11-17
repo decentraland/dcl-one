@@ -26,8 +26,12 @@ the 18 patched trees held such files.
 - **PR check:** `publish --check --fetchable` in the job that every build job needs. A `rev` passes
   when this repository has its ref, or when this repository serves the commit by id. It fetches the
   commit alone, without its tree.
-- **After the merge:** the `publish-sources` job of the CI workflow runs on each push to `main`,
-  after the guards, with `contents: write`. It runs `publish` with the tool and series of `main`.
+- **After the merge:** the `bevy-explorer-publish-sources` workflow runs on each push to `main`
+  that changes `rendering/bevy-explorer/patches/`, with `contents: write`. It runs `publish` with
+  the tool and series of `main`. It has no concurrency group: a group keeps one pending run and
+  cancels the others, and a cancelled run would leave the `rev` of its push without a ref. Runs may
+  overlap, since a ref that another run already pushed is up to date. A manual run on `main`
+  repairs a failed one.
   `publish` rebuilds each commit that this repository lacks from its upstream commit and series,
   fails when the result is not the `rev`, and pushes the ref. It never trusts an object of the fork.
 - **Daily:** the drift workflow keeps `publish --check` without `--fetchable`, so a `rev` without a
@@ -40,8 +44,8 @@ the 18 patched trees held such files.
 
 ## Superseded in the 2026-11-15 ADR
 
-- Decision, "Publish": a workflow runs it on each push to `main`; a maintainer runs it by hand only
-  to repair a failed run.
+- Decision, "Publish": a workflow runs it on each push to `main` that changes a source; a manual
+  run of that workflow repairs a failed run.
 - Decision, "Proof", `publish --check` in the job of `pins`: it runs with `--fetchable` there.
 - Consequences, "Publishing is manual".
 
@@ -64,7 +68,12 @@ the 18 patched trees held such files.
 - Before the merge the build depends on the fork. A deleted fork, or a fork whose objects GitHub has
   pruned, fails the PR check until the contributor pushes again. After the merge the ref keeps the
   commit.
-- `main`'s own build jobs on the merge push still fetch through the fork while `publish-sources`
-  runs.
-- The token of `publish-sources` can push any ref of this repository. It runs only on `main`, with
-  code that review merged.
+- `main`'s own build jobs on the merge push still fetch through the fork while the publish
+  workflow runs.
+- A push publishes the pins of its last commit only. A squash merge pushes one commit; a push of
+  several commits that each change a `rev` leaves the earlier ones without a ref, which the daily
+  check does not see, since it reads the current pins.
+- The token of the publish workflow can push any ref of this repository. It runs only on `main`,
+  with code that review merged.
+- The PR check fails with `cannot check` when the fetch gets no answer (a network failure or a
+  60-second timeout); a rerun, not a push to the fork, is the remedy then.
