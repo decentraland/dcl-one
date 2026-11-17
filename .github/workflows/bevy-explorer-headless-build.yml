@@ -75,8 +75,9 @@ jobs:
       - name: Record the path dependencies' file times for the cache
         run: python "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Stamp snapshot version
-        uses: decentraland/oddish-action@a4e98664bf53d4aae1f6d20d1a43ff2c79b555b3 # v1.0.1
+        uses: decentraland/oddish-action@63936a214f96407ff9878a98260fa73a026f3981 # decentraland/oddish-action#14
         with:
+          package-manager: corepack pnpm@12.21.0
           cwd: ./rendering/bevy-explorer/source/deploy/headless/launcher
           deterministic-snapshot: true
           only-update-versions: true
@@ -132,7 +133,7 @@ jobs:
         shell: bash
         run: |
           cd deploy/headless/dist/bevy-headless-server-${{ matrix.npm_platform }}
-          npm pack --pack-destination "$GITHUB_WORKSPACE/rendering/bevy-explorer/source/deploy/headless/dist"
+          corepack pnpm@12.21.0 pack --pack-destination "$GITHUB_WORKSPACE/rendering/bevy-explorer/source/deploy/headless/dist"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bevy-headless-${{ matrix.npm_platform }}-${{ github.sha }}
