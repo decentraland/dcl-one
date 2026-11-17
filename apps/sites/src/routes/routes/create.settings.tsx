@@ -5,7 +5,7 @@ import { openSignIn } from "@/features/components/auth/signin-store";
 import { useChromeAuth } from "@ui/web/frames/chrome-auth";
 import { creatorHubMeta } from "@/core/lib/seo/creator-hub-meta";
 
-const DOWNLOAD_HREF = "/landings/creator-hub-download";
+const DOWNLOAD_HREF = "/download/creator-hub";
 const RELEASES_HREF = "https://github.com/decentraland/creator-hub/releases";
 
 export const meta = () => creatorHubMeta("Download Creator Hub");

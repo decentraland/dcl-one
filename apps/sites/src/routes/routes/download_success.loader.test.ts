@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loader } from "./download_success";
 import { loader as aliasLoader } from "./download_.success";
-import { loader as legacyLoader } from "./landings.download_.success";
 function read(search = "", cookie = "") {
   return loader({
     request: new Request(`https://site.test/download_success${search}`, {
@@ -53,10 +52,10 @@ describe("Download success loader", () => {
     });
   });
   describe("when visiting an older URL", () => {
-    it.each([aliasLoader, legacyLoader])(
+    it(
       "should retain platform parameters in the canonical redirect",
-      (fn) => {
-        const response = fn({
+      () => {
+        const response = aliasLoader({
           request: new Request(
             "https://site.test/download/success?os=windows&arch=amd64",
           ),
