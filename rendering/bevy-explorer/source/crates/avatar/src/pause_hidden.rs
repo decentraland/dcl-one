@@ -1,4 +1,4 @@
-//! Hidden avatars stop animating.
+//! Avatars that are hidden, or outside the camera's view, stop animating.
 //!
 //! An avatar hidden by the Max Avatars cap, an avatar modifier area, a block or ban, or its
 //! scene keeps its animation player running, but its bones leave the animation evaluation: each
@@ -16,13 +16,22 @@
 //! The player, its transitions and the emote logic keep running, so the clock stays in step
 //! with other clients: when the avatar shows again its bones take the current pose.
 //!
+//! An avatar the camera cannot see pauses the same way. It resumes before it comes into view:
+//! the test is a sphere around the avatar wider than the avatar ([`RESUME_MARGIN`]), so the
+//! camera has to turn through that margin first, and the avatar's shadow near the edge of the
+//! view stays live. It pauses only once a wider sphere ([`PAUSE_MARGIN`]) is out of view, so an
+//! avatar at the edge does not switch back and forth. An entity a scene attached to a bone of an
+//! avatar out of view stays where the bone was until the avatar resumes.
+//!
 //! The local player's avatar never pauses: first person hides it by render layer, not by
-//! visibility, and its bones carry attach points and the camera's head tracking. Avatars that
-//! are only off camera keep animating: their bones still place scene-attached entities and
-//! cast shadows into view.
+//! visibility, and its bones carry attach points and the camera's head tracking.
 
-use bevy::{animation::AnimationTarget, prelude::*};
-use common::structs::PrimaryUser;
+use bevy::{
+    animation::AnimationTarget,
+    prelude::*,
+    render::primitives::{Frustum, Sphere as ViewSphere},
+};
+use common::structs::{PrimaryCamera, PrimaryUser};
 
 use crate::AvatarProcessed;
 
@@ -44,7 +53,17 @@ pub struct PausedAnimation {
     bones: Vec<(Entity, AnimationTarget)>,
 }
 
-#[allow(clippy::type_complexity)]
+/// A paused avatar resumes when a sphere of this radius (metres) around it enters the view.
+const RESUME_MARGIN: f32 = 6.0;
+/// An animating avatar pauses when a sphere of this radius (metres) around it leaves the view.
+const PAUSE_MARGIN: f32 = 9.0;
+
+/// Whether an avatar animates: shown, and near enough to the view. One already paused resumes
+/// at the nearer margin and one animating pauses at the farther, so neither flips at the edge.
+fn animates(shown: bool, paused: bool, within: impl Fn(f32) -> bool) -> bool {
+    shown && within(if paused { RESUME_MARGIN } else { PAUSE_MARGIN })
+}
+
 fn pause_hidden_avatar_animation(
     mut commands: Commands,
     builds: Query<
@@ -54,19 +73,20 @@ fn pause_hidden_avatar_animation(
             Option<&Visibility>,
             Ref<AvatarProcessed>,
             &ChildOf,
+            &GlobalTransform,
         ),
-        (
-            With<AvatarProcessed>,
-            Or<(Changed<InheritedVisibility>, Added<AvatarProcessed>)>,
-        ),
+        With<AvatarProcessed>,
     >,
     roots: Query<&InheritedVisibility>,
+    camera: Query<&Frustum, With<PrimaryCamera>>,
     primary: Query<(), With<PrimaryUser>>,
     paused: Query<&PausedAnimation>,
     children: Query<&Children>,
     targets: Query<&AnimationTarget>,
 ) {
-    for (build, inherited, visibility, processed, parent) in &builds {
+    // without a camera every shown avatar animates
+    let frustum = camera.single().ok();
+    for (build, inherited, visibility, processed, parent, transform) in &builds {
         let avatar = parent.parent();
         // A build loads hidden and is shown by the same commands that mark it processed, so in
         // the frame it is processed its `InheritedVisibility` may not have been propagated yet.
@@ -81,9 +101,22 @@ fn pause_hidden_avatar_animation(
             _ => inherited.get(),
         };
         let paused = paused.get(avatar).ok();
-        match (visible, paused) {
-            // shown again, or rebuilt shown: the bones rejoin the evaluation and take the current
-            // pose (those of a replaced build are gone, and skipped)
+        let should_animate = animates(
+            visible,
+            paused.is_some_and(|paused| paused.build == build),
+            |margin| {
+                frustum.is_none_or(|frustum| {
+                    let sphere = ViewSphere {
+                        center: (transform.translation() + Vec3::Y).into(),
+                        radius: margin,
+                    };
+                    frustum.intersects_sphere(&sphere, true)
+                })
+            },
+        );
+        match (should_animate, paused) {
+            // shown and in view again, or rebuilt so: the bones rejoin the evaluation and take
+            // the current pose (those of a replaced build are gone, and skipped)
             (true, Some(PausedAnimation { bones, .. })) => {
                 for (bone, target) in bones {
                     commands.entity(*bone).try_insert(*target);
@@ -92,7 +125,7 @@ fn pause_hidden_avatar_animation(
             }
             // already paused on this build
             (false, Some(paused)) if paused.build == build => (),
-            // hidden, or rebuilt hidden while the earlier build was paused
+            // hidden or out of view, or rebuilt so while the earlier build was paused
             (false, _) if !primary.contains(avatar) => {
                 let bones: Vec<_> = children
                     .iter_descendants(build)
@@ -141,7 +174,12 @@ mod tests {
             world.entity_mut(root).insert(PrimaryUser::default());
         }
         let build = world
-            .spawn((AvatarProcessed, InheritedVisibility::VISIBLE, ChildOf(root)))
+            .spawn((
+                AvatarProcessed,
+                InheritedVisibility::VISIBLE,
+                GlobalTransform::default(),
+                ChildOf(root),
+            ))
             .id();
         let armature = world.spawn(ChildOf(build)).id();
         let bone = world
@@ -192,7 +230,12 @@ mod tests {
     ) -> (Entity, Entity) {
         let world = app.world_mut();
         let build = world
-            .spawn((AvatarProcessed, visibility, ChildOf(root)))
+            .spawn((
+                AvatarProcessed,
+                visibility,
+                GlobalTransform::default(),
+                ChildOf(root),
+            ))
             .id();
         let bone = world
             .spawn((
@@ -251,6 +294,48 @@ mod tests {
         app.world_mut().entity_mut(build).insert(Visibility::Hidden);
         app.update();
         assert!(app.world().get::<AnimationTarget>(bone).is_none());
+    }
+
+    #[test]
+    fn an_avatar_pauses_and_resumes_at_different_margins() {
+        // in view up to 7 m of margin: inside the pause margin, outside the resume margin
+        let within = |margin: f32| margin >= 7.0;
+        assert!(animates(true, false, within), "animating, it carries on");
+        assert!(!animates(true, true, within), "paused, it stays paused");
+        // well inside the view either resumes
+        assert!(animates(true, true, |_| true));
+        // far outside either pauses, and a hidden avatar never animates
+        assert!(!animates(true, false, |_| false));
+        assert!(!animates(false, false, |_| true));
+    }
+
+    #[test]
+    fn an_avatar_behind_the_camera_stops_animating_until_the_camera_turns() {
+        use bevy::render::camera::CameraProjection;
+
+        let (mut app, avatar) = app_with_avatar(false);
+        // the avatar stands at the origin; the camera is 30 m away, looking away from it
+        let projection = PerspectiveProjection::default();
+        let away = GlobalTransform::from(
+            Transform::from_xyz(0.0, 0.0, -30.0).looking_to(Vec3::NEG_Z, Vec3::Y),
+        );
+        let camera = app
+            .world_mut()
+            .spawn((PrimaryCamera::default(), projection.compute_frustum(&away)))
+            .id();
+        app.update();
+        assert!(app.world().get::<AnimationTarget>(avatar.bone).is_none());
+        assert!(app.world().get::<PausedAnimation>(avatar.root).is_some());
+
+        let towards = GlobalTransform::from(
+            Transform::from_xyz(0.0, 0.0, -30.0).looking_to(Vec3::Z, Vec3::Y),
+        );
+        app.world_mut()
+            .entity_mut(camera)
+            .insert(projection.compute_frustum(&towards));
+        app.update();
+        assert!(app.world().get::<AnimationTarget>(avatar.bone).is_some());
+        assert!(app.world().get::<PausedAnimation>(avatar.root).is_none());
     }
 
     #[test]
