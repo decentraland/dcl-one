@@ -63,10 +63,11 @@ impl CrdtStore {
                 new_timestamp,
                 maybe_new_data,
             ),
-            CrdtType::GO(_) => {
-                self.force_update(component_id, crdt_type, entity, maybe_new_data);
-                true
-            }
+            CrdtType::GO(_) => self
+                .go
+                .entry(component_id)
+                .or_default()
+                .append(entity, maybe_new_data.unwrap()),
         }
     }
 
@@ -106,13 +107,12 @@ impl CrdtStore {
                 .entry(component_id)
                 .or_default()
                 .update_if_different(entity, maybe_new_data),
-            CrdtType::GO(_) => {
-                self.go
-                    .entry(component_id)
-                    .or_default()
-                    .append(entity, maybe_new_data.unwrap());
-                Some(SceneCrdtTimestamp(0))
-            }
+            CrdtType::GO(_) => self
+                .go
+                .entry(component_id)
+                .or_default()
+                .append(entity, maybe_new_data.unwrap())
+                .then_some(SceneCrdtTimestamp(0)),
         }
     }
 
@@ -488,6 +488,75 @@ mod test {
 
     fn entity(id: u16) -> SceneEntityId {
         SceneEntityId { id, generation: 0 }
+    }
+
+    #[test]
+    fn duplicate_grow_only_updates_are_not_reported_as_changes() {
+        let mut store = CrdtStore::default();
+        let component = SceneComponentId(1);
+        assert!(store.try_update(
+            component,
+            CrdtType::GO_ANY,
+            entity(1),
+            SceneCrdtTimestamp(1),
+            Some(&mut DclReader::new(b"event")),
+        ));
+        assert!(!store.try_update(
+            component,
+            CrdtType::GO_ANY,
+            entity(1),
+            SceneCrdtTimestamp(2),
+            Some(&mut DclReader::new(b"event")),
+        ));
+        assert_eq!(
+            store.update_if_different(
+                component,
+                CrdtType::GO_ANY,
+                entity(1),
+                Some(&mut DclReader::new(b"event")),
+            ),
+            None,
+        );
+        store.force_update(
+            component,
+            CrdtType::GO_ANY,
+            entity(1),
+            Some(&mut DclReader::new(b"event")),
+        );
+        assert_eq!(store.retained_data_bytes(), b"event".len());
+        assert_eq!(store.take_updates().go[&component].0[&entity(1)].len(), 1);
+    }
+
+    #[test]
+    fn repeated_append_frames_are_scoped_to_their_component_and_entity() {
+        let mut store = CrdtStore::default();
+        let mut context = CrdtContext::new(
+            crate::SceneId::DUMMY,
+            Default::default(),
+            Default::default(),
+            false,
+            false,
+            false,
+        );
+        let writers = CrdtComponentInterfaces::default();
+        let first = crate::crdt::append_component(&entity(1), &SceneComponentId(1), b"event");
+        let second = crate::crdt::append_component(&entity(1), &SceneComponentId(2), b"event");
+        let third = crate::crdt::append_component(&entity(2), &SceneComponentId(1), b"event");
+        for frame in [&first, &first, &second, &third, &first] {
+            store.process_message_stream(
+                &mut context,
+                &writers,
+                &mut DclReader::new(frame),
+                false,
+                None,
+                None,
+            );
+        }
+        let updates = store.take_updates();
+        assert_eq!(updates.go[&SceneComponentId(1)].0[&entity(1)].len(), 1);
+        assert_eq!(updates.go[&SceneComponentId(2)].0[&entity(1)].len(), 1);
+        assert_eq!(updates.go[&SceneComponentId(1)].0[&entity(2)].len(), 1);
+        assert_eq!(updates.retained_data_bytes(), 3 * b"event".len());
     }
 
     // retained_data_bytes must sum LWW last-write payloads and grow-only entries, and must
