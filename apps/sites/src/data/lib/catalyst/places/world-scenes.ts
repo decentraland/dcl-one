@@ -1,14 +1,33 @@
 import { z } from "zod";
-import { playUrl } from "../bases";
+import { playUrl, worldsContentServerUrl } from "../bases";
 import { catalystBase, getJSON, type GetOptions } from "../client";
-import { ApiDataTotalSchema } from "../generated-schemas/places";
 
-const WorldScene = z.object({ id: z.string(), title: z.string().nullable(), base_position: z.string(), world: z.boolean(), world_name: z.string().nullable() });
-export type WorldScene = z.infer<typeof WorldScene>;
+const WorldScenes = z.object({
+  scenes: z.array(z.object({
+    entityId: z.string(),
+    parcels: z.array(z.string()).optional(),
+    entity: z.object({ metadata: z.object({ display: z.object({ title: z.string().optional() }).optional(), scene: z.object({ base: z.string().optional() }).optional() }).optional() }).optional(),
+  })).optional(),
+});
+export type WorldScene = { entityId: string; title: string; base: string };
 
-export async function loadWorldScenes(worldName: string, offset: number, options: GetOptions = {}) {
-  const response = ApiDataTotalSchema(WorldScene).parse(await getJSON(`/places/api/worlds/${encodeURIComponent(worldName.toLowerCase())}/scenes`, { ...options, query: { offset, limit: 20 } }));
-  return { scenes: response.data, total: response.total };
+// One page of the worlds route, which gives 100 rows at most for each request: the place page lists a world's
+// scenes without paging, so it shows the first 100 and asks for no more.
+const WORLD_SCENES_LIMIT = 100;
+
+/** A world's deployed scenes (the first 100), as decentraland.org's scene page reads them; null when the worlds content server fails. */
+export async function loadWorldScenes(worldName: string, options: GetOptions = {}): Promise<WorldScene[] | null> {
+  try {
+    const raw = await getJSON(`/world/${encodeURIComponent(worldName.toLowerCase())}/scenes`, { ...options, base: options.base ?? worldsContentServerUrl(), query: { limit: WORLD_SCENES_LIMIT } });
+    return (WorldScenes.parse(raw).scenes ?? []).map((s) => ({
+      entityId: s.entityId,
+      title: s.entity?.metadata?.display?.title || s.entityId.slice(0, 8),
+      base: s.entity?.metadata?.scene?.base ?? s.parcels?.[0] ?? "0,0",
+    }));
+  } catch (error) {
+    if (options.signal?.aborted) throw error;
+    return null;
+  }
 }
 
 export function sceneTravelHref(worldName: string | null | undefined, position: string, entry?: string): string {

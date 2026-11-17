@@ -1,35 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-vi.mock("@/data/lib/catalyst/landings/download-counts.server", () => ({
-  loadDownloadsLabel: vi.fn(),
-}));
-
-import { loadDownloadsLabel } from "@/data/lib/catalyst/landings/download-counts.server";
+import { expect, test } from "vitest";
 import { loader } from "./landings.download";
 
-describe("/download loader", () => {
-  beforeEach(() => {
-    vi.mocked(loadDownloadsLabel).mockReset();
-    vi.mocked(loadDownloadsLabel).mockResolvedValue("+438K");
-  });
-
-  it.each([
-    [
-      "Windows NT 10.0; Win64; x64",
-      { kind: "desktop", os: "windows", arch: "amd64" },
-    ],
-    ["Android 15; Pixel 9", { kind: "mobile", os: "android" }],
-    ["iPhone; CPU iPhone OS 18_0 like Mac OS X", { kind: "mobile", os: "ios" }],
-  ])(
-    "should provide the detected platform for %s",
-    async (userAgent, platform) => {
-      const result = await loader({
-        request: new Request("https://sites.example/download", {
-          headers: { "user-agent": userAgent },
-        }),
-      } as never);
-
-      expect(result).toEqual({ platform, downloads: "+438K" });
-    },
-  );
+test.each([
+  ["/landings/download", "/download"],
+  ["/landings/download?utm_source=x&next=https%3A%2F%2Fevil.example", "/download?utm_source=x&next=https%3A%2F%2Fevil.example"],
+])("%s redirects to %s", (path, location) => {
+  const response = loader({ request: new Request(`https://sites.test${path}`) } as never);
+  expect(response.status).toBe(308);
+  expect(response.headers.get("Location")).toBe(location);
 });

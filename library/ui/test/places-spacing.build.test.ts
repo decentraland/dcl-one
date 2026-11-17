@@ -87,13 +87,13 @@ describe.each([390, 1440])('when Places renders at %ipx', (width) => {
         liveBottom: number | null
       }>(`(()=>{
       const main=document.querySelector('main'),tabs=main.querySelector('[role="group"]'),content=tabs.parentElement.parentElement,band=content.parentElement,live=document.querySelector('[data-live]')
-      return {headerBottom:document.querySelector('nav').getBoundingClientRect().bottom,mainTop:main.getBoundingClientRect().top,bandTop:band.getBoundingClientRect().top,contentTop:content.getBoundingClientRect().top,liveBottom:live?.getBoundingClientRect().bottom??null}
+      return {headerBottom:document.querySelector('nav').getBoundingClientRect().bottom,mainTop:main.getBoundingClientRect().top+parseFloat(getComputedStyle(main).paddingTop),bandTop:band.getBoundingClientRect().top,contentTop:content.getBoundingClientRect().top,liveBottom:live?.getBoundingClientRect().bottom??null}
     })()`)
-      expect(geometry.mainTop).toBeCloseTo(geometry.headerBottom, 1)
-      expect(geometry.bandTop).toBeCloseTo(
-        live ? geometry.liveBottom! + 48 : geometry.headerBottom,
-        1
-      )
+      // The page starts under the fixed bar; its content starts at the bar's bottom, 4px lower from
+      // 992px as on decentraland.org.
+      const pageTop = geometry.headerBottom + (width >= 992 ? 4 : 0)
+      expect(geometry.mainTop).toBeCloseTo(pageTop, 1)
+      expect(geometry.bandTop).toBeCloseTo(live ? geometry.liveBottom! + 48 : pageTop, 1)
       expect(geometry.contentTop - geometry.bandTop).toBeCloseTo(48, 1)
     }
   )
