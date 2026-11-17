@@ -57,7 +57,7 @@ use crate::global_crdt::{
 };
 use crate::profile::CurrentUserProfile;
 use crate::{NetworkMessage, Transport, TransportType};
-use bevy::platform::collections::HashMap;
+use bevy::platform::collections::{HashMap, HashSet};
 
 /// Realm to announce verbatim, instead of deriving one from the realm we're in — `--pulse-realm`
 /// on a `--server-mode` engine. The orchestrator that spawns a local-preview server already knows
@@ -1577,6 +1577,7 @@ fn update_listener_aoi(
     // wearables) point at addresses and urns, so they fall out of the parse; a scene whose context
     // isn't registered yet simply isn't routable yet, and gets picked up on a later frame.
     let mut context_by_parcel: HashMap<String, HashMap<IVec2, Entity>> = HashMap::default();
+    let mut live_contexts: HashSet<Entity> = HashSet::default();
     for (_, definition) in definitions.iter() {
         let mut parcels = definition.pointers.iter().filter_map(|pointer| {
             let (x, z) = pointer.split_once(',')?;
@@ -1595,6 +1596,7 @@ fn update_listener_aoi(
         else {
             continue;
         };
+        live_contexts.insert(context);
         let realm_parcels = context_by_parcel.entry(scene_realm).or_default();
         for parcel in std::iter::once(first).chain(parcels) {
             realm_parcels.insert(parcel, context);
@@ -1612,9 +1614,7 @@ fn update_listener_aoi(
     // carrying (the despawn observer sweeps them out of `ForeignPlayer.transports`) — the same
     // teardown a scene room gets when its room goes away.
     transport_for.retain(|context, transport| {
-        let keep = context_by_parcel
-            .values()
-            .any(|parcels| parcels.values().any(|c| c == context));
+        let keep = live_contexts.contains(context);
         if !keep {
             if let Ok(mut entity) = commands.get_entity(*transport) {
                 entity.despawn();
@@ -1623,10 +1623,7 @@ fn update_listener_aoi(
         keep
     });
 
-    for context in context_by_parcel
-        .values()
-        .flat_map(|parcels| parcels.values().copied())
-    {
+    for &context in &live_contexts {
         if transport_for.contains_key(&context) {
             continue;
         }
@@ -1673,17 +1670,22 @@ fn update_listener_aoi(
     let mut aoi: Vec<_> = listener
         .transport_by_parcel
         .iter()
-        .map(|(realm, parcels)| pulse::SceneListenerAoi {
-            realm: realm.clone(),
-            parcel_rects: scene_regions(parcels.keys().copied())
-                .into_iter()
-                .map(|region| pulse::ParcelRect {
-                    min_x: region.min.x,
-                    min_z: region.min.y,
-                    max_x: region.max.x,
-                    max_z: region.max.y,
-                })
-                .collect(),
+        .map(|(realm, parcels)| {
+            // ordered input: rects come out in its order
+            let mut parcels: Vec<IVec2> = parcels.keys().copied().collect();
+            parcels.sort_unstable_by_key(|p| (p.x, p.y));
+            pulse::SceneListenerAoi {
+                realm: realm.clone(),
+                parcel_rects: scene_regions(parcels.into_iter())
+                    .into_iter()
+                    .map(|region| pulse::ParcelRect {
+                        min_x: region.min.x,
+                        min_z: region.min.y,
+                        max_x: region.max.x,
+                        max_z: region.max.y,
+                    })
+                    .collect(),
+            }
         })
         .collect();
     aoi.sort_by(|a, b| a.realm.cmp(&b.realm));

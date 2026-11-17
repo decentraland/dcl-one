@@ -686,25 +686,23 @@ fn reap_scene_contexts(
     live: Query<&RendererSceneContext>,
     loading: Query<&SceneHash, With<SceneLoading>>,
 ) {
-    crdt_contexts.0.retain(|hash, context| {
+    let reaped = comms::global_crdt::CrdtContexts::reap(&mut crdt_contexts, |hash| {
         if hash.is_empty() {
             // the shared context
             return true;
         }
         // a wanted scene keeps its context even while unqueued (a mint in flight, a room still
         // being re-dialled): its room points at it and the scene reloads into it
-        if portables.contains_key(hash)
+        portables.contains_key(hash)
             || orch.wanted.contains_key(hash)
-            || live.iter().any(|ctx| *ctx.hash == **hash)
-            || loading.iter().any(|loading_hash| &loading_hash.0 == hash)
-        {
-            return true;
-        }
-        if let Ok(mut c) = commands.get_entity(*context) {
+            || live.iter().any(|ctx| *ctx.hash == *hash)
+            || loading.iter().any(|loading_hash| loading_hash.0 == hash)
+    });
+    for context in reaped {
+        if let Ok(mut c) = commands.get_entity(context) {
             c.despawn();
         }
-        false
-    });
+    }
 }
 
 /// The adapter a scene room was dialled with.
