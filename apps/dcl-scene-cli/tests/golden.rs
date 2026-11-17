@@ -285,7 +285,8 @@ fn sweep_dead_extractions(parent: &Path) {
     }
 }
 
-/// A private copy of the fixture with the shared toolchain symlinked in.
+/// A private copy of the fixture with the shared toolchain linked in, except
+/// `@dcl/js-runtime`, which a build with scripts writes its types into.
 fn stage(fixture: &Fixture) -> PathBuf {
     let modules = node_modules_src().join("node_modules");
     let root = work_dir().join(fixture.stem());
@@ -297,8 +298,21 @@ fn stage(fixture: &Fixture) -> PathBuf {
         std::fs::copy(authoring_testdata().join(from), &dst)
             .unwrap_or_else(|e| panic!("staging {from}: {e}"));
     }
-    std::os::unix::fs::symlink(modules, root.join("node_modules")).expect("linking node_modules");
+    link_entries(&modules, &root.join("node_modules"));
     root
+}
+
+fn link_entries(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap_or_else(|e| panic!("creating {}: {e}", to.display()));
+    for entry in std::fs::read_dir(from).unwrap().flatten() {
+        let (src, dst) = (entry.path(), to.join(entry.file_name()));
+        match entry.file_name().to_str() {
+            Some("@dcl") => link_entries(&src, &dst),
+            Some("js-runtime") if from.ends_with("@dcl") => copy_tree(&src, &dst),
+            _ => std::os::unix::fs::symlink(&src, &dst)
+                .unwrap_or_else(|e| panic!("linking {}: {e}", dst.display())),
+        }
+    }
 }
 
 fn copy_tree(from: &Path, to: &Path) {

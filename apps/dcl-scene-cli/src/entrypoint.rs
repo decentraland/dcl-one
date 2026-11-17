@@ -2,7 +2,7 @@ use crate::scene::Project;
 use crate::ux::{TrySteps, UserError, write_error};
 use anyhow::Result;
 use serde_json::{Map, Value};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 const RUNTIME_SCRIPT: &str = include_str!(concat!(
     env!("DCL_ONE_ROOT"),
@@ -53,6 +53,7 @@ pub fn generate(
     let safe_entry = serde_json::to_string(&user_entry.display().to_string().replace('\\', "/"))?;
 
     let content = if custom_entry {
+        let _ = std::fs::remove_file(dir.join(SCENE_SCRIPTS_FILE));
         format!(";\"use strict\";export * from {safe_entry}")
     } else {
         write_all_composites(project, &dir, ignore_composite)?;
@@ -336,6 +337,7 @@ fn scan_scripts(root: &Path) -> Result<(Vec<SceneScript>, Vec<String>)> {
                     else {
                         continue;
                     };
+                    check_script_path(root, &rel, entity, script_path)?;
                     let mut instance = fields.clone();
                     instance.insert("entity".to_string(), entity.into());
                     match scripts.iter_mut().find(|s| s.path == script_path) {
@@ -350,6 +352,25 @@ fn scan_scripts(root: &Path) -> Result<(Vec<SceneScript>, Vec<String>)> {
         }
     }
     Ok((scripts, skipped))
+}
+
+fn check_script_path(root: &Path, composite: &str, entity: u64, script_path: &str) -> Result<()> {
+    let inside = Path::new(script_path)
+        .components()
+        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
+    let problem = if !inside {
+        "it is outside the scene folder"
+    } else if !root.join(script_path).is_file() {
+        "that file does not exist"
+    } else {
+        return Ok(());
+    };
+    Err(UserError::new(
+        format!("{composite} attaches the script {script_path} to entity {entity}, but {problem}"),
+        TrySteps::one("keep the script inside the scene folder and name it by its path from there, such as assets/scene/Scripts/MyScript.ts")
+            .and("or remove the script from that entity in the editor"),
+    )
+    .into())
 }
 
 fn script_import_name(index: usize, script_path: &str) -> String {
@@ -418,8 +439,21 @@ fn script_declarations(root: &Path, scripts: &[SceneScript]) -> Result<String> {
 
 fn block_end(text: &str, start: usize) -> usize {
     let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
     for (offset, c) in text[start..].char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
         match c {
+            '"' => in_string = true,
             '{' => depth += 1,
             '}' => {
                 depth = depth.saturating_sub(1);
@@ -431,6 +465,16 @@ fn block_end(text: &str, start: usize) -> usize {
         }
     }
     text.len()
+}
+
+fn replace_file(file: &Path, content: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let permissions = std::fs::metadata(file)?.permissions();
+    let mut staged = tempfile::NamedTempFile::new_in(file.parent().unwrap_or(Path::new(".")))?;
+    staged.write_all(content)?;
+    staged.as_file().set_permissions(permissions)?;
+    staged.persist(file).map_err(|e| e.error)?;
+    Ok(())
 }
 
 /// Types `getScriptInstance` and friends per script path, as upstream does, by
@@ -445,6 +489,13 @@ pub fn write_script_declarations(project: &Project, scripts: &[SceneScript]) -> 
     else {
         return Ok(());
     };
+    if std::fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_symlink()) {
+        crate::ux::note_stderr(format!(
+            "the scene's script types are not written: {} is a link",
+            crate::ux::rel_to(&project.root, &file)
+        ));
+        return Ok(());
+    }
     let Ok(text) = std::fs::read_to_string(&file) else {
         return Ok(());
     };
@@ -462,10 +513,7 @@ pub fn write_script_declarations(project: &Project, scripts: &[SceneScript]) -> 
         return Ok(());
     }
     let updated = format!("{}{block}{}", &text[..start], &text[end..]);
-    let staged = file.with_extension("ts.dcl-one-tmp");
-    if let Err(e) = std::fs::write(&staged, updated).and_then(|()| std::fs::rename(&staged, &file))
-    {
-        let _ = std::fs::remove_file(&staged);
+    if let Err(e) = replace_file(&file, updated.as_bytes()) {
         crate::ux::note_stderr(format!(
             "could not add the scene's script types to {}: {e}",
             crate::ux::rel_to(&project.root, &file)
@@ -477,10 +525,152 @@ pub fn write_script_declarations(project: &Project, scripts: &[SceneScript]) -> 
 #[cfg(test)]
 mod tests {
     use super::{
-        SCRIPT_UTILS_STUB, SceneScript, collect_scripts, scan_max_composite_entity, scan_scripts,
-        scene_scripts_module, script_utils_content, write_script_declarations,
+        DTS_BLOCK_START, SCENE_SCRIPTS_FILE, SCRIPT_UTILS_STUB, SceneScript, block_end,
+        collect_scripts, generate, scan_max_composite_entity, scan_scripts, scene_scripts_module,
+        script_utils_content, write_script_declarations,
     };
     use crate::scene::{Project, Tmp};
+
+    fn write_scripts(t: &Tmp) {
+        t.write(MAIN, TWO_ENTITIES);
+        t.write(
+            "assets/scene/Scripts/Counter.ts",
+            "export function start() {}\n",
+        );
+        t.write("assets/scene/Scripts/Door.ts", "export class Door {}\n");
+    }
+
+    fn vendored_declarations() -> String {
+        let mut archive =
+            zip::ZipArchive::new(std::io::Cursor::new(crate::init::VENDORED_NODE_MODULES)).unwrap();
+        let mut text = String::new();
+        std::io::Read::read_to_string(
+            &mut archive
+                .by_name("node_modules/@dcl/js-runtime/index.d.ts")
+                .unwrap(),
+            &mut text,
+        )
+        .unwrap();
+        text
+    }
+
+    fn script_component(path: &str) -> String {
+        format!(
+            r#"{{"version":1,"components":[{{"name":"asset-packs::Script","jsonSchema":{{"type":"object"}},"data":{{"512":{{"json":{{"value":[{{"path":{path:?},"priority":0}}]}}}}}}}}]}}"#
+        )
+    }
+
+    #[test]
+    fn script_paths_outside_the_scene_or_missing_are_refused() {
+        let t = Tmp::new("scriptpaths");
+        t.write("outside.ts", "export function start() {}\n");
+        for (path, problem) in [
+            ("/etc/hosts", "outside the scene folder"),
+            ("../outside.ts", "outside the scene folder"),
+            (
+                "assets/scene/Scripts/../../../outside.ts",
+                "outside the scene folder",
+            ),
+            ("assets/scene/Scripts/Missing.ts", "does not exist"),
+        ] {
+            t.write(MAIN, script_component(path));
+            let err = format!("{:#}", collect_scripts(&t.0).unwrap_err());
+            for part in ["assets/scene/main.composite", "entity 512", path, problem] {
+                assert!(err.contains(part), "{path}: {part:?} missing from {err}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_vendored_declarations_change_only_in_the_script_utils_block() {
+        let t = Tmp::new("vendored}decl");
+        let original = vendored_declarations();
+        let dts = t.0.join("node_modules/@dcl/js-runtime/index.d.ts");
+        t.write("node_modules/@dcl/js-runtime/index.d.ts", &original);
+        write_scripts(&t);
+        let project = project(&t);
+        let scripts = collect_scripts(&t.0).unwrap();
+        let start = original.find(DTS_BLOCK_START).unwrap();
+        let original_end = block_end(&original, start);
+
+        for _ in 0..2 {
+            write_script_declarations(&project, &scripts).unwrap();
+            let typed = std::fs::read_to_string(&dts).unwrap();
+            let end = block_end(&typed, start);
+            assert_eq!(typed[..start], original[..start]);
+            assert_eq!(typed[end..], original[original_end..]);
+            assert!(
+                typed[start..end].contains("vendored}decl"),
+                "{}",
+                &typed[start..end]
+            );
+            assert!(
+                typed[start..end].contains("ExtractScriptType<script_1_assets_scene_Scripts_Door>")
+            );
+        }
+
+        write_script_declarations(&project, &[]).unwrap();
+        let emptied = std::fs::read_to_string(&dts).unwrap();
+        let end = block_end(&emptied, start);
+        assert!(!emptied[start..end].contains("ExtractScriptType<script_"));
+        assert_eq!(emptied[end..], original[original_end..]);
+        let entries: Vec<_> = std::fs::read_dir(dts.parent().unwrap()).unwrap().collect();
+        assert_eq!(
+            entries.len(),
+            1,
+            "a staging file was left behind: {entries:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn declarations_are_never_written_through_a_link() {
+        let t = Tmp::new("linkeddecl");
+        let runtime = t.0.join("node_modules/@dcl/js-runtime");
+        t.write("elsewhere/victim.txt", "untouched");
+        t.write("node_modules/@dcl/js-runtime/index.d.ts", DECLARATIONS);
+        std::os::unix::fs::symlink(
+            t.0.join("elsewhere/victim.txt"),
+            runtime.join("index.d.ts.dcl-one-tmp"),
+        )
+        .unwrap();
+        write_scripts(&t);
+        let scripts = collect_scripts(&t.0).unwrap();
+        write_script_declarations(&project(&t), &scripts).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(t.0.join("elsewhere/victim.txt")).unwrap(),
+            "untouched"
+        );
+
+        std::fs::remove_file(runtime.join("index.d.ts")).unwrap();
+        t.write("elsewhere/index.d.ts", DECLARATIONS);
+        std::os::unix::fs::symlink(t.0.join("elsewhere/index.d.ts"), runtime.join("index.d.ts"))
+            .unwrap();
+        write_script_declarations(&project(&t), &scripts).unwrap();
+        assert!(
+            std::fs::symlink_metadata(runtime.join("index.d.ts"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            std::fs::read_to_string(t.0.join("elsewhere/index.d.ts")).unwrap(),
+            DECLARATIONS
+        );
+    }
+
+    #[test]
+    fn a_custom_entry_build_drops_the_scene_scripts_module() {
+        let t = Tmp::new("customentry");
+        std::fs::create_dir_all(t.0.join("node_modules/@dcl/asset-packs")).unwrap();
+        write_scripts(&t);
+        let project = project(&t);
+        let module = t.0.join(".dcl-one").join(SCENE_SCRIPTS_FILE);
+        generate(&project, false, false, true).unwrap();
+        assert!(module.is_file());
+        generate(&project, false, true, true).unwrap();
+        assert!(!module.exists());
+    }
 
     const MAIN: &str = "assets/scene/main.composite";
     const UNINSTANCEABLE: &str = r#"{"version":1,"components":[{"name":"core::NotAThing","data":{}},{"name":"asset-packs::Script","jsonSchema":{"type":"object"},"data":{"512":{"json":{"value":[{"path":"src/counter.ts"}]}}}}]}"#;
@@ -506,7 +696,7 @@ mod tests {
     #[test]
     fn collects_each_script_with_its_entity_grouped_by_path_in_entity_order() {
         let t = Tmp::new("collect");
-        t.write(MAIN, TWO_ENTITIES);
+        write_scripts(&t);
         assert_eq!(
             collect_scripts(&t.0).unwrap(),
             vec![
@@ -579,7 +769,7 @@ mod tests {
             script_utils_content(&project, &[]).unwrap(),
             SCRIPT_UTILS_STUB
         );
-        t.write(MAIN, TWO_ENTITIES);
+        write_scripts(&t);
         let scripts = collect_scripts(&t.0).unwrap();
         let runtime = script_utils_content(&project, &scripts).unwrap();
         assert!(runtime.contains("export function runScripts"), "{runtime}");
@@ -600,7 +790,7 @@ mod tests {
     #[test]
     fn scripts_without_asset_packs_are_refused() {
         let t = Tmp::new("noassetpacks");
-        t.write(MAIN, TWO_ENTITIES);
+        write_scripts(&t);
         let scripts = collect_scripts(&t.0).unwrap();
         let err = format!(
             "{:#}",
@@ -612,7 +802,7 @@ mod tests {
     #[test]
     fn scene_scripts_module_imports_every_script_and_passes_each_instance() {
         let t = Tmp::new("scenemodule");
-        t.write(MAIN, TWO_ENTITIES);
+        write_scripts(&t);
         let module = scene_scripts_module(&t.0, &collect_scripts(&t.0).unwrap()).unwrap();
         let counter = t.0.join("assets/scene/Scripts/Counter.ts");
         assert!(
@@ -653,7 +843,7 @@ mod tests {
         write_script_declarations(&project, &[]).unwrap();
         assert_eq!(std::fs::read_to_string(&dts).unwrap(), DECLARATIONS);
 
-        t.write(MAIN, TWO_ENTITIES);
+        write_scripts(&t);
         let scripts = collect_scripts(&t.0).unwrap();
         write_script_declarations(&project, &scripts).unwrap();
         let typed = std::fs::read_to_string(&dts).unwrap();
@@ -662,10 +852,6 @@ mod tests {
         assert!(
             typed.contains("import type { Entity } from '@dcl/ecs'\n"),
             "{typed}"
-        );
-        assert!(
-            !t.0.join("node_modules/@dcl/js-runtime/index.d.ts.dcl-one-tmp")
-                .exists()
         );
         assert!(typed.ends_with("}\n\ndeclare module \"@dcl/asset-packs/dist/action-types\" {\n  export const kept: true\n}\n"), "{typed}");
         assert_eq!(
