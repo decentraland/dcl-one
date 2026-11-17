@@ -448,6 +448,18 @@ for (const [variant, name, id] of panels)
         'false'
       )
     })
+    it('should close on Escape while focus is still on its trigger and keep focus there', async () => {
+      await open()
+      expect(await browser.evaluate('document.activeElement===window.fixtureTrigger')).toBe(true)
+      await press('Escape', 'Escape', 27)
+      expect(await browser.evaluate(`document.getElementById(${JSON.stringify(id)})===null`)).toBe(
+        true
+      )
+      expect(await browser.evaluate('document.activeElement===window.fixtureTrigger')).toBe(true)
+      expect(await browser.evaluate('window.fixtureTrigger.getAttribute("aria-expanded")')).toBe(
+        'false'
+      )
+    })
     it('should close when the pointer presses outside the toolbar', async () => {
       await open()
       await clickControl('main > p')

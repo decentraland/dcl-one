@@ -93,6 +93,13 @@ function useDisclosure(id: string, initial = false) {
       onClick: () => setOpen(!open),
       onBlur: (event: React.FocusEvent) => {
         if (leaves(event.relatedTarget)) setOpen(false)
+      },
+      onKeyDown: (event: React.KeyboardEvent) => {
+        if (open && !event.defaultPrevented && event.key === 'Escape') {
+          event.preventDefault()
+          event.stopPropagation()
+          setOpen(false)
+        }
       }
     },
     panel: {
