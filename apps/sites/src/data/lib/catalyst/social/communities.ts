@@ -110,27 +110,3 @@ export async function loadCommunity(
   }
 }
 
-export async function loadDefaultCommunity(
-  opts: GetOptions = {},
-): Promise<Community | null> {
-  try {
-    const raw = await getJSON<unknown>("/v1/communities", {
-      ...opts,
-      query: { ...opts.query, limit: 60 },
-    });
-    const rows: Community[] = [];
-    for (const n of unwrapResults(raw) ?? []) {
-      const parsed = CommunitySchema.safeParse(n);
-      if (parsed.success && parsed.data.name.trim() !== "") {
-        rows.push(parsed.data);
-      }
-    }
-    if (rows.length === 0) return null;
-    return rows.reduce((best, c) =>
-      (c.membersCount ?? -1) > (best.membersCount ?? -1) ? c : best,
-    );
-  } catch {
-    return null;
-  }
-}
-

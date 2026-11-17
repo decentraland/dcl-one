@@ -14,8 +14,10 @@
 //!   the credential): publish tokens for the key's room; the streamer is
 //!   added to the room's presenters.
 //! - `POST /watcher-token` (a viewer's own signed fetch, never a scene's):
-//!   the platform ban, then the scene ban of the room the stream runs in;
-//!   a subscribe-only token.
+//!   the platform ban, then the scene ban of the room the stream runs in
+//!   and, for a world, its access policy; a subscribe-only token whose
+//!   `dcl.castWatcher` attribute carries the wallet, so the ban and world
+//!   access sweeps reach a watcher already in the room.
 //! - `GET /presenters`, `PUT|DELETE /presenters/{identity}` (signed as
 //!   scene): owner or admin of the place the room's stream credential is
 //!   stored for. As upstream, a demotion does not stick for a scene admin:
@@ -318,6 +320,8 @@ struct ParticipantMetadata<'a> {
 /// in the token's own `cast` list publishes any source, any other only the
 /// microphone; `name` is the display name; five minutes.
 struct Grant<'a> {
+    /// Signed participant attributes; the participant cannot change them.
+    attributes: Vec<(&'static str, String)>,
     identity: &'a str,
     room: &'a str,
     can_publish: bool,
@@ -347,6 +351,9 @@ fn mint(state: &CommsState, grant: Grant<'_>) -> Result<String, ApiError> {
         serde_json::to_string(&grant.metadata)
             .map_err(|e| ApiError::internal(format!("cast metadata: {e}")))?,
     );
+    for (key, value) in grant.attributes {
+        token = token.with_attribute(key, value);
+    }
     token.name = grant.metadata.display_name.map(str::to_owned);
     token
         .to_jwt()
@@ -748,6 +755,7 @@ pub async fn streamer_token(
     let token = mint(
         &state,
         Grant {
+            attributes: Vec::new(),
             identity: &identity,
             room: &room,
             can_publish: true,
@@ -822,7 +830,20 @@ pub async fn watcher_token(
         tracing::warn!(%watcher, place_id, "cast watcher token refused: scene ban");
         return Err(forbidden(SCENE_BANNED_WATCHER_MSG));
     }
+    let identity = format!("watch:{room}:{}", Uuid::new_v4());
+    // A world watcher carries the authorization proof a scene join carries
+    // (`admission::handlers`), stamped before the access check: the world
+    // access sweep keeps a watcher admitted after the world's last access
+    // edit (a password rotation included) and removes the rest.
+    let mut world_proof = None;
     if let Some(world) = scene_room.realm.world() {
+        let started =
+            super::super::admission::world_mint::authorization_started(&state.pool, world)
+                .await
+                .map_err(|error| {
+                    tracing::error!(%error, "world authorization unavailable");
+                    ApiError::http(503, "World authorization unavailable")
+                })?;
         let caller_ip = crate::shared::client_ip::client_ip(&headers);
         let caller = if caller_ip.is_empty() {
             watcher.as_str()
@@ -844,11 +865,28 @@ pub async fn watcher_token(
             tracing::warn!(%watcher, place_id, "cast watcher token refused: world access");
             return Err(unauthorized(WORLD_ACCESS_DENIED_MSG));
         }
+        let proof = super::super::admission::world_mint::authorization_proof(
+            &state.livekit.api_secret,
+            world,
+            &identity,
+            &room,
+            started,
+        );
+        world_proof = Some(
+            json!({ super::super::admission::world_mint::AUTHORIZATION_FIELD: proof }).to_string(),
+        );
     }
-    let identity = format!("watch:{room}:{}", Uuid::new_v4());
+    let mut attributes = vec![(WATCHER_WALLET_ATTRIBUTE, watcher.as_str().to_owned())];
+    if let Some(proof) = world_proof {
+        attributes.push((
+            super::super::admission::world_mint::AUTHORIZATION_ATTRIBUTE,
+            proof,
+        ));
+    }
     let token = mint(
         &state,
         Grant {
+            attributes,
             identity: &identity,
             room: &room,
             can_publish: false,
@@ -914,6 +952,7 @@ pub async fn presentation_bot_token(
     let token = mint(
         &state,
         Grant {
+            attributes: Vec::new(),
             identity: &identity,
             room: &room,
             can_publish: true,
@@ -933,6 +972,26 @@ pub async fn presentation_bot_token(
         room_id: room,
     })
     .into_response())
+}
+
+// ── watchers ──
+
+/// The attribute of a watcher's token that holds the viewer's wallet.
+pub(crate) const WATCHER_WALLET_ATTRIBUTE: &str = "dcl.castWatcher";
+
+/// The wallet a Cast watcher (`watch:<room>:<uuid>`) signed in with, from
+/// the attribute its token set: its identity is synthetic, so the ban and
+/// world access sweeps read it here. `None` for any other participant.
+pub(crate) fn watcher_wallet(
+    identity: &str,
+    attributes: &std::collections::BTreeMap<String, String>,
+) -> Option<Address> {
+    if !identity.starts_with("watch:") {
+        return None;
+    }
+    attributes
+        .get(WATCHER_WALLET_ATTRIBUTE)
+        .and_then(|wallet| Address::parse(wallet).ok())
 }
 
 // ── revoking a credential ──

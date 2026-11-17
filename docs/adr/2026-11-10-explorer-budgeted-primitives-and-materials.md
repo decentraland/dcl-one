@@ -79,9 +79,11 @@ ends that much earlier for spawning and glTF processing.
   components, so marking moves no table rows. Each system queries its pending entities first,
   then its usual changed ones without the marker, in one loop: what waited goes before what is
   new, so new arrivals cannot starve it. Among the waiting there is no arrival order; the query
-  returns them in storage order. Once a run has refused an item, its remaining first meshes and
-  materials wait as they are, untouched: no resolving and no marker written again, so a backlog
-  costs nothing outside the charges. Removals are handled before that loop and drop the marker,
+  returns them in storage order. Once a run has refused an item, the loop leaves the rest of the
+  waiting (`take_while` on the gate): they wait as they are, untouched and unvisited, with no
+  resolving and no marker written again. The tick's arrivals are still all gone through, to mark
+  the new ones and apply changes, so a frame costs what it admits plus that tick's arrivals,
+  whatever the backlog's size. Removals are handled before that loop and drop the marker,
   unless the component was put back in the same tick: the entity then keeps waiting. Every path
   that gives up on an item (no scene context, a glTF mesh the resolver rejects) drops it too.
   A refused material leaves only its resolved glTF base (`BaseMaterial`), so a retry does not
@@ -90,8 +92,12 @@ ends that much earlier for spawning and glTF processing.
 - **A new primitive brings its material.** When `update_mesh` admits a first mesh for an entity
   that has a `PbMaterialComponent` and no material yet, it charges a new material too and marks
   the entity `MaterialPrepaid`; `update_materials` creates a prepaid material without asking the
-  gate. A first material whose primitive still waits waits with it, uncharged. So a new primitive
-  appears with its own material, never with the scene's white default first. A textured material
+  gate. A first material whose primitive still waits waits with it, uncharged, and outside the
+  materials' waiting query (`Without<PendingPrimitive>`), so a flood of waiting primitives is not
+  walked there either: it comes back `MaterialPrepaid` once `update_mesh` admits the primitive.
+  Prepaid materials have a query of their own, gone through first, so the walk's stop never holds
+  one back. So a new primitive appears with its own material, never with the scene's white
+  default first. A textured material
   still shows the default while its textures load. A prepaid material that has to wait for a
   texture source or its glTF base loses `MaterialPrepaid`, so the slice decides it again when it
   is ready, instead of all such materials arriving in one uncharged frame.
@@ -155,6 +161,21 @@ Per run, frames over 50 ms went from 3 to 0 and the worst 1 % mean from 29.6 to 
   cost per item grows with the number of entities in the scene, and the constants, measured with
   1,000, underestimate it there by about two times.
 - Only primitives deferred: every material of the scene came with its primitive.
+- The walk's stop came after the measurements above, from review: until then, once the slice was
+  spent, each frame still visited every waiting primitive and every material waiting for its
+  primitive. `per_frame_cost_with_a_large_backlog` (`scene_runner`'s material tests, run with
+  `--ignored --nocapture`) times both systems in frames with the slice spent and boxes with a new
+  material each waiting, one admitted a frame. Release test build, same machine, medians of 60
+  frames:
+
+  | Waiting | `update_mesh` before | After | `update_materials` before | After |
+  |---|---|---|---|---|
+  | 100 | 1.1 µs | 1.0 µs | 1.6 µs | 1.4 µs |
+  | 10,000 | 18 µs | 1.0 µs | 54 µs | 1.2 µs |
+  | 95,000 | 189 µs | 1.1 µs | 562 µs | 1.4 µs |
+
+  At 95,000 the slowest frames went from 0.7 and 1.5 ms to under 0.02 ms. The 5,000 wave above
+  left at most about 4,700 waiting, under 0.05 ms a frame then, so the table stands.
 
 **What else follows:**
 
@@ -176,7 +197,15 @@ Per run, frames over 50 ms went from 3 to 0 and the worst 1 % mean from 29.6 to 
 ## Follow-ups
 
 - A cost that scales with the scene, or one learned on the running machine, if floods of
-  thousands of primitives turn out to matter.
+  thousands of primitives turn out to matter. Short of that, doubled costs (half as much a
+  frame) would give the web build and weaker machines headroom; measuring there would say
+  whether they need it.
+- Charging glTF spawning and processing for the work they defer. The spawner and
+  `update_ready_gltfs` stop at a clock deadline, and the clock sees only their own work, not the
+  command flush, `PostUpdate` or the render world's work for the entities they reveal. Charging
+  each entity they write with a mesh an estimated cost to `InstantiationCharges` would count both
+  halves of the slice the same way; until then a frame heavy on glTFs can overrun the slice
+  without the debug panel showing it.
 - Nearest-first ordering for every instantiation consumer, as the node-by-node ADR proposes
   for the spawner.
 - Texture tweens create a new `SceneMaterial` for each tweened entity every frame; reusing or

@@ -129,9 +129,8 @@ jobs:
 
           if [[ "${{ github.ref }}" == "refs/heads/main" || ${{ inputs.inspector_changed }} == "false" ]]; then
             echo "Installing latest inspector version: ${{ inputs.inspector_version }}"
-            # The inspector job published this version seconds ago and the registry serves a
-            # CDN-cached packument for 300s, so resolution retries for longer than that.
-            for ((i = 1; i <= 10; i++)); do
+            # The registry lists a just-published inspector after up to 12 minutes, then caches the old list for 300s.
+            for ((i = 1; i <= 50; i++)); do
               pnpm add "@dcl/inspector@${{ inputs.inspector_version }}" && exit 0
               echo "@dcl/inspector@${{ inputs.inspector_version }} not resolvable yet (attempt $i); retrying in 30s"
               sleep 30
