@@ -524,9 +524,9 @@ async fn drive_forward(ctx: BuyContext<'_>, token_id: U256) -> Result<BuyOutcome
         .await?;
 
     let outcome = signer.await_receipt(&fwd_tx).await?;
-    // A reverting forward may have lost the token to a released forward that
-    // mined after all: that one settles the claim.
-    if outcome == ReceiptOutcome::Reverted
+    // A forward that reverts or has not mined may have lost the token to a
+    // released forward that mined after all: that one settles the claim.
+    if outcome != ReceiptOutcome::Confirmed
         && let Some(mined) = settle_by_released_forward(state, signer, key).await?
     {
         return Ok(BuyOutcome {
@@ -703,6 +703,13 @@ async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
                     "broker buy {key:?} is 'forwarding' without a forward_tx_hash"
                 ))
             })?;
+            // A released forward that mined already holds the token, so the
+            // recorded one would only revert: settle before paying gas again.
+            if let Some(mined) = settle_by_released_forward(state, signer, key).await? {
+                return Ok(BuyOutcome {
+                    forward_tx_hash: mined,
+                });
+            }
             if let Some(raw) = row.forward_signed_tx.as_deref() {
                 if signer.rebroadcast(&fwd_tx, raw).await? == Rebroadcast::Dead {
                     // The buy mined and the token is with the relayer; once the
@@ -720,7 +727,7 @@ async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
                 clear_dead_look(state, key).await?;
             }
             let outcome = signer.await_receipt(&fwd_tx).await?;
-            if outcome == ReceiptOutcome::Reverted
+            if outcome != ReceiptOutcome::Confirmed
                 && let Some(mined) = settle_by_released_forward(state, signer, key).await?
             {
                 return Ok(BuyOutcome {
@@ -847,9 +854,10 @@ struct ExistingRow {
 /// claim stays `sent` and a resume re-sends the recorded bytes.
 ///
 /// A claim re-armed after a dead buy was released first checks the
-/// released hashes: if one has a receipt after all, that buy is recorded
-/// again (`sent`) and returned for the caller to settle, and nothing new is
-/// signed.
+/// released hashes: if one mined successfully after all, that buy is
+/// recorded again (`sent`) and returned for the caller to settle, and
+/// nothing new is signed. One that reverted spent nothing, so it is bought
+/// again.
 pub(crate) async fn send_recorded_buy(
     state: &SharedState,
     signer: &DirectSigner,
@@ -858,10 +866,13 @@ pub(crate) async fn send_recorded_buy(
     call: BrokerCall,
 ) -> Result<String, ApiError> {
     let sent = match mined_released_tx(state, signer, key).await {
-        Ok(Some((mined, _))) => restore_mined_buy(state, key, claimed_at, &mined)
-            .await
-            .map(|()| mined),
-        Ok(None) => {
+        Ok(Some((mined, ReceiptOutcome::Confirmed))) => {
+            restore_mined_buy(state, key, claimed_at, &mined)
+                .await
+                .map(|()| mined)
+        }
+        // a released buy that reverted spent nothing: buy again
+        Ok(_) => {
             signer
                 .send_direct_call_recorded(call.to, call.data, |signed| {
                     record_buy(state, key, claimed_at, signed)
@@ -877,9 +888,10 @@ pub(crate) async fn send_recorded_buy(
     sent
 }
 
-/// The first buy released as dead under `key` that has a receipt after
-/// all (a later look than the two that released it), with its outcome. An
-/// RPC error is returned, never read as "none mined".
+/// A buy released as dead under `key` that has a receipt after all (a later
+/// look than the two that released it), with its outcome: a confirmed one if
+/// any, else the first that reverted. An RPC error is returned, never read
+/// as "none mined".
 pub(crate) async fn mined_released_tx(
     state: &SharedState,
     signer: &DirectSigner,
@@ -901,14 +913,20 @@ async fn mined_released(
     .fetch_optional(&state.pool)
     .await?
     .flatten();
+    // a confirmed receipt anywhere in the list wins over an earlier revert
+    let mut reverted = None;
     for hash in released.unwrap_or_default() {
         let (outcome, _) = signer.fetch_receipt_once(&hash).await?;
         if outcome != ReceiptOutcome::Pending {
             tracing::error!(idempotency_key = %key, tx_hash = %hash, ?outcome, "a broker transaction released as dead has a receipt after all");
-            return Ok(Some((hash, outcome)));
+        }
+        match outcome {
+            ReceiptOutcome::Confirmed => return Ok(Some((hash, outcome))),
+            ReceiptOutcome::Reverted if reverted.is_none() => reverted = Some((hash, outcome)),
+            _ => {}
         }
     }
-    Ok(None)
+    Ok(reverted)
 }
 
 /// A forward released as dead that mined successfully after all delivered
@@ -1206,10 +1224,10 @@ async fn set_confirmed(state: &SharedState, key: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
-async fn set_reverted(state: &SharedState, key: &str) {
+pub(crate) async fn set_reverted(state: &SharedState, key: &str) {
     if let Err(e) = sqlx::query(
         "UPDATE shop.broker_purchases SET status = 'reverted', updated_at = timezone('UTC', now()) \
-         WHERE idempotency_key = $1",
+         WHERE idempotency_key = $1 AND status IN ('sent', 'bought', 'forwarding')",
     )
     .bind(key)
     .execute(&state.pool)

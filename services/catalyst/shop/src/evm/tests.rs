@@ -4242,6 +4242,129 @@ async fn a_released_buy_that_mined_after_all_is_resumed_not_bought_again() {
     delete_key(&pool, "broker_purchases", &key).await;
 }
 
+/// A released buy that mined but reverted spent nothing: the re-armed claim
+/// signs a new buy instead of restoring the reverted one.
+#[tokio::test]
+async fn a_released_buy_that_reverted_is_bought_again() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    let (app, key, body, released) = dead_looking_name_buy(&pool, &chain, "lostbuy").await;
+    let (status, _) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 504);
+    age_dead_look(&pool, &key, 11, None).await;
+    let (status, _) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 409);
+
+    chain.mined_elsewhere.lock().unwrap().push(released.clone());
+    chain.reverted.lock().unwrap().push(released.clone());
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 200, "{reply}");
+    let row = recorded_purchase(&pool, &key).await;
+    let bought = row.tx_hash.unwrap();
+    assert_ne!(bought, released);
+    assert_eq!(row.status, "confirmed");
+    assert_eq!(chain.accepted_hashes(), vec![bought]);
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// A confirmed released hash anywhere in the list counts, even after one
+/// that reverted.
+#[tokio::test]
+async fn a_confirmed_released_buy_wins_over_an_earlier_revert() {
+    use crate::credits::escrow::Broker;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    let (state, _) = scripted_state(&pool, chain.clone()).await;
+    let broker = crate::credits::escrow::EconomyBroker::new(state.clone());
+    let (reverted, confirmed) = (
+        format!("0x{}", "ab".repeat(32)),
+        format!("0x{}", "cd".repeat(32)),
+    );
+    let key = broker_claim_in(&pool, "error", None).await;
+    sqlx::query(
+        "UPDATE shop.broker_purchases SET tx_hash = NULL, released_tx_hashes = ARRAY[$2, $3] \
+         WHERE idempotency_key = $1",
+    )
+    .bind(&key)
+    .bind(&reverted)
+    .bind(&confirmed)
+    .execute(&pool)
+    .await
+    .unwrap();
+    chain
+        .mined_elsewhere
+        .lock()
+        .unwrap()
+        .extend([reverted.clone(), confirmed.clone()]);
+    chain.reverted.lock().unwrap().push(reverted);
+
+    assert!(broker.released_buy_mined(&key).await.unwrap());
+    let signer = state.eth_signer.as_ref().unwrap();
+    let mined = crate::checkout::broker::mined_released_tx(&state, signer, &key)
+        .await
+        .unwrap();
+    assert_eq!(
+        mined,
+        Some((confirmed, crate::evm::signer::ReceiptOutcome::Confirmed))
+    );
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// A released forward that already mined settles a resumed claim before a
+/// new forward is signed (`bought`) or the recorded one is waited on or sent
+/// again (`forwarding`).
+#[tokio::test]
+async fn a_mined_released_forward_settles_before_any_forward_is_sent() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    let (state, _) = scripted_state(&pool, chain.clone()).await;
+    let released = format!("0x{}", "ef".repeat(32));
+    chain.mined_elsewhere.lock().unwrap().push(released.clone());
+    for status in ["bought", "forwarding"] {
+        let key = broker_claim_in(&pool, status, Some("0xstuckforward")).await;
+        sqlx::query(
+            "UPDATE shop.broker_purchases SET minted_token_id = '42', \
+             released_forward_tx_hashes = ARRAY[$2] WHERE idempotency_key = $1",
+        )
+        .bind(&key)
+        .bind(&released)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let settled = crate::checkout::broker::resume(&state, &key).await.unwrap();
+        assert_eq!(settled, released, "{status}");
+        let row = recorded_purchase(&pool, &key).await;
+        assert_eq!(
+            (row.status.as_str(), row.forward_tx_hash.as_deref()),
+            ("confirmed", Some(released.as_str())),
+            "{status}"
+        );
+        assert!(chain.accepted_hashes().is_empty(), "{status}: nothing sent");
+        delete_key(&pool, "broker_purchases", &key).await;
+    }
+}
+
+/// A revert seen late never overwrites a claim another request settled.
+#[tokio::test]
+async fn a_late_revert_leaves_a_confirmed_claim_confirmed() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let (state, _) = scripted_state(&pool, Arc::new(ScriptedChain::default())).await;
+    // another request settled the claim before this one saw its revert
+    let key = broker_claim_in(&pool, "confirmed", None).await;
+    crate::checkout::broker::set_reverted(&state, &key).await;
+    assert_eq!(recorded_purchase(&pool, &key).await.status, "confirmed");
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
 /// A broker claim under a fresh key moved to `status` with `leg_hash` as its
 /// recorded buy (`sent`, `error`) or forward (`forwarding`).
 async fn broker_claim_in(pool: &PgPool, status: &str, leg_hash: Option<&str>) -> String {
