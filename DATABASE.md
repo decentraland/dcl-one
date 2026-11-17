@@ -2177,3 +2177,46 @@ bytes are content-addressed and rooted by `content_hash`
 (`services/catalyst/storage/src/gc.rs`), so two reports attaching the same
 file share one blob and a report's deletion never removes bytes another one
 references.
+
+## Sites pairing sessions workload
+
+`explore_api.pair_sessions` (`schemas/11_explore_api.sql`) holds the phone
+pairing sessions of Sites (`/auth/pair/:session` and `/internal/pair`,
+`apps/sites/src/data/lib/auth/pair-store.server.ts`), so a create, the phone's
+complete and the desktop's polls may land on different Sites replicas behind
+the gateway's round-robin `sites` upstream. Sites is the only reader and
+writer, through its catalyst pool (`CATALYST_DATABASE_URL`, shared with the
+places reads); the node never touches the table. It sits in `explore_api`
+beside the other explorer sign-in surface tables and shares their lifecycle:
+rows are disposable, and a restore may lose them.
+
+Inputs: a desktop creates a session (rate-limited per client IP to 30 in five
+minutes, in each Sites process), polls it every few seconds, and the phone
+completes it once with a signature. One row per session: id (16 random bytes,
+base64url), the sha256 of the 32-byte poll token (the token itself is handed
+to the desktop once and never stored), the ephemeral address, its expiration
+and the message to sign, the creation and expiry instants and, once
+completed, the signer and signature. A few hundred bytes a row; at most 500
+live rows by design.
+
+Transitions, each one statement against the database clock (`now()`):
+create takes `pg_advisory_xact_lock(hashtextextended('sites-pair-sessions',
+0))`, deletes the expired rows, and inserts only while fewer than 500 rows
+remain, so concurrent creates on several replicas never exceed the cap and
+never evict a live session; complete is `UPDATE ... WHERE completed_signer IS
+NULL AND expires_at > now()`, so exactly one phone wins (`already` for the
+others, `expired` or `missing` after a lookup); poll reads the row by id,
+compares the token's sha256 to the stored digest in constant time, and
+releases a completed session by deleting it with `RETURNING`, so one poll
+receives the signature; cancel deletes by id and token digest. Expired rows
+are deleted by the next create, and by a poll or complete that finds one;
+no job sweeps them, so between creates they stay bounded by the creates of
+the last five minutes. No secondary index: every read is by primary key and
+the sweep and count scan at most a few hundred rows.
+
+Without a catalyst database (`CATALYST_DATABASE_URL` and
+`PLACES_PG_COMPONENT_PSQL_CONNECTION_STRING` unset), Sites keeps the sessions
+in its own memory with the same rules, like the places reads fall back to the
+API; that mode serves one process only, so a deployment with several Sites
+replicas sets the database URL. The bootstrap defines the table; an existing
+database gains it from the object pass, so no step exists.
