@@ -1,6 +1,7 @@
-import { getScriptParams, toColorOfKind } from './parser';
+import { getScriptParams } from './parser';
+import { reconcileColor } from './color';
 import { isMalformedParam, isPlainObject } from './validation';
-import type { ScriptColor, ScriptLayout, ScriptParamColor, ScriptParamUnion } from './types';
+import type { ScriptLayout, ScriptParamUnion } from './types';
 
 export function parseLayout(layout?: string): ScriptLayout | undefined {
   if (!layout) return undefined;
@@ -10,21 +11,6 @@ export function parseLayout(layout?: string): ScriptLayout | undefined {
     console.warn('Failed to parse script layout:', error);
     return undefined;
   }
-}
-
-// Keeps a stored colour if it still is one, reshaped to the declared kind (a script that changes
-// a param from Color3 to Color4 keeps the creator's channels and gains an opaque alpha).
-function reconcileColor(sourceParam: ScriptParamColor, storedValue: unknown): ScriptColor {
-  const stored = storedValue as Partial<ScriptColor> | undefined;
-  const isColor =
-    !!stored &&
-    typeof stored.r === 'number' &&
-    typeof stored.g === 'number' &&
-    typeof stored.b === 'number';
-  return toColorOfKind(
-    isColor ? (stored as ScriptColor) : sourceParam.value,
-    sourceParam.value.a !== undefined,
-  );
 }
 
 // Reconciles a stored value against a freshly-parsed param shape: the structure/defaults

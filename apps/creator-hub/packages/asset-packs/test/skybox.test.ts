@@ -34,6 +34,8 @@ describe('SkyboxController', () => {
     new (SkyboxController as any)('src', 512 as Entity, ...params) as SkyboxControllerClass;
 
   beforeEach(async () => {
+    // The controller tracks the enabled items in its module, so each test gets a fresh one.
+    vi.resetModules();
     const ecs = await import('@dcl/sdk/ecs');
     root = ecs.engine.RootEntity;
     for (const component of Object.values(components)) component.values.clear();
@@ -121,6 +123,61 @@ describe('SkyboxController', () => {
       expect(sky()).toBeUndefined();
       skybox.toggle();
       expect(sky()).toBeDefined();
+    });
+  });
+
+  describe('when two items are toggled together, as a day and night pair', () => {
+    let day: SkyboxControllerClass;
+    let night: SkyboxControllerClass;
+    const zenith = (item: SkyboxControllerClass) => item['ambient'](item.zenithColor);
+
+    beforeEach(() => {
+      day = create(true, '', 1, 1);
+      night = create(false, '', 1, 0.5);
+      day.start();
+      night.start();
+    });
+
+    it('should swap to the other one when the enabled one toggles second', () => {
+      night.toggle();
+      day.toggle();
+      expect(sky().skyColors.zenith).toEqual(zenith(night));
+    });
+
+    it('should swap to the other one when the enabled one toggles first', () => {
+      day.toggle();
+      night.toggle();
+      expect(sky().skyColors.zenith).toEqual(zenith(night));
+    });
+
+    it('should swap back on the next pair of toggles', () => {
+      night.toggle();
+      day.toggle();
+      night.toggle();
+      day.toggle();
+      expect(sky().skyColors.zenith).toEqual(zenith(day));
+    });
+  });
+
+  describe('when the item in place is disabled while an earlier one is still enabled', () => {
+    it('should bring back the earlier one', () => {
+      const day = create(true, '', 1, 1);
+      const night = create(false, '', 1, 0.5);
+      day.start();
+      night.enable();
+      night.disable();
+      expect(sky().skyColors.zenith).toEqual(day['ambient'](day.zenithColor));
+    });
+  });
+
+  describe('when an item that is not in place changes its clouds', () => {
+    it('should leave the sky of the one in place alone', () => {
+      const day = create(true);
+      const night = create(true);
+      day.start();
+      night.start();
+      day.hideClouds();
+      expect(sky().clouds.opacity).toBe(1);
     });
   });
 

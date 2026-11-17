@@ -6,8 +6,23 @@ import { Color3 } from '@dcl/sdk/math';
 // Skybox, Sun and EnvironmentFog arrived in @dcl/sdk 7.32. They are read off the namespace because
 // an import that names a missing export fails the whole scene build on an older SDK. Read this
 // way they are undefined there, and the item does nothing instead of stopping the scene's scripts.
-const { Skybox, Sun, EnvironmentFog } = ecs;
+// The type keeps the real component types on a new SDK and falls back to the two methods used here
+// on an old one, so `tsc` (run by `sdk-commands build`) passes on both.
+type RootComponent = {
+  createOrReplace(entity: Entity, value: any): unknown;
+  deleteFrom(entity: Entity): unknown;
+};
+type SkyComponentName = 'Skybox' | 'Sun' | 'EnvironmentFog';
+type SkyComponents = {
+  [K in SkyComponentName]: typeof ecs extends Record<K, infer C> ? C : RootComponent;
+};
+const { Skybox, Sun, EnvironmentFog } = ecs as unknown as Partial<SkyComponents>;
 const MIN_SDK_VERSION = '7.32.0';
+
+// The enabled items, oldest first. The last one's settings are in place; disabling it brings back
+// the previous one's, and disabling any other leaves the sky alone. So a day and a night item
+// toggled together swap, in either order.
+const enabledItems: SkyboxController[] = [];
 
 // A number edited with a slider in the Creator Hub UI: Slider<min, max, step>
 type Slider<_Min extends number, _Max extends number, _Step extends number = 1> = number;
@@ -120,8 +135,10 @@ export class SkyboxController {
    * @action
    */
   enable() {
-    if (!isSupported()) return;
+    if (!components()) return;
     this.enabled = true;
+    remove(this);
+    enabledItems.push(this);
     this.apply();
   }
 
@@ -130,11 +147,20 @@ export class SkyboxController {
    * @action
    */
   disable() {
-    if (!isSupported()) return;
+    const sky = components();
+    if (!sky) return;
     this.enabled = false;
-    Skybox.deleteFrom(engine.RootEntity);
-    Sun.deleteFrom(engine.RootEntity);
-    EnvironmentFog.deleteFrom(engine.RootEntity);
+    const inPlace = isInPlace(this);
+    remove(this);
+    if (!inPlace) return;
+    const previous = enabledItems[enabledItems.length - 1];
+    if (previous) {
+      previous.apply();
+      return;
+    }
+    sky.Skybox.deleteFrom(engine.RootEntity);
+    sky.Sun.deleteFrom(engine.RootEntity);
+    sky.EnvironmentFog.deleteFrom(engine.RootEntity);
   }
 
   /**
@@ -186,13 +212,17 @@ export class SkyboxController {
   }
 
   private applyIfEnabled() {
-    if (this.enabled) this.apply();
+    if (isInPlace(this)) this.apply();
   }
 
-  private apply() {
-    this.applySky();
-    this.applySun();
-    this.applyFog();
+  // Public only for the other items: disabling the one in place re-applies the previous one.
+  /** @internal */
+  apply() {
+    const sky = components();
+    if (!sky) return;
+    this.applySky(sky);
+    this.applySun(sky);
+    this.applyFog(sky);
   }
 
   // The renderer derives the ambient light from the sky colours, so darkening those is the only way
@@ -201,7 +231,7 @@ export class SkyboxController {
     return this.ambientBrightness < 1;
   }
 
-  private applySky() {
+  private applySky({ Skybox }: SkyComponents) {
     const custom = this.customSkyColors;
     const skyColors = custom || this.darkened;
     Skybox.createOrReplace(engine.RootEntity, {
@@ -225,7 +255,7 @@ export class SkyboxController {
     });
   }
 
-  private applySun() {
+  private applySun({ Sun }: SkyComponents) {
     if (this.sunIntensity === 1 && !this.customSunColor && this.showSun && !this.fixSunPosition) {
       Sun.deleteFrom(engine.RootEntity);
       return;
@@ -239,7 +269,7 @@ export class SkyboxController {
   }
 
   // The fog darkens with the ambient light: a bright fog would glow in a dark scene.
-  private applyFog() {
+  private applyFog({ EnvironmentFog }: SkyComponents) {
     if (!this.customFog && !this.fogCleared && !this.darkened) {
       EnvironmentFog.deleteFrom(engine.RootEntity);
       return;
@@ -270,12 +300,21 @@ export class SkyboxController {
   }
 }
 
-function isSupported() {
-  if (Skybox && Sun && EnvironmentFog) return true;
+function isInPlace(item: SkyboxController) {
+  return enabledItems[enabledItems.length - 1] === item;
+}
+
+function remove(item: SkyboxController) {
+  const index = enabledItems.indexOf(item);
+  if (index >= 0) enabledItems.splice(index, 1);
+}
+
+function components(): SkyComponents | undefined {
+  if (Skybox && Sun && EnvironmentFog) return { Skybox, Sun, EnvironmentFog };
   console.error(
     `Skybox: this item needs @dcl/sdk ${MIN_SDK_VERSION} or newer. Update the SDK of the scene to use it.`,
   );
-  return false;
+  return undefined;
 }
 
 // A single key holds the colour at every time of day. The protocol documents these colours as

@@ -80,7 +80,8 @@ const IncompatibleAssetModal: React.FC<Props> = ({
           {needsNewerSdk && (
             <p>
               <strong>"{assetName}"</strong> needs a newer SDK than this scene has. Update the
-              scene's SDK to use this asset.
+              scene's SDK to use this asset. Updating also brings the scene's other outdated
+              dependencies to their latest versions.
             </p>
           )}
           {needsDependencyUpdate && (

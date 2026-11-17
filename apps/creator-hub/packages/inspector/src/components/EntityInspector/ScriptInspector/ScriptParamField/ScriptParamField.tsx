@@ -7,7 +7,7 @@ import { toColor3, toHex } from '../../../ui/ColorField/utils';
 import { Dropdown } from '../../../ui/Dropdown';
 import { WalletField } from '../../../ui/WalletField';
 import { Message, MessageType } from '../../../ui/Message';
-import { toColorOfKind } from '../../../../lib/sdk/script-params/parser';
+import { toColorOfKind } from '../../../../lib/sdk/script-params/color';
 import type { ScriptColor } from '../types';
 import { fromNumber, toNumber, isValidNumber } from '../utils';
 import ActionField from './ActionField';
@@ -29,18 +29,22 @@ const asEntity = (value: unknown) =>
 const fromHex = (hex: string, previous: ScriptColor): ScriptColor =>
   toColorOfKind({ ...toColor3(hex), a: previous.a }, previous.a !== undefined);
 
-// `@enabledIf key` reads the sibling's current value, `@enabledIf !key` its opposite.
+// `@enabledIf key` reads the sibling's current value, `@enabledIf !key` its opposite. A key with no
+// sibling (a typo, or a field shown without its siblings) leaves the field enabled rather than
+// locking it for good.
 export function isParamEnabled(enabledIf: string | undefined, siblings?: Record<string, unknown>) {
   if (!enabledIf) return true;
   const negated = enabledIf.startsWith('!');
-  const on = !!siblings?.[negated ? enabledIf.slice(1) : enabledIf];
+  const key = negated ? enabledIf.slice(1) : enabledIf;
+  if (!siblings || !Object.prototype.hasOwnProperty.call(siblings, key)) return true;
+  const on = !!siblings[key];
   return negated ? !on : on;
 }
 
 export function ScriptParamField(props: Props) {
   if (isParamEnabled(props.param.enabledIf, props.siblings)) return <ParamInput {...props} />;
-  // The fieldset natively disables every control inside, including the nested editors that take
-  // no `disabled` prop; the prop gives the plain fields their own disabled look.
+  // Every field takes `disabled` and draws its own disabled look, so the fieldset adds no styling;
+  // it still natively locks any plain input a nested editor renders without the prop.
   return (
     <fieldset
       className={styles.disabled}
@@ -126,6 +130,7 @@ function ParamInput({
           label={labelWithTooltip(name, param.tooltip)}
           value={param.value}
           components={param.components}
+          disabled={disabled}
           onChange={onUpdate}
         />
       );
@@ -135,6 +140,7 @@ function ParamInput({
         <ActionField
           label={labelWithTooltip(name, param.tooltip)}
           value={param.value}
+          disabled={disabled}
           onChange={(value: ActionRef) => onUpdate(value)}
         />
       );
@@ -166,6 +172,7 @@ function ParamInput({
             label={labelWithTooltip(name, param.tooltip)}
             value={param.value}
             entity={asEntity(siblings?.[param.actionsOf])}
+            disabled={disabled}
             onChange={onUpdate}
           />
         );
@@ -178,6 +185,7 @@ function ParamInput({
             key={param.value}
             label={labelWithTooltip(name, param.tooltip)}
             value={param.value}
+            disabled={disabled}
             onChange={e => onUpdate(e.target.value)}
           />
         );
@@ -188,6 +196,7 @@ function ParamInput({
             label={labelWithTooltip(name, param.tooltip)}
             value={param.value}
             format={param.format}
+            error={getError?.(param)}
             disabled={disabled}
             onChange={onUpdate}
           />

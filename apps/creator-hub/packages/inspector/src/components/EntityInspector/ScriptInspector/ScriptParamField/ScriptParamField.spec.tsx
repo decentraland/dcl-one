@@ -20,7 +20,9 @@ vi.mock('../../../ImportAsset', () => ({
   )),
 }));
 vi.mock('../../../../hooks/useAssetOptions', () => ({
-  useAssetOptions: (accept: string[]) => [{ label: `options for ${accept}`, value: '' }],
+  useAssetOptions: (accept: string[]) => [
+    { label: `files for ${accept}`, value: 'assets/scene/Images/sky.png' },
+  ],
 }));
 
 vi.mock('../../../Container', () => ({
@@ -360,6 +362,13 @@ describe('when a param is tied to a sibling with @enabledIf', () => {
     });
   });
 
+  describe('and no sibling has that key', () => {
+    it('should leave the field editable, as an action param shown without siblings is', () => {
+      const container = renderSunHeight({});
+      expect(container.querySelector('fieldset')).toBeNull();
+    });
+  });
+
   describe('and the tag is negated', () => {
     it('should lock the field while the sibling is on', () => {
       const container = renderSunHeight({ fixSunPosition: true }, '!fixSunPosition');
@@ -402,7 +411,10 @@ describe('when a string param is tagged @format image', () => {
       mode: 'field',
       value: 'assets/scene/Images/sky.png',
       accept: ['.png', '.jpg', '.jpeg'],
-      options: [{ label: 'options for .png,.jpg,.jpeg', value: '' }],
+      options: [
+        { label: 'None', value: '' },
+        { label: 'files for .png,.jpg,.jpeg', value: 'assets/scene/Images/sky.png' },
+      ],
       error: undefined,
     });
   });
@@ -423,6 +435,25 @@ describe('when a string param is tagged @format image', () => {
   it('should flag a stored path that is not an image', () => {
     renderTexture({ ...skyboxTexture, value: 'assets/scene/models/sky.glb' });
     expect(importAsset.props.error).toBe('Invalid file type');
+  });
+
+  it('should clear the value when None is picked', () => {
+    renderTexture();
+    const none = importAsset.props.options[0];
+    importAsset.props.onChange({ target: { value: none.value } });
+    expect(onUpdate).toHaveBeenCalledWith('');
+  });
+
+  it('should show the warning for a file missing from the scene', () => {
+    render(
+      <ScriptParamField
+        name="skyboxTexture"
+        param={skyboxTexture}
+        getError={() => '"assets/scene/Images/sky.png" is missing'}
+        onUpdate={vi.fn()}
+      />,
+    );
+    expect(importAsset.props.error).toBe('"assets/scene/Images/sky.png" is missing');
   });
 
   it('should accept an empty value', () => {

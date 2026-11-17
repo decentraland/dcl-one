@@ -123,6 +123,18 @@ export function assertValidTriggerComponent(assetName: string, trigger: TriggerD
   });
 }
 
+// A full `major.minor.patch`: the editor compares only that form, so '7.32' would never block.
+const SDK_VERSION = /^\d+\.\d+\.\d+$/;
+
+export function assertValidMinSdkVersion(assetName: string, minSdkVersion: unknown) {
+  if (minSdkVersion === undefined) return;
+  if (typeof minSdkVersion !== 'string' || !SDK_VERSION.test(minSdkVersion)) {
+    throw new Error(
+      `Invalid minSdkVersion on "${assetName}": ${JSON.stringify(minSdkVersion)}. Use a full version such as "7.32.0".`,
+    );
+  }
+}
+
 export type Asset = AssetData & { contents: Record<string, string> };
 export type AssetPack = AssetPackData & { thumbnail: string; assets: Asset[] };
 export type Catalog = { assetPacks: AssetPack[] };

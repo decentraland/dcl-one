@@ -13,6 +13,7 @@ import { engine } from '@dcl/ecs';
 import { Color3, Color4 } from '@dcl/ecs-math';
 
 import type { ScriptParamUnion, ScriptAction, ScriptColor, ScriptStringFormat } from './types';
+import { isColorValue, toColorOfKind } from './color';
 
 const SLIDER_DEFAULT_STEP = 1;
 
@@ -67,8 +68,10 @@ function evaluateColorCall(expression: CallExpression): ScriptColor | undefined 
   ) {
     return undefined;
   }
-  const factory = COLOR_FACTORIES[callee.object.name][callee.property.name];
-  if (!factory) return undefined;
+  // Own keys only: `Color3.constructor` or `Color3.toString` must not reach Object.prototype.
+  const factories = COLOR_FACTORIES[callee.object.name];
+  if (!Object.hasOwn(factories, callee.property.name)) return undefined;
+  const factory = factories[callee.property.name];
   const args: unknown[] = [];
   for (const argument of expression.arguments) {
     const value =
@@ -84,20 +87,6 @@ function evaluateColorCall(expression: CallExpression): ScriptColor | undefined 
   } catch {
     return undefined;
   }
-}
-
-function isColorValue(value: unknown): value is ScriptColor {
-  if (!value || typeof value !== 'object') return false;
-  const { r, g, b } = value as Record<string, unknown>;
-  return typeof r === 'number' && typeof g === 'number' && typeof b === 'number';
-}
-
-// Shapes any stored or authored colour to the declared kind: a Color3 drops `a`, a Color4
-// always carries one (opaque unless the value says otherwise).
-export function toColorOfKind(value: ScriptColor, alpha: boolean): ScriptColor {
-  const { r, g, b } = value;
-  if (!alpha) return { r, g, b };
-  return { r, g, b, a: typeof value.a === 'number' ? value.a : 1 };
 }
 
 function getColorKind(typeAnnotation: TSType): ColorKind | undefined {
@@ -185,6 +174,8 @@ function inferParamFromValue(value: unknown): ScriptParamUnion {
 function getValueAndTypeFromExpression(expression: Expression): ScriptParamUnion {
   const value = evaluateLiteralExpression(expression);
   if (value === undefined) return { type: 'string', value: '' };
+  // An unannotated `Color3.Red()` default still gets the colour picker, not an {r, g, b} editor.
+  if (expression.type === 'CallExpression' && isColorValue(value)) return { type: 'color', value };
   return inferParamFromValue(value);
 }
 

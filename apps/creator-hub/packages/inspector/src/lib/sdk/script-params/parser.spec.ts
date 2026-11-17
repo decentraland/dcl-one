@@ -333,6 +333,18 @@ export function start(src: string, entity: Entity, speed: Slider<0, 10> = 5) {}
       expect(params.tint).toMatchObject({ type: 'color', value: { r: 1, g: 1, b: 1 } });
     });
 
+    it('should not reach Object.prototype through the factory lookup', () => {
+      const { params } = getScriptParams(
+        classScript('public tint: Color3 = Color3.constructor(),'),
+      );
+      expect(params.tint).toMatchObject({ type: 'color', value: { r: 1, g: 1, b: 1 } });
+    });
+
+    it('should give an unannotated colour default the colour picker', () => {
+      const { params } = getScriptParams(classScript('public tint = Color3.Red(),'));
+      expect(params.tint).toMatchObject({ type: 'color', value: { r: 1, g: 0, b: 0 } });
+    });
+
     it('should drop the alpha of a Color4 default given to a Color3', () => {
       const { params } = getScriptParams(
         classScript('public tint: Color3 = Color4.create(1, 0, 0, 0.5),'),

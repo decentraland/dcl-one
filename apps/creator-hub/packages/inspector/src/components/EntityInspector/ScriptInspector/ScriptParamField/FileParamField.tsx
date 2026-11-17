@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useMemo } from 'react';
 
 import { useAssetOptions } from '../../../../hooks/useAssetOptions';
 import ImportAsset from '../../../ImportAsset';
@@ -11,6 +11,8 @@ type Props = {
   label: React.ReactNode;
   value: string;
   format: ScriptFileFormat;
+  // A warning from the inspector, e.g. that the stored file is no longer in the scene.
+  error?: string;
   disabled?: boolean;
   onChange: (path: string) => void;
 };
@@ -18,11 +20,15 @@ type Props = {
 const hasExtension = (path: string, extensions: string[]) =>
   extensions.some(extension => path.toLowerCase().endsWith(extension));
 
+// Picking it stores '', the value the script reads as "no file" (the Skybox's regular sky).
+const NONE_OPTION = { label: 'None', value: '' };
+
 // A string param tagged `@format image` (or audio, video, model): picks a scene file of that kind
 // from a dropdown, the file tree or the disk, as the Material texture and AudioSource fields do.
-export function FileParamField({ label, value, format, disabled, onChange }: Props) {
+export function FileParamField({ label, value, format, error, disabled, onChange }: Props) {
   const accept = ACCEPTED_FILE_TYPES[format];
-  const options = useAssetOptions(accept);
+  const assetOptions = useAssetOptions(accept);
+  const options = useMemo(() => [NONE_OPTION, ...assetOptions], [assetOptions]);
   const isValidFile = useCallback(
     (node: TreeNode) => isAssetNode(node) && hasExtension(node.name, accept),
     [accept],
@@ -37,7 +43,7 @@ export function FileParamField({ label, value, format, disabled, onChange }: Pro
       accept={accept}
       options={options}
       isValidFile={isValidFile}
-      error={value && !hasExtension(value, accept) ? 'Invalid file type' : undefined}
+      error={value && !hasExtension(value, accept) ? 'Invalid file type' : error}
       onChange={e => onChange(e.target.value)}
     />
   );
