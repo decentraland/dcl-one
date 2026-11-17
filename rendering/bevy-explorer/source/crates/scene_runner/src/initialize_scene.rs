@@ -21,7 +21,7 @@ use common::{
     structs::{
         server_mode, AppConfig, AppError, CurrentRealm, EditorMode, GlobalCrdtStateUpdate,
         IVec2Arg, NearbyVoiceDisabled, PreviewMode, SceneJsFile, SceneLoadDistance, SceneMeta,
-        SceneTime, StartupScenes, WorldHold,
+        SceneTime, ServerConfiguration, StartupScenes, WorldHold,
     },
     terrain::{Occupancy, TerrainChange, TerrainTargets, BORDER_PADDING},
     util::{TaskExt, TryPushChildrenEx},
@@ -39,7 +39,7 @@ use ipfs::{
     ipfs_path::IpfsPath, ActiveEntityTask, EntityDefinition, IpfsAssetServer, RealmInitialLocation,
     SceneIpfsLocation,
 };
-use scene_material::{BoundRegion, SceneBounds};
+use scene_material::{BoundRegion, SceneBounds, FIXED_SCENE_HEIGHT};
 use system_bridge::{LiveSceneInfo, SystemApi, SystemBridge};
 
 use super::{update_world::CrdtExtractors, LoadSceneEvent, PrimaryUser, SceneSets, SceneUpdates};
@@ -367,10 +367,7 @@ pub(crate) fn load_scene_javascript(
         let bounds = if portable.is_some() {
             Vec::default()
         } else {
-            scene_regions(parcels.clone().into_iter())
-                .into_iter()
-                .map(|region| BoundRegion::new(region.min, region.max, region.count))
-                .collect::<Vec<_>>()
+            scene_bound_regions(&parcels, &realm.config)
         };
 
         // get main.crdt
@@ -615,6 +612,27 @@ pub(crate) fn load_scene_javascript(
             },
         ));
     }
+}
+
+/// The regions a scene is clipped and collided to. A World's scenes have no neighbours to build
+/// over, so they share one fixed height limit; a city scene's limit grows with each connected
+/// region's parcel count.
+fn scene_bound_regions(parcels: &HashSet<IVec2>, realm: &ServerConfiguration) -> Vec<BoundRegion> {
+    let world = realm
+        .scenes_urn
+        .as_ref()
+        .is_some_and(|urns| !urns.is_empty());
+    scene_regions(parcels.iter().copied())
+        .into_iter()
+        .map(|region| {
+            let bound = BoundRegion::new(region.min, region.max, region.count);
+            if world {
+                bound.with_height(FIXED_SCENE_HEIGHT)
+            } else {
+                bound
+            }
+        })
+        .collect()
 }
 
 #[derive(Clone)]

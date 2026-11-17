@@ -227,3 +227,51 @@ fn empty_definition_is_kept_without_deferring_and_despawned_out_of_range() {
         .scenes
         .contains_key("current"));
 }
+
+/// an L of three parcels and one parcel apart from it: two connected regions
+const SPLIT_SCENE: [IVec2; 4] = [IVec2::ZERO, IVec2::X, IVec2::Y, IVec2::splat(5)];
+
+/// the height limit over each parcel of a scene with these parcels
+fn heights_over(parcels: &[IVec2], realm: &ServerConfiguration) -> Vec<f32> {
+    let regions = scene_bound_regions(&parcels.iter().copied().collect(), realm);
+    parcels
+        .iter()
+        .map(|parcel| {
+            let over = regions
+                .iter()
+                .filter(|r| {
+                    parcel.cmpge(r.parcel_min()).all() && parcel.cmple(r.parcel_max()).all()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(over.len(), 1, "{parcel} is in one region");
+            over[0].height
+        })
+        .collect()
+}
+
+#[test]
+fn a_world_scene_is_bounded_at_the_fixed_height() {
+    let world = ServerConfiguration {
+        scenes_urn: Some(vec!["urn:decentraland:entity:world-scene".to_owned()]),
+        ..Default::default()
+    };
+
+    assert_eq!(heights_over(&[IVec2::ZERO], &world), [FIXED_SCENE_HEIGHT]);
+    assert_eq!(heights_over(&SPLIT_SCENE, &world), [FIXED_SCENE_HEIGHT; 4]);
+}
+
+#[test]
+fn a_city_scene_is_bounded_by_the_parcel_count_of_each_region() {
+    // a city realm lists no scenes: no list, or an empty one
+    for city in [
+        ServerConfiguration::default(),
+        ServerConfiguration {
+            scenes_urn: Some(Vec::new()),
+            ..Default::default()
+        },
+    ] {
+        // log2(parcels + 1) * 20
+        assert_eq!(heights_over(&[IVec2::ZERO], &city), [20.0]);
+        assert_eq!(heights_over(&SPLIT_SCENE, &city), [40.0, 40.0, 40.0, 20.0]);
+    }
+}
