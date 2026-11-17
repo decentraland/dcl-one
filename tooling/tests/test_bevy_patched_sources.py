@@ -345,6 +345,26 @@ class MaterialiseTest(PatchedSourcesCase):
         self.assert_holds(self.dest(), {name: value for name, value in self.up.files(self.second).items()
                                         if not name.startswith("assets/")})
 
+    def test_a_tree_with_a_workflow_file_fails_until_github_is_excluded(self):
+        """GitHub refuses a push of a workflow file from a workflow's token, so no rev may hold one."""
+        self.up.write(".github/workflows/ci.yml", b"on: push\n")
+        self.up.write(".github/dependabot.yml", b"version: 2\n")
+        base = self.up.commit("upstream CI")
+        self.add_source(commits=[], base=base)
+        problem = 'patched-sources: winit: the tree holds .github/workflows/ci.yml: add ".github" to exclude in source.toml\n'
+        for command in ("verify", "materialise"):
+            with self.subTest(command):
+                self.assertEqual(self.fails(command), problem)
+        self.assertFalse(self.dest().exists())
+        kept = self.up.top_tree(base, drop={".github"})
+        self.add_source(commits=[], base=base, extra='exclude = [".github"]\n', base_tree=kept, tree=kept)
+        self.assert_verifies()
+        # A patch that adds one fails as well: exclude applies to the base, before the series.
+        self.up.write(".github/workflows/added.yml", b"on: push\n")
+        added = self.up.commit("add a workflow")
+        self.add_source(commits=[added], base=base, extra='exclude = [".github"]\n', base_tree=kept)
+        self.assertEqual(self.fails("verify"), problem.replace("ci.yml", "added.yml"))
+
     def test_names_select_sources_and_bevy_has_its_own_dest(self):
         self.add_source("winit")
         self.add_source("bevy")
@@ -1515,6 +1535,23 @@ class PublishTest(PatchedSourcesCase):
         self.assertEqual(self.publish(), ((0, f"opener: published\nwinit: pushed {self.ref}\n", ""), [self.push]))
         self.assertEqual(self.remote.refs(), {f"refs/patched-sources/opener/{other}": other, self.ref: self.rev})
         self.assertEqual(self.publish("absent"), ((1, "", f"patched-sources: absent: no {tool.PATCHES}/absent/source.toml\n"), []))
+
+    def test_fetchable_passes_a_rev_that_the_remote_serves_without_a_ref(self):
+        """A commit pushed to a fork: the remote serves it by id and lists no ref for it."""
+        fork = Remote(self.work / "fork.git")
+        self.assertEqual(self.ok("publish", "--remote", fork.path), f"winit: pushed {self.ref}\n")
+        self.assertEqual(self.publish("--check", "--fetchable"), ((1, f"winit: missing {self.ref}\n", ""), []))
+        git(fork.path, "push", "-q", str(self.remote.path), f"{self.rev}:refs/fork/winit")
+        git(self.remote.path, "update-ref", "-d", "refs/fork/winit")
+        self.assertEqual(self.remote.refs(), {})
+        self.assertEqual(self.publish("--check", "--fetchable"), ((0, "winit: fetchable, no ref\n", ""), []))
+        self.assertEqual(self.publish("--check"), ((1, f"winit: missing {self.ref}\n", ""), []))
+        self.assertEqual(self.publish(), ((0, f"winit: pushed {self.ref}\n", ""), [self.push]))
+        self.assertEqual(self.publish("--check", "--fetchable"), ((0, "winit: published\n", ""), []))
+
+    def test_fetchable_needs_check(self):
+        self.assertEqual(self.publish("--fetchable"), ((1, "", "patched-sources: publish: --fetchable needs --check\n"), []))
+        self.assertEqual(self.remote.refs(), {})
 
     def test_publish_refuses_a_ref_at_another_id(self):
         git(self.up.path, "push", "-q", str(self.remote.path), f"{self.base}:{self.ref}")

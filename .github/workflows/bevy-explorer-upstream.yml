@@ -51,8 +51,8 @@ jobs:
         with:
           path: .cache/patched-sources
           key: ${{ steps.restore.outputs.cache-primary-key }}
-      # Read-only: fails when this repository has no ref for a pinned `rev`. A maintainer publishes
-      # the refs by hand; no workflow writes them.
+      # Read-only: fails when this repository has no ref for a pinned `rev`. The CI workflow's
+      # publish-sources job pushes them on each push to main; a failure here means it failed or did not run.
       - name: Check that this repository has a ref for each pinned revision
         if: ${{ !cancelled() }}
         run: python3 tooling/patched-sources.py publish --check
