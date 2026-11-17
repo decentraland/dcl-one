@@ -57,7 +57,6 @@
   display: flex;
   flex-direction: column;
   gap: var(--dcl-space-16);
-  align-items: flex-start;
 }
 
 /* The reference's MUI contained CTA (24px 48px padding, 6px corners, a white ring on hover): no @dcl/one-ui
@@ -66,8 +65,9 @@
   position: relative;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   text-decoration: none;
-  background: var(--dcl-primary-primary-dark-2);
+  background: var(--dcl-primary-primary);
   color: var(--dcl-neutrals-white);
   padding: var(--dcl-space-24) var(--dcl-space-48);
   border-radius: var(--dcl-radius-xs);

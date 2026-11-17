@@ -42,24 +42,6 @@
     "why": "`communities` is the catalyrst extension to the access leg and is emitted only when a community gate exists; its absence means no community can enter by membership, which is what the empty list renders. As above, a payload that is not a permissions answer fails on the required `permissions` object rather than defaulting here."
   },
   {
-    "file": "src/data/lib/catalyst/landings/subscriptions.ts",
-    "rule": "fabricated-default",
-    "text": "z.boolean().nullish().transform((v) => v ?? false)",
-    "why": "email_verified is an opt-in assertion on the profile settings record: it is written true only once the user confirms their address. The screen is read-only for this field (writes go through PUT /subscription, which now refuses to run on an unreadable read), and an unconfirmed reading only ever offers the confirm step. Absence is the pre-confirmation state."
-  },
-  {
-    "file": "src/data/lib/catalyst/landings/subscriptions.ts",
-    "rule": "fabricated-default",
-    "text": "z.boolean().nullish().transform((v) => v ?? false)",
-    "why": "notify_by_email is the user's email opt-in. It is set true when they subscribe, so a record that does not assert it is a record for someone who has not subscribed. toSubscriptionSettingsView only uses it to decide whether to show the subscribe or the unsubscribe affordance; it is never written back from this parse."
-  },
-  {
-    "file": "src/data/lib/catalyst/landings/subscriptions.ts",
-    "rule": "fabricated-default",
-    "text": "z.boolean().nullish().transform((v) => v ?? false)",
-    "why": "notify_by_browser is the browser-push opt-in, set true only on explicit consent. Nothing on this surface reads it today and nothing writes it back, so the unasserted state and the declined state are the same fact."
-  },
-  {
     "file": "src/data/lib/catalyst/marketplace/credit-quotes.ts",
     "rule": "fabricated-default",
     "text": "quoteCreditPrices(\n        { items: items.slice(start, start + MAX_QUOTE_ITEMS) },\n        opts,\n      ).catch(\n        (): PriceQuotes => ({\n          items: items\n            .slice(start, start + MAX_QUOTE_ITEMS)\n            .map((r) => ({ ...r, credits: null })),\n          amounts: [],\n        }),\n      )",
