@@ -36,10 +36,13 @@ async function evaluate<T>(expression: string): Promise<T> {
   return response.result.value;
 }
 
+// The Sites surface's outward focus ring (apps/ui3/src/components/surface.css), which the pages run under.
+const surfaceFocus = ":where(.ui-surface, .xc, .st, .ch) :where(button, a, input, select, textarea, [tabindex]):focus-visible { outline: 2px solid #ff829d; outline-offset: 3px; }";
+
 async function load(width: number, items: WoUpcomingCard[] = upcoming) {
   await session.send("Emulation.setDeviceMetricsOverride", { width, height: 1000, deviceScaleFactor: 1, mobile: false });
   const markup = renderToStaticMarkup(<StWhatSOn chrome={false} liveNow={liveNow} upcoming={items} allDays={allDays} dayLabels={["Today", "Tue", "Wed", "Thu", "Fri"]} />);
-  const html = `<!doctype html><style>body{margin:0}${css}*,*::before,*::after{transition:none!important}</style>${markup}`;
+  const html = `<!doctype html><style>body{margin:0}${surfaceFocus}${css}*,*::before,*::after{transition:none!important}</style><div class="st">${markup}</div>`;
   await session.navigate(`data:text/html,${encodeURIComponent(html)}`);
 }
 
@@ -121,6 +124,32 @@ describe.each([390, 768, 1440])("when What's On renders at %ipx", (width) => {
     expect(await cardCentre(selector)).not.toBeNull();
     await evaluate(`document.querySelector("[data-probe] a").focus()`);
     expect((await evaluate<Clip>(clipped)).out).toEqual([]);
+  });
+
+  it.each([
+    ["an Upcoming card", ".wo-up .wo-sm"],
+    ["an All Events card", ".wo-all .wo-fc, .wo-all__list .wo-sm"],
+  ])("should draw %s's keyboard focus ring inside the card", async (_, selector) => {
+    await load(width);
+    expect(await cardCentre(selector)).not.toBeNull();
+    // Tab from the element just before the overlay, so the focus is keyboard focus (:focus-visible).
+    await evaluate(`(() => { const b = document.createElement("button"); b.id = "before"; const o = document.querySelector("[data-probe] .wo-card__overlay"); o.before(b); b.focus(); })()`);
+    await session.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
+    await session.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
+    const ring = await evaluate<{ visible: boolean; style: string; width: number; offset: number; inside: boolean }>(`(() => {
+      const card = document.querySelector("[data-probe]"), overlay = card.querySelector(".wo-card__overlay");
+      const s = getComputedStyle(overlay), c = card.getBoundingClientRect(), o = overlay.getBoundingClientRect();
+      const width = parseFloat(s.outlineWidth), offset = parseFloat(s.outlineOffset);
+      const reach = width + offset;
+      return {
+        visible: overlay.matches(":focus-visible"),
+        style: s.outlineStyle,
+        width,
+        offset,
+        inside: o.left - reach >= c.left - 0.5 && o.right + reach <= c.right + 0.5 && o.top - reach >= c.top - 0.5 && o.bottom + reach <= c.bottom + 0.5,
+      };
+    })()`);
+    expect(ring).toEqual({ visible: true, style: "solid", width: 2, offset: -2, inside: true });
   });
 
   it("should keep the time on an Upcoming card that has no actions (an event schedule)", async () => {
