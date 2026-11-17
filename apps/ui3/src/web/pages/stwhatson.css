@@ -720,6 +720,9 @@ h2.wo-all__title {
   .wo-up__dots { display: flex; }
   .wo-sm { min-width: 0; }
   .wo-sm__actions { display: none; }
+  /* The actions are hidden here, so the time they replace on hover or focus stays. */
+  .wo-sm:hover [data-role="time-pill"],
+  .wo-sm:focus-within [data-role="time-pill"] { opacity: 1; }
   .wo-sm__mobileaction { display: flex; }
   .wo-all { --wo-cols: 2; margin-left: calc(-1 * var(--dcl-space-24)); margin-right: calc(-1 * var(--dcl-space-24)); padding: var(--dcl-space-48) var(--dcl-space-24); }
   .wo-all__date:nth-of-type(n+3), .wo-col:nth-child(n+3) { display: none; }

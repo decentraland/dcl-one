@@ -124,4 +124,40 @@ describe.each([1280, 1440])("when an Upcoming card is hovered at %ipx", (width) 
     expect(share).toMatchObject({ width: 32, height: 32, radius: "8px", background: "rgba(255, 255, 255, 0.1)", icon: { width: 24, height: 24 } });
     expect(share.left - remind.right).toBe(12);
   });
+
+  it("should darken Remind me and Share to the public controls' white 20% on their own hover", async () => {
+    await load(width);
+    const hover = async (selector: string) => {
+      const { x, y } = await evaluate<{ x: number; y: number }>(
+        `(() => { const card = document.querySelector(".wo-up__grid .wo-sm"); const r = card.getBoundingClientRect(); return { x: r.x + r.width * 0.8, y: r.y + 10 }; })()`,
+      );
+      await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+      const target = await evaluate<{ x: number; y: number }>(
+        `(() => { const r = document.querySelector(".wo-up__grid .wo-sm ${selector}").getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`,
+      );
+      await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: target.x, y: target.y });
+      return evaluate<string>(`getComputedStyle(document.querySelector(".wo-up__grid .wo-sm ${selector}")).backgroundColor`);
+    };
+    expect(await hover(".wo-sm__actions a")).toBe("rgba(255, 255, 255, 0.2)");
+    expect(await hover(".wo-sm__actions button")).toBe("rgba(255, 255, 255, 0.2)");
+  });
+});
+
+describe.each([390, 768])("when an Upcoming card is focused or hovered at %ipx, where its actions are hidden", (width) => {
+  it.each(["focus", "hover"])("should keep the event time visible on %s", async (mode) => {
+    await load(width);
+    const card = ".wo-up__carousel .wo-sm";
+    if (mode === "focus") await evaluate(`document.querySelector("${card} .wo-card__overlay").focus()`);
+    else {
+      const { x, y } = await evaluate<{ x: number; y: number }>(
+        `(() => { const r = document.querySelector("${card}").getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + 10 }; })()`,
+      );
+      await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+    }
+    const state = await evaluate<{ time: string; actions: string; within: boolean }>(`(() => {
+      const c = document.querySelector("${card}");
+      return { time: getComputedStyle(c.querySelector('[data-role="time-pill"]')).opacity, actions: getComputedStyle(c.querySelector(".wo-sm__actions")).display, within: c.matches(":hover, :focus-within") };
+    })()`);
+    expect(state).toEqual({ time: "1", actions: "none", within: true });
+  });
 });
