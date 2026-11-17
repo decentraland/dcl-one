@@ -843,6 +843,9 @@ class InventoryTests(unittest.TestCase):
                     script.replace('[ -z "$same" ] || ', ''),
                     script.replace('same=$(cut -f1,2 "$logs/binaries" | LC_ALL=C sort | LC_ALL=C uniq -d)\n', 'same=\n'),
                     script.replace('cargo test --locked "$@" --doc\n', ''),
+                    script.replace('${CATALYST_TEST_DOC_SHARD:-$index}', '${CATALYST_TEST_DOC_SHARD:-0}'),
+                    script.replace(' && [ "$doc" -le "$total" ]', ''),
+                    script.replace('if [ "$doc" -eq "$index" ]; then', 'if [ "$doc" -ne "$index" ]; then'),
                     script.replace('echo "$line" >> "$2/failures"; exit 1', 'echo "$line" >> "$2/failures"'),
                     script.replace('  cat "$log"\n', ''),
                     script.replace("cores=", "exit 0\ncores=")]:

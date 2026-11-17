@@ -179,7 +179,8 @@ the test executables; on PRs they run on Linux (`CATALYST_TEST_SHARD=i/n` for
 `tooling/catalyst-test.sh`). The provisioned Archipelago tests take a fixed
 time, so only the shard that `CATALYST_TEST_PROVISIONED_SHARD` names runs them;
 the other shards check that the tests are present. A run that sets neither
-variable runs them. When the dependency cache restores anything, from its exact
+variable runs them. The doc-tests run only in the shard that
+`CATALYST_TEST_DOC_SHARD` names, or in every shard without it. When the dependency cache restores anything, from its exact
 key or a partial match, the jobs compile through a compiler cache (`sccache` on
 the GitHub cache) that holds what that entry does not: the results of the
 workspace crates, of dependencies the entry lacks and of the separate
