@@ -413,6 +413,9 @@ export function registerBevyRenderer(): void {
         onReady: () => {
           bevy.camera.reset();
           syncEditCameraVisibility();
+          // A rebooted agent starts with editing on; restate the Interact toggle so
+          // it neither draws the gizmo nor intercepts clicks while Interact is on.
+          cameraBridge.setEditingEnabled(bevy.interaction.isEditingEnabled());
         },
       });
       // The player's avatar is only shown while the scene RUNS or the user drives

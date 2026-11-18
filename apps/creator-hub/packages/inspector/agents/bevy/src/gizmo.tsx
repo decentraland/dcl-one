@@ -27,6 +27,7 @@ import { Vector3, Quaternion, Color4, Color3 } from '@dcl/sdk/math';
 import type { GizmoMode } from '@dcl/inspector-bevy-protocol';
 
 import { bus } from './bus';
+import { isGizmoActive } from './gizmo-visibility';
 import { getSpawnMarkerTarget } from './spawn-markers';
 
 /**
@@ -406,13 +407,31 @@ let drag: DragState | null = null;
 let grabPending = false;
 let pendingModifiers = { shift: false, ctrl: false };
 // Viewport EDITING: when false, a pointer-down does NOT pick or grab, so the click
-// reaches the running scene instead (test a mechanic, e.g. a button — #1458). The
-// inspector's "Interact" toggle drives this via set-editing-enabled.
+// reaches the running scene instead (test a mechanic, e.g. a button — #1458), and
+// the gizmo (entity or spawn-point handle) is not drawn. The inspector's
+// "Interact" toggle drives this via set-editing-enabled.
 let editingEnabled = true;
 
-/** Enable/disable viewport editing (click-to-pick + gizmo grab). See #1458. */
+/**
+ * Enable/disable viewport editing (click-to-pick + gizmo grab + gizmo drawing).
+ * Selection and spawn-handle updates keep landing while it is off; the per-frame
+ * anchor in gizmoSystemInner draws the latest of them once it is back on.
+ */
 export function setEditingEnabled(enabled: boolean): void {
   editingEnabled = enabled;
+  if (!enabled) {
+    hideGizmo();
+    setHover(null);
+  }
+}
+
+/** Whether the gizmo is anchored, drawn and hover-highlighted this frame. */
+function gizmoActive(): boolean {
+  return isGizmoActive({
+    editingEnabled,
+    hasTarget: selected !== null && selectedPos !== null,
+    modeDrawsHandles: isSupportedMode(gizmoMode),
+  });
 }
 // The entity's live position during a drag (committed on release).
 let dragPos: Vector3 | null = null;
@@ -721,11 +740,12 @@ function recreateGizmoCamera(): void {
 
 function gizmoOverlay(): ReactEcs.JSX.Element | null {
   // Show the composite while a gizmo is up — an entity selection OR a spawn point
-  // (driven via the SPAWN_SENTINEL, so `selected`/`selectedPos` are set for it too).
+  // (driven via the SPAWN_SENTINEL, so `selected`/`selectedPos` are set for it too) —
+  // and editing is on: with Interact on, the handles would be drawn but dead.
   // Hidden while a resize is in flight (resizeSettle > 0): the in-place-resized target is
   // skewed until the camera recreates, so hiding it avoids showing a wrong-aspect gizmo and
   // the "snap" back into place — it reappears already-correct once the size settles (#1529).
-  const gizmoUp = selected !== null && selectedPos !== null && resizeSettle === 0;
+  const gizmoUp = gizmoActive() && resizeSettle === 0;
   if (gizmoCamera === null || !gizmoUp) return null;
   return (
     <UiEntity
@@ -1262,10 +1282,10 @@ function gizmoSystemInner(): void {
   }
 
   // Position + scale the gizmo on the selected entity each frame (the inspector
-  // supplied selectedPos; during a drag we update it locally below). Only for
-  // modes that draw handles: re-anchoring in `free` mode would undo hideGizmo's
-  // park and show whatever groups happen to be visible.
-  if (selected !== null && selectedPos !== null && drag === null && isSupportedMode(gizmoMode)) {
+  // supplied selectedPos; during a drag we update it locally below). Only while
+  // the gizmo is active (see gizmoActive): anchoring otherwise would undo
+  // hideGizmo's park.
+  if (selectedPos !== null && drag === null && gizmoActive()) {
     const t = Transform.getMutable(gizmoRoot);
     t.position = { ...selectedPos };
     // Orient the handles to the entity's rotation when locally aligned (scale
@@ -1281,7 +1301,7 @@ function gizmoSystemInner(): void {
   // on a change, so this is cheap per frame.
   if (drag !== null) {
     setHover(drag.axis);
-  } else if (selected !== null && selectedPos !== null && isSupportedMode(gizmoMode)) {
+  } else if (gizmoActive()) {
     const ray = pointerRay();
     setHover(ray !== null ? pickHandleAtRay(ray) : null);
   } else {
