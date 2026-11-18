@@ -1695,9 +1695,9 @@ fn process_avatar(
                 ("feet_basemesh", WearableCategory::FEET),
                 // ("head", WearableCategory::HEAD),
                 // ("head_basemesh", WearableCategory::HEAD),
-                // ("mask_eyes", WearableCategory::HEAD),
-                // ("mask_eyebrows", WearableCategory::HEAD),
-                // ("mask_mouth", WearableCategory::HEAD),
+                ("mask_eyes", WearableCategory::HEAD),
+                ("mask_eyebrows", WearableCategory::HEAD),
+                ("mask_mouth", WearableCategory::HEAD),
             ];
 
             for (hidename, category) in hiders {
