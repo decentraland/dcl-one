@@ -9,6 +9,7 @@ use url::Url;
 use crate::archipelago::{ArchipelagoBot, ArchipelagoOptions, Assignment, read_connection_string};
 use crate::engine::{Ctx, expect_async, expect_or};
 use crate::identity::Identity;
+use crate::livekit::{JoinOptions, LiveKitJoin};
 use crate::oracle::{self, Peer};
 use crate::pulse::PulseBot;
 
@@ -160,21 +161,78 @@ pub fn check_credentials(assignment: &Assignment, identity: &Identity) -> Result
     Ok(connection.claims.room)
 }
 
-/// The hook where a LiveKit client joins the room a connection string names. It checks the token
-/// and returns the room; joining the room is the LiveKit bot's part and is added here.
+/// A room an assignment named, and the client that joined it when the stack file names one.
+pub struct JoinedRoom {
+    pub room: String,
+    /// Absent when the stack file names no LiveKit client: the token was checked, the room was
+    /// not joined.
+    pub client: Option<LiveKitJoin>,
+}
+
+/// Checks the token of an assignment and, when the stack file names a LiveKit client, joins the
+/// room with it: the proof that the credentials the stack hands out really open the room.
 pub async fn join_room(
     ctx: &Ctx,
     actor: &str,
     identity: &Identity,
     assignment: &Assignment,
-) -> Result<String> {
+) -> Result<JoinedRoom> {
     let room = check_credentials(assignment, identity)?;
     ctx.record(
         actor,
         "room named",
         serde_json::json!({ "room": room, "island": assignment.island }),
     );
-    Ok(room)
+    let has_client = ctx
+        .stack()
+        .livekit
+        .as_ref()
+        .is_some_and(|target| target.client.is_some());
+    let client = if has_client {
+        let name = format!("{actor} in the room");
+        Some(
+            LiveKitJoin::start(
+                ctx,
+                &name,
+                &assignment.connection_string,
+                JoinOptions::default(),
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    Ok(JoinedRoom { room, client })
+}
+
+/// Waits until two clients that joined the same room each hold the other, by wallet.
+pub async fn expect_clients_meet(
+    ctx: &Ctx,
+    one: (&LiveKitJoin, &Identity),
+    other: (&LiveKitJoin, &Identity),
+) -> Result<()> {
+    let holds = |client: &LiveKitJoin, wallet: String| {
+        client
+            .view()
+            .participants
+            .keys()
+            .any(|identity| identity.eq_ignore_ascii_case(&wallet))
+    };
+    expect_or(
+        ctx,
+        "the two clients see each other in the LiveKit room",
+        Duration::from_secs(20),
+        || {
+            one.0.alive()?;
+            other.0.alive()?;
+            let first_sees = holds(one.0, other.1.address());
+            let second_sees = holds(other.0, one.1.address());
+            (first_sees && second_sees).then_some(()).ok_or_else(|| {
+                format!("the first holds the second: {first_sees}; the second holds the first: {second_sees}")
+            })
+        },
+    )
+    .await
 }
 
 /// Waits until the statistics route lists `address` exactly `count` times and returns those

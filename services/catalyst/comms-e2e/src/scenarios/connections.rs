@@ -64,7 +64,7 @@ async fn connect_full_stack(ctx: Ctx) -> Result<()> {
     let first = ctx.identity(0);
     let alone = bring_up(&ctx, "first", &first, &realm, here).await?;
     let assignment = first_assignment(&ctx, &alone.archipelago).await?;
-    join_room(&ctx, "first", &first, &assignment).await?;
+    let first_room = join_room(&ctx, "first", &first, &assignment).await?;
     let island = expect_island_of(&ctx, &first.address()).await?;
     ctx.note("island", &island);
 
@@ -72,7 +72,7 @@ async fn connect_full_stack(ctx: Ctx) -> Result<()> {
     let second = ctx.identity(1);
     let neighbour = bring_up(&ctx, "second", &second, &realm, near(here, 2.0)).await?;
     let assignment_of_second = first_assignment(&ctx, &neighbour.archipelago).await?;
-    join_room(&ctx, "second", &second, &assignment_of_second).await?;
+    let second_room = join_room(&ctx, "second", &second, &assignment_of_second).await?;
     expect_or(
         &ctx,
         "both bots end in one island",
@@ -97,6 +97,23 @@ async fn connect_full_stack(ctx: Ctx) -> Result<()> {
     }
     alone.pulse.expect_alive()?;
     neighbour.pulse.expect_alive()?;
+
+    // The credentials really open the room: with a LiveKit client in the stack file both bots
+    // join, and two bots of one island meet there.
+    match (&first_room.client, &second_room.client) {
+        (Some(one), Some(other)) if first_room.room == second_room.room => {
+            expect_clients_meet(&ctx, (one, &first), (other, &second)).await?;
+            ctx.note("LiveKit join", "both joined one room and saw each other");
+        }
+        (Some(_), Some(_)) => ctx.note(
+            "LiveKit join",
+            "both joined, in different rooms: the first assignment of each named another island",
+        ),
+        _ => ctx.note(
+            "LiveKit join",
+            "not done: the stack file names no LiveKit client (`[livekit] client`)",
+        ),
+    }
     Ok(())
 }
 

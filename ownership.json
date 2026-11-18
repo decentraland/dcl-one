@@ -184,7 +184,8 @@
       "paths": [
         "/services/catalyst/comms/",
         "/library/vendor/rusty_enet/",
-        "/library/dcl-livekit-token/"
+        "/library/dcl-livekit-token/",
+        "/services/catalyst/comms-e2e/"
       ]
     },
     {

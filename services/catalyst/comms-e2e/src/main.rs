@@ -76,6 +76,13 @@ enum Command {
         #[arg(long, value_name = "file")]
         stack_file: PathBuf,
     },
+    /// Print the wallet address of a private key held in an environment variable: the address
+    /// to configure in Pulse as the one scene listener it admits
+    Address {
+        /// The environment variable that holds the private key
+        #[arg(long, value_name = "variable")]
+        key_env: String,
+    },
     /// Start the headless explorer behind the fault link and run console commands in it
     Console {
         #[arg(long, value_name = "file")]
@@ -220,6 +227,12 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
                 explorer.stop().await;
                 anyhow::Ok(())
             })?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Address { key_env } => {
+            let key = Stack::secret(&key_env)?;
+            let identity = catalyst_comms_e2e::identity::Identity::from_wallet_key(&key, "address")?;
+            println!("{}", identity.address());
             Ok(ExitCode::SUCCESS)
         }
         Command::Doctor { stack_file } => {
