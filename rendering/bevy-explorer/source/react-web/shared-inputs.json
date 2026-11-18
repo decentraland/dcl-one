@@ -4656,6 +4656,10 @@
       "path": "library/ui/apps/hud/lib",
       "entries": [
         {
+          "name": "audioUnlock.ts",
+          "kind": "regular"
+        },
+        {
           "name": "bindingLabels.ts",
           "kind": "regular"
         },
@@ -4689,6 +4693,10 @@
     {
       "path": "library/ui/apps/hud/test",
       "entries": [
+        {
+          "name": "audioUnlock.test.ts",
+          "kind": "regular"
+        },
         {
           "name": "avatar.test.tsx",
           "kind": "regular"
@@ -8725,7 +8733,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/engine/EngineHost.tsx",
-      "sha256": "e315becbede258508fff68704b303cd01867a9073958e016962aeb4e0fd4a6d9"
+      "sha256": "1a977b2084d365698c3fa98e5f1b50b69613d3876149031d4ad5467ba56c70c1"
     },
     {
       "path": "library/ui/apps/hud/features/engine/EngineViewport.module.css",
@@ -9608,6 +9616,10 @@
       "sha256": "a159ab4a35346180b4b73cb2ea1b10bdc537c40eb4a8ea77e0f763019ef45566"
     },
     {
+      "path": "library/ui/apps/hud/lib/audioUnlock.ts",
+      "sha256": "e57c837700628663e6a2fd32aa2224e485ba83040bd123bc2bc8e30d822b490d"
+    },
+    {
       "path": "library/ui/apps/hud/lib/bindingLabels.ts",
       "sha256": "028f54981522025bedcc8188a96d98b02a6eb785bf30f889057bf1a855898919"
     },
@@ -9630,6 +9642,10 @@
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
       "sha256": "62a8ae5c397fb9c6cd24ae751be4a044bf8aeb7f8164cfb23428dd12b29cb0fa"
+    },
+    {
+      "path": "library/ui/apps/hud/test/audioUnlock.test.ts",
+      "sha256": "02ceb7c73105963bb6151b827021af8858c478f70687710f6fc4e37bb145c7a4"
     },
     {
       "path": "library/ui/apps/hud/test/avatar.test.tsx",
@@ -21121,6 +21137,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/engine/EngineHost.tsx",
+      "to": "library/ui/apps/hud/lib/audioUnlock.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/engine/EngineHost.tsx",
+      "to": "library/ui/apps/hud/lib/audioUnlock.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/engine/EngineHost.tsx",
+      "to": "library/ui/apps/hud/lib/audioUnlock.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/engine/EngineViewport.tsx",
       "to": "library/explorer-core/lib/hudScale.ts",
       "kind": "native:runtime"
@@ -34469,6 +34500,21 @@
       "from": "library/ui/apps/hud/lib/useWindowKeyDown.ts",
       "to": "library/explorer-core/lib/inputLock.ts",
       "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/audioUnlock.test.ts",
+      "to": "library/ui/apps/hud/lib/audioUnlock.ts",
+      "kind": "native:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/audioUnlock.test.ts",
+      "to": "library/ui/apps/hud/lib/audioUnlock.ts",
+      "kind": "production:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/audioUnlock.test.ts",
+      "to": "library/ui/apps/hud/lib/audioUnlock.ts",
+      "kind": "test:dynamic"
     },
     {
       "from": "library/ui/apps/hud/test/avatar.test.tsx",
@@ -43652,6 +43698,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/lib/audioUnlock.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/lib/bindingLabels.ts",
       "kind": "type"
     },
@@ -43673,6 +43724,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/lib/useWindowKeyDown.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/audioUnlock.test.ts",
       "kind": "type"
     },
     {
