@@ -78,7 +78,7 @@ export function Deploy(props: Props) {
   const [reportOpen, setReportOpen] = useState(false);
   const deployment = getDeployment(project.path);
   const isWorld = previousStep === 'publish-to-world' || !!deployment?.info.isWorld;
-  const worldName = project.worldConfiguration?.name;
+  const worldName = deploymentMetadata?.worldName || project.worldConfiguration?.name;
   const ownsWorld =
     !!wallet &&
     !!worldName &&
@@ -97,7 +97,7 @@ export function Deploy(props: Props) {
   }, [isWorld, deploymentMetadata?.isMultiScene, worldScenes, project.scene.parcels]);
 
   /** Publishing empties the world first: the same condition `handlePublish` undeploys on. */
-  const willEmptyWorld = needsUndeploy && !!wallet && !!project.worldConfiguration?.name;
+  const willEmptyWorld = needsUndeploy && !!wallet && !!worldName;
 
   // Only the idle view shows the limit. A deployment whose publish server never answered
   // (initializeDeployment rejected, e.g. offline) is failed and carries no parcels.
@@ -105,7 +105,7 @@ export function Deploy(props: Props) {
     deployment?.status === 'idle'
       ? {
           isWorld,
-          worldName: project.worldConfiguration?.name,
+          worldName,
           parcels: deployment.info.parcels,
           replacesWorld: willEmptyWorld,
           deploymentId: deployment.id,
@@ -125,17 +125,17 @@ export function Deploy(props: Props) {
     setShowWarning(false);
     updateProjectInfo(project.path, { skipPublishWarning: skipWarning }); // write skip warning flag
 
-    if (willEmptyWorld && wallet && project.worldConfiguration?.name) {
+    if (willEmptyWorld && wallet && worldName) {
       setUndeployStatus('pending');
       try {
         await dispatch(
           managementActions.unpublishEntireWorld({
-            worldName: project.worldConfiguration.name,
+            worldName,
           }),
         ).unwrap();
         setUndeployStatus('complete');
         await dispatch(
-          managementActions.fetchWorldScenes({ worldName: project.worldConfiguration.name }),
+          managementActions.fetchWorldScenes({ worldName }),
         );
       } catch {
         setUndeployStatus('failed');
@@ -144,7 +144,7 @@ export function Deploy(props: Props) {
     }
 
     executeDeployment(project.path);
-  }, [skipWarning, project, willEmptyWorld, wallet, executeDeployment, updateProjectInfo]);
+  }, [skipWarning, project, willEmptyWorld, worldName, wallet, executeDeployment, updateProjectInfo]);
 
   const handleBack = useCallback(() => {
     setShowWarning(false);
@@ -187,12 +187,9 @@ export function Deploy(props: Props) {
 
   const jumpInLocation = useMemo(() => {
     const [x, y] = parseCoords(deployment?.info.baseParcel ?? project.scene.base);
-    const world =
-      deployment?.info.isWorld && project.worldConfiguration
-        ? project.worldConfiguration.name
-        : undefined;
+    const world = deployment?.info.isWorld && worldName ? worldName : undefined;
     return { world, x, y };
-  }, [deployment, project]);
+  }, [deployment, project, worldName]);
 
   /** Web link shown and copied for sharing: it opens for people without the desktop client. */
   const shareUrl = useMemo(() => getSceneJumpInUrl(jumpInLocation), [jumpInLocation]);
@@ -348,7 +345,7 @@ export function Deploy(props: Props) {
           <ProjectStepWrapper
             isWorld={isWorld}
             project={project}
-            name={project.worldConfiguration?.name}
+            name={worldName}
             className="scene"
           >
             {loadingPublish ? (
