@@ -144,10 +144,11 @@ across workers:
   `cargo test --manifest-path ../bevy/Cargo.toml -p
   bevy_image -p bevy_gltf --lib --features
   bevy_gltf/dds,bevy_gltf/bevy_animation,bevy_image/ktx2,bevy_image/zstd`.
-- Accessors with no `bufferView` are accepted (zero-filled per spec; Blender morph targets). In a
-  file that uses `KHR_draco_mesh_compression`, an accessor with neither a `bufferView` nor sparse
-  data fails the load with an error naming the extension, so `image_processing` decodes the
-  geometry and reloads it.
+- Accessors with no `bufferView` are accepted (zero-filled per spec; Blender morph targets). When a
+  `KHR_draco_mesh_compression` primitive reads an accessor with neither a `bufferView` nor sparse
+  data (its indices or an attribute), the load fails with an error naming the extension, so
+  `image_processing` decodes the geometry and reloads it. A file that only lists the extension
+  loads, zero-filled.
 - Animation channels `gltf` would panic on are skipped, and the rest of the clip plays:
   `KHR_animation_pointer` channels, channels with no target node or an unknown target path, and
   samplers whose accessors don't fit the target (an input other than float scalars, an output of

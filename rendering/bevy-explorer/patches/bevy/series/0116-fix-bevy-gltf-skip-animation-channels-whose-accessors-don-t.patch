@@ -1,10 +1,10 @@
 From 0000000000000000000000000000000000000000
 Subject: fix(bevy_gltf): skip animation channels whose accessors don't fit, fail undecoded draco
-Date: 2026-11-17T23:24:41+00:00
+Date: 2026-11-18T01:23:13+00:00
 
 ---
 diff --git a/crates/bevy_gltf/src/loader/mod.rs b/crates/bevy_gltf/src/loader/mod.rs
-index 3edc167fd4a0e47001128096be3ef7cd0735fa05..0b5e0ed3dddc6ce854ec8da3bc0f62709eb85a1e 100644
+index 3edc167fd4a0e47001128096be3ef7cd0735fa05..22cb9ac0d3bffdebefd42cf68b3ad54b60d9a166 100644
 --- a/crates/bevy_gltf/src/loader/mod.rs
 +++ b/crates/bevy_gltf/src/loader/mod.rs
 @@ -121,6 +121,10 @@ pub enum GltfError {
@@ -18,7 +18,7 @@ index 3edc167fd4a0e47001128096be3ef7cd0735fa05..0b5e0ed3dddc6ce854ec8da3bc0f6270
      /// Failed to generate tangents.
      #[error("failed to generate tangents: {0}")]
      GenerateTangentsError(#[from] bevy_mesh::GenerateTangentsError),
-@@ -243,53 +247,147 @@ impl AssetLoader for GltfLoader {
+@@ -243,51 +247,152 @@ impl AssetLoader for GltfLoader {
      }
  }
  
@@ -40,9 +40,11 @@ index 3edc167fd4a0e47001128096be3ef7cd0735fa05..0b5e0ed3dddc6ce854ec8da3bc0f6270
 +///   image itself (`prefer_extension_sources`). Validation reports every error, so when that is
 +///   the only one the rest of the document validated and it is parsed again without validation.
 +/// - An accessor with neither a bufferView nor sparse data is zero-filled (the spec allows it;
-+///   blender exports morph targets like this), unless the file uses `KHR_draco_mesh_compression`:
-+///   then the accessor's data is in a draco stream this loader cannot decode, and the load fails
-+///   with an error naming the extension, which the host can repair (decode it) and reload.
++///   blender exports morph targets like this), unless a `KHR_draco_mesh_compression` primitive
++///   reads it (its indices or an attribute): then the data is in a draco stream this loader
++///   cannot decode, and the load fails with an error naming the extension. The host repairs
++///   such a file by decoding those primitives and reloads it; a file that only lists the
++///   extension has nothing to decode, so its accessors stay zero-filled.
  fn parse_gltf(bytes: &[u8]) -> Result<gltf::Gltf, GltfError> {
      use gltf::json::validation::Error;
 -    let errors = match gltf::Gltf::from_slice(bytes) {
@@ -65,40 +67,25 @@ index 3edc167fd4a0e47001128096be3ef7cd0735fa05..0b5e0ed3dddc6ce854ec8da3bc0f6270
 -        matches!(error, Error::Missing)
 -            && path.0.starts_with("accessors[")
 -            && path.0.ends_with(".bufferView")
--    };
--    let required_webp = |(path, error): &(gltf::json::Path, Error)| {
--        matches!(error, Error::Unsupported)
--            && path.0.starts_with("extensionsRequired[")
--            && path.0.ends_with("= \"EXT_texture_webp\"")
--    };
--    if !errors
--        .iter()
--        .all(|e| missing_buffer_view(e) || required_webp(e))
-+    if gltf
-+        .document
-+        .extensions_used()
-+        .any(|ext| ext == "KHR_draco_mesh_compression")
-     {
--        return Err(gltf::Error::Validation(errors).into());
--    }
--    let gltf = gltf::Gltf::from_slice_without_validation(bytes)?;
--    if errors.iter().any(missing_buffer_view)
--        && gltf
++    const DRACO: &str = "KHR_draco_mesh_compression";
++    if gltf.document.extensions_used().any(|ext| ext == DRACO) {
 +        if let Some(accessor) = gltf
-             .document
--            .extensions_used()
--            .any(|ext| ext == "KHR_draco_mesh_compression")
--    {
--        return Err(gltf::Error::Validation(errors).into());
-+            .accessors()
++            .document
++            .meshes()
++            .flat_map(|mesh| mesh.primitives())
++            .filter(|primitive| primitive.extension_value(DRACO).is_some())
++            .flat_map(|primitive| {
++                let attributes = primitive.attributes().map(|(_, accessor)| accessor);
++                primitive.indices().into_iter().chain(attributes)
++            })
 +            .find(|accessor| accessor.view().is_none() && accessor.sparse().is_none())
 +        {
 +            return Err(GltfError::DracoCompressed(accessor.index()));
 +        }
-     }
-     Ok(gltf)
- }
- 
++    }
++    Ok(gltf)
++}
++
 +/// The node an animation channel animates, or why the channel is skipped. The gltf crate
 +/// validates none of what is checked here, and its channel reader panics on each of these:
 +/// - a target path it does not know (`Target::property` unwraps it);
@@ -121,7 +108,11 @@ index 3edc167fd4a0e47001128096be3ef7cd0735fa05..0b5e0ed3dddc6ce854ec8da3bc0f6270
 +        accessor::{Accessor, DataType, Dimensions},
 +        animation::{Interpolation, Property},
 +        json::validation::Checked,
-+    };
+     };
+-    let required_webp = |(path, error): &(gltf::json::Path, Error)| {
+-        matches!(error, Error::Unsupported)
+-            && path.0.starts_with("extensionsRequired[")
+-            && path.0.ends_with("= \"EXT_texture_webp\"")
 +    let json_target = &document.as_json().animations[channel.animation().index()].channels
 +        [channel.index()]
 +        .target;
@@ -147,10 +138,23 @@ index 3edc167fd4a0e47001128096be3ef7cd0735fa05..0b5e0ed3dddc6ce854ec8da3bc0f6270
 +            accessor.dimensions(),
 +            accessor.data_type()
 +        )
-+    };
+     };
+-    if !errors
+-        .iter()
+-        .all(|e| missing_buffer_view(e) || required_webp(e))
+-    {
+-        return Err(gltf::Error::Validation(errors).into());
 +    if input.dimensions() != Dimensions::Scalar || input.data_type() != DataType::F32 {
 +        return Err(format!("input {} is not float scalars", describe(&input)));
-+    }
+     }
+-    let gltf = gltf::Gltf::from_slice_without_validation(bytes)?;
+-    if errors.iter().any(missing_buffer_view)
+-        && gltf
+-            .document
+-            .extensions_used()
+-            .any(|ext| ext == "KHR_draco_mesh_compression")
+-    {
+-        return Err(gltf::Error::Validation(errors).into());
 +    // rotations and weights may also be normalized integers (KHR_mesh_quantization)
 +    let (dimensions, integers) = match property {
 +        Property::Translation | Property::Scale => (Dimensions::Vec3, false),
@@ -168,7 +172,10 @@ index 3edc167fd4a0e47001128096be3ef7cd0735fa05..0b5e0ed3dddc6ce854ec8da3bc0f6270
 +            "output {} does not fit a {property:?} target",
 +            describe(&output)
 +        ));
-+    }
+     }
+-    Ok(gltf)
++    // sparse indices need no check: an index is at most 4 bytes, and gltf validates every
++    // byteStride to at least 4
 +    for accessor in [&input, &output] {
 +        let views = accessor
 +            .view()
@@ -197,12 +204,10 @@ index 3edc167fd4a0e47001128096be3ef7cd0735fa05..0b5e0ed3dddc6ce854ec8da3bc0f6270
 +        ));
 +    }
 +    Ok(node)
-+}
-+
+ }
+ 
  /// Loads an entire glTF file.
- async fn load_gltf<'a, 'b, 'c>(
-     loader: &GltfLoader,
-@@ -337,39 +435,17 @@ async fn load_gltf<'a, 'b, 'c>(
+@@ -337,39 +442,17 @@ async fn load_gltf<'a, 'b, 'c>(
          let mut animation_roots = <HashSet<_>>::default();
          for animation in gltf.animations() {
              let mut animation_clip = AnimationClip::default();
@@ -252,7 +257,7 @@ index 3edc167fd4a0e47001128096be3ef7cd0735fa05..0b5e0ed3dddc6ce854ec8da3bc0f6270
                  };
                  let interpolation = channel.sampler().interpolation();
                  let reader = channel.reader(|buffer| Some(&buffer_data[buffer.index()]));
-@@ -600,13 +676,13 @@ async fn load_gltf<'a, 'b, 'c>(
+@@ -600,13 +683,13 @@ async fn load_gltf<'a, 'b, 'c>(
                      );
                  }
              }
@@ -270,7 +275,7 @@ index 3edc167fd4a0e47001128096be3ef7cd0735fa05..0b5e0ed3dddc6ce854ec8da3bc0f6270
                  );
              }
              let handle = load_context.add_labeled_asset(
-@@ -2358,6 +2434,160 @@ mod test {
+@@ -2358,6 +2441,192 @@ mod test {
          assert_eq!(clip.curves().len(), 1, "only the node channel is kept");
      }
  
@@ -404,28 +409,60 @@ index 3edc167fd4a0e47001128096be3ef7cd0735fa05..0b5e0ed3dddc6ce854ec8da3bc0f6270
 +        assert_eq!(curves, 1, "only the translation is kept");
 +    }
 +
-+    // an accessor with no data is zero-filled, unless the file uses draco: then the load fails
-+    // with an error naming the extension, which the host repairs
++    // an accessor with no data is zero-filled, unless a draco primitive reads it: then the load
++    // fails with an error naming the extension, which the host repairs. a file that only lists
++    // the extension has nothing to repair, and loads
 +    #[test]
-+    fn accessors_without_data_fail_only_with_draco() {
-+        let json = |extensions_used: &str| {
++    fn accessors_without_data_fail_only_for_draco_primitives() {
++        let json = |extensions_used: &str, primitive_extensions: &str| {
 +            r#"
 +{
 +    "asset": { "version": "2.0" },
-+    "extensionsUsed": EXTENSIONS,
-+    "accessors": [{ "componentType": 5126, "count": 3, "type": "VEC3" }]
++    "extensionsUsed": EXTENSIONS_USED,
++    "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 }, "extensions": PRIMITIVE }] }],
++    "accessors": [{ "componentType": 5126, "count": 3, "type": "VEC3",
++                    "min": [0, 0, 0], "max": [0, 0, 0] }]
 +}
 +"#
-+            .replace("EXTENSIONS", extensions_used)
++            .replace("EXTENSIONS_USED", extensions_used)
++            .replace("PRIMITIVE", primitive_extensions)
 +        };
-+        assert!(super::parse_gltf(json("[]").as_bytes()).is_ok());
-+        let error = super::parse_gltf(json(r#"["KHR_draco_mesh_compression"]"#).as_bytes())
++        let draco = r#"["KHR_draco_mesh_compression"]"#;
++        let compressed =
++            r#"{ "KHR_draco_mesh_compression": { "bufferView": 0, "attributes": { "POSITION": 0 } } }"#;
++        assert!(super::parse_gltf(json("[]", "{}").as_bytes()).is_ok());
++        assert!(
++            super::parse_gltf(json(draco, "{}").as_bytes()).is_ok(),
++            "draco listed, no primitive compressed"
++        );
++        let error = super::parse_gltf(json(draco, compressed).as_bytes())
 +            .err()
-+            .expect("draco accessors without data fail");
++            .expect("a draco primitive's accessor without data fails");
 +        assert!(
 +            error.to_string().contains("KHR_draco_mesh_compression"),
 +            "{error}"
 +        );
++    }
++
++    // sparse indices are read with their view's byteStride, but gltf rejects any stride below
++    // 4, and no index is wider: `animated_node` need not check them
++    #[test]
++    fn short_sparse_index_strides_fail_validation() {
++        let json = r#"
++{
++    "asset": { "version": "2.0" },
++    "buffers": [{ "byteLength": 8 }],
++    "bufferViews": [{ "buffer": 0, "byteLength": 8, "byteStride": 1 }],
++    "accessors": [{ "componentType": 5126, "count": 2, "type": "SCALAR", "sparse": {
++        "count": 1,
++        "indices": { "bufferView": 0, "componentType": 5123 },
++        "values": { "bufferView": 0 } } }]
++}
++"#;
++        let error = super::parse_gltf(json.as_bytes())
++            .err()
++            .expect("a byteStride of 1 fails validation");
++        assert!(error.to_string().contains("byteStride"), "{error}");
 +    }
 +
      #[test]
