@@ -7,15 +7,22 @@
 //
 //   pnpm run avatar-sweep [--counts 0,10,20,50,100,200,400,800] [--caps 20,all]
 //     [--emotes none,dance] [--nametags on] [--layout grid|around] [--setup "<console line>"]...
-//     [--window 10] [--settle 3] [--load-timeout 180]
-//     [--realm <url>] [--position x,y] [--web-app <dir> | --url <served app>] [--out <file>]
+//     [--seed 1|none] [--window 10] [--settle 3] [--load-timeout 180]
+//     [--realm <url>] [--position x,y] [--web-app <dir> [--port <n>] | --url <served app>]
+//     [--mirror <dir> [--mirror-port <n>]] [--out <file>]
 //
-// Each line: {"step", "count", "built", "shown", "drawn", "loadSeconds", "cap", "emote", "nametags", "layout", "samples",
+// The demo avatars wear random base wearables, a few hundred files from the catalyst. Run after
+// run that adds up to more than the catalyst allows one client, so `--mirror <dir>` keeps every
+// file it serves in that directory and later runs ask the catalyst for nothing. A fixed `--port`
+// keeps the page's origin, and with it the browser's own caches, the same from run to run.
+//
+// Each line: {"step", "count", "built", "shown", "drawn", "loadSeconds", "cap", "emote", "nametags", "layout", "seed", "samples",
 // "fps", "frameMs", "gpuFrameMs", "engineMemoryMiB", "hiccups"} where fps, frameMs and gpuFrameMs
 // are {median, p95, max} over the window's samples. The session's Max Avatars is restored at the
 // end. `/avatar_demo cap` is session-only, so the stored setting never changes.
 import { appendFile, writeFile } from 'node:fs/promises'
 import { parseArgs } from 'node:util'
+import { serveCatalystMirror, type CatalystMirror } from '../driver/catalyst-mirror.ts'
 import { chromeArgs } from '../driver/chrome.ts'
 import { DEFAULT_WEB_APP } from '../driver/paths.ts'
 import { serveWebApp, type StaticServer } from '../driver/serve.ts'
@@ -38,6 +45,7 @@ const { values } = parseArgs({
     emotes: { type: 'string', default: 'none,dance' },
     nametags: { type: 'string', default: 'on' },
     layout: { type: 'string', default: 'grid' },
+    seed: { type: 'string', default: '1' },
     setup: { type: 'string', multiple: true, default: [] },
     window: { type: 'string', default: '10' },
     settle: { type: 'string', default: '3' },
@@ -45,6 +53,9 @@ const { values } = parseArgs({
     realm: { type: 'string', default: DEFAULT_REALM },
     position: { type: 'string', default: '0,0' },
     'web-app': { type: 'string', default: process.env.DCL_E2E_WEB_APP || DEFAULT_WEB_APP },
+    port: { type: 'string', default: '0' },
+    mirror: { type: 'string' },
+    'mirror-port': { type: 'string', default: '0' },
     url: { type: 'string' },
     out: { type: 'string' },
     headless: { type: 'boolean', default: false }
@@ -71,6 +82,15 @@ const nametags = list(values.nametags).map((value) => {
   return value === 'on'
 })
 if (values.layout !== 'grid' && values.layout !== 'around') throw new Error('--layout takes grid or around')
+if (values.seed !== 'none' && !/^\d{1,15}$/.test(values.seed)) throw new Error('--seed takes a whole number, or none')
+const seed = values.seed === 'none' ? '' : values.seed
+function port(name: string, value: string): number {
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) throw new Error(`--${name} takes a port, not ${value}`)
+  return parsed
+}
+const appPort = port('port', values.port)
+const mirrorPort = port('mirror-port', values['mirror-port'])
 const windowMs = seconds('window', values.window) * 1000
 const settleMs = seconds('settle', values.settle) * 1000
 const loadTimeoutMs = seconds('load-timeout', values['load-timeout']) * 1000
@@ -111,7 +131,7 @@ let server: StaticServer | undefined
 const { launch } = await webDriverModule()
 let base = values.url
 if (base == null) {
-  server = await serveWebApp(values['web-app'], 0)
+  server = await serveWebApp(values['web-app'], appPort)
   base = server.url
 }
 const page = new URL(base)
@@ -119,6 +139,11 @@ page.searchParams.set('preview', '')
 page.searchParams.set('guest', '1')
 page.searchParams.set('realm', values.realm)
 page.searchParams.set('position', values.position)
+let mirror: CatalystMirror | undefined
+if (values.mirror != null) {
+  mirror = await serveCatalystMirror(values.mirror, mirrorPort)
+  page.searchParams.set('catalyst', mirror.url)
+}
 log(`opening ${page.href}`)
 const driver = await launch({ url: page.href, headless: values.headless, args: chromeArgs() })
 
@@ -156,6 +181,7 @@ try {
   originalCap = first.cap
   if (values.out) await writeFile(values.out, '')
   await run(`/avatar_demo layout ${values.layout}`)
+  await run(`/avatar_demo seed ${seed}`.trim())
   // console lines that set the build up for this run, such as an engine tunable under comparison
   for (const line of values.setup) log(`setup ${line}: ${JSON.stringify(await run(line))}`)
 
@@ -198,6 +224,7 @@ try {
             emote,
             nametags: tags ? 'on' : 'off',
             layout: values.layout,
+            seed: seed === '' ? null : Number(seed),
             samples: samples.length,
             fps: stats(samples.map((s) => s.fps)),
             frameMs: stats(samples.map((s) => s.frameMs)),
@@ -219,6 +246,12 @@ try {
   if (originalCap !== undefined) await run(`/avatar_demo cap ${originalCap}`).catch(() => undefined)
   await run('/nametags true').catch(() => undefined)
   await run('/avatar_demo layout grid').catch(() => undefined)
+  await run('/avatar_demo seed').catch(() => undefined)
   await driver.close()
   await server?.close()
+  if (mirror) {
+    const { kept, fetched, passed, refused } = mirror.stats
+    log(`catalyst mirror: ${kept} answered from ${values.mirror}, ${fetched} fetched and kept, ${passed} passed through, ${refused} refused upstream`)
+    await mirror.close()
+  }
 }

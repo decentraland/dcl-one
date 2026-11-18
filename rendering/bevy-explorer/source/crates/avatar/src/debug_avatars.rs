@@ -8,7 +8,7 @@ use common::structs::{
 use comms::profile::{name_color::name_color, ProfileManager, UserProfile};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use dcl_component::proto_components::sdk::components::PbAvatarShape;
-use rand::{seq::IteratorRandom, Rng};
+use rand::{rngs::StdRng, seq::IteratorRandom, Rng, SeedableRng};
 use serde_json::json;
 
 use crate::{nametag::NametagContent, AvatarProcessed, AvatarSelection, AvatarShape};
@@ -209,7 +209,22 @@ struct Creator {
     wearables: Vec<String>,
     emote: Option<String>,
     layout: DemoLayout,
+    /// With a seed, the avatar at each index always gets the same look.
+    seed: Option<u64>,
     next: u64,
+}
+
+/// A random demo avatar's look: whether it is male, and eight base wearables.
+fn random_look(rng: &mut impl Rng, male_only: bool) -> (bool, Vec<String>) {
+    let male = male_only || rng.gen_bool(0.5);
+    let wearables = base_wearables::base_wearable_urns()
+        .iter()
+        .skip(2)
+        .choose_multiple(rng, 8)
+        .into_iter()
+        .map(ToString::to_string)
+        .collect();
+    (male, wearables)
 }
 
 /// Create local rendered avatars, configure their look or remove only the test population.
@@ -243,6 +258,10 @@ enum DemoAction {
     /// Where new demo avatars stand: `grid` in front of the player, or `around` them.
     Layout {
         layout: DemoLayout,
+    },
+    /// Give the avatar at each index the same random look in every session; no seed clears it.
+    Seed {
+        seed: Option<u64>,
     },
     Male,
     Female,
@@ -286,6 +305,7 @@ fn demo_command(
             config.max_avatars = max;
         }
         Some(DemoAction::Layout { layout }) => creator.layout = layout,
+        Some(DemoAction::Seed { seed }) => creator.seed = seed,
         Some(DemoAction::Emote { name }) => {
             if !CREATOR_EMOTES.iter().any(|(_, value)| *value == name) {
                 cmd.reply_failed("unknown creator emote");
@@ -333,27 +353,23 @@ fn demo_command(
                 cmd.reply_failed("player unavailable");
                 return;
             };
-            let catalog = base_wearables::base_wearable_urns();
             for _ in 0..n {
-                let random = matches!(action, DemoAction::Spawn { .. });
-                let male = if random {
-                    creator.male_only || rng.gen_bool(0.5)
-                } else {
-                    matches!(action, DemoAction::Male)
-                };
-                let wearables = if random {
-                    catalog
-                        .iter()
-                        .skip(2)
-                        .choose_multiple(&mut rng, 8)
-                        .into_iter()
-                        .map(ToString::to_string)
-                        .collect()
-                } else {
-                    creator.wearables.clone()
-                };
                 let index = creator.next;
                 creator.next += 1;
+                let (male, wearables) = if matches!(action, DemoAction::Spawn { .. }) {
+                    match creator.seed {
+                        Some(seed) => random_look(
+                            &mut StdRng::seed_from_u64(seed.wrapping_add(index)),
+                            creator.male_only,
+                        ),
+                        None => random_look(&mut rng, creator.male_only),
+                    }
+                } else {
+                    (
+                        matches!(action, DemoAction::Male),
+                        creator.wearables.clone(),
+                    )
+                };
                 let slot = index % MAX_DEMOS as u64;
                 let offset = demo_offset(creator.layout, slot);
                 let shape = AvatarShape(PbAvatarShape {
@@ -424,17 +440,17 @@ fn demo_command(
             continue;
         };
         built += 1;
-        if processed.get(build).is_ok_and(InheritedVisibility::get) {
+        if processed.get(build).is_ok_and(|shown| shown.get()) {
             shown += 1;
             if children
                 .iter_descendants(build)
-                .any(|mesh| drawn_meshes.get(mesh).is_ok_and(ViewVisibility::get))
+                .any(|mesh| drawn_meshes.get(mesh).is_ok_and(|drawn| drawn.get()))
             {
                 drawn += 1;
             }
         }
     }
-    cmd.reply_ok(json!({"count":count, "built":built, "shown":shown, "drawn":drawn, "cap":config.max_avatars, "layout":creator.layout.name(), "maleOnly":creator.male_only, "wearables":creator.wearables.join(","), "emote":creator.emote.as_deref().unwrap_or("none")}).to_string());
+    cmd.reply_ok(json!({"count":count, "built":built, "shown":shown, "drawn":drawn, "cap":config.max_avatars, "layout":creator.layout.name(), "seed":creator.seed, "maleOnly":creator.male_only, "wearables":creator.wearables.join(","), "emote":creator.emote.as_deref().unwrap_or("none")}).to_string());
 }
 
 /// Temporarily render a fetched profile's appearance on the local player.
@@ -546,6 +562,15 @@ fn fetch_look(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_seed_gives_each_index_the_same_look() {
+        let look = |seed: u64| random_look(&mut StdRng::seed_from_u64(seed), false);
+        assert_eq!(look(7), look(7));
+        assert_eq!(look(7).1.len(), 8);
+        // and different indexes differ
+        assert!((0..20).any(|index| look(index) != look(7)));
+    }
 
     #[test]
     fn the_grid_stands_in_front_of_the_player() {

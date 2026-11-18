@@ -114,6 +114,7 @@ many `built`, waits `--settle` seconds and samples `/performance_state` every 25
 pnpm run avatar-sweep                                          # 0..800 avatars, caps 20 and all, idle and dancing
 pnpm run avatar-sweep --counts 0,100,400 --caps all --emotes none --window 20 --out sweep.jsonl
 pnpm run avatar-sweep --url http://localhost:8080/            # an app served already
+pnpm run avatar-sweep --mirror ~/.cache/dcl-catalyst-mirror --port 8765 --mirror-port 8764   # repeated runs
 ```
 
 | Option | Default | Meaning |
@@ -123,15 +124,29 @@ pnpm run avatar-sweep --url http://localhost:8080/            # an app served al
 | `--emotes` | `none,dance` | What new demo avatars play, looped (`/avatar_demo emote`) |
 | `--nametags` | `on` | `on`, `off` or both (`/nametags`) |
 | `--layout` | `grid` | `grid` puts every demo avatar in view, in front of the player; `around` fills a disc centred on the player, nearest first, so part of the crowd is behind the camera (`/avatar_demo layout`) |
+| `--seed` | `1` | The crowd: with a number, the avatar at each position has the same look in every run (`/avatar_demo seed`), so two builds are compared on the same avatars; `none` draws a new crowd each time |
 | `--setup` | none | A console line to run once before the first step, such as an engine tunable under comparison; repeat it for several |
 | `--window`, `--settle`, `--load-timeout` | `10`, `3`, `180` | Seconds |
 | `--realm`, `--position` | the `genesispng.dcl.eth` world on zone, `0,0` | Where to stand |
 | `--web-app` or `--url`, `--out`, `--headless` | `dist/web` | What to open, a JSONL copy of stdout, headless Chrome (GPU timing may then be missing) |
+| `--port` | `0` (a free one) | The port `--web-app` is served on. A fixed one keeps the page's origin, and so the browser's caches for it, from run to run |
+| `--mirror`, `--mirror-port` | none, `0` | A directory to keep the catalyst's files in, and the port to serve them on (see below) |
+
+The demo avatars wear random base wearables: a few hundred models and textures from the
+catalyst, which a crowd of several hundred asks for all at once. Run after run, that is more than
+the catalyst allows one client, and it then refuses content files for hours. For anything beyond
+a single run, pass `--mirror <dir>`: the sweep serves a catalyst on loopback
+(`driver/catalyst-mirror.ts`) and points the explorer at it with the `catalyst` service override.
+The mirror keeps every content file and active-entity lookup it serves in `<dir>` and answers
+from there afterwards; what it does not have yet it asks the catalyst for, a few requests a
+second, waiting and trying again when refused. The first run fills the directory, slowly; later
+runs ask the catalyst for nothing. Other requests (profiles, `/about`) pass through, not kept.
+The sweep's last stderr line counts each kind.
 
 Each stdout line is one step: `count`, `built` (`-1` when the avatars did not finish building
 within `--load-timeout`), `shown` (demo avatars not hidden, by the cap say) and `drawn` (those with
 a mesh in the camera's view or a shadow's at the end of the window), `loadSeconds` (spawn to every avatar built), the condition (`cap`,
-`emote`, `nametags`, `layout`), and `fps`, `frameMs` and `gpuFrameMs` as `{median, p95, max}` over the
+`emote`, `nametags`, `layout`, `seed`), and `fps`, `frameMs` and `gpuFrameMs` as `{median, p95, max}` over the
 window, with the last `engineMemoryMiB` and `hiccups`. Compare `frameMs.p95` across counts at
 `cap: "all"` for the cost of drawn avatars, and `cap: 20` against `all` for what avatars hidden by
 the cap still cost. Run it on each GPU class (discrete, integrated) the cap must hold on, and give
