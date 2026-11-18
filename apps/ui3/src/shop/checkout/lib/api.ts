@@ -108,22 +108,27 @@ export async function resolveLiveCoupon(
 }
 
 const STORE_MINT_PAGE = 20;
-/** A bound on the pages read, so a feed that never ends a page cannot hold a checkout: 1000 rows of one item. */
-const STORE_MINT_MAX_PAGES = 50;
 
 /** A mint's LIVE price and remaining supply, or null when it is no longer a store mint. A store mint is a `legacy` row
- * among its item's newest-first listings, after any MANA trade listed since, however many: the pages are read until
- * it shows up or they run out. A failed read rejects, as before. */
+ * among its item's newest-first listings, after any MANA trade listed since, however many: the pages are read until it
+ * shows up, a page comes short, or the first answer's total is reached (fixed then, so a growing feed is not chased).
+ * A full page with no total to bound the search is a failed read, not a missing mint; a failed read rejects. */
 export async function fetchStoreMintState(contractAddress: string, itemId: string, client: ShopClient): Promise<{ priceWei: string; available: number } | null> {
-  for (let page = 0; page < STORE_MINT_MAX_PAGES; page++) {
-    const skip = page * STORE_MINT_PAGE;
+  let total: number | null = null;
+  for (let skip = 0; ; skip += STORE_MINT_PAGE) {
     const body = await client.catalog.unified<{ data?: UnifiedListing[]; total?: number }>({ contractAddress, itemId, source: "legacy", first: STORE_MINT_PAGE, skip });
     const rows = body?.data ?? [];
     const row = rows.find((r) => r.acquisition === "store");
     if (row) return row.manaWei ? { priceWei: row.manaWei, available: typeof row.available === "number" ? row.available : 0 } : null;
-    if (rows.length < STORE_MINT_PAGE || (typeof body?.total === "number" && skip + rows.length >= body.total)) return null;
+    if (rows.length < STORE_MINT_PAGE) return null;
+    if (total === null) {
+      if (typeof body?.total !== "number" || !Number.isSafeInteger(body.total) || body.total < 0) {
+        throw new Error("The item's listings came without a total, so its store mint could not be looked for.");
+      }
+      total = body.total;
+    }
+    if (skip + rows.length >= total) return null;
   }
-  return null;
 }
 
 /** What a receipt or an activity line shows for a bought asset. */

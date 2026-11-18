@@ -52,6 +52,27 @@ describe("a store mint's live state", () => {
     expect(skips).toEqual(["0", "20"]);
   });
 
+  it("is found on the last page the first answer's total names, however far", async () => {
+    const rows = [...Array.from({ length: 1000 }, (_, i) => ({ ...LEGACY_TRADE, tradeId: `trade-legacy-${i}` })), STORE_EMOTE];
+    const transport = catalogTransport("ok", {
+      "/v3/catalog/unified": (url: URL) => {
+        const skip = Number(url.searchParams.get("skip") ?? 0);
+        const first = Number(url.searchParams.get("first") ?? rows.length);
+        return { data: rows.slice(skip, skip + first), total: rows.length };
+      },
+    });
+    const client = createShopClient({ base: "http://shop.test", mode: "canonical", transport, signer: null });
+    expect(await fetchStoreMintState(COLLECTION, STORE_EMOTE.itemId!, client)).toEqual({ priceWei: STORE_EMOTE.manaWei, available: STORE_EMOTE.available });
+    const skips = transport.calls.map((c) => new URL(c.url, "http://shop.test").searchParams.get("skip"));
+    expect(skips.at(-1)).toBe("1000");
+  });
+
+  it("rejects a full page that names no total, rather than calling the mint gone", async () => {
+    const page = Array.from({ length: 20 }, (_, i) => ({ ...LEGACY_TRADE, tradeId: `trade-legacy-${i}` }));
+    const client = catalogClient("ok", { "/v3/catalog/unified": { data: page } });
+    await expect(fetchStoreMintState(COLLECTION, STORE_EMOTE.itemId!, client)).rejects.toThrow(/total/);
+  });
+
   it("is null when the item has no store mint any more", async () => {
     const client = catalogClient("ok", { "/v3/catalog/unified": { data: [LEGACY_TRADE], total: 1 } });
     expect(await fetchStoreMintState(COLLECTION, STORE_EMOTE.itemId!, client)).toBeNull();
