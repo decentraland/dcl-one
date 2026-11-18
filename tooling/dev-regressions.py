@@ -337,6 +337,8 @@ TEST_SCRIPT = [
     'shard="${CATALYST_TEST_SHARD:-1/1}"',
     'index="${shard%/*}" total="${shard#*/}"',
     '[[ "$shard" =~ ^[1-9][0-9]*/[1-9][0-9]*$ ]] && [ "$index" -le "$total" ] || { echo "catalyst-test: CATALYST_TEST_SHARD must be i/n with i from 1 to n" >&2; exit 1; }',
+    'doc="${CATALYST_TEST_DOC_SHARD:-$index}"',
+    '[[ "$doc" =~ ^[1-9][0-9]*$ ]] && [ "$doc" -le "$total" ] || { echo "catalyst-test: CATALYST_TEST_DOC_SHARD must name one shard from 1 to $total" >&2; exit 1; }',
     'same=$(cut -f1,2 "$logs/binaries" | LC_ALL=C sort | LC_ALL=C uniq -d)',
     '[ -z "$same" ] || { echo "catalyst-test: two test binaries have one source file and kind: $same" >&2; exit 1; }',
     'LC_ALL=C sort "$logs/binaries" | cut -f3- | awk -v i="$index" -v n="$total" \'NR % n == i % n\' > "$logs/shard"',
@@ -348,6 +350,7 @@ TEST_SCRIPT = [
     'echo "$line" >> "$2/failures"; exit 1',
     'run "$jobs" < "$logs/others"',
     'run "$socket_jobs" < "$logs/sockets"',
+    'if [ "$doc" -eq "$index" ]; then',
     'cargo test --locked "$@" --doc',
 ]
 
@@ -454,7 +457,8 @@ def validate_auth_stress_workflow(workflow):
 def validate_test_script(script):
     # Pins the lines that keep the run complete: bash under set -e, the selection compiled
     # unfiltered, every listed binary of the shard (all of them without CATALYST_TEST_SHARD) run
-    # without arguments in both phases, the doc-tests, and no exit before the end. Comment lines are inert.
+    # without arguments in both phases, the doc-tests in one shard (every shard without
+    # CATALYST_TEST_DOC_SHARD), and no exit before the end. Comment lines are inert.
     require(script.splitlines()[:1] == ["#!/usr/bin/env bash"], "catalyst-test.sh must run under bash")
     lines = [line.strip() for line in script.splitlines() if line.strip() and not line.lstrip().startswith("#")]
     require(lines[:1] == ["set -euo pipefail"], "catalyst-test.sh must stop at the first failing step")

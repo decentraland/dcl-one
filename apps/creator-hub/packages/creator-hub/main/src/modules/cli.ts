@@ -22,6 +22,8 @@ import { downloadGithubRepo } from './download-github-folder';
 import { startMobileDebugServer } from './mobile-debug-server';
 import { qrCodeDataUrl } from './qr-code';
 import { getLanIp } from './network';
+import { getRealm } from './bevy-realm';
+import { NO_SERVER_FLAG } from './realm-server-logs';
 
 // `mobile` marks a preview that was started for the mobile-QR flow (`--mobile`): the
 // SDK runs the preview server but does NOT open the desktop client. It is tracked so a
@@ -40,6 +42,10 @@ const RAW_GLTF_PARAM = 'lsd-raw-gltf';
 // ready. sdk-commands prints it only with a LAN IP; if none is found it never comes, so
 // the mobile start settles (with no url) shortly after instead of hanging indefinitely.
 const MOBILE_DEEPLINK_GRACE_MS = 5000;
+
+// The flag as the start command's `arg` spec declares it. A bare mention of the flag in a
+// comment or a help string would match a substring check while `arg` still rejects it.
+const NO_SERVER_SPEC = /['"]--no-server['"]\s*:\s*Boolean/;
 
 const previewCache: Map<string, Preview> = new Map();
 export let deployServer: { stop: () => Promise<void> } | null = null;
@@ -330,6 +336,26 @@ export async function start(path: string, opts: StartOptions): Promise<string> {
   }
 }
 
+/**
+ * Flags that keep the preview from spawning a second Multiplayer Server for the scene.
+ *
+ * The Bevy editor realm (bevy-realm.ts) is a `sdk-commands start` of the same project, so
+ * on an SDK with the authoritative server it already runs one. A second server loses the
+ * scene room to it and exits, and the preview console then reports that no server is
+ * running while the realm's keeps serving. The preview reuses the realm's server instead;
+ * realm-server-logs.ts relays that server's logs into the preview console.
+ *
+ * `arg` rejects unknown flags, so the flag is only passed when the scene's sdk-commands
+ * declares it. Only versions that spawn a server do.
+ */
+async function getServerArgs(path: string): Promise<string[]> {
+  if (!getRealm(path)) return [];
+  const startCommand = await fs
+    .readFile(join(path, 'node_modules', '@dcl/sdk-commands/dist/commands/start/index.js'), 'utf-8')
+    .catch(() => '');
+  return NO_SERVER_SPEC.test(startCommand) ? [NO_SERVER_FLAG] : [];
+}
+
 async function doStart(path: string, opts: StartOptions, generation: number): Promise<string> {
   const { retry = true } = opts;
   const stopped = () => stopGeneration(path) !== generation;
@@ -396,10 +422,11 @@ async function doStart(path: string, opts: StartOptions, generation: number): Pr
     // itself and prints no deeplink, so we wait for the browser URL it prints. Mobile
     // (`--mobile`): it serves the scene and prints the LAN QR deeplink, opening no client
     // at all. Both are bare.
+    const serverArgs = await getServerArgs(path);
     const args = isMobile
-      ? ['start', '--mobile']
+      ? ['start', '--mobile', ...serverArgs]
       : isBevyWeb
-        ? ['start', '--bevy-web']
+        ? ['start', '--bevy-web', ...serverArgs]
         : [
             'start',
             '--explorer-alpha',
@@ -408,6 +435,7 @@ async function doStart(path: string, opts: StartOptions, generation: number): Pr
             // `--mcp` (a boolean) is emitted by generatePreviewArguments from opts.mcp;
             // pin the port too when the gateway asked for one, so it knows where to connect.
             ...(opts.mcp && opts.mcpPort !== undefined ? ['--mcp-port', String(opts.mcpPort)] : []),
+            ...serverArgs,
             // must stay last: everything after `--` is forwarded to the explorer deeplink
             ...(opts.loadRawGltfs ? ['--', `--${RAW_GLTF_PARAM}`] : []),
           ];

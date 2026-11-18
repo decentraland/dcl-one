@@ -164,7 +164,7 @@ const CALL_TUNE_SECS: f32 = 3.056;
 pub const VOICE_CHAT_CHANNEL: &str = "voice-chat";
 
 /// The call microphone: whether it publishes into the voice room (the mic plugin reads it), and
-/// whether a call is connected (the mic key toggles it instead of the nearby mic then).
+/// whether a call is connected (the mic key drives it instead of the nearby mic then).
 #[derive(Resource, Default)]
 pub struct CallMic {
     pub enabled: bool,

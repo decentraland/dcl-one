@@ -40,7 +40,7 @@ impl Reader {
     pub fn subscribe(self: &Arc<Self>, bus: &dyn NatsBus) -> NatsSubscription {
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             let reader = Arc::downgrade(self);
-            runtime.spawn(async move {
+            crate::shared::task::spawn_on(&runtime, async move {
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
                 loop {
                     interval.tick().await;

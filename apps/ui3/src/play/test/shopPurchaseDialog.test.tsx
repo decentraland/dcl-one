@@ -1,9 +1,9 @@
-// The purchase dialog's steps (features/shop/ui/ShopPurchaseDialog) and its host over the app
+// The purchase dialog's steps (library/ui/apps/shop/ui/ShopPurchaseDialog) and its host over the app
 // (shell/shop/overlay): what each step says and offers, and where the keyboard goes.
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { ShopPurchaseDialog, type ShopPurchaseStep } from '../features/shop/ui'
-import { ARM_MS } from '../features/shop/ui/ShopPurchaseDialog'
+import { ShopPurchaseDialog, type ShopPurchaseStep } from '@dcl/one-ui/apps/shop/ui'
+import { ARM_MS } from '@dcl/one-ui/apps/shop/ui/ShopPurchaseDialog'
 import { createShopOverlay } from '../shell/shop/overlay'
 
 const item = { name: 'Golden Armor', creator: 'Aurora', rarity: 'epic', credits: 500 }
