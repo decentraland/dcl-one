@@ -48,8 +48,8 @@ export async function fetchAvailableContent(hashes: string[]): Promise<Set<strin
 export async function deployEntity(form: FormData): Promise<void> {
   const response = await fetch(`${contentUrl()}/entities`, { method: 'POST', body: form })
   if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as { errors?: string[] }
-    throw new Error(`catalyst deployment failed (${response.status}): ${(body.errors ?? []).join(' ')}`)
+    const body = (await response.json().catch(() => null)) as { errors?: string[] } | null
+    throw new Error(`catalyst deployment failed (${response.status}): ${(body?.errors ?? []).join(' ')}`)
   }
   await response.body?.cancel()
 }

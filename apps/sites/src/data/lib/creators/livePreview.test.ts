@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import './test/setup'
+import { rejection } from './test/rejection'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BodyPartCategory, BodyShape, WearableCategory } from '@dcl/schemas'
 import {
@@ -42,7 +43,7 @@ describe('fetchBridgeState', () => {
 
   it('reports the bridge status on a failed response', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 503 })))
-    const error = await fetchBridgeState('http://localhost:8080').catch((e: unknown) => e)
+    const error = await rejection(fetchBridgeState('http://localhost:8080'))
     expect(error).toBeInstanceOf(LivePreviewError)
     expect(error).toMatchObject({ code: 'bridge_response', status: 503 })
   })

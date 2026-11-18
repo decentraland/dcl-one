@@ -124,5 +124,59 @@
     "rule": "fabricated-default",
     "text": "fetchReferrerProfile(address, { signal }).catch(() => referrerFromAddress(address))",
     "why": "`referrerFromAddress` is the no-profile state, not a profile: `name: null`, `hasClaimedName: false` and `resolved: false`, the same value `fetchReferrerProfile` gives an address with no Catalyst profile. The invite page reads `name: null` as decentraland.org does when its profile query has no data (sites@17b3535a InvitePage.tsx: `getInviterName(null)` falls back to the generic title), so a failed read shows the page without a name and never an invented one."
+  },
+  {
+    "file": "src/data/lib/creators/auth/transactions.ts",
+    "rule": "fabricating-catch",
+    "text": "return 'unknown'",
+    "why": "`unknown` is one of the four outcomes this function answers (`mined`, `reverted`, `superseded`, `unknown`) and means the node could not say. Callers keep the transaction pending on it and ask again; none treats it as settled, so a failed read is reported as exactly what it is."
+  },
+  {
+    "file": "src/data/lib/creators/discountAttempts.ts",
+    "rule": "fabricating-catch",
+    "text": "return { ends: [], creates: [] }",
+    "why": "This reads the browser's own localStorage, not a service: the pending discount attempts this app wrote there. Blocked or corrupt storage means none were kept, which is what the empty lists say. The discounts themselves are read from marketplace-server and are not affected."
+  },
+  {
+    "file": "src/data/lib/creators/forumPost.ts",
+    "rule": "fabricating-catch",
+    "text": "return { link, existing: true }",
+    "why": "Not a fallback: builder-server refuses a second topic with an error that carries the link of the existing one. `existingLink(error)` reads that link from the error, and the function only returns when it is there; any other error is retried or rethrown."
+  },
+  {
+    "file": "src/data/lib/creators/itemEditor.ts",
+    "rule": "fabricating-catch",
+    "text": "return {}",
+    "why": "This reads the editor's panel layout from the browser's localStorage, a preference this app wrote. Blocked or corrupt storage means no saved layout, and the editor opens with its default panels."
+  },
+  {
+    "file": "src/data/lib/creators/linkedContract.ts",
+    "rule": "fabricating-catch",
+    "text": "return 'error'",
+    "why": "`error` is one of the three answers of this check (`ok`, `not_nft`, `error`) and is what the form shows when the contract could not be read. A failed read is reported as a failure, never as a valid or an invalid contract."
+  },
+  {
+    "file": "src/data/lib/creators/models.ts",
+    "rule": "fabricating-catch",
+    "text": "return []",
+    "why": "Validation at import is advice shown beside the model, never a gate: when the validator itself fails (its chunk does not load), the failure is reported through `captureError` on the line above and the model is kept with no advice. The gate on publishing runs the validator again and does not go through here."
+  },
+  {
+    "file": "src/data/lib/creators/pendingLinkedPayment.ts",
+    "rule": "fabricating-catch",
+    "text": "return {}",
+    "why": "This reads a payment in progress from the browser's own storage, written by this app before the creator leaves for the payment page. Blocked or corrupt storage means there is nothing to resume, and the publish flow starts from its first step."
+  },
+  {
+    "file": "src/data/lib/creators/publishCollection.ts",
+    "rule": "fabricated-default",
+    "text": "fetchAllowance().catch(() => 0n)",
+    "why": "When the MANA allowance cannot be read it is taken as none, so the creator is asked to approve the fee before paying. An allowance that was in fact enough costs one extra approval; the opposite guess would send a payment that reverts."
+  },
+  {
+    "file": "src/data/lib/creators/publishCollection.ts",
+    "rule": "fabricated-default",
+    "text": "deps.isCollectionDeployed?.().catch(() => false)",
+    "why": "Reached only after the transaction was not seen mined. Without a confirmed deployment the publish is reported as failed, which is the same outcome a `false` answer gives; a deployment confirmed later is picked up when the collection is read again."
   }
 ]

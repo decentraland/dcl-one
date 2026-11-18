@@ -158,18 +158,19 @@ export async function sendMetaTransaction(
       body: JSON.stringify({ transactionData: { from: account, params: [contract.address, txData] } }),
       method: 'POST'
     })
-    const body = (await response.json().catch(() => ({}))) as {
+    // Null when the relayer's answer is not JSON.
+    const body = (await response.json().catch(() => null)) as {
       ok?: boolean
       message?: string
       code?: string
       txHash?: string
-    }
-    if (body.ok === false || !response.ok) {
-      if (body.message && body.code) throw new MetaTransactionError(body.message, body.code)
+    } | null
+    if (body?.ok === false || !response.ok) {
+      if (body?.message && body.code) throw new MetaTransactionError(body.message, body.code)
       throw new Error(`HTTP Error. Status: ${response.status}.`)
     }
     // Waiting on a missing hash would poll forever.
-    if (typeof body.txHash !== 'string') throw new Error('The relayer answered without a transaction hash')
+    if (typeof body?.txHash !== 'string') throw new Error('The relayer answered without a transaction hash')
     return body.txHash
   } catch (error) {
     if (error instanceof MetaTransactionError) throw error

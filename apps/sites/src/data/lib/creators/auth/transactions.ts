@@ -95,8 +95,13 @@ function metaTransactionWallet(session: Session): MetaTransactionWallet & { acco
   }
   return {
     // Some wallets only answer eth_accounts.
-    accounts: async () =>
-      (await request('eth_requestAccounts', []).catch(() => request('eth_accounts', []))) as string[],
+    accounts: async () => {
+      try {
+        return (await request('eth_requestAccounts', [])) as string[]
+      } catch {
+        return (await request('eth_accounts', [])) as string[]
+      }
+    },
     code: async address => (await request('eth_getCode', [address, 'latest'])) as string,
     signTypedData: async (address, typedData) => (await request('eth_signTypedData_v4', [address, typedData])) as string
   }

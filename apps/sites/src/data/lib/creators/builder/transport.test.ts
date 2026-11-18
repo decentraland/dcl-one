@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import '../test/setup'
+import { rejection } from '../test/rejection'
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
 import { BuilderServerError, isRefusedRequest, request } from './transport'
 
@@ -24,7 +25,7 @@ describe('request', () => {
 
   it('throws the server error message and status on a failed response', async () => {
     signedFetchMock.mockResolvedValue(jsonResponse({ ok: false, error: 'Unauthorized' }, false, 401))
-    const error = await request(ADDRESS, 'GET', '/collections/a1b2').catch((error: unknown) => error)
+    const error = await rejection(request(ADDRESS, 'GET', '/collections/a1b2'))
     expect(error).toBeInstanceOf(BuilderServerError)
     expect(error).toMatchObject({ message: 'Unauthorized', status: 401 })
   })

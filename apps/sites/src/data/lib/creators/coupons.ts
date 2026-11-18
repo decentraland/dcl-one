@@ -348,13 +348,14 @@ export async function postCoupon(address: string, payload: CouponCreation): Prom
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) },
     COUPON_AUTH_METADATA
   )
-  const json = (await response.json().catch(() => ({}))) as {
+  // Null when the answer is not JSON.
+  const json = (await response.json().catch(() => null)) as {
     ok?: boolean
     data?: CollectionDiscount
     message?: string
-  }
-  if (response.ok && json.ok && json.data) return json.data
-  const message = json.message ?? `marketplace-server did not store the discount (${response.status})`
+  } | null
+  if (response.ok && json?.ok && json.data) return json.data
+  const message = json?.message ?? `marketplace-server did not store the discount (${response.status})`
   // Only a validation refusal says no to this coupon. A 409 is it already stored; 401/403/408/429 are about the
   // request (an expired identity, a gateway, a rate limit); a 5xx or an unreadable 2xx says nothing.
   const refused =

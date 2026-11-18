@@ -73,14 +73,9 @@ function read(address: string): Attempts {
   const key = keyOf(address)
   const local = unpersisted.get(key)
   if (local) return local
-  let raw: string | null
   try {
-    raw = localStorage.getItem(key)
-  } catch {
-    return { ends: [], creates: [] }
-  }
-  if (!raw) return { ends: [], creates: [] }
-  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return { ends: [], creates: [] }
     const parsed = JSON.parse(raw) as { ends?: unknown; creates?: unknown }
     // Entries that don't have the shape this build writes are dropped rather than trusted.
     return {

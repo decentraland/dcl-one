@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import '../test/setup'
+import { rejection } from '../test/rejection'
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
 import { BuilderServerError } from './transport'
 import {
@@ -65,7 +66,7 @@ describe('collection events and review requests', () => {
     signedFetchMock.mockResolvedValue(
       jsonResponse({ ok: false, error: 'Too many attempts', data: { retryAt: '2026-09-30T00:00:00Z' } }, false, 429)
     )
-    const error = await requestCollectionValidation(ADDRESS, 'a1b2').catch((e: unknown) => e)
+    const error = await rejection(requestCollectionValidation(ADDRESS, 'a1b2'))
     expect(error).toBeInstanceOf(ValidationLimitError)
     expect((error as ValidationLimitError).status).toBe(429)
   })
@@ -74,14 +75,14 @@ describe('collection events and review requests', () => {
     signedFetchMock.mockResolvedValue(
       jsonResponse({ ok: false, error: 'Too many requests, try again in a minute' }, false, 429)
     )
-    const error = await requestCollectionValidation(ADDRESS, 'a1b2').catch((e: unknown) => e)
+    const error = await rejection(requestCollectionValidation(ADDRESS, 'a1b2'))
     expect(error).toBeInstanceOf(BuilderServerError)
     expect(error).not.toBeInstanceOf(ValidationLimitError)
   })
 
   it('keeps a running validation as a plain 409', async () => {
     signedFetchMock.mockResolvedValue(jsonResponse({ ok: false, error: 'Running' }, false, 409))
-    const error = await requestCollectionValidation(ADDRESS, 'a1b2').catch((e: unknown) => e)
+    const error = await rejection(requestCollectionValidation(ADDRESS, 'a1b2'))
     expect(error).toBeInstanceOf(BuilderServerError)
     expect(error).not.toBeInstanceOf(ValidationLimitError)
     expect((error as BuilderServerError).status).toBe(409)

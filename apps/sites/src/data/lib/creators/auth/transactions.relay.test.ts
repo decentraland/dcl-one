@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import '../test/setup'
+import { rejection } from '../test/rejection'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parseAbi } from 'viem'
 import { getCollectionContract, getContract, type ContractData } from '../chain/contracts'
@@ -232,11 +233,13 @@ describe('when a call goes gasless through the relayer', () => {
 
   it('should treat a dismissed signature as a wallet rejection whatever the wallet says', async () => {
     const { session } = world({ signError: { code: 4001, message: 'whatever' } })
-    const error = await sendContractTransaction(session, {
-      contract: transfer[0],
-      method: transfer[1],
-      args: [...transfer[2]]
-    }).catch((e: unknown) => e)
+    const error = await rejection(
+      sendContractTransaction(session, {
+        contract: transfer[0],
+        method: transfer[1],
+        args: [...transfer[2]]
+      })
+    )
     expect(isWalletRejection(error)).toBe(true)
     expect((error as Error).message).toBe('whatever')
   })
@@ -257,11 +260,13 @@ describe('when a call goes gasless through the relayer', () => {
 
   it("should refuse to sign when the wallet's active account is not the session's", async () => {
     const w = world({ activeAccount: '0x00000000000000000000000000000000000000bb' })
-    const error = await sendContractTransaction(w.session, {
-      contract: transfer[0],
-      method: transfer[1],
-      args: [...transfer[2]]
-    }).catch((e: unknown) => e)
+    const error = await rejection(
+      sendContractTransaction(w.session, {
+        contract: transfer[0],
+        method: transfer[1],
+        args: [...transfer[2]]
+      })
+    )
     expect(error).toBeInstanceOf(WrongAccountError)
     expect(w.walletLog.map(({ method }) => method)).not.toContain('eth_signTypedData_v4')
     expect(w.relayed).toHaveLength(0)

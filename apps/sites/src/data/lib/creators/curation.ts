@@ -304,9 +304,11 @@ export function rememberCurationSearch(search: string): void {
 }
 
 export function curationListUrl(): string {
+  let search = ''
   try {
-    return `/create/curation${window.sessionStorage.getItem(LIST_SEARCH_KEY) ?? ''}`
+    search = window.sessionStorage.getItem(LIST_SEARCH_KEY) ?? ''
   } catch {
-    return '/create/curation'
+    // Storage blocked: the link goes to the unfiltered list.
   }
+  return `/create/curation${search}`
 }

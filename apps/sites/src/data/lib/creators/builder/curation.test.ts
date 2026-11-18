@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import '../test/setup'
+import { rejection } from '../test/rejection'
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
 import {
   fetchCollectionCuration,
@@ -139,7 +140,7 @@ describe('review requests under the automated review', () => {
     signedFetchMock.mockResolvedValue(
       jsonResponse({ ok: false, error: 'Too many attempts', data: { retryAt: '2026-09-30T00:00:00Z' } }, false, 429)
     )
-    const error = await pushCollectionCuration(ADDRESS, 'a1b2').catch((e: unknown) => e)
+    const error = await rejection(pushCollectionCuration(ADDRESS, 'a1b2'))
     expect(error).toBeInstanceOf(ValidationLimitError)
   })
 

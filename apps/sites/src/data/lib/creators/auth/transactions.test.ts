@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import '../test/setup'
+import { rejection } from '../test/rejection'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TransactionNotFoundError, TransactionReceiptNotFoundError, hashTypedData, numberToHex, parseAbi } from 'viem'
 import { ContractName, getCollectionContract, getContract, getCouponManager } from '../chain/contracts'
@@ -190,7 +191,7 @@ describe('when sending a transaction from the wallet itself', () => {
 
   it('should report a dismissed prompt as a wallet rejection', async () => {
     const { session } = walletOn(80002, 'dismisses')
-    const error: unknown = await sendWalletTransaction(session, call).catch((e: unknown) => e)
+    const error: unknown = await rejection(sendWalletTransaction(session, call))
     expect(isWalletRejection(error)).toBe(true)
   })
 
@@ -267,7 +268,7 @@ describe('when the wallet is on another chain than the contract', () => {
 
   it('should report a dismissed signature as a wallet rejection and relay nothing', async () => {
     const { relayed } = nodeAndRelayer()
-    const error = await sendContractTransaction(walletOn(1, 'denies-signature').session, transfer).catch(e => e)
+    const error = await rejection(sendContractTransaction(walletOn(1, 'denies-signature').session, transfer))
     expect(error).toMatchObject({ code: 'user_denied' })
     expect(isWalletRejection(error)).toBe(true)
     expect(relayed()).toHaveLength(0)
@@ -365,7 +366,7 @@ describe('when the creator dismisses a typed-data prompt', () => {
   it('should report it as a wallet rejection', async () => {
     const { session } = walletOn(80002, 'dismisses')
     const { domain, types, value } = buildChequeTypedData(80002, 'urn:x', 1, '0x' + '22'.repeat(32))
-    const error: unknown = await signTypedData(session, domain, types, 'ConsumeSlots', value).catch((e: unknown) => e)
+    const error: unknown = await rejection(signTypedData(session, domain, types, 'ConsumeSlots', value))
     expect(isWalletRejection(error)).toBe(true)
   })
 })
