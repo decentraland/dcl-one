@@ -1,160 +1,34 @@
-import { dclColors, IconButton, styled } from 'decentraland-ui2';
+import { createElement } from 'react';
+import type { ComponentProps } from 'react';
+import { cx } from '/@/lib/cx';
 
+import { classed } from '../classed';
 import { DomainSelect } from '../DetailsTab/DetailsTab.styled';
 
-const { neutral, whiteTransparent } = dclColors;
+import styles from './access.module.css';
 
-const listGrid = {
-  display: 'grid',
-  gridTemplateColumns: '524px 200px minmax(0, 1fr) 30px',
-  columnGap: 10,
-  alignItems: 'center',
-} as const;
+function ParcelSelect(props: ComponentProps<typeof DomainSelect>) {
+  return createElement(DomainSelect, {
+    ...props,
+    className: cx(styles.parcelSelect, props.className),
+  });
+}
 
-const AddButton = styled('span')(({ theme }) => ({
-  '&& .MuiButton-root.MuiButton-sizeSmall': {
-    height: 26,
-    minWidth: 0,
-    padding: theme.spacing(0.25, 0.75),
-    borderRadius: 6,
-    gap: theme.spacing(0.75),
-    fontSize: theme.typography.pxToRem(12),
-    fontWeight: 600,
-    letterSpacing: 0,
-  },
-  '&& .MuiButton-root.Mui-disabled': { opacity: 0.2 },
-  '&& .MuiButton-root .MuiButton-startIcon': { margin: 0 },
-  '&& .MuiButton-root .MuiButton-startIcon > *:nth-of-type(1)': {
-    fontSize: '23.14px',
-    margin: '-2.57px',
-  },
-}));
-
-const AddBlock = styled('div')(({ theme }) => ({
-  display: 'flex',
-  flexDirection: 'column',
-  gap: theme.spacing(1.25),
-  width: 700,
-  maxWidth: '100%',
-}));
-
-const AddRow = styled('div')({
-  width: '100%',
-  '&& .MuiInputBase-root': { paddingRight: 7 },
-});
-
-const BulkTrashButton = styled(IconButton)(({ theme }) => ({
-  width: 30,
-  height: 30,
-  padding: theme.spacing(0.75),
-  borderRadius: 100,
-  color: whiteTransparent.blurry,
-  '& svg': { width: 18, height: 18 },
-  '&:hover': { backgroundColor: whiteTransparent.subtle },
-  '&:focus-visible': {
-    outline: `2px solid ${theme.palette.info.light}`,
-    outlineOffset: 2,
-  },
-}));
-
-const Description = styled('p')(({ theme }) => ({
-  margin: 0,
-  color: neutral.softWhite,
-  fontSize: theme.typography.pxToRem(16),
-  lineHeight: theme.typography.pxToRem(19),
-}));
-
-const ListHeader = styled('div')(({ theme }) => ({
-  ...listGrid,
-  height: 40,
-  padding: theme.spacing(0, 1.25),
-  borderBottom: `1px solid ${whiteTransparent.soft}`,
-  color: neutral.gray4,
-  fontSize: theme.typography.pxToRem(14),
-  lineHeight: 1,
-  '& > .Lead': { display: 'flex', alignItems: 'center', gap: theme.spacing(1.25) },
-  '& .Selected': { color: neutral.softWhite, fontWeight: 600 },
-}));
-
-const ListBlock = styled('div')(({ theme }) => ({
-  display: 'flex',
-  flexDirection: 'column',
-  gap: theme.spacing(2.5),
-}));
-
-const Root = styled('div')(({ theme }) => ({
-  display: 'flex',
-  flexDirection: 'column',
-  gap: theme.spacing(5),
-  paddingTop: theme.spacing(1.125),
-}));
-
-const Notice = styled('p')(({ theme }) => ({
-  margin: theme.spacing(1, 0, 0),
-  color: neutral.gray4,
-  fontSize: theme.typography.pxToRem(14),
-}));
-
-const ParcelSelect = styled(DomainSelect)({
-  '&&': { width: 200 },
-  '&& .MuiSelect-icon': { color: whiteTransparent.blurry },
-});
-
-const Row = styled('li')(({ theme }) => ({
-  ...listGrid,
-  padding: theme.spacing(1.25),
-  boxShadow: `inset 0 -1px 0 ${whiteTransparent.soft}`,
-  '& > .Lead': {
-    gridColumn: 1,
-    display: 'flex',
-    alignItems: 'center',
-    gap: theme.spacing(1.25),
-    minWidth: 0,
-  },
-  '& > .Scope': { gridColumn: 2 },
-  '& > .Note': { gridColumn: 3, justifySelf: 'end' },
-  '& .Who .MuiAvatar-root': { width: 28, height: 28, margin: 2 },
-  '& .Who .Avatar .Paragraph .Name': {
-    display: 'inline-block',
-    maxWidth: 230,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-    verticalAlign: 'bottom',
-    color: neutral.softWhite,
-    fontSize: theme.typography.pxToRem(16),
-    fontWeight: 600,
-  },
-  '& > .Trash': {
-    gridColumn: 4,
-    width: 30,
-    height: 30,
-    padding: theme.spacing(0.75),
-    borderRadius: 100,
-    opacity: 0,
-    color: neutral.gray3,
-    '& svg': { width: 18, height: 18 },
-    '&:hover': { backgroundColor: whiteTransparent.subtle },
-  },
-  '&:hover, &:focus-within': { backgroundColor: whiteTransparent.subtle },
-  '&:hover > .Trash, &:focus-within > .Trash': { opacity: 1 },
-  '& .MuiIconButton-root:focus-visible': {
-    outline: `2px solid ${theme.palette.info.light}`,
-    outlineOffset: 2,
-  },
-}));
-
-const Rows = styled('ul')({
-  margin: 0,
-  padding: 0,
-  listStyle: 'none',
-});
+const AddBlock = classed('div', styles.addBlock);
+const AddButton = classed('span', styles.addButton);
+const AddRow = classed('div', styles.addRow);
+const Description = classed('p', styles.description);
+const ListBlock = classed('div', styles.listBlock);
+const ListHeader = classed('div', styles.listHeader);
+const Notice = classed('p', styles.notice);
+const Root = classed('div', styles.root);
+const Row = classed('li', styles.row);
+const Rows = classed('ul', styles.rows);
 
 export {
   AddBlock,
   AddButton,
   AddRow,
-  BulkTrashButton,
   Description,
   ListBlock,
   ListHeader,

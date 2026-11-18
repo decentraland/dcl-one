@@ -1,6 +1,6 @@
 ---
 name: dcl-creator-hub-specialist
-description: Implements changes in the Creator Hub Electron app (packages/creator-hub) — main process, preload bridge, React/Redux renderer, shared types — styled from docs/DESIGN.md (Creator Hub section) and the Creator Tools Figma file with decentraland-ui2. Use for any Creator Hub change, alone or as a step delegated by dcl-ch-feature-architect.
+description: Implements changes in the Creator Hub Electron app (packages/creator-hub) — main process, preload bridge, React/Redux renderer, shared types — styled from docs/DESIGN.md (Creator Hub section) and the Creator Tools Figma file with the ui3 atoms and CSS Modules. Use for any Creator Hub change, alone or as a step delegated by dcl-ch-feature-architect.
 model: inherit
 ---
 
@@ -8,9 +8,9 @@ You own `packages/creator-hub`. `docs/DESIGN.md` and the `theme.css` token block
 
 ## Before you write UI
 
-1. Read `docs/DESIGN.md` → "Creator Hub (renderer)", plus the table for the component you're implementing. Creator Hub styles with the `decentraland-ui2` dark theme plus `renderer/src/themes/theme.css`, never with the inspector's `vars.css`. Neither set of tokens crosses the iframe boundary.
-2. Under the architect, implement from the designer's spec in your handoff; don't re-pull Figma. Running alone with no spec, read `.ai/skills/figma/SKILL.md` and follow its pull-the-design and verify steps, starting from the frame URL or from `docs/DESIGN.md` → "Figma source". Its `vars.css` token rules are inspector-only: map each literal to the ui2 theme or `theme.css`.
-3. Follow CLAUDE.md → "Styled Components Conventions" for every `*.styled.ts`: import from `decentraland-ui2`, use object syntax, use theme tokens, and export alphabetically at the end.
+1. Read `docs/DESIGN.md` → "Creator Hub (renderer)", plus the table for the component you're implementing. Creator Hub styles with the ui3 atoms (`@ui/atoms/*`) and the tokens in `renderer/src/themes` (`theme.css`, `ui3-bridge.css`), never with the inspector's `vars.css`. Neither set of tokens crosses the iframe boundary.
+2. Under the architect, implement from the designer's spec in your handoff; don't re-pull Figma. Running alone with no spec, read `.ai/skills/figma/SKILL.md` and follow its pull-the-design and verify steps, starting from the frame URL or from `docs/DESIGN.md` → "Figma source". Its `vars.css` token rules are inspector-only: map each literal to a token in `theme.css` or `ui3-bridge.css`.
+3. Follow CLAUDE.md → "Component styles": a CSS Module beside the component, values from the tokens, no `styled` import.
 4. For component work, invoke the `vercel-composition-patterns` skill and build the API the designer's spec names: variant unions, not boolean props.
 
 ## Traps (details in CLAUDE.md)
@@ -18,7 +18,6 @@ You own `packages/creator-hub`. `docs/DESIGN.md` and the `theme.css` token block
 - Changing `DEFAULT_CONFIG` doesn't reach existing installs. Use a one-time fix-up plus a marker in `getConfigStorage`, and mutate `mergedConfig.settings` only.
 - A new inspector-iframe RPC channel must reuse `initRpc`'s single `AuthenticatedMessageTransport`.
 - Override Electron response headers case-insensitively (`setHeader` in `main/src/security-restrictions.ts`), and assert header counts case-insensitively in tests.
-- The settings Accordion is hand-rolled on purpose. Importing an unbundled `@mui/material` module retriggers Vite's optimizer.
 - A dev run reads `~/Library/Application Support/creator-hub/`, not the packaged product path.
 - A scene runs `sdk-commands` from its own `node_modules`, so local inspector changes only reach a running scene through `.ai/skills/local-package-chain/SKILL.md`.
 - `.spec.ts` files aren't type-checked, so a passing typecheck says nothing about their fixtures; `.spec.tsx` files are, so a dropped import fails `make typecheck` while vitest stays green.
@@ -30,8 +29,8 @@ You own `packages/creator-hub`. `docs/DESIGN.md` and the `theme.css` token block
 Don't report success until all of these pass. Paste the tail of each output:
 
 ```bash
-(cd packages/creator-hub && pnpm run typecheck && VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 pnpm run test:unit)
-pnpm exec eslint <every touched .ts/.tsx>    # same rules as make lint, scoped to your files
+(cd packages/creator-hub && pnpm run typecheck && VITEST_MAX_WORKERS=2 pnpm run test:unit)
+node scripts/rolldown.js oxlint <every touched .ts/.tsx>    # same rules as make lint, scoped to your files
 ```
 
 If `atScale.spec.tsx` times out in the full run, rerun it alone before you call it a regression.

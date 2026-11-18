@@ -1,0 +1,237 @@
+/* The community's members and upcoming events, as decentraland.org's community page lays them out.
+ * Event cards are the events page's Upcoming cards (the public EventCard); member cards are drawn here,
+ * as the design system has no avatar or member card. Where the source's value is off the token scale
+ * the nearest token stands in: 10px paddings and gaps take 8px or 12px, the source's 0.3 black and
+ * white take the 0.4 and 0.2 transparencies, and its lime member name (#caff73) takes the exotic
+ * rarity's light green. */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-12);
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  padding-bottom: var(--dcl-space-24);
+  border-bottom: 1px solid var(--dcl-transparencies-white-20);
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-label-md-caps);
+  font-weight: 600;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+/* Below 991px the tab names the section, so its heading is left to assistive technology, as source. */
+@media (max-width: 990.98px) {
+  .title {
+    position: absolute;
+    overflow: hidden;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+.loader,
+.sentinel {
+  display: flex;
+  justify-content: center;
+  padding: var(--dcl-space-16) 0;
+}
+
+.sentinel {
+  min-height: var(--dcl-space-16);
+}
+
+.loader {
+  min-height: 200px;
+  align-items: center;
+}
+
+.empty {
+  margin: 0;
+  padding: var(--dcl-space-32);
+  color: var(--dcl-text-secondary);
+  font-size: var(--dcl-font-size-body-sm);
+  text-align: center;
+}
+
+.emptyEvents {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-16);
+  padding: var(--dcl-space-32);
+  color: var(--dcl-text-primary);
+}
+
+.emptyEvents p {
+  margin: 0;
+  font-size: var(--dcl-font-size-body-md);
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* The members list scrolls inside 350px, as source; its next page loads at the end of it. */
+.membersScroller {
+  overflow-x: hidden;
+  overflow-y: auto;
+  max-height: 350px;
+  padding-right: var(--dcl-space-8);
+  scroll-behavior: smooth;
+  /* Undo the site's global scrollbar colour, which would make Chrome ignore the pseudo-elements. */
+  scrollbar-color: auto;
+  scrollbar-width: auto;
+}
+
+/* The source's always-visible 8px scrollbar; the standard properties where the pseudo-elements are
+ * unsupported. */
+.membersScroller::-webkit-scrollbar {
+  width: var(--dcl-space-8);
+}
+
+.membersScroller::-webkit-scrollbar-track {
+  border-radius: var(--dcl-radius-xs);
+  background: var(--dcl-transparencies-white-10);
+}
+
+.membersScroller::-webkit-scrollbar-thumb {
+  border-radius: var(--dcl-radius-xs);
+  background: var(--dcl-transparencies-white-20);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  .membersScroller {
+    scrollbar-color: var(--dcl-transparencies-white-20) var(--dcl-transparencies-white-10);
+    scrollbar-width: thin;
+  }
+}
+
+.membersScroller:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.members,
+.events {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.members {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--dcl-space-8);
+}
+
+/* Between 768px and 991px the members sit in two columns, as source. */
+@media (min-width: 768px) and (max-width: 990.98px) {
+  .members {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.member {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  padding: var(--dcl-space-12);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-40);
+}
+
+.avatar {
+  display: inline-flex;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 60px;
+  height: 60px;
+  border: 3px solid var(--dcl-transparencies-white-40);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-brand-violet);
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-heading-4);
+  font-weight: 600;
+  object-fit: cover;
+}
+
+.memberText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--dcl-space-4);
+  min-width: 0;
+}
+
+.memberName {
+  display: flex;
+  align-items: center;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.memberLabel {
+  overflow: hidden;
+  color: var(--dcl-rarities-exotic-light);
+  font-size: var(--dcl-font-size-body-md);
+  font-weight: 600;
+  line-height: normal;
+  text-overflow: ellipsis;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.verified {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.role {
+  padding: var(--dcl-space-4);
+  border-radius: var(--dcl-radius-xs);
+  background: var(--dcl-transparencies-white-10);
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-body-xs);
+  line-height: normal;
+}
+
+/* Cards of at least 300px fill the column, as source; on a phone one card spans it. */
+.events {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--dcl-space-24);
+}
+
+@media (max-width: 767.98px) {
+  .events {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.retry {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  padding: var(--dcl-space-16) 0;
+}
+
+.retry .empty {
+  padding: 0;
+}
+
+.notice {
+  margin: 0;
+  color: var(--dcl-feedback-error);
+  font-size: var(--dcl-font-size-body-sm);
+}

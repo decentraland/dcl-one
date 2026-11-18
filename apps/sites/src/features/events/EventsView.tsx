@@ -36,7 +36,7 @@ import { openSignIn } from "../components/auth/signin-store";
 import type { DetectedPlatform } from "../download/options";
 import { jumpInFor, mobileLaunch } from "../jump/mobileLaunch";
 import { useCreatorProfiles } from "./useCreatorProfiles";
-import { useEventReminders, type Reminder } from "./useEventReminders";
+import { REMIND_FAILED, useEventReminders, type Reminder } from "./useEventReminders";
 import type { CreatorProfiles } from "@/data/lib/catalyst/social/creator-profiles";
 import {
   bucketByDay,
@@ -56,6 +56,7 @@ import {
   formatTime,
   heroWhen,
   liveNowItems,
+  upcomingCardProps,
   locationLabel,
   placeCreator,
   placeHref,
@@ -74,7 +75,6 @@ import {
 
 const STORY: StoryId = "admin/whats-on";
 const DETAIL_STORY: StoryId = "admin/whats-on-detail";
-const REMIND_FAILED = "Couldn't update your reminder. Try again.";
 const LEARN_MORE_URL = "https://decentraland.org/blog/about-decentraland/how-to-make-and-run-an-event-in-decentraland";
 const CREATE_HREF = "/events/new-event";
 
@@ -258,17 +258,10 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
 
   const upcomingCards: UpcomingEventCardProps[] = upcomingEvents.map((event) => {
     const href = eventHref(event.id, search);
-    const start = event.next_start_at ?? event.start_at;
     return {
-      id: event.id,
-      title: event.name ?? "Untitled event",
-      image: event.image,
-      href,
+      ...upcomingCardProps(event, { href, now, zone, origin, profiles }),
       onOpen: open(href, event.id),
-      creator: eventCreator(event, profiles),
-      time: start ? { label: relativeStart(start, now, zone), dateTime: start } : { label: "Soon" },
       remind: remindControl(reminders.get(event.id)),
-      calendarHref: calendarHref(event, eventPageShareUrl(origin, event)),
     };
   });
 

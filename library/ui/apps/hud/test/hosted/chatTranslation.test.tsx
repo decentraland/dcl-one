@@ -281,6 +281,7 @@ describe('translation settings', () => {
   it('the Chat tab holds the auto-translate default, kept as a HUD pref', async () => {
     render(
       <SettingsPanel
+        lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }}
         settings={{ ...fakeSession().settings, open: true, list: [] }}
         bindings={fakeSession().bindings}
         profile={fakeProfileState()}
@@ -296,6 +297,7 @@ describe('translation settings', () => {
     setPingMode('community:c1', 'all')
     render(
       <SettingsPanel
+        lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }}
         settings={{ ...fakeSession().settings, open: true, list: [] }}
         bindings={fakeSession().bindings}
         profile={fakeProfileState()}
@@ -317,6 +319,7 @@ describe('translation settings', () => {
     setPingMode('community:c1', 'mentions')
     render(
       <SettingsPanel
+        lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }}
         settings={{ ...fakeSession().settings, open: true, list: [] }}
         bindings={fakeSession().bindings}
         profile={fakeProfileState()}

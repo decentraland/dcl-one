@@ -4,7 +4,7 @@
   flex-direction: column;
 }
 
-.HomePage .HomeTitle {
+.HomePage .HomeTitle.HomeTitle {
   margin-bottom: 40px;
   font-weight: 700;
 }
@@ -25,7 +25,7 @@
   cursor: pointer;
 }
 
-.HomePage .HomeRowTitle {
+.HomePage .HomeRowTitle.HomeRowTitle {
   font-weight: 700;
 }
 
@@ -87,7 +87,7 @@
   color: var(--dcl);
 }
 
-.HomePage .HomeCardIcon .MuiSvgIcon-root {
+.HomePage .HomeCardIcon svg {
   font-size: 28px;
 }
 
@@ -99,7 +99,7 @@
   flex: 1;
 }
 
-.HomePage .HomeCardTitle {
+.HomePage .HomeCardTitle.HomeCardTitle {
   font-weight: 600;
   line-height: 1.3;
 }

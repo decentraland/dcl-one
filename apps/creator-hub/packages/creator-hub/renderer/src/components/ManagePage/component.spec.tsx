@@ -2,10 +2,9 @@ import type { ButtonHTMLAttributes } from 'react';
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Dispatch } from '@reduxjs/toolkit';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { useAuth } from '/@/hooks/useAuth';
 import { LandType, RoleType, type Land } from '/@/lib/land';
@@ -22,6 +21,7 @@ import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
 import { createTestStore } from '../../../tests/utils/testStore';
 import { ManagePage } from '.';
+import { TestProviders } from '../../../tests/utils/TestProviders';
 
 vi.mock('../Navbar', () => ({ Navbar: () => null, NavbarItem: { MANAGE: 'manage' } }));
 vi.mock('../Button', async importOriginal => ({
@@ -96,9 +96,9 @@ const signedIn = (wallet?: string) =>
 const page = (store: ReturnType<typeof createTestStore>) => (
   <Provider store={store as never}>
     <MemoryRouter>
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <ManagePage />
-      </ThemeProvider>
+      </TestProviders>
     </MemoryRouter>
   </Provider>
 );

@@ -1,7 +1,7 @@
-import type { AuthIdentity } from '@dcl/crypto';
 import { localStorageGetIdentity } from '@dcl/single-sign-on-client';
-import fetch from 'decentraland-crypto-fetch';
 import { config } from '/@/config';
+import type { AuthIdentity } from './identity';
+import { signedFetch as fetch } from './signedFetch';
 
 export type CommunityMinimal = {
   id: string;

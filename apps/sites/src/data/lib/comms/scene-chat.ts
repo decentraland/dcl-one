@@ -83,7 +83,7 @@ async function fetchSceneAdapter(parcel: string, signal?: AbortSignal): Promise<
     const { signedFetch } = await import("../auth/signer");
     const response = await signedFetch(signer, `${catalystBase()}${GATEKEEPER}/get-scene-adapter`, {
       method: "POST",
-      metadata: { sceneId, parcel, realmName, signer: "decentraland-kernel-scene" },
+      metadata: { sceneId, parcel, realmName, signer: "dcl:explorer" },
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
       signal,

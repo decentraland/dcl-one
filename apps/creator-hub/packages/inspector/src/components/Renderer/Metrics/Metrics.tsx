@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo } from 'react';
 import { FiAlertTriangle as WarningIcon } from 'react-icons/fi';
 import { IoGridOutline as SquaresGridIcon } from 'react-icons/io5';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import { CrdtMessageType } from '@dcl/ecs';
 

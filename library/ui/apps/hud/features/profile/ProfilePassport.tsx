@@ -519,7 +519,7 @@ export function ProfilePassport({
             ) : profile.bodyImage ? (
               <img className={styles.avatarImg} src={nativeProfileImage(profile.bodyImage)} alt={base} />
             ) : (
-              <Avatar src={profile.picture} name={base} color={nameColor} size={180} status="online" />
+              <Avatar src={profile.picture} name={base} color={nameColor} size={180} />
             )}
           </div>
 

@@ -24,6 +24,11 @@ function renderCard(props: Partial<React.ComponentProps<typeof ProfileCardPresen
 }
 
 describe('profile-card actions', () => {
+  it("draws the user's picture with no online dot, as unity-explorer's header does", () => {
+    renderCard({ user: { ...ALICE, picture: 'alice.png' } })
+    expect(screen.getByRole('img', { name: 'Alice' }).parentElement?.querySelector('[class*="dot"]')).toBeNull()
+  })
+
   it('an incoming request offers a single Accept Friend', async () => {
     const onAcceptRequest = vi.fn()
     renderCard({ relationship: 'incoming', onAcceptRequest, onAddFriend: vi.fn() })

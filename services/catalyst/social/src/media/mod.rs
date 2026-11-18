@@ -26,7 +26,7 @@ pub mod translate;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::routing::{get, post};
+use crate::shared::routing::{get, post};
 use anyhow::bail;
 use axum::Json;
 use axum::Router;

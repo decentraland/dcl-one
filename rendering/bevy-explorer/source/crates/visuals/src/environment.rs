@@ -461,24 +461,23 @@ mod tests {
     #[test]
     fn fog_sky_and_ambient_overrides_reset_without_bypassing_quality() {
         use crate::{
-            nishita_cloud::NishitaCloud, sky_envmap::SkyEnvmapSettings, CloudCover,
-            ShadowBiasOverride,
+            nishita_cloud::NishitaCloud,
+            sky_envmap::{SkyAmbient, SkyEnvmapSettings},
+            sky_preset::{ambient_trilight, fog_falloff_density},
+            CloudCover, FogDensity, ShadowBiasOverride,
         };
         use bevy_atmosphere::prelude::AtmosphereModel;
-        use common::structs::{AppConfig, FogSetting, SceneGlobalLight, SceneLoadDistance};
+        use common::structs::{AppConfig, FogSetting, SceneGlobalLight};
         let mut app = App::new();
         let mut time = Time::<()>::default();
         time.advance_by(std::time::Duration::from_secs(1));
         let mut config = AppConfig::default();
-        config.graphics.fog = FogSetting::Atmospheric;
+        config.graphics.fog = FogSetting::On;
         app.insert_resource(time)
             .insert_resource(config)
             .insert_resource(TimeOfDay { time: 43200.0 })
-            .insert_resource(SceneLoadDistance {
-                load: 100.0,
-                unload: 20.0,
-                load_imposter: 0.0,
-            })
+            .init_resource::<FogDensity>()
+            .init_resource::<SkyAmbient>()
             .insert_resource(SceneGlobalLight {
                 dir_color: Color::WHITE,
                 dir_illuminance: 1000.0,
@@ -506,7 +505,7 @@ mod tests {
             .init_resource::<SkyEnvmapSettings>()
             .init_resource::<ShadowBiasOverride>()
             .insert_resource(SceneEnvironment {
-                fog_density: Some(0.0),
+                fog_density: Some(0.01),
                 zenith: Some(Vec3::X * 2.0),
                 nadir: Some(Vec3::Z),
                 cloud_opacity: Some(0.0),
@@ -526,10 +525,19 @@ mod tests {
                 .resource::<SkyEnvmapSettings>()
                 .authored_lower_hemisphere
         );
+        // the scene's density is in the preset's units
+        let scene_falloff = fog_falloff_density(0.01);
         assert!(matches!(
             world.get::<DistanceFog>(camera).unwrap().falloff,
-            FogFalloff::Exponential { density: 0.0 }
+            FogFalloff::Exponential { density } if density == scene_falloff
         ));
+        // the authored zenith and nadir are the Trilight's sky and ground; the preset keeps the
+        // equator the scene leaves out
+        let preset = ambient_trilight(0.5);
+        assert_eq!(
+            world.resource::<SkyAmbient>().bands,
+            [Vec3::X * 2.0, preset[1], Vec3::Z]
+        );
         let atmosphere = world
             .resource::<AtmosphereModel>()
             .to_ref::<NishitaCloud>()
@@ -538,11 +546,12 @@ mod tests {
         assert_eq!(atmosphere.scene_sun_visible, 0.0);
         let ambient = world.resource::<AmbientLight>();
         assert!(ambient.color.to_linear().alpha * ambient.brightness < -1.5);
+        // the Off setting is no fog, whatever the scene asks for
         world.resource_mut::<AppConfig>().graphics.fog = FogSetting::Off;
         app.update();
-        assert!(!matches!(
+        assert!(matches!(
             app.world().get::<DistanceFog>(camera).unwrap().falloff,
-            FogFalloff::Exponential { .. }
+            FogFalloff::Exponential { density: 0.0 }
         ));
         *app.world_mut().resource_mut::<SceneEnvironment>() = SceneEnvironment::default();
         app.world_mut()
@@ -550,6 +559,7 @@ mod tests {
             .sun_hidden = false;
         app.update();
         let world = app.world_mut();
+        assert_eq!(world.resource::<SkyAmbient>().bands, preset);
         assert!(
             !world
                 .resource::<SkyEnvmapSettings>()
@@ -707,13 +717,8 @@ mod tests {
             .world()
             .resource::<crate::sky_envmap::SkyEnvmap>()
             .clone();
-        for handle in [
-            &raw_sky,
-            &maps.diffuse,
-            &maps.specular,
-            &maps.trilight_diffuse,
-            &maps.trilight_specular,
-        ] {
+        // the ambient map is written on the CPU and takes no part in the sky's passes
+        for handle in [&raw_sky, &maps.specular, &maps.trilight_specular] {
             app.world_mut()
                 .resource_mut::<Assets<Image>>()
                 .get_mut(handle)
@@ -879,26 +884,22 @@ mod tests {
                     [expected_red, 0, 0, 0],
                     "{band}: exact raw -Y pole"
                 );
-                let handles = match quality {
-                    common::structs::SkyReflectionSetting::High => [&maps.diffuse, &maps.specular],
-                    common::structs::SkyReflectionSetting::Low => {
-                        [&maps.trilight_diffuse, &maps.trilight_specular]
-                    }
+                let handle = match quality {
+                    common::structs::SkyReflectionSetting::High => &maps.specular,
+                    common::structs::SkyReflectionSetting::Low => &maps.trilight_specular,
                 };
-                for handle in handles {
-                    let size = app
-                        .world()
-                        .resource::<Assets<Image>>()
-                        .get(handle)
-                        .unwrap()
-                        .width() as usize;
-                    raw_cube(
-                        &mut app,
-                        handle,
-                        size,
-                        &format!("{band} {quality:?} ambient"),
-                    );
-                }
+                let size = app
+                    .world()
+                    .resource::<Assets<Image>>()
+                    .get(handle)
+                    .unwrap()
+                    .width() as usize;
+                raw_cube(
+                    &mut app,
+                    handle,
+                    size,
+                    &format!("{band} {quality:?} reflection"),
+                );
             }
         }
     }

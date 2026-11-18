@@ -1,15 +1,12 @@
 import { useMemo, useState } from 'react';
-import { MenuItem } from 'decentraland-ui2';
+import { SelectOption } from '@ui/atoms/Select';
 
 import type { Land } from '/@/lib/land';
 import { LandType } from '/@/lib/land';
 import { t } from '/@/modules/store/translation/utils';
 
 import { SelectCheckbox } from '../SelectCheckbox';
-import { menuSurfaceStyles } from '../../Dropdown/component.styled';
-import { ChevronDownIcon } from '../../Icons';
 import { EmptyState } from '../../ManagePage/EmptyState';
-import { selectRowStyles } from '../../ManagePage/ViewBar/ViewBar.styled';
 import { ParcelPickerModal } from '../../ParcelPicker';
 import {
   AccessChangeModal,
@@ -228,10 +225,7 @@ export function CollaboratorsTab({ land, landName }: Props) {
                     isEstate && (
                       <ParcelSelect
                         value={value}
-                        IconComponent={ChevronDownIcon}
-                        inputProps={{
-                          'aria-label': t('land_detail.collaborators.parcels_label', { name }),
-                        }}
+                        aria-label={t('land_detail.collaborators.parcels_label', { name })}
                         renderValue={() =>
                           row.scope.kind === 'parcels'
                             ? t('land_detail.collaborators.n_parcels', {
@@ -239,37 +233,31 @@ export function CollaboratorsTab({ land, landName }: Props) {
                               })
                             : t('land_detail.collaborators.all_parcels')
                         }
-                        onChange={event => {
-                          if (event.target.value === CUSTOM) {
+                        onChange={next => {
+                          if (next === CUSTOM) {
                             setPicking(
                               row.scope.kind === 'parcels'
                                 ? row
                                 : { address: row.address, scope: { kind: 'parcels', parcels: [] } },
                             );
-                          } else if (event.target.value === ALL && row.scope.kind === 'parcels') {
+                          } else if (next === ALL && row.scope.kind === 'parcels') {
                             add(row.address);
                           }
                         }}
-                        MenuProps={{
-                          sx: [
-                            theme => menuSurfaceStyles({ theme }),
-                            theme => selectRowStyles({ theme }),
-                          ],
-                        }}
                       >
-                        <MenuItem value={ALL}>
+                        <SelectOption value={ALL}>
                           {t('land_detail.collaborators.all_parcels')}
-                        </MenuItem>
+                        </SelectOption>
                         {row.scope.kind === 'parcels' && (
-                          <MenuItem value="some">
+                          <SelectOption value="some">
                             {t('land_detail.collaborators.n_parcels', {
                               count: row.scope.parcels.length,
                             })}
-                          </MenuItem>
+                          </SelectOption>
                         )}
-                        <MenuItem value={CUSTOM}>
+                        <SelectOption value={CUSTOM}>
                           {t('land_detail.collaborators.custom_parcels')}
-                        </MenuItem>
+                        </SelectOption>
                       </ParcelSelect>
                     )
                   }

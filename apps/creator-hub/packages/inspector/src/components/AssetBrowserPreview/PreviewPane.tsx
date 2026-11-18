@@ -6,7 +6,7 @@ import { FaFile } from 'react-icons/fa';
 import { SiTypescript } from 'react-icons/si';
 import { BsFillLightningChargeFill } from 'react-icons/bs';
 import { MdKeyboardArrowDown, MdKeyboardArrowUp, MdOutlineEmojiPeople } from 'react-icons/md';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 
 import { isSmart, type CustomAsset } from '../../lib/logic/catalog';
 import { ErrorBoundary } from '../ErrorBoundary';

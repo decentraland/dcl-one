@@ -1,0 +1,39 @@
+/* The LAND map's view and its canvas. The rules of the map's shell, layers, buttons, legend and
+   popup are still the global `.shop-landmap*` classes in land.css. */
+
+/* The colour of each kind of parcel on the canvas of a map painted from the tile data (mapView.ts
+   reads them from the canvas element).
+   Each is a token over the shell's panel, so the map follows the theme. A free parcel is close to
+   the panel, LAND that is taken is a clear step from it, and the roads are the strongest grey. The
+   plazas and the districts are held back with the panel, so the LAND on sale stays the strongest
+   colour on the map. The LAND on sale or for rent has a mark in the text colour: an outline, or the
+   whole parcel when the parcel is too small for an outline. The text colour has a contrast of more
+   than 3:1 on LAND that is taken and on the panel in both themes. */
+.root {
+  --_unowned: var(--fill-1);
+  --_taken: color-mix(in srgb, var(--text) 18%, var(--panel));
+  --_road: var(--ink-45);
+  --_plaza: color-mix(in srgb, var(--success) 70%, var(--panel));
+  --_district: color-mix(in srgb, var(--purple) 55%, var(--panel));
+  --_sale: var(--text);
+}
+
+/* The map over the atlas image. The image has its own colours, so the canvas paints only the LAND on
+   sale or for rent: the whole parcel in this colour, which is not a token, at every zoom. */
+.atlas {
+  --_sale: rgba(0, 211, 255, 0.85);
+}
+
+/* The part of the shell that takes the pointer: the map, without its buttons. */
+.view {
+  position: absolute;
+  inset: 0;
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}

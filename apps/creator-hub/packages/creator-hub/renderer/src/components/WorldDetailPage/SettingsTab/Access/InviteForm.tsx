@@ -1,30 +1,21 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import AddIcon from '@mui/icons-material/Add';
-import FileIcon from '@mui/icons-material/InsertDriveFileOutlined';
-import SearchIcon from '@mui/icons-material/Search';
-import { InputAdornment, Tab } from 'decentraland-ui2';
+import {
+  AddIcon,
+  InsertDriveFileOutlinedIcon as FileIcon,
+  SearchIcon,
+} from '@ui/atoms/icons-material';
+import { Tab, Tabs } from '@ui/atoms/Tabs';
 
 import { useAuth } from '/@/hooks/useAuth';
 import communities, { getCommunityThumbnailUrl, type CommunityMinimal } from '/@/lib/communities';
 import { t } from '/@/modules/store/translation/utils';
 
-import { Button } from '../../../Button';
+import Button from '@ui/atoms/Button';
 import { RecipientField, type Recipient } from '../../../ManagePage/RecipientField';
 import { FormTextInput } from '../../../TextInput';
 import { parseCsv, type CsvResult } from './csv';
-import {
-  AddButtons,
-  AddRow,
-  BrowseButton,
-  CsvBlock,
-  CsvButton,
-  DropZone,
-  FileName,
-  Invalid,
-  InviteBlock,
-  InviteTabs,
-  Results,
-} from './Access.styled';
+
+import styles from './Access.module.css';
 
 const SEARCH_MIN = 3;
 const SEARCH_DELAY_MS = 300;
@@ -41,8 +32,7 @@ type Props = {
 function AddButton({ disabled, onClick }: { disabled: boolean; onClick: () => void }) {
   return (
     <Button
-      variant="contained"
-      color="primary"
+      className="hub-button hub-button--primary"
       startIcon={<AddIcon />}
       disabled={disabled}
       onClick={onClick}
@@ -57,8 +47,8 @@ function UserPanel({ onAdd }: { onAdd: (address: string) => void }) {
   const [recipient, setRecipient] = useState<Recipient | null>(null);
   const [round, setRound] = useState(0);
   return (
-    <AddRow>
-      <span className="Field">
+    <div className={styles.addRow}>
+      <span className={styles.field}>
         <RecipientField
           key={round}
           purpose="add"
@@ -66,7 +56,7 @@ function UserPanel({ onAdd }: { onAdd: (address: string) => void }) {
           onResolved={setRecipient}
         />
       </span>
-      <AddButtons>
+      <div className={styles.addButtons}>
         <AddButton
           disabled={!recipient}
           onClick={() => {
@@ -75,8 +65,8 @@ function UserPanel({ onAdd }: { onAdd: (address: string) => void }) {
             setRound(value => value + 1);
           }}
         />
-      </AddButtons>
-    </AddRow>
+      </div>
+    </div>
   );
 }
 
@@ -108,8 +98,8 @@ function CommunityPanel({ onAdd }: { onAdd: (id: string) => void }) {
   }, [query, picked, wallet]);
 
   return (
-    <AddRow>
-      <span className="Field">
+    <div className={styles.addRow}>
+      <span className={styles.field}>
         <FormTextInput
           fullWidth
           value={picked?.name ?? query}
@@ -119,9 +109,9 @@ function CommunityPanel({ onAdd }: { onAdd: (id: string) => void }) {
             'aria-controls': results.length ? listId : undefined,
           }}
           startAdornment={
-            <InputAdornment position="start">
+            <span className={styles.searchIcon}>
               <SearchIcon />
-            </InputAdornment>
+            </span>
           }
           onChange={event => {
             setPicked(null);
@@ -129,7 +119,7 @@ function CommunityPanel({ onAdd }: { onAdd: (id: string) => void }) {
           }}
         />
       </span>
-      <AddButtons>
+      <div className={styles.addButtons}>
         <AddButton
           disabled={!picked}
           onClick={() => {
@@ -139,9 +129,10 @@ function CommunityPanel({ onAdd }: { onAdd: (id: string) => void }) {
             setQuery('');
           }}
         />
-      </AddButtons>
+      </div>
       {results.length > 0 && (
-        <Results
+        <ul
+          className={styles.results}
           id={listId}
           role="listbox"
         >
@@ -164,9 +155,9 @@ function CommunityPanel({ onAdd }: { onAdd: (id: string) => void }) {
               </button>
             </li>
           ))}
-        </Results>
+        </ul>
       )}
-    </AddRow>
+    </div>
   );
 }
 
@@ -194,7 +185,7 @@ function CsvPanel({ onAdd }: { onAdd: Props['onAddCsv'] }) {
   const invalid = result?.invalidLines.length ?? 0;
 
   return (
-    <CsvBlock>
+    <div className={styles.csvBlock}>
       <input
         ref={fileInput}
         data-testid="csv-input"
@@ -207,28 +198,30 @@ function CsvPanel({ onAdd }: { onAdd: Props['onAddCsv'] }) {
         }}
       />
       {result ? (
-        <AddRow>
-          <FileName>
+        <div className={styles.addRow}>
+          <span className={styles.fileName}>
             <FileIcon />
             <span>{result.fileName}</span>
-          </FileName>
-          <AddButtons>
-            <CsvButton
+          </span>
+          <div className={styles.addButtons}>
+            <button
+              className={styles.csvButton}
               type="button"
-              tone="neutral"
+              data-tone="neutral"
               onClick={() => setResult(null)}
             >
               {t('modal.cancel')}
-            </CsvButton>
+            </button>
             {invalid ? (
-              <CsvButton
+              <button
+                className={styles.csvButton}
                 type="button"
-                tone="primary"
+                data-tone="primary"
                 aria-describedby={invalidId}
                 onClick={browse}
               >
                 {t('world_detail.settings.access.csv_replace')}
-              </CsvButton>
+              </button>
             ) : (
               <AddButton
                 disabled={!result.addresses.length && !result.communityIds.length}
@@ -238,11 +231,12 @@ function CsvPanel({ onAdd }: { onAdd: Props['onAddCsv'] }) {
                 }}
               />
             )}
-          </AddButtons>
-        </AddRow>
+          </div>
+        </div>
       ) : (
-        <DropZone
-          dragging={dragging ? 'over' : 'idle'}
+        <div
+          className={styles.dropZone}
+          data-dragging={dragging ? 'over' : 'idle'}
           tabIndex={0}
           onKeyDown={event => {
             if (event.key === 'Enter' || event.key === ' ') {
@@ -262,24 +256,26 @@ function CsvPanel({ onAdd }: { onAdd: Props['onAddCsv'] }) {
           }}
         >
           {t('world_detail.settings.access.csv_drop_text')}
-          <BrowseButton
+          <button
+            className={styles.browseButton}
             type="button"
             tabIndex={-1}
             onClick={browse}
           >
             {t('world_detail.settings.access.csv_browse')}
-          </BrowseButton>
-        </DropZone>
+          </button>
+        </div>
       )}
       {invalid > 0 && (
-        <Invalid
+        <p
+          className={styles.invalid}
           id={invalidId}
           aria-live="polite"
         >
           {t('world_detail.settings.access.csv_invalid_count', { count: invalid })}
-        </Invalid>
+        </p>
       )}
-    </CsvBlock>
+    </div>
   );
 }
 
@@ -288,10 +284,14 @@ export function InviteForm({ disabled, onAddWallet, onAddCommunity, onAddCsv }: 
   const [tab, setTab] = useState<InviteTab>('user');
   const panelId = useId();
   return (
-    <InviteBlock disabled={disabled}>
-      <InviteTabs
+    <fieldset
+      className={styles.inviteBlock}
+      disabled={disabled}
+    >
+      <Tabs
+        className={styles.tabs}
         value={tab}
-        onChange={(_, next: InviteTab) => setTab(next)}
+        onChange={next => setTab(next as InviteTab)}
       >
         <Tab
           value="user"
@@ -308,7 +308,7 @@ export function InviteForm({ disabled, onAddWallet, onAddCommunity, onAddCsv }: 
           label={t('world_detail.settings.access.tab_csv')}
           aria-controls={panelId}
         />
-      </InviteTabs>
+      </Tabs>
       <div
         role="tabpanel"
         id={panelId}
@@ -318,6 +318,6 @@ export function InviteForm({ disabled, onAddWallet, onAddCommunity, onAddCsv }: 
         {tab === 'community' && <CommunityPanel onAdd={onAddCommunity} />}
         {tab === 'csv' && <CsvPanel onAdd={onAddCsv} />}
       </div>
-    </InviteBlock>
+    </fieldset>
   );
 }

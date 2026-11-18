@@ -1598,6 +1598,10 @@ async fn upstream_connection_refused_refunds_the_slot() {
     let parsed: Value = serde_json::from_str(&text).expect("error envelope is JSON");
     assert_eq!(parsed["ok"], false, "body {text}");
     assert_eq!(parsed["error"], "unknown", "body {text}");
+    assert_eq!(
+        parsed["not_sent"], true,
+        "the forward never reached the upstream: nothing was sent"
+    );
     assert!(
         parsed["message"]
             .as_str()
@@ -1649,6 +1653,50 @@ async fn upstream_429_passes_through_verbatim_and_refunds_the_slot() {
         0,
         "an upstream 429 rejects before any broadcast, so the quota slot is refunded"
     );
+}
+
+/// An upstream's 500 or 503 can follow its send. It passes through as it is, never marked as
+/// evidence that nothing was sent, and the slot is kept.
+#[tokio::test]
+async fn an_upstream_500_or_503_passes_through_unmarked_and_keeps_the_slot() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    const UPSTREAM_BODY: &str = r#"{"ok":false,"message":"The relayer service is temporarily unavailable.","code":"unknown"}"#;
+    for upstream_status in [500u16, 503] {
+        let seen: Seen = Arc::new(Mutex::new(None));
+        let mock = spawn_mock_upstream(
+            MockBehaviour {
+                status: upstream_status,
+                body: UPSTREAM_BODY,
+                stall: None,
+            },
+            seen.clone(),
+        )
+        .await;
+        let app = upstream_app(&pool, &mock, Duration::from_secs(5));
+        let buyer = unique_address();
+        let (status, text) = post_with_auth(
+            &app,
+            &tx_body(&buyer, COLLECTION, &split_sig_calldata(&buyer)),
+        )
+        .await;
+        let rows = row_count(&pool, &buyer).await;
+        cleanup_user(&pool, &buyer).await;
+        assert_eq!(status, upstream_status, "{text}");
+        assert_eq!(
+            text, UPSTREAM_BODY,
+            "the body passes through byte-for-byte, unmarked"
+        );
+        assert_eq!(
+            rows, 1,
+            "upstream {upstream_status} is indeterminate: the slot stays consumed"
+        );
+    }
 }
 
 #[tokio::test]
@@ -2074,6 +2122,241 @@ async fn a_direct_relay_is_signed_locally_and_recorded_with_its_target() {
     assert_eq!(status, 400, "{body}");
     assert_eq!(row_count(&pool, &relayer).await, 0);
     cleanup_user(&pool, &user).await;
+}
+
+/// A relay that broadcast but could not record the hash on the buyer's quota reservation still
+/// answers the hash: an error would tell the client nothing was sent, and it would sign again
+/// while this transaction lands. The reservation stays and still counts against the quota.
+#[tokio::test]
+async fn a_broadcast_whose_hash_cannot_be_recorded_still_answers_the_hash() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let (chain_url, raws) = spawn_fake_chain().await;
+    let relayer_key = PrivateKeySigner::random();
+    let settings = Settings {
+        polygon_rpc_url: Some(chain_url),
+        meta_tx_broadcast_enabled: true,
+        relayer_private_key: Some(hex::encode(relayer_key.to_bytes())),
+        ..Settings::for_tests()
+    };
+    let app = router(state(pool.clone(), settings));
+    let user_key = PrivateKeySigner::random();
+    let user = format!("{:#x}", user_key.address());
+    // Recording a hash fails for this buyer only: the scratch database is shared.
+    let name = format!("refuse_hash_{}", &user[2..14]);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE FUNCTION economy.{name}() RETURNS trigger LANGUAGE plpgsql AS $$ \
+         BEGIN IF NEW.tx_hash IS NOT NULL AND lower(NEW.user_address) = '{user}' THEN \
+         RAISE EXCEPTION 'recording refused'; END IF; RETURN NEW; END $$; \
+         CREATE TRIGGER {name} BEFORE UPDATE ON economy.transactions \
+         FOR EACH ROW EXECUTE FUNCTION economy.{name}();"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = post_transaction(
+        &app,
+        &user,
+        COLLECTION,
+        &signed_split_calldata(&user_key, FS),
+    )
+    .await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP TRIGGER {name} ON economy.transactions; DROP FUNCTION economy.{name}();"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["ok"], true, "{body}");
+    let sent = raws.lock().unwrap().clone();
+    assert_eq!(sent.len(), 1, "one raw transaction went out");
+    assert_eq!(
+        body["txHash"].as_str(),
+        Some(format!("{:#x}", alloy_primitives::keccak256(&sent[0])).as_str()),
+        "the answer carries the broadcast hash"
+    );
+    assert_eq!(confirmed_hash(&pool, &user).await, None);
+    assert_eq!(
+        row_count(&pool, &user).await,
+        1,
+        "the reservation still counts against the quota"
+    );
+    cleanup_user(&pool, &user).await;
+}
+
+/// What a JSON-RPC endpoint in front of the fake chain does to one call; the rest pass through.
+#[derive(Clone, Copy)]
+enum RpcFault {
+    /// The send reaches the node (the fake chain records it), and the caller gets a gateway 502.
+    LoseTheSendAnswer,
+    /// The send reaches the node, and the caller gets a JSON-RPC revert error, as from a gateway
+    /// that retried a send the node had already taken, or a node that simulates.
+    AnswerTheSendWithARevert,
+    /// The relayer's own gas estimation reverts (the buyer's simulation passes): the relay has
+    /// reserved the slot and refuses before it signs or sends anything.
+    RevertTheRelayersEstimate,
+}
+
+async fn spawn_faulty_rpc(chain_url: String, fault: RpcFault, relayer: Address) -> String {
+    async fn handle(
+        axum::extract::State((chain, fault, relayer)): axum::extract::State<(
+            String,
+            RpcFault,
+            String,
+        )>,
+        body: axum::body::Bytes,
+    ) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        let req = serde_json::from_slice::<Value>(&body).unwrap_or_default();
+        let revert = Json(json!({
+            "jsonrpc": "2.0",
+            "id": req["id"],
+            "error": { "code": 3, "message": "execution reverted" }
+        }));
+        let method = req["method"].as_str().unwrap_or("");
+        let from = req["params"][0]["from"]
+            .as_str()
+            .unwrap_or("")
+            .to_lowercase();
+        if method == "eth_estimateGas"
+            && matches!(fault, RpcFault::RevertTheRelayersEstimate)
+            && from == relayer
+        {
+            return revert.into_response();
+        }
+        let answer = reqwest::Client::new()
+            .post(&chain)
+            .header("content-type", "application/json")
+            .body(body.to_vec())
+            .send()
+            .await
+            .expect("the fake chain answers");
+        if method == "eth_sendRawTransaction" {
+            match fault {
+                RpcFault::LoseTheSendAnswer => {
+                    return (StatusCode::BAD_GATEWAY, "<html>502 Bad Gateway</html>")
+                        .into_response();
+                }
+                RpcFault::AnswerTheSendWithARevert => return revert.into_response(),
+                RpcFault::RevertTheRelayersEstimate => {}
+            }
+        }
+        let status = StatusCode::from_u16(answer.status().as_u16()).unwrap();
+        let text = answer.bytes().await.expect("the fake chain's body");
+        (status, [("content-type", "application/json")], text).into_response()
+    }
+    let app = axum::Router::new().route("/", post(handle)).with_state((
+        chain_url,
+        fault,
+        format!("{relayer:#x}"),
+    ));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind faulty rpc");
+    let addr = listener.local_addr().expect("faulty rpc addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    format!("http://{addr}")
+}
+
+/// One relayed purchase through a direct signer whose RPC has `fault`: the answer, how many raw
+/// transactions reached the node, and the buyer's reservation (rows, recorded hash).
+async fn relay_through(fault: RpcFault) -> ((u16, Value), usize, i64, Option<String>) {
+    let pool = scratch_pool().await.expect("a scratch database");
+    seed_collection(&pool, COLLECTION).await;
+    let (chain_url, raws) = spawn_fake_chain().await;
+    let relayer_key = PrivateKeySigner::random();
+    let rpc = spawn_faulty_rpc(chain_url, fault, relayer_key.address()).await;
+    let settings = Settings {
+        polygon_rpc_url: Some(rpc),
+        meta_tx_broadcast_enabled: true,
+        relayer_private_key: Some(hex::encode(relayer_key.to_bytes())),
+        ..Settings::for_tests()
+    };
+    let app = router(state(pool.clone(), settings));
+    let user_key = PrivateKeySigner::random();
+    let user = format!("{:#x}", user_key.address());
+    let answer = post_transaction(
+        &app,
+        &user,
+        COLLECTION,
+        &signed_split_calldata(&user_key, FS),
+    )
+    .await;
+    let sent = raws.lock().unwrap().len();
+    let rows = row_count(&pool, &user).await;
+    let hash = if rows > 0 {
+        confirmed_hash(&pool, &user).await
+    } else {
+        None
+    };
+    cleanup_user(&pool, &user).await;
+    (answer, sent, rows, hash)
+}
+
+/// The node took the transaction, but its answer to the send was lost. That is no evidence the
+/// transaction was never sent: the relay answers 504 with no hash, never a refusal (a 4xx, which
+/// the client reads as "sign again"), and the buyer's quota slot stays consumed.
+#[tokio::test]
+async fn a_send_the_node_took_but_whose_answer_was_lost_is_never_a_refusal() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    if scratch_pool().await.is_none() {
+        return;
+    }
+    let ((status, body), sent, rows, hash) = relay_through(RpcFault::LoseTheSendAnswer).await;
+    assert_eq!(sent, 1, "the node holds the transaction");
+    assert_eq!(status, 504, "{body}");
+    assert_eq!(body["ok"], false, "{body}");
+    assert!(body.get("txHash").is_none(), "{body}");
+    assert!(body.get("not_sent").is_none(), "{body}");
+    assert_eq!(rows, 1, "the reservation still counts against the quota");
+    assert_eq!(hash, None, "no hash was observed");
+}
+
+/// A JSON-RPC error answered to the send (here a revert) comes after the send was attempted, and
+/// the node may hold the transaction: it is a 504 that keeps the slot, never the 400 a client reads
+/// as "never sent".
+#[tokio::test]
+async fn an_error_answered_to_the_send_is_never_a_refusal() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    if scratch_pool().await.is_none() {
+        return;
+    }
+    let ((status, body), sent, rows, _) = relay_through(RpcFault::AnswerTheSendWithARevert).await;
+    assert_eq!(sent, 1, "the node holds the transaction");
+    assert_eq!(status, 504, "{body}");
+    assert_eq!(body["ok"], false, "{body}");
+    assert!(body.get("not_sent").is_none(), "{body}");
+    assert_eq!(rows, 1, "the reservation still counts against the quota");
+}
+
+/// The control: a refusal proven before any send (the relayer's gas estimation reverts, after the
+/// slot was reserved) is still a 400 that releases the slot, and nothing reaches the node.
+#[tokio::test]
+async fn a_refusal_before_any_send_is_still_a_4xx_that_frees_the_slot() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    if scratch_pool().await.is_none() {
+        return;
+    }
+    let ((status, body), sent, rows, _) = relay_through(RpcFault::RevertTheRelayersEstimate).await;
+    assert_eq!(sent, 0, "nothing reached the node");
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(body["ok"], false, "{body}");
+    assert_eq!(body["not_sent"], true, "{body}");
+    assert_eq!(rows, 0, "the slot is released");
 }
 
 /// A real read over a real endpoint, only when `ECONOMY_LIVE_RPC_URL` names
@@ -3584,6 +3867,109 @@ async fn a_name_buy_that_failed_before_its_record_is_bought_by_the_next_request(
     assert_eq!(row.status, "confirmed");
     assert_eq!(chain.accepted_hashes(), vec![row.tx_hash.unwrap()]);
     delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// A claim still being signed when its credits checkout is frozen is fenced:
+/// its caller's record then matches no row, so nothing is sent. A buy request
+/// on a frozen checkout's line, claimed or not, answers 409 and says why.
+#[tokio::test]
+async fn a_frozen_credits_checkout_line_is_fenced_and_refused() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let creator = PrivateKeySigner::random();
+    seed_item(
+        &pool,
+        COLLECTION,
+        4,
+        "wearable_v2",
+        &format!("{:#x}", creator.address()),
+    )
+    .await;
+    let chain = Arc::new(ScriptedChain::default());
+    let (state, relayer) = scripted_state(&pool, chain.clone()).await;
+    *chain.mint.lock().unwrap() = Some((COLLECTION.parse().unwrap(), relayer));
+    let app = router(state.clone());
+    let checkout: i64 = sqlx::query_scalar(
+        "INSERT INTO credits.checkouts (idempotency_key, address, status) \
+         VALUES ($1, $2, 'fulfilling') RETURNING id",
+    )
+    .bind(format!("frozen-{}", Uuid::new_v4()))
+    .bind(BUYER)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let (signing, unclaimed) = (
+        format!("checkout:{checkout}:1"),
+        format!("checkout:{checkout}:2"),
+    );
+    let claimed_at = now();
+    let claim = claim_broker_purchase(
+        &pool,
+        &BrokerPurchaseClaim {
+            key: &signing,
+            collection: COLLECTION,
+            item_id: Some("4"),
+            token_id: None,
+            buyer_address: BUYER,
+            escrow_address: RULE_ESCROW,
+            price_wei: "1000000000000000000",
+            chain_id: 137,
+            mode: "primary",
+            trade_hashed_signature: None,
+            usd_amount_wei: None,
+            mana_usd_rate_wei: None,
+        },
+        claimed_at,
+    )
+    .await
+    .unwrap();
+    assert!(claim.claimed);
+
+    sqlx::query("UPDATE credits.checkouts SET status = 'reversing' WHERE id = $1")
+        .bind(checkout)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let fenced = crate::checkout::claims::fence_unrecorded(
+        &mut pool.acquire().await.unwrap(),
+        &[signing.clone(), unclaimed.clone()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(fenced, 1);
+
+    let signer = state.eth_signer.as_ref().unwrap();
+    let call = crate::checkout::calls::BrokerCall {
+        to: Address::repeat_byte(0x11),
+        data: Bytes::new(),
+    };
+    let late =
+        crate::checkout::broker::send_recorded_buy(&state, signer, &signing, claimed_at, call)
+            .await;
+    assert!(matches!(late, Err(ApiError::Conflict(_))), "{late:?}");
+    assert!(chain.accepted_hashes().is_empty(), "nothing was sent");
+    assert_eq!(recorded_purchase(&pool, &signing).await.status, "error");
+
+    let body = json!({ "collection": COLLECTION, "priceWei": "1000000000000000000", "escrowAddress": RULE_ESCROW, "buyerAddress": BUYER, "mode": "primary", "itemId": "4" });
+    for key in [&signing, &unclaimed] {
+        let (status, reply) = keyed_post(&app, "/v1/broker/buy", key, &body).await;
+        assert_eq!(status, 409, "{reply}");
+        assert!(reply.to_string().contains("frozen"), "{reply}");
+    }
+    assert!(chain.accepted_hashes().is_empty());
+
+    delete_key(&pool, "broker_purchases", &signing).await;
+    sqlx::query("DELETE FROM credits.checkouts WHERE id = $1")
+        .bind(checkout)
+        .execute(&pool)
+        .await
+        .unwrap();
+    clear_items_pass(&pool).await;
 }
 
 /// A wearable broker buy whose signing failed is re-armed and bought by the

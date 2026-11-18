@@ -64,10 +64,10 @@ mod tests;
 
 use std::sync::Arc;
 
+use crate::shared::routing::{erase, get, patch, post};
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::HeaderMap;
-use axum::routing::{get, patch};
 use sqlx::PgPool;
 
 use crate::auth::eip1654::Eip1654Validator;
@@ -206,8 +206,7 @@ pub fn router(state: SharedState) -> Router {
     let v1 = Router::new()
         .route(
             "/rentals-listings",
-            axum::routing::post(handlers::create_rentals_listing)
-                .get(handlers::get_rentals_listings),
+            post(handlers::create_rentals_listing).get(erase(handlers::get_rentals_listings)),
         )
         .route(
             "/rentals-listings/{id}",

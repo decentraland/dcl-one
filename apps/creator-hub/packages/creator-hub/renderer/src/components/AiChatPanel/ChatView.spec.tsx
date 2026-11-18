@@ -1,12 +1,12 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 import type { AiMessage } from '/@/modules/store/ai/types';
 
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { ChatView, type ChatViewProps } from './ChatView';
 
 vi.mock('#preload', () => ({
@@ -26,7 +26,7 @@ const userMessage: AiMessage = {
 function renderChat(props: Partial<ChatViewProps>) {
   const noop = () => {};
   return render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <ChatView
         providers={[{ id: 'claude', label: 'Claude', available: true, managedSignIn: true }]}
         provider="claude"
@@ -53,7 +53,7 @@ function renderChat(props: Partial<ChatViewProps>) {
         onClose={noop}
         {...props}
       />
-    </ThemeProvider>,
+    </TestProviders>,
   );
 }
 
@@ -174,6 +174,40 @@ describe('ChatView asset mentions', () => {
     it('should show it by its emote name', () => {
       renderChat({ assetMentions: [{ builtInEmote: 'wave' }] });
       expect(screen.getByText('Built-in animation: wave')).toBeTruthy();
+    });
+  });
+});
+
+describe('ChatView chat history menu', () => {
+  beforeAll(() => {
+    setCurrentLocale('en', flatten(en));
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  describe('when a saved chat is deleted with the keyboard', () => {
+    it('should delete that chat from its menu item and keep the focus in the menu', () => {
+      const onDeleteSession = vi.fn();
+      const now = Date.now();
+      renderChat({
+        sessions: [
+          { id: 's1', title: 'Door', updatedAt: now },
+          { id: 's2', title: 'Window', updatedAt: now },
+        ],
+        onDeleteSession,
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'New chat' }));
+      const door = screen.getByRole('menuitem', { name: /Door/ });
+      const window = screen.getByRole('menuitem', { name: /Window/ });
+
+      expect(door.getAttribute('aria-keyshortcuts')).toBe('Delete');
+      door.focus();
+      fireEvent.keyDown(door, { key: 'Delete' });
+
+      expect(onDeleteSession).toHaveBeenCalledExactlyOnceWith('s1');
+      expect(document.activeElement).toBe(window);
     });
   });
 });

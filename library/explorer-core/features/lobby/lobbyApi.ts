@@ -1,54 +1,82 @@
-// The lobby's data: the curated destinations, the landing place for the home destination, and the
-// places visited most recently.
+// Signed reads (events, communities, the gallery) go through the bridge, not here.
 
 import { serviceUrl } from '@hud-host'
 import type { DiscoverPlace } from '../places/placesApi'
 import { getPref, PREF, setPref } from '../../lib/prefs'
+import { PARCEL_METERS } from '../map/atlas'
+import { fetchConnectedWorld, fetchPeers } from '../map/mapApi'
 
 const PLACES_API = `${serviceUrl('places')}/api`
 const RECENTS_MAX = 20
-const RECENTS_SHOWN = 3
 const CACHE_TTL = 60_000
+const WHERE_LOOKUPS = 4
+const TIMEOUT_MS = 5_000
+
+export type LobbyPlace = DiscoverPlace & { connected_addresses?: string[] | null }
 
 // Reopening the lobby (or walking between scenes) shouldn't refetch what it just had.
 const cache = new Map<string, { at: number; promise: Promise<unknown> }>()
 function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
   const hit = cache.get(key)
-  if (hit && Date.now() - hit.at < CACHE_TTL) return hit.promise as Promise<T>
+  const now = Date.now()
+  if (hit && now - hit.at < CACHE_TTL) return hit.promise as Promise<T>
+  for (const [k, entry] of cache) if (now - entry.at >= CACHE_TTL) cache.delete(k)
   const promise = load()
-  cache.set(key, { at: Date.now(), promise })
+  cache.set(key, { at: now, promise })
   promise.catch(() => {
     if (cache.get(key)?.promise === promise) cache.delete(key)
   })
   return promise
 }
 
-async function placesData(url: string, init?: RequestInit): Promise<DiscoverPlace[]> {
-  const res = await fetch(url, init)
-  if (!res.ok) throw new Error(`places API failed: ${res.status}`)
-  const json = (await res.json()) as { ok?: boolean; data?: DiscoverPlace[] }
+async function placesData(url: string, init?: RequestInit): Promise<LobbyPlace[]> {
+  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) })
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => undefined)
+    throw new Error(`places API failed: ${res.status}`)
+  }
+  const json = (await res.json()) as { ok?: boolean; data?: LobbyPlace[] }
   if (json.ok === false || !Array.isArray(json.data)) throw new Error('places API returned not-ok')
   return json.data
 }
 
-export function fetchHighlighted(): Promise<DiscoverPlace[]> {
-  return cached('highlighted', () => placesData(`${PLACES_API}/destinations?with_realms_detail=true&only_highlighted=true`))
+/** Connected wallets when known, else the place's user count. */
+export function placeOnline(p: { connected_addresses?: readonly string[] | null; user_count?: number }): number {
+  return p.connected_addresses?.length ?? p.user_count ?? 0
+}
+
+export function fetchHighlighted(): Promise<LobbyPlace[]> {
+  return cached('highlighted', () => placesData(`${PLACES_API}/destinations?with_realms_detail=true&with_connected_users=true&only_highlighted=true`))
 }
 
 /** The place covering a parcel (null when the parcel is empty). */
-export function fetchPlaceAt(x: number, y: number): Promise<DiscoverPlace | null> {
+export function fetchPlaceAt(x: number, y: number): Promise<LobbyPlace | null> {
   return cached(`place:${x},${y}`, async () => (await placesData(`${PLACES_API}/places?with_realms_detail=true&positions=${x},${y}`))[0] ?? null)
 }
 
-export function fetchWorld(name: string): Promise<DiscoverPlace | null> {
+export function fetchWorld(name: string): Promise<LobbyPlace | null> {
   return cached(`world:${name}`, async () => (await placesData(`${PLACES_API}/worlds?names=${encodeURIComponent(name)}`))[0] ?? null)
 }
 
-/** The landing place for the home destination: a World by name, else the place at its parcel. */
-export function fetchHomePlace(home: { realm: string | null; parcel: string }): Promise<DiscoverPlace | null> {
-  if (home.realm != null && home.realm.includes('.')) return fetchWorld(home.realm)
-  const [x, y] = home.parcel.split(',').map(Number)
-  return Number.isFinite(x) && Number.isFinite(y) ? fetchPlaceAt(x, y) : Promise.resolve(null)
+/** In the order asked; unknown ids are left out. */
+export async function fetchDestinationsById(ids: string[]): Promise<LobbyPlace[]> {
+  if (ids.length === 0) return []
+  const data = await placesData(`${PLACES_API}/destinations?with_connected_users=true`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(ids)
+  })
+  const byId = new Map(data.map((p) => [p.id, p]))
+  return ids.flatMap((id) => byId.get(id) ?? [])
+}
+
+export function fetchLandingPlace(dest: { world: string | null; parcel: { x: number; y: number } }): Promise<LobbyPlace | null> {
+  return dest.world != null ? fetchWorld(dest.world) : fetchPlaceAt(dest.parcel.x, dest.parcel.y)
+}
+
+/** Never cached. */
+export async function fetchConnected(placeId: string): Promise<LobbyPlace | null> {
+  return (await fetchDestinationsById([placeId]))[0] ?? null
 }
 
 function readRecents(): string[] {
@@ -71,15 +99,49 @@ export async function recordVisit(visit: { realm: string; genesis: boolean; parc
   if (place != null) rememberPlace(place.id)
 }
 
-/** The recently visited places, in visit order. */
-export async function fetchRecents(): Promise<DiscoverPlace[]> {
-  const ids = readRecents()
-  if (ids.length === 0) return []
-  const data = await placesData(`${PLACES_API}/destinations`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(ids)
-  })
-  const byId = new Map(data.map((p) => [p.id, p]))
-  return ids.flatMap((id) => byId.get(id) ?? []).slice(0, RECENTS_SHOWN)
+/** In visit order. */
+export function fetchRecents(): Promise<LobbyPlace[]> {
+  return fetchDestinationsById(readRecents())
+}
+
+export type FriendWhere = { kind: 'genesis'; parcel: { x: number; y: number } } | { kind: 'world'; world: string; parcel: { x: number; y: number } | null } | { kind: 'unknown' }
+
+/** Comms peers first; each wallet still missing is asked for the world it is in. */
+export async function fetchWhereabouts(wallets: string[]): Promise<Map<string, FriendWhere>> {
+  const found = new Map<string, FriendWhere>()
+  if (wallets.length === 0) return found
+  // a batch comms cannot answer leaves its wallets to the worlds
+  const peers = await fetchPeers(AbortSignal.timeout(TIMEOUT_MS), wallets).catch(() => [])
+  for (const peer of peers) {
+    // the position is in world metres
+    found.set(peer.address.toLowerCase(), { kind: 'genesis', parcel: { x: Math.floor(peer.x / PARCEL_METERS), y: Math.floor(peer.z / PARCEL_METERS) } })
+  }
+  const queue = wallets.filter((w) => !found.has(w.toLowerCase()))
+  const lookup = async (): Promise<void> => {
+    for (let w = queue.shift(); w != null; w = queue.shift()) {
+      const world = await fetchConnectedWorld(w, AbortSignal.timeout(TIMEOUT_MS)).catch(() => null)
+      if (world != null) found.set(w.toLowerCase(), { kind: 'world', world, parcel: null })
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(WHERE_LOOKUPS, queue.length) }, lookup))
+  for (const w of wallets) if (!found.has(w.toLowerCase())) found.set(w.toLowerCase(), { kind: 'unknown' })
+  return found
+}
+
+export async function whereTitle(where: FriendWhere): Promise<string> {
+  if (where.kind === 'unknown') return 'Lobby'
+  if (where.kind === 'world') return (await fetchWorld(where.world).catch(() => null))?.title || where.world
+  return (await fetchPlaceAt(where.parcel.x, where.parcel.y).catch(() => null))?.title || `${where.parcel.x},${where.parcel.y}`
+}
+
+export async function fetchCrowd(): Promise<{ x: number; y: number }> {
+  const res = await fetch(`${serviceUrl('archipelagoStats')}/hot-scenes`, { signal: AbortSignal.timeout(TIMEOUT_MS) })
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => undefined)
+    throw new Error(`hot-scenes: ${res.status}`)
+  }
+  const scenes = (await res.json()) as Array<{ baseCoords?: [number, number] }>
+  const top = scenes[0]?.baseCoords
+  if (!Array.isArray(top)) throw new Error('hot-scenes: none')
+  return { x: top[0], y: top[1] }
 }
