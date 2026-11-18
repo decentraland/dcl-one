@@ -534,6 +534,7 @@ impl ExploreState {
                         &pool,
                         &source,
                         interval,
+                        &places::mirror::PAGE_RETRY_DELAYS,
                         &ctx.cancel,
                     )
                     .await?;
@@ -572,6 +573,7 @@ impl ExploreState {
                         &pool,
                         &source,
                         interval,
+                        &places::mirror::PAGE_RETRY_DELAYS,
                         &ctx.cancel,
                     )
                     .await?;
