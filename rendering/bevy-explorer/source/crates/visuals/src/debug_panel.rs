@@ -17,7 +17,6 @@ use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddCo
 use serde_json::json;
 
 use crate::{
-    coast::{CoastState, SeaView},
     lens_flare::{LensFlareSettings, DAY_FLARE},
     shell_texturing::{Ground, ParcelGrass},
     sky_envmap::{SkyAmbient, SkyEnvmapSettings},
@@ -285,18 +284,6 @@ impl Plugin for VisualsDebugPanelPlugin {
                 "enabled",
                 "/lens_flare {value}",
             )],
-        })
-        .add_console_command::<SeaState, _>(sea_state)
-        .add_debug_section(DebugSection {
-            title: "Sea",
-            query: "/sea_state",
-            fields: &[
-                ("Drawn (hidden / flat / waves)", "view"),
-                ("Distance to the sea (m)", "seaDistance"),
-                ("Landscape distance (m)", "landscapeDistance"),
-            ],
-            actions: &[],
-            inputs: &[],
         });
         if app
             .world()
@@ -393,30 +380,6 @@ fn lens_flare_command(
             "elevation": elevation, "fromView": from_view})
         .to_string(),
     );
-}
-
-/// Read what of the sea is drawn, and how far the camera is from it.
-#[derive(clap::Parser, ConsoleCommand)]
-#[command(name = "/sea_state")]
-struct SeaState;
-
-fn sea_state(
-    mut cmd: ConsoleCommand<SeaState>,
-    coast: Res<CoastState>,
-    landscape: Res<LandscapeDistance>,
-) {
-    if let Some(Ok(_)) = cmd.take() {
-        let view = coast.view.map(|view| match view {
-            SeaView::Hidden => "hidden",
-            SeaView::Flat => "flat",
-            SeaView::Waves => "waves",
-        });
-        cmd.reply_ok(
-            json!({"view": view, "seaDistance": coast.sea_distance,
-                "landscapeDistance": landscape.0})
-            .to_string(),
-        );
-    }
 }
 
 #[derive(Resource)]

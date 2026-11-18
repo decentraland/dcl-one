@@ -8,23 +8,16 @@
 mod ripples;
 #[cfg(test)]
 mod tests;
-mod waves;
 
 use std::collections::HashSet;
 
 use bevy::{
     asset::{embedded_asset, embedded_path, RenderAssetUsages},
-    pbr::{
-        ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
-        NotShadowCaster, NotShadowReceiver,
-    },
+    pbr::{ExtendedMaterial, MaterialExtension, NotShadowCaster, NotShadowReceiver},
     prelude::*,
     render::{
-        mesh::{MeshVertexBufferLayoutRef, PrimitiveTopology},
-        render_resource::{
-            AsBindGroup, DepthBiasState, RenderPipelineDescriptor, ShaderDefVal, ShaderRef,
-            SpecializedMeshPipelineError,
-        },
+        mesh::PrimitiveTopology,
+        render_resource::{AsBindGroup, ShaderRef},
     },
 };
 use common::{
@@ -66,56 +59,8 @@ const UNDERGROUND: f32 = -0.5;
 const WALL_HEIGHT: f32 = 50.0;
 const WALL_THICKNESS: f32 = 10.0;
 const OCEAN_SIZE: f32 = 32768.0;
-/// The flat ocean follows the camera on this grid, so its ripples don't slide.
+/// The ocean follows the camera on this grid, so its ripples don't slide.
 const OCEAN_SNAP: f32 = 64.0;
-/// While the wave grid shows, the flat ocean lies this far below it, under its deepest trough
-/// (0.69 m), so the two never z-fight.
-const OCEAN_DROP: f32 = 1.0;
-/// Half the side of the square around the camera where the flat ocean discards itself, under the
-/// wave grid: the grid's half side less its snap, since the grid centre is the camera snapped.
-const OCEAN_PLANE_HOLE: f32 = waves::WAVE_GRID_SIZE_M * 0.5 - waves::WAVE_GRID_SPACING_M;
-/// Sorts the sea before every other transparent surface: it lies under them all.
-const OCEAN_SORT_BIAS: f32 = -1.0e6;
-
-/// coast_water.wgsl's def for which fragments are the flat ocean's: those below the wave grid's
-/// deepest trough; as its float's bits
-fn ocean_plane_def() -> ShaderDefVal {
-    ShaderDefVal::UInt(
-        "OCEAN_PLANE_TOP".into(),
-        (SEA_LEVEL - OCEAN_DROP + 0.1).to_bits(),
-    )
-}
-
-/// What of the sea is drawn.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SeaView {
-    /// beyond the Landscape Distance, as the rest of the landscape
-    Hidden,
-    /// the flat ocean only: the wave grid around the camera covers no sea
-    Flat,
-    /// the flat ocean and the wave grid
-    Waves,
-}
-
-/// How far `camera` (a bevy position) is from the sea: from the nearest side of the land
-/// `bounds`, or 0 over the sea.
-pub(crate) fn sea_distance(bounds: Vec4, camera: Vec3) -> f32 {
-    let unity = Vec2::new(camera.x, -camera.z);
-    let inside = (unity - bounds.xy()).min(bounds.zw() - unity);
-    inside.min_element().max(0.0)
-}
-
-/// What of the sea `camera` sees with the Landscape Distance at `landscape_distance`.
-pub(crate) fn sea_view(bounds: Vec4, camera: Vec3, landscape_distance: f32) -> SeaView {
-    let distance = sea_distance(bounds, camera);
-    if distance > landscape_distance {
-        SeaView::Hidden
-    } else if distance < waves::WAVE_GRID_SIZE_M * 0.5 {
-        SeaView::Waves
-    } else {
-        SeaView::Flat
-    }
-}
 
 pub(crate) struct CoastPlugin;
 
@@ -124,7 +69,6 @@ impl Plugin for CoastPlugin {
         embedded_asset!(app, "coast_surf.wgsl");
         embedded_asset!(app, "coast_cliff.wgsl");
         embedded_asset!(app, "coast_water.wgsl");
-        embedded_asset!(app, "coast_waves.wgsl");
 
         app.init_resource::<CoastState>()
             .add_plugins(MaterialPlugin::<CliffMaterial>::default())
@@ -163,15 +107,8 @@ pub(crate) type WaterMaterial = ExtendedMaterial<WaterExtension>;
 
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub(crate) struct WaterExtension {
-    // one uniform struct, `Water` in coast_water.wgsl
-    /// The coast bounds, as `CliffExtension::bounds`.
     #[uniform(100)]
     pub(crate) bounds: Vec4,
-    /// Half the side of the square around the camera where the flat ocean gives way to the wave
-    /// grid: `OCEAN_PLANE_HOLE` while the grid shows, else 0.
-    #[uniform(100)]
-    pub(crate) plane_hole: f32,
-    /// Slopes in rg, foam noise in b (`ripples::image`).
     #[texture(101)]
     #[sampler(102)]
     pub(crate) ripples: Handle<Image>,
@@ -180,32 +117,8 @@ pub(crate) struct WaterExtension {
 impl MaterialExtension for WaterExtension {
     type Base = StandardMaterial;
 
-    fn vertex_shader() -> ShaderRef {
-        shader(&embedded_path!("coast_waves.wgsl"))
-    }
-
     fn fragment_shader() -> ShaderRef {
         shader(&embedded_path!("coast_water.wgsl"))
-    }
-
-    fn specialize(
-        _pipeline: &MaterialExtensionPipeline,
-        descriptor: &mut RenderPipelineDescriptor,
-        _layout: &MeshVertexBufferLayoutRef,
-        _key: MaterialExtensionKey<Self>,
-    ) -> Result<(), SpecializedMeshPipelineError> {
-        let defs = waves::shader_defs();
-        descriptor.vertex.shader_defs.extend(defs.iter().cloned());
-        if let Some(fragment) = descriptor.fragment.as_mut() {
-            fragment.shader_defs.extend(defs);
-            fragment.shader_defs.push(ocean_plane_def());
-        }
-        // the base material's depth bias only sorts the sea before other transparent surfaces
-        // (`OCEAN_SORT_BIAS`); its depth is tested as it is
-        if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
-            depth_stencil.bias = DepthBiasState::default();
-        }
-        Ok(())
     }
 }
 
@@ -216,21 +129,12 @@ struct CoastAssets {
 }
 
 #[derive(Resource, Default)]
-pub(crate) struct CoastState {
+struct CoastState {
     bounds: Option<Vec4>,
-    /// what of the sea is drawn, for the debug panel
-    pub(crate) view: Option<SeaView>,
-    /// how far the camera is from the sea, for the debug panel
-    pub(crate) sea_distance: Option<f32>,
 }
 
-/// The sea's surfaces, which follow the camera on a `snap` grid.
 #[derive(Component)]
-struct Ocean {
-    snap: f32,
-    /// the wave grid, else the flat ocean
-    waves: bool,
-}
+struct Ocean;
 
 #[derive(Component)]
 struct Cliff {
@@ -272,35 +176,16 @@ fn setup(
             reflectance: 0.38,
             // the open sea reflects the sky; distance fog would paint a grey slab on the horizon
             fog_enabled: false,
-            // the shallows show the sand below; the sea draws no depth
-            alpha_mode: AlphaMode::Blend,
-            depth_bias: OCEAN_SORT_BIAS,
             ..default()
         },
         extension: WaterExtension {
             bounds: NO_COAST,
-            plane_hole: 0.0,
             ripples: images.add(ripples::image()),
         },
     });
     commands.spawn((
-        Name::new("Coast waves"),
-        Ocean {
-            snap: waves::WAVE_GRID_SPACING_M,
-            waves: true,
-        },
-        Mesh3d(meshes.add(waves::wave_grid_mesh())),
-        MeshMaterial3d(water.clone()),
-        Transform::from_xyz(0.0, SEA_LEVEL, 0.0),
-        Visibility::Hidden,
-        NotShadowCaster,
-    ));
-    commands.spawn((
         Name::new("Coast ocean"),
-        Ocean {
-            snap: OCEAN_SNAP,
-            waves: false,
-        },
+        Ocean,
         Mesh3d(meshes.add(Plane3d::default().mesh().size(OCEAN_SIZE, OCEAN_SIZE))),
         MeshMaterial3d(water.clone()),
         Transform::from_xyz(0.0, SEA_LEVEL, 0.0),
@@ -339,7 +224,7 @@ fn update(
     mut meshes: ResMut<Assets<Mesh>>,
     mut cliff_materials: ResMut<Assets<CliffMaterial>>,
     mut water_materials: ResMut<Assets<WaterMaterial>>,
-    mut ocean: Query<(&Ocean, &mut Transform, &mut Visibility)>,
+    mut ocean: Query<(&mut Transform, &mut Visibility), With<Ocean>>,
     underground: Single<(&mut Transform, &mut Visibility), UndergroundOnly>,
     cliffs: Query<(Entity, &Cliff)>,
     walls: Single<&mut SceneColliderData, With<CoastWalls>>,
@@ -383,9 +268,7 @@ fn update(
         .filter(|position| position.is_finite())
         .map(|position| parcel_to_vec3(vec3_to_parcel(position)));
     let (Some(bounds), Some(position), Some(parcel)) = (bounds, position, parcel) else {
-        state.view = None;
-        state.sea_distance = None;
-        for (_, _, mut visibility) in &mut ocean {
+        for (_, mut visibility) in &mut ocean {
             visibility.set_if_neq(Visibility::Hidden);
         }
         for (entity, cliff) in &cliffs {
@@ -395,38 +278,9 @@ fn update(
         return;
     };
 
-    let view = sea_view(bounds, position, distance.0);
-    state.view = Some(view);
-    state.sea_distance = Some(sea_distance(bounds, position));
-    let waves = view == SeaView::Waves;
-    let plane_hole = if waves { OCEAN_PLANE_HOLE } else { 0.0 };
-    if water_materials
-        .get(&assets.water)
-        .is_some_and(|material| material.extension.plane_hole != plane_hole)
-    {
-        if let Some(material) = water_materials.get_mut(&assets.water) {
-            material.extension.plane_hole = plane_hole;
-        }
-    }
-    for (ocean, mut transform, mut visibility) in &mut ocean {
-        let shown = match view {
-            SeaView::Hidden => false,
-            SeaView::Flat => !ocean.waves,
-            SeaView::Waves => true,
-        };
-        if !shown {
-            visibility.set_if_neq(Visibility::Hidden);
-            continue;
-        }
-        // the flat ocean drops under the waves only while they show, so on its own it meets the
-        // shore where the waves do
-        let level = if waves && !ocean.waves {
-            SEA_LEVEL - OCEAN_DROP
-        } else {
-            SEA_LEVEL
-        };
-        let centre = (position.xz() / ocean.snap).round() * ocean.snap;
-        let translation = Vec3::new(centre.x, level, centre.y);
+    for (mut transform, mut visibility) in &mut ocean {
+        let centre = (position.xz() / OCEAN_SNAP).round() * OCEAN_SNAP;
+        let translation = Vec3::new(centre.x, SEA_LEVEL, centre.y);
         if transform.translation != translation {
             transform.translation = translation;
         }

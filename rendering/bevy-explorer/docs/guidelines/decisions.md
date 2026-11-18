@@ -714,26 +714,16 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Landscape Distance from the camera. Bevy's cliffs are procedural chunks built around the
   player's parcel out to the nearer of 768 m and the Landscape Distance: building them out to
   7 km would mean hundreds of chunks with their invisible walls.
-- **The sea is drawn whole, within the Landscape Distance of the coast.** Unity culls its water
-  chunks one by one beyond the Landscape Distance. Bevy has one flat sea plane and one wave grid,
-  1 km square, that follow the camera: the whole sea hides once the camera is farther than the
-  Landscape Distance from the land's edge, and the wave grid hides once it no longer reaches past
-  it. While the grid shows, the plane drops 1 m under it and discards itself beneath it.
-- **The sea is alpha blended, with no refraction.** Unity's water samples a copy of the opaque
-  frame to refract and tint what lies below it. Bevy's transmissive phase would copy the whole
-  frame every frame the sea is drawn, so the sea blends over the frame by its density instead:
-  the shallows show the sand below, unbent, and deep water is opaque. It sorts before every other
-  transparent surface. A transmissive scene material in front of the sea does not see the sea
-  through it.
-- **The sea's foam is procedural noise.** Unity's foam texture belongs to the water asset, which
-  is not carried; a tiling value noise in the ripple texture's blue channel stands in for it.
+- **The sea is always drawn.** Unity culls its water chunks one by one beyond the Landscape
+  Distance. Bevy has one sea plane, a single opaque quad that casts no shadows, so hiding it would
+  save almost nothing, and the water material draws without fog, so nothing would soften it
+  appearing and disappearing.
 - **The lens flare's rings are procedural, and its random copies use a hash.** Unity draws the
   rings from images that are not carried, and places the copies with its seeded random generator.
 - **The lens flare sees transparent surfaces only through depth of field.** Its occlusion test
   reads the depth buffer and, where the view has depth of field's transparent focus texture, the
   transparent coverage in it. A view without that texture (every MSAA view) is hidden only by
-  opaque geometry, not by the sea or imposters. The flare is off while a scene hides the sun and
-  moon discs.
+  opaque geometry, not by imposters. The flare is off while a scene hides the sun and moon discs.
 - **Graphics presets set fewer settings than Unity's, and four differently.** Low, Medium and High
   carry Unity's values for the frame rate, VSync, render scale, avatar outline, jiggle bones, sun
   shadow quality, the Low and High shadow distances and scene lights; Medium is the default and

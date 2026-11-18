@@ -764,7 +764,6 @@ mod test {
             ("coast_surf.wgsl", include_str!("coast_surf.wgsl")),
             ("coast_cliff.wgsl", include_str!("coast_cliff.wgsl")),
             ("coast_water.wgsl", include_str!("coast_water.wgsl")),
-            ("coast_waves.wgsl", include_str!("coast_waves.wgsl")),
         ] {
             let path = Path::new("visuals").join(name);
             registry.insert_asset(path.clone(), &path, source.as_bytes());
@@ -837,12 +836,10 @@ mod test {
             .add(WaterMaterial {
                 base: StandardMaterial {
                     fog_enabled: false,
-                    alpha_mode: AlphaMode::Blend,
                     ..default()
                 },
                 extension: WaterExtension {
                     bounds: NO_COAST,
-                    plane_hole: 0.0,
                     ripples,
                 },
             });

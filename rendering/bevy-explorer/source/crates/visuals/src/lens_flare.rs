@@ -7,7 +7,7 @@
 //! instanced draw (`lens_flare.wgsl`). The vertex stage tests how much of the light is hidden:
 //! samples in a small disc around it pass where nothing opaque was drawn (the depth is the far
 //! plane) and, where the view has depth of field's transparent focus texture, by the share no
-//! transparent surface covers. So the sea and imposters, which draw no depth, hide the light too.
+//! transparent surface covers. So imposters, which draw no depth, hide the light too.
 //! The test runs per vertex, not per pixel.
 
 use bevy::{
