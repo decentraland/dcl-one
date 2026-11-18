@@ -124,7 +124,7 @@ function rails(opts: { trusted: string; kind: 'managed' | 'web3'; gasless?: bool
     await shell.request('shop.buy', { v: SHOP_PROTOCOL, items: [{ contract: CONTRACT, itemId: String(ITEM), quantity: 1 }], method: 'credits' })
     ;(await until('confirm')).handlers.onConfirm?.()
   }
-  return { shop, chain, relay, wallet, shown, events, until, buy }
+  return { shell, shop, chain, relay, wallet, shown, events, until, buy }
 }
 
 describe('the shell purchase on the real rails', () => {
@@ -165,6 +165,27 @@ describe('the shell purchase on the real rails', () => {
     await r.until('failed')
     expect(r.wallet.requests.some((q) => q.method === 'eth_signTypedData_v4')).toBe(false)
     expect(r.relay.posts).toHaveLength(0)
+  })
+
+  it('follows a purchase the relay may have sent, and never signs a second one for it', async () => {
+    // The node took the transaction but the relay never got its answer: a 504 with no hash.
+    const r = rails({ trusted: DEDICATED, kind: 'managed' })
+    r.relay.state.mode = 'fail-after-send'
+    r.relay.state.failStatus = 504
+    await r.buy()
+    const pending = await r.until('pending')
+    expect(r.events.at(-1)).toMatchObject({ state: 'pending' })
+    expect(r.shown.some((s) => s.view.step === 'failed')).toBe(false)
+    expect(r.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    pending.handlers.onClose()
+    // Buying the same item again shows that purchase: the same operation, the same credit.
+    const first = r.events.at(-1)!.operation
+    const again = await r.shell.request('shop.buy', { v: SHOP_PROTOCOL, items: [{ contract: CONTRACT, itemId: String(ITEM), quantity: 1 }], method: 'credits' })
+    expect(again).toMatchObject({ operation: first, state: 'pending' })
+    expect(r.shown.at(-1)?.view.step).toBe('pending')
+    expect(r.shop.log.filter((q) => q.name === 'authorizeCreditBatch')).toHaveLength(1)
+    expect(r.wallet.requests.filter((q) => q.method === 'eth_signTypedData_v4')).toHaveLength(1)
+    expect(r.relay.posts).toHaveLength(1)
   })
 
   it('relays nothing when the hand-off isn’t kept: the signed purchase never leaves the browser', async () => {

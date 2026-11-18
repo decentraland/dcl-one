@@ -362,13 +362,10 @@ impl DirectSigner {
     ) -> Result<String, ApiError> {
         let _guard = self.send_lock.lock().await;
         let signed = self.sign_call(to, data).await?;
-        let tx_hash = self.send_raw(&signed.raw).await.map_err(|e| {
-            if e.is_execution_revert() {
-                ApiError::RelayReverted(format!("transaction reverted: {}", e.message()))
-            } else {
-                ApiError::RelayerFailed(format!("eth_sendRawTransaction failed: {e}"))
-            }
-        })?;
+        let tx_hash = self
+            .send_raw(&signed.raw)
+            .await
+            .map_err(|e| send_failure(&signed.hash, e))?;
         tracing::info!(tx_hash = %tx_hash, relayer = %self.relayer_address, "{log_msg}");
         Ok(tx_hash)
     }
@@ -644,6 +641,43 @@ impl DirectSigner {
     }
 }
 
+/// What a failed `eth_sendRawTransaction` of a just-signed transaction (`hash`) tells the caller.
+/// A revert, or another error the node answers, is the node refusing it: nothing was broadcast.
+/// Two failures can come after the transaction went out, and are indeterminate, `RelayerTimeout`:
+/// never a refusal that releases the buyer's quota slot or tells a client to sign again.
+/// - No usable answer (a timeout, a cut connection, a gateway error, an unreadable body): the
+///   node may have taken it.
+/// - An answer that the node already holds or mined a transaction at this nonce ("already
+///   known", "nonce too low", an underpriced replacement): a gateway that retried the send gets
+///   these about our own transaction.
+fn send_failure(hash: &str, e: RpcError) -> ApiError {
+    if e.is_execution_revert() {
+        return ApiError::RelayReverted(format!("transaction reverted: {}", e.message()));
+    }
+    if matches!(e, RpcError::Transport(_)) || may_hold_it(&e) {
+        return ApiError::RelayerTimeout(format!(
+            "transaction {hash} may have been broadcast: eth_sendRawTransaction failed ({e})"
+        ));
+    }
+    ApiError::RelayerFailed(format!("eth_sendRawTransaction failed: {e}"))
+}
+
+/// Whether a node's error answer says it already holds, or has mined, a transaction at this nonce.
+fn may_hold_it(e: &RpcError) -> bool {
+    let m = e.message().to_ascii_lowercase();
+    [
+        "already known",
+        "alreadyknown",
+        "known transaction",
+        "already imported",
+        "nonce too low",
+        "oldnonce",
+        "replacement transaction underpriced",
+    ]
+    .iter()
+    .any(|s| m.contains(s))
+}
+
 /// The nonce a signed EIP-2718 transaction carries.
 fn signed_nonce(raw: &[u8]) -> Option<u64> {
     use alloy_consensus::Transaction;
@@ -665,6 +699,65 @@ fn parse_tx_hash(tx_hash_hex: &str) -> Result<TxHash, ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only a node's refusal proves a send never went out. No answer, or an answer that the node
+    /// already holds a transaction at this nonce, keeps the slot.
+    #[test]
+    fn a_send_with_no_answer_is_indeterminate_not_refused() {
+        use crate::evm::transaction::{ReservationDisposition, reservation_disposition};
+        let hash = "0x01";
+        let revert = send_failure(
+            hash,
+            RpcError::Response {
+                code: 3,
+                message: "execution reverted".into(),
+            },
+        );
+        assert!(matches!(revert, ApiError::RelayReverted(_)));
+        let refused = send_failure(
+            hash,
+            RpcError::Response {
+                code: -32000,
+                message: "insufficient funds for gas * price + value".into(),
+            },
+        );
+        assert!(matches!(refused, ApiError::RelayerFailed(_)));
+        assert_eq!(
+            reservation_disposition(&refused),
+            ReservationDisposition::Release
+        );
+        let silent = send_failure(hash, RpcError::Transport("operation timed out".into()));
+        assert!(matches!(silent, ApiError::RelayerTimeout(_)), "{silent}");
+        assert_eq!(silent.status(), axum::http::StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(
+            reservation_disposition(&silent),
+            ReservationDisposition::Keep
+        );
+        for message in [
+            "already known",
+            "AlreadyKnown",
+            "Known transaction",
+            "nonce too low: next nonce 6, tx nonce 5",
+            "replacement transaction underpriced",
+        ] {
+            let held = send_failure(
+                hash,
+                RpcError::Response {
+                    code: -32000,
+                    message: message.into(),
+                },
+            );
+            assert!(
+                matches!(held, ApiError::RelayerTimeout(_)),
+                "{message}: {held}"
+            );
+            assert_eq!(
+                reservation_disposition(&held),
+                ReservationDisposition::Keep,
+                "{message}"
+            );
+        }
+    }
 
     /// The cap bounds the fee per gas a transaction may pay: an EIP-1559 `max_fee_per_gas`
     /// (a tip under the cap is not enough) or a legacy `gas_price`, the cap itself included.

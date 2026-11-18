@@ -262,11 +262,16 @@ export function relayedApproval(body: unknown): { owner: string; spender: string
 /**
  * A relay endpoint (POST {base}/transactions): hashes in order, or the refusal/outage asked for. With a
  * `chain`, a relayed MANA approve raises that allowance and every relayed hash gets the receipt `confirm`.
+ * `fail-after-send` broadcasts (the hash goes to `onRelay` and the chain as on `ok`) and then answers
+ * `failStatus` with no hash: 500 by default, as an error after the send; 504 is the relay's answer when
+ * the node took the transaction but its own answer was lost.
  */
-export function createFakeRelay(opts: { mode?: "ok" | "refuse" | "down"; onRelay?: (hash: Hex, body: unknown) => void; chain?: FakeChain; confirm?: TxReceipt["status"] | "none"; chainId?: number } = {}) {
+export function createFakeRelay(
+  opts: { mode?: "ok" | "refuse" | "down" | "fail-after-send"; failStatus?: number; onRelay?: (hash: Hex, body: unknown) => void; chain?: FakeChain; confirm?: TxReceipt["status"] | "none"; chainId?: number } = {},
+) {
   let n = 0;
   const posts: unknown[] = [];
-  const state = { mode: opts.mode ?? "ok", confirm: opts.confirm ?? "success" };
+  const state = { mode: opts.mode ?? "ok", confirm: opts.confirm ?? "success", failStatus: opts.failStatus ?? 500 };
   const fetchImpl = (async (_url: string, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body ?? "null")) as unknown;
     posts.push(body);
@@ -281,6 +286,7 @@ export function createFakeRelay(opts: { mode?: "ok" | "refuse" | "down"; onRelay
       } else if (state.confirm !== "none") opts.chain.receipts.set(hash.toLowerCase(), state.confirm);
     }
     opts.onRelay?.(hash, body);
+    if (state.mode === "fail-after-send") return new Response(JSON.stringify({ ok: false, error: "unknown", message: "Unknown error" }), { status: state.failStatus });
     return new Response(JSON.stringify({ ok: true, txHash: hash }), { status: 200 });
   }) as unknown as typeof fetch;
   return { fetchImpl, posts, state };

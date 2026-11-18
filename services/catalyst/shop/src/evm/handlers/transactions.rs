@@ -83,10 +83,20 @@ pub async fn send_transaction(
         }
     };
 
-    state
+    // The transaction is out, so the answer carries its hash whatever recording it does. An error
+    // here would tell the client nothing was sent, and it would sign again while this one lands. A
+    // reservation left without its hash still counts against the buyer's daily quota.
+    if let Err(err) = state
         .transaction
         .confirm_reservation(&session_id, &tx_hash)
-        .await?;
+        .await
+    {
+        tracing::error!(
+            tx_hash = %tx_hash,
+            error = %err,
+            "economy: relayed a transaction but could not record its hash on the quota reservation"
+        );
+    }
 
     Ok(Json(json!({ "ok": true, "txHash": tx_hash })).into_response())
 }

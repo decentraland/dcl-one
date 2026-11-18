@@ -23,6 +23,7 @@ import {
   GaslessUnavailableError,
   metaTxType,
   normalizeSignature,
+  refusedBeforeBroadcast,
   relayMetaTransaction,
   SignatureDeclinedError,
 } from "./metatx";
@@ -274,6 +275,30 @@ describe("relaying a meta-transaction", () => {
     await expect(
       relayMetaTransaction({ provider, reader: fakeReader({ code: async () => "0x6080" }), target, from, functionData: "0x12" }),
     ).rejects.toBeInstanceOf(GaslessUnavailableError);
+  });
+
+  it("only a 4xx refusal proves nothing was sent", async () => {
+    const provider = { request: async () => `0x${"22".repeat(65)}` };
+    const answering = (status: number, body: unknown) =>
+      (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
+    const relay = (fetchImpl: typeof fetch) => relayMetaTransaction({ provider, reader: fakeReader(), target, from, functionData: "0x12", fetchImpl });
+    for (const [status, error] of [
+      [400, "invalid_transaction"],
+      [429, "quota_reached"],
+    ] as const) {
+      await expect(relay(answering(status, { ok: false, error, message: error })), `${status}`).rejects.toMatchObject({ reason: "relayer-rejected" });
+    }
+    // A failure after the send (500), a gateway in between (502), an upstream relay's 503 passed
+    // through, no answer from the node (504): the transaction may have been broadcast, so the
+    // credit must not be released.
+    for (const status of [500, 501, 502, 503, 504]) {
+      await expect(relay(answering(status, { ok: false, error: "unknown", message: "Unknown error" })), `${status}`).rejects.toMatchObject({
+        reason: "relayer-unreachable",
+      });
+    }
+    await expect(relay(answering(200, { ok: true }))).rejects.toMatchObject({ reason: "relayer-unreachable" });
+    expect([400, 404, 409, 429, 499].every(refusedBeforeBroadcast)).toBe(true);
+    expect([500, 501, 502, 503, 504, 520, 524].some(refusedBeforeBroadcast)).toBe(false);
   });
 });
 

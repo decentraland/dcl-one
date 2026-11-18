@@ -240,7 +240,9 @@ type Harness = {
   storage: ReturnType<typeof memoryStorage>;
 };
 
-async function harness(opts: { method?: "credits" | "mana"; handlers?: FakeHandlers; session?: Session; relay?: "ok" | "refuse" | "down"; confirm?: "success" | "reverted" | "none" } = {}): Promise<Harness> {
+async function harness(
+  opts: { method?: "credits" | "mana"; handlers?: FakeHandlers; session?: Session; relay?: "ok" | "refuse" | "down" | "fail-after-send"; failStatus?: number; confirm?: "success" | "reverted" | "none" } = {},
+): Promise<Harness> {
   const session = opts.session ?? web3();
   const offer = opts.method === "mana" ? wearableResale(session) : creatorOrder(session);
   const tradeId = opts.method === "mana" ? "trade-resale-1" : "trade-creator-1";
@@ -248,6 +250,7 @@ async function harness(opts: { method?: "credits" | "mana"; handlers?: FakeHandl
   const chain = createFakeChain();
   const relay = createFakeRelay({
     mode: opts.relay ?? "ok",
+    failStatus: opts.failStatus,
     onRelay: (hash) => {
       if ((opts.confirm ?? "success") !== "none") chain.receipts.set(hash.toLowerCase(), opts.confirm === "reverted" ? "reverted" : "success");
     },
@@ -359,6 +362,33 @@ describe("running a credits group through the state machine", () => {
     expect(statusOf(h).status).toBe("submitted");
     expect(h.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
     expect(await watchGroup(h.deps, statusOf(h))).toMatchObject({ status: "confirmed", txHash: `0x${"b".repeat(64)}` });
+  });
+
+  // 500: the relay failed after the send (it could not record the hash). 504: the node took the
+  // transaction but the relay never got its answer.
+  it.each([500, 504])("a relay %i after it broadcast keeps the credit until the server reconciles it, and signs nothing again", async (failStatus) => {
+    const settled = {
+      userPurchases: () => ({ purchases: [{ id: `0x${"a1".repeat(32)}`, status: "SETTLED", usdCents: 100, createdAt: 1, txHash: `0x${"b".repeat(64)}` }] }),
+    };
+    const authorizations = (h: Harness) => h.shop.log.filter((r) => r.name === "authorizeCreditBatch").length;
+    // An in-app wallet: a released credit would let TRY AGAIN sign a second one while the first lands.
+    const inApp = await harness({ session: web2(), relay: "fail-after-send", failStatus, handlers: settled });
+    expect(await runGroup(inApp.deps, inApp.group, inApp.resolved)).toMatchObject({ status: "pending", txHash: null });
+    expect(statusOf(inApp).status).toBe("submitted");
+    expect(inApp.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
+    // Running the group again is refused while it is unsettled: no second credit, no second signature.
+    expect(await runGroup(inApp.deps, inApp.group, inApp.resolved)).toMatchObject({ status: "skipped", reason: "submitted" });
+    expect(authorizations(inApp)).toBe(1);
+    expect(inApp.relay.posts).toHaveLength(1);
+    // The server's record of the same credit settles it.
+    expect(await watchGroup(inApp.deps, statusOf(inApp))).toMatchObject({ status: "confirmed", txHash: `0x${"b".repeat(64)}` });
+
+    // A web3 wallet: no fallback to sending the same credit from the wallet.
+    const web3Wallet = await harness({ relay: "fail-after-send", failStatus, handlers: settled });
+    expect(await runGroup(web3Wallet.deps, web3Wallet.group, web3Wallet.resolved)).toMatchObject({ status: "pending", txHash: null });
+    expect(web3Wallet.relay.posts).toHaveLength(1);
+    expect(web3Wallet.wallet.sent).toHaveLength(0);
+    expect(web3Wallet.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
   });
 });
 

@@ -2076,6 +2076,158 @@ async fn a_direct_relay_is_signed_locally_and_recorded_with_its_target() {
     cleanup_user(&pool, &user).await;
 }
 
+/// A relay that broadcast but could not record the hash on the buyer's quota reservation still
+/// answers the hash: an error would tell the client nothing was sent, and it would sign again
+/// while this transaction lands. The reservation stays and still counts against the quota.
+#[tokio::test]
+async fn a_broadcast_whose_hash_cannot_be_recorded_still_answers_the_hash() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let (chain_url, raws) = spawn_fake_chain().await;
+    let relayer_key = PrivateKeySigner::random();
+    let settings = Settings {
+        polygon_rpc_url: Some(chain_url),
+        meta_tx_broadcast_enabled: true,
+        relayer_private_key: Some(hex::encode(relayer_key.to_bytes())),
+        ..Settings::for_tests()
+    };
+    let app = router(state(pool.clone(), settings));
+    let user_key = PrivateKeySigner::random();
+    let user = format!("{:#x}", user_key.address());
+    // Recording a hash fails for this buyer only: the scratch database is shared.
+    let name = format!("refuse_hash_{}", &user[2..14]);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE FUNCTION economy.{name}() RETURNS trigger LANGUAGE plpgsql AS $$ \
+         BEGIN IF NEW.tx_hash IS NOT NULL AND lower(NEW.user_address) = '{user}' THEN \
+         RAISE EXCEPTION 'recording refused'; END IF; RETURN NEW; END $$; \
+         CREATE TRIGGER {name} BEFORE UPDATE ON economy.transactions \
+         FOR EACH ROW EXECUTE FUNCTION economy.{name}();"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = post_transaction(
+        &app,
+        &user,
+        COLLECTION,
+        &signed_split_calldata(&user_key, FS),
+    )
+    .await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP TRIGGER {name} ON economy.transactions; DROP FUNCTION economy.{name}();"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["ok"], true, "{body}");
+    let sent = raws.lock().unwrap().clone();
+    assert_eq!(sent.len(), 1, "one raw transaction went out");
+    assert_eq!(
+        body["txHash"].as_str(),
+        Some(format!("{:#x}", alloy_primitives::keccak256(&sent[0])).as_str()),
+        "the answer carries the broadcast hash"
+    );
+    assert_eq!(confirmed_hash(&pool, &user).await, None);
+    assert_eq!(
+        row_count(&pool, &user).await,
+        1,
+        "the reservation still counts against the quota"
+    );
+    cleanup_user(&pool, &user).await;
+}
+
+/// A JSON-RPC endpoint in front of `chain_url` that loses the answer to `eth_sendRawTransaction`:
+/// the send reaches the node (the fake chain records it), and the caller gets a gateway's 502 page.
+/// Every other call passes through.
+async fn spawn_rpc_losing_send_answers(chain_url: String) -> String {
+    async fn handle(
+        axum::extract::State(chain): axum::extract::State<String>,
+        body: axum::body::Bytes,
+    ) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        let sending = serde_json::from_slice::<Value>(&body)
+            .ok()
+            .is_some_and(|req| req["method"] == "eth_sendRawTransaction");
+        let answer = reqwest::Client::new()
+            .post(&chain)
+            .header("content-type", "application/json")
+            .body(body.to_vec())
+            .send()
+            .await
+            .expect("the fake chain answers");
+        if sending {
+            return (StatusCode::BAD_GATEWAY, "<html>502 Bad Gateway</html>").into_response();
+        }
+        let status = StatusCode::from_u16(answer.status().as_u16()).unwrap();
+        let text = answer.bytes().await.expect("the fake chain's body");
+        (status, [("content-type", "application/json")], text).into_response()
+    }
+    let app = axum::Router::new()
+        .route("/", post(handle))
+        .with_state(chain_url);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind lossy rpc");
+    let addr = listener.local_addr().expect("lossy rpc addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    format!("http://{addr}")
+}
+
+/// The node took the transaction, but its answer to the send was lost. That is no evidence the
+/// transaction was never sent: the relay answers 504 with no hash, never a refusal (which the
+/// client would read as "sign again"), and the buyer's quota slot stays consumed.
+#[tokio::test]
+async fn a_send_the_node_took_but_whose_answer_was_lost_is_never_a_refusal() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let (chain_url, raws) = spawn_fake_chain().await;
+    let lossy = spawn_rpc_losing_send_answers(chain_url).await;
+    let relayer_key = PrivateKeySigner::random();
+    let settings = Settings {
+        polygon_rpc_url: Some(lossy),
+        meta_tx_broadcast_enabled: true,
+        relayer_private_key: Some(hex::encode(relayer_key.to_bytes())),
+        ..Settings::for_tests()
+    };
+    let app = router(state(pool.clone(), settings));
+    let user_key = PrivateKeySigner::random();
+    let user = format!("{:#x}", user_key.address());
+    let (status, body) = post_transaction(
+        &app,
+        &user,
+        COLLECTION,
+        &signed_split_calldata(&user_key, FS),
+    )
+    .await;
+    let sent = raws.lock().unwrap().len();
+    let rows = row_count(&pool, &user).await;
+    let hash = if rows > 0 {
+        confirmed_hash(&pool, &user).await
+    } else {
+        None
+    };
+    cleanup_user(&pool, &user).await;
+    assert_eq!(sent, 1, "the node holds the transaction");
+    assert_eq!(status, 504, "{body}");
+    assert_eq!(body["ok"], false, "{body}");
+    assert!(body.get("txHash").is_none(), "{body}");
+    assert_eq!(rows, 1, "the reservation still counts against the quota");
+    assert_eq!(hash, None, "no hash was observed");
+}
+
 /// A real read over a real endpoint, only when `ECONOMY_LIVE_RPC_URL` names
 /// a public Polygon JSON-RPC: the chain id and MANA's `getNonce` for a fresh
 /// wallet, through the strict guard (no loopback admitted).

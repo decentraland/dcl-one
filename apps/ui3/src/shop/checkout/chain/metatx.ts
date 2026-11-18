@@ -25,7 +25,9 @@ export type MetaTxTarget = {
 
 /**
  * Why a relayed rail could not run. `relayer-rejected` vs `relayer-unreachable` is a money distinction:
- * a parsed answer with no hash was provably not broadcast, while no usable answer may have been.
+ * `relayer-rejected` is a refusal the relay answers before it broadcasts, so nothing was sent;
+ * `relayer-unreachable` is any answer that may follow a broadcast (none at all, a timeout, a failure
+ * after sending, an answer without a hash), so the transaction may still land.
  */
 export type GaslessReason = "disabled" | "contract-account" | "signing-failed" | "relayer-rejected" | "relayer-unreachable" | "unknown";
 
@@ -164,10 +166,20 @@ export async function relayMetaTransaction(opts: RelayOptions): Promise<Relayed>
     throw new GaslessUnavailableError((e as Error)?.message ?? "relayer unreachable", "relayer-unreachable");
   }
   if (!body) throw new GaslessUnavailableError(`relayer answered ${status} with no body`, "relayer-unreachable");
-  if (body.ok === false || !body.txHash) {
-    throw new GaslessUnavailableError(body.message ?? `relayer ${status}`, "relayer-rejected");
-  }
-  return { txHash: body.txHash as Hex, nonce };
+  if (body.ok !== false && body.txHash) return { txHash: body.txHash as Hex, nonce };
+  const reason = body.ok === false && refusedBeforeBroadcast(status) ? "relayer-rejected" : "relayer-unreachable";
+  throw new GaslessUnavailableError(body.message ?? `relayer ${status}`, reason);
+}
+
+/**
+ * Whether a relay refusal with this status proves nothing was broadcast: only a 4xx (validation,
+ * quota, a reverted simulation), as the relay itself decides when it refunds a buyer's quota slot.
+ * A 5xx can come after the send (no answer from the node, a failure to record a transaction already
+ * out, an upstream relay's own 5xx passed through), so it is never read as a refusal, even a 503 the
+ * relay answers before sending: the client cannot tell the two apart.
+ */
+export function refusedBeforeBroadcast(status: number): boolean {
+  return status >= 400 && status < 500;
 }
 
 export function isGaslessUnavailable(e: unknown): e is GaslessUnavailableError {
