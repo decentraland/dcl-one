@@ -402,7 +402,6 @@ fn new_profile(address: Address, ipfs: &IpfsIo) -> UserProfile {
     UserProfile {
         version: 0,
         content: SerializedProfile {
-            has_connected_web3: Some(true),
             eth_address: format!("{address:#x}"),
             user_id: Some(format!("{address:#x}")),
             ..Default::default()
@@ -898,10 +897,13 @@ fn process_login_bridge(
                 login_events.completed(&wallet);
                 segment_config
                     .update_identity(format!("{:#x}", wallet.address().unwrap()), guest_account);
-                let (profile, deployed) = match profile {
+                let (mut profile, deployed) = match profile {
                     LoginProfile::Deployed(profile) => (profile, true),
                     LoginProfile::New(profile) => (profile, false),
                 };
+                // The account decides, whatever an earlier deploy recorded: a guest account has
+                // not connected web3, so the HUD and scenes read it as a guest.
+                profile.content.has_connected_web3 = Some(!guest_account);
                 current_profile.profile = Some(profile);
                 current_profile.is_deployed = deployed;
                 // held, the host shows its welcome page, which deploys the new profile

@@ -641,7 +641,9 @@ pub fn setup_primary_profile(
                     SceneEntityId::PLAYER,
                     &PbPlayerIdentityData {
                         address: profile.content.eth_address.clone(),
-                        is_guest: !(profile.content.has_connected_web3.unwrap_or(false)),
+                        // a guest account is a guest even when an older deploy says it connected web3
+                        is_guest: wallet.is_guest_account()
+                            || !(profile.content.has_connected_web3.unwrap_or(false)),
                     },
                 );
             }
