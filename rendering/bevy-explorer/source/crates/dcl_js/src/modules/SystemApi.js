@@ -413,6 +413,22 @@ module.exports.getPortablesStream = async function() {
   return streamGenerator();
 }
 
+// stream of the map pins of portable-experience scenes, as a whole list on subscribe and on every
+// change: [{ id, x, y, title, description, icon? }]
+module.exports.getMapPinsStream = async function() {
+  const rid = await Deno.core.ops.op_get_map_pins_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_map_pins_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
 module.exports.getPermissionUsedStream = async function() {
   const rid = await Deno.core.ops.op_get_permission_used_stream();
 

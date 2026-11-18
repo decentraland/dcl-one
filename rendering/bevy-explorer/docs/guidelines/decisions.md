@@ -519,14 +519,24 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   as unity-explorer's. unity-explorer's minimap doesn't zoom and moves the pin to the edge past a
   fixed distance (about eight parcels); this one zooms, so the pin moves to the edge exactly when
   the destination leaves the visible map. It is the full map's destination pin, and the minimap
-  being square, it runs along the square's edge rather than a circle. Scene map pins are
-  on neither (below). The header's heart marks the place the player stands in as a favourite; in
+  being square, it runs along the square's edge rather than a circle. Scene map pins are on
+  both (below). The header's heart marks the place the player stands in as a favourite; in
   a World, the World's scene there.
-- **The map draws no scene map pins.** unity-explorer shows the `MapPin`s of every portable
-  experience, among them the quests' global one (`globalpx.dcl.eth`, loaded at startup from
-  `alfa-global-portable-experiences`), and of any scene under `alfa-map-pins`, with a Quest
-  Mini-Games layer to hide them. This explorer loads no global portable experience, so the map
-  reads no `MapPin` and has no such layer.
+- **Scene map pins come only from portable experiences.** The engine reads `MapPin` only from
+  scenes whose scene.json declares `isPortableExperience: true`, however they were loaded, and
+  streams them to the HUD (`getMapPinsStream`); every other scene's pins are ignored, and no flag
+  turns them on for other scenes, where unity-explorer also reads them under `alfa-map-pins`. The
+  Layers panel's Quest Mini-Games switch (on by default, for the session) shows or hides them on
+  the full map and the minimap. A pin stands on the centre of its parcel, its position rounded
+  halves to even; it is never clustered, its title and description are not drawn, and a click
+  opens the place panel for its parcel. It shows the scene's own icon, a content file of the
+  scene, cut round on a white disc; with no such file (another texture kind, an external url, a
+  missing file, or an image that fails to load) it shows the default quest pin. unity-explorer
+  loads that icon only under `alfa-map-pins-custom-icons`, and otherwise always shows its default
+  pin. The pin doesn't pulse. This explorer loads no global portable
+  experience at startup: unity-explorer loads the quests' one (`globalpx.dcl.eth`) from
+  `alfa-global-portable-experiences`; here it is loaded with the launch option
+  (`--portables` or `?portables=`, e.g. `basiccontroller.dcl.eth;globalpx.dcl.eth`).
 - **Arrival is checked on every position report.** unity-explorer checks the route only after
   the player's squared distance from the map's origin has changed by 300 map units, which can
   skip the arrival spot when the player stops on it or reaches it sideways, so the route never

@@ -8,13 +8,18 @@ import { mapLayerData, type MarkerLayer } from '@explorer-core/features/map/mapL
 import type { MapLayer } from '@explorer-core/features/map/mapLayersStore'
 import type { EventMarker, PlaceMarker } from '@explorer-core/features/map/mapMarkers'
 import { nearbyPlayers } from '@explorer-core/features/map/mapPeople'
+import { mapPins, type PinMarker } from '@explorer-core/features/map/mapPins'
 
 export interface MapLayerData {
   liveEvents: EventMarker[]
   pois: PlaceMarker[]
   /** The connected players, as map positions. */
   people: Vec2[]
+  /** The engine sends them whether or not a map is shown. */
+  pins: readonly PinMarker[]
 }
+
+const NO_PINS: readonly PinMarker[] = []
 
 /** Holds `layer` while `on`. */
 function useLayer(layer: MarkerLayer, on: boolean): void {
@@ -43,6 +48,7 @@ function useLayerFromFirstShow(layer: MarkerLayer, on: boolean): void {
 export function useMapLayerData(shown: boolean, layers: ReadonlySet<MapLayer>, self: string | undefined): MapLayerData {
   const data = useSyncExternalStore(mapLayerData.subscribe, mapLayerData.getSnapshot)
   const nearby = useSyncExternalStore(nearbyPlayers.subscribe, nearbyPlayers.getSnapshot)
+  const allPins = useSyncExternalStore(mapPins.subscribe, mapPins.getSnapshot)
   const peopleOn = shown && layers.has('people')
   useLayerFromFirstShow('liveEvents', shown && layers.has('liveEvents'))
   useLayerFromFirstShow('pois', shown && layers.has('pois'))
@@ -60,5 +66,7 @@ export function useMapLayerData(shown: boolean, layers: ReadonlySet<MapLayer>, s
     return out
   }, [peopleOn, nearby, data.peers, self])
 
-  return { liveEvents: data.liveEvents, pois: data.pois, people }
+  const pins = shown && layers.has('pins') ? allPins : NO_PINS
+
+  return { liveEvents: data.liveEvents, pois: data.pois, people, pins }
 }

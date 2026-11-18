@@ -59,6 +59,7 @@ import { streamHere } from '../voiceChat/streamHere'
 import { receiveMapReply, setMapTransport } from '@explorer-core/features/map/mapApi'
 import { setNativeQuit } from '../gate/exitApplication'
 import { nearbyPlayers, travelCount } from '@explorer-core/features/map/mapPeople'
+import { mapPins } from '@explorer-core/features/map/mapPins'
 import { eventAnalytics } from '../events/eventFormat'
 import { useEventsData, type EventsData } from '../events/useEventsData'
 import { donatePlaceOf, donateSceneKey } from '@explorer-core/features/donate/place'
@@ -2574,6 +2575,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'mapPlayers':
           nearbyPlayers.receive(msg.players)
           break
+        case 'mapPins':
+          mapPins.receive(msg.pins)
+          break
         case 'gallery':
         case 'galleryWrite':
         case 'externalUrlOpened':
@@ -2680,6 +2684,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       setMapTransport(null)
       setNativeQuit(null)
       nearbyPlayers.setTransport(null)
+      mapPins.clear()
       driver.dispose()
       driverRef.current = null
     }

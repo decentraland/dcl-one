@@ -42,7 +42,7 @@ import { mockEventList, mockEventPlaces, setMockReminder } from './mockEvents'
 import type { Color3, PortableInfo, PortableState } from './generated/index'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
 import { fixMapPublicReads } from '../features/map/mapApi'
-import { MOCK_NEARBY_PLAYERS, MOCK_PEERS, MOCK_POIS, mockMapReply } from './mockMap'
+import { MOCK_MAP_PINS, MOCK_NEARBY_PLAYERS, MOCK_PEERS, MOCK_POIS, mockMapReply } from './mockMap'
 import { DEFAULT_REALM } from '@hud-host'
 
 // The empty account's events are the reference client's calendar page: five days of seven cards,
@@ -1076,6 +1076,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       for (let done = 0; done <= total; done++) setTimeout(() => reply(at(done, 'running')), 3000 + done * 500)
       setTimeout(() => reply(at(total, 'ready')), 3000 + (total + 1) * 500)
     }
+    reply({ kind: 'mapPins', pins: MOCK_MAP_PINS })
     // ?mockportables=1 → the portables list, so the rail button and its popover are exercisable.
     if (new URLSearchParams(location.search).get('mockportables') === '1') sendPortables()
     // ?perm=1 → fire a sample scene permission prompt so the dialog is exercisable in the mock, and

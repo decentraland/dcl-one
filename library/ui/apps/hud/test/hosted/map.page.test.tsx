@@ -7,6 +7,7 @@ import { fixMapPublicReads, receiveMapReply, setMapTransport, type MapRequest } 
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import type { EventData } from '@explorer-core/engine/protocol'
 import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
+import { mapPins } from '@explorer-core/features/map/mapPins'
 import { navigation } from '@explorer-core/features/map/navigation'
 import { eventOf, placeOf } from '@explorer-core/test/mapFixtures'
 import { MapPage } from '../../features/map/MapPage'
@@ -106,7 +107,8 @@ afterEach(() => {
   vi.restoreAllMocks()
   setMapTransport(null)
   fixMapPublicReads(null)
-  for (const layer of ['liveEvents', 'pois', 'people'] as const) mapLayers.set(layer, true)
+  for (const layer of ['liveEvents', 'pois', 'pins', 'people'] as const) mapLayers.set(layer, true)
+  mapPins.clear()
   mapLayers.setMapType('satellite')
   navigation.stop()
 })
@@ -186,6 +188,35 @@ describe('map layers', () => {
     expect(within(view()).queryByRole('button', { name: 'Friday Party' })).not.toBeInTheDocument()
   })
 
+  it('draws the quest pins of portable experiences, with their own icon, and hides them with their layer', async () => {
+    serve({ places: [place('p', 'Plaza', ['10,-5'])] })
+    renderMap()
+    act(() =>
+      mapPins.receive([
+        { id: 'bafypx:512', x: 10, y: -5, title: 'Memory Grid', description: 'Win a round', icon: null },
+        { id: 'bafypx:513', x: 3, y: 2, title: 'Tile Tally', description: '', icon: 'https://content.test/tile_tally.png' }
+      ])
+    )
+    const memory = marker('Memory Grid')
+    expect(memory).toHaveAttribute('data-marker', 'pins')
+    expect(within(view()).queryByText('Memory Grid')).not.toBeInTheDocument()
+    expect(marker('Tile Tally').querySelector('img')).toHaveAttribute('src', 'https://content.test/tile_tally.png')
+    fireEvent.error(marker('Tile Tally').querySelector('img')!)
+    expect(marker('Tile Tally').querySelector('img')).not.toHaveAttribute('src', 'https://content.test/tile_tally.png')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Layers' }))
+    await userEvent.click(within(screen.getByRole('region', { name: 'Layers' })).getByRole('switch', { name: 'Quest Mini-Games' }))
+    expect(within(view()).queryByRole('button', { name: 'Memory Grid' })).not.toBeInTheDocument()
+  })
+
+  it('opens the place under a quest pin when it is clicked', async () => {
+    serve({ places: [place('p', 'Plaza', ['10,-5'])] })
+    renderMap()
+    act(() => mapPins.receive([{ id: 'bafypx:512', x: 10, y: -5, title: 'Memory Grid', description: '', icon: null }]))
+    await userEvent.click(marker('Memory Grid'))
+    expect(await within(panel()).findByRole('heading', { name: 'Plaza' })).toBeInTheDocument()
+  })
+
   it('leaves a live event in a world off the map', async () => {
     serve({ events: [event('w', 'World Party', 0, 0, { live: true, world: true }), event('g', 'City Party', 5, 5, { live: true })] })
     renderMap()
@@ -198,7 +229,7 @@ describe('map layers', () => {
     renderMap()
     await userEvent.click(screen.getByRole('button', { name: 'Layers' }))
     const layers = screen.getByRole('region', { name: 'Layers' })
-    for (const name of ['Live Events', 'Points of interest', 'People']) {
+    for (const name of ['Live Events', 'Points of interest', 'Quest Mini-Games', 'People']) {
       expect(within(layers).getByRole('switch', { name })).toBeChecked()
     }
     expect(within(layers).getByRole('radio', { name: 'Satellite' })).toBeChecked()

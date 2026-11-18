@@ -4,6 +4,7 @@ import { clusterCellSize, clusterMarkers } from '../features/map/clusters'
 import { parcelCenter, parcelWithinBounds, playerMarkerPosition, positionToCoords } from '../features/map/mapCoords'
 import { createMapLayersStore } from '../features/map/mapLayersStore'
 import { liveEventMarkers, poiMarkers, resultMarkers } from '../features/map/mapMarkers'
+import { mapPins, pinMarkers } from '../features/map/mapPins'
 import type { DiscoverPlace } from '../features/places/placesApi'
 import type { EventData } from '../engine/protocol'
 import { eventOf, placeOf } from './mapFixtures'
@@ -175,10 +176,27 @@ describe('marker layers', () => {
   })
 })
 
+describe('quest pins', () => {
+  it('stand on the centre of their parcel, keep their icon and replace the whole list', () => {
+    expect(pinMarkers([{ id: 'px:1', x: -3, y: 7, title: 'Memory Grid', description: 'Win', icon: null }])).toEqual([
+      { id: 'px:1', key: { x: -3, y: 7 }, position: parcelCenter({ x: -3, y: 7 }), title: 'Memory Grid', icon: null }
+    ])
+    let calls = 0
+    const off = mapPins.subscribe(() => calls++)
+    mapPins.receive([{ id: 'px:1', x: 0, y: 0, title: '', description: '', icon: 'https://content.test/a.png' }])
+    expect(mapPins.getSnapshot().map((p) => p.icon)).toEqual(['https://content.test/a.png'])
+    mapPins.clear()
+    mapPins.clear()
+    expect(mapPins.getSnapshot()).toEqual([])
+    expect(calls).toBe(2)
+    off()
+  })
+})
+
 describe('map layers store', () => {
-  it('starts with the markers, people and satellite on and parcels off', () => {
+  it('starts with the markers, the quest pins, people and satellite on and parcels off', () => {
     const store = createMapLayersStore()
-    expect([...store.getSnapshot()].sort()).toEqual(['liveEvents', 'people', 'pois', 'satellite'])
+    expect([...store.getSnapshot()].sort()).toEqual(['liveEvents', 'people', 'pins', 'pois', 'satellite'])
   })
 
   it('tells subscribers of a change and keeps one map type on', () => {

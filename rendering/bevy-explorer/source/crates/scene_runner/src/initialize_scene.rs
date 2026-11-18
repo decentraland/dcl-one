@@ -19,9 +19,9 @@ use bevy::{
 use common::{
     sets::RealmLifecycle,
     structs::{
-        server_mode, AppConfig, AppError, CurrentRealm, EditorMode, GlobalCrdtStateUpdate,
-        IVec2Arg, NearbyVoiceDisabled, PreviewMode, SceneJsFile, SceneLoadDistance, SceneMeta,
-        SceneTime, StartupScenes, WorldHold,
+        server_mode, AppConfig, AppError, CurrentRealm, DeclaresPortableExperience, EditorMode,
+        GlobalCrdtStateUpdate, IVec2Arg, NearbyVoiceDisabled, PreviewMode, SceneJsFile,
+        SceneLoadDistance, SceneMeta, SceneTime, StartupScenes, WorldHold,
     },
     terrain::{Occupancy, TerrainChange, TerrainTargets, BORDER_PADDING},
     util::{TaskExt, TryPushChildrenEx},
@@ -331,6 +331,7 @@ pub(crate) fn load_scene_javascript(
         let portable = portable_scenes.get(&definition.id);
         let portable_experiences = meta.portable_experiences_toggle();
         let nearby_voice_chat_enabled = meta.nearby_voice_chat_enabled();
+        let declares_portable_experience = meta.declares_portable_experience();
 
         let Some(base) = meta
             .scene
@@ -443,6 +444,10 @@ pub(crate) fn load_scene_javascript(
 
         if !nearby_voice_chat_enabled {
             commands.entity(root).try_insert(NearbyVoiceDisabled);
+        }
+
+        if declares_portable_experience {
+            commands.entity(root).try_insert(DeclaresPortableExperience);
         }
 
         info!("{root:?}: started scene (location: {base:?}, scene thread id: {scene_id:?}, is sdk7: {is_sdk7:?}), storage root: {storage_root}");

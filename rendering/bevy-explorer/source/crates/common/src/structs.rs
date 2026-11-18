@@ -1368,9 +1368,20 @@ pub struct SceneMeta {
     /// ([`PortableExperiencesToggle`]) and `nearbyVoiceChat` are read. Kept as raw json so a value of another shape never
     /// fails the scene.json.
     pub feature_toggles: Option<serde_json::Value>,
+    /// `isPortableExperience`. Kept as raw json so a value of another shape never fails the
+    /// scene.json.
+    pub is_portable_experience: Option<serde_json::Value>,
 }
 
 impl SceneMeta {
+    /// `isPortableExperience: true`, however the scene was loaded.
+    pub fn declares_portable_experience(&self) -> bool {
+        self.is_portable_experience
+            .as_ref()
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    }
+
     /// What this scene says about portable experiences while the player stands in it.
     pub fn portable_experiences_toggle(&self) -> PortableExperiencesToggle {
         self.feature_toggles
@@ -1417,6 +1428,10 @@ impl std::str::FromStr for PortableExperiencesToggle {
 
 #[derive(Component)]
 pub struct NearbyVoiceDisabled;
+
+/// On a scene root whose scene.json declares `isPortableExperience: true`.
+#[derive(Component)]
+pub struct DeclaresPortableExperience;
 
 pub trait PermissionStrings {
     fn active(&self) -> &str;
@@ -2651,6 +2666,25 @@ mod tests {
                 PortableExperiencesToggle::Enabled,
                 "{toggles}"
             );
+        }
+    }
+
+    #[test]
+    fn is_portable_experience_parses_leniently() {
+        let meta = |field: &str| -> SceneMeta {
+            serde_json::from_str(&format!(
+                r#"{{"main":"bin/index.js","scene":{{"base":"0,0","parcels":["0,0"]}}{field}}}"#
+            ))
+            .unwrap()
+        };
+        assert!(meta(r#","isPortableExperience":true"#).declares_portable_experience());
+        for field in [
+            "",
+            r#","isPortableExperience":false"#,
+            r#","isPortableExperience":"true""#,
+            r#","isPortableExperience":1"#,
+        ] {
+            assert!(!meta(field).declares_portable_experience(), "{field}");
         }
     }
 }

@@ -1,5 +1,6 @@
 pub mod agent_commands;
 pub mod explorer_ui;
+pub mod map_pins;
 pub mod portables;
 pub mod smart_wearables;
 pub mod teleport;
@@ -133,6 +134,7 @@ impl Plugin for RestrictedActionsPlugin {
         app.add_plugins(smart_wearables::SmartWearablesPlugin);
         app.add_plugins(portables::PortablesPlugin);
         app.add_plugins(world_access::WorldAccessPlugin);
+        app.add_plugins(map_pins::MapPinsPlugin);
     }
 }
 

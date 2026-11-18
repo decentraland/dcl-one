@@ -102,11 +102,11 @@ fn gen_sdk_components() -> Result<()> {
         "ui_input_binding",
         "avatar_nametag",
         "explorer_item_purchase_result",
+        "map_pin",
     ];
 
     let proto_root = protocol_proto_root();
     // A protocol update must not silently disappear at the Explorer generation boundary.
-    // MapPin (1097) is deprecated and intentionally has no SDK/Explorer consumer.
     let component_dir = proto_root.join("decentraland/sdk/components");
     for entry in std::fs::read_dir(&component_dir)? {
         let path = entry?.path();
@@ -114,9 +114,6 @@ fn gen_sdk_components() -> Result<()> {
             continue;
         }
         let name = path.file_stem().unwrap().to_str().unwrap();
-        if name == "map_pin" {
-            continue;
-        }
         let source = std::fs::read_to_string(&path)?;
         if source.contains("option (common.ecs_component_id)") {
             assert!(components.contains(&name), "active protocol component {name} has no Explorer binding; add its binding and runtime consumer together");
