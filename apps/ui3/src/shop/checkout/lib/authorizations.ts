@@ -126,6 +126,9 @@ export async function setAuthorization(opts: AuthorizationContext & { auth: Shop
       return;
     } catch (e) {
       if (isSignatureDeclined(e) || e instanceof TxPendingError) throw e;
+      // Unlike a purchase, this falls back to the wallet even when the relay may have sent the
+      // call (`relayer-unreachable`): setting an authorization twice leaves it set once, so the
+      // cost is a second prompt and its gas, and a web3 buyer can still approve while the relay is down.
       const fallback = canPayGasItself(opts.walletKind) && (await onChain(provider, auth.chainId));
       if (!fallback) throw e;
     }

@@ -138,22 +138,32 @@ async fn failed_send(
     }
 }
 
-/// The error's envelope with `"not_sent": true` added. A body that is not a JSON object is
-/// answered as it is, without the evidence.
+/// The error's envelope with `"not_sent": true` added (`marked_not_sent`).
 async fn not_sent(err: ApiError) -> Response {
     let (mut parts, body) = err.into_response().into_parts();
     let bytes = axum::body::to_bytes(body, 64 * 1024)
         .await
         .unwrap_or_default();
-    let body = match serde_json::from_slice::<serde_json::Value>(&bytes) {
-        Ok(serde_json::Value::Object(mut envelope)) => {
-            envelope.insert("not_sent".into(), serde_json::Value::Bool(true));
+    let body = match marked_not_sent(&bytes) {
+        Some(marked) => {
             parts.headers.remove(header::CONTENT_LENGTH);
-            serde_json::to_vec(&envelope).unwrap_or_default()
+            marked
         }
-        _ => bytes.to_vec(),
+        None => bytes.to_vec(),
     };
     Response::from_parts(parts, axum::body::Body::from(body))
+}
+
+/// An error body with `"not_sent": true` added, or `None` for a body that is not a JSON object:
+/// that one is answered as it is, without the evidence, which a client reads as maybe sent.
+fn marked_not_sent(body: &[u8]) -> Option<Vec<u8>> {
+    match serde_json::from_slice::<serde_json::Value>(body) {
+        Ok(serde_json::Value::Object(mut envelope)) => {
+            envelope.insert("not_sent".into(), serde_json::Value::Bool(true));
+            serde_json::to_vec(&envelope).ok()
+        }
+        _ => None,
+    }
 }
 
 /// Forwards to the upstream relay. Its answer passes through as it is: whatever its status, it is
@@ -251,7 +261,34 @@ pub async fn get_user_transactions(
 
 #[cfg(test)]
 mod tests {
-    use super::refunds_quota_slot;
+    use super::{marked_not_sent, refunds_quota_slot};
+
+    #[test]
+    fn only_a_json_object_body_is_marked_not_sent() {
+        let marked =
+            marked_not_sent(br#"{"ok":false,"error":"invalid_transaction","message":"m"}"#)
+                .expect("an error envelope is marked");
+        let marked: serde_json::Value = serde_json::from_slice(&marked).unwrap();
+        assert_eq!(
+            marked,
+            serde_json::json!({"ok": false, "error": "invalid_transaction", "message": "m", "not_sent": true})
+        );
+        for body in [
+            &b""[..],
+            b"Bad Gateway",
+            b"[]",
+            br#""ok""#,
+            b"null",
+            b"{\"ok\":false",
+        ] {
+            assert_eq!(
+                marked_not_sent(body),
+                None,
+                "{}",
+                String::from_utf8_lossy(body)
+            );
+        }
+    }
 
     #[test]
     fn only_4xx_upstream_statuses_refund_the_quota_slot() {

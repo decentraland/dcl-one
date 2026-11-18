@@ -250,6 +250,14 @@ pub enum ReservationDisposition {
 /// that created no transaction), `RelayerFailed` (a lookup before signing), `HighCongestion`,
 /// `RelayerUnavailable`, and validation. Anything that can follow a send attempt is
 /// `RelayerTimeout`, answered without it.
+///
+/// The evidence is about this request, not about the signed meta-transaction. If the same signed
+/// body reached the relay twice and the first copy landed, the second fails before any send (the
+/// meta-transaction nonce is spent, so validation or gas estimation reverts) and is answered as not
+/// sent. A credits purchase is safe, since a credit is consumed once. A relayed MANA purchase from
+/// a web3 wallet would fall back to the wallet and could buy twice. The shop client never resends
+/// a POST whose answer it lost (it reads that as in flight), so this takes something between the
+/// buyer and the relay resending it. That risk is accepted here, not handled.
 pub fn reservation_disposition(err: &ApiError) -> ReservationDisposition {
     if is_post_broadcast(err) {
         return ReservationDisposition::Keep;
