@@ -146,6 +146,11 @@ impl SceneAdmission {
         }
     }
 
+    /// The gatekeeper refused the player as banned.
+    pub fn is_refused(&self) -> bool {
+        matches!(self.0, Admission::Refused { .. })
+    }
+
     pub fn scene_id(&self) -> Option<&str> {
         match &self.0 {
             Admission::Unknown => None,
@@ -162,6 +167,14 @@ pub struct SceneRoomModeration {
     pub scene_admins: HashSet<Address>,
 }
 
+/// Marks a remote player the local user must neither see nor hear: blocked either way, or banned
+/// from the current scene's room. `ban_block` keeps it current. While it is present the player's
+/// avatar, nametag and attachments are hidden and their nearby voice is not subscribed (a call
+/// still carries them); anything else that must leave the player out reads this marker rather
+/// than deciding again.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BlockedOrBanned;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum MetadataError {
     NotAnObject,
@@ -171,27 +184,34 @@ impl SceneRoomModeration {
     /// Parses `{"bannedAddresses":[..],"sceneAdmins":[..]}`. A missing or non-array field is
     /// empty; an entry that is not an address is skipped.
     pub fn from_metadata(metadata: &str) -> Result<Self, MetadataError> {
+        let mut moderation = Self::default();
+        moderation.update_from_metadata(metadata)?;
+        Ok(moderation)
+    }
+
+    /// Only explicit arrays replace lists. Missing or non-array fields retain known state;
+    /// an empty array clears its list, and entries that are not addresses are skipped.
+    pub(crate) fn update_from_metadata(&mut self, metadata: &str) -> Result<(), MetadataError> {
         if metadata.trim().is_empty() {
-            return Ok(Self::default());
+            return Ok(());
         }
         let value: serde_json::Value =
             serde_json::from_str(metadata).map_err(|_| MetadataError::NotAnObject)?;
         let object = value.as_object().ok_or(MetadataError::NotAnObject)?;
-        let addresses = |key: &str| -> HashSet<Address> {
-            object
-                .get(key)
-                .and_then(|v| v.as_array())
-                .map(|list| {
-                    list.iter()
-                        .filter_map(|entry| entry.as_str().and_then(|s| s.as_h160()))
-                        .collect()
-                })
-                .unwrap_or_default()
+        let addresses = |key: &str| -> Option<HashSet<Address>> {
+            object.get(key).and_then(|v| v.as_array()).map(|list| {
+                list.iter()
+                    .filter_map(|entry| entry.as_str().and_then(|s| s.as_h160()))
+                    .collect()
+            })
         };
-        Ok(Self {
-            banned_addresses: addresses("bannedAddresses"),
-            scene_admins: addresses("sceneAdmins"),
-        })
+        if let Some(addresses) = addresses("bannedAddresses") {
+            self.banned_addresses = addresses;
+        }
+        if let Some(addresses) = addresses("sceneAdmins") {
+            self.scene_admins = addresses;
+        }
+        Ok(())
     }
 }
 

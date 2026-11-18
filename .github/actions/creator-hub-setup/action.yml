@@ -45,7 +45,7 @@ runs:
           apps/creator-hub/packages/*/node_modules
           apps/creator-hub/packages/inspector/agents/bevy/node_modules
           apps/creator-hub/packages/creator-hub/.electron-vendors.cache.json
-        key: ${{ runner.os }}-pnpm-nodemodules-${{ hashFiles('apps/creator-hub/pnpm-lock.yaml', 'apps/creator-hub/pnpm-workspace.yaml', 'apps/creator-hub/packages/inspector/agents/bevy/pnpm-lock.yaml', 'apps/creator-hub/packages/inspector/agents/bevy/pnpm-workspace.yaml', '.github/actions/creator-hub-setup/action.yml') }}
+        key: ${{ runner.os }}-pnpm-nodemodules-${{ hashFiles('apps/creator-hub/pnpm-lock.yaml', 'apps/creator-hub/pnpm-workspace.yaml', 'apps/creator-hub/packages/inspector/agents/bevy/pnpm-lock.yaml', 'apps/creator-hub/packages/inspector/agents/bevy/pnpm-workspace.yaml', 'apps/creator-hub/packages/zip-extract/**', '.github/actions/creator-hub-setup/action.yml') }}
 
     - name: Read protoc version from Makefile
       id: protoc-version

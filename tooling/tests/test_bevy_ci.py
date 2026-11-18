@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 from hud_manifest_fixture import seal, SHARED
@@ -28,6 +29,39 @@ def producers(outcome='success'):
 
 
 class WorkflowTest(unittest.TestCase):
+
+    def test_avatar_preview_boot_contract_is_selected_for_its_inputs(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text()
+        patterns = re.findall(r"^ +- '?([^'\n]+)'?$", workflow, re.M)
+        for path in (
+            'rendering/avatar-preview/web/preview.js',
+            'rendering/avatar-preview/build.sh',
+            'rendering/avatar-preview/tools/preview-packaging.test.mjs',
+            'rendering/avatar-preview/Cargo.toml',
+            'rendering/bevy-explorer/source/Cargo.toml',
+            'rendering/avatar-preview/tools/preview-boot.test.mjs',
+            'rendering/bevy-explorer/source/deploy/web/engine/content_cache.js',
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns))
+        source = workflow.split('\n  source:\n', 1)[1].split('\n  changes:\n', 1)[0]
+        self.assertIn(
+            'run: node --experimental-vm-modules --test rendering/avatar-preview/tools/preview-*.test.mjs',
+            source,
+        )
+
+    def test_preview_patches_match_the_explorer_pins(self):
+        preview = tomllib.loads((ci.ROOT / 'rendering/avatar-preview/Cargo.toml').read_text())
+        explorer = tomllib.loads((ci.ROOT / 'rendering/bevy-explorer/source/Cargo.toml').read_text())
+        for source, crates in preview['patch'].items():
+            for name, pin in crates.items():
+                with self.subTest(source=source, crate=name):
+                    expected = explorer['patch'][source][name]
+                    self.assertEqual(
+                        (pin.get('git'), pin.get('rev')),
+                        (expected.get('git'), expected.get('rev')),
+                    )
+
     @staticmethod
     def upstream_commit_cache(job):
         """The key command of a job that restores the upstream commits, and the directory, key and fallback of the restore."""
@@ -120,8 +154,8 @@ class WorkflowTest(unittest.TestCase):
                       "&& github.ref == 'refs/heads/main' }}\n", daily)
 
     def test_the_daily_upstream_run_only_reads_the_repository(self):
-        # Publishing a revision writes a ref. The daily run only reads the repository: a maintainer
-        # publishes by hand. The one permission to write is for issues, on the job that reports a failure.
+        # Publishing a revision writes a ref. The daily run only reads the repository: the publish-sources workflow
+        # publishes on a push to main. The one permission to write is for issues, on the job that reports a failure.
         daily = (ci.ROOT / '.github/workflows/bevy-explorer-upstream.yml').read_text()
         self.assertEqual(re.findall(r'^permissions:\n((?:  .+\n)+)', daily, re.M), ['  contents: read\n'])
         jobs = dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)', daily.split('\njobs:\n', 1)[1]))
@@ -170,17 +204,45 @@ class WorkflowTest(unittest.TestCase):
         step = plan[plan.rfind('- name:', 0, pins):pins]
         self.assertNotIn('if:', step)
         self.assertNotIn('continue-on-error', plan)
-        # Cargo fetches each revision from this repository. A revision with no ref fails here, and the
-        # error names the command that publishes it.
-        published = plan.index('          python3 tooling/patched-sources.py publish --check || {\n')
+        # Cargo fetches each revision from this repository by id, and GitHub serves a fork's commits through
+        # it. A revision that neither has fails here, and the error names the command that pushes it to a fork.
+        published = plan.index('          python3 tooling/patched-sources.py publish --check --fetchable || {\n')
         self.assertLess(pins, published)
         select = plan.index('- name: Select engine builds from their inputs')
         self.assertLess(published, select)
         step = plan[plan.rfind('- name:', 0, published):select]
         self.assertNotIn('if:', step)
-        self.assertRegex(step, r"echo '::error::.+`python3 tooling/patched-sources\.py publish`\.'\n +exit 1\n")
+        self.assertRegex(step, r"echo '::error::.+`python3 tooling/patched-sources\.py publish --remote [^`]+`\.'\n +exit 1\n")
         # The plan job's default runner image has the Python the tool needs.
         self.assertRegex(plan, r"(?m)^    runs-on: .*'ubuntu-26\.04'")
+
+    def test_a_push_to_main_publishes_the_pinned_revisions(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
+        # The CI workflow only reads the repository: its pending runs on main can be cancelled.
+        self.assertNotIn('contents: write', workflow)
+        publish = (ci.ROOT / '.github/workflows/bevy-explorer-publish-sources.yml').read_text()
+        # One run for each push to main that changes a source, and none is cancelled: a cancelled run would leave
+        # the `rev` of its push without a ref.
+        self.assertIn("on:\n  push:\n    branches:\n      - main\n    paths:\n      - rendering/bevy-explorer/patches/**\n", publish)
+        self.assertNotIn('concurrency', publish.replace('# No concurrency group', ''))
+        self.assertEqual(re.findall(r'^permissions:\n((?:  .+\n)+)', publish, re.M), ['  contents: read\n'])
+        jobs = dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)', publish.split('\njobs:\n', 1)[1]))
+        self.assertEqual(list(jobs), ['publish'])
+        job = jobs['publish']
+        self.assertIn("    if: github.ref == 'refs/heads/main'\n", job)
+        self.assertEqual(re.findall(r'^    permissions:\n((?:      .+\n)+)', job, re.M), ['      contents: write\n'])
+        # The token is in the environment of the publish step alone, not in the checkout's configuration.
+        self.assertIn('          persist-credentials: false\n', job)
+        self.assertEqual(job.count('github.token'), 1)
+        self.assertNotIn('secrets.', job)
+        # It rebuilds from the upstream commits that the daily run caches: the same key and directory.
+        daily = (ci.ROOT / '.github/workflows/bevy-explorer-upstream.yml').read_text()
+        self.assertEqual(self.upstream_commit_cache(job), self.upstream_commit_cache(daily))
+        self.assertIn('      DCL_PATCHED_SOURCES_CACHE: ${{ github.workspace }}/.cache/patched-sources\n', job)
+        run = job.index('python3 tooling/patched-sources.py publish\n')
+        self.assertLess(job.index('actions/cache/restore@'), run)
+        self.assertNotIn('--remote', job)
+        self.assertNotIn('--check', job)
 
     def test_only_the_test_suite_rebuilds_a_tree_and_only_the_bevy_one(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
@@ -371,6 +433,91 @@ class WorkflowTest(unittest.TestCase):
                       "${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }} --shared-build\n", job)
         self.assertIn('          path: .cache/bevy-engine\n'
                       '          key: ${{ steps.engine-cache.outputs.cache-primary-key }}\n', job)
+
+    def test_pr_web_builds_restore_the_unoptimised_target_that_main_saves(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
+        jobs = dict(re.findall(r'(?ms)^  ([a-z-]+):\n(.*?)(?=^  [a-z-]+:\n|\Z)', workflow.split('\njobs:\n', 1)[1]))
+        web, main = jobs['build-deploy-web'], jobs['web-pr-target']
+        unoptimised = "steps.engine-cache.outputs.cache-matched-key == '' && env.BEVY_WEB_OPT == 'unoptimized'"
+
+        def step(job, name):
+            return job.split(f'      - name: {name}\n', 1)[1].split('\n      - ', 1)[0]
+
+        # Both jobs name the dependencies with one expression, or a PR never finds main's entry.
+        hashes = [re.search(r'echo "hash=(\$\{\{ hashFiles\(.*?\) \}\})"', step(job, 'Identify the wasm dependencies'),
+                            re.S).group(1) for job in (web, main)]
+        self.assertEqual(hashes[0], hashes[1])
+        optimised = re.search(r'key: bevy-explorer-web-(\$\{\{ hashFiles\(.*?\) \}\})',
+                              step(web, 'Restore wasm target cache'), re.S).group(1)
+        self.assertEqual(hashes[0], optimised)
+        # The new family must not start with the optimised cache's restore prefix.
+        self.assertTrue(step(web, 'Restore wasm target cache').endswith('          restore-keys: bevy-explorer-web-'))
+        self.assertNotIn('bevy-explorer-web-unopt', workflow)
+
+        main_key = ('bevy-web-unopt-v1-main-${{ steps.wasm-deps.outputs.hash }}-'
+                    '${{ steps.engine-inputs.outputs.key }}')
+        main_prefix = 'bevy-web-unopt-v1-main-${{ steps.wasm-deps.outputs.hash }}-'
+        restore = step(web, 'Restore the pull request wasm target cache')
+        self.assertIn(f'        if: {unoptimised}\n', restore)
+        # Main's entries in a step that names no PR entry: GitHub searches the PR's own scope with
+        # every key of a step before main's, so a PR entry named here would win over a newer entry
+        # of main for the same dependencies.
+        self.assertTrue((restore + '\n').endswith(f'          key: {main_key}\n          restore-keys: {main_prefix}\n'))
+        self.assertNotIn('bevy-web-unopt-v1-pr-', restore)
+        own = step(web, "Restore the pull request's own wasm target cache")
+        self.assertIn(f"        if: {unoptimised} && steps.wasm-pr-cache.outputs.cache-matched-key == ''\n", own)
+        self.assertTrue((own + '\n').endswith('          key: bevy-web-unopt-v1-pr-${{ steps.wasm-deps.outputs.hash }}\n'
+                                              '          restore-keys: bevy-web-unopt-v1-main-\n'))
+        save = step(web, 'Save the pull request wasm target cache')
+        # Once, when neither main nor the PR had an entry for these dependencies, and never from a fork.
+        self.assertIn(f"          {unoptimised} &&\n"
+                      "          steps.wasm-pr-cache.outputs.cache-matched-key == '' && "
+                      "steps.wasm-own-cache.outputs.cache-hit != 'true' &&\n"
+                      "          github.event.pull_request.head.repo.full_name == github.repository\n", save)
+        self.assertIn('          key: ${{ steps.wasm-own-cache.outputs.cache-primary-key }}', save)
+        # Cargo compares file times in both modes.
+        for name, verb in (("Restore the path dependencies' cached file times", 'restore'),
+                           ("Record the path dependencies' file times for the cache", 'record')):
+            self.assertEqual(step(web, name), "        if: steps.engine-cache.outputs.cache-matched-key == ''\n"
+                             f'        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" {verb} target')
+        order = [web.index(f'      - name: {name}\n') for name in (
+            'Identify the wasm dependencies', 'Restore the pull request wasm target cache',
+            "Restore the pull request's own wasm target cache",
+            "Restore the path dependencies' cached file times", 'Build and test the local web app',
+            "Record the path dependencies' file times for the cache", 'Save the pull request wasm target cache')]
+        self.assertEqual(order, sorted(order))
+
+        # Main fills the cache in a job that no job waits for, as the web job would compile it. Only a
+        # first attempt runs: the cleanup keeps the newest entry, and a later attempt of an older run
+        # would save a newer one.
+        self.assertIn("    if: >-\n      needs.changes.outputs.web == 'true' && github.event_name == 'push' && "
+                      "github.ref == 'refs/heads/main' &&\n      vars.BENCHMARK_ENABLED_RUNNERS == 'none' && "
+                      "github.run_attempt == '1'\n", main)
+        self.assertTrue(main.rstrip().endswith('    timeout-minutes: 45\n    needs:\n      - changes'))
+        self.assertFalse([name for name, body in jobs.items() if re.search(r'^\s+- web-pr-target$', body, re.M)])
+        for line in ('runs-on', 'BEVY_SEGMENT_WRITE_KEY', 'toolchain', 'targets', 'components', 'working-directory: rendering'):
+            mine = re.search(rf'^ +{line}.*$', main, re.M).group().strip()
+            self.assertIn(mine, [found.strip() for found in re.findall(rf'^ +{line}.*$', web, re.M)], line)
+        self.assertIn('    permissions:\n      contents: read\n', main)
+        # A push that changes no engine input finds its entry without a download, and every later step is skipped.
+        probe = step(main, 'Look for the pull request wasm target cache')
+        self.assertTrue((probe + '\n').endswith(f'          lookup-only: true\n          key: {main_key}\n'))
+        self.assertNotIn('restore-keys', probe)
+        after = main.split('      - name: Look for the pull request wasm target cache\n', 1)[1].split('\n    defaults:', 1)[0]
+        later_steps = after.split('\n      - ')[1:]
+        self.assertEqual(len(later_steps), 9)
+        for later in later_steps:
+            self.assertIn("        if: steps.wasm-pr-probe.outputs.cache-hit != 'true'", later, later.splitlines()[0])
+        # Entries of the same dependencies only: an entry of other dependencies would carry their artifacts
+        # into every later save.
+        key = step(main, 'Restore the pull request wasm target cache')
+        self.assertTrue((key + '\n').endswith(f'          restore-keys: {main_prefix}\n'))
+        self.assertIn(f'          key: {main_key}\n', key)
+        self.assertNotIn('bevy-web-unopt-v1-main-\n', key + '\n')
+        self.assertIn('run: python3 ../../../apps/bevy-explorer/build-web.py --no-opt --target-only',
+                      step(main, 'Compile the web engine as a pull request does'))
+        self.assertIn('          key: ${{ steps.wasm-pr-cache.outputs.cache-primary-key }}',
+                      step(main, 'Save the pull request wasm target cache'))
 
     def test_gateway_route_step_requires_the_ignored_fixture_to_pass(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
@@ -686,7 +833,8 @@ class SelectionTest(unittest.TestCase):
         jobs = dict(re.findall(r'(?ms)^  ([a-z-]+):\n(.*?)(?=^  [a-z-]+:\n|\Z)', workflow.split('\njobs:\n', 1)[1]))
         larger = {name for name, body in jobs.items() if re.search(r'runs-on: .*(16core|xlarge)', body)}
         conditions = {'test': 'test', 'headless-smoke': 'headless'}
-        self.assertEqual(larger, {*conditions, 'build-deploy-web'})
+        # web-pr-target runs only on main, where no pull request waits for it.
+        self.assertEqual(larger, {*conditions, 'build-deploy-web', 'web-pr-target'})
         self.assertEqual(set(conditions.values()), set(ci.HELD_ON_DRAFT))
         # The development smoke job and the images read the web job's output, so a draft still builds it.
         for name in ('build-deploy-web', 'images'):

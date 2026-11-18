@@ -6,8 +6,8 @@ origin     = "https://github.com/robtfm/bevy_simple_text_input"
 origin_rev = "f63341739ea3c14dc1e98395115dc58969469297"
 license    = "MIT OR Apache-2.0"
 paths      = ["."]
-exclude    = []
-base_tree  = "3410f72cfcd11e2763788068f28b5ce645271226"
-tree       = "0c7e35a6966c83189daf1bb67d58ae8a954adc28"
-rev        = "946e7001fb81ecf52540a3fd5a3fb3a14b901967"
+exclude    = [".github"]
+base_tree  = "ebb27640ec1dac0a9a4c6bac2db52caf1887eb40"
+tree       = "13abaddef8a2c84ac6df42bf60ea4c5f5f0aa742"
+rev        = "0cc0431d0a0e851ca5297033bb992aae70053a9b"
 nix_hash   = "sha256-3NY8GY4OY4qtlpp0sCuRMKzfctzDM7DtcuFyVoPoji8="

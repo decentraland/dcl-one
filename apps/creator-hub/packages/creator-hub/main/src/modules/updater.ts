@@ -1,7 +1,6 @@
 import path from 'path';
 import updater from 'electron-updater';
 import log from 'electron-log/main';
-import semver from 'semver';
 import { captureException } from '@sentry/electron/main';
 import { FileSystemStorage } from '/shared/types/storage';
 import { INSTALLED_VERSION_FILE_NAME } from '/shared/paths';
@@ -89,8 +88,8 @@ export async function checkForUpdates(config: UpdaterConfig = {}) {
     configureUpdater(config);
     const result = await updater.autoUpdater.checkForUpdates();
     const version = result?.updateInfo?.version ?? null;
-    const currentVersion = updater.autoUpdater.currentVersion?.version;
-    return { updateAvailable: !!(version && semver.gt(version, currentVersion)), version };
+    // electron-updater also checks that this OS can run the update (latest-mac.yml `minimumSystemVersion`).
+    return { updateAvailable: result?.isUpdateAvailable === true, version };
   } catch (error: any) {
     captureException(error, {
       tags: { source: 'auto-updater', event: 'check-for-updates' },

@@ -1,7 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import {
   FEEDBACK_MESSAGE_MAX_LENGTH,
@@ -12,8 +11,10 @@ import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 import { HELP_FAQ_URL } from '/@/modules/utils';
 
+import { TestProviders } from '../../../../tests/utils/TestProviders';
+
 const mocks = vi.hoisted(() => ({
-  send: vi.fn<[FeedbackReport], Promise<FeedbackDelivery>>(),
+  send: vi.fn<(report: FeedbackReport) => Promise<FeedbackDelivery>>(),
   openExternal: vi.fn(),
   track: vi.fn(),
 }));
@@ -32,14 +33,14 @@ type Props = Parameters<typeof ReportIssue>[0];
 function renderDialog({ open: initiallyOpen = true, ...props }: Partial<Props> = {}) {
   const onClose = vi.fn();
   const dialog = (open: boolean) => (
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <ReportIssue
         open={open}
         source="logo-menu"
         onClose={onClose}
         {...props}
       />
-    </ThemeProvider>
+    </TestProviders>
   );
   const { rerender } = render(dialog(initiallyOpen));
   const reopen = () => {

@@ -193,25 +193,52 @@ fn classify_connect_error(error: crate::livekit::web::RoomError) -> AdmissionErr
         })
 }
 
-/// Parses the scene room's metadata into its moderation lists. Unreadable metadata keeps the
-/// lists the room had, or gives it empty ones.
-fn apply_scene_room_metadata(commands: &mut Commands, entity: Entity, metadata: &str) {
-    match crate::SceneRoomModeration::from_metadata(metadata) {
-        Ok(moderation) => {
-            debug!(
-                "scene room metadata: {} banned, {} admins",
-                moderation.banned_addresses.len(),
-                moderation.scene_admins.len()
-            );
-            commands.entity(entity).try_insert(moderation);
-        }
-        Err(err) => {
-            warn!("scene room metadata unreadable ({err:?}): {metadata}");
-            commands
-                .entity(entity)
-                .try_insert_if_new(crate::SceneRoomModeration::default());
-        }
-    }
+/// Metadata patches apply to the room's current lists when commands execute, so consecutive
+/// partial updates in one frame retain each other's fields.
+pub(crate) fn apply_scene_room_metadata(commands: &mut Commands, entity: Entity, metadata: &str) {
+    let metadata = metadata.to_owned();
+    commands
+        .entity(entity)
+        .queue_silenced(move |mut entity: EntityWorldMut| {
+            let observed = entity
+                .get::<crate::scene_bans::MetadataSceneBan>()
+                .map(|ban| ban.0);
+            let invalidated = {
+                let mut moderation = entity
+                    .entry::<crate::SceneRoomModeration>()
+                    .or_default()
+                    .into_mut();
+                match moderation.update_from_metadata(&metadata) {
+                    Ok(()) => debug!(
+                        "scene room metadata: {} banned, {} admins",
+                        moderation.banned_addresses.len(),
+                        moderation.scene_admins.len()
+                    ),
+                    Err(err) => warn!("scene room metadata unreadable ({err:?}): {metadata}"),
+                }
+                observed.is_some_and(|address| !moderation.banned_addresses.contains(&address))
+            };
+            if invalidated {
+                // A later ban in this command batch must cancel credentials from before it.
+                entity.remove::<crate::scene_bans::MetadataSceneBan>();
+            }
+        });
+}
+
+fn apply_scene_room_metadata_change(commands: &mut Commands, entity: Entity, event: &RoomEvent) {
+    let RoomEvent::RoomMetadataChanged {
+        metadata,
+        #[cfg(not(target_arch = "wasm32"))]
+        old_metadata,
+        ..
+    } = event
+    else {
+        return;
+    };
+    // The native SDK's current snapshot can already include this change at Connected.
+    #[cfg(not(target_arch = "wasm32"))]
+    apply_scene_room_metadata(commands, entity, old_metadata);
+    apply_scene_room_metadata(commands, entity, metadata);
 }
 
 /// Marker for a room that hit a terminal disconnect (kicked / identity conflict) while
@@ -236,6 +263,7 @@ fn process_room_events(
         Has<crate::archipelago::IslandOwner>,
         Has<crate::SceneRoom>,
         Has<VoiceRoom>,
+        Has<crate::room_connection::BanRecheck>,
     )>,
     time: Res<Time>,
 ) {
@@ -248,6 +276,7 @@ fn process_room_events(
         island,
         scene_room,
         is_voice_room,
+        ban_recheck,
     ) in livekit_rooms
     {
         while let Ok(room_event) = livekit_room.room_event_receiver.try_recv() {
@@ -290,6 +319,7 @@ fn process_room_events(
                             scope,
                             reason,
                             island,
+                            ban_recheck,
                             time.elapsed_secs_f64(),
                         );
                     }
@@ -362,9 +392,9 @@ fn process_room_events(
                         participant: participant.into(),
                     });
                 }
-                RoomEvent::RoomMetadataChanged { metadata, .. } => {
+                RoomEvent::RoomMetadataChanged { .. } => {
                     if scene_room {
-                        apply_scene_room_metadata(&mut commands, entity, &metadata);
+                        apply_scene_room_metadata_change(&mut commands, entity, &room_event);
                     }
                 }
                 RoomEvent::TrackPublished {
@@ -673,6 +703,7 @@ fn record_disconnect(
     scope: Option<&RoomAccessScope>,
     reason: DisconnectReason,
     island: bool,
+    ban_recheck: bool,
     now: f64,
 ) {
     recovery.retry.observe_connection(false, now);
@@ -685,25 +716,23 @@ fn record_disconnect(
             commands.entity(entity).try_insert(ServerRoomTerminal);
         } else if reason == DisconnectReason::DuplicateIdentity {
             record_identity_conflict(commands, recovery, scope);
-        } else if island {
+        } else if island
+            || matches!(
+                scope.map(|scope| &scope.0),
+                Some(crate::access_status::AccessScope::Scene(_))
+            )
+        {
+            if ban_recheck && recovery.failure == Some(FailureKind::Denied) {
+                return;
+            }
+            // The island owner or the scene gatekeeper decides whether the player may return; a
+            // scene ban comes back as a refusal that keeps checking for the unban.
             // ConnectionStateChanged can already have started the backoff.
             if recovery.failure != Some(FailureKind::Transient) {
                 recovery.fail(now, AdmissionError::new(FailureKind::Transient));
             }
         } else {
-            recovery.fail(now, AdmissionError::new(FailureKind::Denied));
-            if matches!(
-                scope.map(|scope| &scope.0),
-                Some(crate::access_status::AccessScope::Scene(_))
-            ) {
-                recovery.retry.due = recovery
-                    .retry
-                    .due
-                    .max(now + crate::scene_bans::RECHECK_SECS);
-                commands
-                    .entity(entity)
-                    .try_insert((NeedsAdapter, crate::scene_bans::RecheckSceneAdmission));
-            }
+            recovery.failure = Some(FailureKind::Denied);
         }
     }
 }
@@ -749,6 +778,7 @@ mod disconnect_tests {
             None,
             DisconnectReason::ParticipantRemoved,
             true,
+            false,
             0.0,
         );
         world.entity_mut(island).insert(recovery);
@@ -764,9 +794,20 @@ mod disconnect_tests {
     }
 
     #[test]
-    fn a_removed_scene_participant_requires_fresh_admission() {
+    fn participant_removed_from_a_scene_room_asks_the_gatekeeper_again() {
         let mut world = World::new();
-        let room = world.spawn_empty().id();
+        let room = world
+            .spawn((
+                CredentialRequest {
+                    method: "POST",
+                    url: "https://rooms.example/scene".into(),
+                    metadata: "{}".into(),
+                },
+                LivekitTransport {
+                    address: String::new(),
+                },
+            ))
+            .id();
         let mut recovery = RoomRecovery::default();
         record_disconnect(
             &mut world.commands(),
@@ -775,16 +816,19 @@ mod disconnect_tests {
             Some(&RoomAccessScope(AccessScope::Scene("scene".into()))),
             DisconnectReason::ParticipantRemoved,
             false,
+            false,
             0.0,
         );
-        world.flush();
-        assert_eq!(recovery.failure, Some(FailureKind::Denied));
-        assert!(!recovery.can_retry(100.0));
-        assert!(recovery.retry.due >= 5.0);
+        assert_eq!(recovery.failure, Some(FailureKind::Transient));
+        world.entity_mut(room).insert(recovery);
+        world.init_resource::<Time>();
+        world.run_system_once(try_reconnect).unwrap();
+        assert!(world.get::<NeedsAdapter>(room).is_none());
+        world
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(5));
+        world.run_system_once(try_reconnect).unwrap();
         assert!(world.get::<NeedsAdapter>(room).is_some());
-        assert!(world
-            .get::<crate::scene_bans::RecheckSceneAdmission>(room)
-            .is_some());
     }
 
     #[test]
@@ -809,6 +853,7 @@ mod disconnect_tests {
             &mut recovery,
             Some(&RoomAccessScope(AccessScope::PrivateChat)),
             DisconnectReason::ParticipantRemoved,
+            false,
             false,
             0.0,
         );
@@ -923,5 +968,194 @@ pub(super) fn restart_room(
         commands.entity(entity).try_insert(NeedsAdapter);
     } else {
         commands.entity(entity).try_insert(Connecting);
+    }
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+    use crate::SceneRoomModeration;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn scene_metadata_keeps_connect_snapshot_before_an_immediate_partial_change() {
+        let banned = Address::repeat_byte(1);
+        let admin = Address::repeat_byte(2);
+        let replacement = Address::repeat_byte(3);
+        let initial = serde_json::json!({
+            "bannedAddresses": [banned.to_string()], "sceneAdmins": [admin.to_string()]
+        })
+        .to_string();
+        for bans in [vec![replacement.to_string()], vec![]] {
+            let latest = serde_json::json!({"bannedAddresses": bans}).to_string();
+            let mut world = World::new();
+            let room = world.spawn_empty().id();
+            // Connected reads the SDK's already-updated room metadata.
+            apply_scene_room_metadata(&mut world.commands(), room, &latest);
+            apply_scene_room_metadata_change(
+                &mut world.commands(),
+                room,
+                &RoomEvent::RoomMetadataChanged {
+                    old_metadata: initial.clone(),
+                    metadata: latest,
+                },
+            );
+            world.flush();
+            let state = world.get::<SceneRoomModeration>(room).unwrap();
+            assert_eq!(state.scene_admins, [admin].into_iter().collect());
+            assert_eq!(
+                state.banned_addresses,
+                bans.iter()
+                    .map(|address| address.as_h160().unwrap())
+                    .collect()
+            );
+        }
+    }
+
+    #[test]
+    fn scene_metadata_ban_kick_preserves_denial_and_retry_deadline() {
+        use crate::room_connection::{BanRecheck, BAN_RECHECK_SECS};
+        for delay in [BAN_RECHECK_SECS, 45.0] {
+            let mut world = World::new();
+            let room = world.spawn(BanRecheck).id();
+            let mut recovery = RoomRecovery::default();
+            let mut refusal = AdmissionError::new(FailureKind::Denied);
+            refusal.retry_after = Some(delay);
+            recovery.fail(0.0, refusal);
+            let due = recovery.retry.due;
+            let ban_recheck = world.get::<BanRecheck>(room).is_some();
+            record_disconnect(
+                &mut world.commands(),
+                room,
+                &mut recovery,
+                Some(&RoomAccessScope(crate::access_status::AccessScope::Scene(
+                    "scene".into(),
+                ))),
+                DisconnectReason::ParticipantRemoved,
+                false,
+                ban_recheck,
+                2.0,
+            );
+            assert_eq!(recovery.failure, Some(FailureKind::Denied));
+            assert_eq!(recovery.retry.due, due);
+        }
+    }
+
+    #[test]
+    fn scene_room_metadata_updates_replace_only_explicit_lists() {
+        let banned = Address::repeat_byte(1);
+        let admin = Address::repeat_byte(2);
+        let replacement = Address::repeat_byte(3);
+        let initial = SceneRoomModeration {
+            banned_addresses: [banned].into_iter().collect(),
+            scene_admins: [admin].into_iter().collect(),
+        };
+        for (metadata, expected_bans, expected_admins) in [
+            (
+                serde_json::json!({"sceneAdmins": [replacement.to_string()]}),
+                vec![banned],
+                vec![replacement],
+            ),
+            (
+                serde_json::json!({"bannedAddresses": [replacement.to_string()]}),
+                vec![replacement],
+                vec![admin],
+            ),
+            (
+                serde_json::json!({"bannedAddresses": []}),
+                vec![],
+                vec![admin],
+            ),
+            (serde_json::json!({"sceneAdmins": []}), vec![banned], vec![]),
+            (
+                serde_json::json!({"bannedAddresses": [], "sceneAdmins": []}),
+                vec![],
+                vec![],
+            ),
+        ] {
+            let mut world = World::new();
+            let room = world.spawn(initial.clone()).id();
+            apply_scene_room_metadata(&mut world.commands(), room, &metadata.to_string());
+            world.flush();
+            assert_eq!(
+                world.get::<SceneRoomModeration>(room).unwrap(),
+                &SceneRoomModeration {
+                    banned_addresses: expected_bans.into_iter().collect(),
+                    scene_admins: expected_admins.into_iter().collect(),
+                },
+                "{metadata}"
+            );
+        }
+    }
+
+    #[test]
+    fn scene_room_metadata_without_arrays_keeps_previous_lists() {
+        let initial = SceneRoomModeration {
+            banned_addresses: [Address::repeat_byte(1)].into_iter().collect(),
+            scene_admins: [Address::repeat_byte(2)].into_iter().collect(),
+        };
+        for metadata in [
+            "",
+            " \n ",
+            "{}",
+            r#"{"unrelated":true}"#,
+            r#"{"bannedAddresses":null,"sceneAdmins":false}"#,
+            r#"{"bannedAddresses":"not a list","sceneAdmins":42}"#,
+            "not json",
+            "[]",
+            "null",
+        ] {
+            let mut world = World::new();
+            let room = world.spawn(initial.clone()).id();
+            apply_scene_room_metadata(&mut world.commands(), room, metadata);
+            world.flush();
+            assert_eq!(
+                world.get::<SceneRoomModeration>(room),
+                Some(&initial),
+                "{metadata}"
+            );
+        }
+    }
+
+    #[test]
+    fn queued_scene_room_metadata_updates_accumulate_in_order() {
+        let banned = Address::repeat_byte(1);
+        let admin = Address::repeat_byte(2);
+        let mut world = World::new();
+        let room = world.spawn_empty().id();
+        apply_scene_room_metadata(
+            &mut world.commands(),
+            room,
+            &serde_json::json!({"bannedAddresses": [banned.to_string()]}).to_string(),
+        );
+        apply_scene_room_metadata(
+            &mut world.commands(),
+            room,
+            &serde_json::json!({"sceneAdmins": [admin.to_string()]}).to_string(),
+        );
+        world.flush();
+        assert_eq!(
+            world.get::<SceneRoomModeration>(room),
+            Some(&SceneRoomModeration {
+                banned_addresses: [banned].into_iter().collect(),
+                scene_admins: [admin].into_iter().collect(),
+            })
+        );
+    }
+
+    #[test]
+    fn new_scene_room_metadata_starts_empty_and_ignores_a_removed_room() {
+        let mut world = World::new();
+        let removed = world.spawn_empty().id();
+        apply_scene_room_metadata(&mut world.commands(), removed, r#"{"bannedAddresses":[]}"#);
+        world.despawn(removed);
+        let room = world.spawn_empty().id();
+        apply_scene_room_metadata(&mut world.commands(), room, "not json");
+        world.flush();
+        assert_eq!(world.get::<SceneRoomModeration>(removed), None);
+        assert_eq!(
+            world.get::<SceneRoomModeration>(room),
+            Some(&SceneRoomModeration::default())
+        );
     }
 }

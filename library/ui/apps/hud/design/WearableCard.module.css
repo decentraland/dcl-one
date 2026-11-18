@@ -141,6 +141,16 @@
   display: none;
   pointer-events: none;
 }
+/* Firefox has neither mask-border nor -webkit-mask-box-image and would paint the ring's fill as a
+   solid square over the tile: there the outline is a plain border. */
+@supports not ((mask-border: none) or (-webkit-mask-box-image: none)) {
+  .ring {
+    box-sizing: border-box;
+    border: 3px solid var(--accent);
+    border-radius: 18px;
+    background: none;
+  }
+}
 .equipped .ring {
   display: block;
 }
@@ -188,4 +198,31 @@
 }
 .unequip:active {
   background: var(--black);
+}
+/* The gift picker's tile: a smaller lift on hover, the ring marks the selection and stays on hover. */
+.pick:hover {
+  transform: scale(1.05);
+}
+.pick:hover .ring {
+  display: block;
+}
+.pick:not(.equipped):hover .ring {
+  display: none;
+}
+.count {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  background: var(--scrim-40);
+  color: var(--text);
+  font-size: var(--type-13);
+  font-weight: var(--fw-bold);
+}
+.shownNote {
+  opacity: 1;
+}
+.card[aria-disabled='true'] {
+  cursor: default;
 }

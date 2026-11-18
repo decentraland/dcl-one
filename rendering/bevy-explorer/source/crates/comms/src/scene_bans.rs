@@ -5,21 +5,15 @@ use wallet::Wallet;
 
 use crate::{
     room_connection::{
-        AdmissionError, CredentialRequest, CredentialTask, FailureKind, NeedsAdapter, RoomRecovery,
-        RoomSuspended,
+        AdmissionError, BanRecheck, CredentialRequest, CredentialTask, FailureKind, NeedsAdapter,
+        RoomRecovery, RoomSuspended, BAN_RECHECK_SECS,
     },
     SceneAdmission, SceneRoomModeration, SceneRoomTarget,
 };
 
-pub(crate) const RECHECK_SECS: f64 = 5.0;
-
-/// Only scene-room admission can be rechecked while the previous denial remains in force.
-#[derive(Component)]
-pub(crate) struct RecheckSceneAdmission;
-
 /// A retry may predate the latest metadata ban for this wallet.
 #[derive(Component)]
-pub(crate) struct MetadataSceneBan(Address);
+pub(crate) struct MetadataSceneBan(pub(crate) Address);
 
 pub(crate) fn apply_scene_bans(
     mut commands: Commands,
@@ -57,12 +51,14 @@ pub(crate) fn apply_scene_bans(
                     .try_insert(MetadataSceneBan(address));
                 if let Ok(mut recovery) = recovery.get_mut(entity) {
                     let mut error = AdmissionError::new(FailureKind::Denied);
-                    error.retry_after = Some(RECHECK_SECS);
+                    error.retry_after = Some(BAN_RECHECK_SECS);
+                    let due = recovery.retry.due;
                     recovery.fail(time.elapsed_secs_f64(), error);
+                    recovery.retry.due = recovery.retry.due.max(due);
                     commands
                         .entity(entity)
                         .try_remove::<CredentialTask>()
-                        .try_insert((NeedsAdapter, RecheckSceneAdmission));
+                        .try_insert((NeedsAdapter, BanRecheck));
                 }
             }
         } else if observed_ban.is_some() {
@@ -120,7 +116,7 @@ mod tests {
                 expected
             );
             assert_eq!(
-                app.world().get::<RecheckSceneAdmission>(room).is_some(),
+                app.world().get::<BanRecheck>(room).is_some(),
                 mode == "current"
             );
             app.world_mut()

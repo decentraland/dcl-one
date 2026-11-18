@@ -250,6 +250,7 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   `/avatar_state [all|<address>]`, `/chat_history [count]`
   (Nearby only, as received: blocks and scene bans are not applied), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),
+  `/preview_textures` (the preview server's last texture optimization status, in preview mode),
   `/nametag_state` (the nametags: `visible`, `shown`, `sceneAvatars` and `hidden` counts, the glyph `atlas` page
   sizes, the chat `bubbles` setting, and each shown tag's `player`, `sceneAvatar`, `name`, `suffix`, `verified`,
   `official`, `voice`, `distance`, `opacity`, `scale`, `position`, `headOffset` and `bubble`, which is its
@@ -261,16 +262,19 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   sets, for the session, whether a wallet's nametag carries the official badge; replies with
   `address` and `official`),
   `/voice_state` (the nearby mic, with `sceneBlocked` while the scene the player stands in turns
-  nearby voice off, the nearby voice rooms and, as `call`, the private call or community stream the
-  player is in: `status`, `kind`, `peer`, `communityId`, `connection`, `participants`,
-  `micEnabled`, `localSpeaker`, `localRole`, `error`, `errorIsNotice`),
+  nearby voice off or its room refused the player as banned, asking again every 15 seconds; the
+  nearby voice rooms and, as `call`, the private call or community stream the player is in:
+  `status`, `kind`, `peer`, `communityId`, `connection`, `participants`, `micEnabled`,
+  `localSpeaker`, `localRole`, `error`, `errorIsNotice`),
   `/connectivity_state` (safe room state, offline warning and reachability probe; room states
   match voice diagnostics, with `connecting` for first admission and `failed` for refused dials),
   `/connectivity_retry` (immediate recovery without overriding denied access),
   `/ban_block_state [address]` (platform ban, current scene admission, social blocks and
   scene moderation lists; Nearby chat and reactions from an address the scene room bans are
-  dropped; `/ban_block_refresh` re-checks the platform ban), `/scene_comms_state` (scene-message
-  rejection and CRDT-filter counters, plus the binary payload limit), `/entity_screen_position <entity>
+  dropped, and nearby voice is not subscribed from an address blocked either way or banned by the
+  connected scene room, while calls still carry it; `/ban_block_refresh` re-checks the platform
+  ban), `/scene_comms_state` (scene-message rejection and CRDT-filter counters, plus the binary
+  payload limit), `/entity_screen_position <entity>
   [--bounds]`, `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or
   close it) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a refusal
   names why), plus the older `/player_position`, `/get_user_data`, `/connected_players`, `/time`
@@ -300,7 +304,10 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   Use the panel to inspect a scene, compare frame and memory measurements, diagnose
   room and media connections, and exercise supported controls. Availability depends
   on the build, platform and preview mode. `/performance_state` reports the effective
-  frame-rate target and session override independently of the panel.
+  frame-rate target and session override, the sampling status, the latest 15 s performance
+  snapshot and the frame-time breakdown independently of the panel; `/debug_memory`, and in a
+  `performance-profiler` build `/render_state` and `/profile_top`, the rest
+  ([profiling](../docs/guidelines/profiling.md)).
 - The HUD, by role and accessible name (`library/explorer-core/lib/hudAutomation.ts`): `/hud_list [role]`,
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
   `hidden`, `enabled`, `actionable`, `ready`; `"timeout"` ms). A selector is the name or JSON

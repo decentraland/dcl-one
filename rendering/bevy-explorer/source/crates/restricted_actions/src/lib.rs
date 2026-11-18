@@ -3,6 +3,7 @@ pub mod explorer_ui;
 pub mod portables;
 pub mod smart_wearables;
 pub mod teleport;
+pub mod world_access;
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -131,6 +132,7 @@ impl Plugin for RestrictedActionsPlugin {
         app.add_plugins(agent_commands::AgentCommandsPlugin);
         app.add_plugins(smart_wearables::SmartWearablesPlugin);
         app.add_plugins(portables::PortablesPlugin);
+        app.add_plugins(world_access::WorldAccessPlugin);
     }
 }
 
@@ -2730,8 +2732,13 @@ pub fn process_startup_scenes(
                     .get_or_insert_with(tokio::sync::mpsc::unbounded_channel)
                     .0
                     .clone();
+                // a startup scene's server reloads it; its texture status has no HUD
                 IoTaskPool::get()
-                    .spawn(handle_preview_socket(scene.source.clone(), sx.clone()))
+                    .spawn(handle_preview_socket(
+                        scene.source.clone(),
+                        sx.clone(),
+                        None,
+                    ))
                     .detach();
                 scene.hot_reload = Some(sx);
             }

@@ -1,5 +1,7 @@
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
-import { Box, Tooltip, Typography } from 'decentraland-ui2';
+import Text from '@ui/atoms/Text';
+import Tooltip from '@ui/atoms/Tooltip';
+
+import { InfoOutlinedIcon } from '@ui/atoms/icons-material';
 
 import './styles.css';
 
@@ -20,22 +22,25 @@ type Props = {
  */
 export function ChartLegend({ entries }: Props) {
   return (
-    <Box className="ChartLegend">
+    <div className="ChartLegend">
       {entries.map(entry => (
-        <Box
+        <div
           className="LegendEntry"
           key={entry.label}
         >
-          <Box
+          <div
             className="LegendKey"
             style={{ backgroundColor: entry.color }}
           />
-          <Typography variant="body2">{entry.label}</Typography>
+          <Text variant="body2">{entry.label}</Text>
           {entry.tooltip && (
             <Tooltip
-              title={entry.tooltip}
-              placement="top"
+              label={entry.tooltip}
+              side="top"
               arrow
+              portal
+              keepInViewport
+              maxWidth={300}
             >
               <InfoOutlinedIcon
                 fontSize="small"
@@ -44,8 +49,8 @@ export function ChartLegend({ entries }: Props) {
               />
             </Tooltip>
           )}
-        </Box>
+        </div>
       ))}
-    </Box>
+    </div>
   );
 }

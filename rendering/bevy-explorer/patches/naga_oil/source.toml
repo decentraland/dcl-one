@@ -6,8 +6,8 @@ origin     = "https://github.com/robtfm/naga_oil"
 origin_rev = "9007b2ffe3e8f509ffc9b1481f039de78cf31699"
 license    = "MIT OR Apache-2.0"
 paths      = ["."]
-exclude    = []
-base_tree  = "cb29c522dc7f2c072117bfcb6fe75202cf6e2882"
-tree       = "388e971eec7f45bd5283ba657938cc64f2ebc647"
-rev        = "7756770057c798034a2a83602b4d88755da376be"
+exclude    = [".github"]
+base_tree  = "d53a4790d9755c3f1f54c8b170ac6b0430221b52"
+tree       = "17333b51438abcdb57de0fe688bf6c789ea7c622"
+rev        = "b90aa836dcd1f0226779473c5550e9e04b37f224"
 nix_hash   = "sha256-OxjwPrUZJtjOwVq4rhFPpuAzcSpZNHA7lOVVa6T6Uoo="

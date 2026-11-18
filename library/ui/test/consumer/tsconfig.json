@@ -10,5 +10,5 @@
     "noEmit": true,
     "types": []
   },
-  "files": ["types.ts", "../../css-modules.d.ts", "tabsbar.types.tsx"]
+  "files": ["types.ts", "../../css-modules.d.ts", "tabsbar.types.tsx", "titlebar.types.tsx"]
 }

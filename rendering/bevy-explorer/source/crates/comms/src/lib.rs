@@ -7,6 +7,7 @@ pub mod broadcast_position;
 pub mod chat_reaction;
 pub mod community_chat;
 pub mod connectivity;
+mod gait;
 pub mod global_crdt;
 #[cfg(feature = "livekit")]
 pub mod livekit;
@@ -54,7 +55,9 @@ use prost::Message as _;
 use wallet::Wallet;
 
 use crate::global_crdt::ChannelControl;
-pub use moderation::{AdmissionView, BanScope, MetadataError, SceneAdmission, SceneRoomModeration};
+pub use moderation::{
+    AdmissionView, BanScope, BlockedOrBanned, MetadataError, SceneAdmission, SceneRoomModeration,
+};
 
 use self::{
     archipelago::{ArchipelagoPlugin, StartArchipelago},

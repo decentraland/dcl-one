@@ -92,6 +92,14 @@ impl RoomRecovery {
     }
 }
 
+/// A scene room refused for a ban. The room stays denied, but asks for admission again every
+/// [`BAN_RECHECK_SECS`]: an unban reaches only the players inside the room, and the platform
+/// ban poll never admits the room again.
+#[derive(Component)]
+pub struct BanRecheck;
+
+pub const BAN_RECHECK_SECS: f64 = 15.0;
+
 /// Request metadata is owned by the same entity as the connection it authorizes.
 #[derive(Component, Clone)]
 #[require(RoomRecovery)]
@@ -415,12 +423,7 @@ async fn request_adapter(
 fn request_credentials(
     mut commands: Commands,
     requests: Query<
-        (
-            Entity,
-            &CredentialRequest,
-            &RoomRecovery,
-            Has<crate::scene_bans::RecheckSceneAdmission>,
-        ),
+        (Entity, &CredentialRequest, &RoomRecovery, Has<BanRecheck>),
         (
             With<NeedsAdapter>,
             Without<CredentialTask>,
@@ -434,12 +437,9 @@ fn request_credentials(
     let Some(identity) = wallet.address() else {
         return;
     };
-    for (entity, request, recovery, scene_recheck) in &requests {
-        if recovery.can_retry(time.elapsed_secs_f64())
-            || (scene_recheck
-                && recovery.failure == Some(FailureKind::Denied)
-                && recovery.retry.ready(time.elapsed_secs_f64()))
-        {
+    let now = time.elapsed_secs_f64();
+    for (entity, request, recovery, ban_recheck) in &requests {
+        if recovery.can_retry(now) || (ban_recheck && recovery.retry.ready(now)) {
             commands.entity(entity).try_insert(CredentialTask {
                 identity,
                 task: IoTaskPool::get().spawn_compat(request_adapter(
@@ -463,12 +463,15 @@ pub(crate) fn finish_credentials(
         Option<&crate::SceneRoomTarget>,
         Has<RealmAdapter>,
         Has<RoomSuspended>,
+        Has<BanRecheck>,
     )>,
     time: Res<Time>,
     wallet: Res<Wallet>,
     mut admission: ResMut<crate::SceneAdmission>,
 ) {
-    for (entity, mut task, mut recovery, context, scene, realm, suspended) in &mut requests {
+    for (entity, mut task, mut recovery, context, scene, realm, suspended, rechecking) in
+        &mut requests
+    {
         if suspended || wallet.address() != Some(task.identity) {
             commands.entity(entity).try_remove::<CredentialTask>();
             continue;
@@ -489,17 +492,26 @@ pub(crate) fn finish_credentials(
                 if let Some(scene) = scene {
                     admission.set_if_neq(crate::SceneAdmission::allowed(&scene.scene.scene_id));
                     commands.entity(entity).try_remove::<(
-                        crate::scene_bans::RecheckSceneAdmission,
                         crate::scene_bans::MetadataSceneBan,
                         crate::SceneRoomModeration,
                     )>();
                 }
+                commands.entity(entity).try_remove::<BanRecheck>();
                 // Admission alone does not establish a stable transport connection.
                 recovery.failure = None;
                 commands.entity(entity).try_remove::<NeedsAdapter>();
                 manager.connect_existing(&adapter, context.map(|context| context.0), entity);
             }
+            Err(error) if rechecking && error.kind != FailureKind::Denied => {
+                // Only a refusal says anything about the ban.
+                warn!(?entity, kind = ?error.kind, "ban recheck got no answer");
+                recovery.retry.failed(
+                    time.elapsed_secs_f64(),
+                    Some(error.retry_after.unwrap_or_default().max(BAN_RECHECK_SECS)),
+                );
+            }
             Err(mut error) => {
+                let mut banned = false;
                 if let Some(scene) = scene {
                     let next = error
                         .status
@@ -512,30 +524,20 @@ pub(crate) fn finish_credentials(
                             )
                         })
                         .for_session(&scene.scene.realm_about_url, task.identity);
-                    let banned = next
-                        .banned_scene(&scene.scene.realm_about_url, task.identity)
-                        .is_some();
-                    let was_banned = admission
-                        .banned_scene(&scene.scene.realm_about_url, task.identity)
-                        .is_some();
-                    if banned {
-                        commands
-                            .entity(entity)
-                            .try_insert(crate::scene_bans::RecheckSceneAdmission);
-                    }
-                    if banned || was_banned {
-                        error.retry_after = Some(
-                            error
-                                .retry_after
-                                .unwrap_or_default()
-                                .max(crate::scene_bans::RECHECK_SECS),
-                        );
-                    }
+                    let was_banned = admission.is_refused();
+                    banned = next.is_refused() || was_banned;
                     if !was_banned || next.view() != crate::AdmissionView::Unknown {
                         admission.set_if_neq(next);
                     }
                 }
                 warn!(?entity, kind = ?error.kind, "room admission failed");
+                if banned {
+                    error.retry_after =
+                        Some(error.retry_after.unwrap_or_default().max(BAN_RECHECK_SECS));
+                    commands.entity(entity).try_insert(BanRecheck);
+                } else {
+                    commands.entity(entity).try_remove::<BanRecheck>();
+                }
                 recovery.fail(time.elapsed_secs_f64(), error);
             }
         }
@@ -832,6 +834,34 @@ mod tests {
             if status != 503 {
                 assert!(!recovery.can_retry(100.0));
             }
+            assert_eq!(
+                app.world().get::<BanRecheck>(entity).is_some(),
+                scope.is_some()
+            );
+
+            if scope.is_some() {
+                for error in [
+                    AdmissionError::status(503, None),
+                    AdmissionError::new(FailureKind::Transient),
+                    AdmissionError::new(FailureKind::Invalid),
+                ] {
+                    let before = app.world().resource::<crate::SceneAdmission>().clone();
+                    let task = completed(&app, Err(error));
+                    app.world_mut().entity_mut(entity).insert(task);
+                    app.update();
+                    assert_eq!(*app.world().resource::<crate::SceneAdmission>(), before);
+                    assert!(app.world().get::<BanRecheck>(entity).is_some());
+                    let recovery = app.world().get::<RoomRecovery>(entity).unwrap();
+                    assert_eq!(recovery.failure, Some(FailureKind::Denied));
+                    let now = app.world().resource::<Time>().elapsed_secs_f64();
+                    assert!(!recovery.retry.ready(now + BAN_RECHECK_SECS - 0.1));
+                    assert!(recovery.retry.ready(now + BAN_RECHECK_SECS));
+                    assert!(app
+                        .world()
+                        .resource::<AccessStatus>()
+                        .is_denied(&AccessScope::Scene("scene".into())));
+                }
+            }
 
             let task = completed(
                 &app,
@@ -843,6 +873,7 @@ mod tests {
                 app.world().resource::<crate::SceneAdmission>().view(),
                 crate::AdmissionView::Allowed { scene_id: "scene" }
             );
+            assert!(app.world().get::<BanRecheck>(entity).is_none());
             assert!(!app
                 .world()
                 .resource::<AccessStatus>()
@@ -883,9 +914,7 @@ mod tests {
                 ))
                 .id();
             if previous != "none" {
-                app.world_mut()
-                    .entity_mut(room)
-                    .insert(crate::scene_bans::RecheckSceneAdmission);
+                app.world_mut().entity_mut(room).insert(BanRecheck);
             }
             if previous == "earlier_ban" {
                 app.world_mut()
@@ -976,7 +1005,6 @@ mod tests {
     #[cfg(feature = "livekit")]
     #[test]
     fn scene_ban_survives_failed_rechecks_until_fresh_admission() {
-        use crate::scene_bans::RecheckSceneAdmission;
         let mut app = completion_app();
         let address = app.world().resource::<Wallet>().address().unwrap();
         let mut error = AdmissionError::status(403, None);
@@ -1001,12 +1029,14 @@ mod tests {
             ))
             .id();
         app.update();
-        assert!(app.world().get::<RecheckSceneAdmission>(room).is_some());
-        assert!(app.world().get::<RoomRecovery>(room).unwrap().retry.due >= 5.0);
+        assert!(app.world().get::<BanRecheck>(room).is_some());
+        assert!(app.world().get::<RoomRecovery>(room).unwrap().retry.due >= BAN_RECHECK_SECS);
         for error in [
             AdmissionError::status(503, None),
+            AdmissionError::status(503, Some(45.0)),
             AdmissionError::status(403, None),
         ] {
+            let delay = error.retry_after.unwrap_or_default().max(BAN_RECHECK_SECS);
             let task = completed(&app, Err(error));
             app.world_mut().entity_mut(room).insert(task);
             app.update();
@@ -1020,6 +1050,8 @@ mod tests {
                 .world()
                 .resource::<AccessStatus>()
                 .is_denied(&AccessScope::Scene("scene".into())));
+            let now = app.world().resource::<Time>().elapsed_secs_f64();
+            assert!(app.world().get::<RoomRecovery>(room).unwrap().retry.due >= now + delay);
         }
         let task = completed(
             &app,
@@ -1027,7 +1059,7 @@ mod tests {
         );
         app.world_mut().entity_mut(room).insert(task);
         app.update();
-        assert!(app.world().get::<RecheckSceneAdmission>(room).is_none());
+        assert!(app.world().get::<BanRecheck>(room).is_none());
         assert!(app
             .world()
             .get::<crate::SceneRoomModeration>(room)
@@ -1042,6 +1074,74 @@ mod tests {
             .world()
             .resource::<AccessStatus>()
             .is_denied(&AccessScope::Scene("scene".into())));
+    }
+
+    #[cfg(feature = "livekit")]
+    #[test]
+    fn scene_metadata_unban_and_reban_cancel_an_older_request_in_one_flush() {
+        let mut app = completion_app();
+        app.init_resource::<common::structs::CurrentRealm>()
+            .init_resource::<common::structs::PreviewMode>()
+            .add_systems(
+                Update,
+                crate::scene_bans::apply_scene_bans.before(finish_credentials),
+            );
+        let address = app.world().resource::<Wallet>().address().unwrap();
+        let mut metadata = crate::SceneRoomModeration::default();
+        metadata.banned_addresses.insert(address);
+        let room = app
+            .world_mut()
+            .spawn((
+                CredentialRequest {
+                    method: "POST",
+                    url: "https://rooms.example/adapter".into(),
+                    metadata: "{}".into(),
+                },
+                NeedsAdapter,
+                metadata,
+                crate::SceneRoomTarget {
+                    scene: crate::SetCurrentScene {
+                        realm_name: "realm".into(),
+                        realm_about_url: String::new(),
+                        scene_id: "scene".into(),
+                    },
+                    is_world: false,
+                },
+            ))
+            .id();
+        app.update();
+        app.world_mut()
+            .get_mut::<RoomRecovery>(room)
+            .unwrap()
+            .retry
+            .due = 45.0;
+        let task = completed(
+            &app,
+            Ok("livekit:wss://rooms.example/?access_token=before-reban".into()),
+        );
+        app.world_mut().entity_mut(room).insert(task);
+        crate::livekit::apply_scene_room_metadata(
+            &mut app.world_mut().commands(),
+            room,
+            r#"{"bannedAddresses":[]}"#,
+        );
+        crate::livekit::apply_scene_room_metadata(
+            &mut app.world_mut().commands(),
+            room,
+            &serde_json::json!({"bannedAddresses":[address.to_string()]}).to_string(),
+        );
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<crate::SceneAdmission>()
+                .banned_scene("", address),
+            Some("scene")
+        );
+        assert!(app
+            .world()
+            .resource::<Events<crate::livekit::StartLivekit>>()
+            .is_empty());
+        assert!(app.world().get::<RoomRecovery>(room).unwrap().retry.due >= 45.0);
     }
 
     #[cfg(feature = "livekit")]

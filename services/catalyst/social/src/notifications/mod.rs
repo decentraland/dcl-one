@@ -40,8 +40,8 @@ pub mod unsubscribe;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use crate::shared::routing::{erase, get, post, put};
 use axum::Router;
-use axum::routing::{get, post, put};
 use sqlx::PgPool;
 
 use crate::auth::eip1654::Eip1654Validator;
@@ -318,19 +318,19 @@ pub fn router(state: SharedState) -> Router {
         .route("/status", get(handlers::get_status))
         .route(
             "/notifications",
-            get(handlers::get_notifications).post(ingest::post_notifications),
+            get(handlers::get_notifications).post(erase(ingest::post_notifications)),
         )
         .route("/notifications/read", put(handlers::put_read))
         .route(
             "/subscription",
-            get(handlers::get_subscription).put(handlers::put_subscription),
+            get(handlers::get_subscription).put(erase(handlers::put_subscription)),
         )
         .route("/set-email", put(handlers::put_set_email))
         .route("/confirm-email", put(handlers::put_confirm_email))
         .route("/subscription/opt-outs", post(handlers::post_opt_out))
         .route(
             "/subscription/opt-outs/{scope}/{scopeId}",
-            get(handlers::get_opt_out).delete(handlers::delete_opt_out),
+            get(handlers::get_opt_out).delete(erase(handlers::delete_opt_out)),
         )
         .route("/notifications/broadcast", post(handlers::post_broadcast))
         .route("/notifications/email", post(common_email::post_email))
@@ -339,7 +339,9 @@ pub fn router(state: SharedState) -> Router {
             "/unsubscribe/{address}/{notificationType}",
             get(unsubscribe::unsubscribe_one),
         )
-        .fallback(|| async { (axum::http::StatusCode::NOT_FOUND, "Not found") })
+        .fallback(crate::shared::routing::erase(|| async {
+            (axum::http::StatusCode::NOT_FOUND, "Not found")
+        }))
         .layer(axum::middleware::from_fn(errors::json_wire))
         .layer(axum::extract::DefaultBodyLimit::max(256 * 1024))
         .layer(tower_http::cors::CorsLayer::permissive())

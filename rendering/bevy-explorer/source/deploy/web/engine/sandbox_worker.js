@@ -134,7 +134,7 @@ function createJsContext(wasmApi, context) {
   // two scenes agreeing on a bucket name would have a shared filesystem.
   deleteFromPrototypeChain(self.navigator, "storage");
   deleteFromPrototypeChain(self.navigator, "storageBuckets");
-  // the page's service worker registration (and its cache routes) is no scene's business
+  // Scenes cannot access the page's service worker registration.
   deleteFromPrototypeChain(self.navigator, "serviceWorker");
   // the scene server's one-per-scene lock (headless.js) is held by name, which a scene could take
   deleteFromPrototypeChain(self.navigator, "locks");
@@ -769,11 +769,11 @@ function createWebStorageProxy(ops) {
         }
 
         // Handle direct property access like `localStorage.myKey`
-        return ops.op_storage_get(String(prop));
+        return ops.op_webstorage_get(String(prop));
       },
 
       set(_target, prop, value, _receiver) {
-        ops.op_storage_set(String(prop), String(value));
+        ops.op_webstorage_set(String(prop), String(value));
         return true;
       },
 

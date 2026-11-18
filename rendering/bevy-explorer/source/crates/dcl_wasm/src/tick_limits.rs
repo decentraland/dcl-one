@@ -44,8 +44,12 @@ mod tests {
     use super::*;
 
     fn bus(len: usize) -> RpcCall {
+        let mut data = vec![0; len];
+        if let Some(tag) = data.first_mut() {
+            *tag = dcl_types::CommsMessageType::String as u8;
+        }
         RpcCall::SendMessageBus {
-            data: vec![0; len],
+            data,
             recipient: None,
         }
     }

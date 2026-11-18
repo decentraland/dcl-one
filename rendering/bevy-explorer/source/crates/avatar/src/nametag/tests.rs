@@ -268,13 +268,17 @@ fn a_scene_avatar_is_named_once_built_and_follows_its_shape() {
         app.world().get::<Speaking>(guide),
         Some(&Speaking { in_call: true })
     );
-    app.world_mut().resource_mut::<MicState>().scene_blocked = true;
+    app.world_mut()
+        .resource_mut::<MicState>()
+        .set_scene_disabled(true);
     app.update();
     assert_eq!(
         app.world().get::<NametagVoice>(guide).unwrap().0,
         Voice::Speaking
     );
-    app.world_mut().resource_mut::<MicState>().scene_blocked = false;
+    app.world_mut()
+        .resource_mut::<MicState>()
+        .set_scene_disabled(false);
 
     // an empty name takes the tag away, and a name brings it back
     for (name, shown) in [("", None), ("Guide", Some("Guide"))] {
@@ -530,10 +534,10 @@ fn a_hidden_name_keeps_its_tag_and_its_message() {
     app.update();
     assert!(!shown(&app, ada));
     app.world_mut().entity_mut(ada).remove::<HiddenNametag>();
-    app.world_mut().entity_mut(ada).insert(NametagBlocked);
+    app.world_mut().entity_mut(ada).insert(BlockedOrBanned);
     app.update();
     assert!(!shown(&app, ada));
-    app.world_mut().entity_mut(ada).remove::<NametagBlocked>();
+    app.world_mut().entity_mut(ada).remove::<BlockedOrBanned>();
     app.world_mut().entity_mut(ada).insert(BeyondMaxAvatars);
     app.update();
     assert!(!shown(&app, ada));

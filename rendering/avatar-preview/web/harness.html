@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Preview host harness</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #3b1d6e; color: #eee; font: 13px system-ui; }
+    #frame { position: absolute; left: 24px; top: 24px; width: 640px; height: 480px; border: 0; background: transparent; }
+    #log { position: absolute; left: 24px; top: 520px; right: 24px; bottom: 0; margin: 0; overflow: auto; white-space: pre-wrap; font: 12px ui-monospace, monospace; }
+  </style>
+</head>
+<body>
+  <!-- Embeds the preview from another origin, as a host does (the shop uses decentraland-ui2's
+       WearablePreview); the query string is passed through to the iframe. Messages the page sends
+       are listed and kept in window.__messages for tools/contract-check.mjs. -->
+  <iframe id="frame" allow="autoplay"></iframe>
+  <pre id="log"></pre>
+  <script>
+    const target = new URL(location.href).searchParams.get('target') || 'http://localhost:5300';
+    const page = new URL(location.href).searchParams.get('page') || '';
+    const query = location.search.replace(/^\?/, '').split('&').filter(p => p && !p.startsWith('target=') && !p.startsWith('page=')).join('&');
+    const frame = document.getElementById('frame');
+    const log = document.getElementById('log');
+    window.__messages = [];
+    window.addEventListener('message', e => {
+      if (e.source !== frame.contentWindow || !e.data || !e.data.type) return;
+      window.__messages.push(e.data);
+      const text = JSON.stringify(e.data);
+      log.textContent += (text.length > 300 ? text.slice(0, 300) + '…' : text) + '\n';
+    });
+    // the harness also forwards controller requests posted to itself (by a driver) into the frame
+    window.addEventListener('message', e => {
+      if (e.source === window && e.data && e.data.type === 'controller_request') {
+        frame.contentWindow.postMessage(e.data, '*');
+      }
+    });
+    frame.src = `${target}/${page}?${query}`;
+    log.textContent = `embedding ${frame.src}\n`;
+  </script>
+</body>
+</html>

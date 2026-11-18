@@ -1,14 +1,16 @@
 // The links the map hands out: a jump-in link to a parcel, an event's page, a post on X, and
 // an entry in the player's calendar.
 
-import { siteUrl } from '@hud-host'
+import { DEFAULT_REALM, siteUrl } from '@hud-host'
 import type { DiscoverPlace } from '../places/placesApi'
 import type { EventData } from '../../engine/protocol'
 import { parseParcel } from './mapCoords'
 
-/** A link that opens Decentraland at a parcel; carries the sharer's address when they have one. */
-export function jumpInLink(x: number, y: number, referrer: string | undefined): string {
-  const link = siteUrl(`/jump/?position=${x},${y}`)
+/** A link that opens Decentraland at a parcel, of a World when `realm` names one; carries the
+ *  sharer's address when they have one. */
+export function jumpInLink(x: number, y: number, referrer: string | undefined, realm?: string): string {
+  const world = realm != null && realm !== DEFAULT_REALM ? `realm=${encodeURIComponent(realm)}&` : ''
+  const link = siteUrl(`/jump/?${world}position=${x},${y}`)
   return referrer != null && referrer !== '' ? `${link}&referrer=${referrer}` : link
 }
 

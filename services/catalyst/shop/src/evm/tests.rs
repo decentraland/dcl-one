@@ -30,8 +30,8 @@ use super::meta_tx::{MetaTxStruct, meta_tx_digest};
 use super::transaction::{MetaTxSender, TransactionComponent};
 use super::{Settings, SharedState, State, now};
 use crate::checkout::claims::{
-    Claim, EscrowActionClaim, NamePurchaseClaim, NameTransferClaim, claim_escrow_action,
-    claim_name_purchase, claim_name_transfer,
+    BrokerPurchaseClaim, Claim, EscrowActionClaim, NameTransferClaim, claim_broker_purchase,
+    claim_escrow_action, claim_name_transfer,
 };
 use crate::http::Outbound;
 
@@ -969,25 +969,28 @@ async fn escrow_action_claims_cover_every_replay_state() {
 }
 
 #[tokio::test]
-async fn name_purchase_claims_cover_every_replay_state() {
+async fn broker_purchase_claims_cover_every_replay_state() {
     let Some(pool) = scratch_pool().await else {
         return;
     };
     let key = exercise(&pool, "broker_purchases", |key| {
         let pool = pool.clone();
         async move {
-            claim_name_purchase(
+            claim_broker_purchase(
                 &pool,
-                &NamePurchaseClaim {
+                &BrokerPurchaseClaim {
                     key: &key,
-                    registrar: ESCROW,
-                    name: Some("alice"),
+                    collection: ESCROW,
+                    item_id: Some("alice"),
                     token_id: None,
                     buyer_address: BUYER,
-                    custody_address: BUYER,
+                    escrow_address: BUYER,
                     price_wei: "100000000000000000000",
                     chain_id: 1,
                     mode: "name-mint",
+                    trade_hashed_signature: None,
+                    usd_amount_wei: None,
+                    mana_usd_rate_wei: None,
                 },
                 now(),
             )
@@ -3266,4 +3269,1405 @@ async fn a_trial_relays_meta_transactions_for_its_buyers_only() {
     assert_eq!(raws.lock().unwrap().len(), 1);
     cleanup_user(&pool, &buyer_address).await;
     cleanup_user(&pool, &stranger_address).await;
+}
+
+/// A JSON-RPC chain whose failures a test scripts: the next `fail_nonce_reads`
+/// nonce reads fail (a failure before signing); after `pass_sends` accepted
+/// sends, the next `drop_sends` `eth_sendRawTransaction` calls fail without
+/// the node taking the transaction (as a crash between the record and the
+/// send leaves it); `taken_nonces` counts transactions of other senders that
+/// used the relayer's nonces, `finalized_taken_nonces` those of them already
+/// final (the `finalized` count). An accepted transaction mines at once; its
+/// receipt carries a mint of [`SCRIPTED_TOKEN`] on `mint`'s collection to
+/// its recipient when set.
+#[derive(Default)]
+struct ScriptedChain {
+    fail_nonce_reads: std::sync::atomic::AtomicU32,
+    pass_sends: std::sync::atomic::AtomicU32,
+    drop_sends: std::sync::atomic::AtomicU32,
+    taken_nonces: std::sync::atomic::AtomicU32,
+    finalized_taken_nonces: std::sync::atomic::AtomicU32,
+    /// Hashes the node knows (`eth_getTransactionByHash`) without a receipt.
+    known: Mutex<Vec<String>>,
+    /// `eth_getTransactionByHash` replies carry neither `result` nor `error`.
+    blank_tx_lookups: std::sync::atomic::AtomicBool,
+    /// Hashes with a receipt though this node never took them (another
+    /// backend did).
+    mined_elsewhere: Mutex<Vec<String>>,
+    /// Hashes whose receipt reports a revert.
+    reverted: Mutex<Vec<String>>,
+    accepted: Mutex<Vec<Vec<u8>>>,
+    mint: Mutex<Option<(Address, Address)>>,
+}
+
+const SCRIPTED_TOKEN: u64 = 42;
+
+impl ScriptedChain {
+    fn take(counter: &std::sync::atomic::AtomicU32) -> bool {
+        use std::sync::atomic::Ordering;
+        let mut n = counter.load(Ordering::SeqCst);
+        while n > 0 {
+            match counter.compare_exchange(n, n - 1, Ordering::SeqCst, Ordering::SeqCst) {
+                Ok(_) => return true,
+                Err(now) => n = now,
+            }
+        }
+        false
+    }
+
+    fn accepted_hashes(&self) -> Vec<String> {
+        self.accepted
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|raw| format!("{:#x}", alloy_primitives::keccak256(raw)))
+            .collect()
+    }
+}
+
+async fn spawn_scripted_chain(chain: Arc<ScriptedChain>) -> String {
+    async fn handle(
+        axum::extract::State(chain): axum::extract::State<Arc<ScriptedChain>>,
+        Json(req): Json<Value>,
+    ) -> Json<Value> {
+        let id = req.get("id").cloned().unwrap_or(json!(1));
+        let ok = |v: Value| Json(json!({ "jsonrpc": "2.0", "id": id, "result": v }));
+        let fail = |message: &str| {
+            Json(
+                json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": message } }),
+            )
+        };
+        match req.get("method").and_then(|m| m.as_str()).unwrap_or("") {
+            "eth_chainId" => ok(json!("0x89")),
+            "eth_estimateGas" => ok(json!("0x5208")),
+            "eth_gasPrice" => ok(json!("0x3b9aca00")),
+            "eth_maxPriorityFeePerGas" => ok(json!("0x59682f00")),
+            "eth_getBlockByNumber" => ok(
+                json!({ "number": "0x1", "baseFeePerGas": "0x3b9aca00", "timestamp": "0x6553f100" }),
+            ),
+            "eth_blockNumber" => ok(json!("0x50")),
+            "eth_getTransactionCount" => {
+                if ScriptedChain::take(&chain.fail_nonce_reads) {
+                    return fail("header not found");
+                }
+                let taken = if req["params"][1] == "finalized" {
+                    &chain.finalized_taken_nonces
+                } else {
+                    &chain.taken_nonces
+                };
+                let taken = taken.load(std::sync::atomic::Ordering::SeqCst) as usize;
+                ok(json!(format!(
+                    "{:#x}",
+                    chain.accepted.lock().unwrap().len() + taken
+                )))
+            }
+            "eth_sendRawTransaction" => {
+                if !ScriptedChain::take(&chain.pass_sends) && ScriptedChain::take(&chain.drop_sends)
+                {
+                    return fail("upstream request timeout");
+                }
+                let raw = req["params"][0].as_str().unwrap_or("");
+                let bytes = hex::decode(raw.trim_start_matches("0x")).unwrap_or_default();
+                let mut accepted = chain.accepted.lock().unwrap();
+                if accepted.contains(&bytes) {
+                    return fail("already known");
+                }
+                let hash = alloy_primitives::keccak256(&bytes);
+                accepted.push(bytes);
+                ok(json!(format!("{hash:#x}")))
+            }
+            "eth_getTransactionByHash" => {
+                if chain
+                    .blank_tx_lookups
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    return Json(json!({ "jsonrpc": "2.0", "id": id }));
+                }
+                let hash = req["params"][0].as_str().unwrap_or("").to_lowercase();
+                if chain.accepted_hashes().contains(&hash)
+                    || chain.known.lock().unwrap().contains(&hash)
+                    || chain.mined_elsewhere.lock().unwrap().contains(&hash)
+                {
+                    return ok(json!({ "hash": hash }));
+                }
+                ok(Value::Null)
+            }
+            "eth_getTransactionReceipt" => {
+                let hash = req["params"][0].as_str().unwrap_or("").to_lowercase();
+                if !chain.accepted_hashes().contains(&hash)
+                    && !chain.mined_elsewhere.lock().unwrap().contains(&hash)
+                {
+                    return ok(Value::Null);
+                }
+                let logs = match *chain.mint.lock().unwrap() {
+                    Some((collection, to)) => json!([{
+                        "address": format!("{collection:#x}"),
+                        "topics": [
+                            format!("0x{}", hex::encode(alloy_primitives::keccak256("Transfer(address,address,uint256)"))),
+                            format!("0x{}", "0".repeat(64)),
+                            format!("0x{:0>64}", hex::encode(to)),
+                            format!("0x{SCRIPTED_TOKEN:064x}"),
+                        ],
+                        "data": "0x",
+                    }]),
+                    None => json!([]),
+                };
+                let status = if chain.reverted.lock().unwrap().contains(&hash) {
+                    "0x0"
+                } else {
+                    "0x1"
+                };
+                ok(json!({ "status": status, "blockNumber": "0x10", "logs": logs }))
+            }
+            _ => Json(
+                json!({ "jsonrpc": "2.0", "id": id, "error": { "code": 3, "message": "execution reverted" } }),
+            ),
+        }
+    }
+    let app = axum::Router::new()
+        .route("/", post(handle))
+        .with_state(chain);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind scripted chain");
+    let addr = listener.local_addr().expect("chain addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    format!("http://{addr}")
+}
+
+/// The economy state over a scripted chain, serving both the Polygon and the
+/// NAMEs signer with one relayer key.
+async fn scripted_state(pool: &PgPool, chain: Arc<ScriptedChain>) -> (SharedState, Address) {
+    let url = spawn_scripted_chain(chain).await;
+    let relayer = PrivateKeySigner::random();
+    let settings = Settings {
+        polygon_rpc_url: Some(url.clone()),
+        eth_rpc_url: Some(url),
+        meta_tx_broadcast_enabled: true,
+        relayer_private_key: Some(hex::encode(relayer.to_bytes())),
+        admin_token: Some(ADMIN.into()),
+        ..Settings::for_tests()
+    };
+    (state(pool.clone(), settings), relayer.address())
+}
+
+async fn keyed_post(app: &axum::Router, path: &str, key: &str, body: &Value) -> (u16, Value) {
+    let bearer = format!("Bearer {ADMIN}");
+    let (status, text) = send(
+        app,
+        "POST",
+        path,
+        Some(body.to_string()),
+        &[("authorization", &bearer), ("idempotency-key", key)],
+    )
+    .await;
+    (status, serde_json::from_str(&text).unwrap_or_default())
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct RecordedPurchase {
+    status: String,
+    tx_hash: Option<String>,
+    signed_tx: Option<String>,
+    forward_tx_hash: Option<String>,
+    forward_signed_tx: Option<String>,
+    write_ahead: bool,
+}
+
+async fn recorded_purchase(pool: &PgPool, key: &str) -> RecordedPurchase {
+    sqlx::query_as(
+        "SELECT status, tx_hash, signed_tx, forward_tx_hash, forward_signed_tx, write_ahead \
+         FROM shop.broker_purchases WHERE idempotency_key = $1",
+    )
+    .bind(key)
+    .fetch_one(pool)
+    .await
+    .expect("broker purchase row")
+}
+
+fn hash_of_hex(raw: &str) -> String {
+    let bytes = hex::decode(raw.trim_start_matches("0x")).expect("recorded hex");
+    format!("{:#x}", alloy_primitives::keccak256(bytes))
+}
+
+/// A crash between recording a NAME buy and broadcasting it (here: the send
+/// never reaches the node) leaves the claim `sent` with the hash of the
+/// recorded bytes. The retry re-sends those same bytes instead of signing a
+/// new purchase, and one transaction is all the chain ever sees.
+#[tokio::test]
+async fn a_name_buy_recorded_but_not_broadcast_resumes_by_resending_the_same_transaction() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    chain
+        .drop_sends
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let (state, _) = scripted_state(&pool, chain.clone()).await;
+    let app = router(state);
+    let key = format!("names-{}", Uuid::new_v4());
+    let body = json!({ "mode": "mint", "name": "resent", "buyerAddress": BUYER });
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(
+        status, 504,
+        "a recorded transaction whose send failed is indeterminate: {reply}"
+    );
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(row.status, "sent", "{row:?}");
+    assert!(row.write_ahead);
+    let recorded_hash = row
+        .tx_hash
+        .clone()
+        .expect("the hash is recorded before the send");
+    assert_eq!(
+        hash_of_hex(
+            row.signed_tx
+                .as_deref()
+                .expect("the signed bytes are recorded")
+        ),
+        recorded_hash
+    );
+    assert!(
+        chain.accepted_hashes().is_empty(),
+        "nothing reached the node"
+    );
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 200, "the retry re-sends and confirms: {reply}");
+    assert_eq!(reply["txHash"], recorded_hash.as_str());
+    assert_eq!(chain.accepted_hashes(), vec![recorded_hash.clone()]);
+    assert_eq!(recorded_purchase(&pool, &key).await.status, "confirmed");
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(
+        (status, reply["txHash"].as_str()),
+        (200, Some(recorded_hash.as_str()))
+    );
+    assert_eq!(chain.accepted_hashes().len(), 1, "a replay sends nothing");
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// A NAME buy whose signing failed (nothing recorded, nothing sent) is
+/// `error`, and the next request with the same key re-arms it and buys in
+/// that same call instead of answering 409.
+#[tokio::test]
+async fn a_name_buy_that_failed_before_its_record_is_bought_by_the_next_request() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    chain
+        .fail_nonce_reads
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let (state, _) = scripted_state(&pool, chain.clone()).await;
+    let app = router(state);
+    let key = format!("names-{}", Uuid::new_v4());
+    let body = json!({ "mode": "mint", "name": "rearmed", "buyerAddress": BUYER });
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 500, "{reply}");
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(
+        (row.status.as_str(), row.tx_hash.as_deref()),
+        ("error", None)
+    );
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(
+        status, 200,
+        "the re-armed claim buys in the same call: {reply}"
+    );
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(row.status, "confirmed");
+    assert_eq!(chain.accepted_hashes(), vec![row.tx_hash.unwrap()]);
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// A claim still being signed when its credits checkout is frozen is fenced:
+/// its caller's record then matches no row, so nothing is sent. A buy request
+/// on a frozen checkout's line, claimed or not, answers 409 and says why.
+#[tokio::test]
+async fn a_frozen_credits_checkout_line_is_fenced_and_refused() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let creator = PrivateKeySigner::random();
+    seed_item(
+        &pool,
+        COLLECTION,
+        4,
+        "wearable_v2",
+        &format!("{:#x}", creator.address()),
+    )
+    .await;
+    let chain = Arc::new(ScriptedChain::default());
+    let (state, relayer) = scripted_state(&pool, chain.clone()).await;
+    *chain.mint.lock().unwrap() = Some((COLLECTION.parse().unwrap(), relayer));
+    let app = router(state.clone());
+    let checkout: i64 = sqlx::query_scalar(
+        "INSERT INTO credits.checkouts (idempotency_key, address, status) \
+         VALUES ($1, $2, 'fulfilling') RETURNING id",
+    )
+    .bind(format!("frozen-{}", Uuid::new_v4()))
+    .bind(BUYER)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let (signing, unclaimed) = (
+        format!("checkout:{checkout}:1"),
+        format!("checkout:{checkout}:2"),
+    );
+    let claimed_at = now();
+    let claim = claim_broker_purchase(
+        &pool,
+        &BrokerPurchaseClaim {
+            key: &signing,
+            collection: COLLECTION,
+            item_id: Some("4"),
+            token_id: None,
+            buyer_address: BUYER,
+            escrow_address: RULE_ESCROW,
+            price_wei: "1000000000000000000",
+            chain_id: 137,
+            mode: "primary",
+            trade_hashed_signature: None,
+            usd_amount_wei: None,
+            mana_usd_rate_wei: None,
+        },
+        claimed_at,
+    )
+    .await
+    .unwrap();
+    assert!(claim.claimed);
+
+    sqlx::query("UPDATE credits.checkouts SET status = 'reversing' WHERE id = $1")
+        .bind(checkout)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let fenced = crate::checkout::claims::fence_unrecorded(
+        &mut pool.acquire().await.unwrap(),
+        &[signing.clone(), unclaimed.clone()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(fenced, 1);
+
+    let signer = state.eth_signer.as_ref().unwrap();
+    let call = crate::checkout::calls::BrokerCall {
+        to: Address::repeat_byte(0x11),
+        data: Bytes::new(),
+    };
+    let late =
+        crate::checkout::broker::send_recorded_buy(&state, signer, &signing, claimed_at, call)
+            .await;
+    assert!(matches!(late, Err(ApiError::Conflict(_))), "{late:?}");
+    assert!(chain.accepted_hashes().is_empty(), "nothing was sent");
+    assert_eq!(recorded_purchase(&pool, &signing).await.status, "error");
+
+    let body = json!({ "collection": COLLECTION, "priceWei": "1000000000000000000", "escrowAddress": RULE_ESCROW, "buyerAddress": BUYER, "mode": "primary", "itemId": "4" });
+    for key in [&signing, &unclaimed] {
+        let (status, reply) = keyed_post(&app, "/v1/broker/buy", key, &body).await;
+        assert_eq!(status, 409, "{reply}");
+        assert!(reply.to_string().contains("frozen"), "{reply}");
+    }
+    assert!(chain.accepted_hashes().is_empty());
+
+    delete_key(&pool, "broker_purchases", &signing).await;
+    sqlx::query("DELETE FROM credits.checkouts WHERE id = $1")
+        .bind(checkout)
+        .execute(&pool)
+        .await
+        .unwrap();
+    clear_items_pass(&pool).await;
+}
+
+/// A wearable broker buy whose signing failed is re-armed and bought by the
+/// next request, and both of its legs record their signed transaction before
+/// it is sent.
+#[tokio::test]
+async fn a_broker_buy_that_failed_before_its_record_is_bought_by_the_next_request() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let creator = PrivateKeySigner::random();
+    seed_item(
+        &pool,
+        COLLECTION,
+        4,
+        "wearable_v2",
+        &format!("{:#x}", creator.address()),
+    )
+    .await;
+    let chain = Arc::new(ScriptedChain::default());
+    chain
+        .fail_nonce_reads
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let (state, relayer) = scripted_state(&pool, chain.clone()).await;
+    *chain.mint.lock().unwrap() = Some((COLLECTION.parse().unwrap(), relayer));
+    let app = router(state);
+    let key = format!("broker-{}", Uuid::new_v4());
+    let body = json!({ "collection": COLLECTION, "priceWei": "1000000000000000000", "escrowAddress": RULE_ESCROW, "buyerAddress": BUYER, "mode": "primary", "itemId": "4" });
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/buy", &key, &body).await;
+    assert_eq!(status, 500, "{reply}");
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(
+        (row.status.as_str(), row.tx_hash.as_deref()),
+        ("error", None)
+    );
+    assert!(chain.accepted_hashes().is_empty());
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/buy", &key, &body).await;
+    assert_eq!(status, 200, "the re-armed claim buys and forwards: {reply}");
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(row.status, "confirmed", "{row:?}");
+    let buy = row.tx_hash.unwrap();
+    let forward = row.forward_tx_hash.unwrap();
+    assert_eq!(hash_of_hex(row.signed_tx.as_deref().unwrap()), buy);
+    assert_eq!(
+        hash_of_hex(row.forward_signed_tx.as_deref().unwrap()),
+        forward
+    );
+    assert_eq!(reply["txHash"], forward.as_str());
+    assert_eq!(chain.accepted_hashes(), vec![buy, forward]);
+    delete_key(&pool, "broker_purchases", &key).await;
+    clear_items_pass(&pool).await;
+}
+
+/// A crash between the claim and the record leaves the claim `pending` with
+/// nothing recorded, so nothing was sent. While it is fresh another request
+/// is refused (the first may still be signing); once stale, a request takes
+/// it over and buys. The stalled caller's record is fenced on its own claim,
+/// so it can never send a second transaction, and a claim kept from before
+/// transactions were recorded is never bought again.
+#[tokio::test]
+async fn a_claim_left_pending_before_its_record_is_taken_over_once_stale() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    let (state, relayer) = scripted_state(&pool, chain.clone()).await;
+    let app = router(state.clone());
+    let key = format!("names-{}", Uuid::new_v4());
+    let body = json!({ "mode": "mint", "name": "takenover", "buyerAddress": BUYER });
+    let registrar = format!(
+        "{:#x}",
+        super::contracts_addrs::NameContracts::for_chain(state.settings.names_chain_id)
+            .unwrap()
+            .registrar
+    );
+    let stalled_at = now() - chrono::Duration::minutes(10);
+    let stalled = claim_broker_purchase(
+        &pool,
+        &BrokerPurchaseClaim {
+            key: &key,
+            collection: &registrar,
+            item_id: Some("takenover"),
+            token_id: None,
+            buyer_address: BUYER,
+            escrow_address: &format!("{relayer:#x}"),
+            price_wei: "100000000000000000000",
+            chain_id: state.settings.names_chain_id as i64,
+            mode: "name-mint",
+            trade_hashed_signature: None,
+            usd_amount_wei: None,
+            mana_usd_rate_wei: None,
+        },
+        now(),
+    )
+    .await
+    .unwrap();
+    assert!(stalled.claimed);
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(
+        status, 409,
+        "a fresh pending claim may still be signing: {reply}"
+    );
+    assert!(chain.accepted_hashes().is_empty());
+
+    sqlx::query("UPDATE shop.broker_purchases SET updated_at = $2 WHERE idempotency_key = $1")
+        .bind(&key)
+        .bind(stalled_at)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(
+        status, 200,
+        "a stale claim with nothing recorded is taken over: {reply}"
+    );
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(chain.accepted_hashes(), vec![row.tx_hash.clone().unwrap()]);
+
+    let signer = state.eth_signer.as_ref().unwrap();
+    let call = crate::checkout::calls::BrokerCall {
+        to: Address::repeat_byte(0x11),
+        data: Bytes::new(),
+    };
+    let late =
+        crate::checkout::broker::send_recorded_buy(&state, signer, &key, stalled_at, call).await;
+    assert!(
+        matches!(late, Err(ApiError::Conflict(_))),
+        "the stalled caller's record is fenced: {late:?}"
+    );
+    assert_eq!(
+        chain.accepted_hashes().len(),
+        1,
+        "one transaction for the claim"
+    );
+    assert_eq!(recorded_purchase(&pool, &key).await.tx_hash, row.tx_hash);
+
+    sqlx::query(
+        "UPDATE shop.broker_purchases SET status = 'error', tx_hash = NULL, write_ahead = false \
+         WHERE idempotency_key = $1",
+    )
+    .bind(&key)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(
+        status, 409,
+        "an earlier claim's failure is not proof nothing was sent: {reply}"
+    );
+    assert_eq!(chain.accepted_hashes().len(), 1);
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// The key-only resume (what credits fulfilment calls) cannot build a buy,
+/// so a claim left `pending` with nothing recorded is released to `error`
+/// once stale, for the next buy request to re-arm; a fresh one is left to
+/// its caller. Nothing is sent either way.
+#[tokio::test]
+async fn the_key_only_resume_releases_a_stale_pending_claim_without_sending() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    let (state, _) = scripted_state(&pool, chain.clone()).await;
+    let key = format!("broker-{}", Uuid::new_v4());
+    let claim = claim_broker_purchase(
+        &pool,
+        &BrokerPurchaseClaim {
+            key: &key,
+            collection: COLLECTION,
+            item_id: Some("4"),
+            token_id: None,
+            buyer_address: BUYER,
+            escrow_address: RULE_ESCROW,
+            price_wei: "1000000000000000000",
+            chain_id: 137,
+            mode: "primary",
+            trade_hashed_signature: None,
+            usd_amount_wei: None,
+            mana_usd_rate_wei: None,
+        },
+        now(),
+    )
+    .await
+    .unwrap();
+    assert!(claim.claimed);
+
+    let fresh = crate::checkout::broker::resume(&state, &key).await;
+    assert!(matches!(fresh, Err(ApiError::Conflict(_))), "{fresh:?}");
+    assert_eq!(recorded_purchase(&pool, &key).await.status, "pending");
+
+    sqlx::query("UPDATE shop.broker_purchases SET updated_at = $2 WHERE idempotency_key = $1")
+        .bind(&key)
+        .bind(now() - chrono::Duration::minutes(10))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let stale = crate::checkout::broker::resume(&state, &key).await;
+    assert!(matches!(stale, Err(ApiError::Conflict(_))), "{stale:?}");
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(
+        (row.status.as_str(), row.tx_hash.as_deref()),
+        ("error", None)
+    );
+    assert!(chain.accepted_hashes().is_empty(), "nothing was sent");
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// A broker buy whose forward was recorded but never reached the node is
+/// settled by the key-only resume re-sending the recorded forward: the
+/// chain sees the buy and that one forward, nothing else.
+#[tokio::test]
+async fn a_recorded_forward_that_was_not_broadcast_is_resent_by_the_key_only_resume() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let creator = PrivateKeySigner::random();
+    seed_item(
+        &pool,
+        COLLECTION,
+        4,
+        "wearable_v2",
+        &format!("{:#x}", creator.address()),
+    )
+    .await;
+    let chain = Arc::new(ScriptedChain::default());
+    chain
+        .pass_sends
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    chain
+        .drop_sends
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let (state, relayer) = scripted_state(&pool, chain.clone()).await;
+    *chain.mint.lock().unwrap() = Some((COLLECTION.parse().unwrap(), relayer));
+    let app = router(state.clone());
+    let key = format!("broker-{}", Uuid::new_v4());
+    let body = json!({ "collection": COLLECTION, "priceWei": "1000000000000000000", "escrowAddress": RULE_ESCROW, "buyerAddress": BUYER, "mode": "primary", "itemId": "4" });
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/buy", &key, &body).await;
+    assert_eq!(
+        status, 504,
+        "the forward's send failed after its record: {reply}"
+    );
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(row.status, "forwarding", "{row:?}");
+    let buy = row.tx_hash.clone().unwrap();
+    let forward = row.forward_tx_hash.clone().unwrap();
+    assert_eq!(
+        hash_of_hex(row.forward_signed_tx.as_deref().unwrap()),
+        forward
+    );
+    assert_eq!(chain.accepted_hashes(), vec![buy.clone()]);
+
+    let resumed = crate::checkout::broker::resume(&state, &key).await.unwrap();
+    assert_eq!(
+        resumed, forward,
+        "the recorded forward is re-sent, not re-signed"
+    );
+    assert_eq!(chain.accepted_hashes(), vec![buy, forward]);
+    assert_eq!(recorded_purchase(&pool, &key).await.status, "confirmed");
+    delete_key(&pool, "broker_purchases", &key).await;
+    clear_items_pass(&pool).await;
+}
+
+/// Moves a claim's first dead look (and, with `age`, its claim time) into
+/// the past, as a later retry would find them.
+async fn age_dead_look(pool: &PgPool, key: &str, minutes: i64, claim_days: Option<i64>) {
+    sqlx::query(
+        "UPDATE shop.broker_purchases SET dead_seen_at = $2 - make_interval(mins => $3), \
+         created_at = COALESCE($2 - make_interval(days => $4), created_at) \
+         WHERE idempotency_key = $1",
+    )
+    .bind(key)
+    .bind(now())
+    .bind(minutes as i32)
+    .bind(claim_days.map(|d| d as i32))
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn dead_seen(pool: &PgPool, key: &str) -> (bool, Option<Vec<String>>) {
+    sqlx::query_as(
+        "SELECT dead_seen_at IS NOT NULL, released_tx_hashes FROM shop.broker_purchases \
+         WHERE idempotency_key = $1",
+    )
+    .bind(key)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// A NAME buy recorded under `key` whose send never reached the node.
+async fn recorded_unsent_name_buy(
+    pool: &PgPool,
+    chain: &Arc<ScriptedChain>,
+    name: &str,
+) -> (axum::Router, String, Value, String) {
+    chain
+        .drop_sends
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let (state, _) = scripted_state(pool, chain.clone()).await;
+    let app = router(state);
+    let key = format!("names-{}", Uuid::new_v4());
+    let body = json!({ "mode": "mint", "name": name, "buyerAddress": BUYER });
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 504, "{reply}");
+    let recorded = recorded_purchase(pool, &key).await.tx_hash.unwrap();
+    (app, key, body, recorded)
+}
+
+/// A recorded transaction whose nonce another transaction took can never
+/// mine. While that other transaction is not final, the retry neither
+/// re-sends nor re-signs (a reorg could still mine ours) and answers 504.
+/// Once it is final, a first dead look is only noted (504); a second look
+/// ten minutes later agrees, so the claim is released (409) with the dead
+/// hash kept, and the next request buys with a new transaction, the only
+/// one the chain mines.
+#[tokio::test]
+async fn a_recorded_transaction_whose_nonce_was_finally_taken_is_released_and_bought_again() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    let (app, key, body, dead) = recorded_unsent_name_buy(&pool, &chain, "nonceless").await;
+
+    chain
+        .taken_nonces
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 504, "not final yet: wait, never re-sign: {reply}");
+    assert_eq!(dead_seen(&pool, &key).await, (false, None));
+
+    chain
+        .finalized_taken_nonces
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 504, "one dead look is only noted: {reply}");
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(
+        (row.status.as_str(), row.tx_hash.as_deref()),
+        ("sent", Some(dead.as_str()))
+    );
+    assert_eq!(dead_seen(&pool, &key).await, (true, None));
+    let (status, _) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 504, "a second look right after is not enough");
+
+    age_dead_look(&pool, &key, 11, None).await;
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(
+        status, 409,
+        "two looks ten minutes apart release the claim: {reply}"
+    );
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(
+        (row.status.as_str(), row.tx_hash, row.signed_tx),
+        ("error", None, None)
+    );
+    assert_eq!(
+        dead_seen(&pool, &key).await,
+        (false, Some(vec![dead.clone()]))
+    );
+    assert!(chain.accepted_hashes().is_empty(), "nothing was sent");
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 200, "the released claim is bought again: {reply}");
+    let row = recorded_purchase(&pool, &key).await;
+    let bought = row.tx_hash.unwrap();
+    assert_ne!(bought, dead);
+    assert_eq!(row.status, "confirmed");
+    assert_eq!(
+        chain.accepted_hashes(),
+        vec![bought],
+        "one transaction mined for the claim"
+    );
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// A single lookup can be wrong. A node that still knows the transaction
+/// contradicts a missing receipt, so nothing is noted; a first dead look
+/// later contradicted by a receipt (a lagging backend) is forgotten, and the
+/// mined buy is confirmed, never released or bought again.
+#[tokio::test]
+async fn a_dead_look_contradicted_by_a_later_receipt_releases_nothing() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    let (app, key, body, recorded) = recorded_unsent_name_buy(&pool, &chain, "lagging").await;
+    chain
+        .taken_nonces
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    chain
+        .finalized_taken_nonces
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+
+    chain.known.lock().unwrap().push(recorded.clone());
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 504, "{reply}");
+    assert_eq!(
+        dead_seen(&pool, &key).await,
+        (false, None),
+        "the node knows it"
+    );
+
+    chain.known.lock().unwrap().clear();
+    let (status, _) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 504);
+    assert_eq!(dead_seen(&pool, &key).await, (true, None));
+
+    age_dead_look(&pool, &key, 11, None).await;
+    chain.mined_elsewhere.lock().unwrap().push(recorded.clone());
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 200, "the receipt settles it: {reply}");
+    assert_eq!(reply["txHash"], recorded.as_str());
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(
+        (row.status.as_str(), row.tx_hash),
+        ("confirmed", Some(recorded))
+    );
+    assert_eq!(
+        dead_seen(&pool, &key).await,
+        (false, None),
+        "the dead look is forgotten"
+    );
+    assert!(
+        chain.accepted_hashes().is_empty(),
+        "nothing was bought again"
+    );
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// A claim older than the release window may have lost its receipt to a
+/// pruned lookup index, so a dead look there is never released: it is left
+/// `sent` for manual reconciliation.
+#[tokio::test]
+async fn an_old_claim_that_looks_dead_is_left_for_reconciliation() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    let (app, key, body, recorded) = recorded_unsent_name_buy(&pool, &chain, "pruned").await;
+    chain
+        .taken_nonces
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    chain
+        .finalized_taken_nonces
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    age_dead_look(&pool, &key, 11, Some(8)).await;
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 409, "{reply}");
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!((row.status.as_str(), row.tx_hash), ("sent", Some(recorded)));
+    assert_eq!(dead_seen(&pool, &key).await.1, None, "nothing released");
+    assert!(chain.accepted_hashes().is_empty());
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// A recorded forward whose nonce a final transaction took can never mine;
+/// the buy did. A first dead look is only noted; once a second look ten
+/// minutes later agrees, the key-only resume signs one new forward in its
+/// place and settles the claim.
+#[tokio::test]
+async fn a_recorded_forward_that_can_never_mine_is_replaced_by_one_new_forward() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let creator = PrivateKeySigner::random();
+    seed_item(
+        &pool,
+        COLLECTION,
+        4,
+        "wearable_v2",
+        &format!("{:#x}", creator.address()),
+    )
+    .await;
+    let chain = Arc::new(ScriptedChain::default());
+    chain
+        .pass_sends
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    chain
+        .drop_sends
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let (state, relayer) = scripted_state(&pool, chain.clone()).await;
+    *chain.mint.lock().unwrap() = Some((COLLECTION.parse().unwrap(), relayer));
+    let app = router(state.clone());
+    let key = format!("broker-{}", Uuid::new_v4());
+    let body = json!({ "collection": COLLECTION, "priceWei": "1000000000000000000", "escrowAddress": RULE_ESCROW, "buyerAddress": BUYER, "mode": "primary", "itemId": "4" });
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/buy", &key, &body).await;
+    assert_eq!(status, 504, "{reply}");
+    let row = recorded_purchase(&pool, &key).await;
+    let (buy, dead) = (row.tx_hash.unwrap(), row.forward_tx_hash.unwrap());
+
+    chain
+        .taken_nonces
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    chain
+        .finalized_taken_nonces
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let first = crate::checkout::broker::resume(&state, &key).await;
+    assert!(
+        matches!(first, Err(ApiError::RelayerTimeout(_))),
+        "{first:?}"
+    );
+    assert_eq!(recorded_purchase(&pool, &key).await.status, "forwarding");
+
+    age_dead_look(&pool, &key, 11, None).await;
+    let forward = crate::checkout::broker::resume(&state, &key).await.unwrap();
+    assert_ne!(forward, dead);
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(row.status, "confirmed");
+    assert_eq!(row.forward_tx_hash.as_deref(), Some(forward.as_str()));
+    assert_eq!(dead_seen(&pool, &key).await, (false, None));
+    let released: Option<Vec<String>> = sqlx::query_scalar(
+        "SELECT released_forward_tx_hashes FROM shop.broker_purchases WHERE idempotency_key = $1",
+    )
+    .bind(&key)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        released,
+        Some(vec![dead]),
+        "the dead forward is kept apart from buys"
+    );
+    assert_eq!(
+        chain.accepted_hashes(),
+        vec![buy, forward],
+        "one buy, one forward mined"
+    );
+    delete_key(&pool, "broker_purchases", &key).await;
+    clear_items_pass(&pool).await;
+}
+
+/// A NAME buy whose recorded transaction looks dead on this chain: its send
+/// never reached the node and a finalized transaction holds its nonce.
+async fn dead_looking_name_buy(
+    pool: &PgPool,
+    chain: &Arc<ScriptedChain>,
+    name: &str,
+) -> (axum::Router, String, Value, String) {
+    let recorded = recorded_unsent_name_buy(pool, chain, name).await;
+    chain
+        .taken_nonces
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    chain
+        .finalized_taken_nonces
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    recorded
+}
+
+/// A look that finds the transaction known contradicts an earlier dead look
+/// and clears it, so dead, known, then dead again ten minutes after the
+/// first look is a fresh first look: nothing is released.
+#[tokio::test]
+async fn a_known_look_between_two_dead_looks_releases_nothing() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    let (app, key, body, recorded) = dead_looking_name_buy(&pool, &chain, "flicker").await;
+
+    let (status, _) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 504);
+    assert_eq!(dead_seen(&pool, &key).await, (true, None));
+
+    age_dead_look(&pool, &key, 11, None).await;
+    chain.known.lock().unwrap().push(recorded.clone());
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 504, "{reply}");
+    assert_eq!(
+        dead_seen(&pool, &key).await,
+        (false, None),
+        "the known look clears it"
+    );
+
+    chain.known.lock().unwrap().clear();
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 504, "a fresh first look, not a release: {reply}");
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!((row.status.as_str(), row.tx_hash), ("sent", Some(recorded)));
+    assert_eq!(dead_seen(&pool, &key).await, (true, None));
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// A transaction lookup whose reply carries neither `result` nor `error`
+/// proves nothing: it is not a dead look.
+#[tokio::test]
+async fn a_lookup_reply_without_a_result_is_not_a_dead_look() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    let (app, key, body, _) = dead_looking_name_buy(&pool, &chain, "blankreply").await;
+    chain
+        .blank_tx_lookups
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 504, "{reply}");
+    assert_eq!(dead_seen(&pool, &key).await, (false, None));
+    assert_eq!(recorded_purchase(&pool, &key).await.status, "sent");
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// A buy released as dead that mines after all is found when the claim is
+/// re-armed: it is recorded again and settled, and nothing new is signed.
+#[tokio::test]
+async fn a_released_buy_that_mined_after_all_is_resumed_not_bought_again() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    let (app, key, body, released) = dead_looking_name_buy(&pool, &chain, "lateminer").await;
+    let (status, _) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 504);
+    age_dead_look(&pool, &key, 11, None).await;
+    let (status, _) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 409);
+    assert_eq!(
+        dead_seen(&pool, &key).await,
+        (false, Some(vec![released.clone()]))
+    );
+
+    chain.mined_elsewhere.lock().unwrap().push(released.clone());
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["txHash"], released.as_str());
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(
+        (row.status.as_str(), row.tx_hash),
+        ("confirmed", Some(released))
+    );
+    assert_eq!(dead_seen(&pool, &key).await, (false, Some(vec![])));
+    assert!(
+        chain.accepted_hashes().is_empty(),
+        "nothing new was signed or sent"
+    );
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// A released buy that mined but reverted spent nothing: the re-armed claim
+/// signs a new buy instead of restoring the reverted one.
+#[tokio::test]
+async fn a_released_buy_that_reverted_is_bought_again() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    let (app, key, body, released) = dead_looking_name_buy(&pool, &chain, "lostbuy").await;
+    let (status, _) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 504);
+    age_dead_look(&pool, &key, 11, None).await;
+    let (status, _) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 409);
+
+    chain.mined_elsewhere.lock().unwrap().push(released.clone());
+    chain.reverted.lock().unwrap().push(released.clone());
+    let (status, reply) = keyed_post(&app, "/v1/broker/names/buy", &key, &body).await;
+    assert_eq!(status, 200, "{reply}");
+    let row = recorded_purchase(&pool, &key).await;
+    let bought = row.tx_hash.unwrap();
+    assert_ne!(bought, released);
+    assert_eq!(row.status, "confirmed");
+    assert_eq!(chain.accepted_hashes(), vec![bought]);
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// A confirmed released hash anywhere in the list counts, even after one
+/// that reverted.
+#[tokio::test]
+async fn a_confirmed_released_buy_wins_over_an_earlier_revert() {
+    use crate::credits::escrow::Broker;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    let (state, _) = scripted_state(&pool, chain.clone()).await;
+    let broker = crate::credits::escrow::EconomyBroker::new(state.clone());
+    let (reverted, confirmed) = (
+        format!("0x{}", "ab".repeat(32)),
+        format!("0x{}", "cd".repeat(32)),
+    );
+    let key = broker_claim_in(&pool, "error", None).await;
+    sqlx::query(
+        "UPDATE shop.broker_purchases SET tx_hash = NULL, released_tx_hashes = ARRAY[$2, $3] \
+         WHERE idempotency_key = $1",
+    )
+    .bind(&key)
+    .bind(&reverted)
+    .bind(&confirmed)
+    .execute(&pool)
+    .await
+    .unwrap();
+    chain
+        .mined_elsewhere
+        .lock()
+        .unwrap()
+        .extend([reverted.clone(), confirmed.clone()]);
+    chain.reverted.lock().unwrap().push(reverted);
+
+    assert!(broker.released_buy_mined(&key).await.unwrap());
+    let signer = state.eth_signer.as_ref().unwrap();
+    let mined = crate::checkout::broker::mined_released_tx(&state, signer, &key)
+        .await
+        .unwrap();
+    assert_eq!(
+        mined,
+        Some((confirmed, crate::evm::signer::ReceiptOutcome::Confirmed))
+    );
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// A released forward that already mined settles a resumed claim before a
+/// new forward is signed (`bought`) or the recorded one is waited on or sent
+/// again (`forwarding`).
+#[tokio::test]
+async fn a_mined_released_forward_settles_before_any_forward_is_sent() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    let (state, _) = scripted_state(&pool, chain.clone()).await;
+    let released = format!("0x{}", "ef".repeat(32));
+    chain.mined_elsewhere.lock().unwrap().push(released.clone());
+    for status in ["bought", "forwarding"] {
+        let key = broker_claim_in(&pool, status, Some("0xstuckforward")).await;
+        sqlx::query(
+            "UPDATE shop.broker_purchases SET minted_token_id = '42', \
+             released_forward_tx_hashes = ARRAY[$2] WHERE idempotency_key = $1",
+        )
+        .bind(&key)
+        .bind(&released)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let settled = crate::checkout::broker::resume(&state, &key).await.unwrap();
+        assert_eq!(settled, released, "{status}");
+        let row = recorded_purchase(&pool, &key).await;
+        assert_eq!(
+            (row.status.as_str(), row.forward_tx_hash.as_deref()),
+            ("confirmed", Some(released.as_str())),
+            "{status}"
+        );
+        assert!(chain.accepted_hashes().is_empty(), "{status}: nothing sent");
+        delete_key(&pool, "broker_purchases", &key).await;
+    }
+}
+
+/// A revert seen late never overwrites a claim another request settled.
+#[tokio::test]
+async fn a_late_revert_leaves_a_confirmed_claim_confirmed() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let (state, _) = scripted_state(&pool, Arc::new(ScriptedChain::default())).await;
+    // another request settled the claim before this one saw its revert
+    let key = broker_claim_in(&pool, "confirmed", None).await;
+    crate::checkout::broker::set_reverted(&state, &key).await;
+    assert_eq!(recorded_purchase(&pool, &key).await.status, "confirmed");
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// A broker claim under a fresh key moved to `status` with `leg_hash` as its
+/// recorded buy (`sent`, `error`) or forward (`forwarding`).
+async fn broker_claim_in(pool: &PgPool, status: &str, leg_hash: Option<&str>) -> String {
+    let key = format!("broker-{}", Uuid::new_v4());
+    claim_broker_purchase(
+        pool,
+        &BrokerPurchaseClaim {
+            key: &key,
+            collection: COLLECTION,
+            item_id: Some("4"),
+            token_id: None,
+            buyer_address: BUYER,
+            escrow_address: RULE_ESCROW,
+            price_wei: "1000000000000000000",
+            chain_id: 137,
+            mode: "primary",
+            trade_hashed_signature: None,
+            usd_amount_wei: None,
+            mana_usd_rate_wei: None,
+        },
+        now(),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shop.broker_purchases SET status = $2, \
+         tx_hash = CASE WHEN $2 = 'sent' THEN $3 ELSE '0xbuy' END, \
+         forward_tx_hash = CASE WHEN $2 = 'forwarding' THEN $3 END \
+         WHERE idempotency_key = $1",
+    )
+    .bind(&key)
+    .bind(status)
+    .bind(leg_hash)
+    .execute(pool)
+    .await
+    .unwrap();
+    key
+}
+
+/// A release is fenced on its dead look still being ten minutes old: if a
+/// look found the leg alive and a fresh dead look followed, nothing is
+/// released, for the buy leg and the forward leg alike.
+#[tokio::test]
+async fn a_release_needs_a_dead_look_still_ten_minutes_old() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    let (state, _) = scripted_state(&pool, chain).await;
+    let buy = broker_claim_in(&pool, "sent", Some("0xdeadbuy")).await;
+    let forward = broker_claim_in(&pool, "forwarding", Some("0xdeadforward")).await;
+
+    for key in [&buy, &forward] {
+        age_dead_look(&pool, key, 0, None).await;
+    }
+    assert!(
+        !crate::checkout::broker::release_dead_buy(&state, &buy, "0xdeadbuy")
+            .await
+            .unwrap()
+    );
+    assert!(
+        !crate::checkout::broker::release_dead_forward(&state, &forward, "0xdeadforward")
+            .await
+            .unwrap()
+    );
+    assert_eq!(recorded_purchase(&pool, &buy).await.status, "sent");
+    assert_eq!(
+        recorded_purchase(&pool, &forward).await.status,
+        "forwarding"
+    );
+
+    for key in [&buy, &forward] {
+        age_dead_look(&pool, key, 11, None).await;
+    }
+    assert!(
+        crate::checkout::broker::release_dead_buy(&state, &buy, "0xdeadbuy")
+            .await
+            .unwrap()
+    );
+    assert!(
+        crate::checkout::broker::release_dead_forward(&state, &forward, "0xdeadforward")
+            .await
+            .unwrap()
+    );
+    assert_eq!(recorded_purchase(&pool, &buy).await.status, "error");
+    assert_eq!(recorded_purchase(&pool, &forward).await.status, "bought");
+    delete_key(&pool, "broker_purchases", &buy).await;
+    delete_key(&pool, "broker_purchases", &forward).await;
+}
+
+/// Only a released buy that mined successfully counts as having spent MANA:
+/// one whose receipt reverted spent nothing, so its line stays refundable.
+#[tokio::test]
+async fn only_a_confirmed_released_buy_counts_as_spent() {
+    use crate::credits::escrow::Broker;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let chain = Arc::new(ScriptedChain::default());
+    let (state, _) = scripted_state(&pool, chain.clone()).await;
+    let broker = crate::credits::escrow::EconomyBroker::new(state);
+    let released = format!("0x{}", "ab".repeat(32));
+    let key = broker_claim_in(&pool, "error", None).await;
+    sqlx::query(
+        "UPDATE shop.broker_purchases SET tx_hash = NULL, released_tx_hashes = ARRAY[$2] \
+         WHERE idempotency_key = $1",
+    )
+    .bind(&key)
+    .bind(&released)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert!(
+        !broker.released_buy_mined(&key).await.unwrap(),
+        "no receipt: not spent"
+    );
+    chain.mined_elsewhere.lock().unwrap().push(released.clone());
+    chain.reverted.lock().unwrap().push(released.clone());
+    assert!(
+        !broker.released_buy_mined(&key).await.unwrap(),
+        "a reverted buy spent nothing"
+    );
+    chain.reverted.lock().unwrap().clear();
+    assert!(
+        broker.released_buy_mined(&key).await.unwrap(),
+        "a confirmed buy spent MANA"
+    );
+    delete_key(&pool, "broker_purchases", &key).await;
+}
+
+/// A forward released as dead that mines after all delivered the token, so
+/// the replacement forward reverts. The claim is confirmed with the released
+/// forward instead of ending `reverted`.
+#[tokio::test]
+async fn a_released_forward_that_mined_after_all_confirms_the_claim() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let creator = PrivateKeySigner::random();
+    seed_item(
+        &pool,
+        COLLECTION,
+        4,
+        "wearable_v2",
+        &format!("{:#x}", creator.address()),
+    )
+    .await;
+    let chain = Arc::new(ScriptedChain::default());
+    chain
+        .pass_sends
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    chain
+        .drop_sends
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let (state, relayer) = scripted_state(&pool, chain.clone()).await;
+    *chain.mint.lock().unwrap() = Some((COLLECTION.parse().unwrap(), relayer));
+    let app = router(state.clone());
+    let key = format!("broker-{}", Uuid::new_v4());
+    let body = json!({ "collection": COLLECTION, "priceWei": "1000000000000000000", "escrowAddress": RULE_ESCROW, "buyerAddress": BUYER, "mode": "primary", "itemId": "4" });
+
+    let (status, reply) = keyed_post(&app, "/v1/broker/buy", &key, &body).await;
+    assert_eq!(status, 504, "{reply}");
+    let first = recorded_purchase(&pool, &key)
+        .await
+        .forward_tx_hash
+        .unwrap();
+    chain
+        .taken_nonces
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    chain
+        .finalized_taken_nonces
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    assert!(crate::checkout::broker::resume(&state, &key).await.is_err());
+    age_dead_look(&pool, &key, 11, None).await;
+    // The replacement forward is signed but does not reach the node.
+    chain
+        .drop_sends
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    assert!(crate::checkout::broker::resume(&state, &key).await.is_err());
+    let replacement = recorded_purchase(&pool, &key)
+        .await
+        .forward_tx_hash
+        .unwrap();
+    assert_ne!(replacement, first);
+
+    // The released forward mines after all; the replacement then reverts.
+    chain.mined_elsewhere.lock().unwrap().push(first.clone());
+    chain.reverted.lock().unwrap().push(replacement.clone());
+    let settled = crate::checkout::broker::resume(&state, &key).await.unwrap();
+    assert_eq!(settled, first);
+    let row = recorded_purchase(&pool, &key).await;
+    assert_eq!(
+        (row.status.as_str(), row.forward_tx_hash),
+        ("confirmed", Some(first))
+    );
+    delete_key(&pool, "broker_purchases", &key).await;
+    clear_items_pass(&pool).await;
 }

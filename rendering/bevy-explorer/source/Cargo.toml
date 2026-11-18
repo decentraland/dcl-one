@@ -35,7 +35,14 @@ default = ["livekit", "ffmpeg", "inspect", "social", "react-hud-cef", "remote"]
 console = []
 dcl-assert = ["common/dcl-assert"]
 gen-tests = []
-tracy = ["bevy/trace_tracy"]
+# The in-app profiler's inputs: Bevy's `trace` spans around every system, schedule and
+# render-graph node (`src/perf/profiled_scopes.rs`), the counting allocator
+# (`src/perf/allocation_counter.rs`) and, on native, Bevy's render and system-information
+# diagnostics. They cost every frame even while the profiler records nothing, so release builds
+# leave the feature out: `--features performance-profiler` natively, `build-web.py
+# --performance-profiler` or `WASM_FEATURES=livekit,social,performance-profiler just wasm` on the web.
+performance-profiler = ["bevy/trace"]
+tracy = ["performance-profiler", "bevy/trace_tracy"]
 inspect = ["dcl_deno/inspect", "system_ui/inspect"]
 hot_reload = ["bevy/file_watcher", "bevy/embedded_watcher", "ipfs/hot_reload"]
 livekit = ["comms/livekit", "system_ui/livekit", "ban_block/livekit"]
@@ -258,6 +265,7 @@ emojis = "0.8"
 prost = "0.11.8"
 prost-reflect = "0.11"
 clap = "4.6"
+half = "2.4"
 once_cell = "1.16.0"
 rapier3d-f64 = "0.31"
 urlencoding = "2.1.2"
@@ -482,12 +490,16 @@ opener = { workspace = true }
 cef_offscreen = { workspace = true, optional = true }
 
 [target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+# Bevy's system-information diagnostics. Not on macOS: there the feature turns on sysinfo's
+# `apple-app-store`, which removes the process memory reading `src/memory.rs` samples.
+bevy = { workspace = true, features = ["sysinfo_plugin"] }
 ash = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+ipfs = { workspace = true, features = ["web-worker"] }
 cap = { workspace = true }
 # parking_lot only parks with Atomics.wait (instead of panicking on contention) behind its
 # `nightly` feature; bevy_asset's locks are contended once systems run on the compute workers.
@@ -534,7 +546,7 @@ livekit-signaling = { git = "https://github.com/decentraland/dcl-one", rev = "b2
 # cache never converges and the main pass recompiles cold every load.
 # carried on a fork branch off the 0.17.1 tag. not an upstream backport —
 # naga_oil main is 0.22; revisit only if bevy's pinned naga_oil moves.
-naga_oil = { git = "https://github.com/decentraland/dcl-one", rev = "7756770057c798034a2a83602b4d88755da376be" }
+naga_oil = { git = "https://github.com/decentraland/dcl-one", rev = "b90aa836dcd1f0226779473c5550e9e04b37f224" }
 # rANS refill never refills on 32-bit targets (wasm32), corrupting every stream
 # whose encoder chose the branchless refill strategy. fix PR'd upstream as
 # reearth/draco-oxide#34; drop these patches when it lands in a release.
@@ -547,16 +559,16 @@ draco-oxide-core = { git = "https://github.com/decentraland/dcl-one", rev = "ffb
 # patch series there (rendering/bevy-explorer/docs/guidelines/bevy-fork.md). The workspace and the
 # ecosystem crates name these six crates by crates.io version; the other subcrates follow from
 # the same checkout as Bevy's path dependencies.
-bevy = { git = "https://github.com/decentraland/dcl-one", rev = "282c5e25ff1abc40c95bc46801e7036e484f85f5" }
-bevy_ecs = { git = "https://github.com/decentraland/dcl-one", rev = "282c5e25ff1abc40c95bc46801e7036e484f85f5" }
-bevy_math = { git = "https://github.com/decentraland/dcl-one", rev = "282c5e25ff1abc40c95bc46801e7036e484f85f5" }
-bevy_color = { git = "https://github.com/decentraland/dcl-one", rev = "282c5e25ff1abc40c95bc46801e7036e484f85f5" }
-bevy_transform = { git = "https://github.com/decentraland/dcl-one", rev = "282c5e25ff1abc40c95bc46801e7036e484f85f5" }
-bevy_platform = { git = "https://github.com/decentraland/dcl-one", rev = "282c5e25ff1abc40c95bc46801e7036e484f85f5" }
+bevy = { git = "https://github.com/decentraland/dcl-one", rev = "0e9b70d58b880d671bfe831f2cc26caa5bd3a305" }
+bevy_ecs = { git = "https://github.com/decentraland/dcl-one", rev = "0e9b70d58b880d671bfe831f2cc26caa5bd3a305" }
+bevy_math = { git = "https://github.com/decentraland/dcl-one", rev = "0e9b70d58b880d671bfe831f2cc26caa5bd3a305" }
+bevy_color = { git = "https://github.com/decentraland/dcl-one", rev = "0e9b70d58b880d671bfe831f2cc26caa5bd3a305" }
+bevy_transform = { git = "https://github.com/decentraland/dcl-one", rev = "0e9b70d58b880d671bfe831f2cc26caa5bd3a305" }
+bevy_platform = { git = "https://github.com/decentraland/dcl-one", rev = "0e9b70d58b880d671bfe831f2cc26caa5bd3a305" }
 
-ffmpeg-next = { git = "https://github.com/decentraland/dcl-one", rev = "44b05f2e3e9b2dd5729beae8e5f9decb2e347523" }
-parry3d-f64 = { git = "https://github.com/decentraland/dcl-one", rev = "85e6537f50f0df31df074fa9d90b77ff345746e5" }
-deno_core = { git = "https://github.com/decentraland/dcl-one", rev = "9cde6db613b97b69c5bd9a671fbc122a151db67c" }
+ffmpeg-next = { git = "https://github.com/decentraland/dcl-one", rev = "0a8f3cf998262fc4749fb7c86eea93b48f0b8254" }
+parry3d-f64 = { git = "https://github.com/decentraland/dcl-one", rev = "2943100ea8674045ee96e67e3805578aea31fed4" }
+deno_core = { git = "https://github.com/decentraland/dcl-one", rev = "95d9df86a00e079ea15b567857d2ba97fb9f2a6a" }
 
 deno_console = { git = "https://github.com/decentraland/dcl-one", rev = "21ad8173bda46b322a191bf353556305ea4d4f5d" }
 deno_fetch = { git = "https://github.com/decentraland/dcl-one", rev = "21ad8173bda46b322a191bf353556305ea4d4f5d" }
@@ -568,39 +580,41 @@ deno_websocket = { git = "https://github.com/decentraland/dcl-one", rev = "21ad8
 # 0.8.1 + upstream bc39c1f (fragmented-message size cap, unreleased) + 1 MiB default cap.
 # deno_websocket's pinned API exposes no set_max_message_size hook, so the fork default is
 # how scene websocket inbound message size is bounded.
-fastwebsockets = { git = "https://github.com/decentraland/dcl-one", rev = "509b967e6aecd3c33b44a1c4d9abe4a5ed747d9a" }
+fastwebsockets = { git = "https://github.com/decentraland/dcl-one", rev = "758f43302466087ea1cde438d7924d397d8d0b20" }
 deno_webstorage = { git = "https://github.com/decentraland/dcl-one", rev = "21ad8173bda46b322a191bf353556305ea4d4f5d" }
 
 # gltf 1.4.1 (latest release, 2024-05) predates gltf-rs/gltf#449 "allow empty accessors"
 # (robtfm, merged 2025-05): dense accessors with no bufferView (zero-filled per spec,
 # blender emits them for morph targets) get NO reader, so MorphTargetImage comes up
-# short and texture upload panics. Pin the #449 merge commit until a release ships it.
-gltf = { git = "https://github.com/gltf-rs/gltf", rev = "12fc1b7c" }
-gltf-json = { git = "https://github.com/gltf-rs/gltf", rev = "12fc1b7c" }
+# short and texture upload panics. Also gltf-rs/gltf#468 (merged 2026-05): parses
+# KHR_animation_pointer channels, which have no target node; without it bevy_gltf panics on
+# them. Pin main until a release ships both.
+gltf = { git = "https://github.com/gltf-rs/gltf", rev = "50d65229" }
+gltf-json = { git = "https://github.com/gltf-rs/gltf", rev = "50d65229" }
 
-winit = { git = "https://github.com/decentraland/dcl-one", rev = "8489cc6aeade093910e99f009095aa4fd1c85921" }
+winit = { git = "https://github.com/decentraland/dcl-one", rev = "ee0414e120eb9837c1f5892a325791dddb586cc2" }
 wgpu = { git = "https://github.com/decentraland/dcl-one", rev = "189227bff6dafe7e2cdb720ae028a12072dd642f" }
 wgpu-types = { git = "https://github.com/decentraland/dcl-one", rev = "189227bff6dafe7e2cdb720ae028a12072dd642f" }
 naga = { git = "https://github.com/decentraland/dcl-one", rev = "189227bff6dafe7e2cdb720ae028a12072dd642f" }
 
 # Forked crates the workspace names by crates.io version. Each rev is the commit that
 # ../patches/<name>/source.toml names: the upstream commit plus the patch series there.
-bevy_atmosphere = { git = "https://github.com/decentraland/dcl-one", rev = "1fae5e5ea2909a84f635f7f179edec04363cfa57" }
-bevy_console = { git = "https://github.com/decentraland/dcl-one", rev = "b841a83d0218ecf450541baeb6b94b4e331c7bb9" }
-bevy_ecss = { git = "https://github.com/decentraland/dcl-one", rev = "652832a640d681076cb208b30409abab4e4f17d4" }
-bevy_kira_audio = { git = "https://github.com/decentraland/dcl-one", rev = "787966139b4616afaae2fc63901b1c06a0d60ea5" }
-bevy_simple_text_input = { git = "https://github.com/decentraland/dcl-one", rev = "946e7001fb81ecf52540a3fd5a3fb3a14b901967" }
-copypwasmta = { git = "https://github.com/decentraland/dcl-one", rev = "3030ee052f8cab7ff0f252cfa41119b687a0b7a7" }
-opener = { git = "https://github.com/decentraland/dcl-one", rev = "7e2656a2cd87242823e523e8758402d3a5d604ef" }
+bevy_atmosphere = { git = "https://github.com/decentraland/dcl-one", rev = "2983bf4300c7b0fcfeaef445d19665cd93fb1353" }
+bevy_console = { git = "https://github.com/decentraland/dcl-one", rev = "62b94f3c152da9e748d7790c7e9126aed493d327" }
+bevy_ecss = { git = "https://github.com/decentraland/dcl-one", rev = "da37b8fbfd7d2561257254f4ae9370ca33a71acb" }
+bevy_kira_audio = { git = "https://github.com/decentraland/dcl-one", rev = "343c72eb0e0e4b232aea96a4f5210209d06e113b" }
+bevy_simple_text_input = { git = "https://github.com/decentraland/dcl-one", rev = "0cc0431d0a0e851ca5297033bb992aae70053a9b" }
+copypwasmta = { git = "https://github.com/decentraland/dcl-one", rev = "b56757323a5f73eb4a373fef69c4e840f76f98f2" }
+opener = { git = "https://github.com/decentraland/dcl-one", rev = "9fec930b69093f45e4a75e21d8a51d864639dc62" }
 
 # The manifests of bevy_dui, bevy_ecss, bevy_simple_text_input and boimp name three former forks
 # by git. These entries point them at the same commits. With Cargo.lock present Cargo does not
 # read those repositories; a resolve without Cargo.lock reads each branch once.
 [patch."https://github.com/robtfm/bevy"]
-bevy = { git = "https://github.com/decentraland/dcl-one", rev = "282c5e25ff1abc40c95bc46801e7036e484f85f5" }
+bevy = { git = "https://github.com/decentraland/dcl-one", rev = "0e9b70d58b880d671bfe831f2cc26caa5bd3a305" }
 
 [patch."https://github.com/robtfm/bevy_ecss"]
-bevy_ecss = { git = "https://github.com/decentraland/dcl-one", rev = "652832a640d681076cb208b30409abab4e4f17d4" }
+bevy_ecss = { git = "https://github.com/decentraland/dcl-one", rev = "da37b8fbfd7d2561257254f4ae9370ca33a71acb" }
 
 [patch."https://github.com/robtfm/copypwasmta"]
-copypwasmta = { git = "https://github.com/decentraland/dcl-one", rev = "3030ee052f8cab7ff0f252cfa41119b687a0b7a7" }
+copypwasmta = { git = "https://github.com/decentraland/dcl-one", rev = "b56757323a5f73eb4a373fef69c4e840f76f98f2" }

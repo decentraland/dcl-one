@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
 import { IoEyeOffOutline, IoEyeOutline } from 'react-icons/io5';
-import cx from 'classnames';
+import { cx } from '../../../../lib/utils/cx';
 import { validateAssetPath } from '@dcl/asset-packs';
 
 import { useAssetOptions } from '../../../../hooks/useAssetOptions';

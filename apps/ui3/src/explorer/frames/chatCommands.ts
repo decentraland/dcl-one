@@ -20,7 +20,7 @@ export const ENGINE_COMMANDS: ChatCommand[] = [
   { name: "/speed", args: "<walk> <jog> <run>", about: "set the avatar movement speeds" },
   { name: "/jump", args: "<height> <run-height>", about: "set the avatar jump heights" },
   { name: "/shadows", args: "[true|false]", about: "toggle shadows" },
-  { name: "/fog", args: "[true|false]", about: "toggle fog" },
+  { name: "/fog", args: "[true|false] [density]", about: "toggle fog, and optionally set its density per metre" },
   { name: "/bloom", args: "<intensity>", about: "set the bloom intensity" },
   { name: "/show_ui", args: "<scene-hash> [true|false]", about: "show or hide a scene's UI" },
   { name: "/spawn", args: "<ens>", about: "start a portable experience" },

@@ -1,5 +1,5 @@
 import React from 'react';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import { withSdk } from '../../../hoc/withSdk';
 import { useTransformInput } from '../../../hooks/editor/useTransformInput';

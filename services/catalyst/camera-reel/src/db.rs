@@ -140,9 +140,9 @@ fn hashes_of(image_hash: &str, thumbnail_hash: &str) -> Vec<String> {
 }
 
 /// Inside the write's transaction, after the row is rejected or gone:
-/// records `hashes` as withheld unless a non-rejected row, a content file
-/// or a builder upload still names them.
-/// Returns the hashes it recorded. A qualifying rejection promotes an older
+/// records `hashes` as withheld. A rejection withholds whatever else names
+/// them; a deletion skips those a non-rejected row, a content file or a
+/// builder upload still names. Returns the hashes it recorded. A qualifying rejection promotes an older
 /// deletion record; deletion can never downgrade a durable rejection.
 async fn withhold(
     tx: &mut sqlx::Transaction<'_, Postgres>,
@@ -154,10 +154,11 @@ async fn withhold(
     sqlx::query_scalar::<_, String>(
         "INSERT INTO camera_reel.withheld_blobs (hash, image_id, reason, withheld_at) \
          SELECT h.hash, $2, $3, $4 FROM unnest($1::text[]) AS h(hash) \
-         WHERE NOT EXISTS (SELECT 1 FROM camera_reel.images i \
+         WHERE $3 = 'rejected' OR ( \
+               NOT EXISTS (SELECT 1 FROM camera_reel.images i \
                            WHERE (i.image_hash = h.hash OR i.thumbnail_hash = h.hash) AND i.review_status <> 'rejected') \
            AND NOT EXISTS (SELECT 1 FROM content.content_files f WHERE f.content_hash = h.hash) \
-           AND NOT EXISTS (SELECT 1 FROM builder.uploaded_contents u WHERE u.hash = h.hash) \
+           AND NOT EXISTS (SELECT 1 FROM builder.uploaded_contents u WHERE u.hash = h.hash)) \
          ON CONFLICT (hash) DO UPDATE \
              SET reason=EXCLUDED.reason, image_id=EXCLUDED.image_id, withheld_at=EXCLUDED.withheld_at \
              WHERE camera_reel.withheld_blobs.reason = 'deleted' AND EXCLUDED.reason = 'rejected' \
@@ -803,8 +804,8 @@ impl Database {
     }
 
     /// One transaction: the moderator's verdict on the row, then its blobs'
-    /// (`withheld_blobs`): `rejected` withholds the hashes nothing else
-    /// names, any other status releases them. `None` is "no such image".
+    /// (`withheld_blobs`): `rejected` withholds them whatever else names
+    /// them, any other status releases them. `None` is "no such image".
     pub async fn update_image_review_status(
         &self,
         id: &str,
@@ -883,6 +884,7 @@ mod tests {
     #[tokio::test]
     async fn world_lookup_cache_obeys_configured_capacity_after_maintenance() {
         let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(500))
             .connect_lazy("postgres://localhost/camera_cache_test")
             .unwrap();
         let db = Database::new(pool, "https://camera.example", 300, 2);

@@ -1,7 +1,6 @@
 import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
-import cx from 'classnames';
-import { Box } from 'decentraland-ui2';
+import { cx } from '/@/lib/cx';
 import { useDispatch, useSelector } from '#store';
 import { useFeatureFlags } from '/@/hooks/useFeatureFlags';
 import { FeatureFlag } from '/@/modules/store/featureFlags';
@@ -164,9 +163,9 @@ export function Navbar(props: { active: NavbarItem }) {
         </div>
       </>
       <>
-        <Box className="actions">
+        <div className="actions">
           <CreateButton />
-        </Box>
+        </div>
         <AppSettings
           open={openAppSettings}
           initialTab={settingsTab}
