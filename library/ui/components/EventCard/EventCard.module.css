@@ -215,6 +215,7 @@
   /* A day column: a 16:9 cover above the text. A live event is marked on its leading edge. */
   .day {
     flex-direction: column;
+    container-type: inline-size;
   }
 
   .day .media {
@@ -228,10 +229,6 @@
   .day .title {
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .day.isLive {
-    container-type: inline-size;
   }
 
   .day.isLive::before {
@@ -537,6 +534,23 @@
 
     .day.hasActions:not(.isLive) .action:not(.labelled) {
       width: 32px;
+    }
+
+    @container (max-width: 224px) {
+      .day.hasActions:not(.isLive) .labelled {
+        flex-shrink: 1;
+        min-width: 0;
+        padding-inline: var(--dcl-space-4);
+      }
+
+      .day.hasActions:not(.isLive) .labelled > svg {
+        display: none;
+      }
+
+      .day.hasActions:not(.isLive) .actionLabel {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
     }
 
     .day.hasActions:hover .actions,

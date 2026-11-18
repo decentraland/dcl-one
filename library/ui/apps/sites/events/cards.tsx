@@ -15,6 +15,7 @@ import {
   MenusShare
 } from '../../../foundations/icons'
 import dclLogo from '../assets/dcl-logo.svg'
+import { useEventsCopy } from './locale'
 import styles from './cards.module.css'
 import type {
   DayListCardProps,
@@ -49,6 +50,7 @@ function LiveNowCard({
   jumpIn,
   priority = false
 }: LiveEventCardProps & { priority?: boolean }) {
+  const { text } = useEventsCopy()
   return (
     <PlaceCard
       variant="live"
@@ -64,7 +66,9 @@ function LiveNowCard({
       live={live}
       creator={creatorOf(creator)}
       jumpHref={jumpIn?.href}
-      jumpLabel="Jump In"
+      jumpLabel={text('Jump In')}
+      liveLabel={text('LIVE')}
+      byLabel={text('By')}
       onJumpIn={jumpIn?.onJumpIn}
     />
   )
@@ -77,27 +81,34 @@ type ActionProps = { title: string; remind?: RemindControl; calendarHref?: strin
  * action exists, so the first result is read too.
  */
 function useCopyLink(href: string) {
-  const [status, setStatus] = useState('')
+  const { text } = useEventsCopy()
+  const [status, setStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
   const attempt = useRef(0)
   useEffect(() => {
-    if (status !== 'Copied') return
-    const timer = setTimeout(() => setStatus(''), 2000)
+    if (status !== 'copied') return
+    const timer = setTimeout(() => setStatus('idle'), 2000)
     return () => clearTimeout(timer)
   }, [status])
 
   const copy = async () => {
     const current = ++attempt.current
-    setStatus('')
-    let message: string
+    setStatus('idle')
+    let outcome: 'copied' | 'failed'
     try {
       await navigator.clipboard.writeText(new URL(href, window.location.href).href)
-      message = 'Copied'
+      outcome = 'copied'
     } catch {
-      message = "Couldn't copy the link. Try again."
+      outcome = 'failed'
     }
-    if (current === attempt.current) setStatus(message)
+    if (current === attempt.current) setStatus(outcome)
   }
-  return { status, copy }
+  const message =
+    status === 'copied'
+      ? text('Copied')
+      : status === 'failed'
+        ? text("Couldn't copy the link. Try again.")
+        : ''
+  return { status: message, copy }
 }
 
 /**
@@ -119,6 +130,7 @@ function EventActions({
   jumpIn?: JumpIn
   onCopy: () => void
 }) {
+  const { text } = useEventsCopy()
   const small = size === 'small'
   const glyph = small ? 24 : 20
   const [requestedReminder, setRequestedReminder] = useState(false)
@@ -126,7 +138,7 @@ function EventActions({
   const Share = small ? MenusShare : GeneralCopy
   const share = (
     <EventCardAction
-      aria-label={`Copy link: ${title}`}
+      aria-label={text('{action}: {title}', { action: text('Copy link'), title })}
       icon={<Share size={glyph} aria-hidden="true" />}
       onClick={onCopy}
     />
@@ -137,9 +149,10 @@ function EventActions({
         {jumpIn ? (
           <JumpInCTA
             size="sm"
+            label={text('Jump in')}
             href={jumpIn.href}
             onClick={jumpIn.onJumpIn}
-            aria-label={`Jump in: ${title}`}
+            aria-label={text('{action}: {title}', { action: text('Jump in'), title })}
           />
         ) : null}
         {share}
@@ -149,7 +162,7 @@ function EventActions({
     <>
       {remind ? (
         <EventCardAction
-          aria-label={`Remind me: ${title}`}
+          aria-label={text('{action}: {title}', { action: text('Remind me'), title })}
           aria-pressed={remind.active}
           disabled={remind.pending}
           icon={
@@ -159,7 +172,7 @@ function EventActions({
               aria-hidden="true"
             />
           }
-          label={small ? undefined : 'Remind me'}
+          label={small ? undefined : text('Remind me')}
           onClick={() => {
             setRequestedReminder(!remind.active)
             remind.onToggle()
@@ -168,7 +181,7 @@ function EventActions({
       ) : null}
       {calendarHref ? (
         <EventCardActionLink
-          aria-label={`Add to calendar: ${title}`}
+          aria-label={text('{action}: {title}', { action: text('Add to calendar'), title })}
           href={calendarHref}
           target="_blank"
           rel="noopener noreferrer"
@@ -198,10 +211,13 @@ function UpcomingCard({
   usersLabel,
   jumpIn
 }: DayListCardProps) {
+  const { text } = useEventsCopy()
   const { status, copy } = useCopyLink(href)
   return (
     <EventCard
       variant="small"
+      liveLabel={text('LIVE')}
+      byLabel={text('by')}
       title={title}
       href={href}
       onOpen={onOpen}
@@ -243,6 +259,7 @@ function DayCard({
   calendarHref,
   jumpIn
 }: ExperienceCardProps) {
+  const { text } = useEventsCopy()
   const { status, copy } = useCopyLink(href)
   return (
     <EventCard
@@ -252,7 +269,8 @@ function DayCard({
       onOpen={onOpen}
       image={image}
       creator={creatorOf(creator)}
-      byLabel="By"
+      byLabel={text('By')}
+      liveLabel={text('LIVE')}
       live={live}
       players={live ? users : undefined}
       playersLabel={live ? usersLabel : undefined}

@@ -1,3 +1,4 @@
+import { useEventsCopy, type EventsLocale } from "@dcl/one-ui/apps/sites/events/locale";
 import { useEffect, useRef, useState } from "react";
 import { useMachine } from "@xstate/react";
 import { Link, useSearchParams } from "react-router";
@@ -20,7 +21,7 @@ import {
   type TrackFn,
 } from "./machine";
 
-export type CategoryOption = { name: string; label: string };
+export type CategoryOption = { name: string; label: string; i18n?: Partial<Record<EventsLocale, string | null>> };
 type UploadFn = (file: File, vertical: boolean, signal?: AbortSignal) => Promise<string>;
 
 type SubmitHangoutProps = {
@@ -125,6 +126,7 @@ function SubmitHangoutInner({
   privateFieldsEditable,
   canChangeCommunity,
 }: InnerProps) {
+  const { text, errorText } = useEventsCopy();
   const [, setSearchParams] = useSearchParams();
 
   const snapshot = useRef(
@@ -188,18 +190,18 @@ function SubmitHangoutInner({
   return (
     <div className="submit-hangout" data-step={step} data-state={value}>
       <header className="submit-hangout__header">
-        <Link to="/events">Back to Events</Link>
-        <h1>{mode === "edit" ? "Edit Hangout" : "Submit a Hangout"}</h1>
+        <Link to="/events">{text("Back to Events")}</Link>
+        <h1>{mode === "edit" ? text("Edit Hangout") : text("Submit a Hangout")}</h1>
       </header>
 
-      <div className="submit-hangout__controls" role="group" aria-label="Hangout wizard">
+      <div className="submit-hangout__controls" role="group" aria-label={text("Hangout wizard")}>
         {(value === "signinGate" || needsSignIn) && (
           <button
             type="button"
             className="submit-hangout__btn submit-hangout__btn--primary"
             onClick={() => onSignIn ? onSignIn() : send({ type: "SIGN_IN" })}
           >
-            Sign In to continue
+            {text("Sign In to continue")}
           </button>
         )}
 
@@ -217,16 +219,16 @@ function SubmitHangoutInner({
               options={options}
             />
             {value === "details" && <HangoutAssociations draft={d} options={options} canEditAny={canEditAny} canChangeCommunity={canChangeCommunity} onEdit={(patch) => send({ type: "EDIT", patch })} />}
-            {value === "details" && !communityAllowed && <p role="alert">Choose a community you manage, or select None.</p>}
-            {uploadError && <p role="alert">{uploadError}</p>}
-            {uploading && <p role="status">Uploading image…</p>}
+            {value === "details" && !communityAllowed && <p role="alert">{text("Choose a community you manage, or select None.")}</p>}
+            {uploadError && <p role="alert">{errorText(uploadError)}</p>}
+            {uploading && <p role="status">{text("Uploading image…")}</p>}
             <div className="submit-hangout__nav">
-              {value === "cover" ? <Link className="submit-hangout__btn" to="/events">Back</Link> : <button
+              {value === "cover" ? <Link className="submit-hangout__btn" to="/events">{text("Back")}</Link> : <button
                 type="button"
                 className="submit-hangout__btn"
                 onClick={() => send({ type: "BACK" })}
               >
-                Back
+                {text("Back")}
               </button>}
 
               {value === "review" ? (
@@ -236,14 +238,14 @@ function SubmitHangoutInner({
                     className="submit-hangout__btn"
                     onClick={() => send({ type: "PREVIEW" })}
                   >
-                    Preview
+                    {text("Preview")}
                   </button>
                   <button
                     type="button"
                     className="submit-hangout__btn submit-hangout__btn--primary"
                     onClick={() => send({ type: "SUBMIT" })}
                   >
-                    Submit Hangout
+                    {text("Submit Hangout")}
                   </button>
                 </>
               ) : value === "preview" ? (
@@ -252,7 +254,7 @@ function SubmitHangoutInner({
                   className="submit-hangout__btn submit-hangout__btn--primary"
                   onClick={() => send({ type: "SUBMIT" })}
                 >
-                  Confirm &amp; Submit
+                  {text("Confirm & Submit")}
                 </button>
               ) : (
                 <ForwardButton
@@ -270,19 +272,19 @@ function SubmitHangoutInner({
 
         {value === "submitting" && (
           <p className="submit-hangout__status" role="status">
-            Submitting your hangout for review&#x2026;
+            {text("Submitting your hangout for review…")}
           </p>
         )}
         {value === "submitted" && !needsSignIn && (
           <div role="status">
-            <p>{mode === "edit" ? "Your hangout was updated." : "Your hangout was created."}{state.context.result?.approved ? "" : " It is pending review."}</p>
-            {state.context.result?.id && <Link to={`/events/edit-event/${encodeURIComponent(state.context.result.id)}`}>Edit hangout</Link>}
+            <p>{mode === "edit" ? text("Your hangout was updated.") : text("Your hangout was created.")}{state.context.result?.approved ? "" : ` ${text("It is pending review.")}`}</p>
+            {state.context.result?.id && <Link to={`/events/edit-event/${encodeURIComponent(state.context.result.id)}`}>{text("Edit hangout")}</Link>}
           </div>
         )}
 
         {state.context.error && value === "review" && (
           <p className="submit-hangout__error" role="alert">
-            Submit failed: {state.context.error}. Please try again.
+            {text("Submit failed: {error}. Please try again.", { error: errorText(state.context.error) })}
           </p>
         )}
       </div>
@@ -305,6 +307,7 @@ function ForwardButton({
   trackCtx: TrackContext;
   nextStep?: HangoutStateId;
 }) {
+  const { text } = useEventsCopy();
   return (
     <button
       type="button"
@@ -316,7 +319,7 @@ function ForwardButton({
         if (nextStep) emitStepCompleted(emitTrack, trackCtx, from, nextStep);
       }}
     >
-      Continue
+      {text("Continue")}
     </button>
   );
 }
@@ -342,16 +345,17 @@ function StepFields({
   privateFieldsEditable: boolean;
   options: HangoutOptions | null;
 }) {
+  const { locale, text } = useEventsCopy();
   if (step === "cover") {
     return (
       <div className="submit-hangout__fields">
-        <p className="submit-hangout__hint">Cover images are optional.</p>
+        <p className="submit-hangout__hint">{text("Cover images are optional.")}</p>
         {onUpload && <>
-          <label className="submit-hangout__fieldlabel">Upload cover image<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" disabled={uploading} onChange={(event) => { const file = event.target.files?.[0]; if (file) onUpload(file, false); }} /></label>
-          <label className="submit-hangout__fieldlabel">Upload vertical cover<input type="file" accept="image/jpeg,image/png,image/webp" disabled={uploading} onChange={(event) => { const file = event.target.files?.[0]; if (file) onUpload(file, true); }} /></label>
+          <label className="submit-hangout__fieldlabel">{text("Upload cover image")}<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" disabled={uploading} onChange={(event) => { const file = event.target.files?.[0]; if (file) onUpload(file, false); }} /></label>
+          <label className="submit-hangout__fieldlabel">{text("Upload vertical cover")}<input type="file" accept="image/jpeg,image/png,image/webp" disabled={uploading} onChange={(event) => { const file = event.target.files?.[0]; if (file) onUpload(file, true); }} /></label>
         </>}
-        {draft.imagePreviewUrl && <figure className={styles.cover}><img className={styles.coverImage} src={draft.imagePreviewUrl} alt="Hangout cover" width={240} height={120} /><button type="button" className="submit-hangout__btn" onClick={() => onEdit({ imagePreviewUrl: null })}>Remove cover image</button></figure>}
-        {draft.verticalImagePreviewUrl && <figure className={styles.cover}><img className={styles.coverImage} src={draft.verticalImagePreviewUrl} alt="Vertical hangout cover" width={120} height={180} /><button type="button" className="submit-hangout__btn" onClick={() => onEdit({ verticalImagePreviewUrl: null })}>Remove vertical cover</button></figure>}
+        {draft.imagePreviewUrl && <figure className={styles.cover}><img className={styles.coverImage} src={draft.imagePreviewUrl} alt={text("Hangout cover")} width={240} height={120} /><button type="button" className="submit-hangout__btn" onClick={() => onEdit({ imagePreviewUrl: null })}>{text("Remove cover image")}</button></figure>}
+        {draft.verticalImagePreviewUrl && <figure className={styles.cover}><img className={styles.coverImage} src={draft.verticalImagePreviewUrl} alt={text("Vertical hangout cover")} width={120} height={180} /><button type="button" className="submit-hangout__btn" onClick={() => onEdit({ verticalImagePreviewUrl: null })}>{text("Remove vertical cover")}</button></figure>}
       </div>
     );
   }
@@ -360,18 +364,18 @@ function StepFields({
     return (
       <div className="submit-hangout__fields">
         <label className="submit-hangout__fieldlabel">
-          Hangout Name
+          {text("Hangout Name")}
           <input
             className="submit-hangout__field"
             type="text"
             maxLength={150}
             value={draft.name}
-            placeholder="Be as descriptive as you can"
+            placeholder={text("Be as descriptive as you can")}
             onChange={(e) => onEdit({ name: e.target.value })}
           />
         </label>
         <label className="submit-hangout__fieldlabel">
-          Description
+          {text("Description")}
           <textarea
             className="submit-hangout__field"
             rows={2}
@@ -382,16 +386,16 @@ function StepFields({
         </label>
         {categories.length > 0 ? (
           <label className="submit-hangout__fieldlabel">
-            Category
+            {text("Category")}
             <select
               className="submit-hangout__field"
               value={draft.category}
               onChange={(e) => onEdit({ category: e.target.value })}
             >
-              <option value="">None</option>
+              <option value="">{text("None")}</option>
               {categories.map((c) => (
                 <option key={c.name} value={c.name}>
-                  {c.label}
+                  {c.i18n?.[locale] ?? c.label}
                 </option>
               ))}
             </select>
@@ -399,13 +403,13 @@ function StepFields({
         ) : (
           <p className="submit-hangout__hint" role="status">
             {categoriesError
-              ? "Categories couldn't be loaded right now \u{2014} you can continue and pick one later."
-              : "No categories are available right now \u{2014} you can continue without one."}
+              ? text("Categories couldn't be loaded right now — you can continue and pick one later.")
+              : text("No categories are available right now — you can continue without one.")}
           </p>
         )}
         {privateFieldsEditable && <>
-          <label className="submit-hangout__fieldlabel">Contact email<input className="submit-hangout__field" type="email" value={draft.contact} onChange={(event) => onEdit({ contact: event.target.value })} /></label>
-          <label className="submit-hangout__fieldlabel">Details for moderators<textarea aria-label="Details for moderators" className="submit-hangout__field" value={draft.details} maxLength={5000} onChange={(event) => onEdit({ details: event.target.value })} /></label>
+          <label className="submit-hangout__fieldlabel">{text("Contact email")}<input className="submit-hangout__field" type="email" value={draft.contact} onChange={(event) => onEdit({ contact: event.target.value })} /></label>
+          <label className="submit-hangout__fieldlabel">{text("Details for moderators")}<textarea aria-label={text("Details for moderators")} className="submit-hangout__field" value={draft.details} maxLength={5000} onChange={(event) => onEdit({ details: event.target.value })} /></label>
         </>}
       </div>
     );
@@ -416,7 +420,7 @@ function StepFields({
     return (
       <div className="submit-hangout__fields">
         <label className="submit-hangout__fieldlabel">
-          Location Type
+          {text("Location Type")}
           <select
             className="submit-hangout__field"
             value={draft.location}
@@ -424,13 +428,13 @@ function StepFields({
               onEdit({ location: e.target.value === "world" ? "world" : "land" })
             }
           >
-            <option value="land">Land</option>
-            <option value="world">World</option>
+            <option value="land">{text("Land")}</option>
+            <option value="world">{text("World")}</option>
           </select>
         </label>
         {isWorld ? (
           <label className="submit-hangout__fieldlabel">
-            World
+            {text("World")}
             <input
               className="submit-hangout__field"
               type="text"
@@ -440,7 +444,7 @@ function StepFields({
               onChange={(e) => onEdit({ worldName: e.target.value })}
             />
             <datalist id="hangout-worlds">{options?.worlds.map((world) => <option value={world} key={world} />)}</datalist>
-            {options?.worldsError && <span className="submit-hangout__hint">World suggestions could not load. You can enter the world name.</span>}
+            {options?.worldsError && <span className="submit-hangout__hint">{text("World suggestions could not load. You can enter the world name.")}</span>}
           </label>
         ) : (
           <div className="submit-hangout__coords">
@@ -472,7 +476,7 @@ function StepFields({
     return (
       <div className="submit-hangout__fields">
         <label className="submit-hangout__fieldlabel">
-          Date
+          {text("Date")}
           <input
             className="submit-hangout__field"
             type="date"
@@ -481,7 +485,7 @@ function StepFields({
           />
         </label>
         <label className="submit-hangout__fieldlabel">
-          Start (UTC)
+          {text("Start (UTC)")}
           <input
             className="submit-hangout__field"
             type="time"
@@ -490,7 +494,7 @@ function StepFields({
           />
         </label>
         <label className="submit-hangout__fieldcheck">
-          Duration (hours)
+          {text("Duration (hours)")}
           <input className="submit-hangout__field" type="number" min="0.25" max="24" step="0.25" value={draft.durationHours} onChange={(event) => onEdit({ durationHours: Number(event.target.value) })} />
         </label>
         <label className="submit-hangout__fieldcheck">
@@ -499,14 +503,14 @@ function StepFields({
             checked={draft.recurrent}
             onChange={(e) => onEdit({ recurrent: e.target.checked })}
           />
-          Repeat Hangout
+          {text("Repeat Hangout")}
         </label>
         {draft.recurrent && (
-          <label className="submit-hangout__fieldlabel">Repeat<select className="submit-hangout__field" value={draft.recurrence} onChange={(event) => onEdit({ recurrence: event.target.value })}><option value="every_hour">Every hour</option><option value="every_day">Every day</option><option value="every_week">Every week</option><option value="every_month">Every month</option><option value="every_year">Every year</option></select></label>
+          <label className="submit-hangout__fieldlabel">{text("Repeat")}<select className="submit-hangout__field" value={draft.recurrence} onChange={(event) => onEdit({ recurrence: event.target.value })}><option value="every_hour">{text("Every hour")}</option><option value="every_day">{text("Every day")}</option><option value="every_week">{text("Every week")}</option><option value="every_month">{text("Every month")}</option><option value="every_year">{text("Every year")}</option></select></label>
         )}
         {draft.recurrent && (
           <label className="submit-hangout__fieldlabel">
-            Ends
+            {text("Ends")}
             <input
               className="submit-hangout__field"
               type="date"
@@ -521,25 +525,25 @@ function StepFields({
 
   return (
     <div className="submit-hangout__review">
-      <h3 className="submit-hangout__reviewtitle">Review your hangout</h3>
+      <h3 className="submit-hangout__reviewtitle">{text("Review your hangout")}</h3>
       <dl className="submit-hangout__reviewlist">
-        <dt>Name</dt>
+        <dt>{text("Name")}</dt>
         <dd>{draft.name || "\u{2014}"}</dd>
-        <dt>When</dt>
+        <dt>{text("When")}</dt>
         <dd>
           {draft.startDate || "\u{2014}"} {draft.startTime}
-          {draft.recurrent ? ` \u{B7} repeats until ${draft.recurrentUntil || "\u{2014}"}` : ""}
+          {draft.recurrent ? ` · ${text("repeats until {date}", { date: draft.recurrentUntil || "\u{2014}" })}` : ""}
         </dd>
-        <dt>Where</dt>
+        <dt>{text("Where")}</dt>
         <dd>
           {draft.location === "world"
-            ? draft.worldName || "a world"
+            ? draft.worldName || text("a world")
             : `LAND (${draft.coordX}, ${draft.coordY})`}
         </dd>
         {draft.category && (
           <>
-            <dt>Category</dt>
-            <dd>{draft.category}</dd>
+            <dt>{text("Category")}</dt>
+            <dd>{categories.find(c => c.name === draft.category)?.i18n?.[locale] ?? draft.category}</dd>
           </>
         )}
       </dl>

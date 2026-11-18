@@ -329,7 +329,13 @@ describe('EventCard motion', () => {
   })
 
   it('hides the waiting actions without removing them, so they stay in the accessibility tree', () => {
-    expect(hover).not.toMatch(/visibility:\s*hidden|display:\s*none/)
+    for (const selector of [
+      '.day.hasActions:not(.isLive) .actions',
+      '.day.hasActions:not(.isLive) .action',
+      '.showOnHover'
+    ]) {
+      expect(blockOf(hover, selector)).not.toMatch(/visibility:\s*hidden|display:\s*none/)
+    }
     expect(blockOf(hover, '.day.hasActions:not(.isLive) .action')).toContain('pointer-events: none')
     expect(blockOf(hover, '.day.hasActions:hover .action,\n    .day.hasActions:focus-within .action')).toContain(
       'pointer-events: auto'

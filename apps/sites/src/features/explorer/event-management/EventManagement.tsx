@@ -1,3 +1,4 @@
+import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import SitesChrome from "@ui/web/frames/SitesChrome";
@@ -55,13 +56,14 @@ function useEventAccess(identity: AuthIdentity | null, version: number) {
 }
 
 export function EventNavigation({ profile = null, canManageUsers = false }: { profile?: EventProfile | null; canManageUsers?: boolean }) {
+  const { text } = useEventsCopy();
   return (
-    <nav className={styles.navigation} aria-label="Hangout navigation">
-      <Link className={styles.link} to="/events">All hangouts</Link>
-      <Link className={styles.link} to="/events?tab=my">My Hangouts</Link>
-      <Link className={styles.link} to="/events/new-event">Create a Hangout</Link>
-      {canModerate(profile) && <Link className={styles.link} to="/events/admin/pending-events">Moderation</Link>}
-      {canManageUsers && <Link className={styles.link} to="/events/admin/users">User permissions</Link>}
+    <nav className={styles.navigation} aria-label={text("Hangout navigation")}>
+      <Link className={styles.link} to="/events">{text("All hangouts")}</Link>
+      <Link className={styles.link} to="/events?tab=my">{text("My Hangouts")}</Link>
+      <Link className={styles.link} to="/events/new-event">{text("Create a Hangout")}</Link>
+      {canModerate(profile) && <Link className={styles.link} to="/events/admin/pending-events">{text("Moderation")}</Link>}
+      {canManageUsers && <Link className={styles.link} to="/events/admin/users">{text("User permissions")}</Link>}
     </nav>
   );
 }
@@ -74,6 +76,7 @@ export default function EventManagement({ mode }: { mode: Mode }) {
 
 type Read = { key: string; events: ManagedEvent[]; hasMore: boolean; error?: string };
 function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdentity | null }) {
+  const { locale, text, errorText } = useEventsCopy();
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
@@ -165,11 +168,11 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
     <SitesChrome active="whatson">
       <main className={styles.root}>
         <EventNavigation profile={access.profile} canManageUsers={canManageUsers} />
-        <h1>{TITLES[mode]}</h1>
+        <h1>{mode === "mine" ? text("My Hangouts") : TITLES[mode]}</h1>
         {!identity ? (
           <div>
-            <p>Sign in to {mode === "mine" ? "manage your hangouts" : "continue"}.</p>
-            <button className={styles.button} onClick={() => openSignIn()}>Sign in</button>
+            <p>{mode === "mine" ? text("Sign in to manage your hangouts.") : "Sign in to continue."}</p>
+            <button className={styles.button} onClick={() => openSignIn()}>{text("Sign in")}</button>
           </div>
         ) : access.error && mode !== "mine" ? <p role="alert">{access.error}</p>
           : access.loading && mode !== "mine" ? <p role="status">Checking access…</p>
@@ -179,15 +182,15 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
           : (
             <>
               <label className={styles.label}>
-                Search {mode === "users" ? "wallets" : "hangouts"}
+                {mode === "mine" ? text("Search hangouts") : mode === "users" ? "Search wallets" : "Search hangouts"}
                 <input className={styles.input} type="search" value={search} disabled={busy} onChange={(event) => { resetSelection(); setSearch(event.target.value); }} />
               </label>
-              {search.trim().length > 0 && search.trim().length < 3 && <p>Enter at least three characters to search.</p>}
-              {feedback && <p role="status">{feedback}</p>}
-              {loading ? <p role="status">Loading…</p> : current?.error && mode !== "users" ? (
+              {search.trim().length > 0 && search.trim().length < 3 && <p>{text("Enter at least three characters to search.")}</p>}
+              {feedback && <p role="status">{errorText(feedback)}</p>}
+              {loading ? <p role="status">{text("Loading…")}</p> : current?.error && mode !== "users" ? (
                 <div>
-                  <p role="alert">{current.error}</p>
-                  <button className={styles.button} onClick={() => setVersion((previous) => previous + 1)}>Retry</button>
+                  <p role="alert">{errorText(current.error)}</p>
+                  <button className={styles.button} onClick={() => setVersion((previous) => previous + 1)}>{text("Retry")}</button>
                 </div>
               ) : mode === "users" ? (
                 <>
@@ -215,14 +218,14 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
                           <div className={styles.details}>
                             <h2>{event.name}</h2>
                             <p>{event.description}</p>
-                            <p>{event.start_at ? new Date(event.start_at).toLocaleString() : "Date not published"} · {event.world ? event.server || "World location not published" : `${event.x},${event.y}`}</p>
-                            <p>{event.rejected ? "Rejected" : event.approved ? "Approved" : "Pending review"}{event.rejection_reason ? `: ${event.rejection_reason}` : ""}</p>
-                            {(mode === "mine" || has(access.profile, "edit_any_event")) && <Link className={styles.link} to={`/events/edit-event/${encodeURIComponent(event.id)}`}>Edit hangout</Link>}
-                            {event.approved && <Link className={styles.link} to={`/events?id=${encodeURIComponent(event.id)}`}>View hangout</Link>}
+                            <p>{event.start_at ? new Date(event.start_at).toLocaleString(locale) : text("Date not published")} · {event.world ? event.server || text("World location not published") : `${event.x},${event.y}`}</p>
+                            <p>{text(event.rejected ? "Rejected" : event.approved ? "Approved" : "Pending review")}{event.rejection_reason ? `: ${event.rejection_reason}` : ""}</p>
+                            {(mode === "mine" || has(access.profile, "edit_any_event")) && <Link className={styles.link} to={`/events/edit-event/${encodeURIComponent(event.id)}`}>{text("Edit hangout")}</Link>}
+                            {event.approved && <Link className={styles.link} to={`/events?id=${encodeURIComponent(event.id)}`}>{text("View hangout")}</Link>}
                             {mayApprove && (
                               <div>
-                                <button className={styles.button} disabled={busy} onClick={() => { void applyModeration(event.id, "approve"); }}>Approve {event.name}</button>
-                                <button className={styles.button} disabled={busy} onClick={() => setRejection({ id: event.id, name: event.name, reason: "" })}>Reject {event.name}</button>
+                                <button className={styles.button} disabled={busy} onClick={() => { void applyModeration(event.id, "approve"); }}>{text("Approve {name}", { name: event.name })}</button>
+                                <button className={styles.button} disabled={busy} onClick={() => setRejection({ id: event.id, name: event.name, reason: "" })}>{text("Reject {name}", { name: event.name })}</button>
                               </div>
                             )}
                           </div>
@@ -230,22 +233,22 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
                       );
                     })}
                   </ul>
-                  {events.length === 0 && <p>{mode === "mine" ? "No hangouts found. Create your first hangout to get started." : "No pending hangouts on this page."}</p>}
+                  {events.length === 0 && <p>{mode === "mine" ? text("No hangouts found. Create your first hangout to get started.") : "No pending hangouts on this page."}</p>}
                 </>
               )}
-              <nav className={styles.pager} aria-label="Hangout pages">
-                <button className={styles.button} disabled={page === 0 || loading || busy} onClick={() => changePage(page - 1)}>Previous page</button>
-                <span>Page {page + 1}</span>
-                <button className={styles.button} disabled={!more || loading || busy} onClick={() => changePage(page + 1)}>Next page</button>
+              <nav className={styles.pager} aria-label={text("Hangout pages")}>
+                <button className={styles.button} disabled={page === 0 || loading || busy} onClick={() => changePage(page - 1)}>{text("Previous page")}</button>
+                <span>{text("Page {page}", { page: page + 1 })}</span>
+                <button className={styles.button} disabled={!more || loading || busy} onClick={() => changePage(page + 1)}>{text("Next page")}</button>
               </nav>
               {rejection && (
-                <section className={styles.editor} aria-label={`Reject ${rejection.name}`}>
-                  <h2>Reject {rejection.name}</h2>
-                  <label className={styles.label}>Reason
+                <section className={styles.editor} aria-label={text("Reject {name}", { name: rejection.name })}>
+                  <h2>{text("Reject {name}", { name: rejection.name })}</h2>
+                  <label className={styles.label}>{text("Reason")}
                     <textarea className={styles.input} maxLength={500} value={rejection.reason} onChange={(event) => setRejection({ ...rejection, reason: event.target.value })} />
                   </label>
-                  <button className={styles.button} disabled={busy || !rejection.reason.trim()} onClick={() => { void applyModeration(rejection.id, "reject", rejection.reason); }}>Confirm rejection</button>
-                  <button className={styles.button} disabled={busy} onClick={() => setRejection(null)}>Cancel</button>
+                  <button className={styles.button} disabled={busy || !rejection.reason.trim()} onClick={() => { void applyModeration(rejection.id, "reject", rejection.reason); }}>{text("Confirm rejection")}</button>
+                  <button className={styles.button} disabled={busy} onClick={() => setRejection(null)}>{text("Cancel")}</button>
                 </section>
               )}
               {editingProfile && (
@@ -262,7 +265,7 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
                     </label>
                   ))}
                   <button className={styles.button} disabled={busy} onClick={() => { void savePermissions(); }}>Save permissions</button>
-                  <button className={styles.button} disabled={busy} onClick={() => setEditingProfile(false)}>Cancel</button>
+                  <button className={styles.button} disabled={busy} onClick={() => setEditingProfile(false)}>{text("Cancel")}</button>
                 </section>
               )}
             </>

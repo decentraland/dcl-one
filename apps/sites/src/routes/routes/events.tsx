@@ -6,8 +6,10 @@ import {
 } from "react-router";
 import { HydrationBoundary } from "@tanstack/react-query";
 import SitesChrome from "@ui/web/frames/SitesChrome";
+import type { SitesLocaleHandle } from "@ui/web/frames/sites-locale";
 
 import { detectPlatform } from "@/features/download/options";
+import { EventsLocaleProvider } from "@/features/events/locale";
 import { EventsView } from "@/features/events/EventsView";
 import { TAB_PARAM } from "@/features/events/view";
 import EventManagement from "@/features/explorer/event-management/EventManagement";
@@ -18,7 +20,8 @@ import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 
 export const handle = {
   agentMarkdown: "whatsOn",
-} satisfies AgentMarkdownHandle;
+  sitesLocalized: true,
+} satisfies AgentMarkdownHandle & SitesLocaleHandle;
 
 export function meta() {
   return [{ title: "Events — Decentraland" }];
@@ -73,8 +76,7 @@ export default function Events({ loaderData }: Route.ComponentProps) {
       ? { now: loaderData.now, unavailable: loaderData.unavailable }
       : null,
   }));
-  if (params.get(TAB_PARAM) === "my") return <EventManagement mode="mine" />;
-  return (
+  const content = params.get(TAB_PARAM) === "my" ? <EventManagement mode="mine" /> : (
     <HydrationBoundary state={loaderData?.dehydratedState ?? undefined}>
       <SitesChrome active="whatson" headerSurface="overlay" overlayNav>
         <EventsView
@@ -86,4 +88,5 @@ export default function Events({ loaderData }: Route.ComponentProps) {
       </SitesChrome>
     </HydrationBoundary>
   );
+  return <EventsLocaleProvider>{content}</EventsLocaleProvider>;
 }

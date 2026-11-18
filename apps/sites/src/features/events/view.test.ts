@@ -5,6 +5,7 @@ import {
   bucketByDay,
   closedHref,
   creatorWallets,
+  dayLabel,
   eventCreator,
   eventHref,
   eventPageShareUrl,
@@ -209,5 +210,15 @@ describe("creator faces", () => {
       wallet,
       wallet,
     ]);
+  });
+});
+
+describe("when the Events locale is Spanish", () => {
+  it("should translate Today in the calendar", () => {
+    expect(dayLabel(new Date(NOW), 0, "es")).toBe("Hoy");
+  });
+
+  it("should format a future start in the selected language and time convention", () => {
+    expect(relativeStart("2099-06-01T18:00:00Z", NOW, "UTC", "es")).toBe("Hoy 18:00");
   });
 });

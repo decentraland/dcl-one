@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { SitesLocaleContext } from "@ui/web/frames/sites-locale";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -129,6 +130,32 @@ describe("the /events route, rendered on the server and hydrated", () => {
     expect(fetchEvents).not.toHaveBeenCalled();
     expect(fetchMostActivePlaces).not.toHaveBeenCalled();
     expect(fetchEvent).not.toHaveBeenCalled();
+  });
+
+  describe("and the shared locale is Spanish", () => {
+    let data: Loaded["data"];
+
+    beforeEach(async () => {
+      data = await load("/events?id=deep");
+    });
+
+    it("should translate listing and detail controls while preserving the event name", async () => {
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const router = createMemoryRouter(
+        [{ id: "events", path: "/events", Component: Events as never }],
+        { initialEntries: ["/events?id=deep"], hydrationData: { loaderData: { events: data } } },
+      );
+      render(
+        <SitesLocaleContext.Provider value={{ locale: "es", onSelect: vi.fn() }}>
+          <QueryClientProvider client={client}>
+            <RouterProvider router={router} />
+          </QueryClientProvider>
+        </SitesLocaleContext.Provider>,
+      );
+      expect(await screen.findByRole("dialog", { name: "Event deep" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Cerrar" })).toBeTruthy();
+      expect(screen.getByText("Todos los eventos")).toBeTruthy();
+    });
   });
 
   it("should fetch through the browser's query cache on a client navigation, without the server loader", async () => {

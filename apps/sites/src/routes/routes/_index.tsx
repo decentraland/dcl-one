@@ -1,7 +1,7 @@
 import { useContext, useEffect, useRef } from "react";
 
 import SitesChrome from "@ui/web/frames/SitesChrome";
-import { SitesLocaleContext, sitesLanguage } from "@ui/web/frames/sites-locale";
+import { SitesLocaleContext, sitesLanguage, type SitesLocaleHandle } from "@ui/web/frames/sites-locale";
 import { homeCopy } from "@/features/home/locale";
 import { successCopy } from "@/features/download/success-copy";
 import { parseCookies } from "@/core/lib/telemetry/session";
@@ -32,7 +32,8 @@ import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 
 export const handle = {
   agentMarkdown: "discover",
-} satisfies AgentMarkdownHandle;
+  sitesLocalized: true,
+} satisfies AgentMarkdownHandle & SitesLocaleHandle;
 
 const STORY = "discover";
 /** The reference's count while its download counter loads or fails. */

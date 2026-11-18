@@ -283,6 +283,21 @@ describe('when Events cards reveal their controls', () => {
       }
     )
 
+    it('should keep all three future actions inside a narrow desktop day card', async () => {
+      await evaluate(`document.querySelector('[data-calendar]').style.width = '212px'`)
+      await hover(future)
+      const fits = await evaluate(`(() => {
+        const card = document.querySelector('${future}')
+        const button = card.querySelector('button[aria-pressed]')
+        const row = button.parentElement
+        const label = button.lastElementChild
+        const copy = row.lastElementChild
+        return label.clientWidth === label.scrollWidth &&
+          copy.getBoundingClientRect().right <= card.getBoundingClientRect().right
+      })()`)
+      expect(fits).toBe(true)
+    })
+
     it('should reach the live card and Jump In by keyboard with a visible focus outline', async () => {
       const cardLink = live + ' h3 a'
       await evaluate(`document.querySelector('${cardLink}').focus()`)
