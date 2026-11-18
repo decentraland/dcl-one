@@ -13,6 +13,8 @@ The explore API projects recognised mirrored asset URLs onto the node's public o
 
 Production event jump links on `decentraland.org` use the node's public origin with their original path and query. Rewriting applies when the node has a public domain outside `decentraland.org`. Decentraland domains, IP addresses, single-label hosts and absent public URLs retain the upstream addresses.
 
+For a recognised world thumbnail, a world catalogue entry can supply the stored thumbnail key for that world. A legacy hexadecimal key with the same raw CIDv1 stays as projected.
+
 ## Consequences
 
 The catalogue keeps the stored upstream URLs. Projected poster URLs point at the prefixed paths. The root `/poster` and `/poster-vertical` routes continue to serve operators that configure a dedicated `events-assets-099ac00.<domain>` vhost.

@@ -42,7 +42,7 @@ use query::{
 pub use rows::{
     ActiveRows, CategoryTarget, PlaceListFilters, PlaceOrderBy, PlaceRow, PlaceStatusRow, WorldRow,
 };
-use rows::{place_columns, place_image_url, row_to_place, viewer_columns};
+use rows::{WORLD_THUMBNAIL_SQL, place_columns, place_image_url, row_to_place, viewer_columns};
 
 type CategoryCounts = Vec<(String, i64)>;
 type ParcelAliases = Arc<HashMap<String, String>>;
@@ -635,7 +635,8 @@ impl PlacesComponent {
         }
         let latest = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT DISTINCT ON (lower(world_name)) lower(world_name) AS name, \
-             raw->>'image' AS image, raw->>'contact_name' AS contact_name, \
+             raw->>'image' AS image, {WORLD_THUMBNAIL_SQL} AS world_thumbnail_hash, \
+             raw->>'contact_name' AS contact_name, \
              raw->>'contact_email' AS contact_email, creator_address, raw->>'sdk' AS sdk, deployed_at \
              FROM explore.place_indexed \
              WHERE world IS TRUE AND id <> lower(world_name) AND lower(world_name) = ANY($1) \
@@ -667,6 +668,7 @@ impl PlacesComponent {
                     text("image").as_deref(),
                     self.content_origin(),
                     self.asset_domain(),
+                    text("world_thumbnail_hash").as_deref(),
                 );
             }
             if row.contact_name.is_none() {

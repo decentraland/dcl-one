@@ -12,11 +12,14 @@ use sqlx::Row;
 
 use super::query::{
     EXCLUDE_FROM_RANKING_SQL, IS_PRIVATE_SQL, SHOW_IN_PLACES_SQL, SINGLE_PLAYER_SQL,
-    USER_DISLIKE_SQL, USER_FAVORITE_SQL, USER_LIKE_SQL, textsearch_column_sql,
+    USER_DISLIKE_SQL, USER_FAVORITE_SQL, USER_LIKE_SQL, WORLD_CATALOGUE_SQL, textsearch_column_sql,
 };
 use crate::sanitize::{
     ContentOrigin, sanitize_image_url, sanitize_place_description, strip_all_markup_opt,
 };
+
+pub(super) const WORLD_THUMBNAIL_SQL: &str = "(SELECT w.thumbnail_hash FROM worlds.worlds w \
+    WHERE w.name = lower(place_indexed.world_name))";
 
 pub(super) fn place_columns() -> &'static str {
     static SQL: LazyLock<String> = LazyLock::new(|| {
@@ -24,6 +27,7 @@ pub(super) fn place_columns() -> &'static str {
         format!(
             r#"
     id, title, description, raw->>'image' AS image,
+    CASE WHEN {WORLD_CATALOGUE_SQL} THEN {WORLD_THUMBNAIL_SQL} END AS world_thumbnail_hash,
     LOWER(COALESCE(raw->>'owner', creator_address)) AS owner,
     creator_address,
     COALESCE((SELECT array_agg(p::text) FROM jsonb_array_elements_text(raw->'positions') p), ARRAY[]::text[]) AS positions,
@@ -464,12 +468,26 @@ pub(super) fn place_image_url(
     value: Option<&str>,
     content_origin: Option<&ContentOrigin>,
     asset_domain: Option<&str>,
+    world_thumbnail: Option<&str>,
 ) -> Option<String> {
     let value = value?;
     let sanitized = sanitize_image_url(Some(value), content_origin)?;
     // Match the stored URL because sanitization drops default ports and normalizes dot segments.
-    let mapped = asset_domain.and_then(|domain| crate::node_assets::node_asset_url(value, domain));
-    Some(mapped.unwrap_or(sanitized))
+    let Some(mapped) =
+        asset_domain.and_then(|domain| crate::node_assets::node_asset_url(value, domain))
+    else {
+        return Some(sanitized);
+    };
+    if let Some(thumbnail) = world_thumbnail
+        && let Some((prefix, current)) = mapped.rsplit_once('/')
+        && prefix.ends_with("/worlds-content-server/contents")
+        && crate::auth::is_canonical_cid(thumbnail)
+        && current != thumbnail
+        && crate::auth::raw_cid_v1_from_sha256_hex(current).as_deref() != Some(thumbnail)
+    {
+        return Some(format!("{prefix}/{thumbnail}"));
+    }
+    Some(mapped)
 }
 
 pub(super) fn row_to_place(
@@ -508,6 +526,9 @@ pub(super) fn row_to_place(
                 .as_deref(),
             content_origin,
             asset_domain,
+            r.try_get::<Option<String>, _>("world_thumbnail_hash")
+                .unwrap_or(None)
+                .as_deref(),
         ),
         owner: r.try_get::<Option<String>, _>("owner").unwrap_or(None),
         positions: r.try_get::<Vec<String>, _>("positions").unwrap_or_default(),
@@ -696,6 +717,119 @@ mod wire_tests {
                 state.places.asset_domain(),
             );
             assert_eq!(place.image.as_deref(), expected, "{image:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn world_images_use_the_catalogue_thumbnail_with_a_different_digest() {
+        use std::sync::Arc;
+
+        use axum::body::{Body, to_bytes};
+        use axum::http::{Request, StatusCode};
+        use serde_json::{Value, json};
+        use sha2::{Digest, Sha256};
+        use tower::ServiceExt;
+
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let key = crate::auth::hash_bytes_v1(b"catalogue poster");
+        let distinct_legacy = hex::encode(Sha256::digest(b"old poster"));
+        let equivalent_legacy = hex::encode(Sha256::digest(b"catalogue poster"));
+        let production =
+            |hash| format!("https://worlds-content-server.decentraland.org/contents/{hash}");
+        let node = |hash| format!("https://node.example/worlds-content-server/contents/{hash}");
+        let external = "https://cdn.example/world.jpg";
+        let cases = [
+            (
+                "different.dcl.eth",
+                production(&distinct_legacy),
+                Some(key.as_str()),
+                node(&key),
+            ),
+            (
+                "equivalent.dcl.eth",
+                production(&equivalent_legacy),
+                Some(key.as_str()),
+                node(&equivalent_legacy),
+            ),
+            (
+                "missing.dcl.eth",
+                production(&distinct_legacy),
+                None,
+                node(&distinct_legacy),
+            ),
+            (
+                "malformed.dcl.eth",
+                production(&distinct_legacy),
+                Some("../unsafe"),
+                node(&distinct_legacy),
+            ),
+            (
+                "external.dcl.eth",
+                external.to_owned(),
+                Some(key.as_str()),
+                external.to_owned(),
+            ),
+        ];
+        for (name, stored, catalogue, _) in &cases {
+            if let Some(catalogue) = catalogue {
+                sqlx::query("INSERT INTO worlds.worlds (name, thumbnail_hash) VALUES ($1, $2)")
+                    .bind(name)
+                    .bind(catalogue)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+            sqlx::query("INSERT INTO explore.place (id, title, base_position, raw) VALUES ($1, 'Catalogue Example', '0,0', $2)")
+                .bind(name)
+                .bind(json!({
+                    "world": true,
+                    "world_name": name,
+                    "image": stored,
+                    "owner": "0x00000000000000000000000000000000000000bb",
+                }))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        async fn get(app: &axum::Router, route: &str) -> Value {
+            let response = app
+                .clone()
+                .oneshot(Request::get(route).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{route}");
+            serde_json::from_slice(&to_bytes(response.into_body(), 1 << 20).await.unwrap()).unwrap()
+        }
+
+        for domain in [Some("node.example".to_owned()), None] {
+            let state = Arc::new(crate::ExploreState::new(
+                pool.clone(),
+                crate::Settings {
+                    asset_rewrite_domain: domain.clone(),
+                    ..crate::Settings::for_tests()
+                },
+                None,
+            ));
+            let app = crate::router(state.clone()).nest("/places", crate::router(state));
+            let worlds = get(&app, "/api/worlds").await;
+            let destinations = get(&app, "/places/api/destinations").await;
+            for (name, stored, _, mapped) in &cases {
+                let expected = if domain.is_some() { mapped } else { stored };
+                for collection in [&worlds, &destinations] {
+                    let item = collection["data"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|item| item["id"] == *name)
+                        .unwrap();
+                    assert_eq!(item["image"], *expected, "{name}");
+                }
+                let detail = get(&app, &format!("/api/worlds/{name}")).await;
+                assert_eq!(detail["data"]["image"], *expected, "{name}");
+            }
         }
     }
 
