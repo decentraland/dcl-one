@@ -386,3 +386,58 @@ impl Drop for BanGuard {
             .record("moderator", "unban on the way out", format!("{outcome:?}"));
     }
 }
+
+/// What the realm description (`<api>/about`) says about the comms adapter, once it answers 200.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RealmDescription {
+    /// `comms.adapter`: the adapter the realm tells a client to connect with.
+    pub adapter: String,
+}
+
+/// One look at the realm description: the status it answered, and what it names when it is a 200.
+/// The description answers 503 while parts of the stack are still coming back, and a client that
+/// asks then is told there is no realm.
+pub async fn realm_description(api: &Url) -> Result<RealmDescription, String> {
+    let url = api.join("about").map_err(|error| error.to_string())?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let response = client.get(url).send().await.map_err(|error| {
+        format!(
+            "no answer: {}",
+            crate::engine::timeline::redact_text(&error.to_string())
+        )
+    })?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("HTTP {status}"));
+    }
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|error| format!("HTTP {status} with a body that is not JSON: {error}"))?;
+    let adapter = body
+        .pointer("/comms/adapter")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if adapter.is_empty() {
+        return Err(format!("HTTP {status} that names no comms adapter"));
+    }
+    Ok(RealmDescription {
+        adapter: adapter.to_owned(),
+    })
+}
+
+/// Waits until the realm description answers 200 and names the comms adapter.
+pub async fn expect_realm_description(
+    ctx: &Ctx,
+    api: &Url,
+    what: &str,
+    deadline: Duration,
+) -> Result<RealmDescription> {
+    expect_async(ctx, what, deadline, Duration::from_millis(250), || async {
+        realm_description(api).await
+    })
+    .await
+}

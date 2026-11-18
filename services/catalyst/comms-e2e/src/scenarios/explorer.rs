@@ -11,6 +11,7 @@ use crate::engine::{Ctx, Needs, Scenario, expect_async, expect_or};
 use crate::explorer::{Explorer, ExplorerOptions, Fronts};
 use crate::fault::{Direction, Fault};
 use crate::pulse::PulseBot;
+use crate::scenarios::connections_support::{RealmDescription, realm_description};
 use crate::scenarios::waits::holds_for_async;
 
 /// The scenarios of this group, in the order a run takes them.
@@ -165,7 +166,7 @@ async fn start(ctx: &Ctx, preview: bool) -> Result<Subject> {
         },
     )
     .await?;
-    let world = expect_async(
+    let waited = expect_async(
         ctx,
         "the explorer is in the world with a wallet and a realm",
         Duration::from_secs(120),
@@ -186,7 +187,29 @@ async fn start(ctx: &Ctx, preview: bool) -> Result<Subject> {
             }
         },
     )
-    .await?;
+    .await;
+    let world = match waited {
+        Ok(world) => world,
+        Err(error) => {
+            // say what was missing: the explorer's own last word, and what the realm description
+            // answers when this scenario asks for it, directly and through the explorer's front
+            let state = explorer
+                .probe("/world_state")
+                .await
+                .map_or_else(|reason| reason, |state| state.to_string());
+            let direct = match ctx.stack().api.as_ref() {
+                Some(api) => describe(realm_description(api).await),
+                None => "the stack file has no API address".to_owned(),
+            };
+            let through_front = match format!("http://{}/", fronts.api.address()).parse() {
+                Ok(front) => describe(realm_description(&front).await),
+                Err(error) => format!("no front address: {error}"),
+            };
+            bail!(
+                "{error:#}; the explorer's last /world_state: {state}; the realm description fetched by the scenario: directly {direct}, through the explorer's front {through_front}"
+            );
+        }
+    };
     let subject = Subject {
         fronts,
         wallet: world["address"].as_str().unwrap_or_default().to_lowercase(),
@@ -207,6 +230,14 @@ async fn start(ctx: &Ctx, preview: bool) -> Result<Subject> {
     )
     .await?;
     Ok(subject)
+}
+
+/// A realm description fetch, as text for a failure message.
+fn describe(fetched: Result<RealmDescription, String>) -> String {
+    match fetched {
+        Ok(description) => format!("answers 200, adapter {}", description.adapter),
+        Err(reason) => reason,
+    }
 }
 
 /// The explorer's own word on its Pulse connection: `authenticated`, `terminal disconnect`,

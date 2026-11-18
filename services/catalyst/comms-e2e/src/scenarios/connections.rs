@@ -691,14 +691,25 @@ async fn stationary_credentials(ctx: Ctx) -> Result<()> {
     let here = spot(&ctx, 0);
     let identity = ctx.identity(0);
 
+    // what the stack answers before the restart is what it must answer again after it
+    let before = expect_realm_description(
+        &ctx,
+        api(&ctx)?,
+        "the realm description answers 200 and names the comms adapter before the restart",
+        STACK_BACK_DEADLINE,
+    )
+    .await?;
+
     let device = bring_up(&ctx, "standing", &identity, &realm, here).await?;
     first_assignment(&ctx, &device.archipelago).await?;
 
     ctx.record("runner", "restart", program);
+    // The child is killed if this future is dropped (the scenario deadline).
     let status = tokio::time::timeout(
         Duration::from_secs(180),
         tokio::process::Command::new(program)
             .args(arguments)
+            .kill_on_drop(true)
             .status(),
     )
     .await
@@ -707,17 +718,47 @@ async fn stationary_credentials(ctx: Ctx) -> Result<()> {
         bail!("the restart command failed: {status}");
     }
 
-    // the gatekeeper answers again
-    let gatekeeper_url = api(&ctx)?.join("comms-gatekeeper/status")?;
-    expect_async(
+    // whatever the checks find, the stack is left as it was found
+    let outcome = after_restart(&ctx, &identity, &device).await;
+    let back = expect_realm_description(
         &ctx,
+        api(&ctx)?,
+        "the realm description answers 200 again after the restart, as before it",
+        STACK_BACK_DEADLINE,
+    )
+    .await;
+    outcome?;
+    let after = back?;
+    if after != before {
+        bail!(
+            "the realm names a different comms adapter after the restart: before {before:?}, after {after:?}"
+        );
+    }
+    Ok(())
+}
+
+/// How long a restarted stack may take to answer as it did before the restart.
+const STACK_BACK_DEADLINE: Duration = Duration::from_secs(60);
+
+async fn after_restart(
+    ctx: &Ctx,
+    identity: &crate::identity::Identity,
+    device: &Device,
+) -> Result<()> {
+    // the gatekeeper answers again
+    let gatekeeper_url = api(ctx)?.join("comms-gatekeeper/status")?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    expect_async(
+        ctx,
         "the gatekeeper answers after the restart",
         Duration::from_secs(120),
         Duration::from_secs(1),
         || {
-            let url = gatekeeper_url.clone();
+            let (url, client) = (gatekeeper_url.clone(), client.clone());
             async move {
-                match reqwest::get(url).await {
+                match client.get(url).send().await {
                     Ok(response) if response.status().is_success() => Ok(()),
                     Ok(response) => Err(format!("it answers {}", response.status())),
                     Err(error) => Err(error.to_string()),
@@ -728,9 +769,9 @@ async fn stationary_credentials(ctx: Ctx) -> Result<()> {
     .await?;
 
     // the same device returns and does not move: the room must come without a heartbeat
-    let again = ArchipelagoBot::open(&ctx, "standing-again", &identity.same_device()).await?;
-    let assignment = first_assignment(&ctx, &again).await?;
-    check_credentials(&assignment, &identity)?;
+    let again = ArchipelagoBot::open(ctx, "standing-again", &identity.same_device()).await?;
+    let assignment = first_assignment(ctx, &again).await?;
+    check_credentials(&assignment, identity)?;
     device.pulse.expect_alive()?;
     Ok(())
 }
