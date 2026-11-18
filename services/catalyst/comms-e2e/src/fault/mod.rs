@@ -6,12 +6,13 @@
 mod tcp;
 mod udp;
 
+use std::any::Any;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use parking_lot::Mutex;
 use serde::Serialize;
 use tokio::sync::Notify;
@@ -61,17 +62,31 @@ pub(crate) struct Faults {
     pub down: Fault,
 }
 
+/// What happens to the flows older than the current generation.
+pub(crate) mod ending {
+    /// Silent for good, nothing closed.
+    pub const HALF_OPEN: u8 = 0;
+    /// Closed on both sides.
+    pub const CUT: u8 = 1;
+    /// Closed towards the client, left open and silent towards the stack.
+    pub const ORPHAN: u8 = 2;
+}
+
 pub(crate) struct Shared {
     pub name: String,
     pub timeline: Timeline,
     pub faults: Mutex<Faults>,
     pub seeded: Mutex<Seeded>,
-    /// Bumped by `half_open` and `cut`: a flow older than this is dead (half-open) or closed (cut).
+    /// Bumped by `half_open`, `cut` and `orphan`: a flow older than this has ended in the way
+    /// `ending` says.
     pub generation: AtomicU64,
-    /// Whether the last bump closes old flows (`cut`) or only silences them (`half_open`).
-    pub closing: AtomicBool,
-    /// Wakes TCP pumps waiting out a stall, and tells them to look at the generation.
+    pub ending: AtomicU8,
+    /// UDP: the listen port is closed, so a packet to it is answered "port unreachable".
+    pub port_closed: AtomicBool,
+    /// Wakes whatever waits out a stall, and tells it to look at the generation.
     pub changed: Notify,
+    /// Stack-side halves of orphaned TCP connections, kept open until the link goes.
+    pub parked: Mutex<Vec<Box<dyn Any + Send>>>,
     pub up_packets: AtomicU64,
     pub down_packets: AtomicU64,
     pub up_bytes: AtomicU64,
@@ -112,10 +127,17 @@ impl Shared {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Udp,
+    Tcp,
+}
+
 /// A relay between a client and one address of the stack. Dropping it stops relaying and frees
 /// the listen port.
 pub struct FaultLink {
     shared: Arc<Shared>,
+    kind: Kind,
     listen: SocketAddr,
     upstream: SocketAddr,
     tasks: Vec<AbortHandle>,
@@ -123,12 +145,21 @@ pub struct FaultLink {
 
 impl FaultLink {
     /// A UDP relay (ENet, WebTransport, LiveKit media). Port 0 picks a free port.
-    pub async fn udp(ctx: &Ctx, name: &str, listen: SocketAddr, upstream: SocketAddr) -> Result<FaultLink> {
+    pub async fn udp(
+        ctx: &Ctx,
+        name: &str,
+        listen: SocketAddr,
+        upstream: SocketAddr,
+    ) -> Result<FaultLink> {
         let shared = Self::shared(ctx, name);
         let (listen, tasks) = udp::start(shared.clone(), listen, upstream).await?;
-        shared.record("relaying", serde_json::json!({ "udp": listen.to_string(), "to": upstream.to_string() }));
+        shared.record(
+            "relaying",
+            serde_json::json!({ "udp": listen.to_string(), "to": upstream.to_string() }),
+        );
         Ok(FaultLink {
             shared,
+            kind: Kind::Udp,
             listen,
             upstream,
             tasks,
@@ -136,12 +167,21 @@ impl FaultLink {
     }
 
     /// A TCP relay (HTTP, WebSocket, LiveKit signalling). Port 0 picks a free port.
-    pub async fn tcp(ctx: &Ctx, name: &str, listen: SocketAddr, upstream: SocketAddr) -> Result<FaultLink> {
+    pub async fn tcp(
+        ctx: &Ctx,
+        name: &str,
+        listen: SocketAddr,
+        upstream: SocketAddr,
+    ) -> Result<FaultLink> {
         let shared = Self::shared(ctx, name);
         let (listen, tasks) = tcp::start(shared.clone(), listen, upstream).await?;
-        shared.record("relaying", serde_json::json!({ "tcp": listen.to_string(), "to": upstream.to_string() }));
+        shared.record(
+            "relaying",
+            serde_json::json!({ "tcp": listen.to_string(), "to": upstream.to_string() }),
+        );
         Ok(FaultLink {
             shared,
+            kind: Kind::Tcp,
             listen,
             upstream,
             tasks,
@@ -158,8 +198,10 @@ impl FaultLink {
             }),
             seeded: Mutex::new(Seeded::new(ctx.seed() ^ 0x6c69_6e6b)),
             generation: AtomicU64::new(0),
-            closing: AtomicBool::new(false),
+            ending: AtomicU8::new(ending::HALF_OPEN),
+            port_closed: AtomicBool::new(false),
             changed: Notify::new(),
+            parked: Mutex::new(Vec::new()),
             up_packets: AtomicU64::new(0),
             down_packets: AtomicU64::new(0),
             up_bytes: AtomicU64::new(0),
@@ -188,33 +230,62 @@ impl FaultLink {
                 faults.down = fault;
             }
         }
-        self.shared.record("fault", serde_json::json!({ "direction": direction, "fault": fault }));
+        self.shared.record(
+            "fault",
+            serde_json::json!({ "direction": direction, "fault": fault }),
+        );
         self.shared.changed.notify_waiters();
     }
 
-    /// Everything passes again. Flows that were half-opened stay dead: a stale socket does not
-    /// come back.
+    /// Everything passes again and a closed port reopens. Flows that were half-opened or
+    /// orphaned stay as they are: a stale socket does not come back.
     pub fn restore(&self) {
+        self.shared.port_closed.store(false, Ordering::SeqCst);
         self.set(Direction::Both, Fault::Pass);
     }
 
-    /// The flows that exist now go silent for good, with nothing closed: neither side is told.
-    /// A new flow from the same client passes. This is a socket left behind by sleep or by a
-    /// change of network.
-    pub fn half_open(&self) {
-        self.shared.closing.store(false, Ordering::SeqCst);
+    fn end_flows(&self, how: u8, label: &str) {
+        self.shared.ending.store(how, Ordering::SeqCst);
         self.shared.generation.fetch_add(1, Ordering::SeqCst);
-        self.shared.record("half-open", ());
+        self.shared.record(label, ());
         self.shared.changed.notify_waiters();
+    }
+
+    /// The flows that exist now go silent for good, with nothing closed: neither side is told.
+    /// A new flow from the same client passes. This is a socket both ends still believe in.
+    pub fn half_open(&self) {
+        self.end_flows(ending::HALF_OPEN, "half-open");
     }
 
     /// The flows that exist now are closed: on TCP both sides see the connection end, on UDP the
     /// next packet of a client starts a new flow from a new port, as after an address change.
     pub fn cut(&self) {
-        self.shared.closing.store(true, Ordering::SeqCst);
-        self.shared.generation.fetch_add(1, Ordering::SeqCst);
-        self.shared.record("cut", ());
+        self.end_flows(ending::CUT, "cut");
+    }
+
+    /// TCP: the connections that exist now are closed towards the client and left open and silent
+    /// towards the stack. The client knows its socket is gone and dials again; the stack still
+    /// holds the old one. This is what a machine waking from sleep, or changing network, leaves
+    /// behind.
+    pub fn orphan(&self) -> Result<()> {
+        if self.kind != Kind::Tcp {
+            bail!("only a TCP link can orphan its connections");
+        }
+        self.end_flows(ending::ORPHAN, "orphan");
+        Ok(())
+    }
+
+    /// UDP: the listen port closes, so the client's next packet is answered "port unreachable"
+    /// by this machine, which a socket reports as an error on its next call. [`Self::restore`]
+    /// reopens it; flows continue from where they were.
+    pub fn close_port(&self) -> Result<()> {
+        if self.kind != Kind::Udp {
+            bail!("only a UDP link can close its port");
+        }
+        self.shared.port_closed.store(true, Ordering::SeqCst);
+        self.shared.record("port closed", ());
         self.shared.changed.notify_waiters();
+        Ok(())
     }
 
     pub fn counters(&self) -> Counters {
@@ -234,8 +305,9 @@ impl Drop for FaultLink {
         for task in &self.tasks {
             task.abort();
         }
-        self.shared.closing.store(true, Ordering::SeqCst);
+        self.shared.ending.store(ending::CUT, Ordering::SeqCst);
         self.shared.generation.fetch_add(1, Ordering::SeqCst);
+        self.shared.parked.lock().clear();
         self.shared.changed.notify_waiters();
     }
 }

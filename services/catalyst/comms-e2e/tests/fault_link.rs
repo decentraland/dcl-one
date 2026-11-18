@@ -316,3 +316,102 @@ async fn a_bot_through_a_stalled_link_survives_a_short_stall() {
     .unwrap();
     assert!(link.counters().dropped > 0, "the stall dropped nothing");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_orphaned_tcp_connection_ends_for_the_client_and_stays_open_for_the_server() {
+    let ctx = ctx("tcp-orphan");
+    let (server, mut seen) = tcp_echo().await;
+    let link = FaultLink::tcp(&ctx, "link", ANY.parse().unwrap(), server).await.unwrap();
+    let mut client = TcpStream::connect(link.address()).await.unwrap();
+    client.write_all(b"hello").await.unwrap();
+    assert!(read_some(&mut client, SOON).await.is_some());
+    assert_eq!(seen.recv().await, Some("accepted"));
+    assert_eq!(seen.recv().await, Some("read"));
+
+    link.orphan().unwrap();
+    // the client is told at once that its socket is gone
+    assert_eq!(read_some(&mut client, SOON).await.as_deref(), Some(&b""[..]));
+    // the server is told nothing: it still holds the old connection
+    assert!(
+        tokio::time::timeout(QUIET, seen.recv()).await.is_err(),
+        "the server saw the orphaned connection end"
+    );
+
+    // the client dials again and is served, while the old connection is still held
+    let mut fresh = TcpStream::connect(link.address()).await.unwrap();
+    fresh.write_all(b"again").await.unwrap();
+    assert_eq!(read_some(&mut fresh, SOON).await.as_deref(), Some(&b"again"[..]));
+    assert_eq!(seen.recv().await, Some("accepted"));
+    assert_eq!(seen.recv().await, Some("read"));
+
+    // the link going away releases what it kept
+    drop(link);
+    let mut ended = 0;
+    while ended < 2 {
+        match tokio::time::timeout(SOON, seen.recv()).await {
+            Ok(Some("ended")) => ended += 1,
+            Ok(Some(_)) => {}
+            other => panic!("the server did not see both connections end: {other:?}"),
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_closed_udp_port_is_unreachable_and_reopens_with_the_flow_intact() {
+    let ctx = ctx("udp-port");
+    let (server, mut seen) = udp_echo().await;
+    let link = FaultLink::udp(&ctx, "link", ANY.parse().unwrap(), server).await.unwrap();
+    let client = UdpSocket::bind(ANY).await.unwrap();
+    client.connect(link.address()).await.unwrap();
+    client.send(b"one").await.unwrap();
+    assert_eq!(receive(&client, SOON).await.as_deref(), Some(&b"echo:one"[..]));
+    let source = seen.recv().await.unwrap();
+
+    link.close_port().unwrap();
+    // a packet to a closed port comes back as an error on the socket, not as silence
+    let mut refused = false;
+    let mut buffer = [0u8; 64];
+    for _ in 0..100 {
+        if client.send(b"anyone?").await.is_err() {
+            refused = true;
+            break;
+        }
+        if let Ok(Err(_)) =
+            tokio::time::timeout(Duration::from_millis(30), client.recv(&mut buffer)).await
+        {
+            refused = true;
+            break;
+        }
+    }
+    assert!(refused, "no port-unreachable error reached the client");
+    assert!(seen.try_recv().is_err(), "the server heard a packet through a closed port");
+
+    link.restore();
+    // the flow continues from the same upstream port: the server sees the same client
+    let mut echoed = false;
+    for _ in 0..100 {
+        let _ = client.send(b"back").await;
+        if let Ok(Ok(length)) =
+            tokio::time::timeout(Duration::from_millis(50), client.recv(&mut buffer)).await
+        {
+            if &buffer[..length] == b"echo:back" {
+                echoed = true;
+                break;
+            }
+        }
+    }
+    assert!(echoed, "nothing passed after the port reopened");
+    assert_eq!(seen.recv().await.unwrap(), source, "the flow moved to another port");
+    assert_eq!(link.counters().flows, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn each_kind_of_link_refuses_the_other_kind_of_fault() {
+    let ctx = ctx("kinds");
+    let (udp_server, _seen) = udp_echo().await;
+    let udp = FaultLink::udp(&ctx, "udp", ANY.parse().unwrap(), udp_server).await.unwrap();
+    let (tcp_server, _events) = tcp_echo().await;
+    let tcp = FaultLink::tcp(&ctx, "tcp", ANY.parse().unwrap(), tcp_server).await.unwrap();
+    assert!(udp.orphan().is_err());
+    assert!(tcp.close_port().is_err());
+}

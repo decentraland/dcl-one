@@ -1,17 +1,18 @@
 //! The TCP relay: one upstream connection per client connection. A stall stops moving bytes and
-//! closes nothing; a half-open connection stays that way for good; a cut closes both sides.
+//! closes nothing; a half-open connection stays that way for good; a cut closes both sides; an
+//! orphaned connection is closed towards the client and left open towards the stack.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use anyhow::{Context, Result};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::watch;
 use tokio::task::AbortHandle;
 
-use super::{Direction, Fault, Shared};
+use super::{Direction, Fault, Shared, ending};
 
 pub(super) async fn start(
     shared: Arc<Shared>,
@@ -35,23 +36,44 @@ async fn accept(shared: Arc<Shared>, listener: TcpListener, upstream: SocketAddr
         tokio::spawn(async move {
             let generation = shared.generation.load(Ordering::SeqCst);
             shared.flows.fetch_add(1, Ordering::Relaxed);
-            shared.record("connection", serde_json::json!({ "client": peer.to_string() }));
+            shared.record(
+                "connection",
+                serde_json::json!({ "client": peer.to_string() }),
+            );
             let Ok(server) = TcpStream::connect(upstream).await else {
-                shared.record("connection failed", format!("nothing answers at {upstream}"));
+                shared.record(
+                    "connection failed",
+                    format!("nothing answers at {upstream}"),
+                );
                 return;
             };
             let _ = client.set_nodelay(true);
             let _ = server.set_nodelay(true);
             let (client_read, client_write) = client.into_split();
             let (server_read, server_write) = server.into_split();
-            let up = pump(shared.clone(), Direction::Uplink, client_read, server_write, generation);
-            let down = pump(shared.clone(), Direction::Downlink, server_read, client_write, generation);
-            // either side ending ends the pair, and with it both sockets
-            tokio::select! {
-                _ = up => {}
-                _ = down => {}
-            }
-            shared.record("connection ended", serde_json::json!({ "client": peer.to_string() }));
+            // one pump ending tells the other, which then lets go of its halves too
+            let (over, _) = watch::channel(false);
+            let up = pump(
+                shared.clone(),
+                Direction::Uplink,
+                client_read,
+                server_write,
+                generation,
+                over.clone(),
+            );
+            let down = pump(
+                shared.clone(),
+                Direction::Downlink,
+                server_read,
+                client_write,
+                generation,
+                over.clone(),
+            );
+            tokio::join!(up, down);
+            shared.record(
+                "connection ended",
+                serde_json::json!({ "client": peer.to_string() }),
+            );
         });
     }
 }
@@ -61,16 +83,18 @@ enum Gate {
     Open(Fault),
     /// Stalled or half-open: wait for a change.
     Wait,
-    /// Cut: end the connection.
+    /// Cut: end the connection on both sides.
     Close,
+    /// Orphan: let the client side go, keep the stack side open and silent.
+    Orphan,
 }
 
 fn gate(shared: &Shared, direction: Direction, generation: u64) -> Gate {
     if shared.generation.load(Ordering::SeqCst) != generation {
-        return if shared.closing.load(Ordering::SeqCst) {
-            Gate::Close
-        } else {
-            Gate::Wait
+        return match shared.ending.load(Ordering::SeqCst) {
+            ending::CUT => Gate::Close,
+            ending::ORPHAN => Gate::Orphan,
+            _ => Gate::Wait,
         };
     }
     match shared.fault(direction) {
@@ -79,52 +103,89 @@ fn gate(shared: &Shared, direction: Direction, generation: u64) -> Gate {
     }
 }
 
-async fn pump(
+/// Moves bytes one way until the connection ends. On an orphan it keeps its stack-side half
+/// alive in the link and drops its client-side half.
+async fn pump<R, W>(
     shared: Arc<Shared>,
     direction: Direction,
-    mut from: OwnedReadHalf,
-    mut to: OwnedWriteHalf,
+    mut from: R,
+    mut to: W,
     generation: u64,
-) {
+    over: watch::Sender<bool>,
+) where
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    let mut ended = over.subscribe();
     let mut buffer = vec![0u8; 16 * 1024];
-    loop {
+    let orphaned = loop {
         // Register for a change before looking, so one that lands in between is not missed.
         let changed = shared.changed.notified();
         tokio::pin!(changed);
         changed.as_mut().enable();
+        if *ended.borrow() {
+            break false;
+        }
         let fault = match gate(&shared, direction, generation) {
-            Gate::Close => return,
+            Gate::Close => break false,
+            Gate::Orphan => break true,
             Gate::Wait => {
-                changed.await;
+                tokio::select! {
+                    _ = &mut changed => {}
+                    _ = ended.changed() => {}
+                }
                 continue;
             }
             Gate::Open(fault) => fault,
         };
         let length = tokio::select! {
             read = from.read(&mut buffer) => match read {
-                Ok(0) | Err(_) => return,
+                Ok(0) | Err(_) => break false,
                 Ok(length) => length,
             },
             // a fault set while this side was quiet: look again before reading
             _ = &mut changed => continue,
+            _ = ended.changed() => continue,
         };
         shared.count(direction, length);
         // The bytes are read; a stall or half-open that began meanwhile must still hold them.
-        loop {
+        let verdict = loop {
             let changed = shared.changed.notified();
             tokio::pin!(changed);
             changed.as_mut().enable();
-            match gate(&shared, direction, generation) {
-                Gate::Close => return,
-                Gate::Wait => changed.await,
-                Gate::Open(_) => break,
+            if *ended.borrow() {
+                break Some(false);
             }
+            match gate(&shared, direction, generation) {
+                Gate::Close => break Some(false),
+                Gate::Orphan => break Some(true),
+                Gate::Wait => {
+                    tokio::select! {
+                        _ = &mut changed => {}
+                        _ = ended.changed() => {}
+                    }
+                }
+                Gate::Open(_) => break None,
+            }
+        };
+        if let Some(orphaned) = verdict {
+            break orphaned;
         }
         if let Fault::Delay { by } = fault {
             tokio::time::sleep(by).await;
         }
         if to.write_all(&buffer[..length]).await.is_err() {
-            return;
+            break false;
         }
+    };
+    if orphaned {
+        // the stack-side half stays open in the link; the client-side half closes here
+        let mut parked = shared.parked.lock();
+        match direction {
+            Direction::Uplink => parked.push(Box::new(to)),
+            _ => parked.push(Box::new(from)),
+        }
+        return;
     }
+    let _ = over.send(true);
 }
