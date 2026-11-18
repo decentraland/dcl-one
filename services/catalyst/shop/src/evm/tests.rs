@@ -1121,6 +1121,16 @@ async fn an_oz_transaction_never_signed_reaches_the_client_as_not_sent() {
             expected_not_sent,
             "terminal hash {terminal_hash}: {body}"
         );
+        if expected_status == 400 {
+            // Validation answers the same code; only the relayer's refusal carries its status reason.
+            assert_eq!(body["error"], json!("invalid_transaction"), "{body}");
+            assert!(
+                body["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("dropped")),
+                "the 400 is the relayer's refusal, not a validation error: {body}"
+            );
+        }
         assert_eq!(
             rows, expected_rows,
             "terminal hash {terminal_hash}: the slot is released only when nothing was signed"
