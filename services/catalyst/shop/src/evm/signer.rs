@@ -654,7 +654,7 @@ fn send_failure(hash: &str, e: RpcError) -> ApiError {
         tracing::error!(
             tx_hash = %hash,
             error = %e,
-            "economy: the relayer wallet cannot pay for gas; every relayed send answers 504 until it is funded"
+            "economy: the relayer wallet could not fund this transaction's gas; check its balance"
         );
     }
     ApiError::RelayerTimeout(format!(
@@ -662,9 +662,9 @@ fn send_failure(hash: &str, e: RpcError) -> ApiError {
     ))
 }
 
-/// Whether the node refused the send because the relayer's wallet holds too little to pay for the
-/// gas. The answer is still a 504 (`send_failure`), but this fault fails every relayed purchase
-/// until the wallet is funded, so it is logged on its own, apart from a slow or unreachable node.
+/// Whether the node refused the send because the relayer's wallet held too little to pay for this
+/// transaction's gas. The answer is still a 504 that keeps the slot (`send_failure`); this only
+/// logs it on its own, apart from a slow or unreachable node, so a wallet running dry is seen.
 /// Matched on the error message nodes answer for it ("insufficient funds for gas * price + value").
 fn cannot_pay_for_gas(e: &RpcError) -> bool {
     matches!(e, RpcError::Response { message, .. } if message.to_ascii_lowercase().contains("insufficient funds"))

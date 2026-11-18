@@ -40,9 +40,10 @@ struct OzTransactionData {
     status_reason: Option<String>,
 }
 
-/// A 408 or a 499 is not the relayer's own answer: a proxy in front of it gives one when it timed
-/// out or the caller went away, possibly after it forwarded the submission. So, unlike the
-/// relayer's other 4xx, neither proves that no transaction was created.
+/// A 408 or a 499 can come from a proxy in front of the relayer, which gives one when it timed out
+/// or the caller went away, possibly after it forwarded the submission. The status does not say
+/// who answered, so, unlike the relayer's other 4xx, neither is taken as proof that no transaction
+/// was created: both are read conservatively, as in flight.
 fn a_hop_gave_up(status: u16) -> bool {
     matches!(status, 408 | 499)
 }
