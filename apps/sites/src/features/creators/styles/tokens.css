@@ -13,8 +13,6 @@
   --color-card-line: rgba(160, 155, 168, 0.25);
   --color-media: #ecebed; /* Neutrals/Gray 5 */
   --color-accent: #691fa9;
-  --color-accent-hover: #7a2bbf;
-  --color-accent-active: #57178c;
   --color-magenta: #c640cd;
   --color-brand-violet: #a524b3;
   --color-soft-white: #fcfcfc;
@@ -73,17 +71,10 @@
   /* Legendary's light gradient stop (#A657ED) is too close to the purple surfaces; lift it for the pill text. */
   --color-rarity-legendary-light: #e8b9ff;
   /* Overview page (sites' creator landing values, kept exact for visual parity). */
-  --color-apricot: #ffa25a; /* resource links over the dark create cards */
   --color-off-white: #f0f0f0; /* decentraland-ui2 dark scheme text.primary: FAQ frame, answers, CTA border */
   --color-off-white-muted: rgba(240, 240, 240, 0.7); /* ui2 dark text.secondary: FAQ subtitle and questions */
-  --color-gray0-half: rgba(67, 64, 74, 0.5); /* Gray 0 @ 50%: create card info blocks */
-  --color-ink-fade: rgba(24, 20, 26, 0.8); /* testimonials grid fading into the wings */
-  --color-badge-overlay: rgba(0, 0, 0, 0.65); /* live scene "online" pill */
-  --color-online: #3fb950; /* live scene pill dot */
   --color-dcl-red-line: rgba(255, 45, 85, 0.5); /* MUI outlined-primary border (light button) */
   --color-glass-hint: rgba(255, 255, 255, 0.08); /* MUI dark action.hover (ghost button) */
-  --color-glass-glow: rgba(255, 255, 255, 0.15); /* active carousel slide halo */
-  --color-glass-strong: rgba(255, 255, 255, 0.4); /* idle carousel dot */
   /* Status pill fills: the pill's own color at low opacity. */
   --color-green-tint: rgba(48, 205, 0, 0.2);
   --color-orange-tint: rgba(244, 130, 33, 0.2);
@@ -98,13 +89,7 @@
   --gradient-ember: linear-gradient(69deg, #ffbc5b 0%, #ff2d55 100%);
   --gradient-coral: linear-gradient(90deg, #ff7439 0%, #ff2d55 100%);
   /* Overview page (sites' creator landing gradients, exact stops). */
-  --gradient-orchid: linear-gradient(206deg, #c640cd 2.47%, #691fa9 98.81%); /* "join" why card, blog cover fallback */
   /* "create" why card */
-  --gradient-apricot: radial-gradient(2917.83% 156.44% at 16.06% 114.57%, #ff4f57 13.42%, #ffa25a 100%);
-  --gradient-raspberry: linear-gradient(208deg, #ff2d55 13.94%, #c640cd 80.96%); /* "benefit" why card */
-  --gradient-sunrise: linear-gradient(244deg, #ff2d55 -11.67%, #ffbc5b 88.23%); /* section title highlight */
-  --gradient-dawn: linear-gradient(287deg, #ff2d55 5.21%, #ffbc5b 56.5%); /* hero title highlight */
-  --gradient-dusk: linear-gradient(90deg, #43404a 0%, #691fa9 100%); /* FAQ row hover sweep */
   /* The rarity media wash in neutral Gray 3, for media with no artwork yet (an empty collection's cover). */
   --gradient-media-empty: radial-gradient(
     circle at 50% 38%,
