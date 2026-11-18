@@ -152,8 +152,9 @@ across workers:
 - Animation channels `gltf` would panic on are skipped, and the rest of the clip plays:
   `KHR_animation_pointer` channels, channels with no target node or an unknown target path, and
   samplers whose accessors don't fit the target (an input other than float scalars, an output of
-  another type or component type, a `byteStride` shorter than the element, fewer values than
-  keyframes). `gltf` validates none of these, and upstream bevy panics on them. One warning per
+  another type or component type, a `byteStride` shorter than the element, a `count` that reads
+  past its bufferView, fewer values than keyframes, or, with no bufferView, more values than the
+  keyframes use). `gltf` validates none of these, and upstream bevy panics on them. One warning per
   animation names the file, the number skipped and the first one's reason. Animating a
   pointed-to property (a material's emissive, say) is not supported.
 - Texture decode is skipped when `load_materials` is empty, with a 1x1 placeholder under the
