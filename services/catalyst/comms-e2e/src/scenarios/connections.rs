@@ -558,15 +558,17 @@ async fn ban_eviction(ctx: Ctx) -> Result<()> {
     let device = bring_up(&ctx, "banned", &identity, &realm, here).await?;
     first_assignment(&ctx, &device.archipelago).await?;
 
-    gatekeeper
-        .ban(&wallet, "comms-e2e: the ban eviction scenario")
-        .await
-        .map_err(|error| anyhow!("banning the wallet: {error}"))?;
-    ctx.record("moderator", "banned", &wallet);
+    // The guard exists before the ban does and lifts it on every way out of this function,
+    // including the runner dropping the future at the deadline.
+    let ban = BanGuard::place(
+        &ctx,
+        &gatekeeper,
+        &wallet,
+        "comms-e2e: the ban eviction scenario",
+    )
+    .await?;
     let outcome = ban_checks(&ctx, &gatekeeper, &identity, &device).await;
-    // the ban is lifted whatever happened
-    let lifted = gatekeeper.unban(&wallet).await;
-    ctx.record("moderator", "unban answered", format!("{lifted:?}"));
+    let lifted = ban.lift().await;
     outcome?;
     lifted.map_err(|error| anyhow!("lifting the ban: {error}"))?;
     if gatekeeper
@@ -623,32 +625,44 @@ async fn ban_checks(
         bail!("the gatekeeper does not list the wallet as banned");
     }
     let url = socket_url(api(ctx)?)?;
-    match ArchipelagoBot::begin(
+    // The connector verifies the wallet's signature and then, for a banned wallet, sends its kick
+    // message (it has one reason, `KICKED_NEW_SESSION`) and closes: nothing else is the refusal.
+    let bot = ArchipelagoBot::begin(
         ctx,
         "banned-again",
         &url,
         identity,
         ArchipelagoOptions::default(),
     )
-    .await
-    {
-        Ok(bot) => match bot.finish_outcome(ctx, identity).await? {
-            ArchipelagoOutcome::Welcomed => bail!("a banned wallet was welcomed by archipelago"),
-            outcome => ctx.note("archipelago reconnect", format!("{outcome:?}")),
-        },
-        // refused before the challenge: also a refusal
-        Err(error) => ctx.note(
-            "archipelago reconnect",
-            format!("refused before the challenge: {error:#}"),
+    .await?;
+    match bot.finish_outcome(ctx, identity).await? {
+        ArchipelagoOutcome::Kicked(reason) if reason == KICKED_NEW_SESSION => {
+            ctx.note(
+                "archipelago reconnect",
+                format!("kicked with reason {reason}"),
+            );
+        }
+        outcome => bail!(
+            "a banned wallet must be kicked with reason {KICKED_NEW_SESSION} by archipelago, got {outcome:?}"
         ),
     }
+    // Pulse replies to the handshake with `success: false` and the error `banned`, then ends the
+    // connection with `DisconnectReason::Banned`: either of the two reaches the bot first.
     let pulse = PulseBot::dial(ctx, "banned-pulse-again", ConnectOptions::default()).await?;
     match pulse
         .handshake(ctx, identity, HandshakeOptions::default())
         .await?
     {
-        HandshakeOutcome::Accepted => bail!("a banned wallet was accepted by Pulse"),
-        outcome => ctx.note("Pulse reconnect", format!("{outcome:?}")),
+        HandshakeOutcome::Refused { error } if error.as_deref() == Some("banned") => {
+            ctx.note("Pulse reconnect", "refused: banned");
+        }
+        HandshakeOutcome::Disconnected { code } if code == DisconnectReason::Banned.code() => {
+            ctx.note("Pulse reconnect", "disconnected: banned");
+        }
+        outcome => bail!(
+            "a banned wallet must be refused by Pulse as banned (error `banned` or disconnect code {}), got {outcome:?}",
+            DisconnectReason::Banned.code()
+        ),
     }
     Ok(())
 }
