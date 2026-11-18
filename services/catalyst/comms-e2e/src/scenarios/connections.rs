@@ -318,6 +318,23 @@ async fn stale_socket_reconnect(ctx: Ctx) -> Result<()> {
     again
         .alive()
         .map_err(|reason| anyhow!("the new socket: {reason}"))?;
+
+    // a socket of the same device that is still alive is replaced the same way, and is told so
+    let third = ArchipelagoBot::open(&ctx, "third", &identity.same_device()).await?;
+    expect_or(
+        &ctx,
+        "the replaced socket of the same device is kicked with the new-session reason",
+        Duration::from_secs(10),
+        || match again.view().kicked {
+            Some(reason) if reason == KICKED_NEW_SESSION => Ok(()),
+            Some(other) => Err(format!("fatal: it was kicked with reason {other}")),
+            None => Err("not kicked yet".to_owned()),
+        },
+    )
+    .await?;
+    third
+        .alive()
+        .map_err(|reason| anyhow!("the replacing socket: {reason}"))?;
     Ok(())
 }
 
