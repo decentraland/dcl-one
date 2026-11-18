@@ -42,14 +42,26 @@ export class Outbox {
     this.prune();
   }
 
-  /** The oldest `limit` records of `address`, oldest first. Expired records are dropped first. */
-  peek(address: string, limit: number): AiTurnRecord[] {
+  /**
+   * The oldest `limit` records of `address`, oldest first. Expired records are dropped first, and
+   * so is any record `withdrawn` names (an excluded conversation's turn a purge couldn't read).
+   */
+  peek(
+    address: string,
+    limit: number,
+    withdrawn: (record: AiTurnRecord) => boolean = () => false,
+  ): AiTurnRecord[] {
     this.prune();
     const out: AiTurnRecord[] = [];
     for (const entry of this.entries(address)) {
       if (out.length >= limit) break;
       const record = this.read(entry.file);
-      if (record !== null) out.push(record);
+      if (record === null) continue;
+      if (withdrawn(record)) {
+        fs.rmSync(entry.file, { force: true });
+        continue;
+      }
+      out.push(record);
     }
     return out;
   }

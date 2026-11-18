@@ -64,7 +64,12 @@ export function setConversationShared(conversationId: string, shared: boolean): 
     return;
   }
   excludedConversations.add(conversationId);
-  getOutbox().purgeConversation(conversationId);
+  try {
+    getOutbox().purgeConversation(conversationId);
+  } catch (e) {
+    // A file that can't be removed now is skipped by every upload (see `peek`) and expires.
+    log.warn('[AI sharing] could not drop every queued turn of an excluded conversation', e);
+  }
 }
 
 export const isConversationExcluded = (conversationId: string): boolean =>
@@ -124,9 +129,9 @@ export class TurnRecorder {
         log.warn(`[AI sharing] turn ${this.capture.turnId} is too large to share; not queued`);
         return null;
       }
-      // Again after the await: excluding the conversation meanwhile purged a queue this record
-      // wasn't in yet.
-      if (excluded()) return null;
+      // Again right before queuing: excluding the conversation or withdrawing consent meanwhile
+      // purged a queue this record wasn't in yet.
+      if (excluded() || !(await stillShared()) || excluded()) return null;
       queue(record);
       return record.recordId;
     } catch (e) {

@@ -143,17 +143,26 @@ export const refreshQueue = createAsyncThunk('aiSharing/refreshQueue', async () 
   return wallet === null ? [] : aiSharing.list(wallet);
 });
 
-// Settings are written whole and land in the store only once written, so two writes in flight
-// would each drop the other's change. Every write here waits for the one before it.
+type SharingSettings = Pick<
+  AppState['workspace']['settings'],
+  'aiDataSharing' | 'aiSharingPending'
+>;
+
+// The sharing keys land in the store only once written, so two writes in flight would each drop
+// the other's change. Every write here waits for the one before it, reads the keys as they are
+// then, and fails loudly: main reads the saved decision when a turn ends, so nothing may go on
+// as if it was saved when it wasn't. `change` returns null to write nothing.
 let settingsWrite: Promise<unknown> = Promise.resolve();
 
 function writeSettings(
   getState: () => AppState,
   dispatch: AppDispatch,
-  change: (settings: AppState['workspace']['settings']) => AppState['workspace']['settings'],
+  change: (settings: SharingSettings) => SharingSettings | null,
 ): Promise<void> {
   const write = settingsWrite.then(async () => {
-    await dispatch(workspaceActions.updateSettings(change(getState().workspace.settings)));
+    const { aiDataSharing, aiSharingPending } = getState().workspace.settings;
+    const next = change({ aiDataSharing, aiSharingPending });
+    if (next !== null) await dispatch(workspaceActions.updateAiSharingSettings(next)).unwrap();
   });
   settingsWrite = write.catch(() => {});
   return write;
@@ -169,6 +178,30 @@ function saveConsent(
     ...settings,
     aiDataSharing: { ...settings.aiDataSharing, [wallet]: consent },
   }));
+}
+
+const sameDecision = (a: AiSharingConsent | undefined, b: AiSharingConsent) =>
+  a !== undefined &&
+  a.consent === b.consent &&
+  a.version === b.version &&
+  a.decidedAt === b.decidedAt;
+
+/**
+ * Saves `next` only while `expected` is still the wallet's saved decision. A reply that arrives
+ * after the creator decided again must not bring the older decision back.
+ */
+function replaceConsent(
+  getState: () => AppState,
+  dispatch: AppDispatch,
+  wallet: string,
+  expected: AiSharingConsent,
+  next: AiSharingConsent,
+): Promise<void> {
+  return writeSettings(getState, dispatch, settings =>
+    sameDecision(consentFor(settings.aiDataSharing, wallet), expected)
+      ? { ...settings, aiDataSharing: { ...settings.aiDataSharing, [wallet]: next } }
+      : null,
+  );
 }
 
 /** What is waiting to reach the service for `wallet`. */
@@ -215,22 +248,33 @@ function checkVersionMismatch(dispatch: AppDispatch, response: { body?: unknown 
   return true;
 }
 
-/** Takes the service's latest decision as this wallet's, emptying its queue on a "no". */
+/**
+ * Takes the service's latest decision as this wallet's, in place of `local`, emptying its queue
+ * on a "no". Nothing changes if the creator decided again here meanwhile.
+ */
 async function adoptRemote(
   getState: () => AppState,
   dispatch: AppDispatch,
   wallet: string,
+  local: AiSharingConsent,
   remote: api.AiSharingConsentState,
 ): Promise<void> {
   if (remote.decidedAt === null || remote.version === null) return;
-  await saveConsent(getState, dispatch, wallet, {
+  await replaceConsent(getState, dispatch, wallet, local, {
     consent: remote.granted ? 'granted' : 'denied',
     version: remote.version,
     decidedAt: remote.decidedAt,
     delivered: true,
   });
-  if (!remote.granted) await aiSharing.purge(wallet);
+  const saved = selectSharingConsent(getState(), wallet);
+  if (saved?.consent === 'denied' && saved.decidedAt === remote.decidedAt) {
+    await aiSharing.purge(wallet);
+  }
 }
+
+// Decisions reach the service one at a time, in the order they were made: it keeps the one it
+// receives last, which must be the creator's last click.
+let delivering: Promise<unknown> = Promise.resolve();
 
 /**
  * Sends this wallet's decision. The service orders decisions by when it receives them, so the
@@ -238,7 +282,18 @@ async function adoptRemote(
  * which is an offline machine delivering a stale "yes" after the creator said no elsewhere. Then
  * the withdrawal stands here too. Returns whether the service now holds a decision for us.
  */
-async function deliver(
+function deliver(
+  getState: () => AppState,
+  dispatch: AppDispatch,
+  wallet: string,
+  consent: AiSharingConsent,
+): Promise<boolean> {
+  const run = delivering.then(() => deliverNow(getState, dispatch, wallet, consent));
+  delivering = run.catch(() => {});
+  return run;
+}
+
+async function deliverNow(
   getState: () => AppState,
   dispatch: AppDispatch,
   wallet: string,
@@ -246,8 +301,9 @@ async function deliver(
 ): Promise<boolean> {
   const response = await api.putConsent(wallet, toServerDecision(consent));
   if (response.ok) {
-    await saveConsent(getState, dispatch, wallet, { ...consent, delivered: true });
-    return true;
+    await replaceConsent(getState, dispatch, wallet, consent, { ...consent, delivered: true });
+    // A newer decision made meanwhile is still to be sent: the service doesn't hold it yet.
+    return sameDecision(selectSharingConsent(getState(), wallet), consent);
   }
   if (response.status === 409) {
     if (checkVersionMismatch(dispatch, response)) return false;
@@ -256,7 +312,7 @@ async function deliver(
     if (consent.consent === 'denied') return false;
     const remote = await api.getConsent(wallet);
     if (!remote.ok) return false;
-    await adoptRemote(getState, dispatch, wallet, remote.data);
+    await adoptRemote(getState, dispatch, wallet, consent, remote.data);
     return true;
   }
   return false;
@@ -315,7 +371,10 @@ export const deleteEverything = createAsyncThunk(
       dispatch(actions.setSyncedWallet(null));
       return rejectWithValue(response.error);
     }
-    await saveConsent(getState, dispatch, wallet, { ...withdrawal, delivered: true });
+    await replaceConsent(getState, dispatch, wallet, withdrawal, {
+      ...withdrawal,
+      delivered: true,
+    });
     dispatch(actions.setSyncedWallet(wallet));
     dispatch(actions.clearSharedTurns());
     dispatch(actions.clearDigests());
@@ -456,13 +515,15 @@ async function syncConsent(
   let agreed = true;
   if (sameAsRemote) {
     if (local.delivered !== true) {
-      await saveConsent(getState, dispatch, wallet, { ...local, delivered: true });
+      await replaceConsent(getState, dispatch, wallet, local, { ...local, delivered: true });
     }
   } else if (local.delivered !== true || remote.data.decidedAt === null) {
     agreed = await deliver(getState, dispatch, wallet, local);
   } else {
-    await adoptRemote(getState, dispatch, wallet, remote.data);
+    await adoptRemote(getState, dispatch, wallet, local, remote.data);
   }
+  // A decision made while this ran is not settled yet: the next sync sends it.
+  if (agreed && selectSharingConsent(getState(), wallet)?.delivered !== true) agreed = false;
   if (agreed) dispatch(actions.setSyncedWallet(wallet));
   return agreed;
 }
@@ -507,8 +568,9 @@ async function flushQueue(getState: () => AppState, dispatch: AppDispatch): Prom
   if (consent === undefined) return;
   if (Date.now() < getState().aiSharing.nextUploadAt) return;
   // Like withdrawals, erasures go out whatever the consent and the flag say.
-  if (!(await deliverErasures(getState, dispatch, wallet))) {
-    backOff(dispatch);
+  const erasureFailure = await deliverErasures(getState, dispatch, wallet);
+  if (erasureFailure !== null) {
+    backOff(dispatch, erasureFailure);
     return;
   }
   // A "yes" goes out only while sharing is offered (the flag on, the consent text matching): a
@@ -540,16 +602,22 @@ async function flushQueue(getState: () => AppState, dispatch: AppDispatch): Prom
     const response = await api.uploadTurns(wallet, batch);
 
     if (response.ok) {
+      // An empty 2xx body comes back as null: treat it as "all accepted".
+      const rejected = Array.isArray(response.data?.rejected) ? response.data.rejected : [];
       const kept = new Set(
-        response.data.rejected.filter(r => RETRYABLE_REJECTIONS.has(r.reason)).map(r => r.recordId),
+        rejected.filter(r => RETRYABLE_REJECTIONS.has(r.reason)).map(r => r.recordId),
       );
-      if (response.data.rejected.length > 0) {
+      if (rejected.length > 0) {
         // Ids and reason codes only, never content.
-        console.warn('[AI sharing] the service rejected records', response.data.rejected);
+        console.warn('[AI sharing] the service rejected records', rejected);
       }
       await aiSharing.ack(batch.map(r => r.recordId).filter(id => !kept.has(id)));
+      if (kept.size > 0) {
+        // Kept to retry later, with the usual backoff, not every minute.
+        backOff(dispatch);
+        break;
+      }
       dispatch(actions.uploadSucceeded());
-      if (kept.size > 0) break;
       continue;
     }
     if (response.status === 0 && currentWallet() !== wallet) break;
@@ -582,22 +650,22 @@ async function flushQueue(getState: () => AppState, dispatch: AppDispatch): Prom
   await dispatch(refreshQueue());
 }
 
-/** Sends the wallet's waiting conversation erasures, oldest first. False when one failed. */
+/** Sends the wallet's waiting conversation erasures, oldest first; the failed reply, if any. */
 async function deliverErasures(
   getState: () => AppState,
   dispatch: AppDispatch,
   wallet: string,
-): Promise<boolean> {
+): Promise<MetricsResponse<unknown> | null> {
   for (const erasure of selectPending(getState(), wallet).erasures ?? []) {
-    if (currentWallet() !== wallet) return true;
+    if (currentWallet() !== wallet) return null;
     const response = await api.eraseConversation(wallet, erasure.conversationId, erasure.decidedAt);
-    if (!response.ok) return false;
+    if (!response.ok) return response;
     await updatePending(getState, dispatch, wallet, p => ({
       ...p,
       erasures: (p.erasures ?? []).filter(e => !sameErasure(e, erasure)),
     }));
   }
-  return true;
+  return null;
 }
 
 const sameErasure = (
@@ -653,7 +721,9 @@ const slice = createSlice({
     uploadFailed: (state, { payload }: PayloadAction<{ retryAfterSeconds?: number }>) => {
       state.failures += 1;
       const backoff = Math.min(MIN_BACKOFF_MS * 2 ** (state.failures - 1), MAX_BACKOFF_MS);
-      const asked = (payload.retryAfterSeconds ?? 0) * 1000;
+      // Capped like the backoff: a far-off Retry-After must not stall uploads, erasures and
+      // withdrawals for the rest of the session.
+      const asked = Math.min((payload.retryAfterSeconds ?? 0) * 1000, MAX_BACKOFF_MS);
       state.nextUploadAt = Date.now() + Math.max(backoff, asked);
     },
     askDeleteConfirmation: state => {

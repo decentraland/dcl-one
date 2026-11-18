@@ -519,13 +519,16 @@ const slice = createSlice({
         }
         case 'done': {
           const msg = find();
+          // A stopped turn was finalized by `stopped`; its `done` can arrive after the next turn
+          // started (a shared turn's waits for its record), and must not end that one.
+          const finalizedAlready = msg?.done === true;
           if (msg !== undefined) {
             msg.done = true;
             msg.mutations = payload.mutations;
             if (payload.cancelled === true) msg.cancelled = true;
             if (payload.recordId !== undefined) msg.recordId = payload.recordId;
           }
-          state.busy = false;
+          if (!finalizedAlready) state.busy = false;
           break;
         }
         default: {

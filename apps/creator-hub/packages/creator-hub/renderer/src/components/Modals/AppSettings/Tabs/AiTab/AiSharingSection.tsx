@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
+import Button from '@ui/atoms/Button';
 import IconButton from '@ui/atoms/IconButton';
 import Spinner from '@ui/atoms/Spinner';
 import Text from '@ui/atoms/Text';
@@ -55,6 +56,8 @@ export function AiSharingSection() {
   const sharing = hasSharingConsent(consent);
   const [showShared, setShowShared] = useState(false);
   const [showDigests, setShowDigests] = useState(false);
+  const sharedListId = useId();
+  const digestsListId = useId();
 
   useEffect(() => {
     if (visible) void dispatch(aiSharingActions.refreshQueue());
@@ -84,11 +87,8 @@ export function AiSharingSection() {
   return (
     <>
       <hr className="AiDivider" />
-      <div
-        className="AiField"
-        data-signed-out={signedOut}
-      >
-        <div className={styles.toggle}>
+      <div className="AiField">
+        <div className={signedOut ? `${styles.toggle} ${styles.dimmed}` : styles.toggle}>
           <ToggleRow
             checked={sharing}
             disabled={signedOut || (!sharing && !offered)}
@@ -99,7 +99,7 @@ export function AiSharingSection() {
         <Text
           variant="body2"
           tone="secondary"
-          className={`AiHint ${styles.description}`}
+          className={`AiHint ${styles.description} ${signedOut ? styles.dimmed : ''}`}
         >
           {label('description')}
         </Text>
@@ -109,7 +109,7 @@ export function AiSharingSection() {
             {label('signin')}
             <button
               type="button"
-              className="AgentSignLink primary"
+              className={`AgentSignLink primary ${styles.signinLink}`}
               onClick={() => void signIn()}
             >
               {label('signin_link')}
@@ -145,20 +145,21 @@ export function AiSharingSection() {
               >
                 <p className={styles.question}>{label('delete_confirm')}</p>
                 <div className={styles.buttons}>
-                  <button
-                    type="button"
-                    className={`${styles.button} ${styles.danger}`}
+                  <Button
+                    size="sm"
+                    tone="danger"
                     onClick={() => void dispatch(aiSharingActions.deleteEverything())}
                   >
                     {label('delete_confirm_yes')}
-                  </button>
-                  <button
-                    type="button"
-                    className={styles.button}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    tone="neutral"
+                    size="sm"
                     onClick={() => dispatch(aiSharingActions.resetDelete())}
                   >
                     {label('delete_cancel')}
-                  </button>
+                  </Button>
                 </div>
               </div>
             ) : deleteStatus === 'deleted' ? (
@@ -173,7 +174,7 @@ export function AiSharingSection() {
                 <div className={styles.row}>
                   <ListToggle
                     open={showShared}
-                    controls="ai-sharing-shared-turns"
+                    controls={sharedListId}
                     onToggle={() => setShowShared(open => !open)}
                   >
                     {showShared ? label('viewer_hide') : label('viewer_show')}
@@ -200,7 +201,7 @@ export function AiSharingSection() {
 
             {showShared && deleteStatus !== 'deleted' && (
               <div
-                id="ai-sharing-shared-turns"
+                id={sharedListId}
                 className={styles.list}
               >
                 {shared.status === 'failed' && (
@@ -258,7 +259,7 @@ export function AiSharingSection() {
               <div className={styles.row}>
                 <ListToggle
                   open={showDigests}
-                  controls="ai-sharing-digests"
+                  controls={digestsListId}
                   onToggle={() => setShowDigests(open => !open)}
                 >
                   {showDigests ? label('digests_hide') : label('digests_show')}
@@ -267,7 +268,7 @@ export function AiSharingSection() {
             )}
             {showDigests && deleteStatus !== 'deleted' && (
               <div
-                id="ai-sharing-digests"
+                id={digestsListId}
                 className={styles.list}
               >
                 {digests.status === 'failed' && (

@@ -6,7 +6,7 @@ import {
   type AiTurnRecord,
 } from '/shared/types/ai-sharing';
 
-import { ai, aiSharing } from '#preload';
+import { ai, aiSharing, settings as settingsPreload } from '#preload';
 import * as api from '../../../lib/aiSharingApi';
 import { AuthServerProvider } from '../../../lib/auth';
 import { createTestStore, type TestStore } from '../../../../tests/utils/testStore';
@@ -74,9 +74,11 @@ function setup({
   });
   store.dispatch({
     type: 'config/updateSettings/fulfilled',
-    meta: {
-      arg: { aiAssistant: true, aiDataSharing: consent ? { [ADDRESS]: consent } : undefined },
-    },
+    meta: { arg: { aiAssistant: true } },
+  });
+  store.dispatch({
+    type: 'config/updateAiSharingSettings/fulfilled',
+    meta: { arg: { aiDataSharing: consent ? { [ADDRESS]: consent } : undefined } },
   });
   store.dispatch(
     aiActions.setSessionState({
@@ -699,6 +701,28 @@ describe('when the service asks to wait', () => {
       Date.now() + 3599 * 1000,
     );
   });
+
+  it('should wait no longer than the longest backoff, whatever Retry-After says', async () => {
+    vi.mocked(api.getConsent).mockResolvedValue(ok(serverSays(true, granted.decidedAt)));
+    vi.mocked(aiSharing.peek).mockResolvedValue([record('a')]);
+    vi.mocked(api.uploadTurns).mockResolvedValue({ ...fail(503), retryAfterSeconds: 86_400 });
+    const store = setup({ consent: granted });
+
+    await store.dispatch(actions.flush());
+
+    expect(store.getState().aiSharing.nextUploadAt).toBeLessThanOrEqual(Date.now() + 3_600_000);
+  });
+
+  it('should honour Retry-After on a failed conversation erasure', async () => {
+    vi.mocked(api.eraseConversation).mockResolvedValue({ ...fail(503), retryAfterSeconds: 1800 });
+    const store = setup({ consent: granted });
+
+    await store.dispatch(actions.eraseConversation({ conversationId: 's1', recordIds: [] }));
+
+    expect(store.getState().aiSharing.nextUploadAt).toBeGreaterThanOrEqual(
+      Date.now() + 1799 * 1000,
+    );
+  });
 });
 
 describe('when the service runs an older consent text than this app', () => {
@@ -922,10 +946,9 @@ describe('when a conversation is marked as not shared', () => {
     vi.mocked(api.eraseConversation).mockResolvedValue(ok({ deleted: 1 }));
     const store = setup({ consent: { ...granted, consent: 'denied' } });
     store.dispatch({
-      type: 'config/updateSettings/fulfilled',
+      type: 'config/updateAiSharingSettings/fulfilled',
       meta: {
         arg: {
-          ...store.getState().workspace.settings,
           aiSharingPending: { [ADDRESS]: { erasures: [{ conversationId: 's9', decidedAt: NOW }] } },
         },
       },
@@ -1079,5 +1102,89 @@ describe('when looking at the summaries of what was shared', () => {
     await loading;
 
     expect(store.getState().aiSharing.digests.digests).toEqual([]);
+  });
+});
+
+describe('when the creator changes their mind before the first answer arrives', () => {
+  it('should send both decisions in order and keep the last one', async () => {
+    let answerFirst: (value: unknown) => void = () => {};
+    vi.mocked(api.putConsent)
+      .mockReturnValueOnce(new Promise(r => (answerFirst = r)) as never)
+      .mockImplementationOnce(async (_w, d) => ok(serverSays(d.granted, d.decidedAt)));
+    const store = setup({ consent: { ...granted, consent: 'denied', delivered: true } });
+
+    const yes = store.dispatch(actions.decide(true));
+    await vi.waitFor(() => expect(api.putConsent).toHaveBeenCalledTimes(1));
+    const no = store.dispatch(actions.decide(false));
+    await settled();
+
+    // The "no" waits for the "yes" to reach the service, so the service keeps the "no".
+    expect(api.putConsent).toHaveBeenCalledTimes(1);
+    answerFirst(ok(serverSays(true, NOW)));
+    await Promise.all([yes, no]);
+
+    expect(vi.mocked(api.putConsent).mock.calls.map(([, d]) => d.granted)).toEqual([true, false]);
+    expect(store.getState().workspace.settings.aiDataSharing?.[ADDRESS]).toMatchObject({
+      consent: 'denied',
+      delivered: true,
+    });
+  });
+});
+
+describe('when another screen saves the settings with an older copy', () => {
+  it('should keep the sharing decision the store holds', () => {
+    const store = setup({ consent: granted });
+
+    store.dispatch({
+      type: 'config/updateSettings/fulfilled',
+      meta: {
+        arg: { aiAssistant: true, aiDataSharing: { [ADDRESS]: { ...granted, consent: 'denied' } } },
+      },
+    });
+
+    expect(store.getState().workspace.settings.aiDataSharing?.[ADDRESS]?.consent).toBe('granted');
+  });
+});
+
+describe('when the decision cannot be saved', () => {
+  it('should not tell the service about it', async () => {
+    vi.mocked(settingsPreload.updateAiSharingSettings).mockRejectedValueOnce(
+      new Error('disk full'),
+    );
+    const store = setup({ consent: granted });
+
+    await store.dispatch(actions.decide(false));
+
+    expect(api.putConsent).not.toHaveBeenCalled();
+    expect(aiSharing.purge).not.toHaveBeenCalled();
+  });
+});
+
+describe('when the service keeps records for a wallet mismatch', () => {
+  it('should back off instead of retrying every minute', async () => {
+    vi.mocked(api.getConsent).mockResolvedValue(ok(serverSays(true, granted.decidedAt)));
+    vi.mocked(aiSharing.peek).mockResolvedValue([record('a')]);
+    vi.mocked(api.uploadTurns).mockResolvedValue(
+      ok({ accepted: 0, rejected: [{ recordId: 'a', reason: 'address_mismatch' }] }),
+    );
+    const store = setup({ consent: granted });
+
+    await store.dispatch(actions.flush());
+
+    expect(store.getState().aiSharing.failures).toBe(1);
+    expect(store.getState().aiSharing.nextUploadAt).toBeGreaterThan(Date.now());
+  });
+
+  it('should take an empty reply to an upload as everything accepted', async () => {
+    vi.mocked(api.getConsent).mockResolvedValue(ok(serverSays(true, granted.decidedAt)));
+    vi.mocked(aiSharing.peek)
+      .mockResolvedValueOnce([record('a')])
+      .mockResolvedValueOnce([]);
+    vi.mocked(api.uploadTurns).mockResolvedValue(ok(null) as never);
+    const store = setup({ consent: granted });
+
+    await store.dispatch(actions.flush());
+
+    expect(aiSharing.ack).toHaveBeenCalledWith(['a']);
   });
 });

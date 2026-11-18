@@ -172,7 +172,11 @@ export function initIpc({ beforeQuitCleanup }: InitIpcOptions) {
   });
   handle('ai.stop', async () => ai.aiStop());
   handle('aiSharing.peek', async (_event, address, limit) =>
-    aiSharing.getOutbox().peek(address, Math.min(Math.max(1, limit), 50)),
+    aiSharing
+      .getOutbox()
+      .peek(address, Math.min(Math.max(1, limit), 50), record =>
+        aiSharing.isConversationExcluded(record.conversationId),
+      ),
   );
   handle('aiSharing.ack', async (_event, ids) => aiSharing.getOutbox().ack(ids));
   handle('aiSharing.list', async (_event, address) => aiSharing.getOutbox().list(address));

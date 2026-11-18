@@ -15,23 +15,13 @@
   width: 100%;
 }
 
-.action {
-  flex: 1 1 auto;
-  height: 32px;
-  padding: 0 20px;
-  border: none;
-  border-radius: 8px;
-  background: var(--white-10);
-  color: var(--palette-neutral-softWhite);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
+/* Figma: the primary is 170 px wide and the secondary takes the rest of the row. */
+.accept {
+  flex: 0 0 170px;
 }
 
-.action.primary {
-  flex: 0 0 170px;
-  background: var(--brand);
+.decline {
+  flex: 1 1 auto;
 }
 
 .close {
@@ -109,7 +99,6 @@
 }
 
 .detailsToggle:focus-visible,
-.action:focus-visible,
 .menuSwitch:focus-visible,
 .chip:focus-visible {
   outline: 2px solid var(--brand);
@@ -128,12 +117,12 @@
   color: var(--dcl-silver);
 }
 
-.rateButton svg {
+.rateButton {
   font-size: 14px;
 }
 
 /* One thumb icon: turned upside down for "down". */
-.rateButton svg[data-direction="down"] {
+.thumbDown {
   transform: rotate(180deg);
 }
 
@@ -147,7 +136,7 @@
   background: var(--onyx);
   border: 1px solid var(--white-10);
   border-radius: 12px;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-panel);
 }
 
 .menuRow {

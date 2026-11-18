@@ -28,7 +28,7 @@ function mount({ wallet, decision }: { wallet?: string; decision?: AiSharingCons
     payload: { flags: { [FeatureFlag.AI_PROMPT_SHARING]: true }, variants: {} },
   });
   store.dispatch({
-    type: 'config/updateSettings/fulfilled',
+    type: 'config/updateAiSharingSettings/fulfilled',
     meta: { arg: { aiDataSharing: decision ? { [ADDRESS]: decision } : undefined } },
   });
   const flush = vi.spyOn(actions, 'flush').mockReturnValue((() => Promise.resolve()) as never);

@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
+import Button from '@ui/atoms/Button';
 import IconButton from '@ui/atoms/IconButton';
 import Popover from '@ui/atoms/Popover';
 import Tooltip from '@ui/atoms/Tooltip';
@@ -29,6 +30,8 @@ export interface SharingProps {
  */
 export function SharingConsentCard({ sharing, onShareDecision, onShareNotNow }: SharingProps) {
   const [showDetails, setShowDetails] = useState(false);
+  // The card can show in the docked panel and the detached window at once.
+  const detailsId = useId();
   if (sharing === undefined || (sharing.status !== 'ask' && sharing.status !== 'signin')) {
     return null;
   }
@@ -62,7 +65,7 @@ export function SharingConsentCard({ sharing, onShareDecision, onShareNotNow }: 
               className={styles.detailsToggle}
               type="button"
               aria-expanded={showDetails}
-              aria-controls="ai-sharing-details"
+              aria-controls={detailsId}
               onClick={() => setShowDetails(open => !open)}
             >
               <ChevronRightIcon
@@ -75,7 +78,7 @@ export function SharingConsentCard({ sharing, onShareDecision, onShareNotNow }: 
             {showDetails && (
               <ul
                 className={styles.detailsList}
-                id="ai-sharing-details"
+                id={detailsId}
               >
                 <li>{t('editor.ai.sharing.details_shared')}</li>
                 <li>{t('editor.ai.sharing.details_not_shared')}</li>
@@ -86,20 +89,22 @@ export function SharingConsentCard({ sharing, onShareDecision, onShareNotNow }: 
             )}
           </div>
           <div className={styles.cardActions}>
-            <button
-              type="button"
-              className={`${styles.action} ${styles.primary}`}
+            <Button
+              size="sm"
+              className={styles.accept}
               onClick={() => onShareDecision?.(true)}
             >
               {t('editor.ai.sharing.accept')}
-            </button>
-            <button
-              type="button"
-              className={styles.action}
+            </Button>
+            <Button
+              variant="secondary"
+              tone="neutral"
+              size="sm"
+              className={styles.decline}
               onClick={() => onShareDecision?.(false)}
             >
               {t('editor.ai.sharing.decline')}
-            </button>
+            </Button>
           </div>
         </>
       )}
@@ -257,7 +262,7 @@ export function TurnRating({
             >
               <ThumbUpAltIcon
                 fontSize="inherit"
-                data-direction={value}
+                className={value === 'down' ? styles.thumbDown : undefined}
               />
             </IconButton>
           </Tooltip>

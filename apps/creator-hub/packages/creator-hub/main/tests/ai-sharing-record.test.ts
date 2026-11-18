@@ -339,6 +339,18 @@ describe('when dropping queued records', () => {
 
   afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
+  it('should skip and remove a withdrawn record when handing out a batch', () => {
+    const kept = make({ conversationId: 'keep' });
+    const dropped = make({ conversationId: 'gone' });
+    outbox.enqueue(kept);
+    outbox.enqueue(dropped);
+
+    const batch = outbox.peek(ADDRESS, 10, r => r.conversationId === 'gone');
+
+    expect(batch.map(r => r.recordId)).toEqual([kept.recordId]);
+    expect(outbox.count()).toBe(1);
+  });
+
   it("should drop only one wallet's records", () => {
     outbox.enqueue(make());
     outbox.enqueue(make({ address: OTHER }));
@@ -424,6 +436,16 @@ describe('when a turn ends', () => {
     setConversationShared('c-end', true);
 
     expect(queue).not.toHaveBeenCalled();
+  });
+
+  it('should queue nothing when consent is withdrawn while the record is being built', async () => {
+    const queue = vi.fn();
+    const stillShared = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const recordId = await start().finish(end, {}, stillShared, queue);
+
+    expect(stillShared).toHaveBeenCalledTimes(2);
+    expect(queue).not.toHaveBeenCalled();
+    expect(recordId).toBeNull();
   });
 
   it('should queue nothing for a conversation excluded during the turn', async () => {

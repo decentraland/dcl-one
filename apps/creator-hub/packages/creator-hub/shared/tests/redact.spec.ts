@@ -253,3 +253,12 @@ describe('when preparing text for sharing', () => {
     expect(result).toEqual({ text: '😀😀😀', originalLength: 3, truncated: false, redactions: {} });
   });
 });
+
+describe('when the text is a long upper-case run around a credential keyword', () => {
+  it('should finish quickly instead of backtracking', () => {
+    const started = performance.now();
+    redactText('KEY'.repeat(30_000));
+
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+});

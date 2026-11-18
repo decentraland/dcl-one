@@ -56,7 +56,9 @@ const RULES: Rule[] = [
   {
     kind: 'credential',
     pattern: new RegExp(
-      `\\b([A-Z][A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD|PWD)[A-Z0-9_]*\\s*[=:]\\s*)${CREDENTIAL_VALUE}`,
+      // Bounded runs: unbounded ones on both sides of the keyword backtrack quadratically on a
+      // long upper-case run (seconds for `KEY` repeated 30,000 times).
+      `\\b([A-Z][A-Z0-9_]{0,63}(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD|PWD)[A-Z0-9_]{0,63}\\s*[=:]\\s*)${CREDENTIAL_VALUE}`,
       'g',
     ),
     replace: (_m, [prefix]) => `${prefix}<credential>`,

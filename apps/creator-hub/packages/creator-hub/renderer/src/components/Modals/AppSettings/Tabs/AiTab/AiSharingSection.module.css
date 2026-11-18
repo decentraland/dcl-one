@@ -8,8 +8,7 @@
   max-width: 538px;
 }
 
-[data-signed-out="true"] .toggle,
-[data-signed-out="true"] .description {
+.dimmed {
   opacity: 0.4;
 }
 
@@ -23,7 +22,7 @@
   font-size: 12px;
 }
 
-.signin :global(.AgentSignLink) {
+.signinLink {
   margin-left: 0;
   font-weight: 400;
 }
@@ -150,25 +149,6 @@
   gap: 10px;
 }
 
-.button {
-  height: 32px;
-  padding: 0 20px;
-  border: none;
-  border-radius: 8px;
-  background: var(--white-10);
-  color: var(--palette-neutral-softWhite);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-
-.button.danger {
-  background: var(--error);
-}
-
-.button:focus-visible,
 .toggleLink:focus-visible,
 .deleteLink:focus-visible {
   outline: 2px solid var(--brand);
