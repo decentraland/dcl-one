@@ -83,7 +83,7 @@ const latestUpload = new Upload({
 await latestUpload.done();
 ```
 
-This runs in both CI (`make upload-asset-packs` in `.github/workflows/asset-packs.yml`) and local Docker dev (`npm run upload` against MinIO), so both environments are consistent. `tsconfig.scripts.json` requires `resolveJsonModule: true` for the `package.json` import.
+This runs in both CI (`make upload-asset-packs` in `.github/workflows/asset-packs.yml`) and local Docker dev (`npm run upload` against MinIO), so both environments are consistent. The script reads the version from `package.json` through a JSON import (`with { type: 'json' }`).
 
 Result: `{contentUrl}/asset-packs/latest/catalog.json` always reflects the most recently uploaded asset-packs version, and `{contentUrl}/asset-packs/{version}/catalog.json` provides an immutable pinned copy.
 

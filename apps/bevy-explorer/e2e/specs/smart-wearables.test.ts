@@ -185,7 +185,9 @@ scenario(
     await waitFixtureLive(explorer)
     await explorer.hud.wait({ role: 'button', name: `Stop ${FIXTURE_NAME}` }, { timeoutMs: 10_000 })
   },
-  { session: PREVIEW_SESSION }
+  // The preview's last scenario: every open client renders on the one GPU, and the next boot (the
+  // disabling realm's) could find no adapter with this one still up.
+  { session: PREVIEW_SESSION, closeSession: true }
 )
 
 scenario(
@@ -205,7 +207,7 @@ scenario(
     assert.equal(live?.hash, scene.hash, `"${FIXTURE_TITLE}" left /live_scenes while paused`)
     assert.ok((await explorer.liveScenes()).some((candidate) => candidate.title === HOST_TITLE && !candidate.portable), `"${HOST_TITLE}" is not the parcel scene`)
   },
-  { session: DISABLING_SESSION }
+  { session: DISABLING_SESSION, closeSession: true }
 )
 
 scenario(

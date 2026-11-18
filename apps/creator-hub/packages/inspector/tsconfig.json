@@ -10,7 +10,8 @@
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
     "module": "esnext",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
+    "noUncheckedSideEffectImports": false,
     "resolveJsonModule": true,
     "emitDeclarationOnly": true,
     "declaration": true,
@@ -19,9 +20,12 @@
     "jsx": "react-jsx",
     "sourceMap": true,
     "rootDir": "src/",
-    "incremental": true,
-    "types": []
+    "types": ["node"],
+    "paths": {
+      "@ui/*": ["../../../ui3/src/*"]
+    }
   },
   "exclude": ["**/*.spec.ts"],
-  "include": ["src"]
+  "include": ["src"],
+  "references": [{ "path": "./tsconfig.ui3.json" }]
 }

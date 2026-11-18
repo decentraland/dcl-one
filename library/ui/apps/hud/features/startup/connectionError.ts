@@ -1,8 +1,8 @@
-// The sign-in screens' Connection Error: Retry closes it and leaves the screen as it was; Exit leaves,
-// where the page can. `body` replaces the generic text when there is something more useful to say
+// The sign-in screens' Connection Error: Retry closes it and leaves the screen as it was; Exit leaves.
+// `body` replaces the generic text when there is something more useful to say
 // (a desktop sign-in's own reason).
 import { showDialog } from '../../design'
-import { canExit, exitApplication } from '../gate/exitApplication'
+import { exitApplication } from '../gate/exitApplication'
 
 export const CONNECTION_ERROR = {
   title: 'Connection Error',
@@ -13,7 +13,10 @@ export function showConnectionError(body: string = CONNECTION_ERROR.body, signal
   void showDialog({
     title: CONNECTION_ERROR.title,
     body,
-    actions: [...(canExit() ? [{ id: 'exit', label: 'Exit', variant: 'secondary' as const }] : []), { id: 'retry', label: 'Retry' }],
+    actions: [
+      { id: 'exit', label: 'Exit', variant: 'secondary' as const },
+      { id: 'retry', label: 'Retry' }
+    ],
     actionsEqual: true,
     signal
   }).then((choice) => {

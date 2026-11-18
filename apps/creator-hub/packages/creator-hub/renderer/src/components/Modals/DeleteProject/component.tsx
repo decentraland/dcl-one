@@ -1,10 +1,10 @@
 import { useCallback, useState } from 'react';
+import Checkbox from '@ui/atoms/Checkbox';
 
-import { Checkbox } from 'decentraland-ui2';
 import { t } from '/@/modules/store/translation/utils';
 
 import { Modal } from '..';
-import { Button } from '../../Button';
+import Button from '@ui/atoms/Button';
 
 import type { Props } from './types';
 
@@ -13,11 +13,6 @@ import './styles.css';
 export function DeleteProject({ open, project, onClose, onSubmit }: Props) {
   const [shouldDeleteFiles, setShouldDeleteFiles] = useState(false);
 
-  const handleCheckboxChange = useCallback(
-    (_event: React.ChangeEvent<HTMLInputElement>, checked: boolean) =>
-      setShouldDeleteFiles(checked),
-    [],
-  );
   const handleSubmit = useCallback(() => {
     onSubmit(project, shouldDeleteFiles);
   }, [shouldDeleteFiles, onSubmit, project]);
@@ -31,22 +26,29 @@ export function DeleteProject({ open, project, onClose, onSubmit }: Props) {
       actions={
         <>
           <Button
-            color="secondary"
+            variant="text"
+            className="hub-button hub-button--secondary"
             onClick={onClose}
           >
             {t('modal.cancel')}
           </Button>
-          <Button onClick={handleSubmit}>{t('modal.confirm')}</Button>
+          <Button
+            variant="text"
+            className="hub-button hub-button--primary"
+            onClick={handleSubmit}
+          >
+            {t('modal.confirm')}
+          </Button>
         </>
       }
     >
-      <label className="delete-files">
-        <Checkbox
-          value={shouldDeleteFiles}
-          onChange={handleCheckboxChange}
-        />
-        <span>{t('modal.delete_project.files_checkbox')}</span>
-      </label>
+      <Checkbox
+        className="delete-files"
+        checked={shouldDeleteFiles}
+        onChange={setShouldDeleteFiles}
+      >
+        {t('modal.delete_project.files_checkbox')}
+      </Checkbox>
 
       {shouldDeleteFiles && (
         <p className="delete-files-warning">{t('modal.delete_project.files_warning')}</p>

@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { useDrop } from 'react-dnd';
-import cx from 'classnames';
+import { cx } from '../../../../lib/utils/cx';
 import { type ActionPayload, type ActionType } from '@dcl/asset-packs';
 import { recursiveCheck } from '../../../../lib/utils/deep-equal';
 import {

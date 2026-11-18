@@ -13,12 +13,12 @@
 //! read or ownership pass leaves out its chunk only, counted in
 //! `profiles_lookup_failures_total`.
 
+use crate::shared::routing::post;
 use axum::body::Bytes;
 use axum::extract::rejection::BytesRejection;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
 use axum::{Json, Router};
 use serde_json::value::RawValue;
 use serde_json::{Value, json};

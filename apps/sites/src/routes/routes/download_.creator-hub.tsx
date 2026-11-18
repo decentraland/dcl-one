@@ -4,11 +4,11 @@ import { redirect } from "react-router";
 import LdCreatorHubDownloadPage from "@ui/landings/pages/LdCreatorHubDownloadPage";
 
 import {
-  loadDownloadFixture,
+  loadLatestRelease,
   resolveDownload,
   type DownloadOption,
   type OsKey,
-} from "@/core/lib/landings/creator-hub-download.server";
+} from "@/data/lib/download/creator-hub.server";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
 
@@ -30,8 +30,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const osParam = url.searchParams.get("os");
   const archParam = url.searchParams.get("arch");
 
-  const fixture = loadDownloadFixture();
-  const resolved = resolveDownload(fixture, request.headers.get("user-agent"), {
+  const resolved = resolveDownload(await loadLatestRelease(), request.headers.get("user-agent"), {
     os: osParam,
     arch: archParam,
   });
@@ -70,7 +69,7 @@ export default function CreatorHubDownloadRoute({ loaderData }: Route.ComponentP
       {
         os: option.osKey,
         arch: option.arch,
-        file_name: option.fileName,
+        file_name: option.fileName || null,
         kind: option === d.primary ? "primary" : "secondary",
       },
       { sid: d.sid, story: STORY },

@@ -5,7 +5,7 @@ import SitesChrome from "@ui/web/frames/SitesChrome";
 
 import { CREATOR_HUB_RELEASES, CREATOR_HUB_STEPS } from "@/features/download/creator-hub-steps";
 
-import { loadDownloadFixture, resolveDownload } from "@/core/lib/landings/creator-hub-download.server";
+import { loadLatestRelease, resolveDownload } from "@/data/lib/download/creator-hub.server";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
 
@@ -19,7 +19,7 @@ const STORY: StoryId = "landings/creator-hub-download";
 export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const os = url.searchParams.get("os")?.toLowerCase() === "windows" ? "windows" : "macos";
-  const resolved = resolveDownload(loadDownloadFixture(), null, { os, arch: url.searchParams.get("arch") });
+  const resolved = resolveDownload(await loadLatestRelease(), null, { os, arch: url.searchParams.get("arch") });
   const { sid, wrap } = sidLoader(request, context);
   return wrap({ sid, os: resolved.detectedOs, retryUrl: resolved.primary.url });
 }

@@ -1,9 +1,8 @@
 import { Provider } from 'react-redux';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import type { Project } from '/shared/types/projects';
 
@@ -17,6 +16,7 @@ import { Lands, type LandDeployment } from '/@/lib/land';
 import type * as LandModule from '/@/lib/land';
 import { Worlds } from '/@/lib/worlds';
 
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 import { createTestStore } from '../../../../tests/utils/testStore';
 import { watchFor } from '../../../../tests/utils/watchFor';
 import {
@@ -85,7 +85,7 @@ const renderTab = ({ projects = [] as Project[] | 'loading' } = {}) => {
 function mountTab(store: ReturnType<typeof createTestStore>) {
   return render(
     <Provider store={store}>
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <MemoryRouter initialEntries={['/earn']}>
           <Routes>
             <Route
@@ -102,7 +102,7 @@ function mountTab(store: ReturnType<typeof createTestStore>) {
             />
           </Routes>
         </MemoryRouter>
-      </ThemeProvider>
+      </TestProviders>
     </Provider>,
   );
 }
@@ -114,7 +114,7 @@ const NO_DATA = (element: Element) =>
   element.childElementCount === 0 && element.textContent === 'No data';
 
 async function chooseCycle(name: string) {
-  fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Cycle' }));
+  fireEvent.click(screen.getByRole('combobox', { name: 'Cycle' }));
   fireEvent.click(await screen.findByRole('option', { name }));
 }
 
@@ -173,7 +173,7 @@ describe('MyPlacesTab', () => {
 
       const combobox = screen.getByRole('combobox', { name: 'Cycle' });
       expect(combobox.querySelector('svg')).toBeNull();
-      fireEvent.mouseDown(combobox);
+      fireEvent.click(combobox);
 
       const options = await screen.findAllByRole('option');
       const marked = options.filter(option => option.querySelector('svg'));
@@ -185,7 +185,7 @@ describe('MyPlacesTab', () => {
       renderTab();
       await screen.findByRole('article', { name: 'Example Place a' });
 
-      fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Cycle' }));
+      fireEvent.click(screen.getByRole('combobox', { name: 'Cycle' }));
 
       expect((await screen.findAllByRole('option')).map(option => option.textContent)).toEqual([
         'Current cycle',
@@ -266,7 +266,7 @@ describe('MyPlacesTab', () => {
       expect(combobox.textContent).toBe('Current cycle');
       expect(metricsApi.fetchMetrics).not.toHaveBeenCalled();
       expect(screen.queryByText(/^Last updated /)).toBeNull();
-      fireEvent.mouseDown(combobox);
+      fireEvent.click(combobox);
       expect((await screen.findAllByRole('option')).map(option => option.textContent)).toEqual([
         'Current cycle',
       ]);
@@ -289,7 +289,10 @@ describe('MyPlacesTab', () => {
   });
 
   describe('when the Cycle list opens', () => {
-    const paper = () => screen.getByRole('listbox').closest('.MuiPaper-root')!;
+    const activeOption = (combobox: HTMLElement) =>
+      within(screen.getByRole('listbox'))
+        .getAllByRole('option')
+        .find(option => option.id === combobox.getAttribute('aria-activedescendant'))!;
 
     it('should mark the list as keyboard-driven only when a key opened it', async () => {
       renderTab();
@@ -297,15 +300,15 @@ describe('MyPlacesTab', () => {
       const combobox = screen.getByRole('combobox', { name: 'Cycle' });
 
       fireEvent.pointerDown(combobox);
-      fireEvent.mouseDown(combobox);
+      fireEvent.click(combobox);
       await screen.findByRole('listbox');
-      expect(paper().getAttribute('data-keyboard')).toBeNull();
+      expect(getComputedStyle(activeOption(combobox)).outlineStyle).not.toBe('solid');
       fireEvent.keyDown(screen.getByRole('listbox'), { key: 'Escape' });
       await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
 
       fireEvent.keyDown(combobox, { key: 'ArrowDown' });
       await screen.findByRole('listbox');
-      expect(paper().getAttribute('data-keyboard')).toBe('true');
+      expect(getComputedStyle(activeOption(combobox)).outlineStyle).toBe('solid');
     });
   });
 
@@ -367,7 +370,7 @@ describe('MyPlacesTab', () => {
       const { container } = renderTab();
       const info = await within(container).findByLabelText('About D3 Retention');
 
-      fireEvent.mouseOver(info);
+      fireEvent.mouseEnter(info);
 
       await expectTooltip(
         info,
@@ -399,7 +402,7 @@ describe('MyPlacesTab', () => {
       const { container } = renderTab();
       const info = await within(container).findByLabelText('About New Players Attributable');
 
-      fireEvent.mouseOver(info);
+      fireEvent.mouseEnter(info);
 
       await expectTooltip(
         info,
@@ -525,7 +528,7 @@ describe('MyPlacesTab', () => {
       const chip = within(entry).getByText('Not eligible').closest('[tabindex="0"]') as HTMLElement;
       expect(within(entry).queryByText('D3 Retention')).toBeNull();
 
-      fireEvent.mouseOver(chip);
+      fireEvent.mouseEnter(chip);
 
       expect((await screen.findByRole('tooltip')).textContent).toBe(copy);
     });
@@ -541,7 +544,7 @@ describe('MyPlacesTab', () => {
       renderTab();
 
       const entry = await screen.findByRole('article', { name: 'Example World b' });
-      fireEvent.mouseOver(within(entry).getByText('Not eligible'));
+      fireEvent.mouseEnter(within(entry).getByText('Not eligible'));
 
       const tooltip = await screen.findByRole('tooltip');
       expect(within(tooltip).getByText("This scene doesn't meet the Content Policy.")).toBeTruthy();
@@ -560,7 +563,7 @@ describe('MyPlacesTab', () => {
 
       const entry = await screen.findByRole('article', { name: 'Example Place r' });
       expect(await within(entry).findByText('1,234')).toBeTruthy();
-      fireEvent.mouseOver(within(entry).getByText('Replaced'));
+      fireEvent.mouseEnter(within(entry).getByText('Replaced'));
 
       expect((await screen.findByRole('tooltip')).textContent).toBe(
         'This place was republished as a new one. Its earlier numbers are kept.',

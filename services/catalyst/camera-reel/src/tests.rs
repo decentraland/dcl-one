@@ -1278,6 +1278,55 @@ async fn the_insert_itself_enforces_the_per_user_limit() {
 }
 
 #[tokio::test]
+async fn a_rejection_withholds_bytes_another_domain_names() {
+    let Some(mut s) = scratch(Settings::new(API_URL)).await else {
+        return;
+    };
+    let a = s.owner(&random_address());
+    let t = tag();
+    let (h, th) = (s.hash(&format!("h-{t}")), s.hash(&format!("t-{t}")));
+    let entity = format!("profile-{t}");
+    sqlx::query(
+        "INSERT INTO social.profile_images (entity_id, kind, blob_cid, byte_size, source, stored_at) \
+         VALUES ($1, 'face', $2, 1, 'render', timezone('UTC', now()))",
+    )
+    .bind(&entity)
+    .bind(&h)
+    .execute(s.db().pool())
+    .await
+    .unwrap();
+    let img = image(&a, &h, &th, true, "");
+    let twin = image(&a, &h, &th, true, "");
+    s.db().insert_image(&img).await.unwrap();
+    s.db().insert_image(&twin).await.unwrap();
+    let now = chrono::Utc::now().naive_utc();
+    let review = |id: Uuid, status: &'static str| {
+        let db = s.db();
+        async move {
+            db.update_image_review_status(&id.to_string(), status, now)
+                .await
+                .unwrap()
+                .unwrap()
+        }
+    };
+
+    let verdict = review(img.id, WITHHELD_REJECTED).await;
+    assert_eq!(
+        verdict.withheld,
+        vec![h.clone(), th.clone()],
+        "neither the profile image nor the twin row keeps rejected bytes served"
+    );
+    assert_eq!(s.withheld(&h).await.as_deref(), Some(WITHHELD_REJECTED));
+
+    sqlx::query("DELETE FROM social.profile_images WHERE entity_id = $1")
+        .bind(&entity)
+        .execute(s.db().pool())
+        .await
+        .unwrap();
+    s.done().await;
+}
+
+#[tokio::test]
 async fn owner_delete_reports_ownership_and_remaining() {
     let Some(mut s) = scratch(Settings::new(API_URL)).await else {
         return;
@@ -2404,7 +2453,7 @@ async fn a_rejected_or_deleted_photo_is_withheld_on_every_contents_route() {
     assert_eq!(bytes_everywhere(&app, &thumb_hash).await, served);
     assert_eq!(s.withheld(&image_hash).await, None);
 
-    // the same bytes accepted as a builder upload: a rejection withholds only the thumbnail
+    // the same bytes accepted as a builder upload: a rejection still withholds both
     sqlx::query(
         "INSERT INTO builder.uploaded_contents (hash, size, uploaded_by) VALUES ($1, $2, $3)",
     )
@@ -2425,12 +2474,8 @@ async fn a_rejected_or_deleted_photo_is_withheld_on_every_contents_route() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         bytes_everywhere(&app, &image_hash).await,
-        [
-            (StatusCode::NOT_FOUND, false),
-            (StatusCode::OK, true),
-            (StatusCode::OK, true)
-        ],
-        "a deployed file of the same bytes stays served by the content routes"
+        withheld,
+        "another reference does not keep rejected bytes served"
     );
     assert_eq!(bytes_everywhere(&app, &thumb_hash).await, withheld);
     sqlx::query("DELETE FROM builder.uploaded_contents WHERE hash = $1")

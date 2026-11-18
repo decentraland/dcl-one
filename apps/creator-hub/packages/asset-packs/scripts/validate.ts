@@ -2,8 +2,8 @@ import {
   getTriggerComponent,
   assertValidTriggerComponent,
   assertValidMinSdkVersion,
-} from '../src/types';
-import { LocalFileSystem } from './utils/local';
+} from '../src/types.ts';
+import { LocalFileSystem } from './utils/local.ts';
 
 async function main() {
   const local = new LocalFileSystem('./packs');

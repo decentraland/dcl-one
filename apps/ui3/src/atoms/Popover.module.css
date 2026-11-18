@@ -1,0 +1,53 @@
+.root {
+  position: fixed;
+  left: var(--popover-left, 0);
+  top: var(--popover-top, 0);
+  z-index: var(--z-overlay);
+  box-sizing: border-box;
+  min-width: var(--popover-min-width, 0);
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow: auto;
+  border-radius: var(--overlay-radius, 10px);
+  background: var(--overlay-surface, var(--panel));
+  color: var(--overlay-text, var(--text));
+  font-family: var(--font-family);
+  box-shadow: var(--overlay-shadow, var(--shadow-panel));
+  outline: none;
+  /* Not `visibility: hidden`: the surface takes focus before its first measured frame. */
+  opacity: 0;
+  pointer-events: none;
+}
+
+.root[data-placed] {
+  opacity: 1;
+  pointer-events: auto;
+  animation: popover-in 0.12s ease;
+}
+
+/* The layer of a modal surface: it takes the presses outside the surface. It is before the surface, so under it. */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+}
+
+/* A surface opened from a modal dialog is over it, whatever the order of the two layer tokens. */
+.backdrop[data-over-modal],
+.root[data-over-modal] { z-index: max(var(--z-overlay), calc(var(--z-modal, 0) + 1)); }
+
+.root[data-bare] {
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  overflow: visible;
+}
+
+@keyframes popover-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .root[data-placed] { animation: none; }
+}

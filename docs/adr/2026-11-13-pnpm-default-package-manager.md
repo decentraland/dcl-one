@@ -52,8 +52,12 @@ decisions; the rest of both stands.
   oddish's `package-manager` input. pnpm records no `gitHead`, so the Creator Hub action sets it.
 - `tooling/package-manager-check.py` fails on an npm or yarn lockfile, on a project or workflow
   off the pinned pnpm (`PNPM_VERSION`), on a pin carrying another release's integrity
-  (`PNPM_SHA512`), on an `.npmrc` key pnpm does not read, and on a workflow that runs any npm
-  command, packing, publishing and registry queries included, yarn, or anything through `npx`.
+  (`PNPM_SHA512`), on an `.npmrc` key pnpm does not read, and on a workflow or a project script
+  that runs any npm command, packing, publishing and registry queries included, yarn, or
+  anything through `npx`.
+- A script that starts another script of its own project uses `pnpm run` where its project's
+  `make` already calls `pnpm` by name (`apps/creator-hub`). The SDK starts pnpm through corepack,
+  which leaves it off its scripts' `PATH`, so its scripts run the other script's command directly.
 
 Where the layout differs from pnpm's default:
 
@@ -77,7 +81,11 @@ What stays on npm:
 
 - What the products run for a creator, and the test scenes that stand in for a creator's project:
   the SDK's `npm install` in a scene, `library/js-sdk-toolchain/test/snapshots`,
-  `test/build-ecs/fixtures` and `init-test-scene`, and the npm the Creator Hub bundles.
+  `test/build-ecs/fixtures`, `library/dcl-scene-build/testdata` and `init-test-scene`, and the
+  npm the Creator Hub bundles.
+- Instructions written for creators or for users of a published package: the packages' READMEs,
+  the creator docs in `apps/sites` and `apps/dcl-scene-cli`, and the steps of the Creator Hub's
+  `local-package-chain` runbook that act on a scene.
 - `react-web`'s `bundle:native` starts the bridge scene's export with `npm --prefix`, since pnpm
   started through corepack is not on the `PATH` of the scripts it runs.
 

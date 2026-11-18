@@ -1,5 +1,4 @@
 import { localStorageGetIdentity } from '@dcl/single-sign-on-client';
-import { signedHeaderFactory } from 'decentraland-crypto-fetch';
 
 import { buildMetricsUrl } from '/shared/urls';
 import { chunk } from '/shared/utils';
@@ -8,6 +7,7 @@ import { metrics } from '#preload';
 import { config } from '/@/config';
 
 import { AuthServerProvider } from './auth';
+import { signedHeaders } from './signedFetch';
 
 const METRICS_API_URL = config.get('METRICS_API_URL');
 
@@ -15,8 +15,6 @@ const METRICS_API_URL = config.get('METRICS_API_URL');
 export const MAX_LOCATIONS_PER_REQUEST = 100;
 
 const PATH = '/metrics';
-
-const signedHeaders = signedHeaderFactory();
 
 /** A world scene (`world` set) or a Genesis City scene. Coordinates are required for both. */
 export type MetricLocation = {
@@ -57,20 +55,23 @@ export type MetricsBatch = {
 /**
  * ADR-44 signed-fetch headers for a request the main process will make.
  *
- * The signed payload is `<method>:<pathname>:<timestamp>:<metadata>`, lowercased
- * by the signer. The body is not part of it, and the pathname comes from the
+ * The signed payload is `<method>:<pathname>:<timestamp>:<metadata>`, with the method and the
+ * pathname in lower case. The body is not part of it, and the pathname comes from the
  * same helper main uses to resolve the URL, so any query string on `path` is
  * left out.
+ *
+ * The account and its identity are read before the first `await`, so a caller that checks the
+ * signed-in account right before the call gets the signature of that account.
  *
  * @param metadata - signed with the payload and sent as `x-identity-metadata`, e.g. a body's `hashPayload`.
  * @throws when no account is connected or it has no stored identity.
  */
-export function buildSignedHeaders(
+export async function buildSignedHeaders(
   baseUrl: string,
   path: string,
   method: 'get' | 'post' | 'put' = 'post',
   metadata: Record<string, string> = {},
-): Record<string, string> {
+): Promise<Record<string, string>> {
   const address = AuthServerProvider.getAccount();
   if (!address) throw new Error('No connected account found');
 
@@ -78,7 +79,8 @@ export function buildSignedHeaders(
   if (!identity) throw new Error('No identity found');
 
   const { pathname } = buildMetricsUrl(baseUrl, path);
-  return Object.fromEntries(signedHeaders(identity, method, pathname, metadata).entries());
+  const headers = await signedHeaders(identity, method, pathname, metadata);
+  return Object.fromEntries(headers.entries());
 }
 
 /**
@@ -118,7 +120,7 @@ export async function fetchMetrics(locations: MetricLocation[]): Promise<Metrics
       const response = await metrics.request<MetricsBatch>({
         baseUrl: METRICS_API_URL,
         path: PATH,
-        headers: buildSignedHeaders(METRICS_API_URL, PATH),
+        headers: await buildSignedHeaders(METRICS_API_URL, PATH),
         body: { locations: group },
       });
       if (!response.ok) throw new Error(response.error);

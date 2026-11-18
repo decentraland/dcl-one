@@ -383,6 +383,8 @@
         "select_world": {
           "title": "Publish to your World",
           "description": "Choose the domain where your world will be published.",
+          "domain_type_label": "Domain type",
+          "world_name_label": "World name",
           "world_name": "WORLD (NAME)",
           "placeholder": "Select a Name",
           "claim_new_name": "Claim a new NAME",
@@ -616,6 +618,9 @@
         "code_editor": {
           "label": "Code editor of choice",
           "choose_device": "Choose from your device...",
+          "placeholder": "Add or select a default editor",
+          "list": "Added code editors",
+          "remove": "Remove {name}",
           "errors": {
             "load": "Failed to load code editors",
             "set": "Failed to set default editor",
@@ -730,7 +735,6 @@
     },
     "install_client": {
       "title": "To jump in, you'll need to install Decentraland first",
-      "download": "Download",
       "download_macos": "DOWNLOAD FOR MACOS",
       "download_win": "DOWNLOAD FOR WINDOWS",
       "cancel": "NOT NOW"
@@ -797,8 +801,6 @@
       "delete_scene": "Deleting scene...",
       "delete_scene_failed": "Failed deleting scene",
       "dependencies_updated": "Scene dependencies were updated",
-      "multiplayer_sdk_installed": "Multiplayer Server SDK installed.",
-      "multiplayer_sdk_uninstalled": "Multiplayer Server SDK removed. Latest SDK release installed.",
       "updating_sdk_skills": "Installing the latest AI skills...",
       "sdk_skills_updated": "AI skills are up to date",
       "sdk_skills_update_failed": "Could not install the AI skills",
@@ -1474,7 +1476,6 @@
         "title": "Engagement",
         "description": "Understand how users engage with your place.",
         "minutes": "min",
-        "delta": "{value} min",
         "vs_last_week": "{value} vs. last week",
         "daily": {
           "title": "Average Daily Playtime",

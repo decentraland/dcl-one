@@ -76,7 +76,7 @@ describe("fetchSceneRoom", () => {
     expect(fetchMock).toHaveBeenCalledWith("https://node.test/content/entities/active", expect.objectContaining({ method: "POST", body: JSON.stringify({ pointers: ["1,95"] }) }));
     expect(signedFetch).toHaveBeenCalledWith(expect.objectContaining({ signer: expect.stringMatching(/^0x[0-9a-f]{40}$/) }), "https://node.test/comms-gatekeeper/get-scene-adapter", expect.objectContaining({
       method: "POST",
-      metadata: { sceneId: "bafyscene", parcel: "1,95", realmName: "node-realm", signer: "decentraland-kernel-scene" },
+      metadata: { sceneId: "bafyscene", parcel: "1,95", realmName: "node-realm", signer: "dcl:explorer" },
       body: "{}",
     }));
   });

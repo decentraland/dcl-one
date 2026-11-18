@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { flatten } from 'flat';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import { flatten } from '/@/modules/store/translation/flatten';
+import { TestProviders } from '../../../../../../tests/utils/TestProviders';
 
 import type { File } from '/@/lib/deploy';
 import en from '/@/modules/store/translation/locales/en.json';
@@ -43,14 +43,14 @@ describe('Idle', () => {
 
   const renderIdle = () =>
     render(
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <Idle
           files={files}
           sceneSizeLimit={sceneSizeLimit}
           isSceneSizeLimitLoading={isSceneSizeLimitLoading}
           onClick={onClick}
         />
-      </ThemeProvider>,
+      </TestProviders>,
     );
 
   describe('when the scene size limit is being fetched', () => {
