@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { primeRemoteFlags, REMOTE_FLAG, remoteFlag, remoteFlagVariant } from '../../shop/discovery/lib/remoteFlags'
-import { flagQueries, useShopFlag } from '../features/shop/flagsQuery'
+import { flagQueries, useShopFlag } from '@dcl/one-ui/apps/shop/flagsQuery'
 
 function host(): { client: QueryClient; wrapper: ({ children }: { children: React.ReactNode }) => React.JSX.Element } {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })

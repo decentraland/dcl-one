@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use super::super::{CommsState, errors::ApiError};
 use crate::Address;
-use crate::explore::places::removed::{PlaceContext, RemovedPlaces};
+use crate::gatekeeper::removed_places::{PlaceContext, RemovedPlaces};
 use crate::interfaces::{StreamingNotification, StreamingNotificationKind};
 use crate::jobs::{Jobs, PeriodicCfg};
 
@@ -143,10 +143,52 @@ pub(super) async fn enqueue(
     id: Uuid,
     command: CleanupCommand,
 ) -> Result<bool, ApiError> {
+    match prepare(state, id, command).await? {
+        Some(prepared) => Ok(prepared.record(&state.pool).await?),
+        None => Ok(false),
+    }
+}
+
+/// A cleanup intent with its notification context resolved, recorded by the
+/// caller's executor: a replacement records it in the transaction that stores
+/// the new credential.
+pub(super) struct Prepared {
+    id: Uuid,
+    command: CleanupCommand,
+    version: i64,
+    event: Option<StreamingNotification>,
+    context: Option<serde_json::Value>,
+}
+
+impl Prepared {
+    /// Deactivates the credential and records its cleanup; false when it
+    /// changed since `prepare` (or is gone).
+    pub(super) async fn record<'e, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+    ) -> Result<bool, sqlx::Error> {
+        enqueue_prepared(
+            executor,
+            self.id,
+            self.command,
+            self.version,
+            self.event.as_ref(),
+            self.context.as_ref(),
+        )
+        .await
+    }
+}
+
+/// `None` when the credential is no longer active.
+pub(super) async fn prepare(
+    state: &CommsState,
+    id: Uuid,
+    command: CleanupCommand,
+) -> Result<Option<Prepared>, ApiError> {
     let snapshot: Option<(String,i64)> = sqlx::query_as("SELECT place_id,streaming_state_version FROM social.scene_stream_access WHERE id=$1 AND active")
         .bind(id).fetch_optional(&state.pool).await?;
     let Some((place_id, version)) = snapshot else {
-        return Ok(false);
+        return Ok(None);
     };
     let context = RemovedPlaces::new(state.pool.clone())
         .place(&place_id)
@@ -178,16 +220,13 @@ pub(super) async fn enqueue(
         .map(serde_json::to_value)
         .transpose()
         .map_err(|_| ApiError::internal("stream context serialization failed"))?;
-    enqueue_prepared(
-        &state.pool,
+    Ok(Some(Prepared {
         id,
         command,
         version,
-        event.as_ref(),
-        context.as_ref(),
-    )
-    .await
-    .map_err(Into::into)
+        event,
+        context,
+    }))
 }
 
 fn notification_kind(kind: &str) -> Result<StreamingNotificationKind, ApiError> {
@@ -200,8 +239,8 @@ fn notification_kind(kind: &str) -> Result<StreamingNotificationKind, ApiError> 
     }
 }
 
-async fn enqueue_prepared(
-    pool: &PgPool,
+async fn enqueue_prepared<'e, E: sqlx::PgExecutor<'e>>(
+    executor: E,
     id: Uuid,
     command: CleanupCommand,
     version: i64,
@@ -221,7 +260,7 @@ async fn enqueue_prepared(
          SELECT id,place_id,ingress_id,$2,COALESCE($5,timezone('UTC',now())),timezone('UTC',now()),$6,$7,$8 FROM removed \
          ON CONFLICT(access_id) DO NOTHING RETURNING access_id")
         .bind(id).bind(kind).bind(force).bind(version).bind(event.map(|e| e.occurred_at))
-        .bind(event.map(|e| &e.recipient)).bind(event.map(|e| &e.metadata)).bind(context).fetch_optional(pool).await?;
+        .bind(event.map(|e| &e.recipient)).bind(event.map(|e| &e.metadata)).bind(context).fetch_optional(executor).await?;
     Ok(changed.is_some())
 }
 
@@ -325,6 +364,40 @@ async fn cleanup(state: &CommsState, target: Option<Uuid>) -> Result<(), ApiErro
     Ok(())
 }
 
+/// The Cast publishers the cleaned-up credential admitted leave its room
+/// (`cast::evict_revoked_publishers`); a credential that replaced it in the
+/// same place and room keeps its own publishers.
+async fn evict_publishers(state: &CommsState, row: &Cleanup) -> Result<(), ApiError> {
+    let room: Option<String> =
+        sqlx::query_scalar("SELECT room_id FROM social.scene_stream_access WHERE id = $1")
+            .bind(row.access_id)
+            .fetch_optional(&state.pool)
+            .await?
+            .flatten();
+    let Some(room) = room.filter(|r| !r.is_empty()) else {
+        return Ok(());
+    };
+    let successor: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM social.scene_stream_access \
+         WHERE place_id = $1 AND active AND id <> $2 AND room_id = $3 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(&row.place_id)
+    .bind(row.access_id)
+    .bind(&room)
+    .fetch_optional(&state.pool)
+    .await?;
+    super::cast::evict_revoked_publishers(state, &row.place_id, &room, successor).await
+}
+
+/// How long a reset intent waits for its replacement credential before it
+/// is delivered as a revocation.
+const RESET_REPLACEMENT_GRACE: chrono::Duration = chrono::Duration::hours(1);
+
+/// Revokes first: the RTMP ingress is deleted (and `ingress_deleted`
+/// recorded) before anything else, so a room-service failure while evicting
+/// the WebRTC publishers never leaves the revoked key accepting RTMP. Eviction
+/// and the notification follow; either failing retries the row, which skips
+/// the ingress already deleted.
 async fn deliver(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), ApiError> {
     if !row.ingress_deleted {
         if let Some(id) = row.ingress_id.as_deref().filter(|id| !id.is_empty()) {
@@ -339,6 +412,7 @@ async fn deliver(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), A
             return Err(ApiError::internal("stream cleanup lease lost"));
         }
     }
+    evict_publishers(state, row).await?;
     let Some(kind_str) = row.notification_kind.as_deref() else {
         return Ok(());
     };
@@ -355,6 +429,18 @@ async fn deliver(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), A
             return Ok(());
         }
         if kind == StreamingNotificationKind::KeyReset && !replacement {
+            // A replacement commits with its reset intent (`replace_access`), so one still
+            // missing after the grace period never will (an intent from before that, or the
+            // replacement revoked in turn): the reset is delivered as the revocation it is.
+            let now = chrono::Utc::now().naive_utc();
+            if now - row.occurred_at > RESET_REPLACEMENT_GRACE {
+                sqlx::query("UPDATE social.scene_stream_cleanup SET notification_kind='streaming_key_revoke', recipient=NULL, metadata=NULL \
+                    WHERE access_id=$1 AND claim_token=$2 AND notification_kind='streaming_key_reset'")
+                    .bind(row.access_id).bind(token).execute(&state.pool).await?;
+                return Err(ApiError::internal(
+                    "stream reset without a replacement: delivered as a revocation on retry",
+                ));
+            }
             return Err(ApiError::internal(
                 "stream reset awaiting replacement credential",
             ));

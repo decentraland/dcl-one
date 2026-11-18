@@ -298,7 +298,7 @@ impl Jobs {
     /// spawned with [`Jobs::spawn_scoped`] end with it. Cancellation does not
     /// interrupt the body: the job returns to standby only once the body
     /// returns, and another process may run the job meanwhile (see the module
-    /// docs on fencing). An `Err` releases the
+    /// docs on fencing). An `Err` or a panic releases the
     /// lease and retries after a backoff, so a fleet-wide job never stays
     /// dead while a process could run it; `Ok` finishes the job. Without
     /// leases the body runs once, as [`Jobs::spawn`] would run it.
@@ -335,7 +335,14 @@ impl Jobs {
                     trace: ctx.trace.clone(),
                     name: ctx.name.clone(),
                 };
-                let fut = body(run_ctx);
+                use futures::FutureExt;
+                let fut = std::panic::AssertUnwindSafe(async { body(run_ctx).await })
+                    .catch_unwind()
+                    .map(|outcome| {
+                        outcome.unwrap_or_else(|panic| {
+                            Err(anyhow::anyhow!("panic: {}", panic_message(panic.as_ref())))
+                        })
+                    });
                 tokio::pin!(fut);
                 let lost = guard.lost.clone();
                 let outcome = tokio::select! {
@@ -371,7 +378,9 @@ impl Jobs {
                         tracing::warn!(job = %lease_name, "lease lost; stopping and standing by");
                         ctx.error("lease lost: the lease connection dropped");
                         ctx.progress("lease lost; stopping");
-                        let _ = fut.await;
+                        if let Err(err) = fut.await {
+                            tracing::warn!(job = %lease_name, error = %format!("{err:#}"), "run ended with an error after the lease was lost");
+                        }
                         drop(guard);
                     }
                 }
@@ -662,6 +671,36 @@ impl LeaseGuard {
     /// Cancelled when the lease connection was lost while this lease was held.
     pub fn lost(&self) -> &CancellationToken {
         &self.lost
+    }
+
+    /// Runs a bounded control operation on the session that actually holds this lease.
+    /// A local liveness check followed by an unrelated pooled write cannot provide this fence.
+    pub async fn with_connection<T, F>(&self, operation: F) -> sqlx::Result<T>
+    where
+        T: Send,
+        F: for<'connection> FnOnce(
+                &'connection mut PgConnection,
+            ) -> std::pin::Pin<
+                Box<dyn std::future::Future<Output = sqlx::Result<T>> + Send + 'connection>,
+            > + Send,
+    {
+        let mut slot = self.leases.conn.lock().await;
+        if self.released
+            || self.lost.is_cancelled()
+            || !self.leases.held.lock().contains_key(&self.name)
+        {
+            return Err(sqlx::Error::PoolClosed);
+        }
+        let Some(connection) = slot.as_mut() else {
+            return Err(sqlx::Error::PoolClosed);
+        };
+        let result = operation(connection).await;
+        if result.is_err() {
+            *slot = None;
+            self.leases
+                .lose_all("a lease-held control operation failed");
+        }
+        result
     }
 
     pub async fn release(mut self) {
@@ -1394,7 +1433,16 @@ mod lease_tests {
         let Some(pool) = catalyst_db::scratch::pool(6).await else {
             return;
         };
-        let settings = settings("failover");
+        // The keeper waits one keepalive before its first check, so with a
+        // keepalive far beyond the 10 s `wait_until` bound it never checks
+        // during this test, and no lease statement or connect can time out
+        // under CI load. The lease-loss path is covered by the keeper tests
+        // below.
+        const KEEPALIVE_BEYOND_THE_WAITS: Duration = Duration::from_secs(300);
+        let settings = LeaseSettings {
+            keepalive: KEEPALIVE_BEYOND_THE_WAITS,
+            ..settings("failover")
+        };
         let a = Jobs::with_leases(pool.clone(), settings.clone());
         let b = Jobs::with_leases(pool.clone(), settings.clone());
         let (runs_a, runs_b) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
@@ -1557,6 +1605,94 @@ mod lease_tests {
                 .as_deref()
                 .unwrap_or("")
                 .contains("first pass fails"),
+            "{report:?}"
+        );
+        let aborted = jobs.shutdown(Duration::from_secs(5)).await;
+        assert!(aborted.is_empty(), "{aborted:?}");
+    }
+
+    #[tokio::test]
+    async fn a_panicking_leased_body_releases_the_lease_and_retries_after_a_backoff() {
+        let Some(pool) = catalyst_db::scratch::pool(6).await else {
+            return;
+        };
+        let settings = settings("panic");
+        let jobs = Jobs::with_leases(pool.clone(), settings.clone());
+        let runs = Arc::new(AtomicUsize::new(0));
+        let starts = Arc::new(Mutex::new(Vec::new()));
+        jobs.spawn_leased("panicky", {
+            let runs = runs.clone();
+            let starts = starts.clone();
+            move |ctx: JobContext| {
+                starts.lock().push(std::time::Instant::now());
+                let n = runs.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if n == 0 {
+                        panic!("first pass panics");
+                    }
+                    ctx.cancel.cancelled().await;
+                    Ok(())
+                }
+            }
+        });
+        wait_until("second run", || runs.load(Ordering::SeqCst) == 2).await;
+        let starts = starts.lock().clone();
+        assert!(
+            starts[1] - starts[0] >= settings.poll * 2,
+            "retried before the backoff: {:?}",
+            starts[1] - starts[0]
+        );
+        let report = jobs
+            .report()
+            .into_iter()
+            .find(|j| j.name == "panicky")
+            .unwrap();
+        assert_eq!(report.state, JobState::Running);
+        assert!(
+            report
+                .last_error
+                .as_deref()
+                .unwrap_or("")
+                .contains("panic: first pass panics"),
+            "{report:?}"
+        );
+        assert_eq!(jobs.leases().unwrap().held(), vec!["panicky".to_string()]);
+        let aborted = jobs.shutdown(Duration::from_secs(5)).await;
+        assert!(aborted.is_empty(), "{aborted:?}");
+    }
+
+    #[tokio::test]
+    async fn a_leased_body_that_panics_before_returning_its_future_is_retried() {
+        let Some(pool) = catalyst_db::scratch::pool(6).await else {
+            return;
+        };
+        let jobs = Jobs::with_leases(pool.clone(), settings("panic-sync"));
+        let runs = Arc::new(AtomicUsize::new(0));
+        jobs.spawn_leased("panicky-sync", {
+            let runs = runs.clone();
+            move |ctx: JobContext| {
+                if runs.fetch_add(1, Ordering::SeqCst) == 0 {
+                    panic!("closure panics");
+                }
+                async move {
+                    ctx.cancel.cancelled().await;
+                    Ok(())
+                }
+            }
+        });
+        wait_until("second run", || runs.load(Ordering::SeqCst) == 2).await;
+        let report = jobs
+            .report()
+            .into_iter()
+            .find(|j| j.name == "panicky-sync")
+            .unwrap();
+        assert_eq!(report.state, JobState::Running);
+        assert!(
+            report
+                .last_error
+                .as_deref()
+                .unwrap_or("")
+                .contains("panic: closure panics"),
             "{report:?}"
         );
         let aborted = jobs.shutdown(Duration::from_secs(5)).await;

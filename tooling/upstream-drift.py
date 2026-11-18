@@ -2,8 +2,10 @@
 """The pinned sources of the Explorer against their upstreams.
 
 The pinned sources are every rendering/bevy-explorer/patches/<name>/source.toml (an upstream commit
-and the patch series this repository keeps on it) and every git source of
-rendering/bevy-explorer/source/Cargo.lock. Nothing here writes a tracked file.
+and the patch series this repository keeps on it) and every other git source of
+rendering/bevy-explorer/source/Cargo.lock. The lock takes each patched source from this repository:
+that entry has no upstream of its own, and the source.toml names the one to watch. Nothing here
+writes a tracked file.
 
 `check [NAME ...]` asks GitHub, per source (every source, or the named ones), how many commits the
 watched ref has past the pinned commit: the `ref` of source.toml, the branch or tag the lock names,
@@ -41,7 +43,9 @@ PIN = ROOT / 'rendering/bevy-explorer'
 CACHE = ROOT / '.cache/upstream-drift'
 API_CACHE = CACHE / 'api'
 DATA = CACHE / 'data.json'
-USER_AGENT = 'dcl-one upstream-drift (https://github.com/decentraland/dcl-one)'
+# Where Cargo takes the patched sources from: MIRROR of tooling/patched-sources.py.
+REPOSITORY = 'https://github.com/decentraland/dcl-one'
+USER_AGENT = f'dcl-one upstream-drift ({REPOSITORY})'
 EXPLORER = 'decentraland/bevy-explorer'
 
 
@@ -177,10 +181,19 @@ def harvest_reasons(manifest_text, urls):
     return reasons
 
 
+def canonical(url):
+    """A git URL without what GitHub does not read, as `pins` of tooling/patched-sources.py compares it."""
+    url = url.lower()
+    while url.endswith(('/', '.git')):
+        url = url.removesuffix('/').removesuffix('.git')
+    return url
+
+
 def pinned_sources(pin=PIN):
-    """The patched sources, then the git sources the lock keeps with the manifests' reasons."""
+    """The patched sources, then the other git sources the lock keeps with the manifests' reasons."""
     source_dir = pin / 'source'
-    locked = lock_git_sources((source_dir / 'Cargo.lock').read_text(encoding='utf-8'))
+    locked = [source for source in lock_git_sources((source_dir / 'Cargo.lock').read_text(encoding='utf-8'))
+              if canonical(source['upstream']) != canonical(REPOSITORY)]
     reasons = harvest_reasons('\n'.join(m.read_text(encoding='utf-8') for m in manifests(source_dir) if m.exists()),
                               {s['upstream'] for s in locked})
     for source in locked:
@@ -204,20 +217,34 @@ def newer_tags(tags, ref):
     return sorted(newer, key=tag_order)
 
 
+def named_ref(repo, ref, api):
+    """('tag' or 'branch', commit id) of the tag or branch with exactly this name, or None. GitHub
+    compare also resolves a pull request head and a commit id, and those claim nothing about a pin."""
+    for kind, space in (('tag', 'tags'), ('branch', 'heads')):
+        rows = api(f'repos/{repo}/git/matching-refs/{space}/{urllib.parse.quote(ref)}') or []
+        target = next((row['object'] for row in rows if row['ref'] == f'refs/{space}/{ref}'), None)
+        while target and target['type'] == 'tag':  # an annotated tag names its commit through a tag object
+            target = (api(f'repos/{repo}/git/tags/{target["sha"]}') or {}).get('object')
+        if target:
+            return kind, target['sha']
+    return None
+
+
 def check_source(source, api=gh_api):
     """How far the watched ref is from the pinned commit; for a tag, also the newer tags of its
-    scheme. None when GitHub cannot compare the two."""
+    scheme. None when the repository has no tag or branch of that name, or GitHub cannot compare."""
     repo = github_repo(source['upstream'])
     if repo is None:
         return None
     repo = '/'.join(repo)
     ref = source['ref'] or (api(f'repos/{repo}') or {}).get('default_branch')
-    compare = api(f'repos/{repo}/compare/{source["commit"]}...{urllib.parse.quote(ref, safe="")}') if ref else None
+    kind, head = (named_ref(repo, ref, api) or (None, None)) if source['ref'] else ('branch', ref)
+    compare = api(f'repos/{repo}/compare/{source["commit"]}...{urllib.parse.quote(head, safe="")}') if head else None
     if compare is None:
         return None
-    tags = scheme_tags(repo, ref, api) if source['ref'] else []
+    tags = scheme_tags(repo, ref, api) if kind == 'tag' else []
     return {'ref': ref, 'ahead': compare['ahead_by'], 'behind': compare['behind_by'], 'named': bool(source['ref']),
-            'tag': ref in tags, 'newer_tags': newer_tags(tags, ref) if ref in tags else []}
+            'tag': kind == 'tag', 'newer_tags': newer_tags(tags, ref)}
 
 
 def off_ref(result):
@@ -242,7 +269,7 @@ def check_report(sources, api=gh_api):
         result = check_source(source, api)
         if result is None:
             failed += 1
-            why = f'GitHub cannot compare {source["ref"] or "the default branch"} with {pin}' if repo else 'not a GitHub repository'
+            why = f'GitHub cannot compare {"the tag or branch " + source["ref"] if source["ref"] else "the default branch"} with {pin}' if repo else 'not a GitHub repository'
             lines.append(f'- {source["name"]}: {where} NOT CHECKED: {why}')
             continue
         moved += result['ahead'] > 0
@@ -416,6 +443,7 @@ def parse_advisory(markdown):
     return {'id': adv.get('id'), 'package': adv.get('package'), 'date': adv.get('date'), 'aliases': adv.get('aliases', []),
             'categories': adv.get('categories', []), 'keywords': adv.get('keywords', []), 'informational': adv.get('informational'),
             'url': adv.get('url'), 'title': (title.group(1).strip() if title else adv.get('id')),
+            'withdrawn': adv.get('withdrawn'),
             'patched': versions.get('patched', []), 'unaffected': versions.get('unaffected', [])}
 
 
@@ -427,30 +455,50 @@ def affected(version, advisory):
     return True
 
 
+def advisory_files(tree):
+    """Advisory blob shas per crate ({crate: [sha]}, in file-name order) from the recursive git tree
+    of rustsec/advisory-db. The contents API lists at most 1000 entries of a directory and ignores
+    paging, so it cannot list crates/; the tree lists every path unless GitHub truncates it."""
+    if not tree:
+        raise RuntimeError('rustsec/advisory-db tree could not be fetched')
+    if tree.get('truncated'):
+        raise RuntimeError('rustsec/advisory-db tree is truncated: advisories would be missed')
+    files = {}
+    for entry in tree['tree']:
+        parts = entry['path'].split('/')
+        if entry['type'] == 'blob' and len(parts) == 3 and parts[0] == 'crates' and parts[2].endswith('.md'):
+            files.setdefault(parts[1], []).append((parts[2], entry['sha']))
+    return {crate: [sha for _name, sha in sorted(entries)] for crate, entries in files.items()}
+
+
 def collect_advisories(lock_pkgs):
-    listing = gh_pages('repos/rustsec/advisory-db/contents/crates', limit=12)
-    advised = {entry['name'] for entry in listing if entry['type'] == 'dir'}
+    files_by_crate = advisory_files(gh('repos/rustsec/advisory-db/git/trees/main?recursive=1'))
     by_name = {}
     for p in lock_pkgs:
         by_name.setdefault(p['name'], set()).add(p['version'])
-    hits = sorted(advised & set(by_name))
-    findings = []
+    hits = sorted(set(files_by_crate) & set(by_name))
+    findings, withdrawn, unreadable = [], [], []
     for name in hits:
-        files = gh(f'repos/rustsec/advisory-db/contents/crates/{name}') or []
-        for f in files:
-            if not f['name'].endswith('.md'):
+        for sha in files_by_crate[name]:
+            blob = gh(f'repos/rustsec/advisory-db/git/blobs/{sha}')
+            if not blob:
+                unreadable.append({'crate': name, 'sha': sha, 'reason': 'blob not found'})
                 continue
-            content = gh(f'repos/rustsec/advisory-db/contents/crates/{name}/{f["name"]}')
-            if not content:
-                continue
-            advisory = parse_advisory(base64.b64decode(content['content']).decode('utf-8', 'replace'))
+            advisory = parse_advisory(base64.b64decode(blob['content']).decode('utf-8', 'replace'))
             if not advisory:
+                unreadable.append({'crate': name, 'sha': sha, 'reason': 'front matter does not parse'})
+                continue
+            if advisory['withdrawn']:
+                withdrawn.append(advisory['id'])
                 continue
             for version in sorted(by_name[name]):
                 findings.append({**advisory, 'crate': name, 'version': version, 'affected': affected(version, advisory),
                                  'rustsec_url': f'https://rustsec.org/advisories/{advisory["id"]}.html'})
-    print(f'  advisories: {len(hits)} crate(s) in the lock have entries, {sum(1 for f in findings if f["affected"])} affecting the pinned versions', file=sys.stderr)
-    return {'crates_with_entries': hits, 'findings': findings}
+    print(f'  advisories: {len(hits)} crate(s) in the lock have entries, {sum(1 for f in findings if f["affected"])} affecting the pinned versions, '
+          f'{len(withdrawn)} withdrawn skipped, {len(unreadable)} unreadable', file=sys.stderr)
+    for entry in unreadable:
+        print(f'  advisory {entry["crate"]} {entry["sha"]}: {entry["reason"]}', file=sys.stderr)
+    return {'crates_with_entries': hits, 'findings': findings, 'withdrawn': withdrawn, 'unreadable': unreadable}
 
 
 # ---------------------------------------------------------------- direct deps vs crates.io

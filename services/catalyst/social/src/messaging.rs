@@ -14,19 +14,22 @@
 //! `comms::gatekeeper`, and it owns its state ([`MessagingState`]): the ONE
 //! pool, the ONE blob store, the EIP-1654 validator, the platform service
 //! token and this catalyst's federation identity (the epoch author). From
-//! the gatekeeper it takes the route contract only: `require_signer`,
-//! `ApiError`; [`router`] keeps the body limit, NUL guard and CORS. `serve` merges
+//! the gatekeeper it takes the route contract only: `ApiError` and its
+//! `forbidden`, `service_unavailable` and `unauthorized` constructors; the
+//! caller is the wallet signer the shared verifier accepts, never a scene
+//! signer.
+//! [`router`] keeps the body limit, NUL guard and CORS. `serve` merges
 //! it into the `/comms-gatekeeper` nest, so the routes answer exactly as
 //! when they were part of that router.
 
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
+use crate::shared::routing::{erase, get, post};
 use axum::body::Bytes;
 use axum::extract::{Extension, OriginalUri, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
 use chrono::NaiveDateTime;
@@ -36,12 +39,11 @@ use sqlx::PgPool;
 
 use crate::Address;
 use crate::auth::eip1654::Eip1654Validator;
-use crate::comms::gatekeeper::auth::require_signer;
 use crate::comms::gatekeeper::errors::{ApiError, forbidden, service_unavailable, unauthorized};
 use crate::comms::limits::{RateLimitDecision, RateLimiter};
 use crate::mls;
 use crate::shared::now_utc;
-use crate::shared::signed_fetch::SignedPath;
+use crate::shared::signed_fetch::{PayloadPolicy, SignedFetchError, SignedPath, require_signer_at};
 
 /// The settings `serve` resolves from `Config`.
 #[derive(Clone, Default)]
@@ -132,11 +134,11 @@ pub fn router(state: SharedState) -> Router {
         .route("/mls/groups", post(create_group))
         .route(
             "/mls/groups/{group_id}/commits",
-            get(fetch_commits).post(submit_commit),
+            get(fetch_commits).post(erase(submit_commit)),
         )
         .route(
             "/mls/groups/{group_id}/messages",
-            get(fetch_history).post(send_message),
+            get(fetch_history).post(erase(send_message)),
         )
         .route("/mls/blobs/{hash}", get(fetch_blob))
         .layer(axum::extract::DefaultBodyLimit::max(512 * 1024))
@@ -217,11 +219,31 @@ macro_rules! member_exists {
 const MEMBER_EXISTS: &str = member_exists!("$1", "$2");
 
 /// Key-package claims per claimer (sized for opening a large channel) and,
-/// spent only by a package actually handed out, per owner.
+/// spent only by a package actually handed out, per owner and per
+/// (claimer, owner) pair, so one claimer cannot spend an owner's whole budget.
 static CLAIMS_BY_CLAIMER: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(500, Duration::from_secs(3600)));
 static CLAIMS_OF_OWNER: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(60, Duration::from_secs(3600)));
+// Pair keys grow as claimers x owners: a larger map keeps an overflow from resetting them.
+static CLAIMS_OF_PAIR: LazyLock<RateLimiter> =
+    LazyLock::new(|| RateLimiter::new(10, Duration::from_secs(3600)).with_max_buckets(200_000));
+
+fn claim_pair(claimer: &str, owner: &str) -> String {
+    format!("{claimer}:{owner}")
+}
+
+/// Whether the owner's or this pair's handed-out budget is spent.
+fn claim_budget_spent(claimer: &str, owner: &str) -> bool {
+    CLAIMS_OF_OWNER.is_rate_limited(owner)
+        || CLAIMS_OF_PAIR.is_rate_limited(&claim_pair(claimer, owner))
+}
+
+/// Charges one handed-out package to the owner and the pair.
+fn spend_claim(claimer: &str, owner: &str) {
+    CLAIMS_OF_OWNER.check(owner);
+    CLAIMS_OF_PAIR.check(&claim_pair(claimer, owner));
+}
 
 /// Owners with a claim in flight on this node. One claim per owner runs at a
 /// time, so the owner's budget is read and spent atomically; a concurrent
@@ -281,16 +303,46 @@ fn b64_field(v: &Value, key: &str) -> Result<Vec<u8>, ApiError> {
     Ok(bytes)
 }
 
+/// The wallet that signed the request. A scene-signed request, or one whose
+/// `signer` key is re-spelled (under either payload shape), answers 400 as
+/// the gatekeeper's other wallet routes do; see [`auth_refusal`] for the rest.
 async fn auth(
     state: &MessagingState,
     headers: &HeaderMap,
     method: &str,
     path: &SignedPath,
 ) -> Result<String, ApiError> {
-    require_signer(headers, method, path, state.eip1654())
-        .await
-        .map(Address::into_string)
-        .map_err(|e| unauthorized(format!("invalid identity: {}", e.message)))
+    require_signer_at(
+        headers,
+        method,
+        path,
+        PayloadPolicy::V6ThenLegacy,
+        state.eip1654(),
+    )
+    .await
+    .map(|signer| Address::from_signer(&signer).into_string())
+    .map_err(auth_refusal)
+}
+
+/// The answer to a refused signed fetch. A contract-wallet check that could
+/// not run (no validator, or its RPC failed) is 503 with a fixed message, its
+/// detail kept in the log; every other refusal, an unsigned request
+/// included, is the caller's 401 or 400 and is logged at debug only.
+fn auth_refusal(e: SignedFetchError) -> ApiError {
+    if e.is_metadata_refusal() {
+        tracing::debug!(error = %e, "signed-fetch rejected");
+        return ApiError::bad_request("Invalid metadata content");
+    }
+    match e {
+        SignedFetchError::EipNotImplemented | SignedFetchError::CatalystUnavailable(_) => {
+            tracing::warn!(error = %e, "signed-fetch validation unavailable");
+            service_unavailable("Signature validation unavailable")
+        }
+        e => {
+            tracing::debug!(error = %e, "signed-fetch rejected");
+            unauthorized(format!("invalid identity: {e}"))
+        }
+    }
 }
 
 fn authorized_community_binding(
@@ -425,7 +477,7 @@ pub async fn publish_key_packages(
 }
 
 /// `GET /mls/key-packages/{owner}` consumes the package it returns: a
-/// social write behind the social switch and the restore stamps.
+/// social write behind the social switch.
 pub async fn claim_key_package(
     State(state): State<SharedState>,
     OriginalUri(uri): OriginalUri,
@@ -444,8 +496,8 @@ pub async fn claim_key_package(
         &SignedPath::at(&uri, format!("/mls/key-packages/{owner}")),
     )
     .await?;
-    if let Some(refusal) = crate::comms::writes::side_refusal(switch) {
-        return Ok(crate::writes::refused_response(&refusal));
+    if !crate::comms::writes::side_writes_on(switch) {
+        return Ok(crate::writes::disabled_response());
     }
     if CLAIMS_BY_CLAIMER.check(&claimer) == RateLimitDecision::Deny {
         return Err(claim_rate_limited());
@@ -454,7 +506,7 @@ pub async fn claim_key_package(
     let Some(_slot) = ClaimSlot::take(&owner) else {
         return Err(claim_rate_limited());
     };
-    if CLAIMS_OF_OWNER.is_rate_limited(&owner) {
+    if claim_budget_spent(&claimer, &owner) {
         return Err(claim_rate_limited());
     }
     // A block either way answers as an empty stock.
@@ -475,7 +527,7 @@ pub async fn claim_key_package(
     .fetch_optional(&state.pool)
     .await?;
     if row.is_some() {
-        CLAIMS_OF_OWNER.check(&owner);
+        spend_claim(&claimer, &owner);
     }
     match row {
         Some((ref_hash, kp, cs)) => Ok(Json(
@@ -1282,14 +1334,10 @@ mod tests {
         )
     }
 
-    /// A claim consumes the package it returns: off or held it answers the
-    /// social 503 and consumes nothing.
+    /// A claim consumes the package it returns: off it answers the social
+    /// 503 and consumes nothing.
     #[tokio::test]
     async fn a_key_package_claim_is_a_social_write() {
-        use crate::shared::writes::restore::{
-            lab::{HOUR, StampLab},
-            scoped,
-        };
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
         };
@@ -1303,19 +1351,12 @@ mod tests {
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(body["message"], crate::writes::DISABLED_MESSAGE);
         let on = app_with("peer-on", pool.clone(), &dir, true).await;
-        let lab = StampLab::fresh();
-        scoped(lab.stamps.clone(), async {
-            let (status, _) = call(&on, &alice.key, "GET", &claim_path, None, None).await;
-            assert_eq!(status, StatusCode::NOT_FOUND, "fresh stamps reach the store");
-            lab.advance(30 * HOUR);
-            let (status, body) = call(&on, &alice.key, "GET", &claim_path, None, None).await;
-            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-            assert_eq!(
-                body["message"],
-                "social writes are held on this node: the last complete backup (backup.json) is 31 h old, past WRITES_BACKUP_MAX_AGE_HOURS=26"
-            );
-        })
-        .await;
+        let (status, _) = call(&on, &alice.key, "GET", &claim_path, None, None).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "on, the claim reaches the store"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1327,12 +1368,24 @@ mod tests {
         body: Option<Value>,
         bearer: Option<&str>,
     ) -> (StatusCode, Value) {
+        call_with_metadata(app, key, method, path, "{}", body, bearer).await
+    }
+
+    async fn call_with_metadata(
+        app: &axum::Router,
+        key: &str,
+        method: &str,
+        path: &str,
+        metadata: &str,
+        body: Option<Value>,
+        bearer: Option<&str>,
+    ) -> (StatusCode, Value) {
         let mut req = Request::builder()
             .method(method)
             .uri(path)
             .header("content-type", "application/json");
         let signed_path = path.split('?').next().unwrap_or(path);
-        for (k, v) in signed(key, &method.to_ascii_lowercase(), signed_path, "{}")
+        for (k, v) in signed(key, &method.to_ascii_lowercase(), signed_path, metadata)
             .await
             .iter()
         {
@@ -1370,6 +1423,18 @@ mod tests {
             429
         );
         spend_blob_budget(&light, MAX_OPAQUE_BYTES).unwrap();
+    }
+
+    #[test]
+    fn one_claimer_cannot_spend_an_owners_whole_claim_budget() {
+        let owner = address_of(&random_key());
+        let (heavy, other) = (address_of(&random_key()), address_of(&random_key()));
+        for _ in 0..10 {
+            assert!(!claim_budget_spent(&heavy, &owner));
+            spend_claim(&heavy, &owner);
+        }
+        assert!(claim_budget_spent(&heavy, &owner));
+        assert!(!claim_budget_spent(&other, &owner));
     }
 
     /// Unset `FED_PEER_ID` falls back to the id schema apply minted (the old
@@ -1503,6 +1568,60 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// The MLS caller is the wallet itself: scene metadata and a re-spelled
+    /// `signer` key are refused under either payload shape; wallet metadata
+    /// is served as the wallet.
+    #[tokio::test]
+    async fn auth_serves_the_wallet_and_refuses_scene_metadata() {
+        use crate::shared::test_keys::{KEY, SHAPES, signed_as};
+
+        let pool = PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
+        let dir = std::env::temp_dir().join(format!("mls-auth-{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        let state = MessagingState::new(pool, storage, None, Settings::default());
+        const PATH: &str = "/mls/key-packages";
+        let path = SignedPath::local(PATH);
+        for shape in SHAPES {
+            for metadata in [
+                r#"{"signer":"decentraland-kernel-scene","sceneId":"x","parcel":"0,0"}"#,
+                r#"{"Signer":"decentraland-kernel-scene"}"#,
+            ] {
+                let headers = signed_as(KEY, shape, "post", PATH, metadata, metadata).await;
+                let err = auth(&state, &headers, "post", &path).await.unwrap_err();
+                assert_eq!(err.code, 400, "{shape:?} {metadata}: {err}");
+                assert_eq!(err.message, "Invalid metadata content");
+            }
+            for metadata in ["{}", r#"{"signer":"dcl:explorer"}"#] {
+                let headers = signed_as(KEY, shape, "post", PATH, metadata, metadata).await;
+                assert_eq!(
+                    auth(&state, &headers, "post", &path).await.unwrap(),
+                    address_of(KEY),
+                    "{shape:?} {metadata}"
+                );
+            }
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A contract-wallet check that could not run is an outage, not an
+    /// invalid identity, and its detail never reaches the client.
+    #[test]
+    fn auth_refusal_reports_an_unrun_contract_wallet_check_as_503() {
+        for e in [
+            SignedFetchError::CatalystUnavailable("rpc detail".into()),
+            SignedFetchError::EipNotImplemented,
+        ] {
+            let err = auth_refusal(e);
+            assert_eq!(err.code, 503);
+            assert_eq!(err.message, "Signature validation unavailable");
+        }
+        let err = auth_refusal(SignedFetchError::InvalidSignature("detail".into()));
+        assert_eq!(
+            (err.code, err.message.as_str()),
+            (401, "invalid identity: Invalid signature")
+        );
+    }
+
     #[test]
     fn history_bound_is_the_old_rounded_seconds_comparison() {
         assert_eq!(history_bound(None), None);
@@ -1565,11 +1684,25 @@ mod tests {
         let count_path = format!("{claim_path}/count");
         let (_, count) = call(&here, &blocked.key, "GET", &count_path, None, None).await;
         assert_eq!(count["available"], 0, "a blocked wallet sees no stock");
-        // Refused claims never spend the owner's budget (60 an hour).
+        // Refused claims never spend the owner's budget (60 an hour) or the pair's (10).
         for _ in 0..61 {
             let (status, _) = call(&here, &blocked.key, "GET", &claim_path, None, None).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "a blocked claimer");
         }
+        sqlx::query(
+            "DELETE FROM social.blocks WHERE blocker_address = $1 AND blocked_address = $2",
+        )
+        .bind(&owner.address)
+        .bind(&blocked.address)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (status, _) = call(&here, &blocked.key, "GET", &claim_path, None, None).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the pair budget is untouched once unblocked"
+        );
         let held = ClaimSlot::take(&owner.address).unwrap();
         let (status, _) = call(&here, &friend.key, "GET", &claim_path, None, None).await;
         assert_eq!(
@@ -1580,6 +1713,67 @@ mod tests {
         drop(held);
         let (status, _) = call(&here, &friend.key, "GET", &claim_path, None, None).await;
         assert_eq!(status, StatusCode::OK);
+        // An empty stock answers 404 and spends nothing either.
+        for _ in 0..10 {
+            let (status, _) = call(&here, &friend.key, "GET", &claim_path, None, None).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "the stock is empty");
+        }
+        let (status, body) = call(
+            &here,
+            &owner.key,
+            "POST",
+            "/mls/key-packages",
+            Some(json!({ "key_packages": [b64(&key_package(&owner))] })),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, _) = call(&here, &friend.key, "GET", &claim_path, None, None).await;
+        assert_eq!(status, StatusCode::OK, "only handed-out packages count");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The MLS routes act for the wallet itself: a request signed with a
+    /// scene's metadata is refused as the gatekeeper's other wallet routes
+    /// refuse it, and stores nothing under the wallet.
+    #[tokio::test]
+    async fn key_packages_refuse_a_scene_signed_request() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let dir =
+            std::env::temp_dir().join(format!("mls-kp-scene-{}", uuid::Uuid::new_v4().simple()));
+        let here = app("peer-kp-scene", pool.clone(), &dir).await;
+        let (owner, claimer) = (member(), member());
+        let scene = r#"{"signer":"decentraland-kernel-scene","sceneId":"x","parcel":"0,0"}"#;
+        let (status, body) = call_with_metadata(
+            &here,
+            &owner.key,
+            "POST",
+            "/mls/key-packages",
+            scene,
+            Some(json!({ "key_packages": [b64(&key_package(&owner))] })),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        let claim_path = format!("/mls/key-packages/{}", owner.address);
+        let (status, _) = call(&here, &claimer.key, "GET", &claim_path, None, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "nothing was stored");
+
+        let (status, body) = call(
+            &here,
+            &owner.key,
+            "POST",
+            "/mls/key-packages",
+            Some(json!({ "key_packages": [b64(&key_package(&owner))] })),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["published"], 1, "{body}");
+        let (status, _) = call(&here, &claimer.key, "GET", &claim_path, None, None).await;
+        assert_eq!(status, StatusCode::OK, "the wallet's own package is served");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

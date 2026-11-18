@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, type ChangeEvent } from 'react';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 import { withSdk } from '../../../hoc/withSdk';
 import { useHasComponent } from '../../../hooks/sdk/useHasComponent';
 import { getComponentValue } from '../../../hooks/sdk/useComponentValue';

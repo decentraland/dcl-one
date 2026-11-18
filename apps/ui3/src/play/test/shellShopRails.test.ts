@@ -8,7 +8,7 @@ import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
 import type { UsdCents } from '@shop/model/money'
 import { BOOK, ITEM, storeMint } from '@shop/payment/fixtures'
 import type { StoredLogin } from '@explorer-core/features/auth/sso'
-import { SHOP_PROTOCOL, type ShopOperationEvent } from '../lib/shopProtocol'
+import { SHOP_PROTOCOL, type ShopOperationEvent } from '@dcl/one-ui/apps/shop/shopProtocol'
 import { createShellShop, type ShellPurchaseHandlers, type ShellPurchaseView } from '../shell/shop/purchase'
 
 const BUYER = BOOK.buyer.toLowerCase()
@@ -124,7 +124,7 @@ function rails(opts: { trusted: string; kind: 'managed' | 'web3'; gasless?: bool
     await shell.request('shop.buy', { v: SHOP_PROTOCOL, items: [{ contract: CONTRACT, itemId: String(ITEM), quantity: 1 }], method: 'credits' })
     ;(await until('confirm')).handlers.onConfirm?.()
   }
-  return { shop, chain, relay, wallet, shown, events, until, buy }
+  return { shell, shop, chain, relay, wallet, shown, events, until, buy }
 }
 
 describe('the shell purchase on the real rails', () => {
@@ -165,6 +165,55 @@ describe('the shell purchase on the real rails', () => {
     await r.until('failed')
     expect(r.wallet.requests.some((q) => q.method === 'eth_signTypedData_v4')).toBe(false)
     expect(r.relay.posts).toHaveLength(0)
+  })
+
+  // Answers after a send, without the relay's evidence that nothing was sent: this relay's 504 (the
+  // node took it but its answer was lost, or answered an error to the send), and the 500 JSON an
+  // earlier version of this relay, or a transactions-server, answers after it sent.
+  it.each([
+    ['managed', 504],
+    ['web3', 504],
+    ['managed', 500],
+    ['web3', 500]
+  ] as const)('follows a %s wallet’s purchase the relay may have sent (%i), and never signs a second one for it', async (kind, failStatus) => {
+    const r = rails({ trusted: DEDICATED, kind })
+    r.relay.state.mode = 'fail-after-send'
+    r.relay.state.failStatus = failStatus
+    await r.buy()
+    const pending = await r.until('pending')
+    expect(r.events.at(-1)).toMatchObject({ state: 'pending' })
+    // No TRY AGAIN, no cancel, no second send from the wallet.
+    expect(r.shown.some((s) => s.view.step === 'failed')).toBe(false)
+    expect(r.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    expect(r.wallet.sent).toHaveLength(0)
+    pending.handlers.onClose()
+    // Buying the same item again shows that purchase: the same operation, the same credit.
+    const first = r.events.at(-1)!.operation
+    const again = await r.shell.request('shop.buy', { v: SHOP_PROTOCOL, items: [{ contract: CONTRACT, itemId: String(ITEM), quantity: 1 }], method: 'credits' })
+    expect(again).toMatchObject({ operation: first, state: 'pending' })
+    expect(r.shown.at(-1)?.view.step).toBe('pending')
+    expect(r.shop.log.filter((q) => q.name === 'authorizeCreditBatch')).toHaveLength(1)
+    expect(r.wallet.requests.filter((q) => q.method === 'eth_signTypedData_v4')).toHaveLength(1)
+    expect(r.relay.posts).toHaveLength(1)
+    expect(r.wallet.sent).toHaveLength(0)
+  })
+
+  it('still treats a refusal the relay marks as not sent as one', async () => {
+    // The relay's 400 with `"not_sent": true`. A managed wallet: the purchase fails with TRY AGAIN and
+    // gives its credit back.
+    const managed = rails({ trusted: DEDICATED, kind: 'managed' })
+    managed.relay.state.mode = 'refuse'
+    await managed.buy()
+    expect((await managed.until('failed')).view).toMatchObject({ step: 'failed', retry: true })
+    expect(managed.shop.log.find((q) => q.name === 'cancelCreditAuthorizations')?.body).toEqual({ salts: [`0x${'a1'.repeat(32)}`] })
+    // A web3 wallet: it sends the same credit itself.
+    const web3 = rails({ trusted: DEDICATED, kind: 'web3' })
+    web3.relay.state.mode = 'refuse'
+    await web3.buy()
+    await web3.until('success')
+    expect(web3.relay.posts).toHaveLength(1)
+    expect(web3.wallet.sent).toHaveLength(1)
+    expect(web3.shop.log.filter((q) => q.name === 'authorizeCreditBatch')).toHaveLength(1)
   })
 
   it('relays nothing when the hand-off isn’t kept: the signed purchase never leaves the browser', async () => {

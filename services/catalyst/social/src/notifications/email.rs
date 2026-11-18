@@ -127,18 +127,7 @@ impl EmailSource {
     }
 }
 
-/// Why a delivery send did not happen; decides retry vs terminal.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SendFailure {
-    /// Nothing to send with: no key, sender or template.
-    NotConfigured,
-    /// No `SIGNING_KEY` for the unsubscribe links: held until one is set.
-    NoSigningKey,
-    /// Transport or 5xx/429: retry later.
-    Transient(String),
-    /// The provider refused the message (4xx): retrying cannot help.
-    Permanent(String),
-}
+pub use crate::shared::notifications::SendFailure;
 
 /// Where a notification email's signed unsubscribe links point.
 #[derive(Clone, Debug)]

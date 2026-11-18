@@ -12,7 +12,7 @@ import { installHostSignIn } from "@/features/components/auth/signin-store";
 
 import { primeDappsFlags } from "@/data/lib/feature-flags.browser";
 
-import { installSitesShopClient } from "./host";
+import { installSitesShopClient } from "@/data/lib/auth/shop-client";
 import { nativeShopRoutes } from "./native-routes";
 import "./native.css";
 

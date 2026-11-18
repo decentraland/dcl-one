@@ -6,7 +6,8 @@ origin     = "https://github.com/robtfm/rust-ffmpeg"
 origin_rev = "140c74769d0ecceff78997542392afac95fe6ca3"
 license    = "WTFPL"
 paths      = ["."]
-exclude    = []
-base_tree  = "cc8e9fe1be3ed49b686ce8dcb226b540b95f06c1"
-tree       = "f3ac38881507cdf5a7f7a989428a497effd216bc"
+exclude    = [".github"]
+base_tree  = "6d6cd8bd48bd45daa73ffef71238e2c89c995022"
+tree       = "27f34eaedb5868e6087ece156ced57bb3ba91ba7"
+rev        = "0a8f3cf998262fc4749fb7c86eea93b48f0b8254"
 nix_hash   = "sha256-nYSBlqgeE+hU+3X9t0qUivSo/ZGiVHwcQ7Y1duNQvSc="

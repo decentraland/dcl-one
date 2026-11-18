@@ -74,12 +74,12 @@ serve; guest sessions work.
 ## Forks and drift
 
 Bevy and 17 forked sources are tracked as an upstream commit and a patch series under
-`patches/<name>/` ([ADR](../../docs/adr/2026-11-14-explorer-sources-as-patches.md)).
-`python3 tooling/patched-sources.py materialise` writes the rebuilt trees at `bevy/` and
-`forks/<name>/`, which git ignores. Run it before any `cargo` command;
-[the bevy fork](docs/guidelines/bevy-fork.md#changing-bevy) has `export`, the options and the
-stale-tree check. `bevy_dui`, `boimp` and `rpc-rust` (package `dcl-rpc`) are exact upstream bytes
-under `vendor/`.
+`patches/<name>/` ([ADR](../../docs/adr/2026-11-14-explorer-sources-as-patches.md)). Cargo takes
+each one as a commit of this repository, pinned by `rev`
+([ADR](../../docs/adr/2026-11-15-explorer-patched-sources-as-git-commits.md)): no step runs
+before `cargo`. [The bevy fork](docs/guidelines/bevy-fork.md#changing-bevy) has `edit`, `export`,
+`publish` and the checks. `bevy_dui`, `boimp` and `rpc-rust` (package `dcl-rpc`) are exact
+upstream bytes under `vendor/`.
 
 Licences: each `patches/<name>/source.toml` records the licence of its source in `license`, and
 each crate under `vendor/` records its own in its `Cargo.toml`.

@@ -1,25 +1,35 @@
 #!/usr/bin/env python3
-"""Keep unchanged engine, vendored and protocol inputs fresh across CI checkouts.
+"""Keep unchanged engine, in-tree crate and protocol inputs fresh across CI checkouts.
 
 Cargo decides whether a path dependency is fresh by file times, and a fresh checkout gives
 every file the current time, so path dependencies in a CI cache would be rebuilt by every job
-of every run, changed or not. Crates from git or crates.io are judged by version instead.
+of every run, changed or not. Crates from git or crates.io are judged by version instead: Bevy
+and the forked crates are git dependencies; the one path copy is the Bevy tree of the Bevy crate tests.
 
-  record <target-dir>   after the build: each build input's git blob id and mtime, floored
-                        to whole seconds, into every profile's .fingerprint directory, so the
-                        manifest travels in the same cache archive as the artifacts it vouches for
+  record <target-dir>   after the build: each build input's git blob id and mtime, and each
+                        directory's mtime with the id of the input names it holds, into every
+                        profile's .fingerprint directory, so the manifest travels in the same
+                        cache archive as the artifacts it vouches for
   restore <target-dir>  after the checkout and the cache restore, before Cargo runs: each file
-                        whose blob id still matches gets its recorded mtime back; a changed or
-                        new file keeps the checkout's time, so Cargo rebuilds what depends on it
+                        whose blob id still matches gets its recorded mtime back, and so does each
+                        directory that holds the same input names; a changed or new file keeps
+                        the checkout's time, so Cargo rebuilds what depends on it
 
-A tracked file's blob id comes from the index. The trees `tooling/patched-sources.py` writes are not
-tracked, so their blob ids are those of the bytes on disk, stamp included. The Explorer's build guard
-names each patch series as a directory, and Cargo then reads the directory's own time: a series is
-an input too, and its id is that of the names it holds.
+A tracked file's blob id comes from the index. The Bevy tree that `tooling/patched-sources.py` writes for
+the Bevy crate tests is not tracked, so its blob ids are those of the bytes on disk, stamp included.
 
-To Cargo this is a checkout that never moved. Floored times stay valid when a cache archive
-keeps whole seconds only; in CI the tree is only ever written at checkout, before any build.
-Without a manifest (a cold cache) restore changes nothing.
+To Cargo this is a checkout that never moved. Times are kept to the nanosecond: for a package
+whose build script names no input, Cargo stores the time of the newest file as it reads it, so a
+rounded time is a change, and it makes many files equally new, where the one Cargo names
+depends on the order of a directory listing. A build script that names a directory makes Cargo
+read the time of every directory below it, and a checkout writes those too. In CI the tree is
+only ever written at checkout, before any build. Without a manifest (a cold cache) restore
+changes nothing.
+
+The script is for CI checkouts. A tracked file's id is the one of the index, so a local edit that
+is not staged would get the recorded time back. A tracked link is no input: its id is the text of
+the link and its time would be the one of the file it names. A path of the index that is not on
+disk is left out.
 """
 import argparse
 import hashlib
@@ -31,40 +41,35 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 TREE = 'rendering/bevy-explorer/bevy'
-FORKS = 'rendering/bevy-explorer/forks'
-PATCHES = 'rendering/bevy-explorer/patches'
-TREES = (TREE, FORKS, PATCHES, 'rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet',
-         'rendering/bevy-explorer/source', 'library/protocol/proto')
-# Written by tooling/patched-sources.py: the repository does not track them.
-MATERIALISED = (TREE, FORKS)
-# tooling/bevy-target-cache.py prunes the .fingerprint entries of workspace crates, <crate>-<hash>;
-# `bevy` is no workspace crate, so the manifest survives its pruning.
+TREES = (TREE, 'rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet', 'rendering/bevy-explorer/source', 'library/protocol/proto')
+# tooling/bevy-target-cache.py keeps every .fingerprint directory, so the manifest stays in the cache.
 MANIFEST = 'bevy-mtimes.json'
-SECOND = 10**9
 
 
 def blobs(root):
-    """{path: id} for every input under TREES: a file's blob id from the index, or from the bytes of a tree git does
-    not track, and the id of each patch series."""
+    """{path: id} for every input under TREES: a file's blob id from the index, or from the bytes of the tree git does
+    not track."""
     out = subprocess.check_output(['git', 'ls-files', '--stage', '-z', '--', *TREES], cwd=root)
     result = {}
     for record in filter(None, out.split(b'\0')):
         meta, path = record.split(b'\t', 1)
-        result[path.decode('utf-8')] = meta.split()[1].decode('ascii')
-    for tree in MATERIALISED:
-        result.update(hashed(root, tree))
-    result.update(listed(root))
+        mode, blob = meta.split()[:2]
+        if mode != b'120000':
+            result[path.decode('utf-8')] = blob.decode('ascii')
+    result.update(hashed(root, TREE))
     return result
 
 
-def listed(root):
-    """{directory/: id of the names it holds} for every patch series: its time changes when a name does."""
-    result = {}
-    for series in sorted((Path(root) / PATCHES).glob('*/series')):
-        if series.is_dir():
-            names = '\0'.join(sorted(os.listdir(series)))
-            result[series.relative_to(root).as_posix() + '/'] = hashlib.sha1(names.encode('utf-8')).hexdigest()
-    return result
+def directories(paths):
+    """{directory/: id of the input names it holds} for every directory of TREES above an input in `paths`."""
+    names = {}
+    for path in paths:
+        parts = path.rstrip('/').split('/')
+        for depth in range(1, len(parts)):
+            names.setdefault('/'.join(parts[:depth]) + '/', set()).add(parts[depth])
+    return {directory: hashlib.sha1('\0'.join(sorted(held)).encode('utf-8')).hexdigest()
+            for directory, held in names.items()
+            if any(directory.startswith(tree + '/') for tree in TREES)}
 
 
 def hashed(root, tree):
@@ -90,27 +95,36 @@ def fingerprint_dirs(target):
 
 def record(root, target):
     """Write the manifest into every profile; returns how many profiles got it."""
-    files = {path: [blob, (Path(root) / path).stat().st_mtime_ns // SECOND * SECOND]
-             for path, blob in blobs(root).items()}
-    text = json.dumps({'trees': TREES, 'files': files}, sort_keys=True)
-    directories = fingerprint_dirs(target)
-    for directory in directories:
-        (directory / MANIFEST).write_text(text)
-    return len(directories)
+    inputs = blobs(root)
+    files, folders = ({path: [name, (Path(root) / path).stat().st_mtime_ns] for path, name in group.items()
+                       if (Path(root) / path).exists()}
+                      for group in (inputs, directories(inputs)))
+    text = json.dumps({'trees': TREES, 'files': files, 'directories': folders}, sort_keys=True)
+    profiles = fingerprint_dirs(target)
+    for profile in profiles:
+        (profile / MANIFEST).write_text(text)
+    return len(profiles)
 
 
 def restore(root, target):
-    """Give unchanged files their recorded mtime; returns (restored, left with the checkout's time)."""
+    """Give unchanged files, and directories that hold the same names, their recorded mtime; returns the files
+    (restored, left with the checkout's time)."""
     manifests = [d / MANIFEST for d in fingerprint_dirs(target) if (d / MANIFEST).is_file()]
-    recorded = json.loads(manifests[0].read_text())['files'] if manifests else {}
+    manifest = json.loads(manifests[0].read_text()) if manifests else {}
+    inputs = blobs(root)
     restored = left = 0
-    for path, blob in blobs(root).items():
-        entry = recorded.get(path)
-        if entry and entry[0] == blob:
+    for path, blob in inputs.items():
+        entry = manifest.get('files', {}).get(path)
+        if entry and entry[0] == blob and (Path(root) / path).exists():
             os.utime(Path(root) / path, ns=(entry[1], entry[1]))
             restored += 1
         else:
             left += 1
+    # A manifest from before directories were recorded has none: they keep the checkout's time.
+    for path, names in directories(inputs).items():
+        entry = manifest.get('directories', {}).get(path)
+        if entry and entry[0] == names and (Path(root) / path).is_dir():
+            os.utime(Path(root) / path, ns=(entry[1], entry[1]))
     return restored, left
 
 
@@ -123,7 +137,7 @@ def main():
         print(f'{", ".join(TREES)}: mtimes recorded in {record(ROOT, args.target)} profile(s) of {args.target}')
     else:
         restored, left = restore(ROOT, args.target)
-        print(f'{", ".join(TREES)}: {restored} unchanged input(s) keep their cached mtime; {left} changed or unrecorded')
+        print(f'{", ".join(TREES)}: {restored} unchanged input(s) and the directories with the same names keep their cached mtime; {left} changed or unrecorded')
     return 0
 
 

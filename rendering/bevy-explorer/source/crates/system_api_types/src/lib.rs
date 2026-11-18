@@ -163,6 +163,19 @@ pub struct HomeScene {
     pub parcel: Vector2,
 }
 
+/// The lobby's 3D stage, drawn around the system scene's preview avatar for the camera that
+/// renders the scene's `layer`.
+#[derive(Serialize, Deserialize, Clone, Debug, ts_rs::TS)]
+#[ts(export)]
+pub struct LobbyStage {
+    /// The look's id, as the HUD's Settings lists it; an unknown id shows the first look.
+    pub preset: String,
+    /// The system scene's camera layer the preview camera and avatar render on.
+    pub layer: u32,
+    /// The avatar's feet, in the system scene's coordinates.
+    pub feet: Vector3,
+}
+
 /// What the welcome page must show for the signed-in account.
 #[derive(Serialize, Deserialize, Clone, Debug, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
@@ -185,6 +198,16 @@ pub struct SatelliteView {
     pub base_url: String,
     pub suffix_url: String,
     pub top_left_offset: Vector2,
+}
+
+/// A community whose chat channel the local user listens to.
+#[derive(Clone, Debug, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub struct ListenedCommunity {
+    pub id: String,
+    /// The community's name, shown with its messages over their authors' nametags; `None`
+    /// when the HUD doesn't know it.
+    pub name: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize, ts_rs::TS)]
@@ -568,6 +591,40 @@ pub struct AnalyticsEvent {
     pub properties: serde_json::Value,
 }
 
+/// Where the preview server's background texture import is: encoding, finished with new
+/// optimized files in place (the scene shows them on its next reload), or failed.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub enum TextureOptimizationState {
+    Running,
+    Ready,
+    Failed,
+}
+
+/// The preview server's texture import status for one scene, as the preview socket delivered it
+/// (its `TEXTURE_OPTIMIZATION` text frame). `done`, `total` and `failed` count this run's
+/// textures; `bytesBefore` and `bytesAfter` are the converted images' source and KTX2 sizes;
+/// `enabled` is whether the project serves the optimized files. `replay` marks the server's last
+/// status, sent again as the socket (re)connected, not news.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct TextureOptimizationStatus {
+    pub scene_id: String,
+    pub state: TextureOptimizationState,
+    pub done: u32,
+    pub total: u32,
+    pub failed: u32,
+    // f64: a plain JS number on every runtime (exact below 2^53 bytes)
+    pub bytes_before: f64,
+    pub bytes_after: f64,
+    pub enabled: bool,
+    pub replay: bool,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 #[derive(ts_rs::TS)]
@@ -788,6 +845,20 @@ pub enum WorldAccessEvent {
     /// The prompt no longer needs an answer: the realm change it was for is over
     #[serde(rename = "cancelled")]
     Cancelled,
+}
+
+/// Whether the local user may enter a world, by the check a realm change runs before entering.
+/// `invited`: let in by its allow-list. `failed`: the check could not tell; the world decides on
+/// arrival.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum WorldAccessVerdict {
+    Allowed,
+    Invited,
+    Denied,
+    Password,
+    Failed,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug, ts_rs::TS)]

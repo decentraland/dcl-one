@@ -12,7 +12,7 @@ const DEPLOY_TIMEOUT_MS = 30_000;
 const PARCEL = /^(-?\d{1,3}),(-?\d{1,3})$/;
 
 type Fetcher = Parameters<typeof createContentClient>[0]['fetcher'];
-type NodeFormData = { getBuffer(): Buffer; getHeaders(): Record<string, string> };
+type NodeFormData = { getBuffer(): Buffer<ArrayBuffer>; getHeaders(): Record<string, string> };
 
 const isNodeFormData = (body: unknown): body is NodeFormData =>
   typeof (body as NodeFormData | null)?.getBuffer === 'function' &&

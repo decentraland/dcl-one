@@ -192,8 +192,25 @@ pub async fn op_accept_terms(state: &WorkerContext) -> Result<(), WasmError> {
 }
 
 #[wasm_bindgen]
+pub async fn op_get_world_access(
+    state: &WorkerContext,
+    world: String,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_world_access(state.rc(), world).await)
+}
+
+#[wasm_bindgen]
 pub async fn op_get_satellite_view(state: &WorkerContext) -> Result<JsValue, WasmError> {
     serde_result!(dcl_js::system_api::op_get_satellite_view(state.rc()).await)
+}
+
+#[wasm_bindgen]
+pub fn op_set_lobby_stage(state: &WorkerContext, stage: JsValue) -> Result<(), WasmError> {
+    // map_err rather than serde_parse!'s unwrap: a malformed stage throws in JS, as on Deno.
+    let stage = serde_wasm_bindgen::from_value(stage)
+        .map_err(|e| WasmError::from(anyhow::anyhow!("setLobbyStage: {e}")))?;
+    dcl_js::system_api::op_set_lobby_stage(state.rc(), stage);
+    Ok(())
 }
 
 #[wasm_bindgen]
@@ -228,6 +245,11 @@ pub async fn op_read_chat_stream(state: &WorkerContext, rid: u32) -> Result<JsVa
 #[wasm_bindgen]
 pub fn op_send_chat(state: &WorkerContext, message: String, channel: String) {
     dcl_js::system_api::op_send_chat(state.rc(), message, channel)
+}
+
+#[wasm_bindgen]
+pub fn op_set_chat_bubble_text(state: &WorkerContext, message_id: String, message: String) {
+    dcl_js::system_api::op_set_chat_bubble_text(state.rc(), message_id, message)
 }
 
 #[wasm_bindgen]
@@ -590,6 +612,26 @@ pub async fn op_read_analytics_event_stream(
 }
 
 #[wasm_bindgen]
+pub async fn op_get_texture_optimization_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_texture_optimization_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_texture_optimization_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    // json_compatible: a closed stream must end as null, not undefined, for the scene's loop
+    dcl_js::system_api::op_read_texture_optimization_stream(state.rc(), rid)
+        .await
+        .map(|v| {
+            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+                .unwrap()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
 pub async fn op_get_avatar_modifiers(state: &WorkerContext) -> Result<js_sys::Array, WasmError> {
     dcl_js::system_api::op_get_avatar_modifiers(state.rc())
         .await
@@ -828,8 +870,15 @@ pub async fn op_read_community_connectivity_stream(
 }
 
 #[wasm_bindgen]
-pub fn op_set_community_channels(state: &WorkerContext, ids: Vec<String>) {
-    dcl_js::system_api::op_set_community_channels(state.rc(), ids)
+pub fn op_set_community_channels(
+    state: &WorkerContext,
+    communities: JsValue,
+) -> Result<(), WasmError> {
+    // an error the caller can catch, not a worker panic
+    let communities = serde_wasm_bindgen::from_value(communities)
+        .map_err(|e| WasmError::from(anyhow::anyhow!("setCommunityChannels: {e}")))?;
+    dcl_js::system_api::op_set_community_channels(state.rc(), communities);
+    Ok(())
 }
 
 #[wasm_bindgen]

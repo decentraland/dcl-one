@@ -177,7 +177,8 @@
   height: 26px;
   border-radius: var(--r-pill);
   background: var(--panel);
-  font-size: var(--type-13);
+  /* a caller's container may set the count's size */
+  font-size: var(--friends-more-size, var(--type-13));
   font-weight: 600;
 }
 

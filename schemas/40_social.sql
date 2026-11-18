@@ -474,6 +474,15 @@ CREATE UNIQUE INDEX scene_stream_access_active_place_key
 CREATE INDEX scene_stream_access_active_ingress_idx
     ON social.scene_stream_access (ingress_id) WHERE active;
 
+-- Cast 2.0: the streamer, presentation-bot and stream-info lookups of a
+-- streaming key (stream-info is unauthenticated), and the presenter routes'
+-- lookup of the active credential streaming into a room. Active rows only:
+-- at most one per place, while replaced rows accumulate.
+CREATE INDEX scene_stream_access_active_key_idx
+    ON social.scene_stream_access (streaming_key) WHERE active;
+CREATE INDEX scene_stream_access_active_room_idx
+    ON social.scene_stream_access (room_id) WHERE active;
+
 -- Comms-owned streaming cleanup intents: no FK, so revocation survives place/access removal.
 CREATE TABLE social.scene_stream_cleanup (
  access_id uuid PRIMARY KEY, place_id text NOT NULL, ingress_id text,
@@ -1468,6 +1477,14 @@ CREATE TABLE social.archipelago_v4_meta (
 
 -- The per-connection epoch a `/ws/v4` owner claims with.
 CREATE SEQUENCE social.archipelago_v4_connection_epoch;
+
+-- Root/jobs writes only deployment authority metadata, never Pulse assignment state.
+CREATE TABLE social.pulse_authority_generation (
+    deployment_audience text NOT NULL PRIMARY KEY,
+    epoch bigint NOT NULL CHECK (epoch > 0),
+    source_incarnation uuid NOT NULL,
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now())
+);
 
 CREATE TABLE social.archipelago_v4_assignments (
     deployment_audience text NOT NULL,

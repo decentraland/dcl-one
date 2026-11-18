@@ -182,6 +182,15 @@ describe('communities domain', () => {
     expect(h.session().communities.list[0].thumbnail).toBe('https://cdn/c1.png')
   })
 
+  it('logout forgets that the list was loaded', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    act(() => h.driver.emit({ kind: 'communities', communities: [community] }))
+    expect(h.session().lobbyData.communitiesLoaded).toBe(true)
+    act(() => h.session().logout())
+    expect(h.session().lobbyData.communitiesLoaded).toBe(false)
+  })
+
   // DOMAIN: the browse grid — a paged, server-searched list.
   describe('browse grid', () => {
     const page = (n: number, from = 0): Community[] => Array.from({ length: n }, (_, i) => ({ ...community, id: `b${from + i}`, name: `B${from + i}` }))

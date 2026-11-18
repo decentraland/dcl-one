@@ -6,12 +6,12 @@ import { sidLoader } from "@/core/lib/telemetry/session";
 import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { normalizeAddress, type ProfileVM } from "@/data/lib/catalyst/social/profile";
 import {
+  assetsQuery,
   badgesQuery,
   canReadProfile,
   profileKeys,
   creationsQuery,
-  ownedNamesQuery,
-  ownedWearablesQuery,
+  DEFAULT_CREATIONS_CATEGORY,
   photosQuery,
   placesQuery,
   profileQuery,
@@ -45,7 +45,7 @@ function keepQuery(path: string, url: URL): string {
  */
 export const OPTIONAL_READS_BUDGET_MS = 1500;
 
-function withinBudget(work: Promise<unknown> | undefined, ms: number): Promise<void> {
+export function withinBudget(work: Promise<unknown> | undefined, ms: number): Promise<void> {
   if (!work) return Promise.resolve();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const budget = new Promise<void>((resolve) => {
@@ -60,17 +60,15 @@ function prefetchTab(client: QueryClient, address: string, tab: ProfileTab) {
   switch (tab) {
     case "overview":
       return client.prefetchQuery(badgesQuery(address));
+    // The first page of the view a tab opens on: wearables for Creations, every category for Assets.
     case "creations":
-      return client.prefetchQuery(creationsQuery(address));
+      return client.prefetchInfiniteQuery(creationsQuery(address, DEFAULT_CREATIONS_CATEGORY));
     case "places":
       return client.prefetchQuery(placesQuery(address));
     case "photos":
       return client.prefetchQuery(photosQuery(address));
     case "assets":
-      return Promise.all([
-        client.prefetchQuery(ownedWearablesQuery(address)),
-        client.prefetchQuery(ownedNamesQuery(address)),
-      ]);
+      return client.prefetchInfiniteQuery(assetsQuery(address, null));
     default:
       return undefined;
   }

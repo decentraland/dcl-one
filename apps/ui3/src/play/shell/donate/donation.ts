@@ -45,6 +45,7 @@ import {
 import { ShellError } from '@explorer-core/lib/shellReply'
 import type { ShellShopWallet } from '../shop/purchase'
 import { loginSigner } from '../loginSigner'
+import { safeCreator } from '../safeDisplay'
 import { pageLocks, webLock } from '../webLock'
 import { guardedDonationProvider, type DonationIntent } from './guard'
 import type { DonateCreator, DonateHandlers, DonateView } from '@hud/features/donate/types'
@@ -273,20 +274,6 @@ export function resolvePlace(place: DonatePlace, rows: DestinationRow[]): Resolv
   return { creator, title: placeTitle(place, row.title), positions: row.positions }
 }
 
-/**
- * The creator as the money panel may draw them: a name, a `#rgb`-style colour and an `https:` face only, so a
- * profile can't make the page that holds the wallet load anything else. Null without a valid address.
- */
-export function safeCreator(c: Partial<DonateCreator> | null | undefined): DonateCreator | null {
-  if (!c || typeof c.address !== 'string' || !/^0x[0-9a-f]{40}$/.test(c.address)) return null
-  return {
-    address: c.address,
-    ...(typeof c.name === 'string' ? { name: c.name } : {}),
-    ...(c.claimed === true ? { claimed: true } : {}),
-    ...(typeof c.nameColor === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(c.nameColor) ? { nameColor: c.nameColor } : {}),
-    ...(typeof c.face === 'string' && /^https:\/\/[^\s"'()\\]+$/.test(c.face) ? { face: c.face } : {})
-  }
-}
 
 /**
  * The relay answered and refused the tip (`ok: false`). It may have broadcast and lost it first, but a refused tip

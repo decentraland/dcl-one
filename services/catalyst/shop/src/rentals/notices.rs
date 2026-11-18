@@ -29,8 +29,8 @@ use crate::market::MarketplaceState;
 use crate::market::chain_walk::{self, ChainNet};
 use crate::market::notice_cursor::{self, advance, lock, seed};
 use crate::market::transfer_notices::Pass;
-use crate::social::Address;
-use crate::social::notifications::store::{NewNotification, insert_notifications};
+use crate::shared::identity::Address;
+use crate::shared::notifications::{NewNotification, insert_notifications};
 
 pub const KIND_STARTED: &str = notice_cursor::RENTAL_STARTED;
 pub const KIND_ENDED: &str = notice_cursor::RENTAL_ENDED;

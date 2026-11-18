@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { cx } from '/@/lib/cx';
+
+import Button from '@ui/atoms/Button';
 
 import type { Events } from '/shared/types/analytics';
 
@@ -9,18 +12,12 @@ import type { TranslationPath } from '/@/modules/store/translation/types';
 import { getCurrentLocale, t } from '/@/modules/store/translation/utils';
 
 import { EarnDialog } from '../EarnDialog';
-import { ModalCta, ModalTitle } from '../EarnModal.styled';
+import modal from '../EarnModal.module.css';
 import { CloseIcon } from '../icons';
 
 import { CodeInput, EMPTY_CODE } from './CodeInput';
-import {
-  Body,
-  CodeArea,
-  CodeError,
-  ModalForm,
-  PayoutActions,
-  ResendButton,
-} from './PayoutModals.styled';
+import parts from './parts.module.css';
+import styles from './PayoutModals.module.css';
 
 const EXPIRED: TranslationPath = 'earn.joined.payouts.verify.expired';
 
@@ -128,21 +125,27 @@ export function VerifyEmailModal({
       labelledBy={titleId}
       onClose={onClose}
     >
-      <ModalForm
+      <form
+        className={styles.modalForm}
         noValidate
         data-variant="verify"
         onSubmit={submit}
       >
-        <ModalTitle id={titleId}>{t('earn.joined.payouts.verify.title')}</ModalTitle>
-        <Body>
+        <h2
+          className={modal.modalTitle}
+          id={titleId}
+        >
+          {t('earn.joined.payouts.verify.title')}
+        </h2>
+        <p className={styles.body}>
           {getCurrentLocale().formatMessage(
             { id: 'earn.joined.payouts.verify.body_sent' },
             { email, b: (chunks: React.ReactNode[]) => <b key="email">{chunks}</b> },
           )}
           <br />
           {t('earn.joined.payouts.verify.body_instruction')}
-        </Body>
-        <CodeArea>
+        </p>
+        <div className={styles.codeArea}>
           <CodeInput
             value={code}
             labelledBy={titleId}
@@ -154,46 +157,46 @@ export function VerifyEmailModal({
             }}
           />
           {shownError && (
-            <CodeError
+            <p
+              className={styles.codeError}
               id={errorId}
               role="alert"
             >
               <CloseIcon />
               {t(shownError)}
-            </CodeError>
+            </p>
           )}
           {(!error || error === EXPIRED) && (
-            <ResendButton
+            <button
+              className={styles.resendButton}
               type="button"
               aria-disabled={resendHeld || undefined}
               onClick={resend}
             >
               {t('earn.joined.payouts.verify.resend')}
-            </ResendButton>
+            </button>
           )}
-        </CodeArea>
-        <PayoutActions>
-          <ModalCta
-            type="button"
-            variant="contained"
-            color="secondary"
-            size="large"
+        </div>
+        <div className={cx(modal.actions, styles.payoutActions)}>
+          <Button
+            className={cx(parts.cta, parts.ctaSecondary)}
+            variant="secondary"
+            size="lg"
             onClick={onClose}
           >
             {t('earn.joined.payouts.cancel')}
-          </ModalCta>
-          <ModalCta
+          </Button>
+          <Button
+            className={parts.cta}
             type="submit"
-            variant="contained"
-            color="primary"
-            size="large"
+            size="lg"
             disabled={!complete || verifying || !!error}
             aria-busy={verifying || undefined}
           >
             {t('earn.joined.payouts.verify.submit')}
-          </ModalCta>
-        </PayoutActions>
-      </ModalForm>
+          </Button>
+        </div>
+      </form>
     </EarnDialog>
   );
 }

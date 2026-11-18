@@ -1,0 +1,52 @@
+import { createRoot } from 'react-dom/client'
+import { LiveNow } from '../../apps/sites/events/LiveNow'
+import { Upcoming } from '../../apps/sites/events/Upcoming'
+import { DayCard, UpcomingCard } from '../../apps/sites/events/cards'
+import '../../foundations/foundations.css'
+const base = {
+  id: 'event',
+  title: 'A long event title that wraps over two full lines on every supported card width',
+  image: null,
+  href: '/events?id=event',
+  creator: { name: 'Creator', href: '/profile/creator' },
+  time: { label: 'Tomorrow at noon', dateTime: '2026-11-13T12:00:00Z' },
+  remind: { active: false, pending: false, onToggle: () => {} },
+  calendarHref: 'https://calendar.google.com/calendar/render?action=TEMPLATE'
+}
+createRoot(document.getElementById('root')!).render(
+  <main>
+    <LiveNow
+      cards={[
+        { ...base, live: true, jumpIn: { href: '/play' } },
+        { ...base, id: 'other', live: false, jumpIn: { href: '/play' } }
+      ]}
+    />
+    <Upcoming
+      cards={[
+        base,
+        {
+          ...base,
+          id: 'another',
+          creator: undefined,
+          title:
+            'A deliberately very long event title which must be clamped after two complete lines without cutting the second line'
+        }
+      ]}
+    />
+    <section data-day>
+      <DayCard {...base} live={false} />
+    </section>
+    <section data-live-small>
+      <UpcomingCard
+        {...base}
+        id="live-small"
+        title="Live party"
+        remind={undefined}
+        live
+        users={16}
+        usersLabel="16 online"
+        jumpIn={{ href: '/play' }}
+      />
+    </section>
+  </main>
+)

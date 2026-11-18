@@ -240,7 +240,9 @@ type Harness = {
   storage: ReturnType<typeof memoryStorage>;
 };
 
-async function harness(opts: { method?: "credits" | "mana"; handlers?: FakeHandlers; session?: Session; relay?: "ok" | "refuse" | "down"; confirm?: "success" | "reverted" | "none" } = {}): Promise<Harness> {
+async function harness(
+  opts: { method?: "credits" | "mana"; handlers?: FakeHandlers; session?: Session; relay?: "ok" | "refuse" | "down" | "fail-after-send"; refuseStatus?: number; refuseEvidence?: boolean; failStatus?: number; failBody?: unknown; confirm?: "success" | "reverted" | "none" } = {},
+): Promise<Harness> {
   const session = opts.session ?? web3();
   const offer = opts.method === "mana" ? wearableResale(session) : creatorOrder(session);
   const tradeId = opts.method === "mana" ? "trade-resale-1" : "trade-creator-1";
@@ -248,6 +250,10 @@ async function harness(opts: { method?: "credits" | "mana"; handlers?: FakeHandl
   const chain = createFakeChain();
   const relay = createFakeRelay({
     mode: opts.relay ?? "ok",
+    refuseStatus: opts.refuseStatus,
+    refuseEvidence: opts.refuseEvidence,
+    failStatus: opts.failStatus,
+    failBody: opts.failBody,
     onRelay: (hash) => {
       if ((opts.confirm ?? "success") !== "none") chain.receipts.set(hash.toLowerCase(), opts.confirm === "reverted" ? "reverted" : "success");
     },
@@ -360,6 +366,39 @@ describe("running a credits group through the state machine", () => {
     expect(h.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
     expect(await watchGroup(h.deps, statusOf(h))).toMatchObject({ status: "confirmed", txHash: `0x${"b".repeat(64)}` });
   });
+
+  // Failures after a send, none carrying the relay's evidence that nothing was sent: a 500 from an
+  // earlier version of this relay (the hash not recorded) or from a transactions-server after its
+  // submission, an upstream's 502, and this relay's 504 for a send whose outcome it does not know.
+  it.each([
+    { failStatus: 500, failBody: { ok: false, error: "unknown", message: "Unknown error" } },
+    { failStatus: 500, failBody: { ok: false, message: "Transaction failed: execution reverted", code: "expectation_failed" } },
+    { failStatus: 502, failBody: { ok: false, message: "The relayer service is temporarily unavailable.", code: "unknown" } },
+    { failStatus: 504, failBody: { ok: false, error: "unknown", message: "transaction may have been broadcast" } },
+  ])("a relay $failStatus after it broadcast keeps the credit until the server reconciles it, and signs nothing again", async ({ failStatus, failBody }) => {
+    const settled = {
+      userPurchases: () => ({ purchases: [{ id: `0x${"a1".repeat(32)}`, status: "SETTLED", usdCents: 100, createdAt: 1, txHash: `0x${"b".repeat(64)}` }] }),
+    };
+    const authorizations = (h: Harness) => h.shop.log.filter((r) => r.name === "authorizeCreditBatch").length;
+    // An in-app wallet: a released credit would let TRY AGAIN sign a second one while the first lands.
+    const inApp = await harness({ session: web2(), relay: "fail-after-send", failStatus, failBody, handlers: settled });
+    expect(await runGroup(inApp.deps, inApp.group, inApp.resolved)).toMatchObject({ status: "pending", txHash: null });
+    expect(statusOf(inApp).status).toBe("submitted");
+    expect(inApp.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
+    // Running the group again is refused while it is unsettled: no second credit, no second signature.
+    expect(await runGroup(inApp.deps, inApp.group, inApp.resolved)).toMatchObject({ status: "skipped", reason: "submitted" });
+    expect(authorizations(inApp)).toBe(1);
+    expect(inApp.relay.posts).toHaveLength(1);
+    // The server's record of the same credit settles it.
+    expect(await watchGroup(inApp.deps, statusOf(inApp))).toMatchObject({ status: "confirmed", txHash: `0x${"b".repeat(64)}` });
+
+    // A web3 wallet: no fallback to sending the same credit from the wallet.
+    const web3Wallet = await harness({ relay: "fail-after-send", failStatus, failBody, handlers: settled });
+    expect(await runGroup(web3Wallet.deps, web3Wallet.group, web3Wallet.resolved)).toMatchObject({ status: "pending", txHash: null });
+    expect(web3Wallet.relay.posts).toHaveLength(1);
+    expect(web3Wallet.wallet.sent).toHaveLength(0);
+    expect(web3Wallet.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
+  });
 });
 
 describe("process death between boundaries, then resume", () => {
@@ -386,6 +425,57 @@ describe("process death between boundaries, then resume", () => {
     const results = await resumeCheckout(h.deps, state, [h.group], h.resolved);
     expect(results[h.group.keyId]).toMatchObject({ status: "pending" });
     expect(h.relay.posts).toHaveLength(before);
+  });
+});
+
+describe("a credits group the relay refuses", () => {
+  it("without the relay's evidence that nothing was sent, a refusal is not trusted: the credit is kept", async () => {
+    // An earlier version of this relay answered a revert to the send as a 400, after sending.
+    const inApp = await harness({ session: web2(), relay: "refuse", refuseEvidence: false });
+    expect(await runGroup(inApp.deps, inApp.group, inApp.resolved)).toMatchObject({ status: "pending", txHash: null });
+    expect(inApp.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
+    const web3Wallet = await harness({ relay: "refuse", refuseEvidence: false });
+    expect(await runGroup(web3Wallet.deps, web3Wallet.group, web3Wallet.resolved)).toMatchObject({ status: "pending", txHash: null });
+    expect(web3Wallet.wallet.sent).toHaveLength(0);
+  });
+
+  it("with it, the in-app wallet's credit is given back and a web3 wallet sends the same credit itself", async () => {
+    const inApp = await harness({ session: web2(), relay: "refuse", refuseStatus: 503 });
+    expect(await runGroup(inApp.deps, inApp.group, inApp.resolved)).toMatchObject({ status: "failed" });
+    expect(inApp.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(true);
+    const web3Wallet = await harness({ relay: "refuse", refuseStatus: 503 });
+    web3Wallet.chain.receipts.set(`0x${"1".padStart(64, "0")}`, "success");
+    expect(await runGroup(web3Wallet.deps, web3Wallet.group, web3Wallet.resolved)).toMatchObject({ status: "confirmed" });
+    expect(web3Wallet.wallet.sent).toHaveLength(1);
+    expect(web3Wallet.shop.log.filter((r) => r.name === "authorizeCreditBatch")).toHaveLength(1);
+  });
+});
+
+describe("a relayed MANA group the relay answers", () => {
+  const approved = (h: Harness) => h.chain.allowances.set(`137:${BOOK.buyer}:${BOOK.marketplace.contract}`, 10n ** 20n);
+
+  // A MANA group has no credit to expire and no server record: a refusal read as "maybe sent"
+  // would leave it pending for good.
+  it("a refusal the relay marks as not sent (fees above its cap): an in-app wallet fails it, a web3 wallet sends it itself", async () => {
+    const inApp = await harness({ method: "mana", session: web2(), relay: "refuse", refuseStatus: 503 });
+    approved(inApp);
+    expect(await runGroup(inApp.deps, inApp.group, inApp.resolved)).toMatchObject({ status: "failed" });
+    expect(statusOf(inApp).status).toBe("failed");
+
+    const web3Wallet = await harness({ method: "mana", relay: "refuse", refuseStatus: 503 });
+    approved(web3Wallet);
+    web3Wallet.chain.receipts.set(`0x${"1".padStart(64, "0")}`, "success");
+    expect(await runGroup(web3Wallet.deps, web3Wallet.group, web3Wallet.resolved)).toMatchObject({ status: "confirmed" });
+    expect(web3Wallet.relay.posts).toHaveLength(1);
+    expect(web3Wallet.wallet.sent).toHaveLength(1);
+  });
+
+  it("an answer after a send attempt (504): it stays pending, and nothing is sent from the wallet", async () => {
+    const h = await harness({ method: "mana", relay: "fail-after-send", failStatus: 504, confirm: "none" });
+    approved(h);
+    expect(await runGroup(h.deps, h.group, h.resolved)).toMatchObject({ status: "pending", txHash: null });
+    expect(h.relay.posts).toHaveLength(1);
+    expect(h.wallet.sent).toHaveLength(0);
   });
 });
 

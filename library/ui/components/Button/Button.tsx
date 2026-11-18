@@ -37,6 +37,11 @@ type NativeProps =
 
 export type ButtonProps = NativeProps &
   Content & {
+    /**
+     * Button owns its content, so native HTML cannot replace it. Omit this key before spreading a
+     * typed `ButtonHTMLAttributes` or `AnchorHTMLAttributes` object into Button.
+     */
+    dangerouslySetInnerHTML?: never
     children?: ReactNode
     label?: ReactNode
     size?: 'xl' | 'lg' | 'md' | 'sm'
@@ -47,6 +52,7 @@ export type ButtonProps = NativeProps &
     startIcon?: ReactNode
     endIcon?: ReactNode
     forceState?: 'hover' | 'pressed' | 'focus'
+    contentLayout?: 'intrinsic' | 'fill'
   } & ({ iconOnly?: false } | ({ iconOnly: true } & AccessibleName)) &
   ({ variant?: Exclude<Variant, 'iconOnly'> } | ({ variant: 'iconOnly' } & AccessibleName))
 
@@ -64,9 +70,11 @@ export function Button({
   iconOnly = false,
   forceState,
   className,
+  contentLayout = 'intrinsic',
   disabled = false,
   ...native
 }: ButtonProps) {
+  const layout = contentLayout === 'fill' ? 'fill' : 'intrinsic'
   const compact = iconOnly || variant === 'iconOnly'
   const unavailable =
     disabled || loading || native['aria-disabled'] === true || native['aria-disabled'] === 'true'
@@ -81,7 +89,11 @@ export function Button({
           : variant
   const content = (
     <>
-      <span className={styles.content} data-loading={loading || undefined}>
+      <span
+        className={styles.content}
+        data-loading={loading || undefined}
+        data-content-layout={compact ? 'intrinsic' : layout}
+      >
         {(leadingIcon ?? startIcon) != null && (
           <span className={styles.icon} aria-hidden="true">
             {leadingIcon ?? startIcon}
@@ -133,6 +145,7 @@ export function Button({
       <a
         {...anchor}
         {...common}
+        dangerouslySetInnerHTML={undefined}
         href={unavailable ? undefined : href}
         target={target}
         rel={secureRel(target, rel)}
@@ -157,6 +170,7 @@ export function Button({
     <button
       {...button}
       {...common}
+      dangerouslySetInnerHTML={undefined}
       type={type}
       disabled={disabled}
       onClick={guardClick(onClick)}

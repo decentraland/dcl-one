@@ -13,6 +13,37 @@ use super::errors::ApiError;
 use super::store::Credits;
 use super::wallet::GrantOutcome;
 
+/// Why a manual refund of a checkout is refused.
+pub const NOT_MANUALLY_REFUNDABLE: &str = "checkout is not refundable (only a debited, not-yet-reversed checkout in 'fulfilling'/'fulfilled' can be manually refunded)";
+
+/// Locks the wallet, then the checkout (the refund's order), and refuses the
+/// manual refund unless the checkout is still `fulfilling` or `fulfilled` or
+/// this refund already ran (a replay), so it never races compensation.
+async fn lock_refundable(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    id: i64,
+    address: &str,
+    idem: &str,
+) -> Result<(), ApiError> {
+    sqlx::query("SELECT 1 FROM credits.wallets WHERE address = $1 FOR UPDATE")
+        .bind(address)
+        .fetch_optional(&mut **tx)
+        .await?;
+    let refundable: Option<bool> = sqlx::query_scalar(
+        "SELECT status IN ('fulfilling', 'fulfilled') OR EXISTS (SELECT 1 FROM credits.idempotency \
+                 WHERE scope = 'refund' AND idempotency_key = $2) \
+         FROM credits.checkouts WHERE id = $1 FOR UPDATE",
+    )
+    .bind(id)
+    .bind(idem)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if refundable != Some(true) {
+        return Err(ApiError::conflict(NOT_MANUALLY_REFUNDABLE));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct CartItemRow {
     pub item_id: String,
@@ -240,6 +271,10 @@ impl Credits {
         }))
     }
 
+    /// Refunds `amount` and closes a `fulfilling` checkout as `failed`, once
+    /// [`lock_refundable`] holds the wallet and the checkout. A closed
+    /// checkout's unrecorded broker claims (no transaction recorded) are fenced
+    /// in the same transaction; a buy already recorded may still deliver.
     pub async fn refund_checkout_manual(
         &self,
         id: i64,
@@ -249,6 +284,7 @@ impl Credits {
         let tx_ref = format!("checkout:{}", id);
         let idem = format!("admin:refund:{}", id);
         let mut tx = self.pool.begin().await?;
+        lock_refundable(&mut tx, id, address, &idem).await?;
         let outcome = self
             .refund_in_tx(&mut tx, address, amount, &tx_ref, Some(&idem))
             .await?;
@@ -261,6 +297,10 @@ impl Credits {
         .await?
         .rows_affected()
             > 0;
+        if closed {
+            // after the freeze's row lock, so no claim of a line lands unfenced
+            super::fulfillment::fence_unsent_lines(&mut tx, id).await?;
+        }
         tx.commit().await?;
         Ok((outcome, closed))
     }
@@ -278,6 +318,7 @@ impl Credits {
         let tx_ref = format!("checkout:{}", id);
         let idem = format!("admin:refund:{}", id);
         let mut tx = self.pool.begin().await?;
+        lock_refundable(&mut tx, id, address, &idem).await?;
         let outcome = self
             .refund_in_tx(&mut tx, address, amount, &tx_ref, Some(&idem))
             .await?;
@@ -299,6 +340,9 @@ impl Credits {
         .bind(&detail)
         .fetch_one(&mut *tx)
         .await?;
+        if closed {
+            super::fulfillment::fence_unsent_lines(&mut tx, id).await?;
+        }
         tx.commit().await?;
         Ok((outcome, closed))
     }

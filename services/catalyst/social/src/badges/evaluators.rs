@@ -8,6 +8,8 @@
 //! the two upstream hardcodes in its observers (3 wearables of a rarity, a
 //! height of 500).
 
+use std::collections::HashSet;
+
 use serde_json::{Map, Value, json};
 
 use super::Progress;
@@ -189,13 +191,17 @@ pub fn social_butterfly(p: &mut Progress, user: &str, receiver: &str) {
 }
 
 /// `vertical-voyager.ts`: a height of at least 500 completes it, the document
-/// becomes `{steps: 1, height_reached}`.
-pub fn vertical_voyager(p: &mut Progress, height: f64) {
-    if p.completed || height.is_nan() || height < ELEVATION_NEEDED {
+/// becomes `{steps: 1, height_reached}`; an event without one (the Unity
+/// explorer's) completes it with `{steps: 1}`, as upstream's
+/// `undefined < 500` let it.
+pub fn vertical_voyager(p: &mut Progress, height: Option<f64>) {
+    if p.completed || height.is_some_and(|h| h.is_nan() || h < ELEVATION_NEEDED) {
         return;
     }
     let mut state = Map::new();
-    state.insert("height_reached".into(), json!(height));
+    if let Some(height) = height {
+        state.insert("height_reached".into(), json!(height));
+    }
     replace_state(p, 1, state);
 }
 
@@ -335,27 +341,46 @@ pub fn published_key(badge_id: &str) -> &'static str {
     }
 }
 
-/// `emote-creator.ts` / `wearable-designer.ts`: one step per item not yet in
-/// the list (`{itemId, createdAt}`; `itemId` is the collections subgraph's
-/// `<contract>-<item>`), for every item of the creator the mirror holds.
+/// `emote-creator.ts` / `wearable-designer.ts`: lists every item of the
+/// creator the mirror holds (`{itemId, createdAt}`; `itemId` is the
+/// collections subgraph's `<contract>-<item>`). `items` is the creator's
+/// whole set, so steps are its size, never below what is stored: an imported
+/// entry in another id format cannot count an item twice.
 pub fn creator(p: &mut Progress, badge_id: &str, items: &[(String, i64)]) {
     if p.completed {
         return;
     }
     let list = array(p, published_key(badge_id));
-    let mut added = 0;
+    let mut known: HashSet<String> = list
+        .iter()
+        .filter_map(|v| v.get("itemId").and_then(Value::as_str))
+        .map(item_key)
+        .collect();
     for (item_id, created_at_ms) in items {
-        let known = list.iter().any(|v| {
-            v.get("itemId")
-                .and_then(Value::as_str)
-                .is_some_and(|i| i.eq_ignore_ascii_case(item_id))
-        });
-        if !known {
+        if known.insert(item_key(item_id)) {
             list.push(json!({ "itemId": item_id, "createdAt": created_at_ms }));
-            added += 1;
         }
     }
-    p.steps = p.steps.saturating_add(added);
+    let total = i32::try_from(items.len()).unwrap_or(i32::MAX);
+    p.steps = p.steps.max(total);
+}
+
+/// A creator list item id as `<contract>-<item>` lowercased, from that form
+/// or a collections URN (`urn:decentraland:<network>:collections-v2:<contract>:<item>`).
+pub(crate) fn item_key(id: &str) -> String {
+    let id = id.to_ascii_lowercase();
+    let urn = id
+        .strip_prefix("urn:decentraland:")
+        .and_then(|rest| rest.split_once(':'))
+        .and_then(|(_, rest)| rest.strip_prefix("collections-v2:"))
+        .and_then(|rest| rest.split_once(':'))
+        .map(|(contract, rest)| {
+            format!(
+                "{contract}-{}",
+                rest.split_once(':').map_or(rest, |(item, _)| item)
+            )
+        });
+    urn.unwrap_or(id)
 }
 
 /// The buyers' purchase list key (`emotionista.ts`, `fashionista.ts`).
@@ -532,10 +557,13 @@ mod tests {
     #[test]
     fn vertical_voyager_needs_500() {
         let mut p = progress(0, json!({}));
-        vertical_voyager(&mut p, 499.9);
+        vertical_voyager(&mut p, Some(499.9));
         assert_eq!(p.steps, 0);
-        vertical_voyager(&mut p, 500.0);
+        vertical_voyager(&mut p, Some(500.0));
         assert_eq!(p.document(), json!({"steps": 1, "height_reached": 500.0}));
+        let mut unity = progress(0, json!({}));
+        vertical_voyager(&mut unity, None);
+        assert_eq!(unity.document(), json!({"steps": 1}));
     }
 
     fn mv(title: &str, on_ms: i64) -> Move {
@@ -691,6 +719,52 @@ mod tests {
             w.state["published_wearables"][0]["itemId"],
             json!("0xdef-3")
         );
+    }
+
+    #[test]
+    fn item_keys_collapse_only_collections_v2_urns() {
+        assert_eq!(
+            item_key("urn:decentraland:matic:collections-v2:0xAB:3"),
+            "0xab-3"
+        );
+        assert_eq!(
+            item_key("urn:decentraland:matic:collections-v2:0xab:3:42"),
+            "0xab-3"
+        );
+        assert_eq!(item_key("0xAB-3"), "0xab-3");
+        assert_eq!(
+            item_key("urn:decentraland:off-chain:base-avatars:bear"),
+            "urn:decentraland:off-chain:base-avatars:bear"
+        );
+        assert_eq!(
+            item_key("urn:decentraland:ethereum:collections-v1:halloween:hat"),
+            "urn:decentraland:ethereum:collections-v1:halloween:hat"
+        );
+    }
+
+    #[test]
+    fn creators_never_count_an_imported_item_twice() {
+        // imported under another id format: the mirror's ids do not match it
+        let mut p = progress(
+            2,
+            json!({"published_emotes": [
+                {"itemId": "urn:decentraland:matic:collections-v2:0xabc:0", "createdAt": 5},
+                {"itemId": "urn:decentraland:matic:collections-v2:0xabc:1", "createdAt": 6}
+            ]}),
+        );
+        let items = [
+            ("0xabc-0".to_string(), 5_000),
+            ("0xabc-1".to_string(), 6_000),
+            ("0xabc-2".to_string(), 7_000),
+        ];
+        creator(&mut p, EMOTE_CREATOR, &items);
+        assert_eq!(p.steps, 3);
+        let listed = p.state["published_emotes"].as_array().unwrap().len();
+        assert_eq!(listed, 3, "the URN entries stand for their items");
+        // a stored count above the mirror's is kept
+        let mut q = progress(9, json!({}));
+        creator(&mut q, EMOTE_CREATOR, &items);
+        assert_eq!(q.steps, 9);
     }
 
     #[test]

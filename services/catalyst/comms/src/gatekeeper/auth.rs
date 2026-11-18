@@ -281,9 +281,9 @@ pub async fn verify_signed_fetch(
     .await
 }
 
-/// A wallet's own signed fetch (the player-report routes): any `signer`
-/// but the scene's (a re-spelled key refused too, 400), so a scene-signed
-/// chain is never filed as the wallet that signed it.
+/// A wallet's own signed fetch (player reports, scene adapter, island
+/// refresh): any `signer` but the scene's (a re-spelled key refused too,
+/// 400), so a scene-signed chain never acts as the wallet that signed it.
 pub async fn verify_wallet_signed_fetch(
     headers: &HeaderMap,
     method: &str,
@@ -297,6 +297,29 @@ pub async fn verify_wallet_signed_fetch(
         &[],
         &[SCENE_SIGNER],
         CANONICAL_METADATA_KEYS,
+        DEFAULT_EXPIRATION_SECS,
+        validator,
+    )
+    .await
+}
+
+/// Upstream's `authWatcher` (`/cast/watcher-token`): a wallet's own signed
+/// fetch, any `signer` but the scene's, and deliberately strict: no
+/// `canonicalMetadataKeys`, so the pre-6.0.0 payload is refused (the cast web
+/// app signs all-lowercase metadata, for which both payloads are the same).
+pub async fn verify_viewer_signed_fetch(
+    headers: &HeaderMap,
+    method: &str,
+    path: &SignedPath,
+    validator: Option<&dyn Eip1654Validator>,
+) -> Result<SignedFetch, SignedFetchError> {
+    verify_with_keys(
+        headers,
+        method,
+        path,
+        &[],
+        &[SCENE_SIGNER],
+        &[],
         DEFAULT_EXPIRATION_SECS,
         validator,
     )
@@ -321,32 +344,6 @@ pub async fn verify_server_signed_fetch(
         validator,
     )
     .await
-}
-
-/// The bare signer of a request (the authoritative server's route): the five
-/// minute window, either payload shape, no metadata gate.
-pub async fn require_signer(
-    headers: &HeaderMap,
-    method: &str,
-    path: &SignedPath,
-    validator: Option<&dyn Eip1654Validator>,
-) -> Result<Address, SignedFetchError> {
-    let chain = signed_fetch::extract_auth_chain(headers).map_err(map_chain_error)?;
-    let ts = timestamp_or_zero(header_str(headers, AUTH_TIMESTAMP_HEADER));
-    let now = chrono::Utc::now().timestamp();
-    check_timestamp_window(ts, now, FIVE_MINUTES).map_err(map_chain_error)?;
-    let request = SignedRequest {
-        method,
-        paths: &candidate_paths(headers, path),
-        timestamp: ts,
-        metadata: header_str(headers, AUTH_METADATA_HEADER).unwrap_or("{}"),
-    };
-    let outcome = verify_signature(&chain, &request, now, LegacyPayload::Accepted, validator).await;
-    match verdict(outcome, &chain) {
-        Verdict::Signer(signer) => Ok(signer),
-        Verdict::InvalidSignature => Err(SignedFetchError::new(401, "Invalid signature")),
-        Verdict::Other(e) => Err(e),
-    }
 }
 
 /// The platform service token in front of the voice routes and the world
@@ -640,10 +637,10 @@ mod tests {
             "the gatekeeper window is 60 s"
         );
         assert!(
-            require_signer(&headers, "post", &SignedPath::local(PATH), None)
+            verify_server_signed_fetch(&headers, "post", &SignedPath::local(PATH), None)
                 .await
                 .is_ok(),
-            "the bare signer route keeps the five minute window"
+            "the authoritative server route keeps the five minute window"
         );
     }
 

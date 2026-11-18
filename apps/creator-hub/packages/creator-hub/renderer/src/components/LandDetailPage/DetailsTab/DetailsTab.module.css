@@ -1,0 +1,207 @@
+/* Two classes: over the rules of the text field. */
+.descriptionInput.descriptionInput {
+  min-height: 168px;
+}
+
+/* The element that opens the select on the press: it has no box. */
+.pressTarget {
+  display: contents;
+}
+
+/* Three classes: over the border, the focus ring and the font of the Select atom. */
+.domainSelect.domainSelect.domainSelect {
+  display: flex;
+  width: 100%;
+  height: 46px;
+  border: 0;
+  border-radius: 12px;
+  box-shadow: none;
+  color: var(--palette-neutral-softWhite);
+  font-family: var(--text-font);
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.125rem;
+  letter-spacing: 0.00938em;
+}
+
+.domainSelect.domainSelect.domainSelect [role="combobox"] {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: 13px 39px 13px 15px;
+  border: 1px solid var(--palette-whiteTransparent-blurry);
+  /* A button does not take the letter spacing of its parent. */
+  letter-spacing: inherit;
+}
+
+.domainSelect.domainSelect.domainSelect:hover [role="combobox"] {
+  border-color: var(--palette-whiteTransparent-backdrop);
+}
+
+.domainSelect.domainSelect.domainSelect [role="combobox"]:focus,
+.domainSelect.domainSelect.domainSelect[data-open] [role="combobox"] {
+  border-color: var(--palette-neutral-softWhite);
+}
+
+.domainSelect.domainSelect.domainSelect [role="combobox"] > span {
+  min-height: 0;
+  color: inherit;
+}
+
+/* The box of the chevron, 7px high. No transform centers it: the half pixel stays as it was. */
+.domainSelect.domainSelect.domainSelect > span[aria-hidden="true"] {
+  top: calc(50% - 3.5px);
+  right: 16px;
+  color: var(--palette-neutral-softWhite);
+  transform: none;
+}
+
+.domainSelect.domainSelect.domainSelect[data-open] > span[aria-hidden="true"] {
+  transform: rotate(180deg);
+}
+
+/* The list is 4px under the field without this margin. */
+.domainMenu {
+  margin-top: -4px;
+  letter-spacing: 0.00938em;
+}
+
+/* No room under the field: the list stays under it and moves up over it, 16px from the window edge. */
+.domainMenu[data-placement^="top"] {
+  top: auto;
+  bottom: 16px;
+  margin-top: 0;
+}
+
+/* Under the open list: the page takes no hover and no click, and a press on it closes the list. */
+.menuBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-overlay) - 1);
+}
+
+/* Four selectors: over the rows of the ViewBar list. */
+.domainMenu.domainMenu [role="option"]:global(.Danger) {
+  color: var(--error);
+}
+
+.domainMenu.domainMenu [role="option"][aria-disabled="true"] {
+  opacity: 1;
+  color: var(--palette-whiteTransparent-blurry);
+}
+
+.domainMenu.domainMenu [role="option"][aria-disabled="true"] svg {
+  opacity: 0.4;
+}
+
+.emptyValue {
+  color: var(--dcl-silver);
+}
+
+.primaryLink {
+  align-self: flex-start;
+  color: var(--brand);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: normal;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+.primaryLink:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.inputSlot {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.help {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  line-height: normal;
+}
+
+.counter {
+  margin-left: auto;
+  color: var(--dcl-silver);
+  font-size: 0.75rem;
+}
+
+.counter[data-over] {
+  color: var(--error);
+}
+
+.errorText {
+  color: var(--error);
+  font-size: 0.875rem;
+  line-height: normal;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 1044px;
+}
+
+.fieldTitle {
+  color: var(--white);
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: normal;
+}
+
+.domainHelp {
+  margin: 0;
+  color: var(--palette-neutral-softWhite);
+  font-size: 0.875rem;
+  line-height: normal;
+}
+
+.readOnly {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+}
+
+.readOnly dt {
+  color: var(--white);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.readOnly dd {
+  margin: 0 0 16px;
+  color: var(--palette-neutral-softWhite);
+  font-size: 1rem;
+}
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  padding-top: 9px;
+}
+
+.setName.setName {
+  gap: 10px;
+}
+
+/* Two classes: over the padding and the colour of the IconButton atom. */
+.setName.setName button {
+  padding: 5px;
+  margin: -5px;
+  color: var(--white);
+}

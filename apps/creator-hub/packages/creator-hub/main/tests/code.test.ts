@@ -1,25 +1,40 @@
+import fs from 'fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { EditorConfig } from '/shared/types/config';
 
-import { open } from '../src/modules/code';
+import { addEditor, addEditorsPathsToConfig, open } from '../src/modules/code';
 
 // `vi.hoisted` is required here: code.ts imports `child_process` and `electron` at its
 // top, so the factories below run before plain module-level consts are initialized.
-const { execFileSpy, execSpy, openPathSpy, showItemInFolderSpy } = vi.hoisted(() => {
+const { launch, spawnSpy, execSpy, openPathSpy, showItemInFolderSpy } = vi.hoisted(() => {
   const succeed = (...args: unknown[]) => {
     const cb = args[args.length - 1] as (err: unknown, res: unknown) => void;
     cb(null, { stdout: '', stderr: '' });
   };
+  // A child process that starts, or fails to start with `error`, right after `spawn` returns.
+  const launch =
+    (error?: Error) =>
+    (..._args: unknown[]) => {
+      const handlers: Record<string, (arg?: unknown) => void> = {};
+      queueMicrotask(() => (error ? handlers.error?.(error) : handlers.spawn?.()));
+      return {
+        once: (event: string, handler: (arg?: unknown) => void) => {
+          handlers[event] = handler;
+        },
+        unref: vi.fn(),
+      };
+    };
   return {
-    execFileSpy: vi.fn(succeed),
+    launch,
+    spawnSpy: vi.fn(launch()),
     execSpy: vi.fn(succeed),
     openPathSpy: vi.fn(),
     showItemInFolderSpy: vi.fn(),
   };
 });
 
-vi.mock('child_process', () => ({ exec: execSpy, execFile: execFileSpy }));
+vi.mock('child_process', () => ({ exec: execSpy, spawn: spawnSpy }));
 
 vi.mock('electron', () => ({
   app: { getAppPath: () => '/app' },
@@ -68,6 +83,8 @@ vi.mock('fs/promises', () => ({
   default: {
     stat: vi.fn(async () => ({ isDirectory: () => true })),
     readdir: vi.fn(async () => []),
+    access: vi.fn(async () => undefined),
+    constants: { X_OK: 1 },
   },
 }));
 
@@ -86,8 +103,8 @@ describe('code.open', () => {
     it('should pass the whole path as a single argv element', async () => {
       await open(pathWithShellCharacters);
 
-      expect(execFileSpy).toHaveBeenCalledTimes(1);
-      const [file, args] = execFileSpy.mock.calls[0];
+      expect(spawnSpy).toHaveBeenCalledTimes(1);
+      const [file, args] = spawnSpy.mock.calls[0];
       expect(file).toBe(EDITOR_PATH);
       expect(args).toEqual([pathWithShellCharacters]);
     });
@@ -96,7 +113,7 @@ describe('code.open', () => {
       await open(pathWithShellCharacters);
 
       expect(execSpy).not.toHaveBeenCalled();
-      for (const call of execFileSpy.mock.calls) {
+      for (const call of spawnSpy.mock.calls) {
         expect(typeof call[0]).toBe('string');
         expect(call[0]).not.toContain('$(');
         expect(call[0]).not.toContain(pathWithShellCharacters);
@@ -105,10 +122,18 @@ describe('code.open', () => {
   });
 
   describe('when the editor launches successfully', () => {
+    it('should not wait for the editor to exit or keep its output', async () => {
+      await open('/projects/scene/main.ts');
+
+      const [, , options] = spawnSpy.mock.calls[0] as [string, string[], Record<string, unknown>];
+      expect(options).toMatchObject({ detached: true, stdio: 'ignore' });
+      expect(spawnSpy.mock.results[0].value.unref).toHaveBeenCalled();
+    });
+
     it('should not also reveal the path in the file manager', async () => {
       await open('/projects/scene/main.ts');
 
-      expect(execFileSpy).toHaveBeenCalledTimes(1);
+      expect(spawnSpy).toHaveBeenCalledTimes(1);
       expect(showItemInFolderSpy).not.toHaveBeenCalled();
       expect(openPathSpy).not.toHaveBeenCalled();
     });
@@ -128,10 +153,7 @@ describe('code.open', () => {
 
   describe('when the editor process fails', () => {
     beforeEach(() => {
-      execFileSpy.mockImplementationOnce((...args: unknown[]) => {
-        const cb = args[args.length - 1] as (err: unknown) => void;
-        cb(new Error('spawn failed'));
-      });
+      spawnSpy.mockImplementationOnce(launch(new Error('spawn ENOENT')));
     });
 
     it('should reveal the path in the file manager', async () => {
@@ -155,7 +177,7 @@ describe('code.open', () => {
     it('should reveal the path without launching a process', async () => {
       await open('/projects/scene/main.ts');
 
-      expect(execFileSpy).not.toHaveBeenCalled();
+      expect(spawnSpy).not.toHaveBeenCalled();
       expect(showItemInFolderSpy).toHaveBeenCalledWith('/projects/scene/main.ts');
     });
 
@@ -195,7 +217,7 @@ describe('code.open', () => {
     });
 
     function editorEnv() {
-      const [, , options] = execFileSpy.mock.calls[0] as [
+      const [, , options] = spawnSpy.mock.calls[0] as [
         string,
         string[],
         { env: NodeJS.ProcessEnv },
@@ -241,6 +263,131 @@ describe('code.open', () => {
       await open('/projects/scene/main.ts');
 
       expect(editorEnv()).not.toHaveProperty('ELECTRON_RUN_AS_NODE');
+    });
+  });
+});
+
+describe('when the platform is Linux', () => {
+  const originalPlatform = process.platform;
+  const originalPath = process.env.PATH;
+  const INSTALLED = [
+    '/usr/bin/code',
+    '/usr/bin/subl',
+    '/opt/zed/bin/zed',
+    '/snap/bin/cursor',
+    '/opt/tools/constructor',
+  ];
+  // Files that are there but that the user cannot run.
+  const NOT_EXECUTABLE = ['/home/user/bin/code', '/usr/share/applications/code.desktop'];
+  const LAUNCHER = '/home/user/Desktop/code.desktop';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    process.env.PATH = '/home/user/bin:/usr/bin';
+    editors = [];
+    vi.mocked(fs.stat).mockImplementation((async (file: string) => {
+      if (INSTALLED.includes(file) || NOT_EXECUTABLE.includes(file) || file === LAUNCHER) {
+        return { isDirectory: () => false, isFile: () => true };
+      }
+      if (file === '/usr/bin') return { isDirectory: () => true, isFile: () => false };
+      throw new Error('ENOENT');
+    }) as never);
+    vi.mocked(fs.access).mockImplementation((async (file: string) => {
+      if (!INSTALLED.includes(file) && file !== LAUNCHER) throw new Error('EACCES');
+    }) as never);
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform });
+    process.env.PATH = originalPath;
+    vi.mocked(fs.stat).mockImplementation((async () => ({ isDirectory: () => true })) as never);
+    vi.mocked(fs.access).mockImplementation((async () => undefined) as never);
+  });
+
+  describe('code.addEditorsPathsToConfig', () => {
+    it('should add the editors whose command is in PATH or the snap folder, and skip a file that cannot run', async () => {
+      await addEditorsPathsToConfig();
+
+      expect(editors).toEqual([
+        { name: 'Visual Studio Code', path: '/usr/bin/code', isDefault: true },
+        { name: 'Cursor', path: '/snap/bin/cursor', isDefault: false },
+        { name: 'Sublime Text', path: '/usr/bin/subl', isDefault: false },
+      ]);
+    });
+
+    it('should find a Flatpak editor that is not in PATH', async () => {
+      INSTALLED.push('/var/lib/flatpak/exports/bin/com.vscodium.codium');
+      try {
+        await addEditorsPathsToConfig();
+      } finally {
+        INSTALLED.pop();
+      }
+
+      expect(editors).toContainEqual({
+        name: 'VSCodium',
+        path: '/var/lib/flatpak/exports/bin/com.vscodium.codium',
+        isDefault: false,
+      });
+    });
+
+    it('should list an editor installed in two ways once', async () => {
+      INSTALLED.push('/var/lib/flatpak/exports/bin/com.visualstudio.code');
+      try {
+        await addEditorsPathsToConfig();
+      } finally {
+        INSTALLED.pop();
+      }
+
+      expect(editors.filter(editor => editor.name === 'Visual Studio Code')).toEqual([
+        { name: 'Visual Studio Code', path: '/usr/bin/code', isDefault: true },
+      ]);
+    });
+
+    it('should not run the search of another platform', async () => {
+      await addEditorsPathsToConfig();
+
+      expect(execSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('code.addEditor', () => {
+    it('should accept a command that has no extension', async () => {
+      await addEditor('/opt/zed/bin/zed');
+
+      expect(editors).toEqual([
+        { name: 'zed', path: '/opt/zed/bin/zed', isDefault: true, hidden: false },
+      ]);
+    });
+
+    it('should give a known command the name of its editor', async () => {
+      await addEditor('/snap/bin/cursor');
+
+      expect(editors[0].name).toBe('Cursor');
+    });
+
+    it('should use the file name of a command that has the name of an object property', async () => {
+      await addEditor('/opt/tools/constructor');
+
+      expect(editors[0].name).toBe('constructor');
+    });
+
+    it('should reject a path that does not exist', async () => {
+      await expect(addEditor('/usr/bin/missing')).rejects.toThrow('file_not_found');
+    });
+
+    it('should reject a file that the user cannot run', async () => {
+      await expect(addEditor('/usr/share/applications/code.desktop')).rejects.toThrow(
+        'invalid_executable',
+      );
+    });
+
+    it('should reject a desktop entry that is marked executable', async () => {
+      await expect(addEditor(LAUNCHER)).rejects.toThrow('invalid_executable');
+    });
+
+    it('should reject a directory', async () => {
+      await expect(addEditor('/usr/bin')).rejects.toThrow('invalid_executable');
     });
   });
 });

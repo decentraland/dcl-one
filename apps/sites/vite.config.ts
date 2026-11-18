@@ -14,6 +14,8 @@ const shopCore = fileURLToPath(new URL("../../library/shop", import.meta.url));
 const hud = fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url));
 const explorerCore = fileURLToPath(new URL("../../library/explorer-core", import.meta.url));
 const hudHost = fileURLToPath(new URL("../ui3/src/play/host.ts", import.meta.url));
+// What /play supplies to the in-world Shop UI (library/ui/apps/shop).
+const shopHost = fileURLToPath(new URL("../ui3/src/play/shopHost.ts", import.meta.url));
 // library/ui/apps/hud has no node_modules of its own: the @noble modules it imports resolve to this app's
 // copies. Only these specifiers: a dependency of this app keeps an older @noble of its own. Keep this list
 // to the @noble modules library/explorer-core imports; tsconfig.json maps all of @noble/* for the type check.
@@ -79,6 +81,8 @@ function nodeProxy(): Record<string, ProxyOptions> {
     }),
     "/places/api/": to(),
     "/events/api/": to(),
+    // The Events page reads the event list here from the browser too (`fetchEvents`).
+    "/events/v1/": to(),
     "/shop-api": to(),
     "/marketplace-api": to(),
     "/social-api": to(),
@@ -119,6 +123,9 @@ function nodeProxy(): Record<string, ProxyOptions> {
     "/events-assets-099ac00": to(),
     "/opensea": to(),
     "/comms-gatekeeper": to(),
+    // Cast 2.0: the gateway's `^~ /cast/` alias to the gatekeeper, except the stream and watch
+    // pages (/cast/s/, /cast/w/), which are this app's (infra/gateway/gateway.py).
+    "^/cast/(?!s/|w/)": to({ rewrite: (path) => `/comms-gatekeeper${path}` }),
     "/badges": to(),
     "/profile-images": to(),
     "/signatures-api": to(),
@@ -277,6 +284,7 @@ export default defineConfig({
         "@catalyst-api": catalystApi,
         "@shop": shopCore,
         "@hud-host": hudHost,
+        "@shop-host": shopHost,
         "@noble/curves/secp256k1.js": noble("curves/secp256k1.js"),
         "@noble/hashes/sha3.js": noble("hashes/sha3.js"),
         "@noble/hashes/utils.js": noble("hashes/utils.js"),
@@ -290,7 +298,6 @@ export default defineConfig({
         ws: platformWebSocket,
       }).map(([find, replacement]) => ({ find, replacement })),
       { find: /^@dcl\/one-ui$/, replacement: join(oneUi, "index.ts") },
-      { find: /^@dcl\/one-ui\/foundations\.css$/, replacement: join(oneUi, "foundations", "foundations.css") },
       { find: /^@dcl\/one-ui\/text-styles\.module\.css$/, replacement: join(oneUi, "foundations", "typography", "text-styles.module.css") },
       { find: /^@dcl\/one-ui\//, replacement: `${oneUi}/` },
     ],

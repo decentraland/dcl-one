@@ -42,6 +42,11 @@ export async function putSubscription(
   });
 }
 
+/** A loose shape check before the server's own: one `@`, no spaces, a dot in the domain. */
+export function isEmailAddress(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
 /** Starts an address change; the server mails a confirmation link to `email`. */
 export async function putEmail(
   identity: AuthIdentity,
@@ -123,7 +128,8 @@ export function isTypeEmailEnabled(details: SubscriptionDetails, type: string): 
 
 /**
  * Sets one type's email channel, leaving in-app as it was (on for a type not yet listed).
- * `ignore_all_email` becomes true only when no type keeps email on.
+ * A type change never unmutes: muted email stays muted, and unmuted email becomes muted only when
+ * no type keeps email on. Only the master switch (`setAllEmail`) unmutes.
  */
 export function setTypeEmail(
   details: SubscriptionDetails,
@@ -132,7 +138,8 @@ export function setTypeEmail(
 ): SubscriptionDetails {
   const current = details.message_type[type] ?? { email: false, in_app: true };
   const messageType = { ...details.message_type, [type]: { ...current, email: enabled } };
-  const ignoreAllEmail = Object.values(messageType).every((channel) => !channel.email);
+  const ignoreAllEmail =
+    details.ignore_all_email || Object.values(messageType).every((channel) => !channel.email);
   return { ...details, ignore_all_email: ignoreAllEmail, message_type: messageType };
 }
 
