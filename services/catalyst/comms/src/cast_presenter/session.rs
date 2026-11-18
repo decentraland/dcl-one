@@ -16,10 +16,12 @@
 //! away mid-request leaves either a running session or nothing. Multipart
 //! uploads being read hold an upload permit, as many as there are slots.
 //!
-//! The PDF load and each render have a deadline ([`RENDER_TIMEOUT`]). hayro
-//! cannot be interrupted, so a timed-out render keeps its blocking thread
-//! until it returns; the creation or the session fails at once and releases
-//! its slot, and tokio's blocking pool bounds the threads such renders hold.
+//! The PDF load and each render run on [`RENDER_THREADS`] blocking threads
+//! at most, with a deadline ([`RENDER_TIMEOUT`]) that includes the wait for
+//! one. hayro cannot be interrupted, so a timed-out render keeps its thread
+//! until it returns, and that thread stays one of the [`RENDER_THREADS`]: the
+//! creation or the session fails at once and releases its slot, while stuck
+//! renders take render capacity, never more of tokio's shared blocking pool.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -40,6 +42,9 @@ pub const IDLE_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 const OVERLAY_BROADCAST_INTERVAL: Duration = Duration::from_millis(250);
 /// The PDF load, and each slide render.
 pub const RENDER_TIMEOUT: Duration = Duration::from_secs(30);
+/// The blocking threads PDF loads and renders take at once, timed-out ones
+/// included.
+pub const RENDER_THREADS: usize = 4;
 /// `MAX_CONCURRENT_PRESENTATIONS` when unset.
 pub const DEFAULT_MAX_CONCURRENT: usize = 10;
 /// The identity prefix of the gatekeeper's presentation-bot tokens
@@ -198,6 +203,7 @@ struct Session {
     file_type: FileType,
     slide_count: usize,
     doc: Arc<PdfDocument>,
+    renders: Arc<RenderPool>,
     bot: Arc<dyn BotLink>,
     state: tokio::sync::Mutex<SessionState>,
     /// The room's metadata and participant count, as the bot reports them.
@@ -217,6 +223,7 @@ pub struct Presenter {
     in_flight: AtomicUsize,
     /// Multipart uploads being read; `None` when unlimited.
     uploads: Option<Arc<Semaphore>>,
+    renders: Arc<RenderPool>,
 }
 
 /// A slot of the concurrency limit, released on drop unless a session took it.
@@ -244,7 +251,7 @@ impl Drop for Slot {
 }
 
 /// Why a render did not give a slide.
-enum RenderError {
+pub(super) enum RenderError {
     Failed(String),
     TimedOut,
 }
@@ -261,27 +268,67 @@ impl RenderError {
     }
 }
 
-async fn render(
-    doc: &Arc<PdfDocument>,
-    index: usize,
-) -> Result<(Frame, Vec<SlideVideo>), RenderError> {
-    let doc = doc.clone();
-    let rendering = tokio::task::spawn_blocking(move || doc.render(index));
-    match tokio::time::timeout(RENDER_TIMEOUT, rendering).await {
-        Ok(Ok(result)) => result.map_err(RenderError::Failed),
-        Ok(Err(e)) => Err(RenderError::Failed(format!(
-            "Failed to render slide {index}: {e}"
-        ))),
-        Err(_) => Err(RenderError::TimedOut),
-    }
+/// The blocking threads PDF work runs on: at most `threads` at once, each
+/// held until its work returns, whether or not anyone still waits for it.
+pub(super) struct RenderPool {
+    threads: Arc<Semaphore>,
+    timeout: Duration,
 }
 
-async fn load(file: Vec<u8>) -> Result<PdfDocument, String> {
-    let loading = tokio::task::spawn_blocking(move || PdfDocument::load(file));
-    match tokio::time::timeout(RENDER_TIMEOUT, loading).await {
-        Ok(Ok(result)) => result,
-        Ok(Err(e)) => Err(e.to_string()),
-        Err(_) => Err(format!("PDF did not load in {}s", RENDER_TIMEOUT.as_secs())),
+impl RenderPool {
+    pub(super) fn new(threads: usize, timeout: Duration) -> Self {
+        Self {
+            threads: Arc::new(Semaphore::new(threads)),
+            timeout,
+        }
+    }
+
+    /// `work` on one of the pool's threads, or [`RenderError::TimedOut`]
+    /// when it gave no result within the deadline, the wait for a thread
+    /// included.
+    pub(super) async fn run<T: Send + 'static>(
+        &self,
+        work: impl FnOnce() -> T + Send + 'static,
+    ) -> Result<T, RenderError> {
+        let threads = self.threads.clone();
+        let running = async move {
+            let thread = threads.acquire_owned().await.expect("never closed");
+            tokio::task::spawn_blocking(move || {
+                let _thread = thread;
+                work()
+            })
+            .await
+        };
+        match tokio::time::timeout(self.timeout, running).await {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(e)) => Err(RenderError::Failed(e.to_string())),
+            Err(_) => Err(RenderError::TimedOut),
+        }
+    }
+
+    async fn render(
+        &self,
+        doc: &Arc<PdfDocument>,
+        index: usize,
+    ) -> Result<(Frame, Vec<SlideVideo>), RenderError> {
+        let doc = doc.clone();
+        match self.run(move || doc.render(index)).await {
+            Ok(result) => result.map_err(RenderError::Failed),
+            Err(RenderError::Failed(e)) => Err(RenderError::Failed(format!(
+                "Failed to render slide {index}: {e}"
+            ))),
+            Err(RenderError::TimedOut) => Err(RenderError::TimedOut),
+        }
+    }
+
+    async fn load(&self, file: Vec<u8>) -> Result<PdfDocument, String> {
+        match self.run(move || PdfDocument::load(file)).await {
+            Ok(result) => result,
+            Err(RenderError::Failed(e)) => Err(e),
+            Err(RenderError::TimedOut) => {
+                Err(format!("PDF did not load in {}s", self.timeout.as_secs()))
+            }
+        }
     }
 }
 
@@ -300,6 +347,7 @@ impl Presenter {
             sessions: Mutex::new(HashMap::new()),
             in_flight: AtomicUsize::new(0),
             uploads: max_concurrent.map(|max| Arc::new(Semaphore::new(max))),
+            renders: Arc::new(RenderPool::new(RENDER_THREADS, RENDER_TIMEOUT)),
         })
     }
 
@@ -461,12 +509,19 @@ impl Presenter {
         bot.update_metadata(wire::bot_metadata(id, None))
             .await
             .map_err(|e| CreateError::Internal(e.to_string()))?;
-        let doc = Arc::new(load(file).await.map_err(CreateError::Internal)?);
+        let doc = Arc::new(
+            self.renders
+                .load(file)
+                .await
+                .map_err(CreateError::Internal)?,
+        );
         let slide_count = doc.page_count();
         if slide_count == 0 {
             return Err(CreateError::Internal("PDF contains no pages".into()));
         }
-        let (frame, slide_videos) = render(&doc, 0)
+        let (frame, slide_videos) = self
+            .renders
+            .render(&doc, 0)
             .await
             .map_err(|e| CreateError::SlideRender(e.message(0)))?;
         bot.publish_video(frame.width, frame.height)
@@ -482,6 +537,7 @@ impl Presenter {
             file_type: FileType::Pdf,
             slide_count,
             doc,
+            renders: self.renders.clone(),
             bot: bot.clone(),
             state: tokio::sync::Mutex::new(SessionState {
                 current_slide: 0,
@@ -711,7 +767,7 @@ impl Session {
         if target == current {
             return Ok(());
         }
-        match render(&self.doc, target).await {
+        match self.renders.render(&self.doc, target).await {
             Ok((frame, videos)) => {
                 if let Err(e) = self.bot.push_frame(&frame).await {
                     tracing::warn!(presentation = %self.id, "frame push failed: {e}");

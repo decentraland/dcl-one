@@ -1484,6 +1484,64 @@ async fn uploads_are_read_under_a_permit() {
     assert!(unlimited.upload_permit().unwrap().is_none());
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn timed_out_renders_keep_their_thread_and_no_more_start() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let pool = Arc::new(super::session::RenderPool::new(
+        2,
+        Duration::from_millis(100),
+    ));
+    let release = Arc::new(AtomicBool::new(false));
+    let (running, started, finished) = (
+        Arc::new(AtomicUsize::new(0)),
+        Arc::new(AtomicUsize::new(0)),
+        Arc::new(AtomicUsize::new(0)),
+    );
+    let stuck = || {
+        let (release, running, started, finished) = (
+            release.clone(),
+            running.clone(),
+            started.clone(),
+            finished.clone(),
+        );
+        move || {
+            started.fetch_add(1, Ordering::SeqCst);
+            running.fetch_add(1, Ordering::SeqCst);
+            while !release.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            running.fetch_sub(1, Ordering::SeqCst);
+            finished.fetch_add(1, Ordering::SeqCst);
+        }
+    };
+    // Six renders that never end on their own, three rounds of two: each
+    // times out, and its thread stays the pool's.
+    for _ in 0..3 {
+        let runs: Vec<_> = (0..2)
+            .map(|_| {
+                let pool = pool.clone();
+                let work = stuck();
+                tokio::spawn(async move { pool.run(work).await })
+            })
+            .collect();
+        for run in runs {
+            assert!(matches!(
+                run.await.unwrap(),
+                Err(super::session::RenderError::TimedOut)
+            ));
+        }
+    }
+    // Only the first two ever ran: the rest timed out waiting for a thread.
+    assert_eq!(started.load(Ordering::SeqCst), 2);
+    assert_eq!(running.load(Ordering::SeqCst), 2);
+    // Once they return, their threads serve again.
+    release.store(true, Ordering::SeqCst);
+    while finished.load(Ordering::SeqCst) < 2 {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(matches!(pool.run(|| 7).await, Ok(7)));
+}
+
 // ── downloads ──
 
 /// A local server: `/redirect` to a private host, `/big` one byte over 64,
