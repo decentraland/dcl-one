@@ -956,6 +956,12 @@ pub struct ScenePointers {
     // The realm lists its scenes up front (a World) and they have all resolved, so a parcel none
     // of them covers is empty rather than unknown; there is no pointer request to answer for it.
     all_scenes_known: bool,
+    // each named scene's base parcel by hash, from its `scene.json` as the realm listed it: a far
+    // LOD is placed from it without loading the scene's entity definition. Cleared with the
+    // pointers; a hash a redeployment replaced keeps its entry until then
+    bases: HashMap<String, IVec2>,
+    // bumped whenever what `get` answers may have changed
+    generation: u64,
 }
 
 impl Default for ScenePointers {
@@ -967,6 +973,8 @@ impl Default for ScenePointers {
             crcs: Default::default(),
             terrain: Default::default(),
             all_scenes_known: false,
+            bases: Default::default(),
+            generation: 0,
         }
     }
 }
@@ -999,6 +1007,7 @@ impl ScenePointers {
     pub fn set_all_scenes_known(&mut self) {
         if !self.all_scenes_known {
             self.all_scenes_known = true;
+            self.generation += 1;
             // the terrain has been reading those parcels as unknown
             self.terrain.invalidate();
         }
@@ -1012,6 +1021,8 @@ impl ScenePointers {
         self.realm_bounds = (min_bound, max_bound);
         self.all_scenes_known = false;
         self.pointers.clear();
+        self.bases.clear();
+        self.generation += 1;
         self.crcs.clear();
         self.terrain.invalidate();
     }
@@ -1107,7 +1118,26 @@ impl ScenePointers {
         self.terrain
             .mark(parcel, matches!(result, PointerResult::Exists { .. }));
         self.pointers.insert(parcel, result);
+        self.generation += 1;
         res
+    }
+
+    /// Records the base parcel of the scene `hash`, as its `scene.json` names it.
+    pub(crate) fn set_base(&mut self, hash: &str, base: IVec2) {
+        self.bases.insert(hash.to_owned(), base);
+    }
+
+    /// The base parcel of a scene the pointers name, when the realm listed it with its
+    /// `scene.json`.
+    pub(crate) fn base(&self, hash: &str) -> Option<IVec2> {
+        self.bases.get(hash).copied()
+    }
+
+    /// Changes whenever what `get` answers may have changed, so a reader can keep what it worked
+    /// out from the pointers until then. Change detection on the resource cannot tell, since
+    /// `crc` and the terrain take it mutably.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub fn min(&self) -> IVec2 {
@@ -1603,17 +1633,22 @@ fn load_active_entities(
                 }
             }
 
+            let parcel = |pointer: &str| {
+                let (x, y) = pointer.split_once(',')?;
+                let x = x.parse::<i32>().ok()?;
+                let y = y.parse::<i32>().ok()?;
+                Some(IVec2::new(x, y))
+            };
             let parcels = meta
                 .scene
                 .parcels
                 .iter()
-                .filter_map(|pointer| {
-                    let (x, y) = pointer.split_once(',')?;
-                    let x = x.parse::<i32>().ok()?;
-                    let y = y.parse::<i32>().ok()?;
-                    Some(IVec2::new(x, y))
-                })
+                .filter_map(|pointer| parcel(pointer))
                 .collect::<Vec<_>>();
+            // a far LOD's mesh is relative to it (`scene_lod`)
+            if let Some(base) = parcel(&meta.scene.base) {
+                pointers.set_base(&active_entity.id, base);
+            }
 
             // jump to target if we just resolved it
             if teleport_on_resolve
