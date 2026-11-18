@@ -851,7 +851,10 @@ export function ChatView(props: ChatViewProps) {
                   className={styles.textButton}
                   onClick={() => {
                     const lastUser = [...messages].reverse().find(m => m.role === 'user');
-                    if (lastUser !== undefined) onSend(messageText(lastUser));
+                    if (lastUser === undefined) return;
+                    const prompt = messageText(lastUser);
+                    setInput(current => (current.trim() === prompt.trim() ? '' : current));
+                    onSend(prompt);
                   }}
                 >
                   {t('editor.ai.retry')}

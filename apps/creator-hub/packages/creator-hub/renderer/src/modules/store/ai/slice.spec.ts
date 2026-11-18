@@ -21,7 +21,7 @@ const preloadAi = vi.hoisted(() => ({
   detectProviders: vi.fn(),
   revertTurn: vi.fn(),
 }));
-const preloadRecording = vi.hoisted(() => ({ discard: vi.fn() }));
+const preloadRecording = vi.hoisted(() => ({ discard: vi.fn(), combinedContext: vi.fn() }));
 
 vi.mock('#preload', async importOriginal => ({
   ...(await importOriginal<object>()),
@@ -664,6 +664,57 @@ describe('when a second recording is made before the first is sent', () => {
 });
 
 describe('when the send fails', () => {
+  const first = {
+    durationMs: 65_000,
+    actionCount: 4,
+    dir: '/rec/s1',
+    context: '[Session recording 1]',
+  };
+
+  function harness(ai: ReturnType<typeof reducer>) {
+    const dispatch = vi.fn((action: { type: string }) => {
+      ai = reducer(ai, action);
+      return action;
+    });
+    return {
+      dispatch,
+      getState: () => ({ editor: { project: { path: '/scene' } }, ai, workspace: {} }),
+      state: () => ai,
+    };
+  }
+
+  it('should keep what the user typed while it was in flight', async () => {
+    vi.clearAllMocks();
+    preloadAi.isBusy.mockResolvedValue(false);
+    preloadAi.send.mockRejectedValue(new Error('the agent vanished'));
+    const h = harness(reducer(undefined, actions.addRecording(first)));
+
+    await send({ text: 'make it blue' })(h.dispatch as never, h.getState as never, undefined);
+
+    expect(h.state().draftPrompt).toMatchObject({ text: 'make it blue', mode: 'append' });
+  });
+
+  it('should keep a recording that finished while it was in flight, after the sent one', async () => {
+    vi.clearAllMocks();
+    preloadAi.isBusy.mockResolvedValue(false);
+    const second = {
+      durationMs: 30_000,
+      actionCount: 2,
+      dir: '/rec/s2',
+      context: '[Session recording 2]',
+    };
+    const h = harness(reducer(undefined, actions.addRecording(first)));
+    preloadAi.send.mockImplementation(async () => {
+      h.dispatch(actions.addRecording(second) as never);
+      throw new Error('the agent vanished');
+    });
+
+    await send({ text: '' })(h.dispatch as never, h.getState as never, undefined);
+
+    expect(h.state().recording?.sessions.map(one => one.dir)).toEqual(['/rec/s1', '/rec/s2']);
+    expect(h.state().recording?.actionCount).toBe(6);
+  });
+
   it('should put the recording and the typed text back', async () => {
     vi.clearAllMocks();
     preloadAi.isBusy.mockResolvedValue(false);
@@ -691,5 +742,70 @@ describe('when the send fails', () => {
 
     expect(ai.recording?.sessions.map(s => s.dir)).toEqual(['/rec/s1']);
     expect(ai.draftPrompt?.text).toBe('make it blue');
+  });
+});
+
+describe('when several recordings go out with one message', () => {
+  const sessions = [
+    { dir: '/rec/s1', durationMs: 65_000, actionCount: 4, context: '[Session recording 1]' },
+    { dir: '/rec/s2', durationMs: 85_000, actionCount: 8, context: '[Session recording 2]' },
+  ];
+
+  function harness() {
+    let ai = reducer(undefined, actions.addRecording(sessions[0]));
+    ai = reducer(ai, actions.addRecording(sessions[1]));
+    const dispatch = vi.fn((action: { type: string }) => {
+      ai = reducer(ai, action);
+      return action;
+    });
+    return {
+      dispatch,
+      getState: () => ({ editor: { project: { path: '/scene' } }, ai, workspace: {} }),
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    preloadAi.isBusy.mockResolvedValue(false);
+    preloadAi.send.mockResolvedValue({ turnId: 't-1' });
+  });
+
+  it('should ask main for one timeline inside the context budget', async () => {
+    preloadRecording.combinedContext.mockResolvedValue('[Recording 1 of 2] … [Recording 2 of 2] …');
+    const h = harness();
+
+    await send({ text: '' })(h.dispatch as never, h.getState as never, undefined);
+
+    expect(preloadRecording.combinedContext).toHaveBeenCalledWith(['/rec/s1', '/rec/s2']);
+    expect(preloadAi.send.mock.calls[0][1].context).toBe(
+      '[Recording 1 of 2] … [Recording 2 of 2] …',
+    );
+  });
+
+  it('should send them one after another when main cannot combine them', async () => {
+    preloadRecording.combinedContext.mockRejectedValue(new Error('gone'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const h = harness();
+
+    await send({ text: '' })(h.dispatch as never, h.getState as never, undefined);
+
+    expect(preloadAi.send.mock.calls[0][1].context).toBe(
+      '[Session recording 1]\n\n[Session recording 2]',
+    );
+    warn.mockRestore();
+  });
+
+  it('should keep a single recording on its own timeline', async () => {
+    let ai = reducer(undefined, actions.addRecording(sessions[0]));
+    const dispatch = vi.fn((action: { type: string }) => {
+      ai = reducer(ai, action);
+      return action;
+    });
+    const getState = () => ({ editor: { project: { path: '/scene' } }, ai, workspace: {} });
+
+    await send({ text: '' })(dispatch as never, getState as never, undefined);
+
+    expect(preloadRecording.combinedContext).not.toHaveBeenCalled();
+    expect(preloadAi.send.mock.calls[0][1].context).toBe('[Session recording 1]');
   });
 });

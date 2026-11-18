@@ -117,12 +117,13 @@ export const send = createAsyncThunk<
       }),
     );
   }
+  const timelines = await recordingTimelines(recording);
   const attachmentMeta: AiAttachmentMeta[] = files.map(f => ({ name: f.name, kind: f.kind }));
   if (recording && recordingLabel !== undefined) {
     attachmentMeta.unshift({ name: recordingLabel, kind: 'audio' });
   }
   dispatch(actions.pushUserMessage({ text: trimmed, attachments: attachmentMeta }));
-  const context = editorContext(selection, assetMentions, recording);
+  const context = editorContext(selection, assetMentions, timelines);
   dispatch(actions.clearAssetMentions());
   dispatch(actions.setRecording(null));
   const apiKeyFromEnv = state.workspace.settings?.useApiKeyFromEnv ?? false;
@@ -137,11 +138,37 @@ export const send = createAsyncThunk<
       sessionId,
     });
   } catch (error) {
-    if (recording !== null) dispatch(actions.setRecording(recording));
-    if (trimmed !== '') dispatch(actions.setDraftPrompt({ text: trimmed, mode: 'replace' }));
+    if (recording !== null) {
+      const arrivedMeanwhile = getState().ai.recording?.sessions ?? [];
+      dispatch(actions.setRecording(null));
+      for (const one of [...recording.sessions, ...arrivedMeanwhile]) {
+        dispatch(actions.addRecording(one));
+      }
+    }
+    if (trimmed !== '') dispatch(actions.setDraftPrompt({ text: trimmed, mode: 'append' }));
     throw error;
   }
 });
+
+/**
+ * The timelines of the recordings going out with this message.
+ *
+ * @returns one block per session, or the single block main rebuilt for all of them inside the
+ * context budget; concatenation is the fallback when main cannot answer.
+ */
+async function recordingTimelines(recording: AiPendingRecording | null): Promise<string[]> {
+  const own = recording?.sessions.map(one => one.context) ?? [];
+  if (own.length < 2) return own;
+  try {
+    const combined = await recordingPreload.combinedContext(
+      recording?.sessions.map(one => one.dir) ?? [],
+    );
+    return typeof combined === 'string' && combined !== '' ? [combined] : own;
+  } catch (error) {
+    console.warn('[Recording] could not combine the timelines; sending each of them:', error);
+    return own;
+  }
+}
 
 // One line naming what the user has selected, or undefined when nothing is. Kept terse —
 // the assistant can call get_selection / scene_state for the full picture. Exported for tests.
@@ -173,12 +200,11 @@ export function assetMentionsContext(assetMentions: AiState['assetMentions']): s
 function editorContext(
   selection: AiState['selection'],
   assetMentions: AiState['assetMentions'],
-  recording: AiState['recording'],
+  timelines: string[],
 ): string | undefined {
   const lines = [selectionContext(selection), assetMentionsContext(assetMentions)].filter(
     (line): line is string => line !== undefined,
   );
-  const timelines = recording?.sessions.map(one => one.context) ?? [];
   const blocks = [lines.length > 0 ? lines.join('\n') : undefined, ...timelines].filter(
     (block): block is string => block !== undefined,
   );

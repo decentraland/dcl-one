@@ -563,3 +563,46 @@ describe('ChatView draft prompt', () => {
     });
   });
 });
+
+describe('ChatView retry after a failed send', () => {
+  beforeAll(() => {
+    setCurrentLocale('en', flatten(en));
+  });
+
+  afterEach(cleanup);
+
+  const failedTurn: AiMessage[] = [
+    { id: 'u-1', role: 'user', parts: [{ kind: 'text', text: 'make it blue' }], done: true },
+    { id: 't-1', role: 'assistant', parts: [], done: true, error: 'The agent vanished.' },
+  ];
+
+  describe('when the failed prompt was put back in the composer', () => {
+    it('should send it once and leave the composer empty', () => {
+      const onSend = vi.fn();
+      const { update } = renderChat({ messages: failedTurn, onSend });
+      update({
+        messages: failedTurn,
+        onSend,
+        draftPrompt: { text: 'make it blue', nonce: 1, mode: 'append' },
+      });
+      expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('make it blue');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+      expect(onSend).toHaveBeenCalledExactlyOnceWith('make it blue');
+      expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('');
+    });
+  });
+
+  describe('when the creator typed something else after the failure', () => {
+    it('should keep what they typed', () => {
+      const onSend = vi.fn();
+      renderChat({ messages: failedTurn, onSend });
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'something else' } });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+      expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('something else');
+    });
+  });
+});
