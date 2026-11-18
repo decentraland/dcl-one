@@ -1,15 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
-import { TranslationProvider } from '~/intl'
-import { sendOverviewTrack as track } from '~/lib/overviewSegment'
-import type { HotScene } from '~/lib/hotScenes'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { sendOverviewTrack as track } from '@/data/lib/creators/overviewSegment'
+import type { HotScene } from '@/data/lib/creators/hotScenes'
 import { LiveScenes } from './LiveScenes'
 
-vi.mock('~/lib/overviewSegment', () => ({ sendOverviewTrack: vi.fn(), sendOverviewPage: vi.fn() }))
+vi.mock('@/data/lib/creators/overviewSegment', () => ({ sendOverviewTrack: vi.fn(), sendOverviewPage: vi.fn() }))
 vi.mock('react-intersection-observer', () => ({ useInView: () => ({ ref: vi.fn(), inView: true }) }))
 
 const feed = vi.hoisted(() => ({ data: undefined as HotScene[] | undefined }))
-vi.mock('~/hooks/useHotScenes', () => ({ useHotScenes: () => ({ data: feed.data }) }))
+vi.mock('@/features/creators/hooks/useHotScenes', () => ({ useHotScenes: () => ({ data: feed.data }) }))
 
 const aScene = (overrides: Partial<HotScene>): HotScene => ({
   id: 'scene-1',

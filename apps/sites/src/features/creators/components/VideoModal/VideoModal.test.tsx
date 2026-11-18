@@ -2,12 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { type ReactNode } from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TranslationProvider } from '~/intl'
-import { MAX_VIDEO_FILE_SIZE } from '~/lib/itemFiles'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { MAX_VIDEO_FILE_SIZE } from '@/data/lib/creators/itemFiles'
 import { VideoModal } from './VideoModal'
 
 const loadVideoMetadata = vi.hoisted(() => vi.fn())
-vi.mock('~/lib/media', () => ({ loadVideoMetadata }))
+vi.mock('@/data/lib/creators/media', () => ({ loadVideoMetadata }))
 
 // jsdom has no object URLs; the player and poster only need a stable string.
 URL.createObjectURL = vi.fn(() => 'blob:video')

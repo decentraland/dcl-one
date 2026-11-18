@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const settings = vi.hoisted((): { values: Record<string, string> } => ({ values: {} }))
-vi.mock('~/config', () => ({ config: { get: (key: string, fallback = '') => settings.values[key] ?? fallback } }))
+vi.mock('@/data/lib/creators/config', () => ({ config: { get: (key: string, fallback = '') => settings.values[key] ?? fallback } }))
 
 const analytics = vi.hoisted(() => ({ sendDirect: vi.fn() }))
-vi.mock('~/lib/analytics', () => ({
+vi.mock('@/data/lib/creators/analytics', () => ({
   IS_BOT: false,
   sendDirect: analytics.sendDirect,
   eventProperties: (props: Record<string, unknown> = {}) => ({ source: 'creators-website', ...props }),
@@ -13,7 +13,7 @@ vi.mock('~/lib/analytics', () => ({
 }))
 
 const idle = vi.hoisted(() => ({ run: undefined as (() => void) | undefined }))
-vi.mock('~/lib/idle', () => ({
+vi.mock('@/data/lib/creators/idle', () => ({
   afterLoadIdle: (callback: () => void) => {
     idle.run = callback
     return () => undefined

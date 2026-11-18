@@ -1,20 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
-import { ErrorOutlineIcon as HintIcon, UploadFileOutlinedIcon as UploadIcon } from '~/components/Icons'
-import { Button } from '~/components/Button'
-import { CategorySelect } from '~/components/CategorySelect'
-import { Checkbox } from '~/components/Checkbox'
-import { ConfirmModal } from '~/components/ConfirmModal'
-import { BodyShapePicker, DraftPreviewPane, DraftProcessor } from '~/components/ItemDraftModal'
-import { Modal } from '~/components/Modal'
-import { useMeasuredBytes } from '~/hooks/useItemSize'
-import { useThumbnailEditor } from '~/hooks/useThumbnailEditor'
-import { useTranslation } from '~/intl'
-import { errorCode, track } from '~/lib/analytics'
-import { applyPreviewResult, imageThumbnailPatch, needsPreviewData, type PreviewDraft } from '~/lib/draftPreview'
-import { pickFile } from '~/lib/filePicker'
-import { toFileChangeSaveable, type ItemFileChange } from '~/lib/itemDraft'
-import { type BuiltItem } from '~/lib/itemFactory'
-import { ITEM_EXTENSIONS, ItemFileError, THUMBNAIL_PATH, getExtension, isImageFile } from '~/lib/itemFiles'
+import { ErrorOutlineIcon as HintIcon, UploadFileOutlinedIcon as UploadIcon } from '@/features/creators/components/Icons'
+import { Button } from '@/features/creators/components/Button'
+import { CategorySelect } from '@/features/creators/components/CategorySelect'
+import { Checkbox } from '@/features/creators/components/Checkbox'
+import { ConfirmModal } from '@/features/creators/components/ConfirmModal'
+import { BodyShapePicker, DraftPreviewPane, DraftProcessor } from '@/features/creators/components/ItemDraftModal'
+import { Modal } from '@/features/creators/components/Modal'
+import { useMeasuredBytes } from '@/features/creators/hooks/useItemSize'
+import { useThumbnailEditor } from '@/features/creators/hooks/useThumbnailEditor'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { errorCode, track } from '@/data/lib/creators/analytics'
+import { applyPreviewResult, imageThumbnailPatch, needsPreviewData, type PreviewDraft } from '@/data/lib/creators/draftPreview'
+import { pickFile } from '@/data/lib/creators/filePicker'
+import { toFileChangeSaveable, type ItemFileChange } from '@/data/lib/creators/itemDraft'
+import { type BuiltItem } from '@/data/lib/creators/itemFactory'
+import { ITEM_EXTENSIONS, ItemFileError, THUMBNAIL_PATH, getExtension, isImageFile } from '@/data/lib/creators/itemFiles'
 import {
   buildModelUpdate,
   getDefaultBodyShape,
@@ -25,8 +25,8 @@ import {
   loadModelForItem,
   needsNewCategory,
   type LoadedItemModel
-} from '~/lib/itemModelImport'
-import { formatItemSize, getItemSizeLimit, isItemTooBigError, isOverSizeLimit, type ItemSize } from '~/lib/itemSize'
+} from '@/data/lib/creators/itemModelImport'
+import { formatItemSize, getItemSizeLimit, isItemTooBigError, isOverSizeLimit, type ItemSize } from '@/data/lib/creators/itemSize'
 import {
   BodyShapeType,
   IMAGE_WEARABLE_METRICS,
@@ -34,11 +34,11 @@ import {
   getItemBodyShapeType,
   isSmartWearable,
   type Item
-} from '~/lib/items'
-import { captureError } from '~/lib/monitoring'
-import { DEFAULT_RARITY } from '~/lib/rarities'
-import { getWearableCategoryOptions } from '~/lib/wearableCategories'
-import draftModal from '~/components/ItemDraftModal/ItemDraftModal.module.css'
+} from '@/data/lib/creators/items'
+import { captureError } from '@/data/lib/creators/monitoring'
+import { DEFAULT_RARITY } from '@/data/lib/creators/rarities'
+import { getWearableCategoryOptions } from '@/data/lib/creators/wearableCategories'
+import draftModal from '@/features/creators/components/ItemDraftModal/ItemDraftModal.module.css'
 import styles from './ChangeFileModal.module.css'
 
 type Props = {

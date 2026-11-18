@@ -2,22 +2,22 @@ import { StrictMode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-vi.mock('~/hooks/useFeatureFlag', () => ({ useFeatureFlag: () => ({ enabled: false, isLoading: false }) }))
-vi.mock('~/hooks/useAccountWatcher', () => ({ useAccountWatcher: () => undefined }))
-vi.mock('~/store/wallet', () => ({
+vi.mock('@/features/creators/hooks/useFeatureFlag', () => ({ useFeatureFlag: () => ({ enabled: false, isLoading: false }) }))
+vi.mock('@/features/creators/hooks/useAccountWatcher', () => ({ useAccountWatcher: () => undefined }))
+vi.mock('@/features/creators/store/wallet', () => ({
   useWallet: (selector: (s: { restore: () => Promise<void> }) => unknown) =>
     selector({ restore: () => Promise.resolve() })
 }))
-vi.mock('~/components/NavBar', () => ({ NavBar: () => <div data-testid="navbar" /> }))
-vi.mock('~/components/Footer', () => ({ Footer: () => <footer data-testid="footer" /> }))
-vi.mock('~/components/Intercom', () => ({ Intercom: () => null }))
-vi.mock('~/components/Toasts', () => ({ Toasts: () => null }))
-vi.mock('~/components/OverviewPage', () => ({ OverviewPage: () => <div data-testid="overview" /> }))
-vi.mock('~/components/CollectionsPage', () => ({ CollectionsPage: () => <div data-testid="collections" /> }))
-vi.mock('~/components/ItemEditorPage', () => ({ ItemEditorPage: () => <div data-testid="editor" /> }))
-vi.mock('~/lib/analytics', () => ({ track: vi.fn() }))
+vi.mock('@/features/creators/components/NavBar', () => ({ NavBar: () => <div data-testid="navbar" /> }))
+vi.mock('@/features/creators/components/Footer', () => ({ Footer: () => <footer data-testid="footer" /> }))
+vi.mock('@/features/creators/components/Intercom', () => ({ Intercom: () => null }))
+vi.mock('@/features/creators/components/Toasts', () => ({ Toasts: () => null }))
+vi.mock('@/features/creators/components/OverviewPage', () => ({ OverviewPage: () => <div data-testid="overview" /> }))
+vi.mock('@/features/creators/components/CollectionsPage', () => ({ CollectionsPage: () => <div data-testid="collections" /> }))
+vi.mock('@/features/creators/components/ItemEditorPage', () => ({ ItemEditorPage: () => <div data-testid="editor" /> }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn() }))
 const trackPageView = vi.hoisted(() => vi.fn())
-vi.mock('~/lib/pageViews', () => ({ trackPageView }))
+vi.mock('@/data/lib/creators/pageViews', () => ({ trackPageView }))
 
 const { App } = await import('./App')
 

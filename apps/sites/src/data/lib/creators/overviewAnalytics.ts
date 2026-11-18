@@ -1,10 +1,10 @@
 // Overview page analytics (spec: docs/TRACKING_SPEC.md "Overview"). The page moved here from the sites
 // repo, so the event names and sites' props are kept for warehouse continuity.
 import type { SyntheticEvent } from 'react'
-import { SITE_PATH } from '~/config'
-import { collectCampaignParams } from '~/lib/campaignParams'
-import { macArchHint } from '~/lib/creatorHubDownload'
-import { sendOverviewPage, sendOverviewTrack } from '~/lib/overviewSegment'
+import { SITE_PATH } from '@/data/lib/creators/config'
+import { collectCampaignParams } from '@/data/lib/creators/campaignParams'
+import { macArchHint } from '@/data/lib/creators/creatorHubDownload'
+import { sendOverviewPage, sendOverviewTrack } from '@/data/lib/creators/overviewSegment'
 
 /** `section_viewed` values, one per section of the overview page. */
 export const OverviewSection = {

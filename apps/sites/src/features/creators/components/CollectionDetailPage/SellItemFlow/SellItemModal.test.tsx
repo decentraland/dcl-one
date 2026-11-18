@@ -1,23 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { FeatureFlag } from '~/lib/featureFlags'
-import { setFeatureFlags } from '~/test/featureFlags'
+import { FeatureFlag } from '@/data/lib/creators/featureFlags'
+import { setFeatureFlags } from '@/data/lib/creators/test/featureFlags'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { NO_EXPIRATION, formatDateValue, minExpirationDate, parseExpirationDate } from '~/lib/sales'
+import { NO_EXPIRATION, formatDateValue, minExpirationDate, parseExpirationDate } from '@/data/lib/creators/sales'
 import { SellItemModal } from './SellItemModal'
-import { useLocale } from '~/store/locale'
+import { useLocale } from '@/features/creators/store/locale'
 import { ADDRESS, FRIEND, Providers, item, makeSession } from './testUtils'
 
-vi.mock('~/lib/featureFlags', async () => {
-  const actual = await vi.importActual<typeof import('~/lib/featureFlags')>('~/lib/featureFlags')
-  const mock = await import('~/test/featureFlags')
+vi.mock('@/data/lib/creators/featureFlags', async () => {
+  const actual = await vi.importActual<typeof import('@/data/lib/creators/featureFlags')>('@/data/lib/creators/featureFlags')
+  const mock = await import('@/data/lib/creators/test/featureFlags')
   return { ...actual, getIsFeatureEnabled: mock.getIsFeatureEnabled }
 })
 
 beforeEach(() => setFeatureFlags(FeatureFlag.CREDITS_PRIMARY_LISTINGS))
 
 const rate = { data: undefined as bigint | undefined }
-vi.mock('~/hooks/useSales', () => ({
+vi.mock('@/features/creators/hooks/useSales', () => ({
   useFriends: vi.fn(() => ({ data: [], isLoading: false })),
   useManaUsdRate: vi.fn(() => rate)
 }))

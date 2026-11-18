@@ -1,8 +1,8 @@
-import { CheckIcon } from '~/components/Icons'
-import { Modal } from '~/components/Modal'
-import { Button } from '~/components/Button'
-import { useTranslation } from '~/intl'
-import successArt from '~/assets/publish-success.png'
+import { CheckIcon } from '@/features/creators/components/Icons'
+import { Modal } from '@/features/creators/components/Modal'
+import { Button } from '@/features/creators/components/Button'
+import { useTranslation } from '@/data/lib/creators/intl'
+import successArt from '@/features/creators/assets/publish-success.png'
 import styles from './PublishSuccessModal.module.css'
 
 type Props = {

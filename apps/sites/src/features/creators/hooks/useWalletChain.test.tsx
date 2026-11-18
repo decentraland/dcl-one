@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, waitFor, act } from '@testing-library/react'
-import type { Session } from '~/lib/auth'
+import type { Session } from '@/data/lib/creators/auth'
 import { supportedChains, useWalletChain } from './useWalletChain'
 
 const captureError = vi.fn()
-vi.mock('~/lib/monitoring', () => ({ captureError: (...args: unknown[]) => captureError(...args) }))
+vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: (...args: unknown[]) => captureError(...args) }))
 
 type Listener = (...args: unknown[]) => void
 type SendImpl = (method: string, params?: unknown[]) => Promise<unknown>

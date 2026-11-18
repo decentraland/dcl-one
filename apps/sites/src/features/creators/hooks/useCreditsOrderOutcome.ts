@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { CreditsServerError, pollCreditsOrder, type CreditsOrderOutcome } from '~/lib/credits'
-import { captureError } from '~/lib/monitoring'
+import { CreditsServerError, pollCreditsOrder, type CreditsOrderOutcome } from '@/data/lib/creators/credits'
+import { captureError } from '@/data/lib/creators/monitoring'
 
 export type OrderOutcomeState = { status: 'confirming' } | CreditsOrderOutcome
 

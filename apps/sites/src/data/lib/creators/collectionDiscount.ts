@@ -8,8 +8,8 @@ import {
   getCouponManagerForMarketplace,
   liveDiscountStatus,
   type CollectionDiscount
-} from '~/lib/coupons'
-import { type ItemListing } from '~/lib/listings'
+} from '@/data/lib/creators/coupons'
+import { type ItemListing } from '@/data/lib/creators/listings'
 
 export type DiscountReachOptions = {
   chainId: number

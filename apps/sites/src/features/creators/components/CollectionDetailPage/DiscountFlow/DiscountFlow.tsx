@@ -1,23 +1,23 @@
 import { useRef, useState } from 'react'
-import errorArt from '~/assets/modal-error.png'
+import errorArt from '@/features/creators/assets/modal-error.png'
 import { useIntl } from 'react-intl'
-import { useTranslation } from '~/intl'
-import { useBeforeUnloadGuard } from '~/hooks/useBeforeUnloadGuard'
-import { lastCreatedDiscount, useCreateDiscount, useDiscountInFlight } from '~/hooks/useCollectionDiscounts'
-import { isSocialLogin, type Session } from '~/lib/auth'
-import { type Collection } from '~/lib/collections'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { useBeforeUnloadGuard } from '@/features/creators/hooks/useBeforeUnloadGuard'
+import { lastCreatedDiscount, useCreateDiscount, useDiscountInFlight } from '@/features/creators/hooks/useCollectionDiscounts'
+import { isSocialLogin, type Session } from '@/data/lib/creators/auth'
+import { type Collection } from '@/data/lib/creators/collections'
 import {
   DiscountError,
   discountPct,
   isDiscountCapped,
   toDiscountError,
   type DiscountFailureReason
-} from '~/lib/coupons'
-import { acknowledgeUnconfirmedCreate, unconfirmedCreateOf } from '~/lib/discountAttempts'
-import { type SaleableCollection } from '~/lib/saleableCollection'
-import { ConfirmModal } from '~/components/ConfirmModal'
-import { PendingModal } from '~/components/PendingModal'
-import { SuccessModal } from '~/components/SuccessModal'
+} from '@/data/lib/creators/coupons'
+import { acknowledgeUnconfirmedCreate, unconfirmedCreateOf } from '@/data/lib/creators/discountAttempts'
+import { type SaleableCollection } from '@/data/lib/creators/saleableCollection'
+import { ConfirmModal } from '@/features/creators/components/ConfirmModal'
+import { PendingModal } from '@/features/creators/components/PendingModal'
+import { SuccessModal } from '@/features/creators/components/SuccessModal'
 import { CreatorSaleModal, type SaleTerms } from '../CreatorSaleModal'
 import sell from '../SellItemFlow/SellItemModal.module.css'
 import styles from './DiscountFlow.module.css'

@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react'
-import creditsGlyph from '~/assets/icons/credits.svg'
-import manaGlyph from '~/assets/icons/mana-matic.svg'
-import { cx } from '~/lib/cx'
+import creditsGlyph from '@/features/creators/assets/icons/credits.svg'
+import manaGlyph from '@/features/creators/assets/icons/mana-matic.svg'
+import { cx } from '@/data/lib/creators/cx'
 import styles from './SaleIcon.module.css'
 
 /** A currency mark, as the Shop draws it beside an amount: a mask tinted with currentColor. Credits unless told. */

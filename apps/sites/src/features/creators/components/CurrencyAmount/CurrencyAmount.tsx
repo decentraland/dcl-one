@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactNode } from 'react'
-import creditsGlyph from '~/assets/icons/credits.svg'
-import manaGlyph from '~/assets/icons/mana-matic.svg'
+import creditsGlyph from '@/features/creators/assets/icons/credits.svg'
+import manaGlyph from '@/features/creators/assets/icons/mana-matic.svg'
 import styles from './CurrencyAmount.module.css'
 
 export type Currency = 'credits' | 'mana'

@@ -1,8 +1,8 @@
 // Feature-flag state for specs. A spec swaps the real reader for this one with
-// `vi.mock('~/lib/featureFlags', ...)` and then declares the flags its subject runs with; anything
+// `vi.mock('@/data/lib/creators/featureFlags', ...)` and then declares the flags its subject runs with; anything
 // it does not name reads off, exactly as an unreachable service would.
 import { afterEach } from 'vitest'
-import { type FeatureFlag } from '~/lib/featureFlags'
+import { type FeatureFlag } from '@/data/lib/creators/featureFlags'
 
 const enabled = new Set<FeatureFlag>()
 

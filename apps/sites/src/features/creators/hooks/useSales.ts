@@ -7,18 +7,18 @@ import {
   waitForTransaction,
   type ContractCall,
   type Session
-} from '~/lib/auth'
-import { errorCode, track } from '~/lib/analytics'
-import { type Collection } from '~/lib/collections'
-import { allCollectionItemsKey } from '~/hooks/useCollection'
-import { fetchFriends } from '~/lib/friends'
-import { type Item } from '~/lib/items'
-import { fetchItemTradeId, type ItemListing } from '~/lib/listings'
-import { fetchManaUsdRate } from '~/lib/manaRate'
-import { buildIssueTokensCall, copiesPerItem, flattenTransfers, sendBatchSize, type Transfer } from '~/lib/mint'
-import { captureError } from '~/lib/monitoring'
-import { isExpectedWalletError } from '~/lib/walletErrors'
-import { getMaticChainId } from '~/lib/publishCollection'
+} from '@/data/lib/creators/auth'
+import { errorCode, track } from '@/data/lib/creators/analytics'
+import { type Collection } from '@/data/lib/creators/collections'
+import { allCollectionItemsKey } from '@/features/creators/hooks/useCollection'
+import { fetchFriends } from '@/data/lib/creators/friends'
+import { type Item } from '@/data/lib/creators/items'
+import { fetchItemTradeId, type ItemListing } from '@/data/lib/creators/listings'
+import { fetchManaUsdRate } from '@/data/lib/creators/manaRate'
+import { buildIssueTokensCall, copiesPerItem, flattenTransfers, sendBatchSize, type Transfer } from '@/data/lib/creators/mint'
+import { captureError } from '@/data/lib/creators/monitoring'
+import { isExpectedWalletError } from '@/data/lib/creators/walletErrors'
+import { getMaticChainId } from '@/data/lib/creators/publishCollection'
 import {
   buildEnableSalesCall,
   isSalesEnabled,
@@ -31,8 +31,8 @@ import {
   type ListingTerms,
   type PricedSale,
   type SalePrice
-} from '~/lib/sales'
-import { createTrade, fetchSignatureIndexes, fetchTrade, tradeSigner } from '~/lib/trades'
+} from '@/data/lib/creators/sales'
+import { createTrade, fetchSignatureIndexes, fetchTrade, tradeSigner } from '@/data/lib/creators/trades'
 
 // Collections whose sales this tab enabled: builder-server reports minters from the subgraph, which
 // lags the transaction by a while, so a refetch in between must not bring the Enable Sales step back.

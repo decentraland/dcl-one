@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { BodyShape } from '@dcl/schemas'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TranslationProvider } from '~/intl'
-import { ItemType } from '~/lib/items'
-import { ValidationSeverity } from '~/lib/validation'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { ItemType } from '@/data/lib/creators/items'
+import { ValidationSeverity } from '@/data/lib/creators/validation'
 import { ValidationBadge, getValidationStatus } from '.'
 
 const warning = {

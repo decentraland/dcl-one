@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { toTransaction } from '~/test/chain'
+import { toTransaction } from '@/data/lib/creators/test/chain'
 import { type Collection } from './collections'
 import { ItemType, type Item } from './items'
 import {

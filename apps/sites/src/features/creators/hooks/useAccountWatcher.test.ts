@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderHook } from '@testing-library/react'
 import { ProviderType } from '@dcl/schemas'
-import type { Session } from '~/lib/auth'
+import type { Session } from '@/data/lib/creators/auth'
 
 const A = '0xaaaa000000000000000000000000000000000001'
 const B = '0xbbbb000000000000000000000000000000000002'
@@ -18,7 +18,7 @@ const session = (over: Partial<Session> = {}): Session =>
   ({ address: A, providerType: ProviderType.INJECTED, provider, ...over }) as unknown as Session
 
 const walletState: { session: Session | null } = { session: session() }
-vi.mock('~/store/wallet', () => ({
+vi.mock('@/features/creators/store/wallet', () => ({
   useWallet: (sel?: (s: unknown) => unknown) => (typeof sel === 'function' ? sel(walletState) : walletState)
 }))
 

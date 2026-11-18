@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { config } from '~/config'
+import { config } from '@/data/lib/creators/config'
 import {
   buildCollectionPreviewDeepLink,
   launchCollectionPreview,

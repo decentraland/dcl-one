@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { TranslationProvider } from '~/intl'
+import { TranslationProvider } from '@/data/lib/creators/intl'
 import { Carousel } from './Carousel'
 
 const items = [

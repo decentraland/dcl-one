@@ -6,17 +6,17 @@ import {
   fetchLinkedCollectionItems,
   fetchThirdParty,
   type LinkedItemsPage
-} from '~/lib/builder'
-import { type Collection } from '~/lib/collections'
-import { type Item } from '~/lib/items'
+} from '@/data/lib/creators/builder'
+import { type Collection } from '@/data/lib/creators/collections'
+import { type Item } from '@/data/lib/creators/items'
 import {
   LinkedItemFilter,
   hasLinkedWork,
   isLinkedDraft,
   linkedItemFilterToQuery,
   type ItemCuration
-} from '~/lib/linkedItemStatus'
-import { getThirdPartyId } from '~/lib/thirdParty'
+} from '@/data/lib/creators/linkedItemStatus'
+import { getThirdPartyId } from '@/data/lib/creators/thirdParty'
 
 /**
  * The drafts of a linked collection (never submitted, or rejected). builder-server filters by a curation's status but

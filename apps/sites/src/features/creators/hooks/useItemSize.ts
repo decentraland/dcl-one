@@ -2,9 +2,9 @@
 // a save would send measured before it is sent, so what the editor shows is what the save enforces.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueries, useQueryClient, type QueryClient, type UseQueryResult } from '@tanstack/react-query'
-import { fetchContent, fetchContentSize } from '~/lib/builder'
-import { buildMissingImage, catalystImageDeps, type ImageDeps } from '~/lib/catalystEntity'
-import { ItemFileError } from '~/lib/itemFiles'
+import { fetchContent, fetchContentSize } from '@/data/lib/creators/builder'
+import { buildMissingImage, catalystImageDeps, type ImageDeps } from '@/data/lib/creators/catalystEntity'
+import { ItemFileError } from '@/data/lib/creators/itemFiles'
 import {
   MAX_CONCURRENT_MEASUREMENTS,
   MEASUREMENT_TIMEOUT_MS,
@@ -13,10 +13,10 @@ import {
   type ItemSize,
   type MeasurableItem,
   type MeasureDeps
-} from '~/lib/itemSize'
-import { type Item } from '~/lib/items'
-import { createLimiter } from '~/lib/limiter'
-import { captureError } from '~/lib/monitoring'
+} from '@/data/lib/creators/itemSize'
+import { type Item } from '@/data/lib/creators/items'
+import { createLimiter } from '@/data/lib/creators/limiter'
+import { captureError } from '@/data/lib/creators/monitoring'
 
 const CONTENT_SIZE = 'content-size'
 const contentSizeKey = (hash: string) => [CONTENT_SIZE, hash] as const

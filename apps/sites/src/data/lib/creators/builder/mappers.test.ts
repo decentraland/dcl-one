@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { CollectionSort, CollectionType, CurationStatus } from '~/lib/collections'
-import { parseCurationFilters } from '~/lib/curation'
-import { ItemType, type Item } from '~/lib/items'
+import { CollectionSort, CollectionType, CurationStatus } from '@/data/lib/creators/collections'
+import { parseCurationFilters } from '@/data/lib/creators/curation'
+import { ItemType, type Item } from '@/data/lib/creators/items'
 import {
   fromRemoteCollection,
   fromRemoteCuration,

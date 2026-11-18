@@ -4,9 +4,9 @@ import {
   ArrowDropDownIcon as ChevronIcon,
   ChevronRightIcon as CaretIcon,
   CloseIcon as ClearIcon
-} from '~/components/Icons'
-import { useListbox } from '~/components/Select/useListbox'
-import { type BoneNode, type BoneTreeNode } from '~/lib/springBones'
+} from '@/features/creators/components/Icons'
+import { useListbox } from '@/features/creators/components/Select/useListbox'
+import { type BoneNode, type BoneTreeNode } from '@/data/lib/creators/springBones'
 import styles from './BoneTreePicker.module.css'
 
 /** The picker needs a value for "no bone"; the schema's own value for it is `undefined`. */

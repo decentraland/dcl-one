@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { installBackGuard } from '~/lib/backGuard'
+import { installBackGuard } from '@/data/lib/creators/backGuard'
 import { useBeforeUnloadGuard } from './useBeforeUnloadGuard'
 
 /**

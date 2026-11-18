@@ -1,29 +1,29 @@
 import { lazy, Suspense, useEffect, useRef } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { ErrorBoundary } from '~/components/ErrorBoundary'
-import { Footer } from '~/components/Footer'
-import { Intercom } from '~/components/Intercom'
-import { MaintenancePage } from '~/components/MaintenancePage'
-import { NavBar } from '~/components/NavBar'
-import { OverviewPage } from '~/components/OverviewPage'
-import { Toasts } from '~/components/Toasts'
-import { TranslationProvider } from '~/intl'
-import { FeatureFlag } from '~/lib/featureFlags'
-import { trackPageView } from '~/lib/pageViews'
-import { setCanonical } from '~/lib/seo'
-import { useAccountWatcher } from '~/hooks/useAccountWatcher'
-import { useFeatureFlag } from '~/hooks/useFeatureFlag'
-import { useWallet } from '~/store/wallet'
+import { ErrorBoundary } from '@/features/creators/components/ErrorBoundary'
+import { Footer } from '@/features/creators/components/Footer'
+import { Intercom } from '@/features/creators/components/Intercom'
+import { MaintenancePage } from '@/features/creators/components/MaintenancePage'
+import { NavBar } from '@/features/creators/components/NavBar'
+import { OverviewPage } from '@/features/creators/components/OverviewPage'
+import { Toasts } from '@/features/creators/components/Toasts'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { FeatureFlag } from '@/data/lib/creators/featureFlags'
+import { trackPageView } from '@/data/lib/creators/pageViews'
+import { setCanonical } from '@/data/lib/creators/seo'
+import { useAccountWatcher } from '@/features/creators/hooks/useAccountWatcher'
+import { useFeatureFlag } from '@/features/creators/hooks/useFeatureFlag'
+import { useWallet } from '@/features/creators/store/wallet'
 
 // The overview (the landing route) stays eager for the fastest first paint; every other route is code-split.
-const CollectionsPage = lazy(() => import('~/components/CollectionsPage').then(m => ({ default: m.CollectionsPage })))
+const CollectionsPage = lazy(() => import('@/features/creators/components/CollectionsPage').then(m => ({ default: m.CollectionsPage })))
 const CollectionDetailPage = lazy(() =>
-  import('~/components/CollectionDetailPage').then(m => ({ default: m.CollectionDetailPage }))
+  import('@/features/creators/components/CollectionDetailPage').then(m => ({ default: m.CollectionDetailPage }))
 )
-const ItemEditorPage = lazy(() => import('~/components/ItemEditorPage').then(m => ({ default: m.ItemEditorPage })))
-const CurationPage = lazy(() => import('~/components/CurationPage').then(m => ({ default: m.CurationPage })))
-const LivePreviewPage = lazy(() => import('~/components/LivePreviewPage').then(m => ({ default: m.LivePreviewPage })))
-const NotFoundPage = lazy(() => import('~/components/NotFoundPage').then(m => ({ default: m.NotFoundPage })))
+const ItemEditorPage = lazy(() => import('@/features/creators/components/ItemEditorPage').then(m => ({ default: m.ItemEditorPage })))
+const CurationPage = lazy(() => import('@/features/creators/components/CurationPage').then(m => ({ default: m.CurationPage })))
+const LivePreviewPage = lazy(() => import('@/features/creators/components/LivePreviewPage').then(m => ({ default: m.LivePreviewPage })))
+const NotFoundPage = lazy(() => import('@/features/creators/components/NotFoundPage').then(m => ({ default: m.NotFoundPage })))
 
 const PageFallback = () => {
   return (

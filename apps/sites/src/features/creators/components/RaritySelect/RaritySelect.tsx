@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
-import { Select } from '~/components/Select'
-import { useTranslation } from '~/intl'
-import { RARITIES, RARITY_MAX_SUPPLY, type RarityName } from '~/lib/rarities'
+import { Select } from '@/features/creators/components/Select'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { RARITIES, RARITY_MAX_SUPPLY, type RarityName } from '@/data/lib/creators/rarities'
 
 type Props = {
   value: string

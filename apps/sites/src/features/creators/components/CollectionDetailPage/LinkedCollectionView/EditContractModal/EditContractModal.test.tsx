@@ -3,15 +3,15 @@ import { type ReactNode } from 'react'
 import { type ContractNetwork } from '@dcl/schemas'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TranslationProvider } from '~/intl'
+import { TranslationProvider } from '@/data/lib/creators/intl'
 import { EditContractModal } from './EditContractModal'
 
-vi.mock('~/lib/linkedContract', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/linkedContract')>()),
+vi.mock('@/data/lib/creators/linkedContract', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/linkedContract')>()),
   checkLinkedContract: vi.fn()
 }))
 
-import { checkLinkedContract } from '~/lib/linkedContract'
+import { checkLinkedContract } from '@/data/lib/creators/linkedContract'
 
 const CONTRACT = '0x1D9FB685C257E74F869BA302E260C0B68F5EBB37'
 const checkMock = vi.mocked(checkLinkedContract)

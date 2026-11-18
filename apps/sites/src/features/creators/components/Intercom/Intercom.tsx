@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { config } from '~/config'
-import { useAfterLoadIdle } from '~/hooks/useAfterLoadIdle'
-import { getAnonymousId, onAnalyticsReady } from '~/lib/analytics'
-import { useWallet } from '~/store/wallet'
+import { config } from '@/data/lib/creators/config'
+import { useAfterLoadIdle } from '@/features/creators/hooks/useAfterLoadIdle'
+import { getAnonymousId, onAnalyticsReady } from '@/data/lib/creators/analytics'
+import { useWallet } from '@/features/creators/store/wallet'
 
 type IntercomFn = (command: string, payload?: Record<string, unknown>) => void
 type IntercomWindow = Window & { Intercom?: IntercomFn }

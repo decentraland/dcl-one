@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { HttpError } from '~/lib/http'
-import { setErrorForwarder } from '~/lib/monitoring'
-import { toDiscountError } from '~/lib/coupons'
-import { toSellItemError } from '~/lib/sales'
-import { WrongAccountError, WrongChainError } from '~/lib/walletErrors'
+import { HttpError } from '@/data/lib/creators/http'
+import { setErrorForwarder } from '@/data/lib/creators/monitoring'
+import { toDiscountError } from '@/data/lib/creators/coupons'
+import { toSellItemError } from '@/data/lib/creators/sales'
+import { WrongAccountError, WrongChainError } from '@/data/lib/creators/walletErrors'
 import { createQueryClient } from './queryClient'
 
 const reported = vi.fn()

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { errorCode, track } from '~/lib/analytics'
+import { errorCode, track } from '@/data/lib/creators/analytics'
 import {
   BuilderServerError,
   isCollectionBusy,
@@ -10,13 +10,13 @@ import {
   fetchCollectionEvents,
   postCollectionComment,
   requestCollectionValidation
-} from '~/lib/builder'
-import { type Collection } from '~/lib/collections'
-import { collectionCurationKey, collectionEventsKey, refreshReview } from '~/hooks/useCuration'
-import { useFeatureFlag } from '~/hooks/useFeatureFlag'
-import { getValidationAttemptsLeft, isValidationInProgress, type CollectionEvent, type ReviewParty } from '~/lib/events'
-import { FeatureFlag } from '~/lib/featureFlags'
-import { captureError } from '~/lib/monitoring'
+} from '@/data/lib/creators/builder'
+import { type Collection } from '@/data/lib/creators/collections'
+import { collectionCurationKey, collectionEventsKey, refreshReview } from '@/features/creators/hooks/useCuration'
+import { useFeatureFlag } from '@/features/creators/hooks/useFeatureFlag'
+import { getValidationAttemptsLeft, isValidationInProgress, type CollectionEvent, type ReviewParty } from '@/data/lib/creators/events'
+import { FeatureFlag } from '@/data/lib/creators/featureFlags'
+import { captureError } from '@/data/lib/creators/monitoring'
 
 /**
  * Enough rows for the stage, the latest verdict and today's attempts in the first page. The server offsets

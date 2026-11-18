@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { TranslationProvider } from '~/intl'
-import { type ApprovalPlan, type ApprovalView } from '~/hooks/useApprovalFlow'
-import { type Session } from '~/lib/auth'
-import { type Collection } from '~/lib/collections'
-import { type CollectionCuration } from '~/lib/curation'
-import { type Item } from '~/lib/items'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { type ApprovalPlan, type ApprovalView } from '@/features/creators/hooks/useApprovalFlow'
+import { type Session } from '@/data/lib/creators/auth'
+import { type Collection } from '@/data/lib/creators/collections'
+import { type CollectionCuration } from '@/data/lib/creators/curation'
+import { type Item } from '@/data/lib/creators/items'
 import { ApprovalFlowModal } from './ApprovalFlowModal'
 
 // Read at render time, after the mock factory ran.
@@ -20,7 +20,7 @@ const state = vi.hoisted(() => ({
   cancelSigning: vi.fn(),
   reloadItems: vi.fn()
 }))
-vi.mock('~/hooks/useApprovalFlow', () => ({
+vi.mock('@/features/creators/hooks/useApprovalFlow', () => ({
   useApprovalFlow: () => ({
     view,
     plan,
@@ -35,19 +35,19 @@ vi.mock('~/hooks/useApprovalFlow', () => ({
   })
 }))
 const storedSizes = vi.hoisted(() => new Map<string, number>([['Qmmodel', 819_100]]))
-vi.mock('~/lib/builder', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/builder')>()),
+vi.mock('@/data/lib/creators/builder', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/builder')>()),
   fetchContentSize: vi.fn(async (hash: string) => {
     const size = storedSizes.get(hash)
     if (size === undefined) throw new Error('storage down')
     return size
   })
 }))
-vi.mock('~/lib/monitoring', () => ({ captureError: vi.fn() }))
-vi.mock('~/components/CollectionMosaic', () => ({ CollectionMosaic: () => null }))
-vi.mock('~/lib/analytics', () => ({ track: vi.fn() }))
+vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn() }))
+vi.mock('@/features/creators/components/CollectionMosaic', () => ({ CollectionMosaic: () => null }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn() }))
 const clipboard = vi.hoisted(() => ({ copyToClipboard: vi.fn() }))
-vi.mock('~/lib/clipboard', () => clipboard)
+vi.mock('@/data/lib/creators/clipboard', () => clipboard)
 
 const web3 = { address: '0xMe', providerType: 'injected' } as Session
 const collection = { id: 'c1', name: 'Hats', itemCount: 6 } as Collection

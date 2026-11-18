@@ -2,8 +2,8 @@ import { describe, it, expect, vi } from 'vitest'
 import { type ReactNode } from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TranslationProvider } from '~/intl'
-import { NAME_ALREADY_IN_USE_ERROR } from '~/lib/collections'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { NAME_ALREADY_IN_USE_ERROR } from '@/data/lib/creators/collections'
 import { CollectionNameModal } from './CollectionNameModal'
 
 const wrapper = ({ children }: { children: ReactNode }) => <TranslationProvider>{children}</TranslationProvider>

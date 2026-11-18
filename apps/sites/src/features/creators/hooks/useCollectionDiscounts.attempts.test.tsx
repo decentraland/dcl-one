@@ -3,16 +3,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { TranslationProvider } from '~/intl'
-import { type CollectionDiscount, type CouponCreation } from '~/lib/coupons'
-import { collection, makeSession } from '~/components/CollectionDetailPage/SellItemFlow/testUtils'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { type CollectionDiscount, type CouponCreation } from '@/data/lib/creators/coupons'
+import { collection, makeSession } from '@/features/creators/components/CollectionDetailPage/SellItemFlow/testUtils'
 
-vi.mock('~/lib/auth', async () => {
-  const actual = await vi.importActual<typeof import('~/lib/auth')>('~/lib/auth')
+vi.mock('@/data/lib/creators/auth', async () => {
+  const actual = await vi.importActual<typeof import('@/data/lib/creators/auth')>('@/data/lib/creators/auth')
   return { ...actual, readTransactionOutcome: vi.fn() }
 })
-vi.mock('~/lib/coupons', async () => {
-  const actual = await vi.importActual<typeof import('~/lib/coupons')>('~/lib/coupons')
+vi.mock('@/data/lib/creators/coupons', async () => {
+  const actual = await vi.importActual<typeof import('@/data/lib/creators/coupons')>('@/data/lib/creators/coupons')
   return {
     ...actual,
     fetchCreatorDiscounts: vi.fn(),
@@ -21,14 +21,14 @@ vi.mock('~/lib/coupons', async () => {
     storeSignedDiscount: vi.fn()
   }
 })
-vi.mock('~/lib/monitoring', () => ({ captureError: vi.fn() }))
-vi.mock('~/components/CollectionMosaic', () => ({ CollectionMosaic: () => null }))
+vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn() }))
+vi.mock('@/features/creators/components/CollectionMosaic', () => ({ CollectionMosaic: () => null }))
 
-import { readTransactionOutcome } from '~/lib/auth'
-import { createDiscount, endDiscount, fetchCreatorDiscounts, storeSignedDiscount } from '~/lib/coupons'
-import { savePendingEnd, saveUnconfirmedCreate, type PendingEnd } from '~/lib/discountAttempts'
-import { DiscountFlow } from '~/components/CollectionDetailPage/DiscountFlow/DiscountFlow'
-import { EndDiscountFlow } from '~/components/CollectionDetailPage/DiscountFlow/EndDiscountFlow'
+import { readTransactionOutcome } from '@/data/lib/creators/auth'
+import { createDiscount, endDiscount, fetchCreatorDiscounts, storeSignedDiscount } from '@/data/lib/creators/coupons'
+import { savePendingEnd, saveUnconfirmedCreate, type PendingEnd } from '@/data/lib/creators/discountAttempts'
+import { DiscountFlow } from '@/features/creators/components/CollectionDetailPage/DiscountFlow/DiscountFlow'
+import { EndDiscountFlow } from '@/features/creators/components/CollectionDetailPage/DiscountFlow/EndDiscountFlow'
 import {
   pollEvery,
   reconcilePendingEnds,

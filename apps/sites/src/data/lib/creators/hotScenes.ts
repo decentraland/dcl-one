@@ -1,7 +1,7 @@
 // Read-only client for the realm provider's hot-scenes feed, the "what creators are building right now"
 // rail of the overview page.
-import { config } from '~/config'
-import { HttpError } from '~/lib/http'
+import { config } from '@/data/lib/creators/config'
+import { HttpError } from '@/data/lib/creators/http'
 
 export type HotScene = {
   id: string

@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { TranslationProvider } from '~/intl'
-import { type Session } from '~/lib/auth'
-import { type Collection } from '~/lib/collections'
-import { WrongAccountError } from '~/lib/walletErrors'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { type Session } from '@/data/lib/creators/auth'
+import { type Collection } from '@/data/lib/creators/collections'
+import { WrongAccountError } from '@/data/lib/creators/walletErrors'
 import { DisableCollectionFlow } from './DisableCollectionFlow'
 
 type Callbacks = { onSuccess: () => void; onError: (error: unknown) => void }
@@ -16,7 +16,7 @@ const state = vi.hoisted(() => ({
   isPending: false,
   error: null as Error | null
 }))
-vi.mock('~/hooks/useCuration', () => ({
+vi.mock('@/features/creators/hooks/useCuration', () => ({
   useDisableCollection: () => ({
     mutate: state.mutate,
     reset: vi.fn(),
@@ -25,7 +25,7 @@ vi.mock('~/hooks/useCuration', () => ({
     error: state.error
   })
 }))
-vi.mock('~/lib/notifications', () => ({
+vi.mock('@/data/lib/creators/notifications', () => ({
   useNotifications: (select: (s: { showToast: typeof state.showToast }) => unknown) =>
     select({ showToast: state.showToast })
 }))

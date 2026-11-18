@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderHook } from '@testing-library/react'
-import { sendOverviewTrack as track } from '~/lib/overviewSegment'
-import { OverviewSection } from '~/lib/overviewAnalytics'
+import { sendOverviewTrack as track } from '@/data/lib/creators/overviewSegment'
+import { OverviewSection } from '@/data/lib/creators/overviewAnalytics'
 import { useSectionViewed } from './useSectionViewed'
 
-vi.mock('~/lib/overviewSegment', () => ({ sendOverviewTrack: vi.fn(), sendOverviewPage: vi.fn() }))
+vi.mock('@/data/lib/creators/overviewSegment', () => ({ sendOverviewTrack: vi.fn(), sendOverviewPage: vi.fn() }))
 
 // A stand-in viewport that evaluates the `max-width` query it is asked about.
 const viewport = vi.hoisted(() => ({ width: 1280 }))
-vi.mock('~/hooks/useMediaQuery', () => ({
+vi.mock('@/features/creators/hooks/useMediaQuery', () => ({
   useMediaQuery: (query: string) => viewport.width <= Number(/max-width:\s*([\d.]+)px/.exec(query)?.[1] ?? 0)
 }))
 

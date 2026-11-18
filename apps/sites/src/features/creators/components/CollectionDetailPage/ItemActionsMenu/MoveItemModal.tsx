@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react'
-import { useTranslation } from '~/intl'
-import { isCollectionLocked, type Collection } from '~/lib/collections'
-import { type Item } from '~/lib/items'
-import { Button } from '~/components/Button'
-import { Modal } from '~/components/Modal'
-import { Select } from '~/components/Select'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { isCollectionLocked, type Collection } from '@/data/lib/creators/collections'
+import { type Item } from '@/data/lib/creators/items'
+import { Button } from '@/features/creators/components/Button'
+import { Modal } from '@/features/creators/components/Modal'
+import { Select } from '@/features/creators/components/Select'
 import styles from './MoveItemModal.module.css'
-import shared from '~/styles/shared.module.css'
+import shared from '@/features/creators/styles/shared.module.css'
 
 type Props = {
   item: Item

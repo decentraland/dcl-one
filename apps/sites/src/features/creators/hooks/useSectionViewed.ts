@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
-import { useMediaQuery } from '~/hooks/useMediaQuery'
-import { OVERVIEW_MOBILE_QUERY, trackSectionViewed, type OverviewSection } from '~/lib/overviewAnalytics'
+import { useMediaQuery } from '@/features/creators/hooks/useMediaQuery'
+import { OVERVIEW_MOBILE_QUERY, trackSectionViewed, type OverviewSection } from '@/data/lib/creators/overviewAnalytics'
 
 /** Fires `Section Viewed` once, the first time `inView` becomes true for the section. */
 export function useSectionViewed(section: OverviewSection, inView: boolean): void {

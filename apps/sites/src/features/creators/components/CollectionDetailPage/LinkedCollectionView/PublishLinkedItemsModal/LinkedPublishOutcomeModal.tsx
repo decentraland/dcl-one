@@ -1,8 +1,8 @@
-import errorArt from '~/assets/modal-error.png'
-import { useTranslation } from '~/intl'
-import { type LinkedPublishError, type LinkedPublishFailureReason } from '~/lib/publishLinkedItems'
-import { Button } from '~/components/Button'
-import { ConfirmModal } from '~/components/ConfirmModal'
+import errorArt from '@/features/creators/assets/modal-error.png'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { type LinkedPublishError, type LinkedPublishFailureReason } from '@/data/lib/creators/publishLinkedItems'
+import { Button } from '@/features/creators/components/Button'
+import { ConfirmModal } from '@/features/creators/components/ConfirmModal'
 import styles from './LinkedPublishRow.module.css'
 import { PublishSuccessModal } from '../../PublishCollectionModal/PublishSuccessModal'
 

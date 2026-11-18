@@ -2,12 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProviderType } from '@dcl/schemas'
-import { type Item } from '~/lib/items'
-import { type Transfer } from '~/lib/mint'
-import { useNotifications } from '~/lib/notifications'
-import { WrongAccountError } from '~/lib/walletErrors'
-import { track } from '~/lib/analytics'
-import { Toasts } from '~/components/Toasts'
+import { type Item } from '@/data/lib/creators/items'
+import { type Transfer } from '@/data/lib/creators/mint'
+import { useNotifications } from '@/data/lib/creators/notifications'
+import { WrongAccountError } from '@/data/lib/creators/walletErrors'
+import { track } from '@/data/lib/creators/analytics'
+import { Toasts } from '@/features/creators/components/Toasts'
 import { SendItemsFlow } from './SendItemsFlow'
 import { ADDRESS, FRIEND, Providers, collection, item, makeSession } from '../SellItemFlow/testUtils'
 
@@ -15,11 +15,11 @@ type Callbacks = { onSuccess?: (result: unknown) => void; onError?: (error: unkn
 type Variables = { transfers: Transfer[]; onSigned?: () => void }
 
 const send = { mutate: vi.fn<(variables: Variables, callbacks: Callbacks) => void>(), isPending: false }
-vi.mock('~/hooks/useSales', () => ({
+vi.mock('@/features/creators/hooks/useSales', () => ({
   useSendItems: () => send,
   useFriends: () => ({ data: [], isLoading: false })
 }))
-vi.mock('~/lib/analytics', () => ({ track: vi.fn() }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn() }))
 vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 404 })))
 
 const OTHER = '0x00000000000000000000000000000000000000dd'

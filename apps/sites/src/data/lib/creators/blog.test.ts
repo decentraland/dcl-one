@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { HttpError } from '~/lib/http'
+import { HttpError } from '@/data/lib/creators/http'
 import { buildBlogPosts, fetchLatestBlogPosts, normalizeAssetUrl, postUrl } from './blog'
 
 const BASE = 'https://cms-api.decentraland.org/spaces/ea2ybdmmn1kv/environments/master'

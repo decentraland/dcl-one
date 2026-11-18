@@ -4,12 +4,12 @@ import {
   ErrorOutlineIcon as WarningIcon,
   RefreshIcon as RerunIcon,
   ReportProblemOutlinedIcon as ErrorIcon
-} from '~/components/Icons'
-import { Tooltip } from '~/components/Tooltip'
-import { useTranslation } from '~/intl'
-import { type ItemType } from '~/lib/items'
-import { ValidationSeverity, type ValidationIssue } from '~/lib/validation'
-import { ItemThumbnail } from '~/components/ItemThumbnail'
+} from '@/features/creators/components/Icons'
+import { Tooltip } from '@/features/creators/components/Tooltip'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { type ItemType } from '@/data/lib/creators/items'
+import { ValidationSeverity, type ValidationIssue } from '@/data/lib/creators/validation'
+import { ItemThumbnail } from '@/features/creators/components/ItemThumbnail'
 import styles from './ItemValidationCard.module.css'
 
 /** The item the results are about, shown above them. */

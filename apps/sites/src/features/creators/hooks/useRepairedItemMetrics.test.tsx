@@ -2,13 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { type ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook, waitFor } from '@testing-library/react'
-import { fetchContent } from '~/lib/builder'
-import { ItemType, type Item } from '~/lib/items'
-import { captureError } from '~/lib/monitoring'
+import { fetchContent } from '@/data/lib/creators/builder'
+import { ItemType, type Item } from '@/data/lib/creators/items'
+import { captureError } from '@/data/lib/creators/monitoring'
 import { useRepairedItemMetrics } from './useRepairedItemMetrics'
 
-vi.mock('~/lib/builder', () => ({ fetchContent: vi.fn() }))
-vi.mock('~/lib/monitoring', () => ({ captureError: vi.fn() }))
+vi.mock('@/data/lib/creators/builder', () => ({ fetchContent: vi.fn() }))
+vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn() }))
 
 const MALE = 'urn:decentraland:off-chain:base-avatars:BaseMale'
 const BOOT_SCENE = { triangles: 0, materials: 0, textures: 0, meshes: 1, bodies: 1, entities: 1 }

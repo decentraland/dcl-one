@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
-import { AddIcon, ChevronRightIcon, RemoveIcon, StarIcon } from '~/components/Icons'
-import { useTranslation } from '~/intl'
-import { useCreditPacks } from '~/hooks/useCreditPacks'
+import { AddIcon, ChevronRightIcon, RemoveIcon, StarIcon } from '@/features/creators/components/Icons'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { useCreditPacks } from '@/features/creators/hooks/useCreditPacks'
 import {
   MAX_PACK_QUANTITY,
   formatUsd,
@@ -9,13 +9,13 @@ import {
   selectionTotals,
   type PackSelection,
   type PackTotals
-} from '~/lib/creditPacks'
-import { formatCredits } from '~/lib/publishFee'
-import { Button } from '~/components/Button'
-import { CurrencyAmount } from '~/components/CurrencyAmount'
-import { Modal } from '~/components/Modal'
+} from '@/data/lib/creators/creditPacks'
+import { formatCredits } from '@/data/lib/creators/publishFee'
+import { Button } from '@/features/creators/components/Button'
+import { CurrencyAmount } from '@/features/creators/components/CurrencyAmount'
+import { Modal } from '@/features/creators/components/Modal'
 import { artForPack } from '../packArt'
-import { cx } from '~/lib/cx'
+import { cx } from '@/data/lib/creators/cx'
 import styles from './BuyCreditsModal.module.css'
 
 // The catalogue has four packs; the placeholders keep the grid's shape while it loads.

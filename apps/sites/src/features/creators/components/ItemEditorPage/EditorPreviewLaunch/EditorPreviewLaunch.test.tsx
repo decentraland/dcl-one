@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { TranslationProvider } from '~/intl'
+import { TranslationProvider } from '@/data/lib/creators/intl'
 import { EditorPreviewLaunch } from './EditorPreviewLaunch'
 
 const state = vi.hoisted(() => ({ track: vi.fn(), previewCollection: vi.fn() }))
-vi.mock('~/lib/analytics', () => ({ track: state.track }))
-vi.mock('~/lib/explorer', () => ({ previewCollection: state.previewCollection }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: state.track }))
+vi.mock('@/data/lib/creators/explorer', () => ({ previewCollection: state.previewCollection }))
 
 function renderLaunch(props: Partial<Parameters<typeof EditorPreviewLaunch>[0]> = {}) {
   return render(

@@ -2,15 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { type ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { fetchContentSize } from '~/lib/builder'
-import { ItemFileError } from '~/lib/itemFiles'
-import { MAX_CONCURRENT_MEASUREMENTS, measureItemBytes } from '~/lib/itemSize'
-import { ItemType, type Item } from '~/lib/items'
-import { captureError } from '~/lib/monitoring'
+import { fetchContentSize } from '@/data/lib/creators/builder'
+import { ItemFileError } from '@/data/lib/creators/itemFiles'
+import { MAX_CONCURRENT_MEASUREMENTS, measureItemBytes } from '@/data/lib/creators/itemSize'
+import { ItemType, type Item } from '@/data/lib/creators/items'
+import { captureError } from '@/data/lib/creators/monitoring'
 import { itemSizeDeps, useCatalystItemSizes, useMeasuredBytes } from './useItemSize'
 
-vi.mock('~/lib/builder', () => ({ fetchContent: vi.fn(), fetchContentSize: vi.fn() }))
-vi.mock('~/lib/monitoring', () => ({ captureError: vi.fn() }))
+vi.mock('@/data/lib/creators/builder', () => ({ fetchContent: vi.fn(), fetchContentSize: vi.fn() }))
+vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn() }))
 
 const STORED: Record<string, number> = { bafmodel: 2_000_000, bafthumb: 200_000, bafimage: 50_000 }
 

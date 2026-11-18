@@ -8,12 +8,12 @@ import {
   keccak256Hash
 } from '@dcl/hashing'
 import { EntityType } from '@dcl/schemas'
-import { fetchContent } from '~/lib/builder'
-import { type Collection } from '~/lib/collections'
-import { THUMBNAIL_PATH } from '~/lib/itemFiles'
-import { IMAGE_PATH, ItemType, VIDEO_PATH, type Item, type ItemData, type ItemRepresentation } from '~/lib/items'
-import { getDeployableFiles } from '~/lib/itemSync'
-import { generateCatalystImage } from '~/lib/media'
+import { fetchContent } from '@/data/lib/creators/builder'
+import { type Collection } from '@/data/lib/creators/collections'
+import { THUMBNAIL_PATH } from '@/data/lib/creators/itemFiles'
+import { IMAGE_PATH, ItemType, VIDEO_PATH, type Item, type ItemData, type ItemRepresentation } from '@/data/lib/creators/items'
+import { getDeployableFiles } from '@/data/lib/creators/itemSync'
+import { generateCatalystImage } from '@/data/lib/creators/media'
 const EMPTY_ITEM_METRICS = { triangles: 0, materials: 0, textures: 0, meshes: 0, bodies: 0, entities: 1 }
 
 export type EntityContent = Record<string, string>

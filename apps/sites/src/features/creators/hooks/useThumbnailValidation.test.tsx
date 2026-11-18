@@ -2,17 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { type ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook, waitFor } from '@testing-library/react'
-import { TranslationProvider } from '~/intl'
-import { ItemType, type Item } from '~/lib/items'
-import { ValidationSeverity, type ThumbnailSource } from '~/lib/validation'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { ItemType, type Item } from '@/data/lib/creators/items'
+import { ValidationSeverity, type ThumbnailSource } from '@/data/lib/creators/validation'
 import { useThumbnailValidation } from './useThumbnailValidation'
 
 const validateThumbnail = vi.fn()
-vi.mock('~/lib/validation', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/validation')>()),
+vi.mock('@/data/lib/creators/validation', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/validation')>()),
   getValidator: () => ({ validateThumbnail })
 }))
-vi.mock('~/lib/monitoring', () => ({ captureError: vi.fn() }))
+vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn() }))
 
 const warning = { code: 'thumbnail', severity: ValidationSeverity.WARNING, message: 'Not transparent' }
 

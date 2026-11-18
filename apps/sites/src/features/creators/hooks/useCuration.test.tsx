@@ -2,10 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { type ReactNode } from 'react'
-import { type Collection } from '~/lib/collections'
-import { type CollectionCuration } from '~/lib/curation'
-import { type Session } from '~/lib/auth'
-import { WrongAccountError } from '~/lib/walletErrors'
+import { type Collection } from '@/data/lib/creators/collections'
+import { type CollectionCuration } from '@/data/lib/creators/curation'
+import { type Session } from '@/data/lib/creators/auth'
+import { WrongAccountError } from '@/data/lib/creators/walletErrors'
 
 const api = vi.hoisted(() => ({
   fetchCommittee: vi.fn(),
@@ -13,8 +13,8 @@ const api = vi.hoisted(() => ({
   updateCollectionCuration: vi.fn(),
   createCurationForumReply: vi.fn()
 }))
-vi.mock('~/lib/builder', async importOriginal => {
-  const actual = await importOriginal<typeof import('~/lib/builder')>()
+vi.mock('@/data/lib/creators/builder', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/data/lib/creators/builder')>()
   return {
     ...api,
     BuilderServerError: actual.BuilderServerError,
@@ -27,13 +27,13 @@ vi.mock('~/lib/builder', async importOriginal => {
     fetchCurations: vi.fn()
   }
 })
-vi.mock('~/lib/analytics', () => ({ track: vi.fn(), errorCode: () => 'unknown' }))
-vi.mock('~/lib/monitoring', () => ({ captureError: vi.fn() }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn(), errorCode: () => 'unknown' }))
+vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn() }))
 const auth = vi.hoisted(() => ({
   sendContractTransaction: vi.fn(),
   waitForTransaction: vi.fn()
 }))
-vi.mock('~/lib/auth', () => auth)
+vi.mock('@/data/lib/creators/auth', () => auth)
 
 const {
   collectionCurationKey,
@@ -43,8 +43,8 @@ const {
   usePushCuration,
   useRejectCuration
 } = await import('./useCuration')
-const { captureError } = await import('~/lib/monitoring')
-const { BuilderServerError, ValidationLimitError } = await import('~/lib/builder')
+const { captureError } = await import('@/data/lib/creators/monitoring')
+const { BuilderServerError, ValidationLimitError } = await import('@/data/lib/creators/builder')
 
 const ADDRESS = '0xCurator'
 const collection = { id: 'c1', name: 'Hats', isPublished: true } as Collection

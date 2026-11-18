@@ -1,18 +1,18 @@
 import { useMemo } from 'react'
 import { useIntl } from 'react-intl'
 import { Link } from 'react-router-dom'
-import { EditIcon } from '~/components/Icons'
-import { useTranslation } from '~/intl'
-import { CollectionMosaic } from '~/components/CollectionMosaic'
-import { CurationStatePill } from '~/components/CurationStatePill'
+import { EditIcon } from '@/features/creators/components/Icons'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { CollectionMosaic } from '@/features/creators/components/CollectionMosaic'
+import { CurationStatePill } from '@/features/creators/components/CurationStatePill'
 import { ReviewTypePill } from '../ReviewTypePill'
-import { ProfileBadge } from '~/components/ProfileBadge'
-import { AutomatedReviewIcon } from '~/components/AutomatedReviewIcon'
-import { Tooltip } from '~/components/Tooltip'
-import { useRecentCollectionEvents } from '~/hooks/useCollectionEvents'
-import { getAwaitedReply, getCurrentVerdict, type CollectionEvent } from '~/lib/events'
-import { isLinkedCollection, type Collection } from '~/lib/collections'
-import { openForumPost } from '~/lib/forumPost'
+import { ProfileBadge } from '@/features/creators/components/ProfileBadge'
+import { AutomatedReviewIcon } from '@/features/creators/components/AutomatedReviewIcon'
+import { Tooltip } from '@/features/creators/components/Tooltip'
+import { useRecentCollectionEvents } from '@/features/creators/hooks/useCollectionEvents'
+import { getAwaitedReply, getCurrentVerdict, type CollectionEvent } from '@/data/lib/creators/events'
+import { isLinkedCollection, type Collection } from '@/data/lib/creators/collections'
+import { openForumPost } from '@/data/lib/creators/forumPost'
 import {
   canEditAssignee,
   getReviewStage,
@@ -21,9 +21,9 @@ import {
   getCuratorState,
   ReviewStage,
   VALIDATOR_REVIEWER
-} from '~/lib/curation'
-import { formatTimeAgo } from '~/lib/time'
-import { cx } from '~/lib/cx'
+} from '@/data/lib/creators/curation'
+import { formatTimeAgo } from '@/data/lib/creators/time'
+import { cx } from '@/data/lib/creators/cx'
 import styles from './CurationRow.module.css'
 
 type Props = {

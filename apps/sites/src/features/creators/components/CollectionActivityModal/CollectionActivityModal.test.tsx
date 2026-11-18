@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { TranslationProvider } from '~/intl'
-import { type Collection } from '~/lib/collections'
-import { type CollectionEvent, type ReviewParty } from '~/lib/events'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { type Collection } from '@/data/lib/creators/collections'
+import { type CollectionEvent, type ReviewParty } from '@/data/lib/creators/events'
 import { CollectionActivityModal } from './CollectionActivityModal'
 
 const state = vi.hoisted(() => ({
@@ -17,7 +17,7 @@ const state = vi.hoisted(() => ({
   post: vi.fn(),
   postError: false
 }))
-vi.mock('~/hooks/useCollectionEvents', () => ({
+vi.mock('@/features/creators/hooks/useCollectionEvents', () => ({
   useCollectionEvents: () => ({
     events: state.events,
     isLoading: state.isLoading,
@@ -32,9 +32,9 @@ vi.mock('~/hooks/useCollectionEvents', () => ({
   }),
   usePostComment: () => ({ mutate: state.post, isPending: false, isError: state.postError })
 }))
-vi.mock('~/hooks/useCommittee', () => ({ useCommittee: () => ({ isCurator: state.isCurator }) }))
-vi.mock('~/hooks/useProfile', () => ({ useProfile: () => ({ data: { name: 'Curator Jane' } }) }))
-vi.mock('~/lib/analytics', () => ({ track: vi.fn() }))
+vi.mock('@/features/creators/hooks/useCommittee', () => ({ useCommittee: () => ({ isCurator: state.isCurator }) }))
+vi.mock('@/features/creators/hooks/useProfile', () => ({ useProfile: () => ({ data: { name: 'Curator Jane' } }) }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn() }))
 
 const collection = { id: 'c1', name: 'Hats', isPublished: true } as Collection
 

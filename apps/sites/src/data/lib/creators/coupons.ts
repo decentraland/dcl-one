@@ -10,13 +10,13 @@ import {
   getMarketplaceName,
   type ContractData,
   type MarketplaceName
-} from '~/lib/chain/contracts'
+} from '@/data/lib/creators/chain/contracts'
 import { StandardMerkleTree } from '@openzeppelin/merkle-tree'
 import { encodeAbiParameters, numberToHex, parseAbiParameters, recoverTypedDataAddress, toHex, type Hex } from 'viem'
-import { config } from '~/config'
-import { signedFetch, type ContractCall, type TypedDataDomain, type TypedDataTypes } from '~/lib/auth'
-import { OFFCHAIN_MARKETPLACE_TYPES, getOffchainMarketplaceContract, toTypedChecks } from '~/lib/trades'
-import { isWalletRejection, isWalletStateError } from '~/lib/walletErrors'
+import { config } from '@/data/lib/creators/config'
+import { signedFetch, type ContractCall, type TypedDataDomain, type TypedDataTypes } from '@/data/lib/creators/auth'
+import { OFFCHAIN_MARKETPLACE_TYPES, getOffchainMarketplaceContract, toTypedChecks } from '@/data/lib/creators/trades'
+import { isWalletRejection, isWalletStateError } from '@/data/lib/creators/walletErrors'
 
 /** Percentage discount, in parts per million on-chain: 30% is 300_000. The only type this app signs. */
 export const DISCOUNT_TYPE_RATE = 1

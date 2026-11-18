@@ -20,8 +20,8 @@ import {
   ItemType,
   type Item
 } from './items'
-import { fromRemoteItem } from '~/lib/builder/mappers'
-import type { RemoteItem } from '~/lib/builder/wire'
+import { fromRemoteItem } from '@/data/lib/creators/builder/mappers'
+import type { RemoteItem } from '@/data/lib/creators/builder/wire'
 
 const MALE = 'urn:decentraland:off-chain:base-avatars:BaseMale'
 const FEMALE = 'urn:decentraland:off-chain:base-avatars:BaseFemale'

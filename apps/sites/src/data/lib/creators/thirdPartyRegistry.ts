@@ -1,11 +1,11 @@
 // Calls on the ThirdPartyRegistry (Polygon), ported from the legacy builder's thirdParty sagas and the TP approval
 // flow: creators register their third party and buy item slots when publishing; curators set the Merkle root of the
 // approved items (consuming the creator's cheque) and enable or disable a third party.
-import { ContractName, getContract } from '~/lib/chain/contracts'
+import { ContractName, getContract } from '@/data/lib/creators/chain/contracts'
 import { compactSignatureToSignature, parseCompactSignature, parseSignature, size, zeroHash, type Hex } from 'viem'
-import { readContract, type ContractCall } from '~/lib/auth'
-import { type SlotsCheque } from '~/lib/builder'
-import { contractsFromRawMetadata, toRawMetadata, type LinkedContract, type ThirdParty } from '~/lib/thirdParty'
+import { readContract, type ContractCall } from '@/data/lib/creators/auth'
+import { type SlotsCheque } from '@/data/lib/creators/builder'
+import { contractsFromRawMetadata, toRawMetadata, type LinkedContract, type ThirdParty } from '@/data/lib/creators/thirdParty'
 
 export function getThirdPartyRegistry(chainId: number) {
   return getContract(ContractName.ThirdPartyRegistry, chainId)

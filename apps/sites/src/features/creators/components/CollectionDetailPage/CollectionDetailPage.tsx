@@ -1,19 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useIntl } from 'react-intl'
-import { useTranslation } from '~/intl'
-import { useWallet } from '~/store/wallet'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { useWallet } from '@/features/creators/store/wallet'
 import {
   ITEMS_PAGE_SIZE,
   useAllCollectionItems,
   useCollection,
   useCollectionStatus,
   useSaveCollection
-} from '~/hooks/useCollection'
-import { BuilderServerError, ValidationLimitError, isCollectionBusy, isValidationRunning } from '~/lib/builder'
-import { isSocialLogin } from '~/lib/auth'
-import { FeatureFlag } from '~/lib/featureFlags'
-import { getValidationStatus } from '~/lib/validation'
+} from '@/features/creators/hooks/useCollection'
+import { BuilderServerError, ValidationLimitError, isCollectionBusy, isValidationRunning } from '@/data/lib/creators/builder'
+import { isSocialLogin } from '@/data/lib/creators/auth'
+import { FeatureFlag } from '@/data/lib/creators/featureFlags'
+import { getValidationStatus } from '@/data/lib/creators/validation'
 import {
   CollectionDisplayStatus,
   canManageCollectionItems,
@@ -22,21 +22,21 @@ import {
   hasCollectionRole,
   isCollectionLocked,
   isLinkedCollection
-} from '~/lib/collections'
-import { parseUuidParam } from '~/lib/ids'
-import { track } from '~/lib/analytics'
-import { previewCollectionFromDetail } from '~/lib/explorer'
-import { isForumPostRelevant, openForumPost } from '~/lib/forumPost'
-import { cancelCreditsOrder } from '~/lib/credits'
-import { clearTopUpResume, parseTopUpReturn, readTopUpResume, stripTopUpReturn } from '~/lib/creditsTopUp'
-import { isCollectionOwner, type RoleKind } from '~/lib/collectionRoles'
-import { runningDiscountPpm } from '~/lib/collectionDiscount'
-import { toSaleableCollection } from '~/lib/saleableCollection'
-import { useManaUsdRate } from '~/hooks/useSales'
-import { type CollectionDiscount } from '~/lib/coupons'
-import { getMaticChainId } from '~/lib/publishCollection'
-import { canSendCollectionItems } from '~/lib/mint'
-import { ItemType, canEditItemDetails, canEditItemPrice, type Item } from '~/lib/items'
+} from '@/data/lib/creators/collections'
+import { parseUuidParam } from '@/data/lib/creators/ids'
+import { track } from '@/data/lib/creators/analytics'
+import { previewCollectionFromDetail } from '@/data/lib/creators/explorer'
+import { isForumPostRelevant, openForumPost } from '@/data/lib/creators/forumPost'
+import { cancelCreditsOrder } from '@/data/lib/creators/credits'
+import { clearTopUpResume, parseTopUpReturn, readTopUpResume, stripTopUpReturn } from '@/data/lib/creators/creditsTopUp'
+import { isCollectionOwner, type RoleKind } from '@/data/lib/creators/collectionRoles'
+import { runningDiscountPpm } from '@/data/lib/creators/collectionDiscount'
+import { toSaleableCollection } from '@/data/lib/creators/saleableCollection'
+import { useManaUsdRate } from '@/features/creators/hooks/useSales'
+import { type CollectionDiscount } from '@/data/lib/creators/coupons'
+import { getMaticChainId } from '@/data/lib/creators/publishCollection'
+import { canSendCollectionItems } from '@/data/lib/creators/mint'
+import { ItemType, canEditItemDetails, canEditItemPrice, type Item } from '@/data/lib/creators/items'
 import {
   ITEM_TYPE_FILTERS,
   ItemTypeFilter,
@@ -44,36 +44,36 @@ import {
   filterItemsByType,
   paginateItems,
   parseItemTypeFilter
-} from '~/lib/itemFilters'
-import { MAX_PUBLISH_ITEMS, getPublishBlocker } from '~/lib/publishCollection'
-import { useSaveItem } from '~/hooks/useSaveItem'
-import { useForumPostRecovery } from '~/hooks/useForumPost'
-import { useLockedCollectionDeployed, useSyncPublishedItems } from '~/hooks/usePublishCollection'
-import { usePublishInFlight } from '~/store/publishSync'
-import { useThumbnailEditor } from '~/hooks/useThumbnailEditor'
-import { useCollectionListings } from '~/hooks/useCollectionListings'
-import { useBeforeUnloadGuard } from '~/hooks/useBeforeUnloadGuard'
+} from '@/data/lib/creators/itemFilters'
+import { MAX_PUBLISH_ITEMS, getPublishBlocker } from '@/data/lib/creators/publishCollection'
+import { useSaveItem } from '@/features/creators/hooks/useSaveItem'
+import { useForumPostRecovery } from '@/features/creators/hooks/useForumPost'
+import { useLockedCollectionDeployed, useSyncPublishedItems } from '@/features/creators/hooks/usePublishCollection'
+import { usePublishInFlight } from '@/features/creators/store/publishSync'
+import { useThumbnailEditor } from '@/features/creators/hooks/useThumbnailEditor'
+import { useCollectionListings } from '@/features/creators/hooks/useCollectionListings'
+import { useBeforeUnloadGuard } from '@/features/creators/hooks/useBeforeUnloadGuard'
 import {
   DISCOUNT_OPENED_EVENT,
   useAnyDiscountInFlight,
   useCollectionDiscounts,
   useDiscountFlags
-} from '~/hooks/useCollectionDiscounts'
-import { useFeatureFlag } from '~/hooks/useFeatureFlag'
-import { useMediaQuery } from '~/hooks/useMediaQuery'
-import { useItemSyncs } from '~/hooks/useItemSync'
-import { useCollectionValidation, useRerunItemValidation, type ItemValidation } from '~/hooks/useCollectionValidation'
+} from '@/features/creators/hooks/useCollectionDiscounts'
+import { useFeatureFlag } from '@/features/creators/hooks/useFeatureFlag'
+import { useMediaQuery } from '@/features/creators/hooks/useMediaQuery'
+import { useItemSyncs } from '@/features/creators/hooks/useItemSync'
+import { useCollectionValidation, useRerunItemValidation, type ItemValidation } from '@/features/creators/hooks/useCollectionValidation'
 import {
   ItemSyncStatus,
   getItemRowStatus,
   hasPendingChanges,
   hasUpdatesSinceRejection,
   showsItemStatusColumn
-} from '~/lib/itemSync'
-import { ReviewStage, canPushChanges, getReviewStage, hasReviewConversation, isRejectedStage } from '~/lib/curation'
-import { useCommittee } from '~/hooks/useCommittee'
-import { useCollectionCuration, usePushCuration } from '~/hooks/useCuration'
-import { useCollectionEvents } from '~/hooks/useCollectionEvents'
+} from '@/data/lib/creators/itemSync'
+import { ReviewStage, canPushChanges, getReviewStage, hasReviewConversation, isRejectedStage } from '@/data/lib/creators/curation'
+import { useCommittee } from '@/features/creators/hooks/useCommittee'
+import { useCollectionCuration, usePushCuration } from '@/features/creators/hooks/useCuration'
+import { useCollectionEvents } from '@/features/creators/hooks/useCollectionEvents'
 import {
   NOTE_MAX_LENGTH,
   VALIDATION_ATTEMPTS_PER_DAY,
@@ -81,16 +81,16 @@ import {
   countValidationAttempts,
   hasChangesSinceVerdict,
   startOfUtcDay
-} from '~/lib/events'
-import { pageRangeLabel } from '~/lib/pagination'
-import { ITEM_EXTENSIONS, THUMBNAIL_PATH } from '~/lib/itemFiles'
-import { type ItemListing } from '~/lib/listings'
-import { useNotifications } from '~/lib/notifications'
-import { media } from '~/styles/theme'
-import { Button } from '~/components/Button'
-import { ConfirmModal } from '~/components/ConfirmModal'
-import { NoteField } from '~/components/NoteField'
-import { Tooltip } from '~/components/Tooltip'
+} from '@/data/lib/creators/events'
+import { pageRangeLabel } from '@/data/lib/creators/pagination'
+import { ITEM_EXTENSIONS, THUMBNAIL_PATH } from '@/data/lib/creators/itemFiles'
+import { type ItemListing } from '@/data/lib/creators/listings'
+import { useNotifications } from '@/data/lib/creators/notifications'
+import { media } from '@/data/lib/creators/theme'
+import { Button } from '@/features/creators/components/Button'
+import { ConfirmModal } from '@/features/creators/components/ConfirmModal'
+import { NoteField } from '@/features/creators/components/NoteField'
+import { Tooltip } from '@/features/creators/components/Tooltip'
 import {
   EmoteIcon,
   OpenEditorIcon,
@@ -102,16 +102,16 @@ import {
   LocalOfferOutlinedIcon as DiscountIcon,
   PersonOutlineIcon,
   SyncIcon
-} from '~/components/Icons'
-import { CollectionNameModal } from '~/components/CollectionNameModal'
-import { CollectionRolePill } from '~/components/CollectionRolePill'
-import { CollectionStatusPill } from '~/components/CollectionStatusPill'
-import { Pagination } from '~/components/Pagination'
-import { ValidationResultsModal, toValidationSubject } from '~/components/ValidationBadge'
-import addItemsArt from '~/assets/add-items.png'
-import { CollectionActionsMenu } from '~/components/CollectionActionsMenu'
-import { useThirdParty } from '~/hooks/useLinkedCollection'
-import { getThirdPartyId, isThirdPartyManager } from '~/lib/thirdParty'
+} from '@/features/creators/components/Icons'
+import { CollectionNameModal } from '@/features/creators/components/CollectionNameModal'
+import { CollectionRolePill } from '@/features/creators/components/CollectionRolePill'
+import { CollectionStatusPill } from '@/features/creators/components/CollectionStatusPill'
+import { Pagination } from '@/features/creators/components/Pagination'
+import { ValidationResultsModal, toValidationSubject } from '@/features/creators/components/ValidationBadge'
+import addItemsArt from '@/features/creators/assets/add-items.png'
+import { CollectionActionsMenu } from '@/features/creators/components/CollectionActionsMenu'
+import { useThirdParty } from '@/features/creators/hooks/useLinkedCollection'
+import { getThirdPartyId, isThirdPartyManager } from '@/data/lib/creators/thirdParty'
 import { AddItemsModal } from './AddItemsModal'
 import { LinkedCollectionView } from './LinkedCollectionView'
 import { ReviewFlow, type ReviewFlowRequest } from './ReviewFlow'
@@ -124,10 +124,10 @@ import { ManageRolesFlow } from './ManageRolesFlow'
 import { TransferOwnershipFlow } from './TransferOwnershipFlow'
 import { SendItemsFlow } from './SendItemsFlow'
 import { CollectionDiscounts, DiscountFlow, EndDiscountFlow } from './DiscountFlow'
-import { cx } from '~/lib/cx'
+import { cx } from '@/data/lib/creators/cx'
 import styles from './CollectionDetailPage.module.css'
 import row from './ItemListRow/ItemListRow.module.css'
-import shared from '~/styles/shared.module.css'
+import shared from '@/features/creators/styles/shared.module.css'
 
 const NOT_FOUND_STATUSES = [401, 403, 404]
 const NO_ITEMS: Item[] = []

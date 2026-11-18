@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CategorySelect } from '~/components/CategorySelect'
+import { CategorySelect } from '@/features/creators/components/CategorySelect'
 import {
   ExpandMoreIcon,
   LoopIcon,
@@ -8,22 +8,22 @@ import {
   InfoOutlinedIcon as InfoIcon,
   PlayArrowIcon as PlayIcon,
   VideocamOutlinedIcon as VideoIcon
-} from '~/components/Icons'
-import { RaritySelect } from '~/components/RaritySelect'
-import { InfoTooltip, Tooltip } from '~/components/Tooltip'
-import { VideoDropzone } from '~/components/VideoModal'
-import { useObjectURL } from '~/hooks/useObjectURL'
-import { useTranslation } from '~/intl'
-import { EmotePlayMode, ITEM_NAME_MAX_LENGTH, isValidItemName } from '~/lib/itemFactory'
-import { formatItemSize, isOverSizeLimit, type ItemSize } from '~/lib/itemSize'
-import { toMB } from '~/lib/itemFiles'
-import { BodyShapeType, ItemType, VIDEO_PATH, type Item } from '~/lib/items'
-import { type Mapping } from '~/lib/mappings'
-import { decodeLinkedUrn, type LinkedContract } from '~/lib/thirdParty'
-import { MappingEditor } from '~/components/MappingEditor'
+} from '@/features/creators/components/Icons'
+import { RaritySelect } from '@/features/creators/components/RaritySelect'
+import { InfoTooltip, Tooltip } from '@/features/creators/components/Tooltip'
+import { VideoDropzone } from '@/features/creators/components/VideoModal'
+import { useObjectURL } from '@/features/creators/hooks/useObjectURL'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { EmotePlayMode, ITEM_NAME_MAX_LENGTH, isValidItemName } from '@/data/lib/creators/itemFactory'
+import { formatItemSize, isOverSizeLimit, type ItemSize } from '@/data/lib/creators/itemSize'
+import { toMB } from '@/data/lib/creators/itemFiles'
+import { BodyShapeType, ItemType, VIDEO_PATH, type Item } from '@/data/lib/creators/items'
+import { type Mapping } from '@/data/lib/creators/mappings'
+import { decodeLinkedUrn, type LinkedContract } from '@/data/lib/creators/thirdParty'
+import { MappingEditor } from '@/features/creators/components/MappingEditor'
 import { getCategoryOptions, getVariantTargets, type ItemDraft } from './AddItemsModal.state'
-import { BodyShapePicker, DraftPreviewPane } from '~/components/ItemDraftModal'
-import draftModal from '~/components/ItemDraftModal/ItemDraftModal.module.css'
+import { BodyShapePicker, DraftPreviewPane } from '@/features/creators/components/ItemDraftModal'
+import draftModal from '@/features/creators/components/ItemDraftModal/ItemDraftModal.module.css'
 import styles from './AddItemsModal.module.css'
 
 type Props = {

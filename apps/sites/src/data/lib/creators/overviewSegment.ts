@@ -3,10 +3,10 @@
 // sites' key (the app's own instance carries the builder key) loads that source's browser destinations
 // (GA4, GTM) as sites did; until it is ready, calls queue, and leave over the HTTP API if the page goes first.
 import type { Analytics } from '@segment/analytics-next'
-import { config } from '~/config'
-import { eventProperties, IS_BOT, resolveAnalyticsUrl, sendDirect, stampApp } from '~/lib/analytics'
-import { afterLoadIdle } from '~/lib/idle'
-import type { SegmentCall } from '~/lib/segmentHttp'
+import { config } from '@/data/lib/creators/config'
+import { eventProperties, IS_BOT, resolveAnalyticsUrl, sendDirect, stampApp } from '@/data/lib/creators/analytics'
+import { afterLoadIdle } from '@/data/lib/creators/idle'
+import type { SegmentCall } from '@/data/lib/creators/segmentHttp'
 
 type Props = Record<string, unknown>
 type Queued = { call: SegmentCall; props: Props; calledAt: number }

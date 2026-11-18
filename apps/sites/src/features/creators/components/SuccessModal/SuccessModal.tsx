@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react'
-import { CheckIcon, OpenInNewIcon } from '~/components/Icons'
-import successArt from '~/assets/sale-success.png'
-import { Button } from '~/components/Button'
-import { Modal } from '~/components/Modal'
-import { useTranslation } from '~/intl'
+import { CheckIcon, OpenInNewIcon } from '@/features/creators/components/Icons'
+import successArt from '@/features/creators/assets/sale-success.png'
+import { Button } from '@/features/creators/components/Button'
+import { Modal } from '@/features/creators/components/Modal'
+import { useTranslation } from '@/data/lib/creators/intl'
 import styles from './SuccessModal.module.css'
 
 type Props = {

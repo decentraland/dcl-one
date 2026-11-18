@@ -2,7 +2,7 @@
 // one. The catalogue is credits-server's (public GET /credits/packs); the bundled copy is only a
 // fallback so the picker renders before, or without, the fetch. Ids are the contract: checkout is
 // always priced by the server from `packId`.
-import { config } from '~/config'
+import { config } from '@/data/lib/creators/config'
 
 export type CreditPack = {
   id: string

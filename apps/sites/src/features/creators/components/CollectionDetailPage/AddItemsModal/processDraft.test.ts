@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import JSZip from 'jszip'
 import { type ContractNetwork } from '@dcl/schemas'
-import { ItemType, type Item } from '~/lib/items'
-import { ItemFileError } from '~/lib/itemFiles'
+import { ItemType, type Item } from '@/data/lib/creators/items'
+import { ItemFileError } from '@/data/lib/creators/itemFiles'
 import { createDraft, type ItemDraft } from './AddItemsModal.state'
 import { pickPreviewDraft, processDraftFile } from './processDraft'
 
 const { analyzeModel } = vi.hoisted(() => ({ analyzeModel: vi.fn() }))
-vi.mock('~/lib/models', () => ({ analyzeModel }))
+vi.mock('@/data/lib/creators/models', () => ({ analyzeModel }))
 
 function suggest(suggestedCategory: string | null) {
   analyzeModel.mockResolvedValue({ type: 'wearable', validationIssues: [], suggestedCategory })

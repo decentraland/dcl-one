@@ -2,10 +2,10 @@ import { type ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { type Item } from '~/lib/items'
-import { type Collection } from '~/lib/collections'
-import { type CollectionCuration } from '~/lib/curation'
-import { collectionCurationKey, collectionEventsKey } from '~/hooks/useCuration'
+import { type Item } from '@/data/lib/creators/items'
+import { type Collection } from '@/data/lib/creators/collections'
+import { type CollectionCuration } from '@/data/lib/creators/curation'
+import { collectionCurationKey, collectionEventsKey } from '@/features/creators/hooks/useCuration'
 
 const api = vi.hoisted(() => ({
   fetchCollectionCuration: vi.fn(),
@@ -13,10 +13,10 @@ const api = vi.hoisted(() => ({
   publishCollectionItems: vi.fn()
 }))
 const monitoring = vi.hoisted(() => ({ captureError: vi.fn() }))
-vi.mock('~/lib/builder', async importOriginal => ({ ...(await importOriginal<object>()), ...api }))
-vi.mock('~/lib/monitoring', () => monitoring)
+vi.mock('@/data/lib/creators/builder', async importOriginal => ({ ...(await importOriginal<object>()), ...api }))
+vi.mock('@/data/lib/creators/monitoring', () => monitoring)
 
-const { BuilderServerError } = await import('~/lib/builder')
+const { BuilderServerError } = await import('@/data/lib/creators/builder')
 const { requestFirstReview, useSyncPublishedItems } = await import('./usePublishCollection')
 
 const address = '0xme'

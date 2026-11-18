@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react'
-import { LinkIcon } from '~/components/Icons'
-import { useTranslation } from '~/intl'
-import { InfoTooltip } from '~/components/Tooltip'
-import { CollectionDisplayStatus, getCollectionDisplayStatus, type Collection } from '~/lib/collections'
+import { LinkIcon } from '@/features/creators/components/Icons'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { InfoTooltip } from '@/features/creators/components/Tooltip'
+import { CollectionDisplayStatus, getCollectionDisplayStatus, type Collection } from '@/data/lib/creators/collections'
 import styles from './CollectionStatusPill.module.css'
 
 type Props = {

@@ -4,18 +4,18 @@ import type { ReactNode } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 
 const wallet = vi.hoisted(() => ({ session: null as { address: string; providerType?: string } | null }))
-vi.mock('~/store/wallet', () => ({
+vi.mock('@/features/creators/store/wallet', () => ({
   useWallet: (selector: (state: unknown) => unknown) => selector({ session: wallet.session })
 }))
 
 const analytics = vi.hoisted(() => ({ anonymousId: undefined as string | undefined }))
-vi.mock('~/lib/analytics', () => ({
+vi.mock('@/data/lib/creators/analytics', () => ({
   getAnonymousId: () => analytics.anonymousId,
   onAnalyticsReady: (cb: () => void) => cb()
 }))
 
 const settings = vi.hoisted(() => ({ appId: 'app-id-test' }))
-vi.mock('~/config', () => ({
+vi.mock('@/data/lib/creators/config', () => ({
   config: { get: (key: string, fallback = '') => (key === 'INTERCOM_APP_ID' ? settings.appId : fallback) }
 }))
 

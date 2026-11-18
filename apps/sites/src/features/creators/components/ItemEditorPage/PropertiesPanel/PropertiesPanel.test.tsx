@@ -1,15 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { FeatureFlag } from '~/lib/featureFlags'
-import { setFeatureFlags } from '~/test/featureFlags'
+import { FeatureFlag } from '@/data/lib/creators/featureFlags'
+import { setFeatureFlags } from '@/data/lib/creators/test/featureFlags'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { BodyShape } from '@dcl/schemas'
-import { Providers } from '~/components/CollectionDetailPage/SellItemFlow/testUtils'
-import { ItemType, type Item } from '~/lib/items'
+import { Providers } from '@/features/creators/components/CollectionDetailPage/SellItemFlow/testUtils'
+import { ItemType, type Item } from '@/data/lib/creators/items'
 import { useItemForm } from '../useItemForm'
-import { type ItemFileChange } from '~/lib/itemDraft'
-import { type ItemSize } from '~/lib/itemSize'
-import { useNotifications } from '~/lib/notifications'
+import { type ItemFileChange } from '@/data/lib/creators/itemDraft'
+import { type ItemSize } from '@/data/lib/creators/itemSize'
+import { useNotifications } from '@/data/lib/creators/notifications'
 import { PropertiesPanel } from './PropertiesPanel'
 
 // The change-file modal has its own spec; here it hands back whatever result the test prepared.
@@ -25,18 +25,18 @@ vi.mock('../ChangeFileModal', () => ({
   )
 }))
 const builder = vi.hoisted(() => ({ fetchItemContents: vi.fn() }))
-vi.mock('~/lib/builder', async () => ({
-  ...(await vi.importActual<typeof import('~/lib/builder')>('~/lib/builder')),
+vi.mock('@/data/lib/creators/builder', async () => ({
+  ...(await vi.importActual<typeof import('@/data/lib/creators/builder')>('@/data/lib/creators/builder')),
   fetchContent: () => Promise.resolve(new Blob()),
   fetchItemContents: builder.fetchItemContents
 }))
 
 const campaign = vi.hoisted(() => ({ current: null as { name: string; mainTag: string } | null }))
-vi.mock('~/hooks/useCampaign', () => ({ useCampaign: () => campaign.current }))
+vi.mock('@/features/creators/hooks/useCampaign', () => ({ useCampaign: () => campaign.current }))
 
-vi.mock('~/lib/featureFlags', async () => {
-  const actual = await vi.importActual<typeof import('~/lib/featureFlags')>('~/lib/featureFlags')
-  const mock = await import('~/test/featureFlags')
+vi.mock('@/data/lib/creators/featureFlags', async () => {
+  const actual = await vi.importActual<typeof import('@/data/lib/creators/featureFlags')>('@/data/lib/creators/featureFlags')
+  const mock = await import('@/data/lib/creators/test/featureFlags')
   return { ...actual, getIsFeatureEnabled: mock.getIsFeatureEnabled }
 })
 

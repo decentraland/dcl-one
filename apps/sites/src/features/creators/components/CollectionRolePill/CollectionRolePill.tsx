@@ -1,6 +1,6 @@
-import { useTranslation } from '~/intl'
-import { getCollectionRole, type Collection } from '~/lib/collections'
-import { cx } from '~/lib/cx'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { getCollectionRole, type Collection } from '@/data/lib/creators/collections'
+import { cx } from '@/data/lib/creators/cx'
 import styles from './CollectionRolePill.module.css'
 
 type Props = {

@@ -1,13 +1,13 @@
 import { useState } from 'react'
-import { useTranslation } from '~/intl'
-import { ConfirmModal } from '~/components/ConfirmModal'
-import { PendingModal } from '~/components/PendingModal'
-import { useBeforeUnloadGuard } from '~/hooks/useBeforeUnloadGuard'
-import { useDisableCollection } from '~/hooks/useCuration'
-import { isSocialLogin, type Session } from '~/lib/auth'
-import { type Collection } from '~/lib/collections'
-import { useNotifications } from '~/lib/notifications'
-import { isWalletRejection, isWalletStateError } from '~/lib/walletErrors'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { ConfirmModal } from '@/features/creators/components/ConfirmModal'
+import { PendingModal } from '@/features/creators/components/PendingModal'
+import { useBeforeUnloadGuard } from '@/features/creators/hooks/useBeforeUnloadGuard'
+import { useDisableCollection } from '@/features/creators/hooks/useCuration'
+import { isSocialLogin, type Session } from '@/data/lib/creators/auth'
+import { type Collection } from '@/data/lib/creators/collections'
+import { useNotifications } from '@/data/lib/creators/notifications'
+import { isWalletRejection, isWalletStateError } from '@/data/lib/creators/walletErrors'
 
 type Props = {
   session: Session

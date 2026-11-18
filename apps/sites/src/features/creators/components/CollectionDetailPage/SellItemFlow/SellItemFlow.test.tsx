@@ -1,18 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { FeatureFlag } from '~/lib/featureFlags'
-import { setFeatureFlags } from '~/test/featureFlags'
+import { FeatureFlag } from '@/data/lib/creators/featureFlags'
+import { setFeatureFlags } from '@/data/lib/creators/test/featureFlags'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProviderType } from '@dcl/schemas'
-import { ContractName, getContract } from '~/lib/chain/contracts'
-import { getMaticChainId } from '~/lib/publishCollection'
-import { SellItemError } from '~/lib/sales'
+import { ContractName, getContract } from '@/data/lib/creators/chain/contracts'
+import { getMaticChainId } from '@/data/lib/creators/publishCollection'
+import { SellItemError } from '@/data/lib/creators/sales'
 import { SellItemFlow } from './SellItemFlow'
 import { Providers, collection, item, makeSession } from './testUtils'
 
-vi.mock('~/lib/featureFlags', async () => {
-  const actual = await vi.importActual<typeof import('~/lib/featureFlags')>('~/lib/featureFlags')
-  const mock = await import('~/test/featureFlags')
+vi.mock('@/data/lib/creators/featureFlags', async () => {
+  const actual = await vi.importActual<typeof import('@/data/lib/creators/featureFlags')>('@/data/lib/creators/featureFlags')
+  const mock = await import('@/data/lib/creators/test/featureFlags')
   return { ...actual, getIsFeatureEnabled: mock.getIsFeatureEnabled }
 })
 
@@ -26,7 +26,7 @@ const enable = { mutate: vi.fn<(variables: Variables, callbacks: Callbacks) => v
 const sell = { mutate: vi.fn<(variables: Variables, callbacks: Callbacks) => void>(), isPending: false }
 let salesEnabled = false
 
-vi.mock('~/hooks/useSales', () => ({
+vi.mock('@/features/creators/hooks/useSales', () => ({
   useSalesEnabled: () => salesEnabled,
   useEnableSales: () => enable,
   useSellItem: () => sell,

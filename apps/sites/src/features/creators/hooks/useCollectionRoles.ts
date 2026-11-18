@@ -1,10 +1,10 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { errorCode, track } from '~/lib/analytics'
-import { sendContractTransaction, waitForTransaction, type Session } from '~/lib/auth'
-import { type Collection } from '~/lib/collections'
-import { buildSetRolesCall, diffRoles, getRoleAddresses, withRoles, type RoleKind } from '~/lib/collectionRoles'
-import { getMaticChainId } from '~/lib/publishCollection'
-import { SellItemError } from '~/lib/sales'
+import { errorCode, track } from '@/data/lib/creators/analytics'
+import { sendContractTransaction, waitForTransaction, type Session } from '@/data/lib/creators/auth'
+import { type Collection } from '@/data/lib/creators/collections'
+import { buildSetRolesCall, diffRoles, getRoleAddresses, withRoles, type RoleKind } from '@/data/lib/creators/collectionRoles'
+import { getMaticChainId } from '@/data/lib/creators/publishCollection'
+import { SellItemError } from '@/data/lib/creators/sales'
 
 // Role lists this tab saved: builder-server reports minters and managers from the subgraph, which lags the
 // transaction by a while, so a refetch in between must not bring the old list back. Keyed by wallet too,

@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { TranslationProvider } from '~/intl'
-import { type Collection } from '~/lib/collections'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { type Collection } from '@/data/lib/creators/collections'
 import { ReviewReplyBadge } from './ReviewReplyBadge'
 
 const recent = vi.hoisted(() => ({ events: [] as { type: string; actor: string }[], asked: [] as boolean[] }))
-vi.mock('~/hooks/useCollectionEvents', () => ({
+vi.mock('@/features/creators/hooks/useCollectionEvents', () => ({
   useRecentCollectionEvents: (_address: string, _id: string, enabled: boolean) => {
     recent.asked.push(enabled)
     return { data: enabled ? recent.events : undefined }

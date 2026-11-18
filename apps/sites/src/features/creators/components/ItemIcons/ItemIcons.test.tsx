@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { type ReactNode } from 'react'
 import { render, screen } from '@testing-library/react'
-import { TranslationProvider } from '~/intl'
-import { BodyShapeType } from '~/lib/items'
-import { EmotePlayMode } from '~/lib/itemFactory'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { BodyShapeType } from '@/data/lib/creators/items'
+import { EmotePlayMode } from '@/data/lib/creators/itemFactory'
 import { BodyShapeIcon, CategoryIcon, PlayModeIcon } from './ItemIcons'
 
 const wrapper = ({ children }: { children: ReactNode }) => <TranslationProvider>{children}</TranslationProvider>

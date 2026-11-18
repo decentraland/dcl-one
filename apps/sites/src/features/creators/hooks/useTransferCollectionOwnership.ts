@@ -1,12 +1,12 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { errorCode, track } from '~/lib/analytics'
-import { sendContractTransaction, waitForTransaction, type Session } from '~/lib/auth'
-import { type Collection } from '~/lib/collections'
-import { syncCollectionOwner } from '~/lib/builder'
-import { buildTransferOwnershipCall, waitForOwnerSync } from '~/lib/collectionOwnership'
-import { captureError } from '~/lib/monitoring'
-import { getMaticChainId } from '~/lib/publishCollection'
-import { SellItemError } from '~/lib/sales'
+import { errorCode, track } from '@/data/lib/creators/analytics'
+import { sendContractTransaction, waitForTransaction, type Session } from '@/data/lib/creators/auth'
+import { type Collection } from '@/data/lib/creators/collections'
+import { syncCollectionOwner } from '@/data/lib/creators/builder'
+import { buildTransferOwnershipCall, waitForOwnerSync } from '@/data/lib/creators/collectionOwnership'
+import { captureError } from '@/data/lib/creators/monitoring'
+import { getMaticChainId } from '@/data/lib/creators/publishCollection'
+import { SellItemError } from '@/data/lib/creators/sales'
 
 export type TransferOwnershipVariables = {
   collection: Collection

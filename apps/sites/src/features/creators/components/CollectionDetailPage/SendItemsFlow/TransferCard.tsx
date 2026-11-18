@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { AddIcon, CloseIcon, RemoveIcon } from '~/components/Icons'
-import { useTranslation } from '~/intl'
-import { track } from '~/lib/analytics'
-import { getContentsStorageUrl } from '~/lib/builder'
-import { type Friend } from '~/lib/friends'
-import { type Item } from '~/lib/items'
+import { AddIcon, CloseIcon, RemoveIcon } from '@/features/creators/components/Icons'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { track } from '@/data/lib/creators/analytics'
+import { getContentsStorageUrl } from '@/data/lib/creators/builder'
+import { type Friend } from '@/data/lib/creators/friends'
+import { type Item } from '@/data/lib/creators/items'
 import {
   MAX_ITEMS_PER_SEND,
   allocatedElsewhere,
@@ -12,10 +12,10 @@ import {
   maxAmount,
   parseRecipientList,
   type Transfer
-} from '~/lib/mint'
-import { useNotifications } from '~/lib/notifications'
-import { Checkbox } from '~/components/Checkbox'
-import { ItemThumbnail } from '~/components/ItemThumbnail'
+} from '@/data/lib/creators/mint'
+import { useNotifications } from '@/data/lib/creators/notifications'
+import { Checkbox } from '@/features/creators/components/Checkbox'
+import { ItemThumbnail } from '@/features/creators/components/ItemThumbnail'
 import { BeneficiaryInput } from '../SellItemFlow/BeneficiaryInput'
 import styles from './SendItemsModal.module.css'
 

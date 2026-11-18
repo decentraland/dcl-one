@@ -1,7 +1,7 @@
 import { type ReactNode } from 'react'
-import { useTranslation } from '~/intl'
-import { cx } from '~/lib/cx'
-import { getRarityMediaBackground } from '~/lib/rarities'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { cx } from '@/data/lib/creators/cx'
+import { getRarityMediaBackground } from '@/data/lib/creators/rarities'
 import styles from './ItemThumbnail.module.css'
 
 type Props = {

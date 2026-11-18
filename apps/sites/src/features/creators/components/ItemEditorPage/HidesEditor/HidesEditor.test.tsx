@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TranslationProvider } from '~/intl'
+import { TranslationProvider } from '@/data/lib/creators/intl'
 import { HidesEditor } from './HidesEditor'
 
 const contents = { 'male/hat.glb': 'x' }

@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { TranslationProvider } from '~/intl'
-import { track } from '~/lib/analytics'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { track } from '@/data/lib/creators/analytics'
 import { NotFoundPage } from './NotFoundPage'
 
-vi.mock('~/lib/analytics', () => ({ track: vi.fn() }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn() }))
 
 describe('NotFoundPage', () => {
   it('explains the miss, offers the way home and counts the view', () => {

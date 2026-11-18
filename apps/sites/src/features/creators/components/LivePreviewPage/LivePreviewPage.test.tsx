@@ -4,14 +4,14 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { TranslationProvider } from '~/intl'
-import { type Session } from '~/lib/auth'
-import { type Collection } from '~/lib/collections'
-import { type ValidationContext, type ValidationSource } from '~/lib/validation'
-import { useWallet } from '~/store/wallet'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { type Session } from '@/data/lib/creators/auth'
+import { type Collection } from '@/data/lib/creators/collections'
+import { type ValidationContext, type ValidationSource } from '@/data/lib/creators/validation'
+import { useWallet } from '@/features/creators/store/wallet'
 
 // ui2 lazy-loads MUI and talks to a real iframe; the page's own behaviour is what's under test.
-vi.mock('~/components/WearablePreview', () => ({
+vi.mock('@/features/creators/components/WearablePreview', () => ({
   WearablePreview: ({ id }: { id: string }) => (
     <iframe id={id} src="https://wearable-preview.decentraland.zone/?x=1" title="preview" />
   ),
@@ -28,24 +28,24 @@ vi.mock('~/components/WearablePreview', () => ({
   })),
   EmoteControls: () => <div data-testid="ui2-emote-controls" />
 }))
-vi.mock('~/lib/featureFlags', async () => {
-  const actual = await vi.importActual<typeof import('~/lib/featureFlags')>('~/lib/featureFlags')
-  const mock = await import('~/test/featureFlags')
+vi.mock('@/data/lib/creators/featureFlags', async () => {
+  const actual = await vi.importActual<typeof import('@/data/lib/creators/featureFlags')>('@/data/lib/creators/featureFlags')
+  const mock = await import('@/data/lib/creators/test/featureFlags')
   return { ...actual, getIsFeatureEnabled: mock.getIsFeatureEnabled }
 })
-vi.mock('~/lib/catalyst', () => ({ fetchBaseWearables: vi.fn().mockResolvedValue([]) }))
-vi.mock('~/lib/analytics', () => ({ track: vi.fn(), errorCode: () => 'unknown' }))
-vi.mock('~/lib/monitoring', () => ({ captureError: vi.fn(), setMonitoringTags: vi.fn() }))
-vi.mock('~/lib/connectionSpeed', () => ({ measureDownlinkMbps: () => Promise.resolve(null) }))
+vi.mock('@/data/lib/creators/catalyst', () => ({ fetchBaseWearables: vi.fn().mockResolvedValue([]) }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn(), errorCode: () => 'unknown' }))
+vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn(), setMonitoringTags: vi.fn() }))
+vi.mock('@/data/lib/creators/connectionSpeed', () => ({ measureDownlinkMbps: () => Promise.resolve(null) }))
 
 const validate = vi.fn(async (_source: ValidationSource, _ctx: ValidationContext) => ({ issues: [] }))
-vi.mock('~/lib/validation', async () => {
-  const actual = await vi.importActual<typeof import('~/lib/validation')>('~/lib/validation')
+vi.mock('@/data/lib/creators/validation', async () => {
+  const actual = await vi.importActual<typeof import('@/data/lib/creators/validation')>('@/data/lib/creators/validation')
   return { ...actual, getValidator: () => ({ validate }) }
 })
 
 const addItemsProps: Array<Record<string, unknown>> = []
-vi.mock('~/components/CollectionDetailPage/AddItemsModal', () => ({
+vi.mock('@/features/creators/components/CollectionDetailPage/AddItemsModal', () => ({
   AddItemsModal: (props: Record<string, unknown>) => {
     addItemsProps.push(props)
     return <div data-testid="add-items-modal" />
@@ -65,7 +65,7 @@ const draft: Collection = {
   createdAt: 1,
   updatedAt: 1
 }
-vi.mock('~/hooks/useCollections', () => ({ useDraftCollections: () => ({ data: [draft], isLoading: false }) }))
+vi.mock('@/features/creators/hooks/useCollections', () => ({ useDraftCollections: () => ({ data: [draft], isLoading: false }) }))
 
 const { LivePreviewPage } = await import('./LivePreviewPage')
 

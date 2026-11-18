@@ -1,21 +1,21 @@
 import { describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { TranslationProvider } from '~/intl'
-import { type Collection } from '~/lib/collections'
-import { openExternal } from '~/lib/navigation'
-import { type CollectionCuration } from '~/lib/curation'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { type Collection } from '@/data/lib/creators/collections'
+import { openExternal } from '@/data/lib/creators/navigation'
+import { type CollectionCuration } from '@/data/lib/creators/curation'
 import { CurationRow } from './CurationRow'
 
-vi.mock('~/lib/navigation', () => ({ openExternal: vi.fn() }))
-vi.mock('~/components/CollectionMosaic', () => ({ CollectionMosaic: () => null }))
-vi.mock('~/hooks/useProfile', () => ({ useProfile: () => ({ data: undefined }) }))
+vi.mock('@/data/lib/creators/navigation', () => ({ openExternal: vi.fn() }))
+vi.mock('@/features/creators/components/CollectionMosaic', () => ({ CollectionMosaic: () => null }))
+vi.mock('@/features/creators/hooks/useProfile', () => ({ useProfile: () => ({ data: undefined }) }))
 const latest = vi.hoisted(() => ({
   event: null as { type: string; actor?: string } | null,
   timeline: true,
   fetched: [] as boolean[]
 }))
-vi.mock('~/hooks/useCollectionEvents', () => ({
+vi.mock('@/features/creators/hooks/useCollectionEvents', () => ({
   useRecentCollectionEvents: (_address: string, _id: string, enabled: boolean) => {
     latest.fetched.push(enabled)
     return { data: latest.timeline ? (latest.event ? [latest.event] : []) : null, flagEnabled: latest.timeline }

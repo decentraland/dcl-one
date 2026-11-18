@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
 import { deleteCollection, fetchCollectionItemPreviews, fetchCollections } from './collections'
 
-vi.mock('~/lib/auth', () => ({
+vi.mock('@/data/lib/creators/auth', () => ({
   signedFetch: vi.fn()
 }))
 
-import { signedFetch } from '~/lib/auth'
-import { ADDRESS, jsonResponse, okResponse, remoteCollection } from '~/test/builderServer'
+import { signedFetch } from '@/data/lib/creators/auth'
+import { ADDRESS, jsonResponse, okResponse, remoteCollection } from '@/data/lib/creators/test/builderServer'
 
 const signedFetchMock = signedFetch as Mock
 

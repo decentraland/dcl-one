@@ -1,4 +1,4 @@
-import { shortenAddress } from '~/lib/address'
+import { shortenAddress } from '@/data/lib/creators/address'
 import {
   useId,
   useLayoutEffect,
@@ -10,14 +10,14 @@ import {
   type KeyboardEvent
 } from 'react'
 import { createPortal } from 'react-dom'
-import { CloseIcon, ExpandMoreIcon as ChevronIcon } from '~/components/Icons'
-import { useTranslation } from '~/intl'
-import { useProfile } from '~/hooks/useProfile'
-import { type Friend } from '~/lib/friends'
-import { isValidAddress } from '~/lib/sales'
-import { holdsAddresses } from '~/lib/mint'
+import { CloseIcon, ExpandMoreIcon as ChevronIcon } from '@/features/creators/components/Icons'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { useProfile } from '@/features/creators/hooks/useProfile'
+import { type Friend } from '@/data/lib/creators/friends'
+import { isValidAddress } from '@/data/lib/creators/sales'
+import { holdsAddresses } from '@/data/lib/creators/mint'
 import styles from './SellItemModal.module.css'
-import shared from '~/styles/shared.module.css'
+import shared from '@/features/creators/styles/shared.module.css'
 
 const LIST_GAP = 6
 const VIEWPORT_MARGIN = 8

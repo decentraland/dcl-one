@@ -1,6 +1,6 @@
 import { type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { ArrowDropDownIcon as ChevronIcon, ExpandMoreIcon as CompactChevronIcon } from '~/components/Icons'
+import { ArrowDropDownIcon as ChevronIcon, ExpandMoreIcon as CompactChevronIcon } from '@/features/creators/components/Icons'
 import styles from './Select.module.css'
 import { useListbox } from './useListbox'
 

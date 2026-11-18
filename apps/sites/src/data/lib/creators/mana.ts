@@ -1,6 +1,6 @@
 // MANA (Polygon) balance and allowance reads plus the approve call a MANA payment may need first.
-import { ContractName, getContract } from '~/lib/chain/contracts'
-import { readContract, type ContractCall } from '~/lib/auth'
+import { ContractName, getContract } from '@/data/lib/creators/chain/contracts'
+import { readContract, type ContractCall } from '@/data/lib/creators/auth'
 
 export function getManaContract(chainId: number) {
   return getContract(ContractName.MANAToken, chainId)

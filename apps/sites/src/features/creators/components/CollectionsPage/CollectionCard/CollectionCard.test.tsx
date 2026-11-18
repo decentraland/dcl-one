@@ -4,18 +4,18 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { TranslationProvider } from '~/intl'
-import { type Collection } from '~/lib/collections'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { type Collection } from '@/data/lib/creators/collections'
 import { CollectionCard } from './CollectionCard'
 
-vi.mock('~/lib/builder', () => ({
+vi.mock('@/data/lib/creators/builder', () => ({
   fetchCollectionItemPreviews: vi.fn().mockResolvedValue([
     { id: 'i1', name: 'Hat', thumbnailUrl: 'https://cdn.example/1.png' },
     { id: 'i2', name: 'Cap', thumbnailUrl: 'https://cdn.example/2.png' }
   ])
 }))
 
-vi.mock('~/store/wallet', () => ({
+vi.mock('@/features/creators/store/wallet', () => ({
   useWallet: (selector: (state: { session: { address: string } }) => unknown) =>
     selector({ session: { address: '0xabc' } })
 }))

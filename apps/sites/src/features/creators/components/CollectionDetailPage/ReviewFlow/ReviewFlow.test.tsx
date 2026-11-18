@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { TranslationProvider } from '~/intl'
-import { BuilderServerError, ValidationLimitError } from '~/lib/builder'
-import { type Collection } from '~/lib/collections'
-import { type CollectionCuration } from '~/lib/curation'
-import { type CollectionEvent } from '~/lib/events'
-import { type Item } from '~/lib/items'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { BuilderServerError, ValidationLimitError } from '@/data/lib/creators/builder'
+import { type Collection } from '@/data/lib/creators/collections'
+import { type CollectionCuration } from '@/data/lib/creators/curation'
+import { type CollectionEvent } from '@/data/lib/creators/events'
+import { type Item } from '@/data/lib/creators/items'
 import { ReviewFlow, type ReviewFlowRequest } from './ReviewFlow'
 
 const mocks = vi.hoisted(() => ({
@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   track: vi.fn(),
   appealError: null as Error | null
 }))
-vi.mock('~/hooks/useCollectionEvents', () => ({
+vi.mock('@/features/creators/hooks/useCollectionEvents', () => ({
   useRequestValidation: () => ({ mutate: mocks.validate, isPending: false }),
   useAppealCuration: () => ({
     mutate: mocks.appeal,
@@ -26,16 +26,16 @@ vi.mock('~/hooks/useCollectionEvents', () => ({
     error: mocks.appealError
   })
 }))
-vi.mock('~/components/CollectionActivityModal', () => ({
+vi.mock('@/features/creators/components/CollectionActivityModal', () => ({
   CollectionActivityModal: ({ commentAs }: { commentAs?: string }) => (
     <div data-testid="activity-modal-stub" data-comment-as={commentAs} />
   )
 }))
-vi.mock('~/lib/notifications', () => ({
+vi.mock('@/data/lib/creators/notifications', () => ({
   useNotifications: (selector: (state: { showToast: typeof mocks.toast }) => unknown) =>
     selector({ showToast: mocks.toast })
 }))
-vi.mock('~/lib/analytics', () => ({ track: mocks.track, errorCode: () => 'error' }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: mocks.track, errorCode: () => 'error' }))
 
 const collection = { id: 'c1', name: 'Hats', isPublished: true, isApproved: false } as Collection
 const items = [

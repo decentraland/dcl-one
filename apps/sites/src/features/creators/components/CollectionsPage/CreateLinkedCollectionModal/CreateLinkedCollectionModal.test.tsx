@@ -2,16 +2,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { type ReactNode } from 'react'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TranslationProvider } from '~/intl'
-import { BuilderServerError } from '~/lib/builder'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { BuilderServerError } from '@/data/lib/creators/builder'
 import { CreateLinkedCollectionModal } from './CreateLinkedCollectionModal'
 
-vi.mock('~/lib/linkedContract', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/linkedContract')>()),
+vi.mock('@/data/lib/creators/linkedContract', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/linkedContract')>()),
   checkLinkedContract: vi.fn()
 }))
 
-import { checkLinkedContract } from '~/lib/linkedContract'
+import { checkLinkedContract } from '@/data/lib/creators/linkedContract'
 
 const CONTRACT = '0x1d9fb685c257e74f869ba302e260c0b68f5ebb37'
 const checkMock = vi.mocked(checkLinkedContract)

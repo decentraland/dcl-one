@@ -1,9 +1,9 @@
 import { useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { track } from '~/lib/analytics'
-import { fetchCollections } from '~/lib/builder'
-import { findCollectionByContract, isContractAddress } from '~/lib/collections'
+import { track } from '@/data/lib/creators/analytics'
+import { fetchCollections } from '@/data/lib/creators/builder'
+import { findCollectionByContract, isContractAddress } from '@/data/lib/creators/collections'
 
 export const CONTRACT_PARAM = 'contract'
 

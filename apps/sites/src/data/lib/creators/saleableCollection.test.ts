@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ContractName, getContract } from '~/lib/chain/contracts'
+import { ContractName, getContract } from '@/data/lib/creators/chain/contracts'
 import { type Collection } from './collections'
 import { ItemType, type Item } from './items'
 import { type ItemListing } from './listings'

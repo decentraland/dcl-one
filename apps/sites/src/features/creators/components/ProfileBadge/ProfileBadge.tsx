@@ -1,6 +1,6 @@
-import { useProfile } from '~/hooks/useProfile'
-import { useTranslation } from '~/intl'
-import { shortenAddress } from '~/lib/address'
+import { useProfile } from '@/features/creators/hooks/useProfile'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { shortenAddress } from '@/data/lib/creators/address'
 import styles from './ProfileBadge.module.css'
 
 type Props = {

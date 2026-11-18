@@ -1,7 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
-import { useTranslation } from '~/intl'
-import { track } from '~/lib/analytics'
-import { captureError } from '~/lib/monitoring'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { track } from '@/data/lib/creators/analytics'
+import { captureError } from '@/data/lib/creators/monitoring'
 import styles from './ErrorBoundary.module.css'
 
 type Props = { children: ReactNode }

@@ -9,11 +9,11 @@
 // Nothing here is user-facing, so the copy/i18n rules don't apply. Never emit PII or secrets; wallet
 // addresses are pseudonymous public ids and are allowed.
 import { isbot } from 'isbot'
-import { createAnonymousIdResolver, readStoredId } from '~/lib/segmentAnonymousId.helpers'
-import { APP_VERSION, config, currentSearch } from '~/config'
-import { currentAddress } from '~/lib/currentAddress'
-import { postToSegment, type SegmentCall } from '~/lib/segmentHttp'
-import { isWalletRejection, isWalletStateError } from '~/lib/walletErrors'
+import { createAnonymousIdResolver, readStoredId } from '@/data/lib/creators/segmentAnonymousId.helpers'
+import { APP_VERSION, config, currentSearch } from '@/data/lib/creators/config'
+import { currentAddress } from '@/data/lib/creators/currentAddress'
+import { postToSegment, type SegmentCall } from '@/data/lib/creators/segmentHttp'
+import { isWalletRejection, isWalletStateError } from '@/data/lib/creators/walletErrors'
 
 type Props = Record<string, unknown>
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { render as rtlRender, screen } from '@testing-library/react'
 import type { ReactElement, ReactNode } from 'react'
-import { TranslationProvider } from '~/intl'
+import { TranslationProvider } from '@/data/lib/creators/intl'
 import { ThumbnailMosaic } from './ThumbnailMosaic'
 
 const wrapper = ({ children }: { children: ReactNode }) => <TranslationProvider>{children}</TranslationProvider>

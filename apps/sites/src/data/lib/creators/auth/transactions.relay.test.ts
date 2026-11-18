@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parseAbi } from 'viem'
-import { getCollectionContract, getContract, type ContractData } from '~/lib/chain/contracts'
-import { WrongAccountError, isWalletRejection } from '~/lib/walletErrors'
-import { TEST_SIGNER, testAccount } from '~/test/chain'
+import { getCollectionContract, getContract, type ContractData } from '@/data/lib/creators/chain/contracts'
+import { WrongAccountError, isWalletRejection } from '@/data/lib/creators/walletErrors'
+import { TEST_SIGNER, testAccount } from '@/data/lib/creators/test/chain'
 import { type Session } from './auth'
 import { sendContractTransaction } from '.'
 

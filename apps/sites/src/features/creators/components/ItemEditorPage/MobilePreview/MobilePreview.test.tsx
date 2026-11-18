@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { BodyShape } from '@dcl/schemas'
-import { TranslationProvider } from '~/intl'
-import { ItemType, type Item } from '~/lib/items'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { ItemType, type Item } from '@/data/lib/creators/items'
 import { MobilePreview } from './MobilePreview'
 
 const make = (id: string, bodyShapes: BodyShape[]): Item => ({

@@ -3,9 +3,9 @@ import { type ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { BodyShape } from '@dcl/schemas'
-import { TranslationProvider } from '~/intl'
-import { ItemType, type Item } from '~/lib/items'
-import { ValidationSeverity, type ValidationSource } from '~/lib/validation'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { ItemType, type Item } from '@/data/lib/creators/items'
+import { ValidationSeverity, type ValidationSource } from '@/data/lib/creators/validation'
 
 const stores = new Map<string, Map<string, unknown>>()
 vi.mock('idb-keyval', () => ({
@@ -21,12 +21,12 @@ vi.mock('idb-keyval', () => ({
 }))
 const validate = vi.fn()
 const validateThumbnail = vi.fn()
-vi.mock('~/lib/validation', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/validation')>()),
+vi.mock('@/data/lib/creators/validation', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/validation')>()),
   getValidator: () => ({ validate, validateThumbnail })
 }))
-vi.mock('~/lib/monitoring', () => ({ captureError: vi.fn() }))
-vi.mock('~/lib/analytics', () => ({ track: vi.fn() }))
+vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn() }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn() }))
 
 const { useCollectionValidation, useRerunItemValidation } = await import('./useCollectionValidation')
 

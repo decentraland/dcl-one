@@ -1,7 +1,7 @@
 import { useId } from 'react'
-import { InfoOutlinedIcon } from '~/components/Icons'
-import { useTranslation } from '~/intl'
-import { COLLECTION_NAME_MAX_LENGTH } from '~/lib/collections'
+import { InfoOutlinedIcon } from '@/features/creators/components/Icons'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { COLLECTION_NAME_MAX_LENGTH } from '@/data/lib/creators/collections'
 import styles from './CollectionNameInput.module.css'
 
 type Props = {

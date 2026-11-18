@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { buildBoneTree, type BoneNode } from '~/lib/springBones'
+import { buildBoneTree, type BoneNode } from '@/data/lib/creators/springBones'
 import { BoneTreePicker } from './BoneTreePicker'
 
 const bones: BoneNode[] = [

@@ -1,14 +1,14 @@
 import { useMemo } from 'react'
-import { useTranslation } from '~/intl'
-import { useRecentCollectionEvents } from '~/hooks/useCollectionEvents'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { useRecentCollectionEvents } from '@/features/creators/hooks/useCollectionEvents'
 import {
   CollectionDisplayStatus,
   canManageCollectionItems,
   getCollectionDisplayStatus,
   type Collection
-} from '~/lib/collections'
-import { getAwaitedReply } from '~/lib/events'
-import { cx } from '~/lib/cx'
+} from '@/data/lib/creators/collections'
+import { getAwaitedReply } from '@/data/lib/creators/events'
+import { cx } from '@/data/lib/creators/cx'
 import styles from './ReviewReplyBadge.module.css'
 
 /** Collections whose review is still open: the only ones worth a timeline request per list row. */

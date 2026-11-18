@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProviderType } from '@dcl/schemas'
-import { SellItemError } from '~/lib/sales'
-import { WrongAccountError } from '~/lib/walletErrors'
+import { SellItemError } from '@/data/lib/creators/sales'
+import { WrongAccountError } from '@/data/lib/creators/walletErrors'
 import { TransferOwnershipFlow } from './TransferOwnershipFlow'
 import { ADDRESS, FRIEND, Providers, collection, makeSession } from '../SellItemFlow/testUtils'
 
@@ -15,8 +15,8 @@ const transfer = {
   isPending: false,
   data: undefined as { owner: string } | undefined
 }
-vi.mock('~/hooks/useTransferCollectionOwnership', () => ({ useTransferCollectionOwnership: () => transfer }))
-vi.mock('~/hooks/useSales', () => ({
+vi.mock('@/features/creators/hooks/useTransferCollectionOwnership', () => ({ useTransferCollectionOwnership: () => transfer }))
+vi.mock('@/features/creators/hooks/useSales', () => ({
   useFriends: () => ({
     data: [{ address: FRIEND, name: 'Ana', hasClaimedName: true, avatarUrl: '' }],
     isLoading: false

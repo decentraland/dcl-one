@@ -5,14 +5,14 @@ import { PreviewRenderer } from '@dcl/schemas'
 import { type ReactNode } from 'react'
 
 const getIsFeatureEnabled = vi.fn()
-vi.mock('~/lib/featureFlags', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/featureFlags')>()),
+vi.mock('@/data/lib/creators/featureFlags', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/featureFlags')>()),
   getIsFeatureEnabled: () => getIsFeatureEnabled()
 }))
 const measureDownlinkMbps = vi.fn()
-vi.mock('~/lib/connectionSpeed', () => ({ measureDownlinkMbps: () => measureDownlinkMbps() }))
+vi.mock('@/data/lib/creators/connectionSpeed', () => ({ measureDownlinkMbps: () => measureDownlinkMbps() }))
 const track = vi.fn()
-vi.mock('~/lib/analytics', () => ({ track: (...args: unknown[]) => track(...args) }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: (...args: unknown[]) => track(...args) }))
 
 const { usePreviewRenderer } = await import('./usePreviewRenderer')
 

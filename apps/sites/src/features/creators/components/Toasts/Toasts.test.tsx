@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TranslationProvider } from '~/intl'
-import { useNotifications } from '~/lib/notifications'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { useNotifications } from '@/data/lib/creators/notifications'
 import { Toasts } from './Toasts'
 
 beforeEach(() => {

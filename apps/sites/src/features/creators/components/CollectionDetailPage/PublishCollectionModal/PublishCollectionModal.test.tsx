@@ -2,24 +2,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { type ComponentProps } from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TranslationProvider } from '~/intl'
-import { type Session } from '~/lib/auth'
-import { type Collection } from '~/lib/collections'
-import { PublishCollectionError } from '~/lib/publishCollection'
-import { ItemType, type Item } from '~/lib/items'
-import { ValidationSeverity, type ValidationIssue } from '~/lib/validation'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { type Session } from '@/data/lib/creators/auth'
+import { type Collection } from '@/data/lib/creators/collections'
+import { PublishCollectionError } from '@/data/lib/creators/publishCollection'
+import { ItemType, type Item } from '@/data/lib/creators/items'
+import { ValidationSeverity, type ValidationIssue } from '@/data/lib/creators/validation'
 import { PublishCollectionModal } from './PublishCollectionModal'
 
 const rerun = vi.fn()
-vi.mock('~/hooks/useCollection', () => ({
+vi.mock('@/features/creators/hooks/useCollection', () => ({
   useAllCollectionItems: () => ({ data: [], isLoading: false }),
   useSaveCollection: () => ({ mutate: vi.fn(), isPending: false, error: null })
 }))
 const profile = vi.hoisted(() => ({ data: undefined as { email?: string } | undefined, isLoading: false }))
-vi.mock('~/hooks/useProfile', () => ({ useProfile: () => profile }))
-vi.mock('~/hooks/useCollectionValidation', () => ({ useRerunItemValidation: () => rerun }))
-vi.mock('~/lib/analytics', () => ({ track: vi.fn() }))
-vi.mock('~/hooks/useItemSize', () => ({
+vi.mock('@/features/creators/hooks/useProfile', () => ({ useProfile: () => profile }))
+vi.mock('@/features/creators/hooks/useCollectionValidation', () => ({ useRerunItemValidation: () => rerun }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn() }))
+vi.mock('@/features/creators/hooks/useItemSize', () => ({
   useCatalystItemSizes: () => ({ sizes: new Map(), unknown: new Set(), isMeasuring: false })
 }))
 vi.mock('./ConfirmNameStep', () => ({

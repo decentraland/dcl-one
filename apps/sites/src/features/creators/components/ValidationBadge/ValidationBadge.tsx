@@ -3,10 +3,10 @@ import {
   CheckCircleOutlineIcon as PassIcon,
   ErrorOutlineIcon as WarningIcon,
   ReportProblemOutlinedIcon as ErrorIcon
-} from '~/components/Icons'
-import { Tooltip } from '~/components/Tooltip'
-import { useTranslation } from '~/intl'
-import { type ValidationIssue, type ValidationStatus } from '~/lib/validation'
+} from '@/features/creators/components/Icons'
+import { Tooltip } from '@/features/creators/components/Tooltip'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { type ValidationIssue, type ValidationStatus } from '@/data/lib/creators/validation'
 import { type ValidationSubject } from './ItemValidationCard'
 import { ValidationResultsModal, type ItemResult } from './ValidationResultsModal'
 import styles from './ValidationBadge.module.css'

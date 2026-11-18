@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { sendOverviewTrack } from '~/lib/overviewSegment'
-import { HttpError } from '~/lib/http'
+import { sendOverviewTrack } from '@/data/lib/creators/overviewSegment'
+import { HttpError } from '@/data/lib/creators/http'
 import {
   cancelCreatorHubRedirect,
   fetchCreatorHubAssets,
@@ -13,8 +13,8 @@ import {
   type MacArch
 } from './creatorHubDownload'
 
-vi.mock('~/lib/overviewSegment', () => ({ sendOverviewTrack: vi.fn() }))
-vi.mock('~/lib/analytics', () => ({ ensureAnonymousId: () => 'anon-1' }))
+vi.mock('@/data/lib/creators/overviewSegment', () => ({ sendOverviewTrack: vi.fn() }))
+vi.mock('@/data/lib/creators/analytics', () => ({ ensureAnonymousId: () => 'anon-1' }))
 
 const URL_BASE = 'https://github.com/decentraland/creator-hub/releases/download/0.50.0'
 const asset = (name: string) => ({ name, browser_download_url: `${URL_BASE}/${name}` })

@@ -1,8 +1,8 @@
 import { create } from 'zustand'
-import { identify, reset as resetAnalytics, track } from '~/lib/analytics'
-import { logout, restoreSession, signInRedirect, type Session } from '~/lib/auth'
-import { setCurrentAddressReader } from '~/lib/currentAddress'
-import { setMonitoringUser } from '~/lib/monitoring'
+import { identify, reset as resetAnalytics, track } from '@/data/lib/creators/analytics'
+import { logout, restoreSession, signInRedirect, type Session } from '@/data/lib/creators/auth'
+import { setCurrentAddressReader } from '@/data/lib/creators/currentAddress'
+import { setMonitoringUser } from '@/data/lib/creators/monitoring'
 
 // The IN-FLIGHT silent restore, so concurrent callers share one pass rather than racing. Cleared once
 // it settles — it dedupes overlapping calls, it is not a run-once latch.

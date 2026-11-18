@@ -1,8 +1,8 @@
-import { CylinderIcon } from '~/components/Icons'
-import { Tooltip } from '~/components/Tooltip'
-import { useTranslation } from '~/intl'
-import { track } from '~/lib/analytics'
-import { useAvatarPreview } from '~/store/avatarPreview'
+import { CylinderIcon } from '@/features/creators/components/Icons'
+import { Tooltip } from '@/features/creators/components/Tooltip'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { track } from '@/data/lib/creators/analytics'
+import { useAvatarPreview } from '@/features/creators/store/avatarPreview'
 import styles from './SceneBoundariesToggle.module.css'
 
 type Props = {

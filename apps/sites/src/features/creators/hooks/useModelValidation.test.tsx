@@ -2,17 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { type ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook, waitFor } from '@testing-library/react'
-import { TranslationProvider } from '~/intl'
-import { ItemType } from '~/lib/items'
-import { ValidationSeverity, type ValidationSource } from '~/lib/validation'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { ItemType } from '@/data/lib/creators/items'
+import { ValidationSeverity, type ValidationSource } from '@/data/lib/creators/validation'
 import { useModelValidation } from './useModelValidation'
 
 const validate = vi.fn()
-vi.mock('~/lib/validation', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/validation')>()),
+vi.mock('@/data/lib/creators/validation', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/validation')>()),
   getValidator: () => ({ validate })
 }))
-vi.mock('~/lib/monitoring', () => ({ captureError: vi.fn() }))
+vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn() }))
 
 const source: ValidationSource = { kind: 'blob', contents: { 'hat.glb': new Blob(['x']) }, mainFile: 'hat.glb' }
 

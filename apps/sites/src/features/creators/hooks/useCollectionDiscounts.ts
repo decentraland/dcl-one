@@ -7,8 +7,8 @@ import {
   signTypedData,
   waitForTransaction,
   type Session
-} from '~/lib/auth'
-import { errorCode, track } from '~/lib/analytics'
+} from '@/data/lib/creators/auth'
+import { errorCode, track } from '@/data/lib/creators/analytics'
 import {
   DiscountError,
   createDiscount,
@@ -23,8 +23,8 @@ import {
   type CollectionDiscount,
   type CouponCreation,
   type DiscountTerms
-} from '~/lib/coupons'
-import { type Collection } from '~/lib/collections'
+} from '@/data/lib/creators/coupons'
+import { type Collection } from '@/data/lib/creators/collections'
 import {
   clearPendingEnd,
   clearUnconfirmedCreate,
@@ -35,12 +35,12 @@ import {
   saveUnconfirmedCreate,
   updatePendingEnd,
   type PendingEnd
-} from '~/lib/discountAttempts'
-import { FeatureFlag } from '~/lib/featureFlags'
-import { getMaticChainId } from '~/lib/publishCollection'
-import { readSignatureIndexes } from '~/lib/trades'
-import { useFeatureFlag } from '~/hooks/useFeatureFlag'
-import { captureError } from '~/lib/monitoring'
+} from '@/data/lib/creators/discountAttempts'
+import { FeatureFlag } from '@/data/lib/creators/featureFlags'
+import { getMaticChainId } from '@/data/lib/creators/publishCollection'
+import { readSignatureIndexes } from '@/data/lib/creators/trades'
+import { useFeatureFlag } from '@/features/creators/hooks/useFeatureFlag'
+import { captureError } from '@/data/lib/creators/monitoring'
 
 export const DISCOUNT_OPENED_EVENT = 'Open create collection discount'
 const DISCOUNT_CREATED_EVENT = 'Create collection discount'

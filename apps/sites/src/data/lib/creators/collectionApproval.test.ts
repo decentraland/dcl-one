@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { ContractName, getCollectionContract, getContract } from '~/lib/chain/contracts'
+import { ContractName, getCollectionContract, getContract } from '@/data/lib/creators/chain/contracts'
 import { decodeFunctionData, type Hex } from 'viem'
-import { toTransaction } from '~/test/chain'
+import { toTransaction } from '@/data/lib/creators/test/chain'
 import { type Collection } from './collections'
 import { buildRescueItemsCalls, buildSetApprovedCall, RESCUE_CHUNK_SIZE } from './collectionApproval'
 

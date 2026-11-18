@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { createPanelStorage, loadEditorLayout, saveEditorLayout } from '~/lib/itemEditor'
+import { createPanelStorage, loadEditorLayout, saveEditorLayout } from '@/data/lib/creators/itemEditor'
 
 /** The sidebar mode and the panel-size storage, both remembered across visits. */
 export function useEditorLayout() {

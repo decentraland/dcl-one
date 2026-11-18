@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { cacheKey, deleteCached, type ValidationIssue, type ValidationResult } from '~/lib/validation'
+import { cacheKey, deleteCached, type ValidationIssue, type ValidationResult } from '@/data/lib/creators/validation'
 
 /**
  * Checks an item again from scratch: drops the persisted results of the given validation queries and refetches

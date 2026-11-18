@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { readdirSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { breakpoints } from './theme'
+import { breakpoints } from '@/data/lib/creators/theme'
 
 // Widths a module's media query may use besides the canonical breakpoints, keyed by file, each with its reason.
 const ALLOWED: Record<string, number[]> = {}

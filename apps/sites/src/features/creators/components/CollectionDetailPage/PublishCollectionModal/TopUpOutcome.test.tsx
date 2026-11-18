@@ -2,18 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { TranslationProvider } from '~/intl'
-import { pollCreditsOrder, type CreditsOrderOutcome } from '~/lib/credits'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { pollCreditsOrder, type CreditsOrderOutcome } from '@/data/lib/creators/credits'
 import { ADDRESS } from '../SellItemFlow/testUtils'
 import { TopUpOutcome } from './TopUpOutcome'
 
-vi.mock('~/lib/credits', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/credits')>()),
+vi.mock('@/data/lib/creators/credits', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/credits')>()),
   pollCreditsOrder: vi.fn()
 }))
-vi.mock('~/lib/analytics', () => ({ track: vi.fn() }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn() }))
 // lottie-web draws on a canvas, which jsdom lacks.
-vi.mock('~/components/Confetti/LottieBurst', () => ({ default: () => null }))
+vi.mock('@/features/creators/components/Confetti/LottieBurst', () => ({ default: () => null }))
 
 const fetchMock = vi.fn()
 vi.stubGlobal('fetch', fetchMock)

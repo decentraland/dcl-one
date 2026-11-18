@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchCollectionListings } from '~/lib/listings'
+import { fetchCollectionListings } from '@/data/lib/creators/listings'
 
 /** The primary listings of a published collection keyed by item id; off without a contract address. */
 export function useCollectionListings(contractAddress: string | undefined) {

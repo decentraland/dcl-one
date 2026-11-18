@@ -1,5 +1,5 @@
 import { useQueries, useQuery } from '@tanstack/react-query'
-import { config } from '~/config'
+import { config } from '@/data/lib/creators/config'
 
 // The subset of the Catalyst profile the ui2 Navbar `avatar` prop consumes.
 export type ProfileAvatar = {

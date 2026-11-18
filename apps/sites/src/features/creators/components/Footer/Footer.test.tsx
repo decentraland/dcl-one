@@ -2,9 +2,9 @@ import { afterEach, describe, it, expect, beforeEach, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
-import { TranslationProvider } from '~/intl'
-import { sendOverviewTrack } from '~/lib/overviewSegment'
-import { useLocale } from '~/store/locale'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { sendOverviewTrack } from '@/data/lib/creators/overviewSegment'
+import { useLocale } from '@/features/creators/store/locale'
 import { Footer } from './Footer'
 
 const viewport = vi.hoisted(() => ({ near: true }))
@@ -12,7 +12,7 @@ vi.mock('react-intersection-observer', () => ({
   useInView: ({ skip }: { skip?: boolean }) => ({ ref: vi.fn(), inView: !skip && viewport.near })
 }))
 
-vi.mock('~/lib/overviewSegment', () => ({ sendOverviewTrack: vi.fn(), sendOverviewPage: vi.fn() }))
+vi.mock('@/data/lib/creators/overviewSegment', () => ({ sendOverviewTrack: vi.fn(), sendOverviewPage: vi.fn() }))
 
 const setReadyState = (state: DocumentReadyState) =>
   Object.defineProperty(document, 'readyState', { configurable: true, get: () => state })

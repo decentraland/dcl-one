@@ -1,8 +1,8 @@
 import { useEffect, useState, type ComponentPropsWithoutRef } from 'react'
-import { useTranslation } from '~/intl'
-import { saleTimeLeft, formatCountdown, countdownTickMs } from '~/lib/saleCountdown'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { saleTimeLeft, formatCountdown, countdownTickMs } from '@/data/lib/creators/saleCountdown'
 import { SaleIcon } from './SaleIcon'
-import { cx } from '~/lib/cx'
+import { cx } from '@/data/lib/creators/cx'
 import styles from './SaleCountdown.module.css'
 
 // Live "2d 4h" label counting down to a moment — a sale's end, or its start. Repaints on a self-adjusting

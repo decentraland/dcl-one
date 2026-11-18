@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { Button } from '~/components/Button'
-import { Modal } from '~/components/Modal'
-import { useObjectURL } from '~/hooks/useObjectURL'
-import { useTranslation } from '~/intl'
+import { Button } from '@/features/creators/components/Button'
+import { Modal } from '@/features/creators/components/Modal'
+import { useObjectURL } from '@/features/creators/hooks/useObjectURL'
+import { useTranslation } from '@/data/lib/creators/intl'
 import { VideoDropzone } from './VideoDropzone'
 import styles from './VideoModal.module.css'
 

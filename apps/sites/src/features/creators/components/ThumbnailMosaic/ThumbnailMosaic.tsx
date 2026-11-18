@@ -1,7 +1,7 @@
-import { SparklesIcon } from '~/components/Icons'
-import { ItemThumbnail } from '~/components/ItemThumbnail'
-import { useTranslation } from '~/intl'
-import { cx } from '~/lib/cx'
+import { SparklesIcon } from '@/features/creators/components/Icons'
+import { ItemThumbnail } from '@/features/creators/components/ItemThumbnail'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { cx } from '@/data/lib/creators/cx'
 import styles from './ThumbnailMosaic.module.css'
 
 export type MosaicThumbnail = {

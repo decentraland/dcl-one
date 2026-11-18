@@ -3,16 +3,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ProviderType } from '@dcl/schemas'
-import { TranslationProvider } from '~/intl'
-import { DiscountError, type CollectionDiscount } from '~/lib/coupons'
-import { type SaleableCollection } from '~/lib/saleableCollection'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { DiscountError, type CollectionDiscount } from '@/data/lib/creators/coupons'
+import { type SaleableCollection } from '@/data/lib/creators/saleableCollection'
 import { makeSession } from '../SellItemFlow/testUtils'
 
 const track = vi.fn()
-vi.mock('~/lib/analytics', () => ({ track: (...args: unknown[]) => track(...args), errorCode: () => 'unknown' }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: (...args: unknown[]) => track(...args), errorCode: () => 'unknown' }))
 const openExternal = vi.fn()
-vi.mock('~/lib/navigation', () => ({ openExternal: (url: string) => openExternal(url) }))
-vi.mock('~/components/CollectionMosaic', () => ({ CollectionMosaic: () => null }))
+vi.mock('@/data/lib/creators/navigation', () => ({ openExternal: (url: string) => openExternal(url) }))
+vi.mock('@/features/creators/components/CollectionMosaic', () => ({ CollectionMosaic: () => null }))
 
 import { CreatorSaleModal } from './CreatorSaleModal'
 

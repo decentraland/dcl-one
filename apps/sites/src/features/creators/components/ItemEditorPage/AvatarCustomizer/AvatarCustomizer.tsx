@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { BodyShape, WearableCategory } from '@dcl/schemas'
-import { CasinoIcon as RandomIcon, CloseIcon, FemaleIcon, MaleIcon, PersonIcon } from '~/components/Icons'
-import { Button } from '~/components/Button'
-import { Select } from '~/components/Select'
-import { useScrollFades } from '~/hooks/useScrollFades'
-import { useTranslation } from '~/intl'
+import { CasinoIcon as RandomIcon, CloseIcon, FemaleIcon, MaleIcon, PersonIcon } from '@/features/creators/components/Icons'
+import { Button } from '@/features/creators/components/Button'
+import { Select } from '@/features/creators/components/Select'
+import { useScrollFades } from '@/features/creators/hooks/useScrollFades'
+import { useTranslation } from '@/data/lib/creators/intl'
 import {
   BASE_WEARABLE_CATEGORIES,
   BODY_SHAPES,
@@ -15,8 +15,8 @@ import {
   type AvatarColors,
   type BaseWearable,
   type BaseWearableCategory
-} from '~/lib/avatar'
-import { useAvatarPreview } from '~/store/avatarPreview'
+} from '@/data/lib/creators/avatar'
+import { useAvatarPreview } from '@/features/creators/store/avatarPreview'
 import styles from './AvatarCustomizer.module.css'
 
 type ToggleProps = {

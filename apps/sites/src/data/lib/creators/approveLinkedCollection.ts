@@ -2,27 +2,27 @@
 // handleInitiateTPItemsApprovalFlow and its batched deploy: the pending items' curated hashes form the third
 // party's Merkle tree; its root goes on chain (consuming the creator's slots cheque), then each item's entity is
 // deployed with its proof and its curation approved. Every step is idempotent, so a failed run can be resumed.
-import { type ContractCall, type TransactionSender, type TransactionSettlement } from '~/lib/auth'
-import { type LinkedApprovalData } from '~/lib/builder'
+import { type ContractCall, type TransactionSender, type TransactionSettlement } from '@/data/lib/creators/auth'
+import { type LinkedApprovalData } from '@/data/lib/creators/builder'
 import {
   ApprovalError,
   INDEXER_TIMEOUT_MS,
   waitForIndexer,
   type DeployDeps,
   type DeployFailure
-} from '~/lib/approveCollection'
+} from '@/data/lib/creators/approveCollection'
 import {
   buildDeploymentForm,
   buildLinkedItemEntity,
   computeLinkedItemContentHash,
   getLinkedEntityContent,
   type LinkedMerkleProof
-} from '~/lib/catalystEntity'
-import { CurationStatus, type Collection } from '~/lib/collections'
-import { type ItemCuration } from '~/lib/linkedItemStatus'
-import { VIDEO_PATH, type Item } from '~/lib/items'
-import { type ThirdParty } from '~/lib/thirdParty'
-import { buildReviewThirdPartyWithRootCall, toChequeSlot, type ChequeSlot } from '~/lib/thirdPartyRegistry'
+} from '@/data/lib/creators/catalystEntity'
+import { CurationStatus, type Collection } from '@/data/lib/creators/collections'
+import { type ItemCuration } from '@/data/lib/creators/linkedItemStatus'
+import { VIDEO_PATH, type Item } from '@/data/lib/creators/items'
+import { type ThirdParty } from '@/data/lib/creators/thirdParty'
+import { buildReviewThirdPartyWithRootCall, toChequeSlot, type ChequeSlot } from '@/data/lib/creators/thirdPartyRegistry'
 
 // Governance proposal f69c4d40-aaaf-11ec-87a7-6d2a41508231: a sample of 1% of the items, between 50 and 300.
 export const MIN_ITEMS_TO_REVIEW = 50

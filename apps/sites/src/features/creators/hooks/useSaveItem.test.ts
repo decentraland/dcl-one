@@ -2,16 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement, type ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook } from '@testing-library/react'
-import { TranslationProvider } from '~/intl'
-import { fetchContent, fetchContentSize, saveItem } from '~/lib/builder'
-import { track } from '~/lib/analytics'
-import { captureError } from '~/lib/monitoring'
-import { ItemType, type Item } from '~/lib/items'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { fetchContent, fetchContentSize, saveItem } from '@/data/lib/creators/builder'
+import { track } from '@/data/lib/creators/analytics'
+import { captureError } from '@/data/lib/creators/monitoring'
+import { ItemType, type Item } from '@/data/lib/creators/items'
 import { buildSaveItem, fetchStoredThumbnail, useSaveItem, wasImageRefreshSkipped } from './useSaveItem'
 
-vi.mock('~/lib/builder', () => ({ fetchContent: vi.fn(), fetchContentSize: vi.fn(), saveItem: vi.fn() }))
-vi.mock('~/lib/analytics', () => ({ track: vi.fn(), errorCode: () => 'unknown' }))
-vi.mock('~/lib/monitoring', () => ({ captureError: vi.fn() }))
+vi.mock('@/data/lib/creators/builder', () => ({ fetchContent: vi.fn(), fetchContentSize: vi.fn(), saveItem: vi.fn() }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn(), errorCode: () => 'unknown' }))
+vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn() }))
 
 const item: Item = {
   id: 'w1',

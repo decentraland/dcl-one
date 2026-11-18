@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { type ReactNode } from 'react'
-import { type Collection } from '~/lib/collections'
+import { type Collection } from '@/data/lib/creators/collections'
 
 const api = vi.hoisted(() => ({
   fetchCollectionEvents: vi.fn(),
@@ -10,14 +10,14 @@ const api = vi.hoisted(() => ({
   appealCollectionCuration: vi.fn(),
   postCollectionComment: vi.fn()
 }))
-vi.mock('~/lib/builder', async importOriginal => ({ ...(await importOriginal<object>()), ...api }))
-vi.mock('~/lib/analytics', () => ({ track: vi.fn(), errorCode: () => 'unknown' }))
-vi.mock('~/lib/monitoring', () => ({ captureError: vi.fn() }))
+vi.mock('@/data/lib/creators/builder', async importOriginal => ({ ...(await importOriginal<object>()), ...api }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn(), errorCode: () => 'unknown' }))
+vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn() }))
 const flag = vi.hoisted(() => ({ enabled: true }))
-vi.mock('~/hooks/useFeatureFlag', () => ({ useFeatureFlag: () => ({ enabled: flag.enabled, isLoading: false }) }))
+vi.mock('@/features/creators/hooks/useFeatureFlag', () => ({ useFeatureFlag: () => ({ enabled: flag.enabled, isLoading: false }) }))
 
-const { BuilderServerError } = await import('~/lib/builder')
-const { captureError } = await import('~/lib/monitoring')
+const { BuilderServerError } = await import('@/data/lib/creators/builder')
+const { captureError } = await import('@/data/lib/creators/monitoring')
 const { useAppealCuration, useCollectionEvents, usePostComment, useRequestValidation } =
   await import('./useCollectionEvents')
 

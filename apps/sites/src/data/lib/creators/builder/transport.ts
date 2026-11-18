@@ -1,7 +1,7 @@
 // Thin client for builder-server (the unchanged legacy back end). Requests are signed through the
 // lib/auth chokepoint; response bodies are the legacy `{ ok, data }` envelope.
-import { config } from '~/config'
-import { signedFetch } from '~/lib/auth'
+import { config } from '@/data/lib/creators/config'
+import { signedFetch } from '@/data/lib/creators/auth'
 
 /** Carries the HTTP status so callers can tell "no access / gone" from a transient failure. */
 export class BuilderServerError extends Error {

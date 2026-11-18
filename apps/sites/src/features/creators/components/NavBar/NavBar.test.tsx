@@ -2,15 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import type { NavbarProps } from 'decentraland-ui2'
-import { TranslationProvider } from '~/intl'
-import { config } from '~/config'
-import { openExternal } from '~/lib/navigation'
-import { sendOverviewTrack } from '~/lib/overviewSegment'
-import { track } from '~/lib/analytics'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { config } from '@/data/lib/creators/config'
+import { openExternal } from '@/data/lib/creators/navigation'
+import { sendOverviewTrack } from '@/data/lib/creators/overviewSegment'
+import { track } from '@/data/lib/creators/analytics'
 import { NavBar } from './NavBar'
 
 // Stands in for the ui2 navbar: surfaces the balance chips the real one renders from these props.
-vi.mock('~/components/TopNav', () => ({
+vi.mock('@/features/creators/components/TopNav', () => ({
   TopNav: ({
     shopCreditsBalance,
     onClickShopCredits,
@@ -54,7 +54,7 @@ const wallet = vi.hoisted(() => ({
   session: undefined as { address: string; providerType?: string } | undefined,
   signIn: vi.fn()
 }))
-vi.mock('~/store/wallet', () => ({
+vi.mock('@/features/creators/store/wallet', () => ({
   useWallet: () => ({
     session: wallet.session,
     connecting: false,
@@ -64,7 +64,7 @@ vi.mock('~/store/wallet', () => ({
   })
 }))
 
-vi.mock('~/hooks/useProfile', () => ({
+vi.mock('@/features/creators/hooks/useProfile', () => ({
   useProfile: () => ({ data: undefined, isLoading: false })
 }))
 
@@ -72,14 +72,14 @@ const balances = vi.hoisted(() => ({
   credits: undefined as number | undefined,
   manaWei: undefined as bigint | undefined
 }))
-vi.mock('~/hooks/useBalances', () => ({
+vi.mock('@/features/creators/hooks/useBalances', () => ({
   useCreditsBalance: () => ({ data: balances.credits === undefined ? undefined : { credits: balances.credits } }),
   useManaBalance: () => ({ data: balances.manaWei })
 }))
 
-vi.mock('~/lib/navigation', () => ({ openExternal: vi.fn() }))
-vi.mock('~/lib/analytics', () => ({ track: vi.fn() }))
-vi.mock('~/lib/auth', () => ({
+vi.mock('@/data/lib/creators/navigation', () => ({ openExternal: vi.fn() }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn() }))
+vi.mock('@/data/lib/creators/auth', () => ({
   isSocialLogin: (session: { providerType?: string }) => session.providerType === 'magic'
 }))
 
@@ -87,7 +87,7 @@ const walletChain = vi.hoisted(() => ({
   hook: vi.fn(),
   switchTo: vi.fn()
 }))
-vi.mock('~/hooks/useWalletChain', () => ({
+vi.mock('@/features/creators/hooks/useWalletChain', () => ({
   useWalletChain: (session: unknown) => {
     walletChain.hook(session)
     return session
@@ -95,10 +95,10 @@ vi.mock('~/hooks/useWalletChain', () => ({
       : { chainId: undefined, chains: [80002, 11155111], switchTo: walletChain.switchTo }
   }
 }))
-vi.mock('~/lib/overviewSegment', () => ({ sendOverviewTrack: vi.fn(), sendOverviewPage: vi.fn() }))
+vi.mock('@/data/lib/creators/overviewSegment', () => ({ sendOverviewTrack: vi.fn(), sendOverviewPage: vi.fn() }))
 
 const committee = vi.hoisted(() => ({ isCurator: false }))
-vi.mock('~/hooks/useCommittee', () => ({ useCommittee: () => ({ isCurator: committee.isCurator }) }))
+vi.mock('@/features/creators/hooks/useCommittee', () => ({ useCommittee: () => ({ isCurator: committee.isCurator }) }))
 
 beforeEach(() => {
   committee.isCurator = false

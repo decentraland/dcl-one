@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchCreditsBalance } from '~/lib/credits'
-import { config } from '~/config'
+import { fetchCreditsBalance } from '@/data/lib/creators/credits'
+import { config } from '@/data/lib/creators/config'
 
 export function useCreditsBalance(address: string | undefined) {
   return useQuery({
@@ -17,7 +17,7 @@ export function useManaBalance(address: string | undefined) {
   return useQuery({
     queryKey: ['mana-balance', address, chainId],
     // The navbar reads it on every page, the overview included, which must not load the contract registry.
-    queryFn: async () => (await import('~/lib/mana')).fetchManaBalance(address!, chainId),
+    queryFn: async () => (await import('@/data/lib/creators/mana')).fetchManaBalance(address!, chainId),
     enabled: !!address,
     staleTime: 30_000
   })

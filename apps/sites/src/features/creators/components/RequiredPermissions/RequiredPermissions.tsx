@@ -1,4 +1,4 @@
-import { useTranslation } from '~/intl'
+import { useTranslation } from '@/data/lib/creators/intl'
 import styles from './RequiredPermissions.module.css'
 
 type Props = {

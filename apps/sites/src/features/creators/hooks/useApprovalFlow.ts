@@ -1,11 +1,11 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { type Entity } from '@dcl/schemas'
-import { allCollectionItemsKey } from '~/hooks/useCollection'
-import { collectionCurationKey } from '~/hooks/useCuration'
-import { catalystImageDeps as imageDeps } from '~/lib/catalystEntity'
-import { itemEntitiesKey } from '~/hooks/useItemSync'
-import { errorCode, track } from '~/lib/analytics'
+import { allCollectionItemsKey } from '@/features/creators/hooks/useCollection'
+import { collectionCurationKey } from '@/features/creators/hooks/useCuration'
+import { catalystImageDeps as imageDeps } from '@/data/lib/creators/catalystEntity'
+import { itemEntitiesKey } from '@/features/creators/hooks/useItemSync'
+import { errorCode, track } from '@/data/lib/creators/analytics'
 import {
   APPROVAL_INDEX_TIMEOUT_MS,
   approveOnChain,
@@ -18,23 +18,23 @@ import {
   type DeployDeps,
   type DeployFailure,
   type RescueTarget
-} from '~/lib/approveCollection'
-import { sendContractTransaction, signWithIdentity, waitForTransaction, type Session } from '~/lib/auth'
+} from '@/data/lib/creators/approveCollection'
+import { sendContractTransaction, signWithIdentity, waitForTransaction, type Session } from '@/data/lib/creators/auth'
 import {
   fetchAllCollectionItems,
   fetchCollection,
   publishCollectionItems,
   pushCollectionCuration,
   updateCollectionCuration
-} from '~/lib/builder'
-import { deployEntity, fetchAvailableContent, fetchEntitiesByPointers } from '~/lib/catalyst'
-import { RESCUE_CHUNK_SIZE } from '~/lib/collectionApproval'
-import { type Collection } from '~/lib/collections'
-import { type CollectionCuration } from '~/lib/curation'
-import { type Item } from '~/lib/items'
-import { captureError } from '~/lib/monitoring'
-import { getMaticChainId } from '~/lib/publishCollection'
-import { isWalletRejection, isWalletStateError } from '~/lib/walletErrors'
+} from '@/data/lib/creators/builder'
+import { deployEntity, fetchAvailableContent, fetchEntitiesByPointers } from '@/data/lib/creators/catalyst'
+import { RESCUE_CHUNK_SIZE } from '@/data/lib/creators/collectionApproval'
+import { type Collection } from '@/data/lib/creators/collections'
+import { type CollectionCuration } from '@/data/lib/creators/curation'
+import { type Item } from '@/data/lib/creators/items'
+import { captureError } from '@/data/lib/creators/monitoring'
+import { getMaticChainId } from '@/data/lib/creators/publishCollection'
+import { isWalletRejection, isWalletStateError } from '@/data/lib/creators/walletErrors'
 
 /**
  * `approve` runs the whole flow; `enable` only switches a disabled collection back on as last approved, so changes the

@@ -1,7 +1,7 @@
 import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query'
-import { HttpError } from '~/lib/http'
-import { captureError } from '~/lib/monitoring'
-import { isExpectedWalletError } from '~/lib/walletErrors'
+import { HttpError } from '@/data/lib/creators/http'
+import { captureError } from '@/data/lib/creators/monitoring'
+import { isExpectedWalletError } from '@/data/lib/creators/walletErrors'
 
 /**
  * The app's QueryClient. react-query swallows every query and mutation failure (it becomes `error`

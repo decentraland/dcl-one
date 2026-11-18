@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { type ReactNode } from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TranslationProvider } from '~/intl'
-import { openExternal } from '~/lib/navigation'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { openExternal } from '@/data/lib/creators/navigation'
 import { PaymentMethodCard } from './PaymentMethodCard'
 
-vi.mock('~/lib/navigation', () => ({ openExternal: vi.fn() }))
+vi.mock('@/data/lib/creators/navigation', () => ({ openExternal: vi.fn() }))
 
 beforeEach(() => vi.mocked(openExternal).mockClear())
 

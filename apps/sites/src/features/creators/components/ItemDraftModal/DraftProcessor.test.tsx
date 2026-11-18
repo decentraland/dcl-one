@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render } from '@testing-library/react'
 import { PreviewRenderer } from '@dcl/schemas'
-import { ItemType } from '~/lib/items'
-import { type PreviewDraft } from '~/lib/draftPreview'
+import { ItemType } from '@/data/lib/creators/items'
+import { type PreviewDraft } from '@/data/lib/creators/draftPreview'
 
 type PreviewProps = { id: string; onLoad?: () => void; onUpdate?: () => void }
 const previewProps: PreviewProps[] = []
@@ -12,7 +12,7 @@ const controller = {
   emote: { getLength: vi.fn(async () => 0), goTo: vi.fn() }
 }
 
-vi.mock('~/components/WearablePreview', () => ({
+vi.mock('@/features/creators/components/WearablePreview', () => ({
   WearablePreview(props: PreviewProps) {
     previewProps.push(props)
     return <iframe id={props.id} title="preview" />
@@ -20,10 +20,10 @@ vi.mock('~/components/WearablePreview', () => ({
   createWearablePreviewController: vi.fn(() => controller)
 }))
 
-vi.mock('~/hooks/usePreviewRenderer', () => ({ usePreviewRenderer: () => PreviewRenderer.UNITY }))
+vi.mock('@/features/creators/hooks/usePreviewRenderer', () => ({ usePreviewRenderer: () => PreviewRenderer.UNITY }))
 
 const { captureError } = vi.hoisted(() => ({ captureError: vi.fn() }))
-vi.mock('~/lib/monitoring', () => ({ captureError }))
+vi.mock('@/data/lib/creators/monitoring', () => ({ captureError }))
 
 const { DraftProcessor, BOOT_BUDGET_MS, READ_BUDGET_MS, RUN_BUDGET_MS } = await import('./DraftProcessor')
 

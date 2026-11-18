@@ -9,9 +9,9 @@ import {
   type TouchEvent,
   type TransitionEvent
 } from 'react'
-import { useMediaQuery } from '~/hooks/useMediaQuery'
-import { useTranslation } from '~/intl'
-import { media } from '~/styles/theme'
+import { useMediaQuery } from '@/features/creators/hooks/useMediaQuery'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { media } from '@/data/lib/creators/theme'
 import styles from './Carousel.module.css'
 
 const SWIPE_THRESHOLD = 50

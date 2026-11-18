@@ -1,7 +1,7 @@
-import uploadErrorArt from '~/assets/modal-error.png'
-import { ConfirmModal } from '~/components/ConfirmModal'
-import { useTranslation } from '~/intl'
-import { type UploadFailureReason } from '~/lib/uploadItems'
+import uploadErrorArt from '@/features/creators/assets/modal-error.png'
+import { ConfirmModal } from '@/features/creators/components/ConfirmModal'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { type UploadFailureReason } from '@/data/lib/creators/uploadItems'
 
 type Props = {
   reason: UploadFailureReason

@@ -2,14 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { type ReactNode } from 'react'
-import { type ContractCall, type Session } from '~/lib/auth'
-import { type Collection } from '~/lib/collections'
-import { type CollectionCuration } from '~/lib/curation'
-import { type Item } from '~/lib/items'
-import { allCollectionItemsKey } from '~/hooks/useCollection'
-import { itemEntitiesKey } from '~/hooks/useItemSync'
-import { captureError } from '~/lib/monitoring'
-import { WrongAccountError } from '~/lib/walletErrors'
+import { type ContractCall, type Session } from '@/data/lib/creators/auth'
+import { type Collection } from '@/data/lib/creators/collections'
+import { type CollectionCuration } from '@/data/lib/creators/curation'
+import { type Item } from '@/data/lib/creators/items'
+import { allCollectionItemsKey } from '@/features/creators/hooks/useCollection'
+import { itemEntitiesKey } from '@/features/creators/hooks/useItemSync'
+import { captureError } from '@/data/lib/creators/monitoring'
+import { WrongAccountError } from '@/data/lib/creators/walletErrors'
 
 const flow = vi.hoisted(() => ({
   APPROVAL_INDEX_TIMEOUT_MS: 1000,
@@ -34,18 +34,18 @@ const auth = vi.hoisted(() => ({
   signWithIdentity: vi.fn(),
   waitForTransaction: vi.fn()
 }))
-vi.mock('~/lib/approveCollection', () => flow)
-vi.mock('~/lib/builder', () => api)
-vi.mock('~/lib/auth', () => auth)
+vi.mock('@/data/lib/creators/approveCollection', () => flow)
+vi.mock('@/data/lib/creators/builder', () => api)
+vi.mock('@/data/lib/creators/auth', () => auth)
 const catalyst = vi.hoisted(() => ({
   fetchEntitiesByPointers: vi.fn(),
   fetchAvailableContent: vi.fn(),
   deployEntity: vi.fn()
 }))
-vi.mock('~/lib/catalyst', () => catalyst)
-vi.mock('~/lib/analytics', () => ({ track: vi.fn(), errorCode: () => 'unknown' }))
-vi.mock('~/lib/monitoring', () => ({ captureError: vi.fn() }))
-vi.mock('~/lib/media', () => ({ generateCatalystImage: vi.fn() }))
+vi.mock('@/data/lib/creators/catalyst', () => catalyst)
+vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn(), errorCode: () => 'unknown' }))
+vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn() }))
+vi.mock('@/data/lib/creators/media', () => ({ generateCatalystImage: vi.fn() }))
 
 const { useApprovalFlow } = await import('./useApprovalFlow')
 type ApprovalMode = import('./useApprovalFlow').ApprovalMode

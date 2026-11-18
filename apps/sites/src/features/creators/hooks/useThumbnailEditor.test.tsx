@@ -3,22 +3,22 @@ import { type ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TranslationProvider } from '~/intl'
-import { pickFile } from '~/lib/filePicker'
-import { blobToDataURL, getImageType, resizeImage } from '~/lib/media'
-import { useNotifications } from '~/lib/notifications'
-import { THUMBNAIL_PATH } from '~/lib/itemFiles'
-import { ItemType, type Item } from '~/lib/items'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { pickFile } from '@/data/lib/creators/filePicker'
+import { blobToDataURL, getImageType, resizeImage } from '@/data/lib/creators/media'
+import { useNotifications } from '@/data/lib/creators/notifications'
+import { THUMBNAIL_PATH } from '@/data/lib/creators/itemFiles'
+import { ItemType, type Item } from '@/data/lib/creators/items'
 import { useThumbnailEditor, type ThumbnailSubject } from './useThumbnailEditor'
 
-vi.mock('~/lib/filePicker', () => ({ pickFile: vi.fn() }))
-vi.mock('~/lib/builder', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/builder')>()),
+vi.mock('@/data/lib/creators/filePicker', () => ({ pickFile: vi.fn() }))
+vi.mock('@/data/lib/creators/builder', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/builder')>()),
   fetchItemContents: vi.fn(() => new Promise(() => {}))
 }))
 // jsdom has no canvas: resizing hands back a fixed PNG data URL.
-vi.mock('~/lib/media', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/media')>()),
+vi.mock('@/data/lib/creators/media', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/media')>()),
   getImageType: vi.fn().mockResolvedValue('png'),
   resizeImage: vi.fn().mockResolvedValue(new Blob(['png'], { type: 'image/png' })),
   blobToDataURL: vi.fn().mockResolvedValue('data:image/png;base64,iVBORw0KGgo=')

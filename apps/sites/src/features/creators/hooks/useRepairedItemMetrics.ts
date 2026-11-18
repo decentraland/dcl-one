@@ -1,9 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchContent } from '~/lib/builder'
-import { isImageFile } from '~/lib/itemFiles'
-import { ItemType, hasEmptyModelMetrics, type Item } from '~/lib/items'
-import { countModelMetrics } from '~/lib/modelMetrics'
-import { captureError } from '~/lib/monitoring'
+import { fetchContent } from '@/data/lib/creators/builder'
+import { isImageFile } from '@/data/lib/creators/itemFiles'
+import { ItemType, hasEmptyModelMetrics, type Item } from '@/data/lib/creators/items'
+import { countModelMetrics } from '@/data/lib/creators/modelMetrics'
+import { captureError } from '@/data/lib/creators/monitoring'
 
 /**
  * Metrics counted from the model file of a wearable saved without geometry (a preview read of an empty scene),

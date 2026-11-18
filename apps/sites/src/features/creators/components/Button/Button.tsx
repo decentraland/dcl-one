@@ -7,7 +7,7 @@ import type {
   ReactElement,
   ReactNode
 } from 'react'
-import { cx } from '~/lib/cx'
+import { cx } from '@/data/lib/creators/cx'
 import styles from './Button.module.css'
 
 export type ButtonVariant = 'primary' | 'gradient' | 'secondary' | 'dark' | 'glass' | 'light' | 'ghost'

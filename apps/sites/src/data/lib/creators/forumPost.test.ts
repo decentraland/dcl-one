@@ -15,11 +15,11 @@ import {
 import { type Item } from './items'
 
 const analytics = vi.hoisted(() => ({ track: vi.fn() }))
-vi.mock('~/lib/analytics', () => ({ track: analytics.track, errorCode: () => 'unknown' }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: analytics.track, errorCode: () => 'unknown' }))
 const monitoring = vi.hoisted(() => ({ captureError: vi.fn() }))
-vi.mock('~/lib/monitoring', () => monitoring)
+vi.mock('@/data/lib/creators/monitoring', () => monitoring)
 const navigation = vi.hoisted(() => ({ openExternal: vi.fn() }))
-vi.mock('~/lib/navigation', () => navigation)
+vi.mock('@/data/lib/creators/navigation', () => navigation)
 
 const OWNER = '0x00000000000000000000000000000000000000aa'
 const LINK = 'https://forum.decentraland.org/t/hats/77'

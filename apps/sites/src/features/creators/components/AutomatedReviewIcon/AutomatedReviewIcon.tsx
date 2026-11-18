@@ -2,8 +2,8 @@ import {
   CheckCircleOutlineIcon as PassedIcon,
   HelpOutlineIcon as UnsupportedIcon,
   ReportProblemOutlinedIcon as IssuesIcon
-} from '~/components/Icons'
-import { type CuratorVerdictOutcome } from '~/lib/events'
+} from '@/features/creators/components/Icons'
+import { type CuratorVerdictOutcome } from '@/data/lib/creators/events'
 import styles from './AutomatedReviewIcon.module.css'
 
 export type AutomatedReviewStatus = CuratorVerdictOutcome | 'running'

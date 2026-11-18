@@ -1,5 +1,5 @@
 import type { CSSProperties, SVGProps } from 'react'
-import { cx } from '~/lib/cx'
+import { cx } from '@/data/lib/creators/cx'
 import styles from './SaleIcon.module.css'
 
 // The Shop's glyphs for this modal, inlined with the same paths so both draw identically. Each fills or strokes with

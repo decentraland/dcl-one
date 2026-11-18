@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { trackPage } from '~/lib/analytics'
-import { sendOverviewPage } from '~/lib/overviewSegment'
+import { trackPage } from '@/data/lib/creators/analytics'
+import { sendOverviewPage } from '@/data/lib/creators/overviewSegment'
 import { trackPageView } from './pageViews'
 
-vi.mock('~/lib/analytics', () => ({ trackPage: vi.fn() }))
-vi.mock('~/lib/overviewSegment', () => ({ sendOverviewPage: vi.fn(), sendOverviewTrack: vi.fn() }))
+vi.mock('@/data/lib/creators/analytics', () => ({ trackPage: vi.fn() }))
+vi.mock('@/data/lib/creators/overviewSegment', () => ({ sendOverviewPage: vi.fn(), sendOverviewTrack: vi.fn() }))
 
 beforeEach(() => vi.clearAllMocks())
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { track } from '~/lib/analytics'
-import { blobsAreEqual } from '~/lib/blobs'
+import { track } from '@/data/lib/creators/analytics'
+import { blobsAreEqual } from '@/data/lib/creators/blobs'
 import {
   LivePreviewError,
   fetchBridgeState,
@@ -9,8 +9,8 @@ import {
   queryLocalNetworkPermission,
   type BridgeState,
   type LivePreviewErrorCode
-} from '~/lib/livePreview'
-import { captureError } from '~/lib/monitoring'
+} from '@/data/lib/creators/livePreview'
+import { captureError } from '@/data/lib/creators/monitoring'
 
 export type LiveBridgeStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
 export type LiveBridgeErrorCode = LivePreviewErrorCode | 'unreachable' | 'permission_denied'

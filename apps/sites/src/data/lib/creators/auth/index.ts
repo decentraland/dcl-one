@@ -1,4 +1,4 @@
-import { afterLoadIdle } from '~/lib/idle'
+import { afterLoadIdle } from '@/data/lib/creators/idle'
 import { restoreSession as restoreAuthSession, type Session } from './auth'
 import type * as Transactions from './transactions'
 

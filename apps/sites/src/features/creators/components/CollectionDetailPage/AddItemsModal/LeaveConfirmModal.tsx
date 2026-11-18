@@ -1,5 +1,5 @@
-import { ConfirmModal } from '~/components/ConfirmModal'
-import { useTranslation } from '~/intl'
+import { ConfirmModal } from '@/features/creators/components/ConfirmModal'
+import { useTranslation } from '@/data/lib/creators/intl'
 
 type Props = {
   /** With reviewed items, offer to save them; with none, collapse to a simple discard confirm. */

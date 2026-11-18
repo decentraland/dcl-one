@@ -2,14 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProviderType } from '@dcl/schemas'
-import { type ItemListing } from '~/lib/listings'
+import { type ItemListing } from '@/data/lib/creators/listings'
 import { RemoveListingFlow } from './RemoveListingFlow'
 import { Providers, collection, item, makeSession } from './testUtils'
 
 type Callbacks = { onSuccess?: () => void; onError?: (error: unknown) => void }
 type Variables = { onSigned?: () => void }
 const remove = { mutate: vi.fn<(variables: Variables, callbacks: Callbacks) => void>(), isPending: false }
-vi.mock('~/hooks/useSales', () => ({ useRemoveListing: () => remove }))
+vi.mock('@/features/creators/hooks/useSales', () => ({ useRemoveListing: () => remove }))
 
 const listing: ItemListing = { itemId: '3', tradeId: 'trade-1', currency: 'credits', credits: 50 }
 const last = () => remove.mutate.mock.calls[remove.mutate.mock.calls.length - 1]

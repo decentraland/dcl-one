@@ -4,19 +4,19 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { TranslationProvider } from '~/intl'
-import { type Collection } from '~/lib/collections'
-import { useNotifications } from '~/lib/notifications'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { type Collection } from '@/data/lib/creators/collections'
+import { useNotifications } from '@/data/lib/creators/notifications'
 import { CollectionActionsMenu } from './CollectionActionsMenu'
 
-vi.mock('~/lib/builder', () => ({ deleteCollection: vi.fn() }))
-vi.mock('~/lib/clipboard', () => ({ copyToClipboard: vi.fn().mockResolvedValue(true) }))
-vi.mock('~/lib/navigation', () => ({ openExternal: vi.fn() }))
-vi.mock('~/hooks/useFeatureFlag', () => ({ useFeatureFlag: () => ({ enabled: true, isLoading: false }) }))
+vi.mock('@/data/lib/creators/builder', () => ({ deleteCollection: vi.fn() }))
+vi.mock('@/data/lib/creators/clipboard', () => ({ copyToClipboard: vi.fn().mockResolvedValue(true) }))
+vi.mock('@/data/lib/creators/navigation', () => ({ openExternal: vi.fn() }))
+vi.mock('@/features/creators/hooks/useFeatureFlag', () => ({ useFeatureFlag: () => ({ enabled: true, isLoading: false }) }))
 
-import { deleteCollection } from '~/lib/builder'
-import { copyToClipboard } from '~/lib/clipboard'
-import { openExternal } from '~/lib/navigation'
+import { deleteCollection } from '@/data/lib/creators/builder'
+import { copyToClipboard } from '@/data/lib/creators/clipboard'
+import { openExternal } from '@/data/lib/creators/navigation'
 
 const OWNER = '0xabc'
 

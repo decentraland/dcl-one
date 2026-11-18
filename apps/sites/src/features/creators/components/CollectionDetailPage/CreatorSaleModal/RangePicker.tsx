@@ -2,10 +2,10 @@ import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref
 import DatePicker from 'react-datepicker'
 import { enUS, es, zhCN, type Locale as DateLocale } from 'date-fns/locale'
 import 'react-datepicker/dist/react-datepicker.css'
-import { useMorphFrom } from '~/hooks/useMorphFrom'
+import { useMorphFrom } from '@/features/creators/hooks/useMorphFrom'
 import { useIntl } from 'react-intl'
-import { useTranslation } from '~/intl'
-import { breakpoints } from '~/styles/theme'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { breakpoints } from '@/data/lib/creators/theme'
 import styles from './RangePicker.module.css'
 
 // The calendar's weekday and month names in the viewer's language.

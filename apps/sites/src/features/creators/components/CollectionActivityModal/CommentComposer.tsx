@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { useTranslation } from '~/intl'
-import { Button } from '~/components/Button'
-import { NoteField } from '~/components/NoteField'
-import { usePostComment } from '~/hooks/useCollectionEvents'
-import { type Collection } from '~/lib/collections'
-import { COMMENT_MAX_LENGTH, type ReviewParty } from '~/lib/events'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { Button } from '@/features/creators/components/Button'
+import { NoteField } from '@/features/creators/components/NoteField'
+import { usePostComment } from '@/features/creators/hooks/useCollectionEvents'
+import { type Collection } from '@/data/lib/creators/collections'
+import { COMMENT_MAX_LENGTH, type ReviewParty } from '@/data/lib/creators/events'
 import styles from './CollectionActivityModal.module.css'
 
 // The limit rarely matters, so the length only shows once it is close.

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { BodyShape, PreviewEmote, WearableCategory } from '@dcl/schemas'
-import { type BaseWearable } from '~/lib/avatar'
-import { ItemType } from '~/lib/items'
+import { type BaseWearable } from '@/data/lib/creators/avatar'
+import { ItemType } from '@/data/lib/creators/items'
 import { selectAvatarAttributes, useAvatarPreview } from './avatarPreview'
 
 const catalog: BaseWearable[] = [

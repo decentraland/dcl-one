@@ -1,15 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { errorCode, track } from '~/lib/analytics'
-import { fetchAllCollectionItems, fetchCollection, saveCollection, deleteCollection } from '~/lib/builder'
-import { buildCollectionInitializeData } from '~/lib/saveCollection'
-import { useCollectionCuration } from '~/hooks/useCuration'
+import { errorCode, track } from '@/data/lib/creators/analytics'
+import { fetchAllCollectionItems, fetchCollection, saveCollection, deleteCollection } from '@/data/lib/creators/builder'
+import { buildCollectionInitializeData } from '@/data/lib/creators/saveCollection'
+import { useCollectionCuration } from '@/features/creators/hooks/useCuration'
 import {
   getCollectionDisplayStatus,
   isLinkedCollection,
   withoutCollection,
   type Collection,
   type CollectionDisplayStatus
-} from '~/lib/collections'
+} from '@/data/lib/creators/collections'
 
 export const ITEMS_PAGE_SIZE = 20
 

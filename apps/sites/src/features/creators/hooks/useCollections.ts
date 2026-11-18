@@ -1,12 +1,12 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { fetchCollectionItemPreviews, fetchCollections } from '~/lib/builder'
+import { fetchCollectionItemPreviews, fetchCollections } from '@/data/lib/creators/builder'
 import {
   CollectionType,
   listFilterToParams,
   summarizeCollections,
   type CollectionListFilter,
   type CollectionSort
-} from '~/lib/collections'
+} from '@/data/lib/creators/collections'
 
 // Same page size as the legacy builder's collections page.
 export const COLLECTIONS_PAGE_SIZE = 8

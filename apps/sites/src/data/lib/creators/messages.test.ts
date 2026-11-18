@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { flattenMessages } from './messages'
-import en from '~/intl/en.json'
-import es from '~/intl/es.json'
-import zh from '~/intl/zh.json'
+import en from '@/data/lib/creators/intl/en.json'
+import es from '@/data/lib/creators/intl/es.json'
+import zh from '@/data/lib/creators/intl/zh.json'
 
 describe('flattenMessages', () => {
   it('flattens nested objects into dotted ids', () => {

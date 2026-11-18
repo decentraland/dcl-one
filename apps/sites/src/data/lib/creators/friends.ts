@@ -1,7 +1,7 @@
 // The creator's friends, for picking a sale beneficiary. Read through the social service RPC (the
 // client the sites profile pages use); the connection is opened for the read and closed right after.
-import { config } from '~/config'
-import { type Session } from '~/lib/auth'
+import { config } from '@/data/lib/creators/config'
+import { type Session } from '@/data/lib/creators/auth'
 
 export type Friend = {
   address: string

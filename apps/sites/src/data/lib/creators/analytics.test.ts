@@ -8,14 +8,14 @@ const PROXY_URL = 'https://proxy.example.com/abc/def.min.js'
 const wallet = vi.hoisted(() => ({ session: null as { address: string } | null }))
 
 const settings = vi.hoisted((): { values: Record<string, string | undefined> } => ({ values: {} }))
-vi.mock('~/config', () => ({
+vi.mock('@/data/lib/creators/config', () => ({
   config: { get: (key: string, fallback = '') => settings.values[key] ?? fallback },
   currentSearch: () => '?utm_source=x',
   APP_VERSION: '1.2.3'
 }))
 
 const posted = vi.hoisted(() => vi.fn())
-vi.mock('~/lib/segmentHttp', () => ({ postToSegment: posted }))
+vi.mock('@/data/lib/creators/segmentHttp', () => ({ postToSegment: posted }))
 
 function segmentStub() {
   return {

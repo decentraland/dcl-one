@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { isCommitteeMember } from '~/lib/curation'
+import { isCommitteeMember } from '@/data/lib/creators/curation'
 
 // Same refresh cadence as builder-server's own committee cache.
 const COMMITTEE_STALE_MS = 60 * 60_000
@@ -12,7 +12,7 @@ export function useCommittee(address: string | undefined) {
   const query = useQuery({
     queryKey: ['committee'],
     // The navbar asks on every page; the builder-server client stays off the overview's first load.
-    queryFn: async () => (await import('~/lib/builder')).fetchCommittee(),
+    queryFn: async () => (await import('@/data/lib/creators/builder')).fetchCommittee(),
     staleTime: COMMITTEE_STALE_MS,
     enabled: !!address
   })

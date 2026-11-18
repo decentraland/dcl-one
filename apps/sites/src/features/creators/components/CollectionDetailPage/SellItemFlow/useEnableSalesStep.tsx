@@ -1,10 +1,10 @@
 import { useRef, useState, type ReactElement } from 'react'
-import { useTranslation } from '~/intl'
-import { useEnableSales, useSalesEnabled } from '~/hooks/useSales'
-import { isSocialLogin, type Session } from '~/lib/auth'
-import { type Collection } from '~/lib/collections'
-import { toSellItemError, type SellFailureReason } from '~/lib/sales'
-import { PendingModal } from '~/components/PendingModal'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { useEnableSales, useSalesEnabled } from '@/features/creators/hooks/useSales'
+import { isSocialLogin, type Session } from '@/data/lib/creators/auth'
+import { type Collection } from '@/data/lib/creators/collections'
+import { toSellItemError, type SellFailureReason } from '@/data/lib/creators/sales'
+import { PendingModal } from '@/features/creators/components/PendingModal'
 import { EnableSalesModal, type EnableSalesReason } from './EnableSalesModal'
 
 // A wallet transaction/signature is first prompted, then (once signed) confirmed or stored.

@@ -1,8 +1,8 @@
 import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { Button } from '~/components/Button'
-import { useTranslation } from '~/intl'
-import { track } from '~/lib/analytics'
+import { Button } from '@/features/creators/components/Button'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { track } from '@/data/lib/creators/analytics'
 import styles from './NotFoundPage.module.css'
 
 const NotFoundPage = () => {

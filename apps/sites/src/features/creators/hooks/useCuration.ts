@@ -1,8 +1,8 @@
 import { useMemo } from 'react'
-import { useTranslation } from '~/intl'
+import { useTranslation } from '@/data/lib/creators/intl'
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
-import { errorCode, track } from '~/lib/analytics'
-import { sendContractTransaction, waitForTransaction, type Session } from '~/lib/auth'
+import { errorCode, track } from '@/data/lib/creators/analytics'
+import { sendContractTransaction, waitForTransaction, type Session } from '@/data/lib/creators/auth'
 import {
   isCollectionBusy,
   isValidationRunning,
@@ -13,19 +13,19 @@ import {
   fetchCurations,
   pushCollectionCuration,
   updateCollectionCuration
-} from '~/lib/builder'
-import { type Collection } from '~/lib/collections'
-import { buildSetApprovedCall } from '~/lib/collectionApproval'
-import { APPROVAL_INDEX_TIMEOUT_MS, waitForIndexer } from '~/lib/approveCollection'
-import { orderCurators, type CollectionCuration, type CurationFilters } from '~/lib/curation'
-import { shortenAddress } from '~/lib/address'
-import { type RejectReasonCode } from '~/lib/events'
-import { captureError } from '~/lib/monitoring'
-import { postAssignee } from '~/hooks/useForumPost'
-import { useCommittee } from '~/hooks/useCommittee'
-import { useProfiles } from '~/hooks/useProfile'
-import { getMaticChainId } from '~/lib/publishCollection'
-import { isExpectedWalletError } from '~/lib/walletErrors'
+} from '@/data/lib/creators/builder'
+import { type Collection } from '@/data/lib/creators/collections'
+import { buildSetApprovedCall } from '@/data/lib/creators/collectionApproval'
+import { APPROVAL_INDEX_TIMEOUT_MS, waitForIndexer } from '@/data/lib/creators/approveCollection'
+import { orderCurators, type CollectionCuration, type CurationFilters } from '@/data/lib/creators/curation'
+import { shortenAddress } from '@/data/lib/creators/address'
+import { type RejectReasonCode } from '@/data/lib/creators/events'
+import { captureError } from '@/data/lib/creators/monitoring'
+import { postAssignee } from '@/features/creators/hooks/useForumPost'
+import { useCommittee } from '@/features/creators/hooks/useCommittee'
+import { useProfiles } from '@/features/creators/hooks/useProfile'
+import { getMaticChainId } from '@/data/lib/creators/publishCollection'
+import { isExpectedWalletError } from '@/data/lib/creators/walletErrors'
 
 /** The committee as picker options, the signed-in curator first and marked, after `leading` and a divider. */
 type CuratorOption = { value: string; label: string; dividerBefore?: boolean }

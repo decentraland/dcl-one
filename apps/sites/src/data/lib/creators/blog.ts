@@ -1,6 +1,6 @@
 // Read-only client for the latest blog posts on the Contentful-backed CMS API ("Fresh from the blog").
-import { config } from '~/config'
-import { HttpError } from '~/lib/http'
+import { config } from '@/data/lib/creators/config'
+import { HttpError } from '@/data/lib/creators/http'
 
 type CMSLink = { sys: { id: string } }
 

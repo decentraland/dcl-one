@@ -8,7 +8,7 @@ import {
   isContractAddress
 } from './linkedContract'
 
-vi.mock('~/lib/auth', () => ({ readContract: vi.fn() }))
+vi.mock('@/data/lib/creators/auth', () => ({ readContract: vi.fn() }))
 
 const ADDRESS = '0x1d9fb685c257e74f869ba302e260c0b68f5ebb37'
 

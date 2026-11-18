@@ -1,11 +1,11 @@
 import { useState } from 'react'
-import { useTranslation } from '~/intl'
-import { type LinkedContract } from '~/lib/thirdParty'
-import { Button } from '~/components/Button'
-import { EMPTY_LINKED_CONTRACT, LinkedContractFields } from '~/components/LinkedContractFields'
-import { Modal } from '~/components/Modal'
-import nameModal from '~/components/CollectionNameModal/CollectionNameModal.module.css'
-import shared from '~/styles/shared.module.css'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { type LinkedContract } from '@/data/lib/creators/thirdParty'
+import { Button } from '@/features/creators/components/Button'
+import { EMPTY_LINKED_CONTRACT, LinkedContractFields } from '@/features/creators/components/LinkedContractFields'
+import { Modal } from '@/features/creators/components/Modal'
+import nameModal from '@/features/creators/components/CollectionNameModal/CollectionNameModal.module.css'
+import shared from '@/features/creators/styles/shared.module.css'
 
 type Props = {
   /** The contract a previous attempt submitted, so a retry starts from it. */

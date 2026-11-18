@@ -1,8 +1,8 @@
 import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { CloseIcon } from '~/components/Icons'
-import { useTranslation } from '~/intl'
-import { track } from '~/lib/analytics'
+import { CloseIcon } from '@/features/creators/components/Icons'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { track } from '@/data/lib/creators/analytics'
 import styles from './Modal.module.css'
 
 // Refcounted scroll lock: modals can stack (add-items + its confirm dialogs), and a

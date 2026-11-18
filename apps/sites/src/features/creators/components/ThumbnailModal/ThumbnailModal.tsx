@@ -1,23 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { PreviewProjection, PreviewRenderer } from '@dcl/schemas'
-import { Button } from '~/components/Button'
-import { Modal } from '~/components/Modal'
+import { Button } from '@/features/creators/components/Button'
+import { Modal } from '@/features/creators/components/Modal'
 import {
   EmoteControls,
   WearablePreview,
   TranslationControls,
   createWearablePreviewController,
   type WearablePreviewController
-} from '~/components/WearablePreview'
-import { ZoomControls } from '~/components/ZoomControls'
-import { usePreviewRenderer } from '~/hooks/usePreviewRenderer'
-import { useTranslation } from '~/intl'
-import { BuilderServerError, COLLECTION_LOCKED_STATUS } from '~/lib/builder'
-import { MAX_THUMBNAIL_FILE_SIZE, THUMBNAIL_PATH, toMB } from '~/lib/itemFiles'
-import { isItemTooBigError } from '~/lib/itemSize'
-import { ItemType } from '~/lib/items'
-import { ImageType, dataURLToBlob, getImageType, resizeImage, blobToDataURL } from '~/lib/media'
-import { retryWhilePreviewReloads, toEmoteWithBlobs, toWearableWithBlobs } from '~/lib/preview'
+} from '@/features/creators/components/WearablePreview'
+import { ZoomControls } from '@/features/creators/components/ZoomControls'
+import { usePreviewRenderer } from '@/features/creators/hooks/usePreviewRenderer'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { BuilderServerError, COLLECTION_LOCKED_STATUS } from '@/data/lib/creators/builder'
+import { MAX_THUMBNAIL_FILE_SIZE, THUMBNAIL_PATH, toMB } from '@/data/lib/creators/itemFiles'
+import { isItemTooBigError } from '@/data/lib/creators/itemSize'
+import { ItemType } from '@/data/lib/creators/items'
+import { ImageType, dataURLToBlob, getImageType, resizeImage, blobToDataURL } from '@/data/lib/creators/media'
+import { retryWhilePreviewReloads, toEmoteWithBlobs, toWearableWithBlobs } from '@/data/lib/creators/preview'
 import styles from './ThumbnailModal.module.css'
 
 const PREVIEW_ID = 'thumbnail-editor'

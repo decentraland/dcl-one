@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchCampaign, type Campaign } from '~/lib/campaign'
-import { FeatureFlag } from '~/lib/featureFlags'
+import { fetchCampaign, type Campaign } from '@/data/lib/creators/campaign'
+import { FeatureFlag } from '@/data/lib/creators/featureFlags'
 import { useFeatureFlag } from './useFeatureFlag'
 
 const STALE_TIME_MS = 15 * 60_000

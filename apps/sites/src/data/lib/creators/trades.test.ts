@@ -1,15 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Network, TradeAssetType, TradeType, type Trade, type TradeCreation } from '@dcl/schemas'
-import { ContractName, getContract } from '~/lib/chain/contracts'
+import { ContractName, getContract } from '@/data/lib/creators/chain/contracts'
 import { zeroAddress } from 'viem'
 
-vi.mock('~/lib/auth', async () => {
-  const actual = await vi.importActual<typeof import('~/lib/auth')>('~/lib/auth')
+vi.mock('@/data/lib/creators/auth', async () => {
+  const actual = await vi.importActual<typeof import('@/data/lib/creators/auth')>('@/data/lib/creators/auth')
   return { ...actual, readContract: vi.fn(), signedFetch: vi.fn() }
 })
 
-import { readContract, signedFetch } from '~/lib/auth'
-import { typedDataDigest } from '~/test/chain'
+import { readContract, signedFetch } from '@/data/lib/creators/auth'
+import { typedDataDigest } from '@/data/lib/creators/test/chain'
 import {
   OFFCHAIN_MARKETPLACE_TYPES,
   TradeConflictError,

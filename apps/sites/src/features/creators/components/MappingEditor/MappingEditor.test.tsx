@@ -2,8 +2,8 @@ import { describe, it, expect, vi } from 'vitest'
 import { type ReactNode } from 'react'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TranslationProvider } from '~/intl'
-import { MappingType, type Mapping } from '~/lib/mappings'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { MappingType, type Mapping } from '@/data/lib/creators/mappings'
 import { MappingEditor } from './MappingEditor'
 
 const wrapper = ({ children }: { children: ReactNode }) => <TranslationProvider>{children}</TranslationProvider>

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { CREDIT_PACKS, fetchCreditPacks, type CreditPack } from '~/lib/creditPacks'
+import { CREDIT_PACKS, fetchCreditPacks, type CreditPack } from '@/data/lib/creators/creditPacks'
 
 /**
  * The credit-pack catalogue from credits-server. `packs` is null while it loads; a failed fetch falls

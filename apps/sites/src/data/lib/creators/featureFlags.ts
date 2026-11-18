@@ -1,6 +1,6 @@
 // Decentraland feature flags, read from the same service every other dapp reads (ported from shop's
 // lib/featureFlags): a cached fetch behind an async accessor, keyed `${app}-${feature}`.
-import { config } from '~/config'
+import { config } from '@/data/lib/creators/config'
 
 /** Flag names as they appear in the service, without their application prefix. */
 export enum FeatureFlag {

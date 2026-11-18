@@ -1,7 +1,7 @@
 // credits-server client (shop credits, USD-denominated: 1 credit = 10 US cents). Requests are
 // ADR-44 signed through the lib/auth chokepoint.
-import { config } from '~/config'
-import { signedFetch } from '~/lib/auth'
+import { config } from '@/data/lib/creators/config'
+import { signedFetch } from '@/data/lib/creators/auth'
 
 export type CreditsBalance = {
   credits: number

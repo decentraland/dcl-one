@@ -1,5 +1,5 @@
 // Rarity constants shared by every rarity control (pill, select, forms).
-import { rarities } from '~/styles/theme'
+import { rarities } from '@/data/lib/creators/theme'
 
 export const RARITIES = ['unique', 'mythic', 'exotic', 'legendary', 'epic', 'rare', 'uncommon', 'common'] as const
 

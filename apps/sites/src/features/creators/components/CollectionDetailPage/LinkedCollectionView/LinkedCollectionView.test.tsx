@@ -5,39 +5,39 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ProviderType, type Mappings } from '@dcl/schemas'
-import { TranslationProvider } from '~/intl'
-import { type Session } from '~/lib/auth'
-import { CurationStatus, type Collection } from '~/lib/collections'
-import { ItemType, type Item } from '~/lib/items'
-import { type ItemCuration, type LinkedItemsQuery } from '~/lib/linkedItemStatus'
-import { RelinkCancelledError, type RelinkDeps } from '~/lib/relinkCollection'
-import { type ThirdParty } from '~/lib/thirdParty'
-import { WrongAccountError } from '~/lib/walletErrors'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { type Session } from '@/data/lib/creators/auth'
+import { CurationStatus, type Collection } from '@/data/lib/creators/collections'
+import { ItemType, type Item } from '@/data/lib/creators/items'
+import { type ItemCuration, type LinkedItemsQuery } from '@/data/lib/creators/linkedItemStatus'
+import { RelinkCancelledError, type RelinkDeps } from '@/data/lib/creators/relinkCollection'
+import { type ThirdParty } from '@/data/lib/creators/thirdParty'
+import { WrongAccountError } from '@/data/lib/creators/walletErrors'
 import { LinkedCollectionView } from './LinkedCollectionView'
 
-vi.mock('~/lib/builder', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/builder')>()),
+vi.mock('@/data/lib/creators/builder', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/builder')>()),
   fetchLinkedCollectionItems: vi.fn(),
   fetchAllLinkedCollectionItems: vi.fn(),
   fetchItemCurations: vi.fn()
 }))
 
-vi.mock('~/lib/relinkCollection', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/relinkCollection')>()),
+vi.mock('@/data/lib/creators/relinkCollection', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/relinkCollection')>()),
   relinkCollection: vi.fn()
 }))
-vi.mock('~/lib/monitoring', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/monitoring')>()),
+vi.mock('@/data/lib/creators/monitoring', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/monitoring')>()),
   captureError: vi.fn()
 }))
-vi.mock('~/lib/linkedContract', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/linkedContract')>()),
+vi.mock('@/data/lib/creators/linkedContract', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/linkedContract')>()),
   checkLinkedContract: vi.fn(async () => 'ok' as const)
 }))
 
-import { fetchAllLinkedCollectionItems, fetchItemCurations, fetchLinkedCollectionItems } from '~/lib/builder'
-import { relinkCollection } from '~/lib/relinkCollection'
-import { captureError } from '~/lib/monitoring'
+import { fetchAllLinkedCollectionItems, fetchItemCurations, fetchLinkedCollectionItems } from '@/data/lib/creators/builder'
+import { relinkCollection } from '@/data/lib/creators/relinkCollection'
+import { captureError } from '@/data/lib/creators/monitoring'
 
 const ADDRESS = '0xabc0000000000000000000000000000000000001'
 const CONTRACT = '0x1d9fb685c257e74f869ba302e260c0b68f5ebb37'

@@ -4,13 +4,13 @@ import {
   getThumbnailErrorMessage,
   thumbnailPatchFromFile,
   type ThumbnailPatch
-} from '~/components/ThumbnailModal'
-import { useItemContents } from '~/hooks/usePublishCollection'
-import { useTranslation } from '~/intl'
-import { pickFile } from '~/lib/filePicker'
-import { ItemType, type Item } from '~/lib/items'
-import { useNotifications } from '~/lib/notifications'
-import { isImageWearableContents } from '~/lib/wearableCategories'
+} from '@/features/creators/components/ThumbnailModal'
+import { useItemContents } from '@/features/creators/hooks/usePublishCollection'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { pickFile } from '@/data/lib/creators/filePicker'
+import { ItemType, type Item } from '@/data/lib/creators/items'
+import { useNotifications } from '@/data/lib/creators/notifications'
+import { isImageWearableContents } from '@/data/lib/creators/wearableCategories'
 
 /** What gets a new thumbnail: a saved item (its files load when the modal opens) or an in-memory draft. */
 export type ThumbnailSubject =

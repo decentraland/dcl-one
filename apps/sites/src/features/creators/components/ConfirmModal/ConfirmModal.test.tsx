@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { type ReactNode } from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TranslationProvider } from '~/intl'
-import { useNotifications } from '~/lib/notifications'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { useNotifications } from '@/data/lib/creators/notifications'
 import { ConfirmModal } from './ConfirmModal'
 
 const wrapper = ({ children }: { children: ReactNode }) => <TranslationProvider>{children}</TranslationProvider>

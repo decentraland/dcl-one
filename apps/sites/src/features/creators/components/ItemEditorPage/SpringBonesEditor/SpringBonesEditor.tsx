@@ -1,8 +1,8 @@
 import { useMemo, useState, type CSSProperties } from 'react'
 import { BodyShape, type SpringBoneParams } from '@dcl/schemas'
-import { ActionsMenu, ActionsMenuDivider, ActionsMenuItem } from '~/components/ActionsMenu'
-import { Select } from '~/components/Select'
-import { useTranslation } from '~/intl'
+import { ActionsMenu, ActionsMenuDivider, ActionsMenuItem } from '@/features/creators/components/ActionsMenu'
+import { Select } from '@/features/creators/components/Select'
+import { useTranslation } from '@/data/lib/creators/intl'
 import {
   buildBoneTree,
   buildSubtreeSizes,
@@ -15,7 +15,7 @@ import {
   sumConfiguredBones,
   type BoneNode,
   type SpringBoneParamsByName
-} from '~/lib/springBones'
+} from '@/data/lib/creators/springBones'
 import { BoneTreePicker } from './BoneTreePicker'
 import styles from './SpringBonesEditor.module.css'
 

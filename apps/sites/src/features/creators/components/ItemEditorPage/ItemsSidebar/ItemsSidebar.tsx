@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { type BodyShape } from '@dcl/schemas'
-import { Button } from '~/components/Button'
-import { CollectionStatusPill } from '~/components/CollectionStatusPill'
+import { Button } from '@/features/creators/components/Button'
+import { CollectionStatusPill } from '@/features/creators/components/CollectionStatusPill'
 import {
   EmoteIcon,
   WearableIcon,
@@ -18,18 +18,18 @@ import {
   MaleIcon,
   VisibilityIcon as DressedIcon,
   VisibilityOffIcon as UndressedIcon
-} from '~/components/Icons'
-import { ItemThumbnail } from '~/components/ItemThumbnail'
-import { Tooltip } from '~/components/Tooltip'
-import { useScrollFades } from '~/hooks/useScrollFades'
-import { useTranslation } from '~/intl'
-import { track } from '~/lib/analytics'
-import { getContentsStorageUrl } from '~/lib/builder'
-import { isLinkedCollection, type Collection, type CollectionDisplayStatus } from '~/lib/collections'
-import { groupItemsByType, hasRepresentationFor, type EditorMode } from '~/lib/itemEditor'
-import { BodyShapeType, ItemType, getItemBodyShapeType, isSmartWearable, type Item } from '~/lib/items'
+} from '@/features/creators/components/Icons'
+import { ItemThumbnail } from '@/features/creators/components/ItemThumbnail'
+import { Tooltip } from '@/features/creators/components/Tooltip'
+import { useScrollFades } from '@/features/creators/hooks/useScrollFades'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { track } from '@/data/lib/creators/analytics'
+import { getContentsStorageUrl } from '@/data/lib/creators/builder'
+import { isLinkedCollection, type Collection, type CollectionDisplayStatus } from '@/data/lib/creators/collections'
+import { groupItemsByType, hasRepresentationFor, type EditorMode } from '@/data/lib/creators/itemEditor'
+import { BodyShapeType, ItemType, getItemBodyShapeType, isSmartWearable, type Item } from '@/data/lib/creators/items'
 import { EditorSection } from '../EditorSection'
-import { cx } from '~/lib/cx'
+import { cx } from '@/data/lib/creators/cx'
 import styles from './ItemsSidebar.module.css'
 import { Link } from 'react-router-dom'
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Network } from '@dcl/schemas'
-import { type CouponCreation } from '~/lib/coupons'
+import { type CouponCreation } from '@/data/lib/creators/coupons'
 import {
   acknowledgeUnconfirmedCreate,
   clearPendingEnd,

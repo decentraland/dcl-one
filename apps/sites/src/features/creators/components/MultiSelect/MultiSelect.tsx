@@ -1,9 +1,9 @@
 import { useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { ArrowDropDownIcon as ChevronIcon, CheckIcon, ExpandMoreIcon as CompactChevronIcon } from '~/components/Icons'
-import { useTranslation } from '~/intl'
-import base from '~/components/Select/Select.module.css'
-import { useListbox } from '~/components/Select/useListbox'
+import { ArrowDropDownIcon as ChevronIcon, CheckIcon, ExpandMoreIcon as CompactChevronIcon } from '@/features/creators/components/Icons'
+import { useTranslation } from '@/data/lib/creators/intl'
+import base from '@/features/creators/components/Select/Select.module.css'
+import { useListbox } from '@/features/creators/components/Select/useListbox'
 import styles from './MultiSelect.module.css'
 
 export type MultiSelectOption<T extends string> = { value: T; label: string }

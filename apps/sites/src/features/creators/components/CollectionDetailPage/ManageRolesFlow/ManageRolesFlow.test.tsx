@@ -2,11 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProviderType } from '@dcl/schemas'
-import { ContractName, getContract } from '~/lib/chain/contracts'
-import { type Collection } from '~/lib/collections'
-import { type RoleKind } from '~/lib/collectionRoles'
-import { SellItemError } from '~/lib/sales'
-import { WrongAccountError } from '~/lib/walletErrors'
+import { ContractName, getContract } from '@/data/lib/creators/chain/contracts'
+import { type Collection } from '@/data/lib/creators/collections'
+import { type RoleKind } from '@/data/lib/creators/collectionRoles'
+import { SellItemError } from '@/data/lib/creators/sales'
+import { WrongAccountError } from '@/data/lib/creators/walletErrors'
 import { ManageRolesFlow } from './ManageRolesFlow'
 import { ADDRESS, FRIEND, Providers, collection, makeSession } from '../SellItemFlow/testUtils'
 
@@ -14,11 +14,11 @@ type Callbacks = { onSuccess?: (result: unknown) => void; onError?: (error: unkn
 type Variables = { kind: RoleKind; current: string[]; next: string[]; onSigned?: () => void }
 
 const save = { mutate: vi.fn<(variables: Variables, callbacks: Callbacks) => void>(), isPending: false }
-vi.mock('~/hooks/useCollectionRoles', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/hooks/useCollectionRoles')>()),
+vi.mock('@/features/creators/hooks/useCollectionRoles', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/features/creators/hooks/useCollectionRoles')>()),
   useSetCollectionRoles: () => save
 }))
-vi.mock('~/hooks/useSales', () => ({
+vi.mock('@/features/creators/hooks/useSales', () => ({
   useFriends: () => ({
     data: [{ address: FRIEND, name: 'Ana', hasClaimedName: true, avatarUrl: '' }],
     isLoading: false

@@ -7,42 +7,42 @@ import {
   LinkIcon,
   PersonOutlineIcon,
   SearchIcon
-} from '~/components/Icons'
-import { useTranslation } from '~/intl'
-import { clearTopUpResume, parseTopUpReturn, readTopUpResume, stripTopUpReturn } from '~/lib/creditsTopUp'
-import { openExternal } from '~/lib/navigation'
-import { pageRangeLabel } from '~/lib/pagination'
-import { useWallet } from '~/store/wallet'
-import { COLLECTIONS_PAGE_SIZE, useCollections, useCollectionsSummary } from '~/hooks/useCollections'
-import { useSaveCollection } from '~/hooks/useCollection'
-import { CONTRACT_PARAM, useCollectionByContractLink } from '~/hooks/useCollectionByContractLink'
-import { track } from '~/lib/analytics'
+} from '@/features/creators/components/Icons'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { clearTopUpResume, parseTopUpReturn, readTopUpResume, stripTopUpReturn } from '@/data/lib/creators/creditsTopUp'
+import { openExternal } from '@/data/lib/creators/navigation'
+import { pageRangeLabel } from '@/data/lib/creators/pagination'
+import { useWallet } from '@/features/creators/store/wallet'
+import { COLLECTIONS_PAGE_SIZE, useCollections, useCollectionsSummary } from '@/features/creators/hooks/useCollections'
+import { useSaveCollection } from '@/features/creators/hooks/useCollection'
+import { CONTRACT_PARAM, useCollectionByContractLink } from '@/features/creators/hooks/useCollectionByContractLink'
+import { track } from '@/data/lib/creators/analytics'
 import {
   CollectionSort,
   CollectionStatusFilter,
   LINKED_FILTER,
   isStatusFilterShown,
   type CollectionListFilter
-} from '~/lib/collections'
-import { buildNewCollection } from '~/lib/saveCollection'
-import { isRefusedRequest } from '~/lib/builder'
-import { captureError } from '~/lib/monitoring'
+} from '@/data/lib/creators/collections'
+import { buildNewCollection } from '@/data/lib/creators/saveCollection'
+import { isRefusedRequest } from '@/data/lib/creators/builder'
+import { captureError } from '@/data/lib/creators/monitoring'
 import {
   LINKED_WEARABLES_DOCS_PATH,
   buildNewLinkedCollection,
   getThirdPartyId,
   type LinkedContract
-} from '~/lib/thirdParty'
-import { config } from '~/config'
-import { CollectionNameModal } from '~/components/CollectionNameModal'
+} from '@/data/lib/creators/thirdParty'
+import { config } from '@/data/lib/creators/config'
+import { CollectionNameModal } from '@/features/creators/components/CollectionNameModal'
 import { CreateLinkedCollectionModal } from './CreateLinkedCollectionModal'
-import { Pagination } from '~/components/Pagination'
-import emptyCollectionsArt from '~/assets/empty-collections.png'
-import { Button } from '~/components/Button'
+import { Pagination } from '@/features/creators/components/Pagination'
+import emptyCollectionsArt from '@/features/creators/assets/empty-collections.png'
+import { Button } from '@/features/creators/components/Button'
 import { CollectionCard } from './CollectionCard'
 import { CollectionListRow } from './CollectionListRow'
-import { cx } from '~/lib/cx'
-import shared from '~/styles/shared.module.css'
+import { cx } from '@/data/lib/creators/cx'
+import shared from '@/features/creators/styles/shared.module.css'
 import styles from './CollectionsPage.module.css'
 
 const STATUS_FILTERS = [

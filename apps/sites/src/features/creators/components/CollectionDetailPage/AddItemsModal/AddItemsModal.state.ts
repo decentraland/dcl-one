@@ -2,17 +2,17 @@
 // rules. All async work (file loading, model analysis, thumbnails, upload) lives outside and
 // feeds results in through actions, so this reducer stays fully unit-testable.
 import { EmoteCategory, WearableCategory } from '@dcl/schemas'
-import { type ValidationIssue } from '~/lib/validation'
-import { type Mapping, type Mappings } from '~/lib/mappings'
-import { VIDEO_PATH, cleanAssetName, isImageFile, isModelFile } from '~/lib/itemFiles'
-import { EmotePlayMode, ITEM_NAME_MAX_LENGTH, isValidItemName } from '~/lib/itemFactory'
-import { getItemSizeLimit, isOverSizeLimit, type ItemSize } from '~/lib/itemSize'
-import { BodyShapeType, ItemType, getMissingBodyShapeType, type Item, type ItemMetrics } from '~/lib/items'
-import { applyPreviewResult, type PreviewResult } from '~/lib/draftPreview'
-import { type UploadFailureReason } from '~/lib/uploadItems'
-import { type AnimationMetrics } from '~/lib/models'
-import { DEFAULT_RARITY } from '~/lib/rarities'
-import { IMAGE_WEARABLE_CATEGORIES, hidesForCategory } from '~/lib/wearableCategories'
+import { type ValidationIssue } from '@/data/lib/creators/validation'
+import { type Mapping, type Mappings } from '@/data/lib/creators/mappings'
+import { VIDEO_PATH, cleanAssetName, isImageFile, isModelFile } from '@/data/lib/creators/itemFiles'
+import { EmotePlayMode, ITEM_NAME_MAX_LENGTH, isValidItemName } from '@/data/lib/creators/itemFactory'
+import { getItemSizeLimit, isOverSizeLimit, type ItemSize } from '@/data/lib/creators/itemSize'
+import { BodyShapeType, ItemType, getMissingBodyShapeType, type Item, type ItemMetrics } from '@/data/lib/creators/items'
+import { applyPreviewResult, type PreviewResult } from '@/data/lib/creators/draftPreview'
+import { type UploadFailureReason } from '@/data/lib/creators/uploadItems'
+import { type AnimationMetrics } from '@/data/lib/creators/models'
+import { DEFAULT_RARITY } from '@/data/lib/creators/rarities'
+import { IMAGE_WEARABLE_CATEGORIES, hidesForCategory } from '@/data/lib/creators/wearableCategories'
 
 export type DraftStatus = 'processing' | 'ready' | 'failed'
 

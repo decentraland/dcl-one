@@ -2,9 +2,9 @@
 // handleInitiateApprovalFlow: token ids → rescue content hashes on chain → deploy entities → approve.
 // Every step is idempotent, so running the flow again resumes where a closed or failed run stopped.
 import { type Entity } from '@dcl/schemas'
-import { type ContractCall } from '~/lib/auth'
-import { type Collection } from '~/lib/collections'
-import { RESCUE_CHUNK_SIZE, buildRescueItemsCalls, buildSetApprovedCall } from '~/lib/collectionApproval'
+import { type ContractCall } from '@/data/lib/creators/auth'
+import { type Collection } from '@/data/lib/creators/collections'
+import { RESCUE_CHUNK_SIZE, buildRescueItemsCalls, buildSetApprovedCall } from '@/data/lib/creators/collectionApproval'
 import {
   buildDeploymentForm,
   buildItemEntity,
@@ -14,9 +14,9 @@ import {
   type AuthLink,
   type ImageDeps,
   type MissingImage
-} from '~/lib/catalystEntity'
-import { isItemSynced } from '~/lib/itemSync'
-import { ItemType, getItemMetadata, type Item } from '~/lib/items'
+} from '@/data/lib/creators/catalystEntity'
+import { isItemSynced } from '@/data/lib/creators/itemSync'
+import { ItemType, getItemMetadata, type Item } from '@/data/lib/creators/items'
 
 export { buildMissingImage }
 

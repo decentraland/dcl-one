@@ -1,7 +1,7 @@
 // Raw EIP-1193 requests the navbar needs on the first load (the wallet's network, and switching it), kept free of
 // viem so that it stays out of the overview's bundle. Everything that encodes, signs or sends lives in ./transactions.
-import { config } from '~/config'
-import { WrongAccountError } from '~/lib/walletErrors'
+import { config } from '@/data/lib/creators/config'
+import { WrongAccountError } from '@/data/lib/creators/walletErrors'
 import { type Session } from './auth'
 
 const toHex = (value: number) => `0x${value.toString(16)}`

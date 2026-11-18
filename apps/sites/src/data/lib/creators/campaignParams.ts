@@ -1,6 +1,6 @@
 // Partner-attribution params, ported from sites' `campaignParams` with the same semantics: read from the
 // URL at call time, not persisted, so a partner link must land on the page whose clicks it attributes.
-import { currentSearch } from '~/config'
+import { currentSearch } from '@/data/lib/creators/config'
 
 const CAMPAIGN_PARAM_KEYS = ['utm_org', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'] as const
 

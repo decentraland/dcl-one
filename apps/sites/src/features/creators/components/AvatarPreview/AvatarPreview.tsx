@@ -5,10 +5,10 @@ import {
   WearablePreview,
   createWearablePreviewController,
   type WearablePreviewController
-} from '~/components/WearablePreview'
-import { config } from '~/config'
-import { usePreviewRenderer } from '~/hooks/usePreviewRenderer'
-import { type AvatarAttributes } from '~/lib/avatar'
+} from '@/features/creators/components/WearablePreview'
+import { config } from '@/data/lib/creators/config'
+import { usePreviewRenderer } from '@/features/creators/hooks/usePreviewRenderer'
+import { type AvatarAttributes } from '@/data/lib/creators/avatar'
 import {
   PREVIEW_WHEEL_START,
   PREVIEW_WHEEL_ZOOM,
@@ -16,9 +16,9 @@ import {
   getPreviewZoom,
   isEmoteSubject,
   type AvatarPreviewSource
-} from '~/lib/preview'
-import { createPreviewBridge, type PreviewBridge } from '~/lib/previewBridge'
-import { useAvatarPreview } from '~/store/avatarPreview'
+} from '@/data/lib/creators/preview'
+import { createPreviewBridge, type PreviewBridge } from '@/data/lib/creators/previewBridge'
+import { useAvatarPreview } from '@/features/creators/store/avatarPreview'
 import styles from './AvatarPreview.module.css'
 
 export type { AvatarPreviewSource }

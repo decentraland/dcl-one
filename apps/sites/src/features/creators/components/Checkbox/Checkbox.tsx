@@ -1,6 +1,6 @@
 import { type ComponentPropsWithoutRef, type ReactNode } from 'react'
-import { CheckIcon } from '~/components/Icons'
-import { cx } from '~/lib/cx'
+import { CheckIcon } from '@/features/creators/components/Icons'
+import { cx } from '@/data/lib/creators/cx'
 import styles from './Checkbox.module.css'
 
 type Props = {

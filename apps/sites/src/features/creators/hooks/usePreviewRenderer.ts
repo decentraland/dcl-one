@@ -1,11 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { PreviewRenderer } from '@dcl/schemas'
-import { previewRendererOverride } from '~/config'
-import { track } from '~/lib/analytics'
-import { measureDownlinkMbps } from '~/lib/connectionSpeed'
-import { FeatureFlag, getIsFeatureEnabled } from '~/lib/featureFlags'
-import { setMonitoringTags } from '~/lib/monitoring'
-import { pickRenderer, type RendererDecision } from '~/lib/pickRenderer'
+import { previewRendererOverride } from '@/data/lib/creators/config'
+import { track } from '@/data/lib/creators/analytics'
+import { measureDownlinkMbps } from '@/data/lib/creators/connectionSpeed'
+import { FeatureFlag, getIsFeatureEnabled } from '@/data/lib/creators/featureFlags'
+import { setMonitoringTags } from '@/data/lib/creators/monitoring'
+import { pickRenderer, type RendererDecision } from '@/data/lib/creators/pickRenderer'
 
 async function decide(): Promise<RendererDecision> {
   // A URL override needs neither the flag nor the probe: it forces Babylon either way.

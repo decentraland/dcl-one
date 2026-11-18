@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useInView } from 'react-intersection-observer'
 import { useLocation } from 'react-router-dom'
-import { useAfterLoadIdle } from '~/hooks/useAfterLoadIdle'
-import { useLocale, LOCALES, type Locale } from '~/store/locale'
-import { englishMessage, useTranslation } from '~/intl'
-import { isOverviewPath, LandingPlace, trackLandingClick } from '~/lib/overviewAnalytics'
+import { useAfterLoadIdle } from '@/features/creators/hooks/useAfterLoadIdle'
+import { useLocale, LOCALES, type Locale } from '@/features/creators/store/locale'
+import { englishMessage, useTranslation } from '@/data/lib/creators/intl'
+import { isOverviewPath, LandingPlace, trackLandingClick } from '@/data/lib/creators/overviewAnalytics'
 import styles from './Footer.module.css'
 
 // The full Decentraland footer — the large purple footer with newsletter, MENU columns, social links

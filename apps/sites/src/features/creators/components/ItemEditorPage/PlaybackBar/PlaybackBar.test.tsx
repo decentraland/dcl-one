@@ -3,18 +3,18 @@ import { type ReactNode } from 'react'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { PreviewEmote, PreviewEmoteEventType, type IPreviewController } from '@dcl/schemas'
-import { TranslationProvider } from '~/intl'
-import { track } from '~/lib/analytics'
-import { ItemType, type Item } from '~/lib/items'
-import { useAvatarPreview } from '~/store/avatarPreview'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { track } from '@/data/lib/creators/analytics'
+import { ItemType, type Item } from '@/data/lib/creators/items'
+import { useAvatarPreview } from '@/features/creators/store/avatarPreview'
 import { PlaybackBar } from './PlaybackBar'
 
 // ui2's scrubber lazy-loads MUI and talks to an iframe; the bar's own controls are what's under test.
-vi.mock('~/components/WearablePreview', () => ({
+vi.mock('@/features/creators/components/WearablePreview', () => ({
   EmoteControls: () => <div data-testid="ui2-emote-controls" />
 }))
 
-vi.mock('~/lib/analytics', () => ({ track: vi.fn() }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn() }))
 
 const emote = (id: string): Item =>
   ({

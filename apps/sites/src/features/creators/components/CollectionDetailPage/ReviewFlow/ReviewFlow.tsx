@@ -3,28 +3,28 @@ import {
   ChatBubbleOutlineIcon as CommentIcon,
   ErrorOutlineIcon as ErrorIcon,
   InfoOutlinedIcon as InfoIcon
-} from '~/components/Icons'
-import { useTranslation } from '~/intl'
-import { Button } from '~/components/Button'
-import { CollectionActivityModal } from '~/components/CollectionActivityModal'
-import { Tooltip } from '~/components/Tooltip'
-import { useAppealCuration, useRequestValidation } from '~/hooks/useCollectionEvents'
-import { track } from '~/lib/analytics'
+} from '@/features/creators/components/Icons'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { Button } from '@/features/creators/components/Button'
+import { CollectionActivityModal } from '@/features/creators/components/CollectionActivityModal'
+import { Tooltip } from '@/features/creators/components/Tooltip'
+import { useAppealCuration, useRequestValidation } from '@/features/creators/hooks/useCollectionEvents'
+import { track } from '@/data/lib/creators/analytics'
 import {
   ValidationLimitError,
   isAppealAlreadyOpen,
   isCollectionBusy,
   isReviewConflict,
   isValidationRunning
-} from '~/lib/builder'
-import { type Collection } from '~/lib/collections'
+} from '@/data/lib/creators/builder'
+import { type Collection } from '@/data/lib/creators/collections'
 import {
   getReviewStage,
   hasReviewConversation,
   isRejectedStage,
   ReviewStage,
   type CollectionCuration
-} from '~/lib/curation'
+} from '@/data/lib/creators/curation'
 import {
   countUnansweredComments,
   countValidationAttempts,
@@ -38,10 +38,10 @@ import {
   latestStageEvent,
   startOfUtcDay,
   type CollectionEvent
-} from '~/lib/events'
-import { hasUpdatesSinceRejection } from '~/lib/itemSync'
-import { type Item } from '~/lib/items'
-import { useNotifications } from '~/lib/notifications'
+} from '@/data/lib/creators/events'
+import { hasUpdatesSinceRejection } from '@/data/lib/creators/itemSync'
+import { type Item } from '@/data/lib/creators/items'
+import { useNotifications } from '@/data/lib/creators/notifications'
 import {
   AdditionalReviewModal,
   AutomatedIssuesModal,
@@ -50,8 +50,8 @@ import {
   ReviewingModal,
   SentForReviewModal
 } from './ReviewModals'
-import { markReviewModalSeen, wasReviewModalSeen } from '~/lib/reviewModalMemory'
-import { type ItemCheck } from '~/lib/validation'
+import { markReviewModalSeen, wasReviewModalSeen } from '@/data/lib/creators/reviewModalMemory'
+import { type ItemCheck } from '@/data/lib/creators/validation'
 import styles from './ReviewFlow.module.css'
 
 /** What the page asks for: a modal (right after publishing, or at the daily limit), another automated review, or a curator's. */

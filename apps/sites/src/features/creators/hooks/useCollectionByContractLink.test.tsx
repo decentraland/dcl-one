@@ -3,12 +3,12 @@ import { renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { type ReactNode } from 'react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
-import { type Collection } from '~/lib/collections'
+import { type Collection } from '@/data/lib/creators/collections'
 
 const api = vi.hoisted(() => ({ fetchCollections: vi.fn() }))
-vi.mock('~/lib/builder', async importOriginal => ({ ...(await importOriginal<object>()), ...api }))
+vi.mock('@/data/lib/creators/builder', async importOriginal => ({ ...(await importOriginal<object>()), ...api }))
 const track = vi.hoisted(() => vi.fn())
-vi.mock('~/lib/analytics', () => ({ track }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track }))
 
 const { useCollectionByContractLink } = await import('./useCollectionByContractLink')
 

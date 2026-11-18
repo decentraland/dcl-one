@@ -1,19 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProviderType } from '@dcl/schemas'
-import { type Session } from '~/lib/auth'
+import { type Session } from '@/data/lib/creators/auth'
 
 const analytics = vi.hoisted(() => ({ track: vi.fn(), identify: vi.fn(), reset: vi.fn() }))
-vi.mock('~/lib/analytics', () => analytics)
+vi.mock('@/data/lib/creators/analytics', () => analytics)
 
 const auth = vi.hoisted(() => ({
   restoreSession: vi.fn(),
   logout: vi.fn().mockResolvedValue(undefined),
   signInRedirect: vi.fn()
 }))
-vi.mock('~/lib/auth', () => auth)
+vi.mock('@/data/lib/creators/auth', () => auth)
 
 const monitoring = vi.hoisted(() => ({ setMonitoringUser: vi.fn() }))
-vi.mock('~/lib/monitoring', () => monitoring)
+vi.mock('@/data/lib/creators/monitoring', () => monitoring)
 
 const session = {
   address: '0xcreator',
@@ -78,7 +78,7 @@ describe('restore', () => {
 
   it('exposes the signed-in address to analytics and Sentry', async () => {
     const useWallet = await loadStore()
-    const { currentAddress } = await import('~/lib/currentAddress')
+    const { currentAddress } = await import('@/data/lib/creators/currentAddress')
 
     expect(currentAddress()).toBeUndefined()
     await useWallet.getState().restore()

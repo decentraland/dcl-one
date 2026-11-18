@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BodyShapeType, ItemType, type Item } from '~/lib/items'
+import { BodyShapeType, ItemType, type Item } from '@/data/lib/creators/items'
 import {
   addItemsReducer,
   createDraft,

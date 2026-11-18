@@ -1,7 +1,7 @@
 import { type CSSProperties } from 'react'
 import { Rarity } from '@dcl/schemas'
-import { useTranslation } from '~/intl'
-import { formatRarityLabel, isRarity } from '~/lib/rarities'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { formatRarityLabel, isRarity } from '@/data/lib/creators/rarities'
 import styles from './RarityPill.module.css'
 
 const LIGHT_OVERRIDES: Partial<Record<string, string>> = {

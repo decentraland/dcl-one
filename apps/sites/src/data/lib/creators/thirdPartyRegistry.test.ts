@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { type ContractNetwork } from '@dcl/schemas'
-import { ContractName, getContract } from '~/lib/chain/contracts'
+import { ContractName, getContract } from '@/data/lib/creators/chain/contracts'
 import { zeroHash, parseSignature, serializeCompactSignature, signatureToCompactSignature } from 'viem'
-import { readContract } from '~/lib/auth'
-import { decodeCall, toTransaction } from '~/test/chain'
+import { readContract } from '@/data/lib/creators/auth'
+import { decodeCall, toTransaction } from '@/data/lib/creators/test/chain'
 import { type ThirdParty } from './thirdParty'
 import {
   buildAddThirdPartyCall,
@@ -19,7 +19,7 @@ import {
   usdToMana
 } from './thirdPartyRegistry'
 
-vi.mock('~/lib/auth', () => ({ readContract: vi.fn() }))
+vi.mock('@/data/lib/creators/auth', () => ({ readContract: vi.fn() }))
 
 const CHAIN_ID = 80002
 const ETHER = 10n ** 18n

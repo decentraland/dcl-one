@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { useInView } from 'react-intersection-observer'
-import { useSectionViewed } from '~/hooks/useSectionViewed'
-import type { OverviewSection } from '~/lib/overviewAnalytics'
+import { useSectionViewed } from '@/features/creators/hooks/useSectionViewed'
+import type { OverviewSection } from '@/data/lib/creators/overviewAnalytics'
 import styles from './AnimatedSection.module.css'
 
 type AnimatedSectionProps = {

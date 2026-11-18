@@ -3,18 +3,18 @@ import { type ReactNode } from 'react'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { PreviewRenderer } from '@dcl/schemas'
 import userEvent from '@testing-library/user-event'
-import { TranslationProvider } from '~/intl'
-import { ItemFileError, THUMBNAIL_PATH } from '~/lib/itemFiles'
-import { ItemType } from '~/lib/items'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { ItemFileError, THUMBNAIL_PATH } from '@/data/lib/creators/itemFiles'
+import { ItemType } from '@/data/lib/creators/items'
 import { ThumbnailModal } from './ThumbnailModal'
 
 let renderer: PreviewRenderer | undefined
-vi.mock('~/hooks/usePreviewRenderer', () => ({ usePreviewRenderer: () => renderer }))
+vi.mock('@/features/creators/hooks/usePreviewRenderer', () => ({ usePreviewRenderer: () => renderer }))
 
 type PreviewProps = { id: string; unity?: boolean; onLoad?: () => void }
 let previewProps: PreviewProps | null = null
 const getScreenshot = vi.fn()
-vi.mock('~/components/WearablePreview', () => ({
+vi.mock('@/features/creators/components/WearablePreview', () => ({
   WearablePreview(props: PreviewProps) {
     previewProps = props
     return <iframe id={props.id} title="preview" />
@@ -23,12 +23,12 @@ vi.mock('~/components/WearablePreview', () => ({
   EmoteControls: () => null,
   TranslationControls: () => null
 }))
-vi.mock('~/components/ZoomControls', () => ({ ZoomControls: () => null }))
+vi.mock('@/features/creators/components/ZoomControls', () => ({ ZoomControls: () => null }))
 
 // jsdom has no canvas: resizing hands back a fixed PNG data URL.
 const PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgo='
-vi.mock('~/lib/media', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/media')>()),
+vi.mock('@/data/lib/creators/media', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/media')>()),
   getImageType: vi.fn().mockResolvedValue('png'),
   resizeImage: vi.fn().mockResolvedValue(new Blob(['png'], { type: 'image/png' })),
   blobToDataURL: vi.fn().mockResolvedValue('data:image/png;base64,iVBORw0KGgo=')

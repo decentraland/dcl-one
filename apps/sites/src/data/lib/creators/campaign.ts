@@ -1,7 +1,7 @@
 // The live marketing campaign, read from Decentraland's Contentful proxy exactly as the legacy
 // builder does (decentraland-dapps' campaign module): one "admin" entry points at the campaign entry
 // of the moment, which carries the name and the tag creators are asked to use.
-import { config } from '~/config'
+import { config } from '@/data/lib/creators/config'
 
 const CAMPAIGN_CONTENT_TYPE = 'marketingCampaign'
 const LOCALE = 'en-US'

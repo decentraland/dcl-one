@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ContractNetwork } from '@dcl/schemas'
-import { useTranslation } from '~/intl'
-import { track } from '~/lib/analytics'
-import { previewCollectionFromDetail } from '~/lib/explorer'
-import { isRefusedRequest } from '~/lib/builder'
-import { captureError } from '~/lib/monitoring'
-import { isSocialLogin, sendContractTransaction, settleTransaction, type Session } from '~/lib/auth'
-import { shortenAddress } from '~/lib/address'
-import { copyToClipboard } from '~/lib/clipboard'
-import { isCollectionLocked, type Collection } from '~/lib/collections'
-import { ITEM_EXTENSIONS } from '~/lib/itemFiles'
-import { type Item } from '~/lib/items'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { track } from '@/data/lib/creators/analytics'
+import { previewCollectionFromDetail } from '@/data/lib/creators/explorer'
+import { isRefusedRequest } from '@/data/lib/creators/builder'
+import { captureError } from '@/data/lib/creators/monitoring'
+import { isSocialLogin, sendContractTransaction, settleTransaction, type Session } from '@/data/lib/creators/auth'
+import { shortenAddress } from '@/data/lib/creators/address'
+import { copyToClipboard } from '@/data/lib/creators/clipboard'
+import { isCollectionLocked, type Collection } from '@/data/lib/creators/collections'
+import { ITEM_EXTENSIONS } from '@/data/lib/creators/itemFiles'
+import { type Item } from '@/data/lib/creators/items'
 import {
   LinkedItemFilter,
   getLinkedItemStatus,
@@ -20,20 +20,20 @@ import {
   parseLinkedItemFilter,
   splitLinkedSelection,
   type ItemCuration
-} from '~/lib/linkedItemStatus'
-import { isContractInUseError } from '~/lib/linkedContract'
-import { type Mappings } from '~/lib/mappings'
-import { getMaticChainId } from '~/lib/publishCollection'
-import { RelinkCancelledError, loadRelinkFrom, relinkCollection, type RelinkStep } from '~/lib/relinkCollection'
-import { isWalletRejection, isWalletStateError } from '~/lib/walletErrors'
-import errorArt from '~/assets/modal-error.png'
-import { ConfirmModal } from '~/components/ConfirmModal'
-import { PendingModal } from '~/components/PendingModal'
-import { SuccessModal } from '~/components/SuccessModal'
-import { fetchRegisteredContracts } from '~/lib/thirdPartyRegistry'
-import { useNotifications } from '~/lib/notifications'
-import { pageRangeLabel } from '~/lib/pagination'
-import { CurationStatus } from '~/lib/collections'
+} from '@/data/lib/creators/linkedItemStatus'
+import { isContractInUseError } from '@/data/lib/creators/linkedContract'
+import { type Mappings } from '@/data/lib/creators/mappings'
+import { getMaticChainId } from '@/data/lib/creators/publishCollection'
+import { RelinkCancelledError, loadRelinkFrom, relinkCollection, type RelinkStep } from '@/data/lib/creators/relinkCollection'
+import { isWalletRejection, isWalletStateError } from '@/data/lib/creators/walletErrors'
+import errorArt from '@/features/creators/assets/modal-error.png'
+import { ConfirmModal } from '@/features/creators/components/ConfirmModal'
+import { PendingModal } from '@/features/creators/components/PendingModal'
+import { SuccessModal } from '@/features/creators/components/SuccessModal'
+import { fetchRegisteredContracts } from '@/data/lib/creators/thirdPartyRegistry'
+import { useNotifications } from '@/data/lib/creators/notifications'
+import { pageRangeLabel } from '@/data/lib/creators/pagination'
+import { CurationStatus } from '@/data/lib/creators/collections'
 import {
   LINKED_COLLECTION_NAME_MAX_LENGTH,
   REGISTRY_NETWORKS,
@@ -41,10 +41,10 @@ import {
   withCollectionUrnSuffix,
   type LinkedContract,
   type ThirdParty
-} from '~/lib/thirdParty'
+} from '@/data/lib/creators/thirdParty'
 import { useQueryClient } from '@tanstack/react-query'
-import { useSaveCollection } from '~/hooks/useCollection'
-import { invalidateCollectionItems } from '~/hooks/usePublishCollection'
+import { useSaveCollection } from '@/features/creators/hooks/useCollection'
+import { invalidateCollectionItems } from '@/features/creators/hooks/usePublishCollection'
 import {
   LINKED_ITEMS_PAGE_SIZE,
   thirdPartyKey,
@@ -52,16 +52,16 @@ import {
   useHasLinkedWork,
   useItemCurations,
   useLinkedCollectionItems
-} from '~/hooks/useLinkedCollection'
-import { useMediaQuery } from '~/hooks/useMediaQuery'
-import { useBeforeUnloadGuard } from '~/hooks/useBeforeUnloadGuard'
-import { useSaveItem } from '~/hooks/useSaveItem'
-import { createItemSaveQueue } from '~/lib/itemSaveQueue'
-import { media } from '~/styles/theme'
-import { Button } from '~/components/Button'
-import { CollectionActionsMenu } from '~/components/CollectionActionsMenu'
-import { CollectionNameModal } from '~/components/CollectionNameModal'
-import { CollectionStatusPill } from '~/components/CollectionStatusPill'
+} from '@/features/creators/hooks/useLinkedCollection'
+import { useMediaQuery } from '@/features/creators/hooks/useMediaQuery'
+import { useBeforeUnloadGuard } from '@/features/creators/hooks/useBeforeUnloadGuard'
+import { useSaveItem } from '@/features/creators/hooks/useSaveItem'
+import { createItemSaveQueue } from '@/data/lib/creators/itemSaveQueue'
+import { media } from '@/data/lib/creators/theme'
+import { Button } from '@/features/creators/components/Button'
+import { CollectionActionsMenu } from '@/features/creators/components/CollectionActionsMenu'
+import { CollectionNameModal } from '@/features/creators/components/CollectionNameModal'
+import { CollectionStatusPill } from '@/features/creators/components/CollectionStatusPill'
 import { EditContractModal } from './EditContractModal'
 import { EditUrnModal } from './EditUrnModal'
 import {
@@ -71,14 +71,14 @@ import {
   ContentCopyIcon,
   EditIcon,
   ReportProblemOutlinedIcon as WarningIcon
-} from '~/components/Icons'
-import { Pagination } from '~/components/Pagination'
-import { Tooltip } from '~/components/Tooltip'
-import addItemsArt from '~/assets/add-items.png'
+} from '@/features/creators/components/Icons'
+import { Pagination } from '@/features/creators/components/Pagination'
+import { Tooltip } from '@/features/creators/components/Tooltip'
+import addItemsArt from '@/features/creators/assets/add-items.png'
 import { AddItemsModal } from '../AddItemsModal'
 import detail from '../CollectionDetailPage.module.css'
 import styles from './LinkedCollectionView.module.css'
-import shared from '~/styles/shared.module.css'
+import shared from '@/features/creators/styles/shared.module.css'
 import { LinkedItemActionsMenu } from './LinkedItemActionsMenu'
 import { LinkedItemRow, nextMappingStates } from './LinkedItemRow'
 import { PublishLinkedItemsModal } from './PublishLinkedItemsModal'

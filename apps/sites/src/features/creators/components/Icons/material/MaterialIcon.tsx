@@ -1,5 +1,5 @@
 import type { SVGProps } from 'react'
-import { cx } from '~/lib/cx'
+import { cx } from '@/data/lib/creators/cx'
 import styles from './MaterialIcon.module.css'
 
 export type MaterialIconProps = Omit<SVGProps<SVGSVGElement>, 'fontSize'> & {

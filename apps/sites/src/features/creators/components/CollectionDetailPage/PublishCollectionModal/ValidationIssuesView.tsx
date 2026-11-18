@@ -3,12 +3,12 @@ import {
   ChevronRightIcon,
   ErrorOutlineIcon as WarningIcon,
   ReportProblemOutlinedIcon as ErrorIcon
-} from '~/components/Icons'
-import { useTranslation } from '~/intl'
-import { hasErrors as anyErrors, type ItemCheck } from '~/lib/validation'
-import { Button } from '~/components/Button'
-import { Modal } from '~/components/Modal'
-import { ItemValidationCard, toValidationSubject } from '~/components/ValidationBadge'
+} from '@/features/creators/components/Icons'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { hasErrors as anyErrors, type ItemCheck } from '@/data/lib/creators/validation'
+import { Button } from '@/features/creators/components/Button'
+import { Modal } from '@/features/creators/components/Modal'
+import { ItemValidationCard, toValidationSubject } from '@/features/creators/components/ValidationBadge'
 import { type ValidationFlow } from './ValidationGate'
 import styles from './ValidationIssuesView.module.css'
 

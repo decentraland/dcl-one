@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { type ReactNode } from 'react'
 import { render, screen } from '@testing-library/react'
-import { TranslationProvider } from '~/intl'
+import { TranslationProvider } from '@/data/lib/creators/intl'
 import { RarityPill } from './RarityPill'
 
 const wrapper = ({ children }: { children: ReactNode }) => <TranslationProvider>{children}</TranslationProvider>

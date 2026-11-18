@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchLatestBlogPosts } from '~/lib/blog'
+import { fetchLatestBlogPosts } from '@/data/lib/creators/blog'
 
 /** The newest blog posts; editorial cadence, so one fetch per visit. */
 export function useLatestBlogPosts() {

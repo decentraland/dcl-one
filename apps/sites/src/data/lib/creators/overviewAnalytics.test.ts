@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { sendOverviewPage, sendOverviewTrack } from '~/lib/overviewSegment'
+import { sendOverviewPage, sendOverviewTrack } from '@/data/lib/creators/overviewSegment'
 import { OverviewSection, clickPayload, trackClick, trackOverviewPage, trackSectionViewed } from './overviewAnalytics'
 
-vi.mock('~/lib/overviewSegment', () => ({ sendOverviewTrack: vi.fn(), sendOverviewPage: vi.fn() }))
+vi.mock('@/data/lib/creators/overviewSegment', () => ({ sendOverviewTrack: vi.fn(), sendOverviewPage: vi.fn() }))
 const mac = vi.hoisted(() => ({ arch: null as 'intel' | 'apple_silicon' | 'unknown' | null }))
-vi.mock('~/lib/creatorHubDownload', () => ({ macArchHint: () => mac.arch }))
+vi.mock('@/data/lib/creators/creatorHubDownload', () => ({ macArchHint: () => mac.arch }))
 
 beforeEach(() => {
   vi.clearAllMocks()

@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useQueries, type QueryClient } from '@tanstack/react-query'
-import { fetchContent } from '~/lib/builder'
-import { type Item } from '~/lib/items'
+import { fetchContent } from '@/data/lib/creators/builder'
+import { type Item } from '@/data/lib/creators/items'
 import {
   getInitialSpringBoneParams,
   getRepresentationModelHashes,
@@ -10,7 +10,7 @@ import {
   parseSpringBones,
   type BoneNode,
   type SpringBoneParamsByHash
-} from '~/lib/springBones'
+} from '@/data/lib/creators/springBones'
 
 export type SpringBonesModel = {
   hash: string

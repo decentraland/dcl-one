@@ -1,4 +1,4 @@
-import { cx } from '~/lib/cx'
+import { cx } from '@/data/lib/creators/cx'
 import styles from './ErrorNotice.module.css'
 import { SaleIcon } from './SaleIcon'
 

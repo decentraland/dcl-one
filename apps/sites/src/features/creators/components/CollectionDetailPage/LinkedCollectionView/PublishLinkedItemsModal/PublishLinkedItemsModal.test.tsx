@@ -2,20 +2,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { type ReactNode } from 'react'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TranslationProvider } from '~/intl'
-import { type Session } from '~/lib/auth'
-import { type Collection } from '~/lib/collections'
-import { ItemType, type Item } from '~/lib/items'
-import { LinkedPublishError } from '~/lib/publishLinkedItems'
-import { type ThirdParty } from '~/lib/thirdParty'
-import { type ThirdPartyPrice } from '~/lib/thirdPartyRegistry'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { type Session } from '@/data/lib/creators/auth'
+import { type Collection } from '@/data/lib/creators/collections'
+import { ItemType, type Item } from '@/data/lib/creators/items'
+import { LinkedPublishError } from '@/data/lib/creators/publishLinkedItems'
+import { type ThirdParty } from '@/data/lib/creators/thirdParty'
+import { type ThirdPartyPrice } from '@/data/lib/creators/thirdPartyRegistry'
 import { PublishLinkedItemsModal } from './PublishLinkedItemsModal'
 
 const publishMutate = vi.fn()
 const slotsRefetch = vi.fn()
 let slotsData = { available: 5, registered: true }
 
-vi.mock('~/hooks/useLinkedPublish', () => ({
+vi.mock('@/features/creators/hooks/useLinkedPublish', () => ({
   usePublishLinkedItems: () => ({ mutate: publishMutate, isPending: false }),
   useSignSlotsCheque: () => ({
     isPending: false,
@@ -30,12 +30,12 @@ vi.mock('~/hooks/useLinkedPublish', () => ({
   }),
   useLinkedSlots: () => ({ data: slotsData, isError: false, refetch: slotsRefetch })
 }))
-vi.mock('~/hooks/useLinkedCollection', () => ({ useItemCurations: () => ({ data: new Map() }) }))
-vi.mock('~/hooks/useCollection', () => ({
+vi.mock('@/features/creators/hooks/useLinkedCollection', () => ({ useItemCurations: () => ({ data: new Map() }) }))
+vi.mock('@/features/creators/hooks/useCollection', () => ({
   useSaveCollection: () => ({ mutate: vi.fn(), isPending: false, error: null, reset: vi.fn() })
 }))
-vi.mock('~/hooks/useProfile', () => ({ useProfile: () => ({ data: { email: 'jane.doe@example.com' } }) }))
-vi.mock('~/hooks/useBalances', () => ({ useManaBalance: () => ({ data: 10n ** 24n, isSuccess: true }) }))
+vi.mock('@/features/creators/hooks/useProfile', () => ({ useProfile: () => ({ data: { email: 'jane.doe@example.com' } }) }))
+vi.mock('@/features/creators/hooks/useBalances', () => ({ useManaBalance: () => ({ data: 10n ** 24n, isSuccess: true }) }))
 
 const ETHER = 10n ** 18n
 const price: ThirdPartyPrice = {

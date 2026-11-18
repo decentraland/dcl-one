@@ -1,16 +1,16 @@
 import { useEffect } from 'react'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
-import { createCollectionForumPost, createCurationForumReply, fetchCollection } from '~/lib/builder'
-import { type Collection } from '~/lib/collections'
+import { createCollectionForumPost, createCurationForumReply, fetchCollection } from '@/data/lib/creators/builder'
+import { type Collection } from '@/data/lib/creators/collections'
 import {
   markForumPostRecovered,
   postAssigneeToForum,
   postCollectionToForum,
   shouldRecoverForumPost,
   type ForumPostSource
-} from '~/lib/forumPost'
-import { type Item } from '~/lib/items'
-import { profileQuery } from '~/hooks/useProfile'
+} from '@/data/lib/creators/forumPost'
+import { type Item } from '@/data/lib/creators/items'
+import { profileQuery } from '@/features/creators/hooks/useProfile'
 
 /** Opens the collection's topic, writing its link into the cached collection. */
 export function postToForum(

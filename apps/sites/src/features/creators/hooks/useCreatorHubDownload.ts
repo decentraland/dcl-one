@@ -5,7 +5,7 @@ import {
   fetchCreatorHubAssets,
   otherCreatorHubDownloads,
   pickCreatorHubDownload
-} from '~/lib/creatorHubDownload'
+} from '@/data/lib/creators/creatorHubDownload'
 
 /** Why the CTA links to the download page instead: still loading, no release (error or rate limit), or no installer for this OS. */
 export type DownloadFallback = 'loading' | 'unavailable' | 'unsupported'

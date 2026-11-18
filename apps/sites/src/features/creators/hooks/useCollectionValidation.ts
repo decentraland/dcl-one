@@ -1,8 +1,8 @@
 import { useCallback, useMemo } from 'react'
 import { useQueries, type UseQueryResult } from '@tanstack/react-query'
-import { useTranslation } from '~/intl'
-import { track } from '~/lib/analytics'
-import { type Item } from '~/lib/items'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { track } from '@/data/lib/creators/analytics'
+import { type Item } from '@/data/lib/creators/items'
 import {
   getValidationStatus,
   itemValidationContext,
@@ -11,7 +11,7 @@ import {
   type ValidationResult,
   type ValidationSource,
   type ValidationStatus
-} from '~/lib/validation'
+} from '@/data/lib/creators/validation'
 import { modelValidationKey, modelValidationQuery } from './useModelValidation'
 import { thumbnailValidationKey, thumbnailValidationQuery } from './useThumbnailValidation'
 import { useRerunValidation } from './useRerunValidation'

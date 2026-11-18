@@ -6,10 +6,10 @@
 // Convention: pass a `flow` in the context (e.g. { flow: 'publish-collection' }) so console and Sentry
 // group failures by user action. Never put secrets in the context — `beforeSend` scrubs defensively anyway.
 import * as Sentry from '@sentry/react'
-import { config } from '~/config'
-import { currentAddress } from '~/lib/currentAddress'
-import { afterLoadIdle } from '~/lib/idle'
-import { errorChain } from '~/lib/walletErrors'
+import { config } from '@/data/lib/creators/config'
+import { currentAddress } from '@/data/lib/creators/currentAddress'
+import { afterLoadIdle } from '@/data/lib/creators/idle'
+import { errorChain } from '@/data/lib/creators/walletErrors'
 
 export type ErrorContext = Record<string, unknown>
 
@@ -183,7 +183,7 @@ const REPLAY_LOAD_RATE = REPLAY_SESSION_RATE + REPLAY_ON_ERROR_RATE
 /** Loads the replay recorder, a separate chunk, once the page is idle, so it never weighs on the first load. */
 function loadReplay(): void {
   afterLoadIdle(() => {
-    import('~/lib/sentryReplay')
+    import('@/data/lib/creators/sentryReplay')
       .then(({ replayIntegration }) => Sentry.addIntegration(replayIntegration()))
       // A failed chunk load only costs the recording; it is not an app failure worth reporting.
       .catch(() => undefined)

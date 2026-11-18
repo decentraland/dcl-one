@@ -23,8 +23,8 @@ import {
   withoutCollection,
   type Collection
 } from './collections'
-import { fromRemoteCollection, toCollectionsQueryString } from '~/lib/builder/mappers'
-import type { RemoteCollection } from '~/lib/builder/wire'
+import { fromRemoteCollection, toCollectionsQueryString } from '@/data/lib/creators/builder/mappers'
+import type { RemoteCollection } from '@/data/lib/creators/builder/wire'
 
 const remote: RemoteCollection = {
   id: 'a1b2',

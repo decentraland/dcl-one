@@ -5,20 +5,20 @@ import {
   ErrorOutlineIcon as WarningIcon,
   HelpOutlineIcon as UncheckedIcon,
   ReportProblemOutlinedIcon as IssuesIcon
-} from '~/components/Icons'
-import { useTranslation } from '~/intl'
-import { Modal } from '~/components/Modal'
-import { ItemValidationCard } from '~/components/ValidationBadge'
-import { getContentsStorageUrl } from '~/lib/builder'
+} from '@/features/creators/components/Icons'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { Modal } from '@/features/creators/components/Modal'
+import { ItemValidationCard } from '@/features/creators/components/ValidationBadge'
+import { getContentsStorageUrl } from '@/data/lib/creators/builder'
 import {
   countFailedItems,
   groupVerdictItems,
   toCuratorIssues,
   type CuratorVerdict,
   type ValidationItemResult
-} from '~/lib/events'
-import { type Item } from '~/lib/items'
-import { formatTimeAgo } from '~/lib/time'
+} from '@/data/lib/creators/events'
+import { type Item } from '@/data/lib/creators/items'
+import { formatTimeAgo } from '@/data/lib/creators/time'
 import styles from './AutomatedVerdictModal.module.css'
 
 type Props = {

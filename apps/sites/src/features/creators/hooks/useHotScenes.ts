@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchHotScenes } from '~/lib/hotScenes'
+import { fetchHotScenes } from '@/data/lib/creators/hotScenes'
 
 /** The realm provider's hot-scenes feed; per-visit freshness is enough for a marketing rail. */
 export function useHotScenes() {

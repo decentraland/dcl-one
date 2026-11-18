@@ -3,28 +3,28 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { BodyShape } from '@dcl/schemas'
-import { Providers } from '~/components/CollectionDetailPage/SellItemFlow/testUtils'
-import { BodyShapeType, ItemType, type Item } from '~/lib/items'
-import { type ItemFileChange } from '~/lib/itemDraft'
+import { Providers } from '@/features/creators/components/CollectionDetailPage/SellItemFlow/testUtils'
+import { BodyShapeType, ItemType, type Item } from '@/data/lib/creators/items'
+import { type ItemFileChange } from '@/data/lib/creators/itemDraft'
 import { ChangeFileModal } from './ChangeFileModal'
 
 const pickFile = vi.fn()
 const loadItemFile = vi.fn()
 const analyzeModel = vi.fn()
-vi.mock('~/lib/filePicker', () => ({ pickFile: (...args: unknown[]) => pickFile(...args) }))
-vi.mock('~/lib/itemFiles', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/itemFiles')>()),
+vi.mock('@/data/lib/creators/filePicker', () => ({ pickFile: (...args: unknown[]) => pickFile(...args) }))
+vi.mock('@/data/lib/creators/itemFiles', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/itemFiles')>()),
   loadItemFile: (...args: unknown[]) => loadItemFile(...args)
 }))
-vi.mock('~/lib/models', () => ({ analyzeModel: (...args: unknown[]) => analyzeModel(...args) }))
+vi.mock('@/data/lib/creators/models', () => ({ analyzeModel: (...args: unknown[]) => analyzeModel(...args) }))
 // Stored files by content hash: the size shown counts everything the item keeps.
 const stored = vi.hoisted<{ sizes: Record<string, number> }>(() => ({ sizes: {} }))
-vi.mock('~/lib/builder', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/builder')>()),
+vi.mock('@/data/lib/creators/builder', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/builder')>()),
   fetchContentSize: async (hash: string) => stored.sizes[hash] ?? 1_000,
   fetchContent: async () => new Blob(['stored'])
 }))
-vi.mock('~/hooks/useThumbnailValidation', () => ({ useThumbnailValidation: () => ({ data: undefined }) }))
+vi.mock('@/features/creators/hooks/useThumbnailValidation', () => ({ useThumbnailValidation: () => ({ data: undefined }) }))
 // The preview iframe is what fills metrics and the auto thumbnail; here it answers at once (or when the
 // test releases it) and records which draft it was handed.
 const processed = vi.hoisted(() => ({
@@ -32,16 +32,16 @@ const processed = vi.hoisted(() => ({
   defer: false,
   pending: [] as Array<() => void>
 }))
-vi.mock('~/lib/draftPreview', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/draftPreview')>()),
+vi.mock('@/data/lib/creators/draftPreview', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/draftPreview')>()),
   imageThumbnailPatch: (contents: Record<string, Blob>) =>
     Promise.resolve({
       thumbnail: 'data:image/png;base64,BBBB',
       contents: { ...contents, 'thumbnail.png': new Blob(['pad']) }
     })
 }))
-vi.mock('~/components/ItemDraftModal', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/components/ItemDraftModal')>()),
+vi.mock('@/features/creators/components/ItemDraftModal', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/features/creators/components/ItemDraftModal')>()),
   DraftProcessor: ({
     draft,
     onResult

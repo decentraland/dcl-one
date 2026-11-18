@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TranslationProvider } from '~/intl'
-import { track } from '~/lib/analytics'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { track } from '@/data/lib/creators/analytics'
 import { ErrorBoundary } from './ErrorBoundary'
 
-vi.mock('~/lib/analytics', () => ({ track: vi.fn() }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn() }))
 
 function Boom(): never {
   throw new Error('boom')

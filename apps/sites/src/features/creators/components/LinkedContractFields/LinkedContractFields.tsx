@@ -1,19 +1,19 @@
 import { useEffect, useId, useMemo, useRef } from 'react'
-import { InfoOutlinedIcon } from '~/components/Icons'
+import { InfoOutlinedIcon } from '@/features/creators/components/Icons'
 import { type ContractNetwork } from '@dcl/schemas'
-import { config } from '~/config'
-import { useTranslation } from '~/intl'
+import { config } from '@/data/lib/creators/config'
+import { useTranslation } from '@/data/lib/creators/intl'
 import {
   checkLinkedContract,
   isAddressBeingTyped,
   isContractAddress,
   type LinkedContractCheck
-} from '~/lib/linkedContract'
-import { getLinkedContractNetworks } from '~/lib/thirdParty'
-import { Select } from '~/components/Select'
-import nameInput from '~/components/CollectionNameInput/CollectionNameInput.module.css'
-import { cx } from '~/lib/cx'
-import shared from '~/styles/shared.module.css'
+} from '@/data/lib/creators/linkedContract'
+import { getLinkedContractNetworks } from '@/data/lib/creators/thirdParty'
+import { Select } from '@/features/creators/components/Select'
+import nameInput from '@/features/creators/components/CollectionNameInput/CollectionNameInput.module.css'
+import { cx } from '@/data/lib/creators/cx'
+import shared from '@/features/creators/styles/shared.module.css'
 import styles from './LinkedContractFields.module.css'
 
 const CONTRACT_CHECK_DEBOUNCE_MS = 1000

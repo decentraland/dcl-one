@@ -1,7 +1,7 @@
 import { useIntl } from 'react-intl'
-import { useTranslation } from '~/intl'
-import { discountPct, isDiscountCapped, liveDiscountStatus, type CollectionDiscount } from '~/lib/coupons'
-import { Button } from '~/components/Button'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { discountPct, isDiscountCapped, liveDiscountStatus, type CollectionDiscount } from '@/data/lib/creators/coupons'
+import { Button } from '@/features/creators/components/Button'
 import { SaleTag } from '../SaleTag'
 import styles from './DiscountFlow.module.css'
 

@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { BodyShape } from '@dcl/schemas'
-import { TranslationProvider } from '~/intl'
-import { getDefaultSpringBoneParams, type BoneNode } from '~/lib/springBones'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { getDefaultSpringBoneParams, type BoneNode } from '@/data/lib/creators/springBones'
 import { SpringBonesEditor } from './SpringBonesEditor'
 
 // Armature (not a joint) → Hips → [Tail_springbone_1 → Tail_springbone_2, Hair_springbone]

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchBaseWearables } from '~/lib/catalyst'
+import { fetchBaseWearables } from '@/data/lib/creators/catalyst'
 
 /** The Catalyst base-avatars catalog the preview mannequin is dressed from; public, so it never depends on the signer. */
 export function useBaseWearables() {

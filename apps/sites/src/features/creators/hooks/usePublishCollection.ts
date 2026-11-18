@@ -1,8 +1,8 @@
 import { useEffect, useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
-import { ContractName, getContract } from '~/lib/chain/contracts'
-import { errorCode, track } from '~/lib/analytics'
-import { captureError } from '~/lib/monitoring'
+import { ContractName, getContract } from '@/data/lib/creators/chain/contracts'
+import { errorCode, track } from '@/data/lib/creators/analytics'
+import { captureError } from '@/data/lib/creators/monitoring'
 import {
   deleteItem,
   fetchAllCollectionItems,
@@ -16,14 +16,14 @@ import {
   saveCollection,
   saveCollectionTOS,
   saveItem
-} from '~/lib/builder'
-import { isContractDeployed, sendContractTransaction, waitForTransaction, type Session } from '~/lib/auth'
-import { isCollectionLocked, isLinkedCollection, type Collection } from '~/lib/collections'
-import { authorizePublication } from '~/lib/credits'
-import { withRehashedContents } from '~/lib/itemFactory'
-import { type Item } from '~/lib/items'
-import { buildManaApproveCall } from '~/lib/mana'
-import { useNotifications } from '~/lib/notifications'
+} from '@/data/lib/creators/builder'
+import { isContractDeployed, sendContractTransaction, waitForTransaction, type Session } from '@/data/lib/creators/auth'
+import { isCollectionLocked, isLinkedCollection, type Collection } from '@/data/lib/creators/collections'
+import { authorizePublication } from '@/data/lib/creators/credits'
+import { withRehashedContents } from '@/data/lib/creators/itemFactory'
+import { type Item } from '@/data/lib/creators/items'
+import { buildManaApproveCall } from '@/data/lib/creators/mana'
+import { useNotifications } from '@/data/lib/creators/notifications'
 import {
   PublishCollectionError,
   PublishTransactionRevertedError,
@@ -35,13 +35,13 @@ import {
   syncPublishedItems,
   type PaymentMethod,
   type PublishResult
-} from '~/lib/publishCollection'
-import { type PublicationFee } from '~/lib/publishFee'
-import { buildCollectionInitializeData } from '~/lib/saveCollection'
-import { useTranslation } from '~/intl'
-import { postToForum } from '~/hooks/useForumPost'
-import { storeCuration } from '~/hooks/useCuration'
-import { isPublishSyncing, usePublishSyncStore } from '~/store/publishSync'
+} from '@/data/lib/creators/publishCollection'
+import { type PublicationFee } from '@/data/lib/creators/publishFee'
+import { buildCollectionInitializeData } from '@/data/lib/creators/saveCollection'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { postToForum } from '@/features/creators/hooks/useForumPost'
+import { storeCuration } from '@/features/creators/hooks/useCuration'
+import { isPublishSyncing, usePublishSyncStore } from '@/features/creators/store/publishSync'
 
 export function useRarities(address: string | undefined) {
   return useQuery({

@@ -1,12 +1,12 @@
 // Re-points a linked collection to another NFT contract, in an order that stays safe to repeat: the server takes the
 // contract first (it refuses one another collection already links), the registry is rewritten only when it does not
 // list the contract yet, and every item is then moved under it. A run that stops halfway is finished by running again.
-import { type ContractCall, type TransactionSettlement } from '~/lib/auth'
-import { type Collection } from '~/lib/collections'
-import { type Item } from '~/lib/items'
-import { getItemMapping, relinkMappings } from '~/lib/mappings'
-import { isSameContract, withContractReplaced, type LinkedContract, type ThirdParty } from '~/lib/thirdParty'
-import { buildUpdateThirdPartyCall } from '~/lib/thirdPartyRegistry'
+import { type ContractCall, type TransactionSettlement } from '@/data/lib/creators/auth'
+import { type Collection } from '@/data/lib/creators/collections'
+import { type Item } from '@/data/lib/creators/items'
+import { getItemMapping, relinkMappings } from '@/data/lib/creators/mappings'
+import { isSameContract, withContractReplaced, type LinkedContract, type ThirdParty } from '@/data/lib/creators/thirdParty'
+import { buildUpdateThirdPartyCall } from '@/data/lib/creators/thirdPartyRegistry'
 
 export type RelinkStep = 'collection' | 'signing' | 'pending' | 'items'
 

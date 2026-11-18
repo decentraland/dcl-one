@@ -1,12 +1,12 @@
 import { useMemo } from 'react'
-import { AddIcon, ChevronLeftIcon, ChevronRightIcon, ExpandMoreIcon as ExpandIcon } from '~/components/Icons'
-import { useTranslation } from '~/intl'
-import { useFriends } from '~/hooks/useSales'
-import { useProfile } from '~/hooks/useProfile'
-import { type Session } from '~/lib/auth'
-import { getContentsStorageUrl } from '~/lib/builder'
-import { type Friend } from '~/lib/friends'
-import { type Item } from '~/lib/items'
+import { AddIcon, ChevronLeftIcon, ChevronRightIcon, ExpandMoreIcon as ExpandIcon } from '@/features/creators/components/Icons'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { useFriends } from '@/features/creators/hooks/useSales'
+import { useProfile } from '@/features/creators/hooks/useProfile'
+import { type Session } from '@/data/lib/creators/auth'
+import { getContentsStorageUrl } from '@/data/lib/creators/builder'
+import { type Friend } from '@/data/lib/creators/friends'
+import { type Item } from '@/data/lib/creators/items'
 import {
   MAX_ITEMS_PER_SEND,
   copiesPerRecipient,
@@ -16,11 +16,11 @@ import {
   type RecipientBundle,
   type Transfer,
   type TransferDraft
-} from '~/lib/mint'
-import { Button } from '~/components/Button'
-import { ItemThumbnail } from '~/components/ItemThumbnail'
-import { Modal } from '~/components/Modal'
-import { StepIndicator } from '~/components/StepIndicator'
+} from '@/data/lib/creators/mint'
+import { Button } from '@/features/creators/components/Button'
+import { ItemThumbnail } from '@/features/creators/components/ItemThumbnail'
+import { Modal } from '@/features/creators/components/Modal'
+import { StepIndicator } from '@/features/creators/components/StepIndicator'
 import sell from '../SellItemFlow/SellItemModal.module.css'
 import styles from './SendItemsModal.module.css'
 import { TransferCard } from './TransferCard'

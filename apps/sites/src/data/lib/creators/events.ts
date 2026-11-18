@@ -3,8 +3,8 @@
 // allowance are all read off these rows; nothing here is stored on the client.
 
 import { type BodyShape as BodyShapeUrn } from '@dcl/schemas'
-import { BODY_SHAPE_FEMALE, BODY_SHAPE_MALE, type Item } from '~/lib/items'
-import { ValidationSeverity, type ValidationIssue } from '~/lib/validation/types'
+import { BODY_SHAPE_FEMALE, BODY_SHAPE_MALE, type Item } from '@/data/lib/creators/items'
+import { ValidationSeverity, type ValidationIssue } from '@/data/lib/creators/validation/types'
 
 export const COLLECTION_EVENT_TYPES = [
   'collection.published',

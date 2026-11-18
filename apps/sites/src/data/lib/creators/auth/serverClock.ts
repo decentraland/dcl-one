@@ -4,7 +4,7 @@
 // future" when the clock is ahead). This module measures how far the device
 // clock is from the servers' and lets signing correct for it, so a wrong device clock no longer locks the
 // creator out.
-import { config } from '~/config'
+import { config } from '@/data/lib/creators/config'
 
 /**
  * Drift below this is left alone: it fits inside the servers' 60s window with room for latency, and a

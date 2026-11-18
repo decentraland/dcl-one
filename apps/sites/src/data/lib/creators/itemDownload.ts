@@ -1,6 +1,6 @@
 // "Download item": every stored file of an item, zipped the way the importer accepts it back.
 import JSZip from 'jszip'
-import { fetchItemContents } from '~/lib/builder'
+import { fetchItemContents } from '@/data/lib/creators/builder'
 import { THUMBNAIL_PATH, getModelFileNameFromSubfolder, isImageFile, isModelFile } from './itemFiles'
 import { BodyShapeType, IMAGE_PATH, VIDEO_PATH, type Item } from './items'
 import { downloadBlob } from './navigation'

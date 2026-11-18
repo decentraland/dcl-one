@@ -2,12 +2,12 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter } from 'react-router-dom'
-import { basePath } from '~/config'
-import { initAnalytics } from '~/lib/analytics'
-import { initSentry } from '~/lib/monitoring'
-import { createQueryClient } from '~/lib/queryClient'
+import { basePath } from '@/data/lib/creators/config'
+import { initAnalytics } from '@/data/lib/creators/analytics'
+import { initSentry } from '@/data/lib/creators/monitoring'
+import { createQueryClient } from '@/data/lib/creators/queryClient'
 import { App } from './App'
-import '~/styles/index.css'
+import '@/features/creators/styles/index.css'
 
 initSentry()
 initAnalytics()

@@ -3,15 +3,15 @@ import { type ReactNode } from 'react'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { TranslationProvider } from '~/intl'
-import { deleteItem, fetchContent, fetchContentSize, fetchItemContents, saveItem } from '~/lib/builder'
-import { type ThumbnailPatch } from '~/components/ThumbnailModal'
-import { type Collection } from '~/lib/collections'
-import { ItemType, type Item, BODY_SHAPE_MALE } from '~/lib/items'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { deleteItem, fetchContent, fetchContentSize, fetchItemContents, saveItem } from '@/data/lib/creators/builder'
+import { type ThumbnailPatch } from '@/features/creators/components/ThumbnailModal'
+import { type Collection } from '@/data/lib/creators/collections'
+import { ItemType, type Item, BODY_SHAPE_MALE } from '@/data/lib/creators/items'
 import { ConfirmItemsStep } from './ConfirmItemsStep'
 
-vi.mock('~/lib/builder', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/builder')>()),
+vi.mock('@/data/lib/creators/builder', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/builder')>()),
   saveItem: vi.fn(),
   deleteItem: vi.fn(),
   fetchContent: vi.fn(),
@@ -24,7 +24,7 @@ const STORED_SIZES: Record<string, number> = { Qmmodel: 2_800_000, Qmthumb: 200_
 
 // The real editor renders a WearablePreview iframe; stand in with a button that hands back a fixed PNG.
 const NEW_THUMBNAIL = new Blob(['png'], { type: 'image/png' })
-vi.mock('~/components/ThumbnailModal', () => ({
+vi.mock('@/features/creators/components/ThumbnailModal', () => ({
   ThumbnailModal: ({
     contents,
     onSave,

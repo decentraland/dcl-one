@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { afterLoadIdle } from '~/lib/idle'
+import { afterLoadIdle } from '@/data/lib/creators/idle'
 
 /** Turns true once the page has loaded and gone idle; see `afterLoadIdle`. */
 export function useAfterLoadIdle(): boolean {

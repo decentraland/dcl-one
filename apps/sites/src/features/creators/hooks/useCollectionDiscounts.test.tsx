@@ -2,21 +2,21 @@ import { describe, expect, it, vi } from 'vitest'
 import { type ReactNode } from 'react'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { type CollectionDiscount } from '~/lib/coupons'
-import { Providers, collection, makeSession } from '~/components/CollectionDetailPage/SellItemFlow/testUtils'
+import { type CollectionDiscount } from '@/data/lib/creators/coupons'
+import { Providers, collection, makeSession } from '@/features/creators/components/CollectionDetailPage/SellItemFlow/testUtils'
 
-vi.mock('~/lib/auth', async () => {
-  const actual = await vi.importActual<typeof import('~/lib/auth')>('~/lib/auth')
+vi.mock('@/data/lib/creators/auth', async () => {
+  const actual = await vi.importActual<typeof import('@/data/lib/creators/auth')>('@/data/lib/creators/auth')
   return { ...actual, sendWalletTransaction: vi.fn(), waitForTransaction: vi.fn() }
 })
 
-vi.mock('~/lib/coupons', async () => {
-  const actual = await vi.importActual<typeof import('~/lib/coupons')>('~/lib/coupons')
+vi.mock('@/data/lib/creators/coupons', async () => {
+  const actual = await vi.importActual<typeof import('@/data/lib/creators/coupons')>('@/data/lib/creators/coupons')
   return { ...actual, endDiscount: vi.fn() }
 })
 
-import { sendWalletTransaction } from '~/lib/auth'
-import { endDiscount } from '~/lib/coupons'
+import { sendWalletTransaction } from '@/data/lib/creators/auth'
+import { endDiscount } from '@/data/lib/creators/coupons'
 import { useDiscountInFlight, useEndDiscount } from './useCollectionDiscounts'
 
 describe('when ending a discount', () => {

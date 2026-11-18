@@ -1,15 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { TranslationProvider } from '~/intl'
-import { useLocale } from '~/store/locale'
-import { sendOverviewTrack as track } from '~/lib/overviewSegment'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { useLocale } from '@/features/creators/store/locale'
+import { sendOverviewTrack as track } from '@/data/lib/creators/overviewSegment'
 import { CreateCards } from './CreateCards'
 
-vi.mock('~/lib/overviewSegment', () => ({ sendOverviewTrack: vi.fn(), sendOverviewPage: vi.fn() }))
+vi.mock('@/data/lib/creators/overviewSegment', () => ({ sendOverviewTrack: vi.fn(), sendOverviewPage: vi.fn() }))
 vi.mock('react-intersection-observer', () => ({ useInView: () => ({ ref: vi.fn(), inView: true }) }))
 
 const viewport = vi.hoisted(() => ({ mobile: false }))
-vi.mock('~/hooks/useMediaQuery', () => ({ useMediaQuery: () => viewport.mobile }))
+vi.mock('@/features/creators/hooks/useMediaQuery', () => ({ useMediaQuery: () => viewport.mobile }))
 
 beforeEach(() => {
   viewport.mobile = false

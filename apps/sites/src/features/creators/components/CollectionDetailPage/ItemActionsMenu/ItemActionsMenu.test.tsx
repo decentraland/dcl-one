@@ -1,44 +1,44 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { FeatureFlag } from '~/lib/featureFlags'
-import { setFeatureFlags } from '~/test/featureFlags'
+import { FeatureFlag } from '@/data/lib/creators/featureFlags'
+import { setFeatureFlags } from '@/data/lib/creators/test/featureFlags'
 import { type ReactNode } from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { type Entity, EntityType } from '@dcl/schemas'
-import { TranslationProvider } from '~/intl'
-import { type Collection } from '~/lib/collections'
-import { ItemSyncStatus } from '~/lib/itemSync'
-import { ItemType, type Item } from '~/lib/items'
-import { useNotifications } from '~/lib/notifications'
-import { useWallet } from '~/store/wallet'
-import { getMaticChainId } from '~/lib/publishCollection'
-import { getOffchainMarketplaceContract } from '~/lib/trades'
-import { type Session } from '~/lib/auth'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { type Collection } from '@/data/lib/creators/collections'
+import { ItemSyncStatus } from '@/data/lib/creators/itemSync'
+import { ItemType, type Item } from '@/data/lib/creators/items'
+import { useNotifications } from '@/data/lib/creators/notifications'
+import { useWallet } from '@/features/creators/store/wallet'
+import { getMaticChainId } from '@/data/lib/creators/publishCollection'
+import { getOffchainMarketplaceContract } from '@/data/lib/creators/trades'
+import { type Session } from '@/data/lib/creators/auth'
 import { ItemActionsMenu } from './ItemActionsMenu'
 
-vi.mock('~/lib/featureFlags', async () => {
-  const actual = await vi.importActual<typeof import('~/lib/featureFlags')>('~/lib/featureFlags')
-  const mock = await import('~/test/featureFlags')
+vi.mock('@/data/lib/creators/featureFlags', async () => {
+  const actual = await vi.importActual<typeof import('@/data/lib/creators/featureFlags')>('@/data/lib/creators/featureFlags')
+  const mock = await import('@/data/lib/creators/test/featureFlags')
   return { ...actual, getIsFeatureEnabled: mock.getIsFeatureEnabled }
 })
 
 beforeEach(() => setFeatureFlags(FeatureFlag.OFFCHAIN_PUBLIC_ITEM_ORDERS, FeatureFlag.CREDITS_PRIMARY_LISTINGS))
 
-vi.mock('~/lib/builder', () => ({
+vi.mock('@/data/lib/creators/builder', () => ({
   saveItem: vi.fn(),
   deleteItem: vi.fn(),
   fetchCollections: vi.fn(),
   fetchCollectionCuration: vi.fn(),
   getContentsStorageUrl: (hash: string) => `https://storage.example/${hash}`
 }))
-vi.mock('~/lib/catalyst', () => ({ fetchCatalystContent: vi.fn() }))
-vi.mock('~/lib/clipboard', () => ({ copyToClipboard: vi.fn().mockResolvedValue(true) }))
+vi.mock('@/data/lib/creators/catalyst', () => ({ fetchCatalystContent: vi.fn() }))
+vi.mock('@/data/lib/creators/clipboard', () => ({ copyToClipboard: vi.fn().mockResolvedValue(true) }))
 
-import { deleteItem, fetchCollections, saveItem } from '~/lib/builder'
-import { fetchCatalystContent } from '~/lib/catalyst'
-import { copyToClipboard } from '~/lib/clipboard'
+import { deleteItem, fetchCollections, saveItem } from '@/data/lib/creators/builder'
+import { fetchCatalystContent } from '@/data/lib/creators/catalyst'
+import { copyToClipboard } from '@/data/lib/creators/clipboard'
 
 const OWNER = '0xowner'
 const MANAGER = '0xmanager'

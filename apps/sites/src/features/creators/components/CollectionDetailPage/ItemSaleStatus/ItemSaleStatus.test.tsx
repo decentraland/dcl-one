@@ -1,12 +1,12 @@
 import { describe, it, expect, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
 
-vi.mock('~/lib/navigation', () => ({ openExternal: vi.fn() }))
-import { openExternal } from '~/lib/navigation'
+vi.mock('@/data/lib/creators/navigation', () => ({ openExternal: vi.fn() }))
+import { openExternal } from '@/data/lib/creators/navigation'
 import { type ReactNode } from 'react'
 import { render, screen } from '@testing-library/react'
-import { TranslationProvider } from '~/intl'
-import { type ItemListing } from '~/lib/listings'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { type ItemListing } from '@/data/lib/creators/listings'
 import { ItemSaleStatus } from './ItemSaleStatus'
 
 const listing: ItemListing = { itemId: '3', currency: 'mana', manaWei: 10n }

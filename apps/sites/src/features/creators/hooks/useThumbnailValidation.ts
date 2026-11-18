@@ -1,13 +1,13 @@
 import { queryOptions, useQuery } from '@tanstack/react-query'
-import { useTranslation, type Translate } from '~/intl'
-import { captureError } from '~/lib/monitoring'
+import { useTranslation, type Translate } from '@/data/lib/creators/intl'
+import { captureError } from '@/data/lib/creators/monitoring'
 import {
   ValidationSeverity,
   cachedRun,
   getValidator,
   type ThumbnailSource,
   type ValidationResult
-} from '~/lib/validation'
+} from '@/data/lib/creators/validation'
 
 // Blobs serialize to {} in a query key, so each one gets its own id.
 const blobIds = new WeakMap<Blob, number>()

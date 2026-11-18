@@ -2,10 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 // @dcl/schemas' root barrel doesn't re-export `getNetwork` / `getNetworkMapping`.
 import { ChainId, getNetwork, getNetworkMapping } from '@dcl/schemas/dist/dapps/chain-id'
 import { Network } from '@dcl/schemas/dist/dapps/network'
-import { readWalletChainId, subscribeWalletChain, switchWalletChain, type Session } from '~/lib/auth'
-import { captureError } from '~/lib/monitoring'
-import { isWalletRejection } from '~/lib/walletErrors'
-import { config } from '~/config'
+import { readWalletChainId, subscribeWalletChain, switchWalletChain, type Session } from '@/data/lib/creators/auth'
+import { captureError } from '@/data/lib/creators/monitoring'
+import { isWalletRejection } from '@/data/lib/creators/walletErrors'
+import { config } from '@/data/lib/creators/config'
 
 const KNOWN_CHAINS = Object.values(ChainId).filter((id): id is ChainId => typeof id === 'number')
 

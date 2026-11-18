@@ -1,6 +1,6 @@
-import { Modal } from '~/components/Modal'
-import { StepIndicator } from '~/components/StepIndicator'
-import { useTranslation } from '~/intl'
+import { Modal } from '@/features/creators/components/Modal'
+import { StepIndicator } from '@/features/creators/components/StepIndicator'
+import { useTranslation } from '@/data/lib/creators/intl'
 import styles from './PendingModal.module.css'
 
 type Props = {

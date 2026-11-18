@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { sendOverviewTrack as track } from '~/lib/overviewSegment'
-import { OverviewSection } from '~/lib/overviewAnalytics'
+import { sendOverviewTrack as track } from '@/data/lib/creators/overviewSegment'
+import { OverviewSection } from '@/data/lib/creators/overviewAnalytics'
 import { AnimatedSection } from './AnimatedSection'
 
-vi.mock('~/lib/overviewSegment', () => ({ sendOverviewTrack: vi.fn(), sendOverviewPage: vi.fn() }))
+vi.mock('@/data/lib/creators/overviewSegment', () => ({ sendOverviewTrack: vi.fn(), sendOverviewPage: vi.fn() }))
 
 const viewport = vi.hoisted(() => ({ inView: false }))
 vi.mock('react-intersection-observer', () => ({ useInView: () => ({ ref: vi.fn(), inView: viewport.inView }) }))

@@ -2,11 +2,11 @@ import { describe, it, expect, vi } from 'vitest'
 import { type ReactNode } from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TranslationProvider } from '~/intl'
-import { track } from '~/lib/analytics'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { track } from '@/data/lib/creators/analytics'
 import { Modal } from './Modal'
 
-vi.mock('~/lib/analytics', () => ({ track: vi.fn() }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn() }))
 
 const wrapper = ({ children }: { children: ReactNode }) => <TranslationProvider>{children}</TranslationProvider>
 

@@ -1,6 +1,6 @@
 import { useIntl } from 'react-intl'
-import { useTranslation } from '~/intl'
-import { cx } from '~/lib/cx'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { cx } from '@/data/lib/creators/cx'
 import styles from './SaleTag.module.css'
 
 type Props = {

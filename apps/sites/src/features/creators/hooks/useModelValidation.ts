@@ -1,6 +1,6 @@
 import { queryOptions, useQuery } from '@tanstack/react-query'
-import { useTranslation, type Translate } from '~/intl'
-import { captureError } from '~/lib/monitoring'
+import { useTranslation, type Translate } from '@/data/lib/creators/intl'
+import { captureError } from '@/data/lib/creators/monitoring'
 import {
   ValidationSeverity,
   cachedRun,
@@ -9,7 +9,7 @@ import {
   type ValidationContext,
   type ValidationResult,
   type ValidationSource
-} from '~/lib/validation'
+} from '@/data/lib/creators/validation'
 
 /**
  * Cache identity of a source: the hashes of a saved item's distinct models and their audio, with the body

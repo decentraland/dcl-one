@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { ProviderType } from '@dcl/schemas/dist/dapps/provider-type'
-import { reset as resetAnalytics } from '~/lib/analytics'
-import { useWallet } from '~/store/wallet'
+import { reset as resetAnalytics } from '@/data/lib/creators/analytics'
+import { useWallet } from '@/features/creators/store/wallet'
 
 // When the user switches (or disconnects) the account in an injected wallet, everything already fetched
 // and every signed request belongs to the previous account. Rather than purging each query and store by

@@ -1,5 +1,5 @@
 // Deep links into the Decentraland Shop, where the items of an approved collection are sold.
-import { config } from '~/config'
+import { config } from '@/data/lib/creators/config'
 
 /** The item's page in the Shop, keyed by collection contract and on-chain item id like the Shop's own route. */
 export function shopItemUrl(contractAddress: string, itemId: string): string {

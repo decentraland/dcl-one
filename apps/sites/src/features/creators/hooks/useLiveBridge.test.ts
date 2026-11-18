@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
-import { track } from '~/lib/analytics'
+import { track } from '@/data/lib/creators/analytics'
 import { useLiveBridge } from './useLiveBridge'
 
-vi.mock('~/lib/analytics', () => ({ track: vi.fn() }))
-vi.mock('~/lib/monitoring', () => ({ captureError: vi.fn() }))
+vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn() }))
+vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn() }))
 
 const BRIDGE = 'http://localhost:8080'
 

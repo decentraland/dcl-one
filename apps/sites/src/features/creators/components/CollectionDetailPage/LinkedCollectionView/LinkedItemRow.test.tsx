@@ -2,9 +2,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { type ReactNode } from 'react'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { type ContractNetwork, type Mappings } from '@dcl/schemas'
-import { TranslationProvider } from '~/intl'
-import { ItemType, type Item } from '~/lib/items'
-import { LinkedItemStatus } from '~/lib/linkedItemStatus'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { ItemType, type Item } from '@/data/lib/creators/items'
+import { LinkedItemStatus } from '@/data/lib/creators/linkedItemStatus'
 import { LinkedItemRow, nextMappingStates } from './LinkedItemRow'
 
 const CONTRACT = { network: 'amoy' as ContractNetwork, address: '0x1d9fb685c257e74f869ba302e260c0b68f5ebb37' }

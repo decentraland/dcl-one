@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TransactionNotFoundError, TransactionReceiptNotFoundError, hashTypedData, numberToHex, parseAbi } from 'viem'
-import { ContractName, getCollectionContract, getContract, getCouponManager } from '~/lib/chain/contracts'
-import { buildChequeTypedData } from '~/lib/publishLinkedItems'
-import { WrongAccountError, WrongChainError, isWalletRejection } from '~/lib/walletErrors'
+import { ContractName, getCollectionContract, getContract, getCouponManager } from '@/data/lib/creators/chain/contracts'
+import { buildChequeTypedData } from '@/data/lib/creators/publishLinkedItems'
+import { WrongAccountError, WrongChainError, isWalletRejection } from '@/data/lib/creators/walletErrors'
 import { type Session } from './auth'
 import {
   readContract,
@@ -17,8 +17,8 @@ import {
   type TypedDataTypes
 } from '.'
 import { waitForReceipt, watchTransaction } from './transactions'
-import { OFFCHAIN_MARKETPLACE_TYPES, getTradeDomain } from '~/lib/trades'
-import { typedDataDigest } from '~/test/chain'
+import { OFFCHAIN_MARKETPLACE_TYPES, getTradeDomain } from '@/data/lib/creators/trades'
+import { typedDataDigest } from '@/data/lib/creators/test/chain'
 
 vi.mock('decentraland-connect', () => ({ getRpcUrls: () => ({ 80002: 'https://rpc.example.com' }) }))
 

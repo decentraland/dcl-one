@@ -9,7 +9,7 @@ import {
   localStorageGetIdentity,
   localStorageStoreIdentity
 } from '@dcl/single-sign-on-client'
-import { config } from '~/config'
+import { config } from '@/data/lib/creators/config'
 import { resyncServerClock, serverClockOffset, serverNow } from './serverClock'
 
 // ~31 days, same as the legacy builder and marketplace webapps.

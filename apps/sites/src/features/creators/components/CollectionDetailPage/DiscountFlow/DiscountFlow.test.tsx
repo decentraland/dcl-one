@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { type SaleableCollection } from '~/lib/saleableCollection'
-import { DiscountError, type CollectionDiscount } from '~/lib/coupons'
+import { type SaleableCollection } from '@/data/lib/creators/saleableCollection'
+import { DiscountError, type CollectionDiscount } from '@/data/lib/creators/coupons'
 import { Providers, collection, makeSession } from '../SellItemFlow/testUtils'
 import { CollectionDiscounts } from './CollectionDiscounts'
 import { DiscountFlow } from './DiscountFlow'
@@ -17,15 +17,15 @@ const create = {
   isSuccess: false
 }
 const end = { mutate: vi.fn<(variables: Variables, callbacks: Callbacks) => void>(), isPending: false }
-vi.mock('~/hooks/useCollectionDiscounts', () => ({
+vi.mock('@/features/creators/hooks/useCollectionDiscounts', () => ({
   useCreateDiscount: () => create,
   useEndDiscount: () => end,
   useDiscountInFlight: () => ({ creating: create.isPending, ending: end.isPending }),
   endOutcome: () => undefined,
   lastCreatedDiscount: () => undefined
 }))
-vi.mock('~/lib/monitoring', () => ({ captureError: vi.fn() }))
-vi.mock('~/components/CollectionMosaic', () => ({ CollectionMosaic: () => null }))
+vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn() }))
+vi.mock('@/features/creators/components/CollectionMosaic', () => ({ CollectionMosaic: () => null }))
 
 const DAY = 24 * 60 * 60 * 1000
 

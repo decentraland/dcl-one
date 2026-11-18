@@ -1,26 +1,26 @@
 import { type MouseEvent, useEffect, useMemo, useState } from 'react'
-import { Button } from '~/components/Button'
-import { Tooltip } from '~/components/Tooltip'
-import { ChevronDownIcon, AppleIcon, MicrosoftIcon } from '~/components/Icons'
-import { useAfterLoadIdle } from '~/hooks/useAfterLoadIdle'
-import { useCreatorHubDownload } from '~/hooks/useCreatorHubDownload'
-import { useMediaQuery } from '~/hooks/useMediaQuery'
-import { useTypingListEffect } from '~/hooks/useTypingListEffect'
-import { useTranslation } from '~/intl'
+import { Button } from '@/features/creators/components/Button'
+import { Tooltip } from '@/features/creators/components/Tooltip'
+import { ChevronDownIcon, AppleIcon, MicrosoftIcon } from '@/features/creators/components/Icons'
+import { useAfterLoadIdle } from '@/features/creators/hooks/useAfterLoadIdle'
+import { useCreatorHubDownload } from '@/features/creators/hooks/useCreatorHubDownload'
+import { useMediaQuery } from '@/features/creators/hooks/useMediaQuery'
+import { useTypingListEffect } from '@/features/creators/hooks/useTypingListEffect'
+import { useTranslation } from '@/data/lib/creators/intl'
 import {
   buildName,
   cancelCreatorHubRedirect,
   type CreatorHubDownload,
   type DownloadOption,
   startCreatorHubDownload
-} from '~/lib/creatorHubDownload'
+} from '@/data/lib/creators/creatorHubDownload'
 import {
   CREATOR_HUB_TARGET,
   DOWNLOAD_CLICK,
   OVERVIEW_MOBILE_QUERY,
   OverviewSection,
   trackClick
-} from '~/lib/overviewAnalytics'
+} from '@/data/lib/creators/overviewAnalytics'
 import { CREATOR_DOCS_URL, CREATOR_HUB_DOWNLOAD_URL, heroData } from '../data'
 import styles from './Hero.module.css'
 

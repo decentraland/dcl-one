@@ -1,22 +1,22 @@
 import { useState } from 'react'
-import { config } from '~/config'
-import { useTranslation } from '~/intl'
-import { openExternal } from '~/lib/navigation'
-import { isContractInUseError } from '~/lib/linkedContract'
+import { config } from '@/data/lib/creators/config'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { openExternal } from '@/data/lib/creators/navigation'
+import { isContractInUseError } from '@/data/lib/creators/linkedContract'
 import {
   LINKED_COLLECTION_NAME_MAX_LENGTH,
   LINKED_WEARABLES_DOCS_PATH,
   validateLinkedCollectionName,
   type LinkedContract
-} from '~/lib/thirdParty'
-import { Button } from '~/components/Button'
-import { CollectionNameInput } from '~/components/CollectionNameInput'
-import { EMPTY_LINKED_CONTRACT, LinkedContractFields } from '~/components/LinkedContractFields'
-import { Modal } from '~/components/Modal'
-import nameInput from '~/components/CollectionNameInput/CollectionNameInput.module.css'
+} from '@/data/lib/creators/thirdParty'
+import { Button } from '@/features/creators/components/Button'
+import { CollectionNameInput } from '@/features/creators/components/CollectionNameInput'
+import { EMPTY_LINKED_CONTRACT, LinkedContractFields } from '@/features/creators/components/LinkedContractFields'
+import { Modal } from '@/features/creators/components/Modal'
+import nameInput from '@/features/creators/components/CollectionNameInput/CollectionNameInput.module.css'
 import styles from './CreateLinkedCollectionModal.module.css'
-import nameModal from '~/components/CollectionNameModal/CollectionNameModal.module.css'
-import shared from '~/styles/shared.module.css'
+import nameModal from '@/features/creators/components/CollectionNameModal/CollectionNameModal.module.css'
+import shared from '@/features/creators/styles/shared.module.css'
 
 type Props = {
   isPending: boolean

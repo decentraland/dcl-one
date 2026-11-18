@@ -3,12 +3,12 @@ import { type ReactNode } from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
-import { TranslationProvider } from '~/intl'
-import { type ReviewedContent } from '~/lib/approveLinkedCollection'
-import { type Session } from '~/lib/auth'
-import { type Collection } from '~/lib/collections'
-import { type Item } from '~/lib/items'
-import { type ThirdParty } from '~/lib/thirdParty'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { type ReviewedContent } from '@/data/lib/creators/approveLinkedCollection'
+import { type Session } from '@/data/lib/creators/auth'
+import { type Collection } from '@/data/lib/creators/collections'
+import { type Item } from '@/data/lib/creators/items'
+import { type ThirdParty } from '@/data/lib/creators/thirdParty'
 import { LinkedReviewBar } from './LinkedReviewBar'
 
 const rejectMutate = vi.fn()
@@ -18,14 +18,14 @@ const hat = (id: string) => ({ id, name: `Hat ${id}`, currentContentHash: `hash-
 const pending = ['1', '2', '3'].map(hat)
 let served = pending
 
-vi.mock('~/hooks/useCuration', () => ({
+vi.mock('@/features/creators/hooks/useCuration', () => ({
   useCollectionCuration: () => ({ data: null, isLoading: false })
 }))
-vi.mock('~/hooks/useLinkedCollection', () => ({
+vi.mock('@/features/creators/hooks/useLinkedCollection', () => ({
   useItemCurations: () => ({ data: new Map(), isLoading: false })
 }))
-vi.mock('~/hooks/useLinkedReview', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/hooks/useLinkedReview')>()),
+vi.mock('@/features/creators/hooks/useLinkedReview', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/features/creators/hooks/useLinkedReview')>()),
   usePendingLinkedItems: () => ({ data: served, isLoading: false }),
   useRejectLinkedItems: () => ({ mutate: rejectMutate, isPending: false, isError: false, reset: vi.fn() })
 }))

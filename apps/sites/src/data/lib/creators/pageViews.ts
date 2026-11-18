@@ -1,5 +1,5 @@
-import { trackPage } from '~/lib/analytics'
-import { trackOverviewPage } from '~/lib/overviewAnalytics'
+import { trackPage } from '@/data/lib/creators/analytics'
+import { trackOverviewPage } from '@/data/lib/creators/overviewAnalytics'
 
 // Stable page names for the funnel: a raw pathname carries collection ids and would never group.
 const PAGE_NAMES: Record<string, string> = {

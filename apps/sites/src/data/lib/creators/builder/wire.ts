@@ -1,10 +1,10 @@
 // builder-server's wire contract: the request and response shapes as the legacy server sends and takes them.
 // Only this folder sees them; the rest of the app works with the domain types the mappers produce.
 import type { ContractNetwork, Mappings } from '@dcl/schemas'
-import type { CollectionStatusCounts, CurationStatus, PaginatedResource } from '~/lib/collections'
-import type { CurationRequestStatus } from '~/lib/curation'
-import type { CollectionEventActor, CollectionEventPayload } from '~/lib/events'
-import type { ItemData, ItemMetrics, ItemType } from '~/lib/items'
+import type { CollectionStatusCounts, CurationStatus, PaginatedResource } from '@/data/lib/creators/collections'
+import type { CurationRequestStatus } from '@/data/lib/creators/curation'
+import type { CollectionEventActor, CollectionEventPayload } from '@/data/lib/creators/events'
+import type { ItemData, ItemMetrics, ItemType } from '@/data/lib/creators/items'
 import type { SlotsCheque } from './linked'
 
 export type RemoteCollection = {

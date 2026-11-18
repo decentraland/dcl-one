@@ -2,18 +2,18 @@ import { describe, expect, it, vi } from 'vitest'
 import { type ReactNode } from 'react'
 import { renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { CurationStatus, type Collection } from '~/lib/collections'
-import { type Item } from '~/lib/items'
-import { LinkedItemFilter } from '~/lib/linkedItemStatus'
+import { CurationStatus, type Collection } from '@/data/lib/creators/collections'
+import { type Item } from '@/data/lib/creators/items'
+import { LinkedItemFilter } from '@/data/lib/creators/linkedItemStatus'
 import { useLinkedCollectionItems } from './useLinkedCollection'
 
-vi.mock('~/lib/builder', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/builder')>()),
+vi.mock('@/data/lib/creators/builder', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/builder')>()),
   fetchAllLinkedCollectionItems: vi.fn(),
   fetchItemCurations: vi.fn()
 }))
 
-import { fetchAllLinkedCollectionItems, fetchItemCurations } from '~/lib/builder'
+import { fetchAllLinkedCollectionItems, fetchItemCurations } from '@/data/lib/creators/builder'
 
 const collection = { id: 'c1', urn: 'urn:decentraland:amoy:collections-thirdparty:brand:hats' } as Collection
 const items = ['1', '2', '3', '4', '5'].map(id => ({ id, name: `Hat ${id}` }) as Item)

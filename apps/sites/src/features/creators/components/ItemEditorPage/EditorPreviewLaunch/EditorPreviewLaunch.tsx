@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { JumpInIcon } from '~/components/Icons'
-import { useTranslation } from '~/intl'
-import { track } from '~/lib/analytics'
-import { previewCollection } from '~/lib/explorer'
+import { JumpInIcon } from '@/features/creators/components/Icons'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { track } from '@/data/lib/creators/analytics'
+import { previewCollection } from '@/data/lib/creators/explorer'
 import styles from './EditorPreviewLaunch.module.css'
-import { Button } from '~/components/Button'
+import { Button } from '@/features/creators/components/Button'
 
 type Props = {
   collectionId: string

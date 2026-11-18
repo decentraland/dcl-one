@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { type FeatureFlag, getIsFeatureEnabled } from '~/lib/featureFlags'
+import { type FeatureFlag, getIsFeatureEnabled } from '@/data/lib/creators/featureFlags'
 
 const STALE_TIME_MS = 60_000
 

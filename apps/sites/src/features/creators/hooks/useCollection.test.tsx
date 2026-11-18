@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { type ReactNode } from 'react'
-import { type Collection, type CollectionsList } from '~/lib/collections'
+import { type Collection, type CollectionsList } from '@/data/lib/creators/collections'
 
 const api = vi.hoisted(() => ({ deleteCollection: vi.fn() }))
-vi.mock('~/lib/builder', async importOriginal => ({ ...(await importOriginal<object>()), ...api }))
-vi.mock('~/lib/analytics', async importOriginal => ({ ...(await importOriginal<object>()), track: vi.fn() }))
+vi.mock('@/data/lib/creators/builder', async importOriginal => ({ ...(await importOriginal<object>()), ...api }))
+vi.mock('@/data/lib/creators/analytics', async importOriginal => ({ ...(await importOriginal<object>()), track: vi.fn() }))
 
 const { useDeleteCollection } = await import('./useCollection')
 

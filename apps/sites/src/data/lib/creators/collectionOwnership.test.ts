@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { toTransaction } from '~/test/chain'
-import { ContractName, getContract } from '~/lib/chain/contracts'
+import { toTransaction } from '@/data/lib/creators/test/chain'
+import { ContractName, getContract } from '@/data/lib/creators/chain/contracts'
 import { BuilderServerError } from './builder'
 import { type Collection } from './collections'
 import {

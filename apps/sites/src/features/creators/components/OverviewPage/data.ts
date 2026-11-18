@@ -1,7 +1,7 @@
 // Content of the overview page that is not copy: asset URLs, destinations, ids. Every id doubles as the
 // i18n key under `overview.*`, so the copy for an entry lives in en.json / es.json.
-import { config } from '~/config'
-import dclLogo from '~/assets/overview/dcl-logo.svg'
+import { config } from '@/data/lib/creators/config'
+import dclLogo from '@/features/creators/assets/overview/dcl-logo.svg'
 
 const sitesUrl = config.get('SITES_URL')
 const docsUrl = config.get('DOCS_URL')

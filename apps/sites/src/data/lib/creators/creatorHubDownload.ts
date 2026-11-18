@@ -1,11 +1,11 @@
 // The overview hero's one-click Creator Hub download. sites' `/download/creator-hub-success` keeps the rest
 // of the funnel, so `download_started` keeps sites' props and goes to sites' Segment source.
-import { config } from '~/config'
-import { ensureAnonymousId } from '~/lib/analytics'
-import { currentAddress } from '~/lib/currentAddress'
-import { HttpError } from '~/lib/http'
-import { redirectExternal } from '~/lib/navigation'
-import { sendOverviewTrack } from '~/lib/overviewSegment'
+import { config } from '@/data/lib/creators/config'
+import { ensureAnonymousId } from '@/data/lib/creators/analytics'
+import { currentAddress } from '@/data/lib/creators/currentAddress'
+import { HttpError } from '@/data/lib/creators/http'
+import { redirectExternal } from '@/data/lib/creators/navigation'
+import { sendOverviewTrack } from '@/data/lib/creators/overviewSegment'
 
 type Asset = { name: string; browser_download_url: string }
 

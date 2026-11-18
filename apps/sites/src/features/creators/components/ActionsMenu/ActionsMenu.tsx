@@ -9,8 +9,8 @@ import {
   type ReactNode
 } from 'react'
 import { createPortal } from 'react-dom'
-import { Button } from '~/components/Button'
-import { MoreHorizIcon } from '~/components/Icons'
+import { Button } from '@/features/creators/components/Button'
+import { MoreHorizIcon } from '@/features/creators/components/Icons'
 import styles from './ActionsMenu.module.css'
 
 type MenuContextValue = { close: () => void }

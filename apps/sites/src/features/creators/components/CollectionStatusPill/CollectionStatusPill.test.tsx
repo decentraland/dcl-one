@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { type ReactNode } from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TranslationProvider } from '~/intl'
-import { CurationStatus, type Collection } from '~/lib/collections'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { CurationStatus, type Collection } from '@/data/lib/creators/collections'
 import { CollectionStatusPill } from './CollectionStatusPill'
 
 const underReview: Collection = {

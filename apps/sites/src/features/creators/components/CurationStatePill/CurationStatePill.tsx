@@ -1,5 +1,5 @@
-import { useTranslation } from '~/intl'
-import { type CurationState } from '~/lib/curation'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { type CurationState } from '@/data/lib/creators/curation'
 import styles from './CurationStatePill.module.css'
 
 export function CurationStatePill({ state }: { state: CurationState }) {

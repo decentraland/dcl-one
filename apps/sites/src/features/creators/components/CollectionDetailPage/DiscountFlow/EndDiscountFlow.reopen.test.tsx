@@ -3,20 +3,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { TranslationProvider } from '~/intl'
-import { type CollectionDiscount } from '~/lib/coupons'
-import { type SaleableCollection } from '~/lib/saleableCollection'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { type CollectionDiscount } from '@/data/lib/creators/coupons'
+import { type SaleableCollection } from '@/data/lib/creators/saleableCollection'
 import { collection, makeSession } from '../SellItemFlow/testUtils'
 
-vi.mock('~/lib/coupons', async () => {
-  const actual = await vi.importActual<typeof import('~/lib/coupons')>('~/lib/coupons')
+vi.mock('@/data/lib/creators/coupons', async () => {
+  const actual = await vi.importActual<typeof import('@/data/lib/creators/coupons')>('@/data/lib/creators/coupons')
   return { ...actual, endDiscount: vi.fn(), createDiscount: vi.fn() }
 })
-vi.mock('~/lib/monitoring', () => ({ captureError: vi.fn() }))
-vi.mock('~/components/CollectionMosaic', () => ({ CollectionMosaic: () => null }))
+vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn() }))
+vi.mock('@/features/creators/components/CollectionMosaic', () => ({ CollectionMosaic: () => null }))
 
-import { DiscountError, createDiscount, endDiscount } from '~/lib/coupons'
-import { resetDiscountSession } from '~/hooks/useCollectionDiscounts'
+import { DiscountError, createDiscount, endDiscount } from '@/data/lib/creators/coupons'
+import { resetDiscountSession } from '@/features/creators/hooks/useCollectionDiscounts'
 import { DiscountFlow } from './DiscountFlow'
 import { EndDiscountFlow } from './EndDiscountFlow'
 

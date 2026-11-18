@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { errorCode, track } from '~/lib/analytics'
+import { errorCode, track } from '@/data/lib/creators/analytics'
 import {
   deployLinkedItems,
   prepareLinkedApproval,
@@ -8,9 +8,9 @@ import {
   type LinkedApprovalPlan,
   type LinkedDeployFailure,
   type ReviewedContent
-} from '~/lib/approveLinkedCollection'
-import { ApprovalError, waitForIndexer, APPROVAL_INDEX_TIMEOUT_MS } from '~/lib/approveCollection'
-import { sendContractTransaction, settleTransaction, signWithIdentity, type Session } from '~/lib/auth'
+} from '@/data/lib/creators/approveLinkedCollection'
+import { ApprovalError, waitForIndexer, APPROVAL_INDEX_TIMEOUT_MS } from '@/data/lib/creators/approveCollection'
+import { sendContractTransaction, settleTransaction, signWithIdentity, type Session } from '@/data/lib/creators/auth'
 import {
   fetchAllLinkedCollectionItems,
   fetchContent,
@@ -20,16 +20,16 @@ import {
   fetchPendingLinkedItems,
   fetchThirdParty,
   updateItemCuration
-} from '~/lib/builder'
-import { deployEntity, fetchAvailableContent } from '~/lib/catalyst'
-import { type Collection } from '~/lib/collections'
-import { type Item } from '~/lib/items'
-import { captureError } from '~/lib/monitoring'
-import { getMaticChainId } from '~/lib/publishCollection'
-import { loadSentRoot, saveSentRoot } from '~/lib/pendingLinkedPayment'
-import { buildReviewThirdPartyCall, fetchRegisteredThirdParty } from '~/lib/thirdPartyRegistry'
-import { type ThirdParty } from '~/lib/thirdParty'
-import { isExpectedWalletError, isWalletRejection, isWalletStateError } from '~/lib/walletErrors'
+} from '@/data/lib/creators/builder'
+import { deployEntity, fetchAvailableContent } from '@/data/lib/creators/catalyst'
+import { type Collection } from '@/data/lib/creators/collections'
+import { type Item } from '@/data/lib/creators/items'
+import { captureError } from '@/data/lib/creators/monitoring'
+import { getMaticChainId } from '@/data/lib/creators/publishCollection'
+import { loadSentRoot, saveSentRoot } from '@/data/lib/creators/pendingLinkedPayment'
+import { buildReviewThirdPartyCall, fetchRegisteredThirdParty } from '@/data/lib/creators/thirdPartyRegistry'
+import { type ThirdParty } from '@/data/lib/creators/thirdParty'
+import { isExpectedWalletError, isWalletRejection, isWalletStateError } from '@/data/lib/creators/walletErrors'
 import { itemCurationsKey, thirdPartyKey } from './useLinkedCollection'
 import { invalidateCollectionItems } from './usePublishCollection'
 

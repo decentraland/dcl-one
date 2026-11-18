@@ -1,5 +1,5 @@
-import { getContentsStorageUrl } from '~/lib/builder'
-import { type Item } from '~/lib/items'
+import { getContentsStorageUrl } from '@/data/lib/creators/builder'
+import { type Item } from '@/data/lib/creators/items'
 import { type ValidationSubject } from './ItemValidationCard'
 
 /** A saved item as the validation results show it. */

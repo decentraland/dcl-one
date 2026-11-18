@@ -1,6 +1,6 @@
-import { ChevronLeftIcon, ChevronRightIcon } from '~/components/Icons'
-import { useTranslation } from '~/intl'
-import { pageWindow } from '~/lib/pagination'
+import { ChevronLeftIcon, ChevronRightIcon } from '@/features/creators/components/Icons'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { pageWindow } from '@/data/lib/creators/pagination'
 import styles from './Pagination.module.css'
 
 type Props = {

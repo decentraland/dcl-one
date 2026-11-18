@@ -12,8 +12,8 @@ import {
   type BaseWearable,
   type BaseWearableCategory,
   type BaseWearableSelection
-} from '~/lib/avatar'
-import { ItemType } from '~/lib/items'
+} from '@/data/lib/creators/avatar'
+import { ItemType } from '@/data/lib/creators/items'
 
 /** What the avatar needs to know about an item to dress it: one emote and one wearable per slot at a time. */
 type Dressable = { id: string; type: ItemType; category?: string }

@@ -1,11 +1,11 @@
 import { useState, type ReactNode } from 'react'
 import { type BodyShape } from '@dcl/schemas'
-import { CloseIcon, DesktopWindowsOutlinedIcon as DesktopIcon } from '~/components/Icons'
-import { ItemThumbnail } from '~/components/ItemThumbnail'
-import { useTranslation } from '~/intl'
-import { getContentsStorageUrl } from '~/lib/builder'
-import { hasRepresentationFor } from '~/lib/itemEditor'
-import { type Item } from '~/lib/items'
+import { CloseIcon, DesktopWindowsOutlinedIcon as DesktopIcon } from '@/features/creators/components/Icons'
+import { ItemThumbnail } from '@/features/creators/components/ItemThumbnail'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { getContentsStorageUrl } from '@/data/lib/creators/builder'
+import { hasRepresentationFor } from '@/data/lib/creators/itemEditor'
+import { type Item } from '@/data/lib/creators/items'
 import styles from '../ItemEditorPage.module.css'
 
 type Props = {

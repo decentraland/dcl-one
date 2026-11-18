@@ -3,16 +3,16 @@ import {
   CalendarTodayOutlinedIcon as CalendarIcon,
   InfoOutlinedIcon as InfoIcon,
   WarningAmberOutlinedIcon as WarningIcon
-} from '~/components/Icons'
+} from '@/features/creators/components/Icons'
 import DatePicker from 'react-datepicker'
 import { enUS, es, zhCN, type Locale as DateLocale } from 'date-fns/locale'
 import { useIntl } from 'react-intl'
 import 'react-datepicker/dist/react-datepicker.css'
-import { useTranslation } from '~/intl'
-import { type Locale } from '~/store/locale'
-import { useFriends } from '~/hooks/useSales'
-import { type Session } from '~/lib/auth'
-import { type Item } from '~/lib/items'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { type Locale } from '@/features/creators/store/locale'
+import { useFriends } from '@/features/creators/hooks/useSales'
+import { type Session } from '@/data/lib/creators/auth'
+import { type Item } from '@/data/lib/creators/items'
 import {
   NO_EXPIRATION,
   formatDateValue,
@@ -21,16 +21,16 @@ import {
   parseExpirationDate,
   toPricedSale,
   type SalePrice
-} from '~/lib/sales'
-import { Button } from '~/components/Button'
-import { Checkbox } from '~/components/Checkbox'
-import { Modal } from '~/components/Modal'
-import { InfoTooltip } from '~/components/Tooltip'
+} from '@/data/lib/creators/sales'
+import { Button } from '@/features/creators/components/Button'
+import { Checkbox } from '@/features/creators/components/Checkbox'
+import { Modal } from '@/features/creators/components/Modal'
+import { InfoTooltip } from '@/features/creators/components/Tooltip'
 import { BeneficiaryInput } from './BeneficiaryInput'
 import { DEFAULT_PRICE_VALUES, PriceField, type PriceFormValues } from './PriceField'
 import { SellItemCard } from './SellItemCard'
-import { Switch } from '~/components/Switch'
-import { cx } from '~/lib/cx'
+import { Switch } from '@/features/creators/components/Switch'
+import { cx } from '@/data/lib/creators/cx'
 import styles from './SellItemModal.module.css'
 
 const DATE_LOCALES: Record<Locale, DateLocale> = { en: enUS, es, zh: zhCN }

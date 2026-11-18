@@ -1,5 +1,5 @@
 import styled from '@emotion/styled'
-import { media } from '~/styles/theme'
+import { media } from '@/data/lib/creators/theme'
 
 // Holds the space of the lazy-loaded global DCL navbar (same height) so there's no layout shift; the
 // fill matches the restyled navbar bar (see NavbarViolet below) so it doesn't flash when it hydrates.

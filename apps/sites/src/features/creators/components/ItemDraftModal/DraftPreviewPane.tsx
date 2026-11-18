@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from 'react'
-import { ItemThumbnail } from '~/components/ItemThumbnail'
+import { ItemThumbnail } from '@/features/creators/components/ItemThumbnail'
 import {
   ClockIcon,
   FilmReelIcon,
@@ -11,15 +11,15 @@ import {
   SentimentSatisfiedAltIcon as SmileIcon,
   TextureIcon,
   ThirtyFpsSelectIcon as FpsIcon
-} from '~/components/Icons'
-import { RequiredPermissions } from '~/components/RequiredPermissions'
-import { Tooltip } from '~/components/Tooltip'
-import { useThumbnailValidation } from '~/hooks/useThumbnailValidation'
-import { useTranslation } from '~/intl'
-import { THUMBNAIL_PATH, hasFacialExpressions } from '~/lib/itemFiles'
-import { ItemType } from '~/lib/items'
-import { isThumbnailGenerating, type PreviewDraft } from '~/lib/draftPreview'
-import { cx } from '~/lib/cx'
+} from '@/features/creators/components/Icons'
+import { RequiredPermissions } from '@/features/creators/components/RequiredPermissions'
+import { Tooltip } from '@/features/creators/components/Tooltip'
+import { useThumbnailValidation } from '@/features/creators/hooks/useThumbnailValidation'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { THUMBNAIL_PATH, hasFacialExpressions } from '@/data/lib/creators/itemFiles'
+import { ItemType } from '@/data/lib/creators/items'
+import { isThumbnailGenerating, type PreviewDraft } from '@/data/lib/creators/draftPreview'
+import { cx } from '@/data/lib/creators/cx'
 import styles from './ItemDraftModal.module.css'
 
 type Props = {

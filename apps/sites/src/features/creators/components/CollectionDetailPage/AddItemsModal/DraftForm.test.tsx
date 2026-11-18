@@ -2,12 +2,12 @@ import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
-import { TranslationProvider } from '~/intl'
-import { BodyShapeType, ItemType, type Item } from '~/lib/items'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { BodyShapeType, ItemType, type Item } from '@/data/lib/creators/items'
 import { createDraft, type ItemDraft } from './AddItemsModal.state'
 import { DraftForm } from './DraftForm'
 
-vi.mock('~/hooks/useThumbnailValidation', () => ({ useThumbnailValidation: () => ({ data: undefined }) }))
+vi.mock('@/features/creators/hooks/useThumbnailValidation', () => ({ useThumbnailValidation: () => ({ data: undefined }) }))
 
 const wrapper = ({ children }: { children: ReactNode }) => <TranslationProvider>{children}</TranslationProvider>
 

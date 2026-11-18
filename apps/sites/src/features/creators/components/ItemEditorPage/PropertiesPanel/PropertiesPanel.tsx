@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch } from 'react'
-import { ActionsMenu, ActionsMenuDivider, ActionsMenuItem } from '~/components/ActionsMenu'
-import { Button } from '~/components/Button'
-import { CategorySelect } from '~/components/CategorySelect'
+import { ActionsMenu, ActionsMenuDivider, ActionsMenuItem } from '@/features/creators/components/ActionsMenu'
+import { Button } from '@/features/creators/components/Button'
+import { CategorySelect } from '@/features/creators/components/CategorySelect'
 import {
   ClockIcon,
   ImageIcon,
@@ -18,22 +18,22 @@ import {
   VideocamOutlinedIcon as VideoIcon,
   TextureIcon,
   ThirtyFpsSelectIcon as FpsIcon
-} from '~/components/Icons'
-import { ItemThumbnail } from '~/components/ItemThumbnail'
-import { RaritySelect } from '~/components/RaritySelect'
-import { RequiredPermissions } from '~/components/RequiredPermissions'
-import { Switch } from '~/components/Switch'
-import { InfoTooltip, Tooltip } from '~/components/Tooltip'
-import { VideoDropzone, VideoModal } from '~/components/VideoModal'
-import { useCampaign } from '~/hooks/useCampaign'
-import { useFeatureFlag } from '~/hooks/useFeatureFlag'
-import { useObjectURL } from '~/hooks/useObjectURL'
-import { useItemVideo } from '~/hooks/useItem'
-import { useDeleteItem } from '~/hooks/usePublishCollection'
-import { useThumbnailEditor } from '~/hooks/useThumbnailEditor'
-import { useTranslation } from '~/intl'
-import { getContentsStorageUrl } from '~/lib/builder'
-import { FeatureFlag } from '~/lib/featureFlags'
+} from '@/features/creators/components/Icons'
+import { ItemThumbnail } from '@/features/creators/components/ItemThumbnail'
+import { RaritySelect } from '@/features/creators/components/RaritySelect'
+import { RequiredPermissions } from '@/features/creators/components/RequiredPermissions'
+import { Switch } from '@/features/creators/components/Switch'
+import { InfoTooltip, Tooltip } from '@/features/creators/components/Tooltip'
+import { VideoDropzone, VideoModal } from '@/features/creators/components/VideoModal'
+import { useCampaign } from '@/features/creators/hooks/useCampaign'
+import { useFeatureFlag } from '@/features/creators/hooks/useFeatureFlag'
+import { useObjectURL } from '@/features/creators/hooks/useObjectURL'
+import { useItemVideo } from '@/features/creators/hooks/useItem'
+import { useDeleteItem } from '@/features/creators/hooks/usePublishCollection'
+import { useThumbnailEditor } from '@/features/creators/hooks/useThumbnailEditor'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { getContentsStorageUrl } from '@/data/lib/creators/builder'
+import { FeatureFlag } from '@/data/lib/creators/featureFlags'
 import {
   ITEM_DESCRIPTION_MAX_LENGTH,
   ITEM_UTILITY_MAX_LENGTH,
@@ -41,11 +41,11 @@ import {
   type ItemDraft,
   type ItemDraftAction,
   type ItemFileChange
-} from '~/lib/itemDraft'
-import { downloadItem } from '~/lib/itemDownload'
-import { EmotePlayMode, ITEM_NAME_MAX_LENGTH, isValidItemName } from '~/lib/itemFactory'
-import { hasFacialExpressions, THUMBNAIL_PATH, VIDEO_PATH, toMB } from '~/lib/itemFiles'
-import { formatItemSize, isOverSizeLimit, type ItemSize } from '~/lib/itemSize'
+} from '@/data/lib/creators/itemDraft'
+import { downloadItem } from '@/data/lib/creators/itemDownload'
+import { EmotePlayMode, ITEM_NAME_MAX_LENGTH, isValidItemName } from '@/data/lib/creators/itemFactory'
+import { hasFacialExpressions, THUMBNAIL_PATH, VIDEO_PATH, toMB } from '@/data/lib/creators/itemFiles'
+import { formatItemSize, isOverSizeLimit, type ItemSize } from '@/data/lib/creators/itemSize'
 import {
   BodyShapeType,
   ItemType,
@@ -53,20 +53,20 @@ import {
   isMissingSmartWearableVideo,
   isSmartWearable,
   type Item
-} from '~/lib/items'
-import { useNotifications } from '~/lib/notifications'
-import { type SpringBoneParamsByName } from '~/lib/springBones'
-import { getEmoteCategoryOptions, getWearableCategoryOptions } from '~/lib/wearableCategories'
-import { buildItemMappings, getItemMapping } from '~/lib/mappings'
-import { type LinkedContract } from '~/lib/thirdParty'
-import { MappingEditor } from '~/components/MappingEditor'
-import { DeleteItemModal } from '~/components/CollectionDetailPage/DeleteItemModal'
+} from '@/data/lib/creators/items'
+import { useNotifications } from '@/data/lib/creators/notifications'
+import { type SpringBoneParamsByName } from '@/data/lib/creators/springBones'
+import { getEmoteCategoryOptions, getWearableCategoryOptions } from '@/data/lib/creators/wearableCategories'
+import { buildItemMappings, getItemMapping } from '@/data/lib/creators/mappings'
+import { type LinkedContract } from '@/data/lib/creators/thirdParty'
+import { MappingEditor } from '@/features/creators/components/MappingEditor'
+import { DeleteItemModal } from '@/features/creators/components/CollectionDetailPage/DeleteItemModal'
 import { ChangeFileModal } from '../ChangeFileModal'
 import { EditorSection } from '../EditorSection'
 import { HidesEditor } from '../HidesEditor'
 import { SpringBonesEditor, type SpringBonesModel } from '../SpringBonesEditor'
 import { TagsInput } from './TagsInput'
-import { type RejectReasonCode } from '~/lib/events'
+import { type RejectReasonCode } from '@/data/lib/creators/events'
 import styles from '../ItemEditorPage.module.css'
 
 export type SpringBonesFormProps = {

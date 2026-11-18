@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BodyShape } from '@dcl/schemas'
-import { ValidationSeverity } from '~/lib/validation'
+import { ValidationSeverity } from '@/data/lib/creators/validation'
 import {
   countValidationAttempts,
   getAutomatedIssuesByItem,

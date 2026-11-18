@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useTranslation } from '~/intl'
-import { useFeatureFlag } from '~/hooks/useFeatureFlag'
-import { useManaUsdRate } from '~/hooks/useSales'
-import { FeatureFlag } from '~/lib/featureFlags'
-import { formatCredits, formatMana } from '~/lib/publishFee'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { useFeatureFlag } from '@/features/creators/hooks/useFeatureFlag'
+import { useManaUsdRate } from '@/features/creators/hooks/useSales'
+import { FeatureFlag } from '@/data/lib/creators/featureFlags'
+import { formatCredits, formatMana } from '@/data/lib/creators/publishFee'
 import {
   MAX_SALE_CREDITS,
   MAX_SALE_MANA_WEI,
@@ -13,9 +13,9 @@ import {
   parseManaAmount,
   sanitizeManaInput,
   type PriceCurrency
-} from '~/lib/sales'
-import { CurrencyAmount } from '~/components/CurrencyAmount'
-import { Select, type SelectOption } from '~/components/Select'
+} from '@/data/lib/creators/sales'
+import { CurrencyAmount } from '@/features/creators/components/CurrencyAmount'
+import { Select, type SelectOption } from '@/features/creators/components/Select'
 import styles from './SellItemModal.module.css'
 
 export type PriceFormValues = {

@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { type ReactNode } from 'react'
 
 const fetchCommittee = vi.hoisted(() => vi.fn())
-vi.mock('~/lib/builder', () => ({ fetchCommittee }))
+vi.mock('@/data/lib/creators/builder', () => ({ fetchCommittee }))
 
 const { useCommittee } = await import('./useCommittee')
 

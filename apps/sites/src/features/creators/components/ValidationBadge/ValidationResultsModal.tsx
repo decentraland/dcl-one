@@ -1,6 +1,6 @@
-import { Modal } from '~/components/Modal'
-import { useTranslation } from '~/intl'
-import { type ValidationIssue } from '~/lib/validation'
+import { Modal } from '@/features/creators/components/Modal'
+import { useTranslation } from '@/data/lib/creators/intl'
+import { type ValidationIssue } from '@/data/lib/creators/validation'
 import { ItemValidationCard, type ValidationSubject } from './ItemValidationCard'
 import styles from './ValidationResultsModal.module.css'
 

@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
-import { CategoryIcon } from '~/components/ItemIcons'
-import { Select } from '~/components/Select'
-import { useTranslation } from '~/intl'
+import { CategoryIcon } from '@/features/creators/components/ItemIcons'
+import { Select } from '@/features/creators/components/Select'
+import { useTranslation } from '@/data/lib/creators/intl'
 
 type Props = {
   value: string | null

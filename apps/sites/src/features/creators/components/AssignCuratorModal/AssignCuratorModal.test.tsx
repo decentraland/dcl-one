@@ -1,20 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { TranslationProvider } from '~/intl'
-import { type Collection } from '~/lib/collections'
-import { type CollectionCuration } from '~/lib/curation'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { type Collection } from '@/data/lib/creators/collections'
+import { type CollectionCuration } from '@/data/lib/creators/curation'
 import { AssignCuratorModal } from './AssignCuratorModal'
 
 const ME = '0xme'
 const OTHER = '0xother'
 const mutate = vi.fn()
-vi.mock('~/lib/builder', () => ({ fetchCommittee: async () => [OTHER, ME] }))
-vi.mock('~/hooks/useCuration', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/hooks/useCuration')>()),
+vi.mock('@/data/lib/creators/builder', () => ({ fetchCommittee: async () => [OTHER, ME] }))
+vi.mock('@/features/creators/hooks/useCuration', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/features/creators/hooks/useCuration')>()),
   useAssignCurator: () => ({ mutate, isPending: false, isError: false })
 }))
-vi.mock('~/hooks/useProfile', () => ({ useProfiles: (list: string[]) => list.map(() => undefined) }))
+vi.mock('@/features/creators/hooks/useProfile', () => ({ useProfiles: (list: string[]) => list.map(() => undefined) }))
 
 const collection = { id: 'c1', name: 'Hats' } as Collection
 const curation: CollectionCuration = {

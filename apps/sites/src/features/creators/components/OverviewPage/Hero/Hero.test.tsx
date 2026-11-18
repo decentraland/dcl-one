@@ -1,16 +1,16 @@
 import { readFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
-import { TranslationProvider } from '~/intl'
-import { type CreatorHubDownload, startCreatorHubDownload } from '~/lib/creatorHubDownload'
-import { sendOverviewTrack as track } from '~/lib/overviewSegment'
+import { TranslationProvider } from '@/data/lib/creators/intl'
+import { type CreatorHubDownload, startCreatorHubDownload } from '@/data/lib/creators/creatorHubDownload'
+import { sendOverviewTrack as track } from '@/data/lib/creators/overviewSegment'
 import { heroData } from '../data'
 import { Hero } from './Hero'
 
-vi.mock('~/lib/overviewSegment', () => ({ sendOverviewTrack: vi.fn(), sendOverviewPage: vi.fn() }))
+vi.mock('@/data/lib/creators/overviewSegment', () => ({ sendOverviewTrack: vi.fn(), sendOverviewPage: vi.fn() }))
 
 const viewport = vi.hoisted(() => ({ mobile: false, reducedMotion: false }))
-vi.mock('~/hooks/useMediaQuery', () => ({
+vi.mock('@/features/creators/hooks/useMediaQuery', () => ({
   useMediaQuery: (query: string) => (query.includes('reduced-motion') ? viewport.reducedMotion : viewport.mobile)
 }))
 
@@ -18,12 +18,12 @@ const release = vi.hoisted(() => ({
   download: undefined as CreatorHubDownload | undefined,
   others: [] as CreatorHubDownload[]
 }))
-vi.mock('~/hooks/useCreatorHubDownload', () => ({
+vi.mock('@/features/creators/hooks/useCreatorHubDownload', () => ({
   useCreatorHubDownload: () =>
     release.download ? { download: release.download, others: release.others } : { fallback: 'loading' }
 }))
-vi.mock('~/lib/creatorHubDownload', async importOriginal => ({
-  ...(await importOriginal<typeof import('~/lib/creatorHubDownload')>()),
+vi.mock('@/data/lib/creators/creatorHubDownload', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/data/lib/creators/creatorHubDownload')>()),
   startCreatorHubDownload: vi.fn(),
   cancelCreatorHubRedirect: vi.fn(),
   macArchHint: () => null

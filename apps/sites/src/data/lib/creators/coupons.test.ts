@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ContractName, getContract, getCouponManager } from '~/lib/chain/contracts'
+import { ContractName, getContract, getCouponManager } from '@/data/lib/creators/chain/contracts'
 
-vi.mock('~/lib/auth', async () => {
-  const actual = await vi.importActual<typeof import('~/lib/auth')>('~/lib/auth')
+vi.mock('@/data/lib/creators/auth', async () => {
+  const actual = await vi.importActual<typeof import('@/data/lib/creators/auth')>('@/data/lib/creators/auth')
   return { ...actual, readContract: vi.fn(), signedFetch: vi.fn() }
 })
 
-import { signedFetch } from '~/lib/auth'
+import { signedFetch } from '@/data/lib/creators/auth'
 import {
   decodeCall,
   recoverTypedDataSigner,
@@ -14,7 +14,7 @@ import {
   testAccount,
   toTransaction,
   typedDataDigest
-} from '~/test/chain'
+} from '@/data/lib/creators/test/chain'
 import {
   COUPON_TYPES,
   DiscountError,

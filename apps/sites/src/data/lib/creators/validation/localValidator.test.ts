@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BodyShape } from '@dcl/schemas'
-import { englishMessage } from '~/intl'
+import { englishMessage } from '@/data/lib/creators/intl'
 import { captureError } from '../monitoring'
 import { ItemType, type Item } from '../items'
 

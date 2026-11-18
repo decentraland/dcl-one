@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { errorCode, track } from '~/lib/analytics'
+import { errorCode, track } from '@/data/lib/creators/analytics'
 import {
   readTransactionSender,
   sendContractTransaction,
   settleTransaction,
   signTypedData,
   type Session
-} from '~/lib/auth'
+} from '@/data/lib/creators/auth'
 import {
   deleteVirtualThirdParty,
   fetchItemCurations,
@@ -18,13 +18,13 @@ import {
   setThirdPartyKind,
   updateItemCuration,
   type SlotsCheque
-} from '~/lib/builder'
-import { type Collection } from '~/lib/collections'
-import { type Item } from '~/lib/items'
-import { canPushLinkedItem, type ItemCuration } from '~/lib/linkedItemStatus'
-import { fetchManaAllowance } from '~/lib/mana'
-import { captureError } from '~/lib/monitoring'
-import { getMaticChainId } from '~/lib/publishCollection'
+} from '@/data/lib/creators/builder'
+import { type Collection } from '@/data/lib/creators/collections'
+import { type Item } from '@/data/lib/creators/items'
+import { canPushLinkedItem, type ItemCuration } from '@/data/lib/creators/linkedItemStatus'
+import { fetchManaAllowance } from '@/data/lib/creators/mana'
+import { captureError } from '@/data/lib/creators/monitoring'
+import { getMaticChainId } from '@/data/lib/creators/publishCollection'
 import {
   LinkedPublishError,
   getLinkedSlots,
@@ -34,10 +34,10 @@ import {
   type LinkedPublishStep,
   type LinkedSlots,
   type PublishLinkedParams
-} from '~/lib/publishLinkedItems'
-import { pushLinkedChanges, type PushLinkedResult } from '~/lib/pushLinkedChanges'
-import { fetchRegisteredThirdParty, fetchThirdPartyPrice } from '~/lib/thirdPartyRegistry'
-import { isWalletRejection } from '~/lib/walletErrors'
+} from '@/data/lib/creators/publishLinkedItems'
+import { pushLinkedChanges, type PushLinkedResult } from '@/data/lib/creators/pushLinkedChanges'
+import { fetchRegisteredThirdParty, fetchThirdPartyPrice } from '@/data/lib/creators/thirdPartyRegistry'
+import { isWalletRejection } from '@/data/lib/creators/walletErrors'
 import { invalidateCollectionItems } from './usePublishCollection'
 import { thirdPartyKey, thirdPartySlotsKey } from './useLinkedCollection'
 

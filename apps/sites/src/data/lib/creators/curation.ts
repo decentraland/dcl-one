@@ -1,7 +1,7 @@
 // Curation domain: the committee's review requests on standard collections, ported from the legacy
 // builder (modules/curations, modules/committee, CurationPage) against the same builder-server API.
-import { CollectionSort, hasBeenApproved, type Collection } from '~/lib/collections'
-import { isFinalValidationError, latestStageEvent, type CollectionEvent, type RejectReasonCode } from '~/lib/events'
+import { CollectionSort, hasBeenApproved, type Collection } from '@/data/lib/creators/collections'
+import { isFinalValidationError, latestStageEvent, type CollectionEvent, type RejectReasonCode } from '@/data/lib/creators/events'
 
 export type CurationRequestStatus = 'pending' | 'approved' | 'rejected'
 

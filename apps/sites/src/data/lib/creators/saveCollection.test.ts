@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { decodeAbiParameters, parseAbiParameters, slice, zeroAddress, type Hex } from 'viem'
-import { config } from '~/config'
+import { config } from '@/data/lib/creators/config'
 import { ItemType, type Item } from './items'
 import {
   buildCollectionInitializeData,
