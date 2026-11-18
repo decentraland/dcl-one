@@ -6,23 +6,9 @@ use crate::api::posters::{HOST_PREFIX, valid_file};
 
 /// Maps a recognised upstream asset to its path on the node's public domain.
 pub fn node_asset_url(url: &str, domain: &str) -> Option<String> {
-    let (scheme, rest) = url.split_once("://")?;
-    if !scheme.eq_ignore_ascii_case("https") || url.bytes().any(|byte| byte.is_ascii_control()) {
-        return None;
-    }
-
-    let parsed = Url::parse(url).ok()?;
+    let (parsed, path_and_query) = parse_upstream_url(url)?;
     let host = parsed.host_str()?;
-    let (authority, path_and_query) = rest.split_at(rest.find('/')?);
-    let path = path_and_query
-        .split_once('?')
-        .map_or(path_and_query, |(path, _)| path);
-
-    // Check the raw authority and path because Url normalizes default ports and dot segments.
-    if !authority.eq_ignore_ascii_case(host) || path != parsed.path() || parsed.fragment().is_some()
-    {
-        return None;
-    }
+    let path = parsed.path();
 
     if host == "api.decentraland.org" && matches!(path, "/v1/map.png" | "/v2/map.png") {
         return Some(format!("https://{domain}/api{path_and_query}"));
@@ -66,6 +52,41 @@ pub fn to_node(url: &str, domain: Option<&str>) -> String {
         .unwrap_or_else(|| url.to_owned())
 }
 
+/// Maps a production jump link to the node while retaining its query spelling.
+pub fn node_page_url(url: &str, domain: &str) -> Option<String> {
+    let (parsed, path_and_query) = parse_upstream_url(url)?;
+    if parsed.host_str()? != "decentraland.org"
+        || !matches!(parsed.path(), "/jump" | "/jump/events")
+        || parsed.query().is_none()
+    {
+        return None;
+    }
+
+    Some(format!("https://{domain}{path_and_query}"))
+}
+
+fn parse_upstream_url(url: &str) -> Option<(Url, &str)> {
+    let (scheme, rest) = url.split_once("://")?;
+    if !scheme.eq_ignore_ascii_case("https") || url.bytes().any(|byte| byte.is_ascii_control()) {
+        return None;
+    }
+
+    let parsed = Url::parse(url).ok()?;
+    let host = parsed.host_str()?;
+    let (authority, path_and_query) = rest.split_at(rest.find('/')?);
+    let path = path_and_query
+        .split_once('?')
+        .map_or(path_and_query, |(path, _)| path);
+
+    // Check the raw authority and path because Url normalizes default ports and dot segments.
+    if !authority.eq_ignore_ascii_case(host) || path != parsed.path() || parsed.fragment().is_some()
+    {
+        return None;
+    }
+
+    Some((parsed, path_and_query))
+}
+
 fn is_peer_host(host: &str) -> bool {
     if host == "peer.decentraland.org" {
         return true;
@@ -92,7 +113,7 @@ fn is_asset_segment(segment: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{node_asset_url, to_node};
+    use super::{node_asset_url, node_page_url, to_node};
 
     const D: &str = "node.example";
 
@@ -186,6 +207,36 @@ mod tests {
         ] {
             assert_eq!(node_asset_url(untouched, D), None, "{untouched}");
             assert_eq!(to_node(untouched, Some(D)), untouched);
+        }
+    }
+
+    #[test]
+    fn node_page_url_maps_only_upstream_jump_links_with_queries() {
+        for (upstream, node) in [
+            (
+                "https://decentraland.org/jump/events?position=0%2C0&realm=x.dcl.eth",
+                "https://node.example/jump/events?position=0%2C0&realm=x.dcl.eth",
+            ),
+            (
+                "https://decentraland.org/jump?position=1%2c1&name=a+b",
+                "https://node.example/jump?position=1%2c1&name=a+b",
+            ),
+        ] {
+            assert_eq!(node_page_url(upstream, D).as_deref(), Some(node));
+        }
+
+        for url in [
+            "https://decentraland.org/events/event/?id=1",
+            "https://play.decentraland.org/?position=1,1",
+            "https://decentraland.org.evil.example/jump/events?position=1,1",
+            "http://decentraland.org/jump/events?position=1,1",
+            "https://example.com/party",
+            "https://decentraland.org/jump/events",
+            "https://decentraland.org/jump/events?position=1,1#scroll",
+            "https://decentraland.org:443/jump?position=1,1",
+            "https://decentraland.org/jump/other/../events?position=1,1",
+        ] {
+            assert_eq!(node_page_url(url, D), None, "{url}");
         }
     }
 

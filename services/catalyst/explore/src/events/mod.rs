@@ -1051,7 +1051,12 @@ fn event_row_to_record(
     let url = raw
         .get("url")
         .and_then(|v| v.as_str())
-        .and_then(|s| validate_event_url(s).ok());
+        .and_then(|s| validate_event_url(s).ok())
+        .map(|url| {
+            rewrite_domain
+                .and_then(|domain| crate::node_assets::node_page_url(&url, domain))
+                .unwrap_or(url)
+        });
     let user = raw_str(raw, "user").or_else(|| r.user_creator.clone());
     let owner_view = matches!((verified_viewer,user.as_deref()),(Some(viewer),Some(owner)) if viewer.eq_ignore_ascii_case(owner));
     let scene_name = strip_all_markup_opt(raw_str(raw, "scene_name"));
@@ -1500,6 +1505,27 @@ mod tests {
                 "https://events-assets-099ac00.decentraland.org/poster/v.webp".into()
             ))
         );
+    }
+
+    #[test]
+    fn event_jump_urls_name_the_node_when_configured() {
+        let upstream = "https://decentraland.org/jump/events?position=0%2C0&realm=x.dcl.eth";
+        let local = "https://node.example/jump/events?position=0%2C0&realm=x.dcl.eth";
+        let organiser = "https://example.com/party";
+
+        for (asset_domain, stored, expected) in [
+            (Some("node.example"), upstream, local),
+            (None, upstream, upstream),
+            (Some("node.example"), organiser, organiser),
+            (None, organiser, organiser),
+        ] {
+            let record = event_row_to_record(
+                row_with(json!({ "url": stored }), None, None),
+                None,
+                &test_view(asset_domain),
+            );
+            assert_eq!(record.url.as_deref(), Some(expected), "{stored}");
+        }
     }
 
     #[test]
