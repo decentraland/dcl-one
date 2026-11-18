@@ -2,7 +2,7 @@
 
 The files under `src/assets/landscape/` come from the Decentraland Unity explorer,
 [decentraland/unity-explorer](https://github.com/decentraland/unity-explorer), and are embedded
-into the build as `embedded://landscape/...`. They are kept in plain git, not Git LFS.
+into the build as `embedded://landscape/...`.
 
 That repository is licensed under the Apache License 2.0 (its `LICENSE` file).
 

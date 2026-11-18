@@ -609,8 +609,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   save almost nothing, and the water material draws without fog, so nothing would soften it
   appearing and disappearing.
 - **No satellite floor.** unity-explorer lays the minimap's satellite images flat at 0.205 m under the
-  terrain in Genesis City; here the terrain covers that plane out to the landscape distance, so the
-  floor would never be seen and is not shipped.
+  terrain in Genesis City; here the ground covers that plane everywhere, so the floor would never be
+  seen and is not shipped.
 
 ## Deliberate choices that look like mistakes
 
