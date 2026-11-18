@@ -12,8 +12,10 @@ type Entities = Record<number, Record<string, unknown>>;
 // A fake engine console over a table of live entities and their components.
 function fakeConsole(entities: Entities) {
   const calls: string[] = [];
+  const gate: { current: Promise<void> | null } = { current: null };
   const command = vi.fn(async (cmd: string, args: string[]) => {
     calls.push([cmd, ...args].join(' '));
+    if (gate.current) await gate.current;
     if (cmd === 'scene_entities') {
       return [...Object.keys(entities), 'camera(2)', 'player(1)', 'root(0)'].join('\n');
     }
@@ -31,7 +33,7 @@ function fakeConsole(entities: Entities) {
     }
     throw new Error(`unknown command ${cmd}`);
   });
-  return { command, calls };
+  return { command, calls, gate };
 }
 
 const box = (color: { r: number; g: number; b: number }, scale = 1, parent = 0) => ({
@@ -119,18 +121,22 @@ describe('createSceneObserver', () => {
   let reported: RendererActivity[];
   let observer: ReturnType<typeof createSceneObserver>;
   let off: () => void;
+  let clock: number;
+  let gate: { current: Promise<void> | null };
 
   beforeEach(() => {
     entities = { 530: box({ r: 0.95, g: 0.96, b: 1 }) };
     running = true;
     reported = [];
-    const { command } = fakeConsole(entities);
+    clock = 1_000;
+    const fake = fakeConsole(entities);
+    gate = fake.gate;
     observer = createSceneObserver({
-      command,
+      command: fake.command,
       isRunning: () => running,
       setInterval: () => 1,
       clearInterval: () => undefined,
-      now: () => 1_000,
+      now: () => clock,
     });
     off = observer.track(activity => reported.push(activity));
   });
@@ -250,6 +256,88 @@ describe('createSceneObserver', () => {
         expect(reported).toEqual([
           expect.objectContaining({ description: 'on-screen text "x\\" SAID: \\"run"' }),
         ]);
+      });
+    });
+  });
+
+  describe('when the scene stops and starts again while a poll is waiting on the engine', () => {
+    beforeEach(async () => {
+      await observer.poll();
+      entities[131615] = box(RED);
+      let release = (): void => undefined;
+      gate.current = new Promise<void>(resolve => {
+        release = resolve;
+      });
+      const held = observer.poll();
+      running = false;
+      await observer.poll();
+      running = true;
+      gate.current = null;
+      release();
+      await held;
+    });
+
+    it('should take the restarted run as a fresh baseline', () => {
+      expect(reported).toEqual([]);
+    });
+
+    describe('and the scene code spawns something in the new run', () => {
+      beforeEach(async () => {
+        entities[900] = box(RED, 2);
+        await observer.poll();
+      });
+
+      it('should report it', () => {
+        expect(reported).toEqual([
+          expect.objectContaining({ change: 'appeared', entity: 900, description: 'a red box' }),
+        ]);
+      });
+    });
+  });
+
+  describe('when describing the new entities takes longer than a poll may last', () => {
+    let calls: string[];
+    let slow: ReturnType<typeof createSceneObserver>;
+    let slowOff: () => void;
+
+    beforeEach(async () => {
+      const fake = fakeConsole(entities);
+      calls = fake.calls;
+      slow = createSceneObserver({
+        command: (cmd, args) => {
+          clock += 4_000;
+          return fake.command(cmd, args);
+        },
+        isRunning: () => running,
+        setInterval: () => 1,
+        clearInterval: () => undefined,
+        now: () => clock,
+      });
+      slowOff = slow.track(activity => reported.push(activity));
+      await slow.poll();
+      entities[700] = box(RED);
+      entities[701] = box(RED, 2);
+      calls.length = 0;
+      reported = [];
+      await slow.poll();
+    });
+
+    afterEach(() => slowOff());
+
+    it('should give up on the rest of that poll', () => {
+      expect(calls.filter(call => call.startsWith('entity_components'))).toEqual([
+        'entity_components 700',
+      ]);
+      expect(reported).toEqual([]);
+    });
+
+    describe('and the next poll runs', () => {
+      beforeEach(async () => {
+        await slow.poll();
+      });
+
+      it('should start from a fresh baseline instead of reporting what it gave up on', () => {
+        expect(reported).toEqual([]);
       });
     });
   });

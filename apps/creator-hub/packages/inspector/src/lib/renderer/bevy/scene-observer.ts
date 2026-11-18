@@ -59,8 +59,8 @@ export type EntityFacts = {
 };
 
 const DESCRIBE_TTL_MS = 2_000;
-// A console reply that never comes must not stall the polling for the rest of the session.
 const COMMAND_TIMEOUT_MS = 3_000;
+const POLL_BUDGET_MS = 5_000;
 // More root-level changes than this in one poll are grouped by description.
 const GROUP_ABOVE = 4;
 const MAX_TEXT = 60;
@@ -319,19 +319,21 @@ export function createSceneObserver(options: SceneObserverOptions): SceneObserve
   }
 
   async function poll(): Promise<void> {
-    if (busy || trackers.size === 0) return;
+    if (trackers.size === 0) return;
+    const running = isRunning();
+    if (!running) wasRunning = false;
+    if (busy || !running) return;
     busy = true;
+    const deadline = now() + POLL_BUDGET_MS;
     try {
-      const running = isRunning();
-      if (!running) {
+      const ids = await listEntities();
+      if (!ids) return;
+      if (now() > deadline) {
         wasRunning = false;
         return;
       }
-      const ids = await listEntities();
-      if (!ids) return;
       seenAt = now();
       if (!wasRunning) {
-        // Play just started: what is there now is the scene, not news.
         wasRunning = true;
         known = new Map(ids.map(id => [id, null]));
         return;
@@ -352,6 +354,10 @@ export function createSceneObserver(options: SceneObserverOptions): SceneObserve
 
       const described = new Map<number, EntityFacts>();
       for (const id of added.slice(0, maxDescribedPerPoll)) {
+        if (now() > deadline) {
+          wasRunning = false;
+          return;
+        }
         const f = await facts(id);
         if (f) described.set(id, f);
       }
@@ -387,8 +393,6 @@ export function createSceneObserver(options: SceneObserverOptions): SceneObserve
           }
         }
         if (visible.length === 0) continue;
-        // A part-built object is called after its own mesh or, for an empty parent, its biggest
-        // part (a creature's body, not its eye).
         const main = rootFacts?.description
           ? rootFacts
           : visible.reduce((biggest, p) => (p.size > biggest.size ? p : biggest));

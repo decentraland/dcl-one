@@ -77,9 +77,7 @@ export function createSessionRecorder(deps: SessionRecorderDeps): SessionRecorde
       try {
         stops.push(startTracker());
       } catch (error) {
-        // One capture source failing (e.g. a renderer without a capability it claims)
-        // must not cost the host the rest of the recording.
-        // eslint-disable-next-line no-console
+        // oxlint-disable-next-line no-console
         console.warn('[recorder] a capture source failed to start', error);
       }
     }
@@ -89,7 +87,7 @@ export function createSessionRecorder(deps: SessionRecorderDeps): SessionRecorde
         try {
           stop();
         } catch (error) {
-          // eslint-disable-next-line no-console
+          // oxlint-disable-next-line no-console
           console.warn('[recorder] a capture source failed to stop', error);
         }
       }

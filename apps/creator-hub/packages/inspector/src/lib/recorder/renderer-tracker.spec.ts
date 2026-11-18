@@ -216,6 +216,112 @@ describe('trackRenderer', () => {
     });
   });
 
+  describe('when a later capture source throws while the tracker starts', () => {
+    let failing: ReturnType<typeof createMockRenderer>;
+    let renderer: RendererTrackerOptions['renderer'];
+
+    beforeEach(() => {
+      failing = createMockRenderer();
+      renderer = {
+        ...failing.renderer,
+        gizmos: {
+          isWorldAligned: () => {
+            throw new Error('no gizmos');
+          },
+          onChange: () => () => undefined,
+        },
+      } as unknown as RendererTrackerOptions['renderer'];
+    });
+
+    it('should leave nothing subscribed behind it', () => {
+      expect(() =>
+        trackRenderer({
+          engine: ctx.engine,
+          renderer,
+          emit: event => emitted.push(event),
+        }),
+      ).toThrow('no gizmos');
+      expect(failing.unsubscribes.activity).toHaveBeenCalledTimes(1);
+      expect(failing.unsubscribes.run).toHaveBeenCalledTimes(1);
+      expect(failing.unsubscribes.editing).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('when the tracker stops while a click is still being described', () => {
+    beforeEach(async () => {
+      stop();
+      emitted = [];
+      const pending = createMockRenderer(() => new Promise<string | null>(() => undefined));
+      const stopPending = trackRenderer({
+        engine: ctx.engine,
+        renderer: pending.renderer,
+        emit: event => emitted.push(event),
+        now: () => Date.now(),
+      });
+      pending.report({ kind: 'sceneClick', entity: 1043 as Entity, point: { x: 1, y: 2, z: 3 } });
+      stopPending();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    it('should record the click with the plain name', () => {
+      expect(emitted.map(e => [e.kind, e.text])).toEqual([
+        [
+          'scene-click',
+          "Clicked an entity created by the scene's code (#1043) in the running scene at (1, 2, 3)",
+        ],
+      ]);
+    });
+  });
+
+  describe('when the scene answers a hover lookup after the pointer has left', () => {
+    let resolvers: Map<number, (value: string | null) => void>;
+    let slow: ReturnType<typeof createMockRenderer>;
+    let stopSlow: StopTracker;
+
+    beforeEach(async () => {
+      stop();
+      emitted = [];
+      resolvers = new Map();
+      slow = createMockRenderer(
+        entity => new Promise<string | null>(resolve => resolvers.set(entity as number, resolve)),
+      );
+      stopSlow = trackRenderer({
+        engine: ctx.engine,
+        renderer: slow.renderer,
+        emit: event => emitted.push(event),
+        now: () => Date.now(),
+      });
+      slow.report({ kind: 'pointerTarget', entity: 1043 as Entity });
+      await vi.advanceTimersByTimeAsync(200);
+      slow.report({ kind: 'pointerTarget', entity: null });
+      await vi.advanceTimersByTimeAsync(200);
+      resolvers.get(1043)?.('a red box');
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    afterEach(() => stopSlow());
+
+    it('should drop the answer about the entity the pointer already left', () => {
+      expect(emitted.map(e => e.text)).toEqual(['Pointer over nothing in the viewport']);
+    });
+
+    describe('and the pointer comes back to that entity', () => {
+      beforeEach(async () => {
+        slow.report({ kind: 'pointerTarget', entity: 1043 as Entity });
+        await vi.advanceTimersByTimeAsync(200);
+        resolvers.get(1043)?.('a red box');
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      it('should report the pointer resting on it', () => {
+        expect(emitted.map(e => e.text)).toEqual([
+          'Pointer over nothing in the viewport',
+          "Pointer over a red box created by the scene's code (#1043) in the viewport",
+        ]);
+      });
+    });
+  });
+
   describe('when the renderer cannot report activity', () => {
     let bare: StopTracker;
 

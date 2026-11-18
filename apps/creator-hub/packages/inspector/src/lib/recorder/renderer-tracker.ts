@@ -94,7 +94,9 @@ export function trackRenderer({
     t: number;
   };
   let pendingPointer: PendingPointer | null = null;
+  let lastFlushedPointer: PendingPointer | null = null;
   let pointerTimer: ReturnType<typeof setTimeout> | null = null;
+  const pendingClicks = new Set<() => void>();
   let lastPointerText = '';
   let lastPlayer: { position: Vec3; t: number } | null = null;
   let playerPosition: Vec3 | null = null;
@@ -157,6 +159,7 @@ export function trackRenderer({
     const pending = pendingPointer;
     pendingPointer = null;
     if (!pending) return;
+    lastFlushedPointer = pending;
     if (pending.entity === null) {
       emitPointer(pending, null);
       return;
@@ -166,7 +169,7 @@ export function trackRenderer({
       return;
     }
     void describeTarget(pending.entity, pending.meshName).then(target => {
-      if (!stopped) emitPointer(pending, target);
+      if (!stopped && lastFlushedPointer === pending) emitPointer(pending, target);
     });
   }
 
@@ -215,6 +218,7 @@ export function trackRenderer({
     if (activity.kind === 'sceneClick') {
       const t = now();
       const p = prefix();
+      const { entity, meshName } = activity;
       const send = (target: { text: string; ref: EntityRef } | null) =>
         emit({
           t,
@@ -223,13 +227,19 @@ export function trackRenderer({
           text: `${p}Clicked ${target ? target.text : 'nothing'} in the running scene${at(activity.point)}`,
           ...(target && { entity: target.ref }),
         });
-      if (activity.entity === null) send(null);
-      else if (!needsLookup(activity.entity))
-        send(describeRendererEntity(engine, activity.entity, activity.meshName));
-      else
-        void describeTarget(activity.entity, activity.meshName).then(target => {
-          if (!stopped) send(target);
-        });
+      if (entity === null) {
+        send(null);
+        return;
+      }
+      if (!needsLookup(entity)) {
+        send(describeRendererEntity(engine, entity, meshName));
+        return;
+      }
+      const sendPlain = () => send(describeRendererEntity(engine, entity, meshName));
+      pendingClicks.add(sendPlain);
+      void describeTarget(entity, meshName).then(target => {
+        if (pendingClicks.delete(sendPlain)) send(target);
+      });
       return;
     }
     if (activity.kind === 'sceneEntities') {
@@ -254,64 +264,68 @@ export function trackRenderer({
     });
   }
 
-  if (renderer.activity) unsubscribes.push(renderer.activity.track(onActivity));
+  try {
+    if (renderer.activity) unsubscribes.push(renderer.activity.track(onActivity));
 
-  if (renderer.sceneRun) {
+    if (renderer.sceneRun) {
+      unsubscribes.push(
+        renderer.sceneRun.onRunChange(running =>
+          emit({ kind: 'mode', text: running ? 'Started playing the scene' : 'Paused the scene' }),
+        ),
+      );
+    }
+    if (renderer.interaction) {
+      unsubscribes.push(
+        renderer.interaction.onEditingChange(enabled =>
+          emit({
+            kind: 'mode',
+            text: enabled
+              ? 'Turned off Interact mode (viewport clicks select and move entities again)'
+              : 'Turned on Interact mode (viewport clicks reach the running scene)',
+          }),
+        ),
+      );
+    }
+    if (renderer.editorCamera) {
+      unsubscribes.push(
+        renderer.editorCamera.onModeChange(mode =>
+          emit({
+            kind: 'mode',
+            text:
+              mode === 'free'
+                ? 'Switched to the free editor camera'
+                : 'Switched to the player (avatar) camera',
+          }),
+        ),
+      );
+    }
+    if (renderer.audio) {
+      unsubscribes.push(
+        renderer.audio.onMuteChange(muted =>
+          emit({ kind: 'mode', text: muted ? 'Muted the scene audio' : 'Unmuted the scene audio' }),
+        ),
+      );
+    }
+    let worldAligned = renderer.gizmos.isWorldAligned();
     unsubscribes.push(
-      renderer.sceneRun.onRunChange(running =>
-        emit({ kind: 'mode', text: running ? 'Started playing the scene' : 'Paused the scene' }),
-      ),
-    );
-  }
-  if (renderer.interaction) {
-    unsubscribes.push(
-      renderer.interaction.onEditingChange(enabled =>
+      renderer.gizmos.onChange(() => {
+        const next = renderer.gizmos.isWorldAligned();
+        if (next === worldAligned) return;
+        worldAligned = next;
         emit({
           kind: 'mode',
-          text: enabled
-            ? 'Turned off Interact mode (viewport clicks select and move entities again)'
-            : 'Turned on Interact mode (viewport clicks reach the running scene)',
-        }),
-      ),
+          text: `Switched the gizmo to ${next ? 'world' : 'local'} alignment`,
+        });
+      }),
     );
+  } catch (error) {
+    unsubscribes.forEach(unsubscribe => unsubscribe());
+    throw error;
   }
-  if (renderer.editorCamera) {
-    unsubscribes.push(
-      renderer.editorCamera.onModeChange(mode =>
-        emit({
-          kind: 'mode',
-          text:
-            mode === 'free'
-              ? 'Switched to the free editor camera'
-              : 'Switched to the player (avatar) camera',
-        }),
-      ),
-    );
-  }
-  if (renderer.audio) {
-    unsubscribes.push(
-      renderer.audio.onMuteChange(muted =>
-        emit({ kind: 'mode', text: muted ? 'Muted the scene audio' : 'Unmuted the scene audio' }),
-      ),
-    );
-  }
-  let worldAligned = renderer.gizmos.isWorldAligned();
-  unsubscribes.push(
-    renderer.gizmos.onChange(() => {
-      const next = renderer.gizmos.isWorldAligned();
-      if (next === worldAligned) return;
-      worldAligned = next;
-      emit({
-        kind: 'mode',
-        text: `Switched the gizmo to ${next ? 'world' : 'local'} alignment`,
-      });
-    }),
-  );
 
   return () => {
     unsubscribes.forEach(unsubscribe => unsubscribe());
     if (pointerTimer) clearTimeout(pointerTimer);
-    // Stopping can't wait for the running scene: a target still pending is named plainly.
     const pending = pendingPointer;
     if (pending && now() - pending.t >= pointerDwellMs) {
       emitPointer(
@@ -322,6 +336,9 @@ export function trackRenderer({
       );
     }
     pendingPointer = null;
+    const clicks = [...pendingClicks];
+    pendingClicks.clear();
+    for (const sendPlain of clicks) sendPlain();
     stopped = true;
   };
 }
