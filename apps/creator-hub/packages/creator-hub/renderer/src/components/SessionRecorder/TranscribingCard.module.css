@@ -24,7 +24,7 @@
   height: 8px;
   flex-shrink: 0;
   border-radius: 50%;
-  background-color: var(--palette-info-light);
+  background-color: var(--brand);
   animation: pulse 1.2s ease-in-out infinite;
 }
 
@@ -55,7 +55,7 @@
   bottom: 0;
   left: 0;
   border-radius: 2px;
-  background-color: var(--palette-info-light);
+  background: var(--gradient-flare);
 }
 
 .fill {
