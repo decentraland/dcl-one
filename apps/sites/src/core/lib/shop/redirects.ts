@@ -35,6 +35,13 @@ export function parseAssetRef(ref: string | null | undefined): { contract: strin
   return m ? { contract: m[1]!.toLowerCase(), id: m[2]! } : null;
 }
 
+export { SHOP_BASE };
+
+/** The Shop page of an account: everything it has published or owns. */
+export function accountPage(address: string): string {
+  return `${SHOP_BASE}/accounts/${encodeURIComponent(address.toLowerCase())}`;
+}
+
 /** The Shop page of an asset: an item page for a collection item, a token page for a registry token. */
 export function assetPage(contract: string, id: string, as: "item" | "token" = isTokenRegistry(contract) ? "token" : "item"): string {
   const c = contract.toLowerCase();

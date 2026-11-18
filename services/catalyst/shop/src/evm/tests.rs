@@ -1033,9 +1033,14 @@ async fn name_transfer_claims_cover_every_replay_state() {
 /// The relay over the fake OZ relayer and the fake chain (the collections
 /// mirror seeded with `COLLECTION`).
 async fn oz_app(pool: &PgPool) -> axum::Router {
+    oz_app_over(pool, spawn_fake_relayer().await).await
+}
+
+/// The relay over the OZ relayer at `relayer_url` and the fake chain.
+async fn oz_app_over(pool: &PgPool, relayer_url: String) -> axum::Router {
     let (chain_url, _) = spawn_fake_chain().await;
     let settings = Settings {
-        oz_relayer_url: Some(spawn_fake_relayer().await),
+        oz_relayer_url: Some(relayer_url),
         oz_relayer_id: Some("relayer-under-test".into()),
         oz_relayer_api_key: Some("api-key-under-test".into()),
         polygon_rpc_url: Some(chain_url),
@@ -1043,6 +1048,94 @@ async fn oz_app(pool: &PgPool) -> axum::Router {
     };
     assert!(settings.has_relayer());
     router(state(pool.clone(), settings))
+}
+
+/// A fake OZ relayer whose submission answers `submission` and whose every status check answers
+/// `status`.
+async fn spawn_oz_answering(submission: Value, status: Value) -> String {
+    let app = axum::Router::new()
+        .route(
+            "/api/v1/relayers/{relayer_id}/transactions",
+            post(move || {
+                let submission = submission.clone();
+                async move { Json(submission) }
+            }),
+        )
+        .route(
+            "/api/v1/relayers/{relayer_id}/transactions/{tx_id}",
+            axum::routing::get(move || {
+                let status = status.clone();
+                async move { Json(status) }
+            })
+            .delete(|| async { StatusCode::NO_CONTENT }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake relayer");
+    let addr = listener.local_addr().expect("relayer addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    format!("http://{addr}")
+}
+
+/// What the buyer's client reads when the OZ relayer created nothing: a submission without a hash,
+/// then a terminal status that says so with an explicit `"hash": null`. That reaches the client as
+/// a refusal it may act on, 400 with `"not_sent": true`, and the slot is released. The control is
+/// the same terminal status carrying a hash: the transaction was signed and may be out, so the
+/// answer is a 504 without the evidence and the slot is kept.
+#[tokio::test]
+async fn an_oz_transaction_never_signed_reaches_the_client_as_not_sent() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let signed_hash = format!("0x{:064x}", 0xab);
+    for (terminal_hash, expected_status, expected_not_sent, expected_rows) in [
+        (Value::Null, 400u16, Some(true), 0i64),
+        (json!(signed_hash), 504, None, 1),
+    ] {
+        let submission = json!({ "success": true, "data": { "id": "oz-tx", "hash": null, "status": "pending" } });
+        let status = json!({ "success": true, "data": { "id": "oz-tx", "hash": terminal_hash, "status": "failed", "status_reason": "dropped" } });
+        let app = oz_app_over(&pool, spawn_oz_answering(submission, status).await).await;
+        let key = PrivateKeySigner::random();
+        let user = format!("{:#x}", key.address());
+        let (code, body) =
+            post_transaction(&app, &user, COLLECTION, &signed_split_calldata(&key, FS)).await;
+        let rows = row_count(&pool, &user).await;
+        cleanup_user(&pool, &user).await;
+        assert_eq!(
+            code, expected_status,
+            "terminal hash {terminal_hash}: {body}"
+        );
+        assert_eq!(
+            body["ok"],
+            json!(false),
+            "terminal hash {terminal_hash}: {body}"
+        );
+        assert_eq!(
+            body["not_sent"].as_bool(),
+            expected_not_sent,
+            "terminal hash {terminal_hash}: {body}"
+        );
+        if expected_status == 400 {
+            // Validation answers the same code; only the relayer's refusal carries its status reason.
+            assert_eq!(body["error"], json!("invalid_transaction"), "{body}");
+            assert!(
+                body["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("dropped")),
+                "the 400 is the relayer's refusal, not a validation error: {body}"
+            );
+        }
+        assert_eq!(
+            rows, expected_rows,
+            "terminal hash {terminal_hash}: the slot is released only when nothing was signed"
+        );
+    }
 }
 
 #[tokio::test]

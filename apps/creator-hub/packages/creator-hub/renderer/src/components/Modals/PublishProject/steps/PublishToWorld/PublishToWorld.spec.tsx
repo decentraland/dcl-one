@@ -141,6 +141,15 @@ describe('PublishToWorld', () => {
     });
   });
 
+  describe('when the owner picks one of their Worlds', () => {
+    it('should not ask for their parcel permissions, which the server has none of', async () => {
+      await renderStep();
+
+      expect(api.fetchWorldSettings).toHaveBeenCalled();
+      expect(api.fetchParcelsPermission).not.toHaveBeenCalled();
+    });
+  });
+
   describe('when a collaborator picks a world and every request for it fails', () => {
     beforeEach(async () => {
       api.fetchWorldSettings.mockImplementation(OFFLINE);

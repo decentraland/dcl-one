@@ -30,6 +30,9 @@ export const DEFAULT_DCLIGNORE = [
   '*.map',
   'node_modules/**',
   '*.md',
+  // added to the SDK's list after 7.33; Creator Hub also writes them to every scene's .dclignore
+  'cursor.config',
+  'cursorignore',
 ];
 
 type Rule = { regex: RegExp; negated: boolean; anchored: boolean; directoryOnly: boolean };

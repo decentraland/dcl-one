@@ -24,6 +24,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   ambient, and the sky preset keeps the bands a scene leaves out. A scene's fog density is in the
   sky preset's units, so it goes through the same conversion to bevy's falloff, and it takes the
   place of the `/fog` density while the scene is active.
+- **Scene colour gradients are linear (#1293).** Sun, sky, fog and cloud gradients are read as
+  linear colours, as `gradient.proto` specifies for `ColorKey.color`, with values above 1
+  allowed. A Sun key above 1 is scaled back to 1 for the hue, and the light is multiplied by its
+  largest channel. Unity's environment profile at `0a8bafca9e62ced7f34ac182158b11edd0c842a4`
+  puts the Sun gradient straight into the light colour, which it decodes as sRGB: the same key
+  gives a darker, more saturated hue there, and a key of (2, 2, 2) lights the scene about 4.6
+  times rather than 2. We follow the protocol.
 - **A root light source replaces what it sets.** Point and spot light intensities are scaled to
   the sky preset's light unit (the default 16000 is 8 units). A `LightSource` on a scene's root
   entity replaces the sun's colour and, when it gives an intensity, the sun's intensity as lux,
@@ -98,11 +105,15 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Scene roots and avatars register their hashes through component hooks; the publisher writes
   the values in place. See the
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
+  The same key orders scene spawns, which come in loading waves of at most six
+  ([ADR](../../../../docs/adr/2026-11-09-explorer-scene-streaming.md)).
 - **Voice chat (private calls and community streams)** keeps the call statuses and guards, the
   3 × 2000 ms re-dial budget, the 1 s hang-up-before-join delay and the server's 60 s ring.
-  - Don't add hold-to-talk to the call mic: `T` opens the chat. The `Microphone` key (`V`) toggles
-    the call mic while a call is connected and the nearby mic otherwise. A community listener's
-    `V` does nothing, since a listener can't speak.
+  - Don't bind the mic to `T`: it opens the chat. The `Microphone` key (`V`) drives the call mic
+    while a call is connected and the nearby mic otherwise, as Unity's `T` does. Nearby, a press
+    opens the mic and its release closes it. In a call, a press shorter than 0.5 s leaves the mic
+    open and a longer one is push-to-talk. A press while the mic is open closes it on release. A
+    community listener's `V` does nothing, since a listener can't speak.
   - Don't start a call's mic from a stored setting. It goes up on the call's first connect for
     whoever may speak (both sides of a private call, a stream's speakers). Don't turn it back on
     after a re-dial: what the user chose since then stands.
@@ -338,16 +349,44 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   not need), on sign-in, on a realm change, on `/ban_block_refresh` and, as a periodic chance to
   notice a ban while the client idles, every 300 s (unity-explorer checks at start-up only; no
   push reaches an idle client here, and the period promises no freshness, as a failed check
-  fails open, as there, and the state says so instead of guessing); a ban whose record the
+  fails open, as there, and the state says so instead of guessing; a failed check keeps a ban
+  already known, past its `expiresAt` too, since the local clock lifts no ban; once a known ban's
+  `expiresAt` passes it is checked again once, after any `Retry-After`); a ban whose record the
   gatekeeper withholds (a device match) is still a ban. The endpoint matches the address only,
   so a device ban shows only as a platform-scoped refusal of the scene adapter: that refusal
-  marks the platform ban, and the endpoint's "not banned" does not lift it while the refusal
-  stands. The local user's scene ban is the refusal of the
+  marks the platform ban. The endpoint's "not banned" does not lift it while the refusal stands:
+  it asks the gatekeeper for that scene's room again, and the gatekeeper's admission lifts it, so
+  a ban that expired or was lifted ends without a scene or realm change. Until then the notice
+  shows the refusal's ban, which carries no reason or period. The local user's scene
+  ban is the refusal of the
   scene adapter, read from its status and body (the gatekeeper's 403 for a platform or scene
   ban, the worlds server's 401 for a platform or world ban), where unity-explorer treats any 401
   or 403 as forbidden access. The player is not moved out of a scene that refused them, as
   there. Other players' scene bans and
   the admins come from the room's metadata and count only while the room is connected, as there.
+- **Realm entry refused during a platform ban.** The realm change reads `PlatformBanStatus`
+  (`common::platform_ban`) and, while a platform ban is known, refuses every request ("You are
+  banned from Decentraland"), so the lobby's pick, a link held for the
+  terms and an in-world realm change all stay where they are and nothing loads or connects. A ban
+  learnt while a change waits on world access (a world's password prompt) stops it with the same
+  answer; one learnt after the realm's own fetch has started does not stop that change. The
+  HUD reads the same ban from one stream: before the world it covers the lobby, welcome page,
+  picker or loader with a blocking notice that a sign-out or a "not banned" answer closes, and a
+  ban answered during the first entry keeps it open over the world (B1); a refused in-world
+  travel shows the same notice, dismissible, and the player stays put (B5). A ban learnt after the
+  first world entry opens nothing until a travel is refused, and an open notice words the period
+  again each minute. Differences from
+  unity-explorer, which checks once in its login flow and ends on a terminal blocked screen with
+  Exit and Support:
+  - Entering does not wait for the first check: an unknown or failed check lets the player in,
+    and a ban answered later refuses realm changes from then on. unity-explorer awaits the request.
+    The check starts at sign-in, before the lobby shows, so a ban is normally known before the
+    pick; a launch straight to a link's destination can enter first and the gatekeeper's own
+    refusal of the scene adapter then applies.
+  - In-world realm changes are refused too, which unity-explorer does not check.
+  - Sign Out instead of Exit: the web has no application to exit.
+  - The notice words the period as unity-explorer does (hours under a day, else days, rounded
+    up) and adds the ban's custom message.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.
@@ -680,6 +719,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Native HUD preferences are persisted by the engine** (`hud-prefs.json`), because CEF's
   `localStorage` does not survive.
 - **Web is Chrome only.**
+- **HLS plays natively on the web.** A media source is assigned to the element's `src` whatever
+  its format; there is no hls.js. Desktop Chrome plays TS and fMP4 HLS, live streams included,
+  through a plain `src` with `crossOrigin = "anonymous"`, and its frames copy into a
+  `VideoFrame`. HEVC in HLS and Chromium builds without proprietary codecs do not play; neither
+  is a target.
 - **The end-to-end tests use no Playwright.** They drive the client through its console on both
   shells, so one spec runs on the web and the standalone, and what they need from a browser (real
   input, pages outside the client such as sign-in, screenshots) the in-repo web driver does

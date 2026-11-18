@@ -821,6 +821,20 @@ pub struct FriendConnectivityEvent {
     pub status: String,
 }
 
+/// The signed-in wallet's platform ban. `banned` is false while the check is unknown or
+/// failed. Dates are the gatekeeper's ISO strings.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct PlatformBanNotice {
+    pub banned: bool,
+    /// Empty when the record was withheld or the ban is known only from a refusal
+    pub reason: String,
+    pub custom_message: Option<String>,
+    pub expires_at: Option<String>,
+}
+
 /// The engine needs a password to enter a world (see `ipfs::world_access`); answered with
 /// `SetWorldPassword`.
 #[derive(Clone, Debug, Serialize, Deserialize)]

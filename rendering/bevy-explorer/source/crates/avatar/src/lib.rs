@@ -70,6 +70,7 @@ pub mod material_cache;
 pub mod nametag;
 #[cfg(feature = "explorer")]
 pub mod npc_dynamics;
+pub mod pause_hidden;
 pub mod point_at_ik;
 #[cfg(feature = "explorer")]
 pub mod point_at_marker;
@@ -221,6 +222,7 @@ impl Plugin for AvatarPlugin {
         app.add_plugins(debug_avatars::DebugAvatarsPlugin);
         app.add_plugins(PointAtIkPlugin);
         app.add_plugins(PointAtMarkerPlugin);
+        app.add_plugins(pause_hidden::PauseHiddenAvatarsPlugin);
         app.add_systems(
             Update,
             (
@@ -1695,9 +1697,9 @@ fn process_avatar(
                 ("feet_basemesh", WearableCategory::FEET),
                 // ("head", WearableCategory::HEAD),
                 // ("head_basemesh", WearableCategory::HEAD),
-                // ("mask_eyes", WearableCategory::HEAD),
-                // ("mask_eyebrows", WearableCategory::HEAD),
-                // ("mask_mouth", WearableCategory::HEAD),
+                ("mask_eyes", WearableCategory::HEAD),
+                ("mask_eyebrows", WearableCategory::HEAD),
+                ("mask_mouth", WearableCategory::HEAD),
             ];
 
             for (hidename, category) in hiders {

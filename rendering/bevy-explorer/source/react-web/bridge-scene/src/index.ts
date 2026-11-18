@@ -49,6 +49,7 @@ import { registerAvatarPointer } from './domains/avatarPointer'
 import { registerPermissions } from './domains/permissions'
 import { registerPortables } from './domains/portables'
 import { registerWorldAccess } from './domains/worldAccess'
+import { registerPlatformBan } from './domains/platformBan'
 import { registerEditor } from './domains/editor'
 
 export function main(): void {
@@ -96,6 +97,7 @@ export function main(): void {
     registerPermissions(ctx)
     registerPortables(ctx)
     registerWorldAccess(ctx)
+    registerPlatformBan(ctx)
     registerEditor(ctx)
     registerAvatarPreview(ctx)
     registerMinimap(ctx)

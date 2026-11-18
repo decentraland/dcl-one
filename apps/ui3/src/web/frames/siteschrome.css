@@ -19,6 +19,7 @@
 }
 @media (max-width: 991px) {
   .site-layout.site-layout--sites { --site-header-h: 64px; --site-nav-pad: var(--dcl-space-16); --site-nav-bg: var(--dcl-bg-navbar-mobile); }
+  .site-layout--overlay-mobile > .site-layout__navigation { margin-bottom: calc(-1 * var(--site-header-h)); }
 }
 /* The nav floats over the page's top (decentraland.org's is fixed): a page that asks for it starts under the nav. */
 .site-layout--overlay > .site-layout__navigation { margin-bottom: calc(-1 * var(--site-header-h)); }

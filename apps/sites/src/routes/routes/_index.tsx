@@ -1,6 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useContext, useEffect, useRef } from "react";
 
 import SitesChrome from "@ui/web/frames/SitesChrome";
+import { SitesLocaleContext, sitesLanguage } from "@ui/web/frames/sites-locale";
+import { homeCopy } from "@/features/home/locale";
+import { successCopy } from "@/features/download/success-copy";
+import { parseCookies } from "@/core/lib/telemetry/session";
 import AnimatedBackground from "@ui/shop/discovery/components/animated-background/AnimatedBackground";
 import { Hero } from "@dcl/one-ui/apps/sites/home/Hero";
 import { WhatsOn } from "@dcl/one-ui/apps/sites/home/WhatsOn";
@@ -42,16 +46,23 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const { sid, wrap } = sidLoader(request, context);
   const [{ content: loadedContent, cards, profiles }, downloads] =
     await Promise.all([loadHomeLive(), loadDownloadCounts()]);
-  const content = homeAgentContent(loadedContent);
+  const locale = sitesLanguage(
+    parseCookies(request.headers.get("cookie")).lang,
+  ).code;
+  const content = homeAgentContent(loadedContent, locale);
   const payload = {
     sid,
+    locale,
     content,
     downloads: downloads ?? DOWNLOADS_FALLBACK,
     platform: detectPlatform(request.headers.get("user-agent")),
     installers: explorerInstallersUrl() !== null,
     cards: whatsOnCards(cards, profiles),
     faces: Object.fromEntries(
-      VIBE_CLIPS.map((clip) => [clip.address, profiles[clip.address]?.face ?? null]),
+      VIBE_CLIPS.map((clip) => [
+        clip.address,
+        profiles[clip.address]?.face ?? null,
+      ]),
     ),
   };
   return wrap(payload);
@@ -60,6 +71,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 export default function Home({ loaderData }: Route.ComponentProps) {
   const { sid, platform, installers, downloads, cards, faces } = loaderData;
 
+  const locale = useContext(SitesLocaleContext)?.locale ?? loaderData.locale;
+  const copy = homeCopy[locale];
   const viewed = useRef(false);
   useEffect(() => {
     if (viewed.current) return;
@@ -67,42 +80,51 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     track("lp_discover_viewed", {}, { sid, story: STORY });
   }, [sid]);
 
-  const { hero, hangOut, store } = homeDownloadActions(platform, downloads, installers);
+  const { hero, hangOut, store, alternateStore } = homeDownloadActions(
+    platform,
+    downloads,
+    installers,
+    copy.download,
+  );
   const labels = {
-    previous: "Previous slide",
-    next: "Next slide",
-    goTo: (n: number) => `Go to slide ${n}`,
-    position: (n: number, total: number) => `Slide ${n} of ${total}`,
+    previous: copy.slides.previous,
+    next: copy.slides.next,
+    goTo: (n: number) => `${copy.slides.goTo} ${n}`,
+    position: (n: number, total: number) =>
+      copy.slides.position
+        .replace("{current}", String(n))
+        .replace("{total}", String(total)),
   };
   return (
-    <SitesChrome active="play" overlayNav headerSurface="overlay">
+    <SitesChrome
+      active="play"
+      overlayNav
+      headerSurface="overlay"
+      footerCopy={successCopy[locale].footer}
+    >
       <main>
         <Hero
-          title="Close the Feed. Come Hang Out."
-          imageAlt="Friends exploring Decentraland"
+          title={copy.hero.title}
+          imageAlt={copy.hero.imageAlt}
           actions={hero}
           mobile={{
-            title: "Hang Out From Anywhere",
-            subtitle: "Decentraland now on mobile.",
+            title: copy.hero.mobileTitle,
+            subtitle: copy.hero.subtitle,
             store,
+            alternateStore,
           }}
         />
         <WhatsOn
-          title="Jump Into What's Happening"
-          labels={{ live: "LIVE", by: "by", jumpIn: "Jump in" }}
+          title={copy.whatsOn.title}
+          labels={copy.whatsOn}
           carouselLabels={labels}
-          viewAll={{ label: "View All", href: "/events" }}
+          viewAll={{ label: copy.whatsOn.view_all, href: "/events" }}
           background={<AnimatedBackground />}
           cards={cards}
         />
         <CatchTheVibe
-          title="Catch the Vibe"
-          labels={{
-            play: "Play",
-            pause: "Pause",
-            mute: "Mute",
-            unmute: "Unmute",
-          }}
+          title={copy.vibe}
+          labels={copy.media}
           carouselLabels={labels}
           items={VIBE_CLIPS.map((clip) => ({
             id: clip.id,
@@ -114,21 +136,21 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               avatarUrl: faces[clip.address] ?? undefined,
             },
           }))}
-          hangOut={{ label: "Hang out now", href: "/play/" }}
+          hangOut={{ label: copy.hangOutNow, href: "/play/" }}
         />
         <WeeklyRituals
-          title="Your Weekly Rituals"
+          title={copy.rituals.title}
           labels={labels}
           cards={WEEKLY_RITUALS.map((ritual) => ({
             id: ritual.id,
-            title: ritual.title,
+            title: copy.rituals[ritual.id],
             href: homeEventHref(ritual.eventId),
             image: ritual.image,
             mobileImage: ritual.mobileImage,
           }))}
         />
         <ComeHangOut
-          title="Come Hang Out"
+          title={copy.hangOut}
           background={<AnimatedBackground />}
           actions={hangOut}
           store={store}
