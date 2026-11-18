@@ -1,4 +1,4 @@
-import future from 'fp-future';
+import { future } from '../../../utils/future';
 import * as BABYLON from '@babylonjs/core';
 import { GLTFFileLoader, GLTFLoaderAnimationStartMode } from '@babylonjs/loaders';
 import type { GLTFLoader } from '@babylonjs/loaders/glTF/2.0';
@@ -412,7 +412,7 @@ export function processGLTFAssetContainer(assetContainer: BABYLON.AssetContainer
   assetContainer.addAllToScene();
 }
 
-// eslint-disable-next-line @typescript-eslint/ban-types
+// oxlint-disable-next-line typescript/ban-types
 function disposeDelegate($: { dispose: Function }) {
   $.dispose();
 }

@@ -1,18 +1,13 @@
 import { apiSource } from "../api";
 import { dbSource } from "../db.server";
+import { catalystDatabaseConfigured } from "../pool.server";
 import { CatalystError } from "../client";
 import type { GetOptions } from "../client";
 import type { Place, Category } from "../schema";
 import type { FetchPlacesParams } from "../types";
 import type { CopyStamp } from "@ui/data/copyAsOf";
 
-function dbConfigured(): boolean {
-  if (typeof process === "undefined") return false;
-  return Boolean(
-    process.env.CATALYST_DATABASE_URL ||
-      process.env.PLACES_PG_COMPONENT_PSQL_CONNECTION_STRING,
-  );
-}
+const dbConfigured = catalystDatabaseConfigured;
 
 let warned = false;
 function warnFallback(err: unknown): void {

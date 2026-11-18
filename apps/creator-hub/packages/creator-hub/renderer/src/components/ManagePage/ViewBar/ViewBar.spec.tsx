@@ -1,13 +1,13 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 import { FilterBy, SortBy } from '/shared/types/manage';
 
 import { ManageViewBar } from '.';
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 
 type BarProps = Parameters<typeof ManageViewBar>[0];
 
@@ -19,7 +19,7 @@ function renderBar(props: Partial<BarProps> = {}) {
     onSearch: vi.fn(),
   };
   render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <h1 id="manage-title">Manage</h1>
       <ManageViewBar
         labelledBy="manage-title"
@@ -30,7 +30,7 @@ function renderBar(props: Partial<BarProps> = {}) {
         {...handlers}
         {...props}
       />
-    </ThemeProvider>,
+    </TestProviders>,
   );
   return handlers;
 }
@@ -86,9 +86,9 @@ describe('ManageViewBar', () => {
     it('should report the filter, and no filter for All', () => {
       const { onViewChange } = renderBar({ view: FilterBy.PUBLISHED });
 
-      fireEvent.mouseDown(screen.getByRole('combobox', { name: 'View' }));
+      fireEvent.click(screen.getByRole('combobox', { name: 'View' }));
       fireEvent.click(screen.getByRole('option', { name: 'Not Published' }));
-      fireEvent.mouseDown(screen.getByRole('combobox', { name: 'View' }));
+      fireEvent.click(screen.getByRole('combobox', { name: 'View' }));
       fireEvent.click(screen.getByRole('option', { name: 'All' }));
 
       expect(onViewChange.mock.calls).toEqual([[FilterBy.UNPUBLISHED], [undefined]]);
@@ -99,7 +99,7 @@ describe('ManageViewBar', () => {
     it('should report the sort', () => {
       const { onSortChange } = renderBar();
 
-      fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Sort by' }));
+      fireEvent.click(screen.getByRole('combobox', { name: 'Sort by' }));
       fireEvent.click(screen.getByRole('option', { name: 'Name' }));
 
       expect(onSortChange).toHaveBeenCalledWith(SortBy.NAME);

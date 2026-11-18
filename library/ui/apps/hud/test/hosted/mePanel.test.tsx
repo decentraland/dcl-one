@@ -3,6 +3,7 @@ import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MePanel, type MePanelProps } from '../../features/sidebar/panels/MePanel'
 import { PopupHost, closeTopPopup, resetPopups } from '../../design/popups'
+import { ToastHost, dismissToast } from '../../design/Toast'
 
 const ADDRESS = `0x10e${'0'.repeat(32)}a7a92`
 
@@ -20,6 +21,7 @@ function panel(over: Partial<MePanelProps> = {}): MePanelProps {
     <>
       <MePanel {...props} />
       <PopupHost />
+      <ToastHost />
     </>
   )
   return props
@@ -125,6 +127,24 @@ describe('Me panel', () => {
   it('gives a claimed name no tag', () => {
     panel({ profile: { address: ADDRESS, name: 'Tester', hasClaimedName: true } })
     expect(screen.queryByText(/^#/)).toBeNull()
+  })
+
+  it('draws INVITE FRIENDS under the wallet only when the bar gives an invite link', () => {
+    panel()
+    expect(screen.queryByRole('button', { name: 'INVITE FRIENDS' })).not.toBeInTheDocument()
+  })
+
+  it('INVITE FRIENDS copies the invite link, says "Link copied!" and stays open', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+    const link = `https://decentraland.zone/invite/${ADDRESS}`
+    const props = panel({ inviteLink: link })
+    expect(rowNames()).toEqual(['Copy address', 'INVITE FRIENDS', 'Backpack', 'Profile'])
+    await userEvent.click(screen.getByRole('button', { name: 'INVITE FRIENDS' }))
+    expect(writeText).toHaveBeenCalledWith(link)
+    expect(await screen.findByText('Link copied!')).toBeInTheDocument()
+    expect(props.onClose).not.toHaveBeenCalled()
+    act(() => dismissToast('invite-link'))
   })
 
   it('copies the whole wallet address from its short form, says so, and stays open', async () => {

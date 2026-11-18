@@ -24,12 +24,12 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use crate::shared::routing::get;
 use anyhow::Context as _;
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use bytes::Bytes;
 use parking_lot::Mutex;
 use serde_json::json;

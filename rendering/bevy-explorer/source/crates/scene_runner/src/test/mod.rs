@@ -569,12 +569,12 @@ fn lifecycle_cleans_dead_entities_from_crdt_store() {
             Some(&mut DclReader::new(&make_reparent_buffer(0))),
         );
         // grow-only entries are kept per entity too
-        for _ in 0..2 {
+        for sequence in 0..2u8 {
             context.crdt_store.force_update(
                 SceneComponentId::POINTER_RESULT,
                 CrdtType::GO_ENT,
                 id,
-                Some(&mut DclReader::new(&[1, 2, 3])),
+                Some(&mut DclReader::new(&[1, 2, sequence])),
             );
         }
     }

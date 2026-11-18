@@ -1,152 +1,140 @@
-import { Children, useEffect, useState } from 'react'
-import friendsEmpty from '../../assets/lobby/friends-empty.webp'
-import players from '../../assets/lobby/players.png'
-import { Avatar, Button, MaskIcon, VerifiedBadge } from '../../design'
-import {
-  GeneralAddToCalendar,
-  GeneralHome,
-  GeneralJumpIn,
-  GeneralLeftArrow,
-  GeneralLive,
-  GeneralMapPin,
-  GeneralRightArrow,
-  GeneralTime
-} from '../../../../foundations/icons/general'
-import { MenusShare } from '../../../../foundations/icons/menus'
-import { NavbarFriends } from '../../../../foundations/icons/navbar'
-import { eventStartAt, type DclEvent } from '@explorer-core/features/events/eventsApi'
-import { FriendFaces } from '../events/EventCard'
+import { useState } from 'react'
+import addToCalendar from '../../assets/lobby/add-to-calendar-icn.png'
+import defaultPlace from '../../assets/map/panel/default-place.png'
+import defaultProfile from '../../assets/lobby/default-profile-thumbnail.png'
+import defaultCommunity from '../../assets/lobby/thumbnail-default.png'
+import homeIcon from '../../assets/lobby/home-icon.png'
+import jumpIn from '../../assets/map/panel/jump-in.png'
+import liveIcon from '../../assets/map/panel/live.png'
+import locationIcon from '../../assets/lobby/location-icn.png'
+import playersIcon from '../../assets/map/panel/players.png'
+import privateIcon from '../../assets/lobby/private-icn.png'
+import publicIcon from '../../assets/lobby/public-icn.png'
+import reminderOff from '../../assets/map/panel/reminder-off.png'
+import reminderOn from '../../assets/map/panel/reminder-on.png'
+import shareIcon from '../../assets/map/panel/share.png'
+import timeIcon from '../../assets/lobby/time-icn.png'
+import verifiedIcon from '../../assets/lobby/icon-verified.png'
+import { MaskIcon } from '../../design'
 import { useCreatorName } from '../places/useCreatorName'
-import type { Friend } from '@explorer-core/engine/protocol'
 import styles from './LobbyCards.module.css'
 
-function OnlineCounter({ count }: { count: number }): React.JSX.Element {
+const cx = (...names: Array<string | false | null | undefined>): string => names.filter(Boolean).join(' ')
+
+function Thumb({ src, fallback, className }: { src: string | null | undefined; fallback: string; className: string }): React.JSX.Element {
+  const [loaded, setLoaded] = useState<string | null>(null)
+  const [failed, setFailed] = useState<string | null>(null)
+  const url = src && src !== failed ? src : fallback
+  const waiting = src != null && src !== '' && src !== failed && loaded !== src
   return (
-    <span className={styles.counter}>
-      <span className={styles.onlineDot} />
-      <MaskIcon src={players} size={16} />
-      {count}
+    <span className={className}>
+      <img className={styles.thumbImage} src={url} alt="" draggable={false} onLoad={() => setLoaded(url)} onError={() => src && setFailed(src)} />
+      <span className={cx(styles.thumbSkeleton, waiting && styles.thumbSkeletonShown)} aria-hidden="true" />
     </span>
   )
 }
 
-function JumpIn({ disabled, onClick }: { disabled?: boolean; onClick: () => void }): React.JSX.Element {
+/** Hidden at 0. */
+function OnlineBadge({ count, className }: { count: number | null | undefined; className?: string }): React.JSX.Element | null {
+  if (count == null || count <= 0) return null
   return (
-    <button type="button" className={styles.jump} disabled={disabled} onClick={onClick}>
-      Jump in
-      <GeneralJumpIn size={24} aria-hidden="true" />
+    <span className={cx(styles.online, className)}>
+      <span className={styles.onlineDot} />
+      <MaskIcon src={playersIcon} size={16} className={styles.onlineIcon} />
+      <span className={styles.onlineCount}>{count}</span>
+    </span>
+  )
+}
+
+export function profilePictureStyle(color: string, picture: string | null | undefined): React.CSSProperties {
+  return { backgroundColor: color, borderColor: `color-mix(in srgb, ${color} 80%, white)`, backgroundImage: `url("${picture || defaultProfile}")` }
+}
+
+export interface ConnectedFriend {
+  address: string
+  name: string
+  color: string
+  picture?: string | null
+}
+
+const MAX_FRIEND_PICTURES = 3
+
+export function ConnectedFriends({ friends, onHover }: { friends: ConnectedFriend[]; onHover?: (friend: ConnectedFriend | null, e?: React.MouseEvent) => void }): React.JSX.Element | null {
+  if (friends.length === 0) return null
+  const shown = friends.slice(0, MAX_FRIEND_PICTURES)
+  const more = friends.length - shown.length
+  return (
+    <span className={styles.friendsRow} aria-label={`${friends.length} ${friends.length === 1 ? 'friend' : 'friends'} here`}>
+      {shown.map((f, i) => (
+        <span
+          key={f.address}
+          className={cx(styles.friendPicture, i > 0 && styles.overlapping)}
+          style={profilePictureStyle(f.color, f.picture)}
+          onMouseMove={(e) => onHover?.(f, e)}
+          onMouseLeave={() => onHover?.(null)}
+        />
+      ))}
+      {more > 0 && <span className={cx(styles.friendsOverflow, styles.overlapping)}>+{more}</span>}
+    </span>
+  )
+}
+
+function JumpInButton({ size, className, disabled, onClick, label }: { size: 'large' | 'small'; className: string; disabled?: boolean; onClick: () => void; label: string }): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      className={cx(styles.jumpIn, size === 'large' ? styles.jumpInLarge : styles.jumpInSmall, className)}
+      disabled={disabled}
+      aria-label={label}
+      onClick={(e) => {
+        e.stopPropagation()
+        onClick()
+      }}
+    >
+      <span className={styles.jumpInText}>JUMP IN</span>
+      <MaskIcon src={jumpIn} size={size === 'large' ? 24 : 22} />
     </button>
   )
 }
 
-/** A section's title row: the title on the left, VIEW ALL (when the section has a page to open) on the right. */
-export function SectionHead({ title, onViewAll, children }: { title: string; onViewAll?: () => void; children?: React.ReactNode }): React.JSX.Element {
-  return (
-    <div className={styles.head}>
-      <h2 className={styles.headTitle}>{title}</h2>
-      {children}
-      {onViewAll && (
-        <button type="button" className={styles.viewAll} onClick={onViewAll}>
-          <span>View all</span>
-          <GeneralRightArrow size={24} className={styles.viewAllArrow} aria-hidden="true" />
-        </button>
-      )}
-    </div>
-  )
-}
-
-/**
- * Cards a page at a time, with the lobby's pager under them: a dot per page, and Previous and Next
- * arrows that show while the section is hovered or holds focus (they wrap at the ends). A single
- * page has no pager; `reserve` keeps its row, so the widget is as tall with one page as with many.
- */
-export function Pages({ perPage, gap, reserve = false, children }: { perPage: number; gap: number; reserve?: boolean; children: React.ReactNode }): React.JSX.Element {
-  const items = Children.toArray(children)
-  const pages = Math.max(1, Math.ceil(items.length / perPage))
-  const [page, setPage] = useState(0)
-  useEffect(() => setPage((p) => Math.min(p, pages - 1)), [pages])
-  const shown = Math.min(page, pages - 1)
-  const step = (by: number): void => setPage((shown + by + pages) % pages)
-  return (
-    <div className={styles.pages}>
-      <div className={styles.pageRow} style={{ gap }}>
-        {items.slice(shown * perPage, shown * perPage + perPage)}
-      </div>
-      {pages > 1 ? (
-        <div className={styles.pager}>
-          <button type="button" aria-label="Previous page" className={styles.pagerArrow} onClick={() => step(-1)}>
-            <GeneralLeftArrow size={32} aria-hidden="true" />
-          </button>
-          <div className={styles.dots}>
-            {Array.from({ length: pages }, (_, i) => (
-              <button
-                key={i}
-                type="button"
-                aria-current={i === shown ? 'true' : undefined}
-                aria-label={`Page ${i + 1}`}
-                className={`${styles.dot} ${i === shown ? styles.dotActive : ''}`.trim()}
-                onClick={() => setPage(i)}
-              />
-            ))}
-          </div>
-          <button type="button" aria-label="Next page" className={styles.pagerArrow} onClick={() => step(1)}>
-            <GeneralRightArrow size={32} aria-hidden="true" />
-          </button>
-        </div>
-      ) : (
-        reserve && <PagerSpace />
-      )}
-    </div>
-  )
-}
-
-/** The pager's row with nothing in it. */
-function PagerSpace(): React.JSX.Element {
-  return <div className={styles.pagerSpace} aria-hidden="true" />
-}
-
 export function LandingCard({
   title,
-  creator,
   image,
-  count,
-  loading,
+  online,
+  friends,
+  canOpen,
   disabled,
+  onOpen,
   onJumpIn,
-  onOpen
+  onFriendHover
 }: {
   title: string
-  creator: string | null
   image: string | null
-  count: number | null
-  loading: boolean
+  online: number | null
+  friends: ConnectedFriend[]
+  /** The place is known (not an offline stand-in): the card opens it. */
+  canOpen: boolean
   disabled: boolean
+  onOpen: () => void
   onJumpIn: () => void
-  /** A click anywhere but Jump In: the place's detail card, once the place is known. */
-  onOpen?: () => void
+  onFriendHover?: (friend: ConnectedFriend | null, e?: React.MouseEvent) => void
 }): React.JSX.Element {
-  const creatorName = useCreatorName(creator)
-  const open = loading ? undefined : onOpen
   return (
-    <div
-      className={`${styles.landing} ${open ? styles.landingOpen : ''}`.trim()}
-      aria-busy={loading}
-      title={creatorName ?? undefined}
-      onClick={open && ((e) => !(e.target as HTMLElement).closest('button') && open())}
-    >
-      <div className={`${styles.thumb} ${loading ? styles.skeleton : ''}`.trim()}>{image && <img src={image} alt="" />}</div>
-      <div className={styles.shade} />
-      {count != null && !loading && (
-        <div className={styles.landingBadges}>
-          <OnlineCounter count={count} />
-        </div>
-      )}
-      <div className={styles.landingTitle}>
-        <GeneralHome size={24} />
-        <span>{title}</span>
-      </div>
-      <div className={styles.landingJump}>
-        <JumpIn disabled={loading || disabled} onClick={onJumpIn} />
+    <div className={cx(styles.landing, !canOpen && styles.static)}>
+      <span className={styles.outline} aria-hidden="true" />
+      <div className={styles.landingBody}>
+        <Thumb src={image} fallback={defaultPlace} className={styles.landingThumb} />
+        <span className={cx(styles.gradient, styles.landingGradient)} />
+        {canOpen && <button type="button" className={styles.cover} aria-label={`Open ${title}`} onClick={onOpen} />}
+        <span className={cx(styles.badges, styles.landingBadges)}>
+          <OnlineBadge count={online} />
+          <ConnectedFriends friends={friends} onHover={onFriendHover} />
+        </span>
+        <span className={styles.landingFooter}>
+          <MaskIcon src={homeIcon} size={24} className={styles.homeIcon} />
+          <span className={styles.landingTitle}>{title}</span>
+        </span>
+        <JumpInButton size="large" className={styles.landingJumpIn} disabled={disabled} onClick={onJumpIn} label="Jump In" />
       </div>
     </div>
   )
@@ -156,195 +144,244 @@ export function PlaceCard({
   title,
   creator,
   image,
-  count,
+  online,
+  friends,
+  narrow,
   disabled,
+  onOpen,
   onJumpIn,
-  onOpen
+  onFriendHover
 }: {
   title: string
   creator: string | null
   image: string | null
-  count: number
+  online: number | null
+  friends: ConnectedFriend[]
+  narrow?: boolean
   disabled: boolean
-  onJumpIn: () => void
-  /** A click anywhere but Jump In: the place's detail card. */
   onOpen: () => void
+  onJumpIn: () => void
+  onFriendHover?: (friend: ConnectedFriend | null, e?: React.MouseEvent) => void
 }): React.JSX.Element {
   const creatorName = useCreatorName(creator)
   return (
-    <div className={styles.place} onClick={(e) => !(e.target as HTMLElement).closest('button') && onOpen()}>
-      <div className={styles.thumb}>{image && <img src={image} alt="" />}</div>
-      <div className={styles.shade} />
-      {count > 0 && (
-        <div className={styles.placeBadges}>
-          <OnlineCounter count={count} />
-        </div>
-      )}
-      <div className={styles.placeText}>
-        <div className={styles.placeTitle}>{title}</div>
-        <div className={`${styles.placeFoot} ${creatorName ? '' : styles.placeFootBare}`.trim()}>
-          {creatorName && <div className={styles.placeCreator}>{creatorName}</div>}
-          <div className={styles.placeJump}>
-            <JumpIn disabled={disabled} onClick={onJumpIn} />
-          </div>
-        </div>
-      </div>
+    <div className={cx(styles.place, narrow && styles.narrow)}>
+      <Thumb src={image} fallback={defaultPlace} className={styles.zoomThumb} />
+      <span className={cx(styles.gradient, styles.placeGradient)} />
+      <button type="button" className={styles.cover} aria-label={`Open ${title}`} onClick={onOpen} />
+      <span className={cx(styles.badges, styles.placeBadges)}>
+        <OnlineBadge count={online} />
+        <ConnectedFriends friends={friends} onHover={onFriendHover} />
+      </span>
+      <span className={styles.placeFooter}>
+        <span className={styles.placeTitle}>{title}</span>
+        {creatorName && <span className={styles.placeCreator}>{creatorName}</span>}
+      </span>
+      <JumpInButton size="small" className={styles.placeJumpIn} disabled={disabled} onClick={onJumpIn} label={`Jump in to ${title}`} />
     </div>
   )
 }
 
-const HOUR = 3_600_000
-
-/** "In 1 hour", "In 3 days", as the lobby's event card says it. */
-export function startsIn(startAt: string, now: number): string {
-  const ms = new Date(startAt).getTime() - now
-  if (!Number.isFinite(ms) || ms <= 0) return 'Live now'
-  const plural = (n: number, unit: string): string => `In ${n} ${unit}${n === 1 ? '' : 's'}`
-  if (ms < HOUR) return plural(Math.max(1, Math.round(ms / 60_000)), 'minute')
-  if (ms < 24 * HOUR) return plural(Math.round(ms / HOUR), 'hour')
-  return plural(Math.round(ms / (24 * HOUR)), 'day')
-}
-
-/**
- * An event that is on now: its picture, the LIVE badge with who is there, its name and its host.
- * Hovered or focused, Jump in takes the host's line.
- */
 export function LiveEventCard({
-  event,
+  title,
+  host,
+  image,
+  attendees,
   friends,
   disabled,
+  onOpen,
   onJumpIn,
-  onOpen
+  onFriendHover
 }: {
-  event: DclEvent
-  /** The player's friends at the event. */
-  friends: Friend[]
+  title: string
+  host: string | null
+  image: string | null
+  attendees: number
+  friends: ConnectedFriend[]
   disabled: boolean
-  onJumpIn: () => void
-  /** A click anywhere but Jump in: the event's detail card, when the event has a place to go to. */
-  onOpen?: () => void
+  onOpen: () => void
+  onJumpIn: (() => void) | null
+  onFriendHover?: (friend: ConnectedFriend | null, e?: React.MouseEvent) => void
 }): React.JSX.Element {
-  const here = event.connected_addresses?.length ?? 0
   return (
-    <div
-      className={`${styles.liveCard} ${onOpen ? styles.landingOpen : ''}`.trim()}
-      onClick={onOpen && ((e) => !(e.target as HTMLElement).closest('button') && onOpen())}
-    >
-      <div className={styles.thumb}>{event.image && <img src={event.image} alt="" />}</div>
-      <div className={styles.liveBadges}>
-        <span className={styles.liveBadge}>
-          <GeneralLive size={18} aria-hidden="true" />
-          Live
-        </span>
-        {here > 0 && <OnlineCounter count={here} />}
-        {friends.length > 0 && (
-          <span className={styles.liveFriends}>
-            {/* under the faces: the card clips what is drawn above them */}
-            <FriendFaces friends={friends} tip="bottom" />
+    <div className={styles.liveEvent}>
+      <span className={styles.liveShadow} aria-hidden="true" />
+      <div className={styles.liveBody}>
+        <Thumb src={image} fallback={defaultPlace} className={styles.zoomThumb} />
+        <span className={cx(styles.gradient, styles.liveGradient)} />
+        <button type="button" className={styles.cover} aria-label={`Open ${title}`} onClick={onOpen} />
+        <span className={cx(styles.badges, styles.liveBadges)}>
+          <span className={styles.liveBadge}>
+            <MaskIcon src={liveIcon} size={16} />
+            LIVE
           </span>
-        )}
-      </div>
-      <div className={styles.liveText}>
-        <div className={styles.liveTitle}>{event.name}</div>
-        <div className={`${styles.liveFoot} ${event.user_name ? '' : styles.liveFootBare}`.trim()}>
-          {event.user_name && <div className={styles.liveBy}>{event.user_name}</div>}
-          <div className={styles.liveJump}>
-            <JumpIn disabled={disabled} onClick={onJumpIn} />
-          </div>
-        </div>
+          <OnlineBadge count={attendees} />
+          <ConnectedFriends friends={friends} onHover={onFriendHover} />
+        </span>
+        <span className={styles.liveTitle}>{title}</span>
+        {host && <span className={styles.liveHost}>By {host}</span>}
+        {onJumpIn && <JumpInButton size="large" className={styles.liveJumpIn} disabled={disabled} onClick={onJumpIn} label={`Jump in to ${title}`} />}
       </div>
     </div>
   )
 }
 
-/**
- * An event to come: its name, host and how long until it starts, beside its picture. Hovered or
- * focused, Add to calendar and Share take the host's line.
- */
 export function UpcomingEventCard({
-  event,
+  title,
+  host,
+  image,
+  startsIn,
+  interested,
   onOpen,
-  onAddToCalendar,
+  onInterested,
+  onCalendar,
   onShare
 }: {
-  event: DclEvent
-  /** null when the event has no place to go to. */
-  onOpen: (() => void) | null
-  onAddToCalendar: () => void
-  /** Opens the share menu beside the button. */
-  onShare: (button: HTMLElement) => void
+  title: string
+  host: string | null
+  image: string | null
+  startsIn: string
+  interested: boolean
+  onOpen: () => void
+  onInterested: () => void
+  onCalendar: () => void
+  onShare: (anchor: HTMLElement) => void
 }): React.JSX.Element {
   return (
-    <article className={styles.event}>
-      <button type="button" className={styles.eventOpen} disabled={onOpen == null} onClick={onOpen ?? undefined}>
-        <span className={styles.eventTitle}>{event.name}</span>
-        {event.user_name && (
-          <span className={styles.eventBy}>
-            By <b>{event.user_name}</b>
-          </span>
-        )}
-        <span className={styles.eventWhen}>
-          <GeneralTime size={20} aria-hidden="true" />
-          {startsIn(eventStartAt(event), Date.now())}
+    <div className={cx(styles.upcoming, interested && styles.interested)}>
+      <span className={styles.upcomingThumbFrame}>
+        <Thumb src={image} fallback={defaultPlace} className={styles.zoomThumb} />
+      </span>
+      <button type="button" className={styles.cover} aria-label={`Open ${title}`} onClick={onOpen} />
+      <span className={styles.upcomingInfo}>
+        <span className={styles.upcomingTexts}>
+          <span className={styles.upcomingTitle}>{title}</span>
+          {host && (
+            <span className={styles.upcomingHostRow}>
+              <span className={styles.upcomingHostPrefix}>by</span>
+              <span className={styles.upcomingHost}>{host}</span>
+            </span>
+          )}
         </span>
+        <span className={styles.schedule}>
+          <MaskIcon src={timeIcon} size={20} />
+          <span className={styles.scheduleText}>{startsIn}</span>
+        </span>
+      </span>
+      <span className={styles.actions}>
+        <button type="button" className={styles.action} aria-label={interested ? 'Not interested' : 'Interested'} aria-pressed={interested} onClick={onInterested}>
+          <img src={interested ? reminderOn : reminderOff} alt="" width={24} height={24} />
+        </button>
+        <button type="button" className={styles.action} aria-label="Add to calendar" onClick={onCalendar}>
+          <img src={addToCalendar} alt="" width={24} height={24} />
+        </button>
+        <button type="button" className={styles.action} aria-label="Share" onClick={(e) => onShare(e.currentTarget)}>
+          <img src={shareIcon} alt="" width={24} height={24} />
+        </button>
+      </span>
+    </div>
+  )
+}
+
+export type FriendPresence = 'online' | 'away' | 'offline'
+
+// The presence modifiers have their own names: the card shares this sheet with the online-count badge.
+const PRESENCE_CLASS: Record<FriendPresence, string | undefined> = { online: styles.presenceOnline, away: styles.presenceAway, offline: undefined }
+
+export function FriendCard({
+  name,
+  walletTag,
+  verified,
+  color,
+  picture,
+  presence,
+  location,
+  joinable,
+  disabled = false,
+  onOpen,
+  onJoin
+}: {
+  name: string
+  walletTag: string | null
+  verified: boolean
+  color: string
+  picture: string | null
+  presence: FriendPresence
+  location: string
+  joinable: boolean
+  disabled?: boolean
+  onOpen: () => void
+  onJoin: () => void
+}): React.JSX.Element {
+  return (
+    <div className={cx(styles.friend, joinable && styles.joinable, PRESENCE_CLASS[presence])}>
+      <button type="button" className={styles.cover} aria-label={`${name}'s profile`} onClick={onOpen} />
+      <span className={styles.friendPictureLarge} style={profilePictureStyle(color, picture)} />
+      <span className={styles.presence} />
+      <span className={styles.friendName}>
+        <span className={styles.friendNameText} style={{ color }}>
+          {name}
+        </span>
+        {verified ? <img className={styles.verified} src={verifiedIcon} alt="Verified" width={12} height={12} /> : walletTag && <span className={styles.walletTag}>{walletTag}</span>}
+      </span>
+      <span className={styles.friendLocation}>
+        <MaskIcon src={locationIcon} width={12} height={14} className={styles.locationIcon} />
+        <span className={styles.friendLocationText}>{location}</span>
+      </span>
+      {joinable && (
+        <button type="button" className={styles.join} aria-label={`Join ${name}`} disabled={disabled} onClick={onJoin}>
+          <span className={styles.joinText}>JOIN</span>
+          <MaskIcon src={jumpIn} size={16} />
+        </button>
+      )}
+    </div>
+  )
+}
+
+export function CommunityCard({
+  title,
+  image,
+  isPrivate,
+  members,
+  narrow,
+  onView
+}: {
+  title: string
+  image: string | null
+  isPrivate: boolean
+  members: string
+  narrow?: boolean
+  onView: () => void
+}): React.JSX.Element {
+  return (
+    <div className={cx(styles.community, narrow && styles.narrow)}>
+      <Thumb src={image} fallback={defaultCommunity} className={styles.zoomThumb} />
+      <span className={cx(styles.gradient, styles.communityGradient)} />
+      <span className={styles.communityFooter}>
+        <span className={styles.communityTitle}>{title}</span>
+        <span className={styles.membersRow}>
+          <MaskIcon src={isPrivate ? privateIcon : publicIcon} size={10} className={styles.visibilityIcon} />
+          <span className={styles.membersText}>{isPrivate ? 'Private' : 'Public'}</span>
+          <span className={styles.separator} />
+          <span className={cx(styles.membersText, styles.members)}>{members}</span>
+        </span>
+      </span>
+      <button type="button" className={styles.cover} aria-label={title} onClick={onView} />
+      <button type="button" className={styles.view} aria-label={`View ${title}`} onClick={onView}>
+        VIEW
       </button>
-      <span className={styles.eventImage}>{event.image && <img src={event.image} alt="" />}</span>
-      <span className={styles.eventActions}>
-        <Button size="bare" radius="button" variant="tint" className={styles.eventAction} aria-label="Add to calendar" onClick={onAddToCalendar}>
-          <GeneralAddToCalendar size={24} aria-hidden="true" />
-        </Button>
-        <Button size="bare" radius="button" variant="tint" className={styles.eventAction} aria-label="Share" aria-haspopup="menu" onClick={(e) => onShare(e.currentTarget)}>
-          <MenusShare size={24} aria-hidden="true" />
-        </Button>
-      </span>
-    </article>
-  )
-}
-
-/** No friends yet: how to make some. The pager's row stays under the card, as in the design. */
-export function FriendsEmpty(): React.JSX.Element {
-  return (
-    <div className={styles.pages}>
-      <div className={styles.friendsEmpty}>
-        <span className={styles.friendsEmptyGlow} aria-hidden="true" />
-        <img className={styles.friendsEmptyArt} src={friendsEmpty} alt="" />
-        <div className={styles.friendsEmptyText}>
-          <div className={styles.friendsEmptyTitle}>Time to make some friends!</div>
-          <div className={styles.friendsEmptyBody}>Visit someone's profile or click their name in Chat to add them as a friend. They'll show up here when they're online.</div>
-        </div>
-      </div>
-      <PagerSpace />
     </div>
   )
 }
 
-/** Friends, none of them online. */
-export function FriendsNoneOnline(): React.JSX.Element {
+export function GalleryCard({ image, label, narrow, onOpen }: { image: string; label: string; narrow?: boolean; onOpen: () => void }): React.JSX.Element {
   return (
-    <div className={styles.pages}>
-      <div className={styles.friendsNone}>
-        <NavbarFriends size={34} aria-hidden="true" />
-        <span>No Friends Online</span>
+    <div className={cx(styles.photo, narrow && styles.narrow)}>
+      <span className={cx(styles.outline, styles.photoOutline)} aria-hidden="true" />
+      <div className={styles.photoBody}>
+        <Thumb src={image} fallback={defaultPlace} className={styles.zoomThumb} />
+        <button type="button" className={styles.cover} aria-label={label} onClick={onOpen} />
       </div>
-      <PagerSpace />
     </div>
-  )
-}
-
-export function FriendCard({ friend, color, where, onOpen }: { friend: Friend; color: string; where: string; onOpen: () => void }): React.JSX.Element {
-  return (
-    <button type="button" className={styles.friend} onClick={onOpen}>
-      <Avatar src={friend.picture} name={friend.name} color={color} framed size={40} dotPosition="top" status={friend.status === 'away' ? 'away' : 'online'} />
-      <span className={styles.friendText}>
-        <span className={styles.friendName} style={{ color }}>
-          <span>{friend.name}</span>
-          {friend.claimed && <VerifiedBadge size={12} />}
-        </span>
-        <span className={styles.friendWhere}>
-          <GeneralMapPin size={14} aria-hidden="true" />
-          <span>{where}</span>
-        </span>
-      </span>
-    </button>
   )
 }

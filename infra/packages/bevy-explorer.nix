@@ -191,8 +191,8 @@ let
         (target / ".cargo-checksum.json").write_text('{"files":{}, "package":null}')
   '';
   workspaceRootOnly = pkgs.writeShellScriptBin "cargo" ''echo "{\"workspace_root\":\"$WORKSPACE_ROOT\"}"'';
-  hashOfUnpatchedGitSource."git+https://github.com/gltf-rs/gltf?rev=12fc1b7c#12fc1b7ce28c7b4c6d1b881a30df24060dccfbda" =
-    "sha256-YdTXJXNtGNxGf3KbQpZ8NcCXmVTVdgHTYGc9S6s88s0=";
+  hashOfUnpatchedGitSource."git+https://github.com/gltf-rs/gltf?rev=50d65229#50d65229477fe5f785c2c90df21eb59c93ea2261" =
+    "sha256-nSlREMX9EKNpBFAXMA9PUj2FeLEr9Yh8UayEzrJIUBQ=";
   vendor = checkoutsByRev: packages: crane.vendorCargoDeps {
     cargoLockParsed.package = packages;
     outputHashes = hashOfUnpatchedGitSource;

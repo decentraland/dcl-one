@@ -6,6 +6,10 @@
 // web deployment into native mode (it would skip the launch gates).
 declare const __NATIVE_HUD__: boolean
 
+// Build-time constant (vite.config.ts `define`): true when the bundle was built with
+// HUD_REACT_PROFILING=1 on React's profiling build; false otherwise and in the native bundle.
+declare const __HUD_REACT_PROFILING__: boolean
+
 // Build-time constant (vite.config.ts `define`): the short commit the HUD was built from, '' when
 // the build had no git checkout. The sign-in screens show it in their corner.
 declare const __HUD_BUILD__: string

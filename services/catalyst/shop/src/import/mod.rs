@@ -26,12 +26,12 @@
 //! whole-credit rounding up (`types::UsdCents::credits_ceil`); the rate is
 //! the `economy.price_snapshots` decimal text read exactly, no float.
 
+use crate::shared::routing::post;
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::{PgPool, Row};

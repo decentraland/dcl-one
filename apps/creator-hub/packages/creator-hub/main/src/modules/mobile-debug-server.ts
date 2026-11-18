@@ -3,10 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { WebContents } from 'electron';
 import log from 'electron-log/main';
-import QRCode from 'qrcode';
 import type { MobileDebugBroadcastResult, MobileDebugSessionInfo } from '/shared/types/ipc';
 import { getAvailablePort } from './port';
 import { getLanIp } from './network';
+import { qrCodeDataUrl } from './qr-code';
 
 export interface MobileDebugSession {
   id: number;
@@ -346,7 +346,7 @@ export async function getStandaloneDeeplink(): Promise<{ url: string; qr: string
   const lanIp = getLanIp();
   const sceneInspectorTarget = `ws://${lanIp}:${wsPort}`;
   const url = `decentraland://?scene-inspector=${encodeURIComponent(sceneInspectorTarget)}`;
-  const qr = await QRCode.toDataURL(url, { width: 512, margin: 2 });
+  const qr = qrCodeDataUrl(url);
 
   return { url, qr, port: wsPort };
 }

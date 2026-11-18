@@ -155,13 +155,13 @@ describe('startup screens', () => {
     expect(within(dialog).getByText(/We couldn't connect to the server/)).toBeInTheDocument()
   })
 
-  it('the desktop client offers no Exit: not in the footer, not in Connection Error', async () => {
+  it('the desktop client offers Exit in the footer and in Connection Error', async () => {
     isNative = true
     await renderSettled(startup(flow({ status: 'sign-in-or-guest', error: 'thirdweb 500' })))
     const dialog = await screen.findByRole('dialog')
-    expect(within(dialog).queryByRole('button', { name: 'Exit' })).toBeNull()
+    expect(within(dialog).getByRole('button', { name: 'Exit' })).toBeInTheDocument()
     expect(within(dialog).getByRole('button', { name: 'Retry' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /^EXIT$/i })).toBeNull()
+    expect(screen.getAllByRole('button', { name: /^EXIT$/i })).toHaveLength(2)
   })
 
   it('a guest sign-in that fails shows Connection Error: Retry closes it, Exit leaves', async () => {

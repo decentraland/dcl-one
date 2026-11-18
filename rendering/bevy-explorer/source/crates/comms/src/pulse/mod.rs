@@ -26,6 +26,7 @@ use bevy::math::{IVec2, Vec3};
 use bevy::platform::time::Instant;
 use dcl_component::proto_components::{kernel::comms::rfc4, pulse};
 
+pub(crate) mod movement_pacing;
 pub mod pacing;
 pub mod plugin;
 pub mod reconnect;

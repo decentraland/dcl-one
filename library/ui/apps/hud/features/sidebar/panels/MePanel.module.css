@@ -63,6 +63,11 @@
   white-space: nowrap;
   cursor: pointer;
 }
+/* INVITE FRIENDS: the wallet button's pill, with its label in 10px capitals */
+.invite {
+  font-size: var(--type-10);
+  line-height: 15px;
+}
 .wallet:hover,
 .wallet:focus-visible {
   background: var(--list-row-hover);

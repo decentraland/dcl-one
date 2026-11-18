@@ -14,6 +14,17 @@ export type {
   NavBarSection,
   NavBarSignIn
 } from './components/NavBar/NavBar'
+export {
+  decentralandNavigation,
+  decentralandNavigationSection,
+  decentralandNavSections
+} from './components/NavBar/NavBar.navigation'
+export type {
+  DecentralandNavigationArea,
+  DecentralandNavigationEntry,
+  DecentralandNavigationItem,
+  DecentralandNavigationSectionId
+} from './components/NavBar/NavBar.navigation'
 
 export { Button } from './components/Button/Button'
 export type { ButtonProps } from './components/Button/Button'
@@ -34,8 +45,23 @@ export * from './components/Tabs/Tabs'
 export * from './components/TabsBar/TabsBar'
 export { textClasses } from './text-styles'
 
+export { Checkbox } from './components/Checkbox/Checkbox'
+export type { CheckboxProps, CheckboxSize, CheckboxVariant } from './components/Checkbox/Checkbox'
+
+export { CheckboxLabel } from './components/CheckboxLabel/CheckboxLabel'
+export type {
+  CheckboxLabelPosition,
+  CheckboxLabelProps
+} from './components/CheckboxLabel/CheckboxLabel'
+
 export { InputExplorerNames } from './components/InputExplorerNames/InputExplorerNames'
 export type { InputExplorerNamesProps } from './components/InputExplorerNames/InputExplorerNames'
+
+export { InputWebCreatorTools } from './components/InputWebCreatorTools/InputWebCreatorTools'
+export type { InputWebCreatorToolsProps } from './components/InputWebCreatorTools/InputWebCreatorTools'
+
+export { Switch } from './components/Switch/Switch'
+export type { SwitchProps } from './components/Switch/Switch'
 
 export { TitleBar } from './components/TitleBar/TitleBar'
 export type {

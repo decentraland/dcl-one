@@ -81,17 +81,6 @@ export const CAT_PINS: Record<string, string> = {
   sports: pinSports
 }
 
-/** Pin sprite for a place, from the first of its categories we have art for. Places with only
- *  categories that have no pin (`poi`, `featured`, …) fall back to the generic "all" icon,
- *  matching how MapPage resolves an unknown category. */
-export function pinForCategories(categories: string[]): string {
-  for (const c of categories) {
-    const pin = CAT_PINS[c]
-    if (pin != null) return pin
-  }
-  return CAT_ICONS.all
-}
-
 /** The sea and shores around Genesis City, rendered once; it covers SEA_SIZE map units square, centred on the origin. */
 export const SEA_ART = sea
 export const SEA_SIZE = 24000

@@ -112,6 +112,7 @@ index of every ordering point around the avatar, camera and collider transform p
 | `Nametag` | Nametag positioning from post-IK globals |
 | `AttachSync` | Avatar-attach and scene-proxy position sync |
 | `Billboard` | Billboard orientation, facing this frame's camera |
+| `CameraFit` | Geometry fitted to a camera's final projection, after bevy's `CameraUpdateSystem` (a resize resets a projection's aspect ratio there) |
 
 A system that needs a position in `PostUpdate` goes `.in_set(PostUpdateSets::X)` as a
 producer or `.after(PostUpdateSets::X)` as a consumer. If an ordering point is genuinely
@@ -144,7 +145,8 @@ well, or its writes land a frame late. `crates/avatar/src/point_at_marker.rs` is
     instances already in progress first, and reveals each when its last node is done;
   - `spawn_timing`'s `start_spawner` before the spawner, `finish_spawner` between the spawner and
     processing, and `finish_processing` after processing: they measure both into diagnostics.
-- **`Last`**: CEF command drain, livekit room close on app exit, the web engine heartbeat.
+- **`Last`**: CEF command drain, livekit room close on app exit, the web engine heartbeat, the
+  profiler's frame fold and the benchmark summary.
 - **`OnEnter`/`OnExit`**: a few states (transmitter, receiver, microphone, parcel grass).
 
 Other named sets: `RealmLifecycle` for systems that react to a realm change, `TerrainSet` in
@@ -154,13 +156,15 @@ Other named sets: `RealmLifecycle` for systems that react to a realm change, `Te
 ## Render world
 
 The render app is bevy's. We add a few `RenderSet::Prepare*` systems for custom materials and
-uniforms, and two render-graph nodes in `Core3d`, in this order between `DepthOfField` and
-`Tonemapping`: the hover glow (`crates/scene_material/src/highlight`, whose mask phase also adds
-queue and sort systems in `RenderSet::QueueMeshes` and `RenderSet::PhaseSort`) and the stars pass
-(`crates/visuals/src/stars.rs`). Below render scale 1 the world camera renders to an image that a
-`Core2d` compositor camera (`crates/visuals/src/upscale.rs`, order 1) draws onto the window, and
-that camera carries the UI; at scale 1 the compositor is inactive. Render-world ordering follows
-bevy's conventions, not ours.
+uniforms, and three render-graph nodes in `Core3d`: the hover glow between `DepthOfField` and
+`Tonemapping` (`crates/scene_material/src/highlight`, whose mask phase also adds queue and sort
+systems in `RenderSet::QueueMeshes` and `RenderSet::PhaseSort`), and two stars passes
+(`crates/visuals/src/stars.rs`), of which a view draws one: the early pass between
+`MainTransmissivePass` and `MainTransparentPass` for views without depth of field (every MSAA
+view), and the pass between `DepthOfField` and `Tonemapping` for views with it. Below render
+scale 1 the world camera renders to an image that a `Core2d` compositor camera
+(`crates/visuals/src/upscale.rs`, order 1) draws onto the window, and that camera carries the UI;
+at scale 1 the compositor is inactive. Render-world ordering follows bevy's conventions, not ours.
 
 ## Headless
 

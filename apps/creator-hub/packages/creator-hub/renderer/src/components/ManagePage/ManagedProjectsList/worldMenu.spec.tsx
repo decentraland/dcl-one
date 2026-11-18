@@ -1,4 +1,4 @@
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { misc } from '#preload';

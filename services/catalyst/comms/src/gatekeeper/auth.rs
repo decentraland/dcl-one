@@ -281,9 +281,9 @@ pub async fn verify_signed_fetch(
     .await
 }
 
-/// A wallet's own signed fetch (the player-report routes): any `signer`
-/// but the scene's (a re-spelled key refused too, 400), so a scene-signed
-/// chain is never filed as the wallet that signed it.
+/// A wallet's own signed fetch (player reports, scene adapter, island
+/// refresh): any `signer` but the scene's (a re-spelled key refused too,
+/// 400), so a scene-signed chain never acts as the wallet that signed it.
 pub async fn verify_wallet_signed_fetch(
     headers: &HeaderMap,
     method: &str,

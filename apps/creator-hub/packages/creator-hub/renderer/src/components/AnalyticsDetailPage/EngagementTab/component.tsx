@@ -1,5 +1,3 @@
-import { Box } from 'decentraland-ui2';
-
 import type { PlaceEngagementMetrics } from '/shared/types/place-analytics';
 
 import { t } from '/@/modules/store/translation/utils';
@@ -48,13 +46,13 @@ function ScalarCard({
 
 export function EngagementTab({ engagement }: Props) {
   return (
-    <Box className="EngagementTab">
+    <div className="EngagementTab">
       <TabHeading
         title={t('analytics.detail.engagement.title')}
         description={t('analytics.detail.engagement.description')}
       />
-      <Box className="Cards">
-        <Box className="PlaytimeCards">
+      <div className="Cards">
+        <div className="PlaytimeCards">
           <ScalarCard
             title={t('analytics.detail.engagement.playtime.title')}
             description={t('analytics.detail.engagement.playtime.description')}
@@ -65,7 +63,7 @@ export function EngagementTab({ engagement }: Props) {
             description={t('analytics.detail.engagement.afk.description')}
             value={engagement.afkTime}
           />
-        </Box>
+        </div>
         <ChartCard
           title={t('analytics.detail.engagement.social.title')}
           description={t('analytics.detail.engagement.social.description')}
@@ -112,22 +110,22 @@ export function EngagementTab({ engagement }: Props) {
               },
             ]}
           />
-          <Box className="SocialCharts">
-            <Box className="SocialChart">
-              <Typography variant="subtitle1" className="ChartTitle">
+          <div className="SocialCharts">
+            <div className="SocialChart">
+              <Text variant="subtitle1" className="ChartTitle">
                 {t('analytics.detail.engagement.social.totals_title')}
-              </Typography>
+              </Text>
               <MultiLineChart
                 series={socialSeries('weeklyTotals')}
                 formatValue={formatCount}
                 height={SOCIAL_CHART_HEIGHT}
                 compact
               />
-            </Box>
-            <Box className="SocialChart">
-              <Typography variant="subtitle1" className="ChartTitle">
+            </div>
+            <div className="SocialChart">
+              <Text variant="subtitle1" className="ChartTitle">
                 {t('analytics.detail.engagement.social.rate_title')}
-              </Typography>
+              </Text>
               <MultiLineChart
                 series={socialSeries('visitorRate')}
                 formatValue={formatPercentage}
@@ -135,11 +133,11 @@ export function EngagementTab({ engagement }: Props) {
                 height={SOCIAL_CHART_HEIGHT}
                 compact
               />
-            </Box>
-          </Box>
+            </div>
+          </div>
         </ChartCard>
         */}
-      </Box>
-    </Box>
+      </div>
+    </div>
   );
 }

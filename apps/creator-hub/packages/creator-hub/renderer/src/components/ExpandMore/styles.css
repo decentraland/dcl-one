@@ -1,9 +1,21 @@
-.ExpandMore .MuiButtonBase-root {
+.ExpandMore .header {
+  display: flex;
+  align-items: center;
+}
+
+.ExpandMore .ExpandMoreToggle {
   padding: 0;
   margin-right: 4px;
+  transform: rotate(-90deg);
+  transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.ExpandMore .ExpandMoreToggle[aria-expanded='true'] {
+  transform: rotate(0deg);
 }
 
 .ExpandMore .title {
+  margin: 0;
   color: var(--dcl-silver);
   text-transform: none !important;
 }

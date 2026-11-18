@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
-import type { RefObject } from 'react';
 import { AiOutlineSound as AudioIcon } from 'react-icons/ai';
 import { IoVideocamOutline as VideoIcon } from 'react-icons/io5';
 import { FaFile as OtherIcon } from 'react-icons/fa';
 import { SiTypescript as ScriptIcon } from 'react-icons/si';
-import cx from 'classnames';
-import { PreviewCamera, PreviewMessageType, PreviewProjection, sendMessage } from '@dcl/schemas';
-import type { EmoteWithBlobs, WearableWithBlobs } from '@dcl/schemas';
-import { WearablePreview } from 'decentraland-ui';
+import { cx } from '../../lib/utils/cx';
+import { PreviewCamera, PreviewProjection } from '@dcl/schemas';
 
 import { Loading } from '../Loading';
+import { WearablePreview } from '../WearablePreview';
+import type { PreviewController } from '../WearablePreview';
 import { toEmoteWithBlobs, toWearableWithBlobs } from './utils';
 import { type Props } from './types';
 
@@ -110,40 +109,18 @@ function isSupersededRender(error: unknown) {
 }
 
 /** The load the frame reports for its initial empty scene, before the model arrives. */
-async function isPlaceholderSceneLoad(wp: ReturnType<typeof WearablePreview.createController>) {
+async function isPlaceholderSceneLoad(wp: PreviewController) {
   return (await wp.scene.getMetrics()).triangles === 0;
-}
-
-/** Resends `blob` on the preview frame's READY message; returns whether it was sent. */
-function useSendModelWhenReady(
-  containerRef: RefObject<HTMLDivElement>,
-  blob: WearableWithBlobs | EmoteWithBlobs,
-) {
-  const modelSent = useRef(false);
-
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      const frame = containerRef.current?.querySelector('iframe')?.contentWindow;
-      if (!frame || event.source !== frame) return;
-      if (event.data?.type !== PreviewMessageType.READY) return;
-      sendMessage(frame, PreviewMessageType.UPDATE, { options: { blob } });
-      modelSent.current = true;
-    };
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, [containerRef, blob]);
-
-  return modelSent;
 }
 
 function GltfPreview({ value, resources, onScreenshot, onLoad, isEmote }: Props) {
   const { state, finish } = usePreviewOutcome(onScreenshot);
-  const containerRef = useRef<HTMLDivElement>(null);
   const blob = useMemo(
     () => (isEmote ? toEmoteWithBlobs(value, resources) : toWearableWithBlobs(value, resources)),
     [value, resources, isEmote],
   );
-  const modelSent = useSendModelWhenReady(containerRef, blob);
+  // The frame reports a load for its first, empty scene too; only a load after the model was sent counts.
+  const modelSent = useRef(false);
 
   const handleLoad = useCallback(async () => {
     if (!modelSent.current) return;
@@ -179,10 +156,7 @@ function GltfPreview({ value, resources, onScreenshot, onLoad, isEmote }: Props)
   return (
     <>
       <div>{state === 'loading' && <Loading dimmer={false} />}</div>
-      <div
-        ref={containerRef}
-        className={cx('GltfPreview', { hidden: state === 'loading' })}
-      >
+      <div className={cx('GltfPreview', { hidden: state === 'loading' })}>
         <WearablePreview
           id={value.name}
           blob={blob}
@@ -191,6 +165,7 @@ function GltfPreview({ value, resources, onScreenshot, onLoad, isEmote }: Props)
           {...wearablePreviewExtraOptions}
           projection={PreviewProjection.ORTHOGRAPHIC}
           camera={PreviewCamera.STATIC}
+          onUpdate={() => (modelSent.current = true)}
           onLoad={handleLoad}
           onError={error => finish(undefined, error)}
         />

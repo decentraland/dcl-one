@@ -38,7 +38,7 @@ pub mod resolver;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::routing::get;
+use crate::shared::routing::get;
 use anyhow::bail;
 use axum::Router;
 use sqlx::PgPool;

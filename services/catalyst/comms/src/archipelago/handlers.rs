@@ -126,10 +126,12 @@ fn connector_configured(
     } else {
         axum::Router::new()
     };
-    sockets.fallback(move |method, uri, headers| {
-        let http = http.clone();
-        async move { http.respond(method, uri, headers).await }
-    })
+    sockets.fallback(crate::shared::routing::erase(
+        move |method, uri, headers| {
+            let http = http.clone();
+            async move { http.respond(method, uri, headers).await }
+        },
+    ))
 }
 
 pub(super) struct ConnectorHttp {

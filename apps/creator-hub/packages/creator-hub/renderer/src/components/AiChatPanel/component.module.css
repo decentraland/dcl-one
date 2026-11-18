@@ -1,0 +1,909 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  width: var(--panel-width, 360px);
+  flex: 0 0 auto;
+  height: 100%;
+  border-left: 1px solid var(--fill-5);
+  background-color: #1d1c20;
+  overflow: hidden;
+}
+
+.panel[data-fill] {
+  width: 100%;
+  flex: 1 1 auto;
+  border-left: none;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 8px 8px 16px;
+  border-bottom: 1px solid var(--fill-5);
+  min-height: 48px;
+  background-color: var(--bg);
+}
+
+.headerTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tone-secondary);
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* min-height: 0 lets this flex child shrink below its content so it scrolls internally instead of
+   stretching the panel; overscroll-behavior: contain stops a scroll that hits the top or bottom
+   from chaining out to the editor behind it (#1501). */
+.transcript {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.emptyState {
+  margin: auto;
+  max-width: 272px;
+  text-align: center;
+  color: var(--text-tone-secondary);
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+/* The greeting that opens every chat: top-left, and it stays as the first entry of the transcript
+   once the conversation starts (it is not a centered empty-state placeholder). */
+.introMessage {
+  align-self: flex-start;
+  max-width: 100%;
+  color: var(--text-tone-secondary);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* A dark neutral surface (not the brand red): user messages read as quiet cards, and the
+   assistant's content and the red send button carry the accent. */
+.userBubble {
+  align-self: flex-end;
+  max-width: 88%;
+  padding: 10px 14px;
+  border-radius: 16px;
+  background-color: var(--chip-fill);
+  color: var(--text-tone-primary);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.assistantBubble {
+  align-self: flex-start;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.875rem;
+  color: var(--text-tone-primary);
+}
+
+.assistantText {
+  word-break: break-word;
+  line-height: 1.6;
+  font-size: 0.875rem;
+}
+
+.assistantText > *:first-child,
+.assistantText > div > *:first-child {
+  margin-top: 0;
+}
+
+.assistantText > *:last-child,
+.assistantText > div > *:last-child {
+  margin-bottom: 0;
+}
+
+.assistantText p {
+  margin: 8px 0;
+}
+
+.assistantText ul,
+.assistantText ol {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.assistantText li {
+  margin-top: 2px;
+}
+
+.assistantText h1,
+.assistantText h2,
+.assistantText h3,
+.assistantText h4,
+.assistantText h5,
+.assistantText h6 {
+  margin: 12px 0 6px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.assistantText h1 {
+  font-size: 1rem;
+}
+
+.assistantText h2,
+.assistantText h3,
+.assistantText h4,
+.assistantText h5,
+.assistantText h6 {
+  font-size: 0.875rem;
+}
+
+.assistantText strong {
+  font-weight: 700;
+}
+
+.assistantText a {
+  color: var(--brand);
+  text-decoration: underline;
+}
+
+.assistantText code {
+  font-family: monospace;
+  font-size: 0.75rem;
+  background-color: var(--fill-3);
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.assistantText pre {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background-color: var(--fill-3);
+  overflow-x: auto;
+}
+
+.assistantText pre code {
+  padding: 0;
+  background-color: transparent;
+}
+
+.assistantText blockquote {
+  margin: 8px 0;
+  padding-left: 12px;
+  border-left: 1px solid var(--fill-5);
+  color: var(--text-tone-secondary);
+}
+
+/* Interactive `ask_user` prompt block, rendered inline in the transcript. */
+.promptBox {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--fill-5);
+  background-color: var(--fill-3);
+}
+
+.promptQuestion {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-tone-primary);
+  line-height: 1.5;
+}
+
+.promptOptions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.promptOption {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--fill-5);
+  background-color: #1d1c20;
+  color: var(--text-tone-primary);
+  font-family: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.promptOption[data-selected],
+.promptOption:hover:not(:disabled) {
+  border-color: var(--brand);
+  background-color: var(--chip-fill);
+}
+
+.promptOption:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.promptOptionDesc {
+  color: var(--text-tone-secondary);
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
+.promptOtherRow {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* The answer field: 205px of text at least, a dark outline at rest. */
+.promptField textarea {
+  width: 205px;
+}
+
+.promptField.promptField.promptField:not([data-disabled]) > div:not(:hover):not(:focus-within) {
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.23);
+}
+
+.promptField textarea::placeholder,
+.composerField textarea::placeholder {
+  opacity: 0.42;
+}
+
+.promptAnswer {
+  align-self: flex-start;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background-color: var(--chip-fill);
+  color: var(--text-tone-primary);
+  font-size: 0.875rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.promptNote {
+  color: var(--text-tone-secondary);
+  font-size: 0.75rem;
+}
+
+.assistantImage {
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--fill-5);
+  align-self: flex-start;
+}
+
+.toolChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background-color: var(--fill-3);
+  color: var(--text-tone-secondary);
+  font-size: 0.75rem;
+  font-family: monospace;
+}
+
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thinkingRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-tone-secondary);
+  font-size: 0.75rem;
+}
+
+.errorRow {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background-color: #ec303a;
+  color: #fff;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.composer {
+  position: relative;
+  padding: 12px;
+  border-top: 1px solid var(--fill-5);
+}
+
+.composer[data-dragging] {
+  outline: 2px dashed var(--white);
+  outline-offset: -8px;
+  border-radius: 8px;
+  background-color: var(--fill-3);
+}
+
+/* A drop hint shown over the composer while a file is dragged over it. */
+.dropHint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 8px;
+  background-color: var(--ai-input-bg);
+  color: var(--text-tone-secondary);
+  font-size: 0.75rem;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* The row of attachment pills above the input (both the pending composer chips and the ones shown
+   under a sent user bubble). Wraps when several files are attached. */
+.attachmentBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.attachmentBar[data-bubble] {
+  margin-bottom: 0;
+}
+
+.attachmentBar[data-bubble="spaced"] {
+  margin-top: 6px;
+}
+
+.attachmentChip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 176px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background-color: var(--fill-3);
+  color: var(--text-tone-primary);
+  font-size: 0.6875rem;
+}
+
+.attachmentChip > svg {
+  flex-shrink: 0;
+  font-size: 0.9375rem;
+}
+
+.attachmentRemove.attachmentRemove {
+  flex-shrink: 0;
+  padding: 0;
+  width: 16px;
+  height: 16px;
+  color: var(--text-tone-secondary);
+}
+
+.attachmentRemove svg {
+  font-size: 0.875rem;
+}
+
+.attachmentRemove.attachmentRemove:hover {
+  color: var(--text-tone-primary);
+}
+
+/* The paperclip that opens the file picker, sitting inside the input at its left edge. */
+.attachButton.attachButton {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  color: var(--text-tone-secondary);
+}
+
+.attachButton.attachButton:hover {
+  color: var(--text-tone-primary);
+}
+
+.attachButton.attachButton:disabled {
+  color: var(--ctl-disabled-ink);
+}
+
+.setupBox {
+  margin: auto;
+  max-width: 304px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--text-tone-secondary);
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.setupStep {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.setupAlt {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.setupDivider {
+  width: 100%;
+  border: none;
+  border-top: 1px solid var(--fill-5);
+  margin: 4px 0;
+}
+
+.commandLine {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background-color: var(--fill-3);
+  color: var(--text-tone-primary);
+  font-family: monospace;
+  font-size: 0.75rem;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.guideLink {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--brand);
+  font: inherit;
+  font-size: 0.75rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.guideLink:hover {
+  text-decoration: underline;
+}
+
+/* The row of pill controls under the header: the chat picker on the left, the agent picker on the
+   right. */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--fill-5);
+}
+
+/* A dark rounded pill used for the toolbar controls (New Chat menu and agent select), matching the
+   CODE/PREVIEW pills in the editor top bar but on the panel's darker surface. The outline is
+   transparent at rest and only shows on hover or while the menu is open (#1619). */
+.toolbarPill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 0 0 auto;
+  width: 160px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background-color: var(--ai-menu-bg);
+  color: var(--text-tone-primary);
+  font-size: 0.75rem;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.toolbarPill[data-open],
+.toolbarPill:hover {
+  border-color: var(--text-tone-secondary);
+}
+
+.toolbarPill:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The send and stop buttons are the same ruby circle, so the composer control keeps a constant
+   size and style whether idle or busy (#1618, #1620). */
+.sendButton.sendButton {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background-color: var(--brand);
+  color: var(--palette-neutral-softWhite);
+}
+
+.sendButton.sendButton:hover:not(:disabled) {
+  background-color: var(--primary-hover);
+}
+
+.sendButton.sendButton:disabled {
+  background-color: rgba(255, 255, 255, 0.12);
+  color: var(--ctl-disabled-ink);
+}
+
+.providerOption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.providerHint {
+  flex-shrink: 0;
+  color: var(--text-tone-secondary);
+  font-size: 0.6875rem;
+  font-weight: 500;
+}
+
+.providerValueHint {
+  color: var(--text-tone-secondary);
+  font-size: 0.6875rem;
+}
+
+.billingCard {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  margin: 0 12px 8px;
+  padding: 20px;
+  border-radius: 12px;
+  background-color: #35333b;
+}
+
+.billingTitle {
+  font-weight: 700;
+  color: var(--text-tone-primary);
+  font-size: 0.875rem;
+}
+
+.billingBody {
+  color: var(--text-tone-secondary);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+/* The label stays white and in its own case ("Got It"). */
+.billingCard .billingButton[data-tone="neutral"] {
+  min-width: 64px;
+  padding: 4px 20px;
+  border-radius: 8px;
+  background-color: var(--dark-gray);
+  color: var(--white);
+  text-transform: none;
+}
+
+.billingCard .billingButton[data-tone="neutral"]:hover:not(:disabled) {
+  background-color: var(--light-gray);
+}
+
+.outdatedHint {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 0 12px 8px;
+  padding: 12px 20px;
+  border-radius: 12px;
+  background-color: var(--ai-warning-bg);
+  color: var(--warning);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.outdatedHint svg {
+  flex-shrink: 0;
+}
+
+.signInHintBody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.selectionBar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--fill-5);
+  color: var(--text-tone-secondary);
+  font-size: 0.75rem;
+}
+
+.selectionNames {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clearMention.clearMention {
+  flex-shrink: 0;
+  padding: 2px;
+  color: var(--text-tone-primary);
+  background-color: var(--fill-3);
+}
+
+.clearMention.clearMention:hover:not(:disabled) {
+  background-color: var(--chip-fill);
+}
+
+/* A text button of the small size: the label is as wide as its text with 5px at each side. */
+.textButton.textButton {
+  min-width: 64px;
+  padding: 4px 5px;
+}
+
+.textButton[data-tone="neutral"]:not(:disabled) {
+  color: var(--light-gray);
+}
+
+/* Two classes: over the disabled rule of the text button. */
+.textButton.textButton[data-tone="neutral"]:disabled {
+  color: var(--ctl-disabled-ink);
+}
+
+.textButton > span[aria-hidden="true"]:first-child {
+  margin-left: -2px;
+}
+
+.textButton svg {
+  font-size: 18px;
+}
+
+/* The composer field: rounded, with the attach and send controls inside it and no gap between
+   them and the text. The outline is dark at rest, grey on hover and white while the text area
+   has the focus (#1576); a focused control inside the field does not light it. */
+.composerField > div {
+  align-items: center;
+  gap: 0;
+  padding: 8.5px 6px 8.5px 14px;
+  border-radius: 10px;
+  background-color: var(--ai-input-bg);
+}
+
+.composerField.composerField.composerField textarea {
+  padding: 0;
+}
+
+.composerField.composerField.composerField > div,
+.composerField.composerField.composerField > div:focus-within {
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.23);
+}
+
+.composerField.composerField.composerField[data-disabled] > div {
+  box-shadow: inset 0 0 0 1px var(--ctl-disabled-ink);
+}
+
+.composerField.composerField.composerField:not([data-disabled]) > div:hover {
+  box-shadow: inset 0 0 0 1px var(--text-tone-secondary);
+}
+
+.composerField.composerField.composerField.composerField > div:has(textarea:focus) {
+  box-shadow: inset 0 0 0 2px var(--white);
+}
+
+/* Both toolbar dropdowns (the chat menu and the agent select) open 10px below their trigger and
+   share the same dark rounded surface and 12px labels (#1619). */
+.menu {
+  /* The 12% white layer is the lift that a raised dark surface had on the menu colour. */
+  --overlay-surface:
+    linear-gradient(rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.12)), var(--ai-menu-bg);
+  --overlay-radius: 12px;
+  --overlay-line: var(--fill-5);
+}
+
+.chatMenu {
+  width: 300px;
+}
+
+.menu .menuItem,
+.menu .sessionItem {
+  gap: 8px;
+  min-height: 0;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  letter-spacing: 0.00938em;
+}
+
+.menu .menuItem {
+  width: auto;
+  margin: 4px 8px;
+}
+
+.sessionRow {
+  display: flex;
+  align-items: center;
+  margin: 4px 8px;
+  padding-right: 16px;
+  border-radius: 6px;
+}
+
+/* Rows keep one 4px gap between them, and the line sits 8px under the first row. */
+.sessionRow + .sessionRow {
+  margin-top: 0;
+}
+
+.chatMenu [role="separator"] {
+  margin-top: 4px;
+}
+
+.sessionRow:hover {
+  background-color: var(--fill-3);
+}
+
+.sessionRow[data-current],
+.sessionRow[data-current]:hover {
+  background-color: var(--ai-session-selected);
+}
+
+.menu .sessionRow .sessionItem.sessionItem {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  padding: 6px 8px 6px 16px;
+  background: none;
+}
+
+.menu .sessionRow .sessionItem.sessionItem:focus-visible {
+  background-color: var(--fill-5);
+}
+
+.sessionText {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.sessionWhen {
+  color: var(--text-tone-secondary);
+  font-size: 0.75rem;
+}
+
+/* The left inset is where the content of a menu item starts (8px margin and 16px padding), so
+   the label is in line with the row icons above and below it (#1619). */
+.menuSectionLabel {
+  padding: 6px 16px 2px 24px;
+  color: var(--text-tone-secondary);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* The agent select: the same pill as the chat picker. */
+.providerSelect.providerSelect {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  border-color: transparent;
+  border-radius: 8px;
+  background-color: var(--ai-menu-bg);
+  box-shadow: none;
+  font-size: 0.75rem;
+  letter-spacing: 0.00938em;
+}
+
+.providerSelect.providerSelect:hover {
+  border-color: var(--text-tone-secondary);
+}
+
+/* The open or focused outline is 2px and starts half a pixel above the box. */
+.providerSelect.providerSelect[data-open],
+.providerSelect.providerSelect:focus-within {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.providerSelect[data-open]::after,
+.providerSelect:focus-within::after {
+  content: "";
+  position: absolute;
+  inset: -1.5px -1px -1px;
+  border: 2px solid var(--text-tone-secondary);
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+.providerSelect.providerSelect[data-disabled] {
+  border-color: var(--ctl-disabled-ink);
+  box-shadow: none;
+  opacity: 1;
+  color: var(--ctl-disabled-ink);
+}
+
+.providerSelect [role="combobox"] {
+  height: 100%;
+  padding: 0 31px 0 13px;
+  letter-spacing: inherit;
+}
+
+.providerSelect [role="combobox"] > span {
+  flex: 1 1 auto;
+}
+
+.providerSelect > span[aria-hidden="true"] {
+  right: 6px;
+  color: var(--icon-btn-ink);
+}
+
+.providerSelect[data-disabled] > span[aria-hidden="true"] {
+  color: var(--ctl-disabled-ink);
+}
+
+.providerMenu {
+  margin-top: 6px;
+}
+
+.providerMenu .providerRow {
+  gap: 8px;
+  min-height: 0;
+  margin: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  letter-spacing: 0.00938em;
+}
+
+.providerMenu .providerRow[aria-selected="true"] {
+  background-color: var(--ai-selected);
+}
+
+.providerMenu .providerRow[aria-selected="true"][data-active] {
+  background-color: var(--ai-selected);
+}
+
+.providerMenu .providerRow[aria-selected="true"]:hover {
+  background-color: var(--ai-selected-hover);
+}
+
+/* Icon sizes and places. Two classes outweigh the size rule of the icon. */
+.clearMentionIcon.clearMentionIcon {
+  font-size: 13px;
+}
+
+.menuIcon.menuIcon {
+  font-size: 16px;
+}
+
+.pillChevron.pillChevron {
+  margin-left: auto;
+}
+
+/* The mark keeps its place in the row while the row is not the current one. */
+.hiddenMark {
+  visibility: hidden;
+}

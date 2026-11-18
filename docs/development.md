@@ -14,13 +14,22 @@ nix develop --command make check   # non-interactive: never starts services
 proposes the current tip on the first of each month; `python3
 tooling/nixpkgs-update.py` does the same locally.
 
-`nix develop` starts a per-checkout PostgreSQL 18, API, Sites, LiveKit, NATS and
-Pulse that outlive the shell and reload on edits.
+`nix develop` starts a per-checkout PostgreSQL 18, API, Sites, LiveKit with its
+RTMP Ingress and Valkey, NATS and Pulse that outlive the shell and reload on edits.
 
 Ports, from base 5210 (`FOUNDATION_DEV_PORT` on first use; saved in
 `.cache/dev/settings.json`): API and `/ws` +0, its metrics +1, Sites and Pulse WebTransport +2,
 PostgreSQL +3, LiveKit +4..+6, Pulse ENet and `/metrics` +7, NATS +8, its
-monitor +9. An occupied saved port fails startup.
+monitor +9. The ingress takes the first free block 10000 above the base (`ingress_port`):
+Valkey +0, RTMP +1 (every interface), the ingress relay +2 and health +3. An occupied
+saved port fails startup.
+
+A stream key from `/scene-stream-access` streams to the `rtmp://…/x` URL it comes with
+(`foundation-dev status` prints it). Behind a public origin that URL names the origin's
+host, so its RTMP port must be reachable there directly: a TLS front or an HTTP tunnel
+does not carry RTMP. The ingress needs a minute or two on its first start while
+GStreamer scans its plugins. A stack started before the ingress existed needs
+`foundation-dev down`, then `up`.
 
 | `foundation-dev …` | Action |
 | --- | --- |
@@ -193,9 +202,10 @@ input of the Rust job goes on that list and on the path list of
 `development.yml` in the change that adds it; pushes to `main` always run the
 Rust tests. The Rust tests run in three shards. Each shard sorts the test
 binaries by source file and kind, so the three take one list on any runner
-(`tooling/catalyst-test.sh`). One more label works the same way:
-`ci:desktop` builds the Creator Hub desktop app on a PR and attaches its test
-builds. `release:creator-hub` is read after the merge: the push to
+(`tooling/catalyst-test.sh`). Two more labels work the same way:
+`ci:desktop` builds the Creator Hub desktop app for macOS and Windows on a PR
+and attaches its test builds, and `ci:linux` does the same for Linux.
+`release:creator-hub` is read after the merge: the push to
 `main` publishes the Creator Hub installers as a pre-release only when its PR
 has the label. A draft PR does not run the Explorer test suite and the headless
 smoke test; they start when the PR is marked ready for review, or on the next
