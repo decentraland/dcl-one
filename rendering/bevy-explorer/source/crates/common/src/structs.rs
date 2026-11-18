@@ -680,7 +680,7 @@ pub const SETTINGS_GENERATION: u32 = 3;
 
 /// bump to run one-time migrations of saved input binding tables
 /// (see [`AppConfig::migrate_inputs`])
-pub const INPUTS_GENERATION: u32 = 1;
+pub const INPUTS_GENERATION: u32 = 2;
 
 /// bump when the terms of use change, so every install accepts them again
 pub const TERMS_VERSION: u32 = 1;
@@ -812,11 +812,12 @@ impl AppConfig {
     }
 
     /// migrate saved input tables: replace bindings still on changed old defaults
-    /// (RollLeft/RollRight KeyT/KeyG freed for ChatPanel/Gallery, quick emotes moved off
-    /// the Action 3-6 digits onto the numpad), and add defaults for any actions the saved
-    /// table doesn't mention
+    /// (generation 1: RollLeft/RollRight KeyT/KeyG freed for ChatPanel/Gallery, quick emotes
+    /// moved off the Action 3-6 digits onto the numpad; generation 2: the microphone moved
+    /// from KeyV to KeyT and ChatPanel lost KeyT), and add
+    /// defaults for any actions the saved table doesn't mention
     pub fn migrate_inputs(&mut self) {
-        if self.inputs_generation < INPUTS_GENERATION {
+        if self.inputs_generation < 1 {
             for (action, bindings) in self.inputs.0.iter_mut() {
                 let (old_default, new_default) = match action {
                     Action::System(SystemAction::RollLeft) => (KeyCode::KeyT, None),
@@ -857,8 +858,31 @@ impl AppConfig {
                     *bindings = new_default.map(InputIdentifier::Key).into_iter().collect();
                 }
             }
-            self.inputs_generation = INPUTS_GENERATION;
         }
+        if self.inputs_generation < 2 {
+            let t = InputIdentifier::Key(KeyCode::KeyT);
+            let is = |action: &Action, system: SystemAction| *action == Action::System(system);
+            for (action, bindings) in self.inputs.0.iter_mut() {
+                if is(action, SystemAction::ChatPanel) && *bindings == [t] {
+                    bindings.clear();
+                }
+            }
+            // a T the user gave another action keeps the microphone on V, or one press would
+            // fire both
+            let t_taken = self.inputs.0.iter().any(|(action, bindings)| {
+                !is(action, SystemAction::Microphone) && bindings.contains(&t)
+            });
+            if !t_taken {
+                for (action, bindings) in self.inputs.0.iter_mut() {
+                    if is(action, SystemAction::Microphone)
+                        && *bindings == [InputIdentifier::Key(KeyCode::KeyV)]
+                    {
+                        *bindings = vec![t];
+                    }
+                }
+            }
+        }
+        self.inputs_generation = self.inputs_generation.max(INPUTS_GENERATION);
         // ShowProfile is legacy (see the SystemAction variant): drop saved rows so the dead
         // action neither lingers in tables nor resurfaces anywhere.
         self.inputs
@@ -2602,6 +2626,79 @@ mod tests {
             get(&config, SystemAction::RollLeft),
             Some(vec![InputIdentifier::Key(KeyCode::KeyT)])
         );
+    }
+
+    #[test]
+    fn migrate_inputs_moves_the_microphone_to_t() {
+        fn table(rows: &[(SystemAction, Option<KeyCode>)]) -> AppConfig {
+            AppConfig {
+                inputs: InputMapSerialized(
+                    rows.iter()
+                        .map(|(action, key)| {
+                            (
+                                Action::System(*action),
+                                key.map(InputIdentifier::Key).into_iter().collect(),
+                            )
+                        })
+                        .collect(),
+                    Default::default(),
+                ),
+                inputs_generation: 1,
+                ..Default::default()
+            }
+        }
+        fn get(config: &AppConfig, action: SystemAction) -> Vec<InputIdentifier> {
+            config
+                .inputs
+                .0
+                .iter()
+                .find(|(a, _)| *a == Action::System(action))
+                .map(|(_, bindings)| bindings.clone())
+                .unwrap()
+        }
+        let t = InputIdentifier::Key(KeyCode::KeyT);
+        let v = InputIdentifier::Key(KeyCode::KeyV);
+
+        // both on the old defaults: the microphone takes T, ChatPanel is left unbound
+        let mut config = table(&[
+            (SystemAction::Microphone, Some(KeyCode::KeyV)),
+            (SystemAction::ChatPanel, Some(KeyCode::KeyT)),
+        ]);
+        config.migrate_inputs();
+        assert_eq!(get(&config, SystemAction::Microphone), vec![t]);
+        assert_eq!(get(&config, SystemAction::ChatPanel), vec![]);
+        assert_eq!(config.inputs_generation, INPUTS_GENERATION);
+
+        // rebinds are kept
+        let mut config = table(&[
+            (SystemAction::Microphone, Some(KeyCode::KeyB)),
+            (SystemAction::ChatPanel, Some(KeyCode::KeyY)),
+        ]);
+        config.migrate_inputs();
+        assert_eq!(
+            get(&config, SystemAction::Microphone),
+            vec![InputIdentifier::Key(KeyCode::KeyB)]
+        );
+        assert_eq!(
+            get(&config, SystemAction::ChatPanel),
+            vec![InputIdentifier::Key(KeyCode::KeyY)]
+        );
+
+        // T given to another action: the microphone stays on V
+        let mut config = table(&[
+            (SystemAction::Microphone, Some(KeyCode::KeyV)),
+            (SystemAction::ChatPanel, Some(KeyCode::KeyY)),
+            (SystemAction::RollLeft, Some(KeyCode::KeyT)),
+        ]);
+        config.migrate_inputs();
+        assert_eq!(get(&config, SystemAction::Microphone), vec![v]);
+        assert_eq!(get(&config, SystemAction::RollLeft), vec![t]);
+
+        // a deliberate rebind of the microphone back to V after the migration stays
+        let mut config = table(&[(SystemAction::Microphone, Some(KeyCode::KeyV))]);
+        config.inputs_generation = INPUTS_GENERATION;
+        config.migrate_inputs();
+        assert_eq!(get(&config, SystemAction::Microphone), vec![v]);
     }
 
     #[test]
