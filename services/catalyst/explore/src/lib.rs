@@ -313,8 +313,12 @@ impl ExploreState {
     ) -> Self {
         Self {
             voting_power: places::voting_power::Client::new(settings.snapshot_score_url.clone()),
-            places: PlacesComponent::new(pool.clone(), &settings.content_public_url)
-                .with_worlds_mirror(settings.worlds_upstream.is_some()),
+            places: PlacesComponent::new(
+                pool.clone(),
+                &settings.content_public_url,
+                settings.asset_rewrite_domain.clone(),
+            )
+            .with_worlds_mirror(settings.worlds_upstream.is_some()),
             events: EventsComponent::new(
                 pool.clone(),
                 settings.asset_rewrite_domain.clone(),

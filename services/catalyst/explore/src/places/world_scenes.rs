@@ -20,7 +20,7 @@ const PARENT_VISIBILITY: &str = "NOT EXISTS (SELECT 1 FROM explore.place_indexed
 const PARENT_PRESENT_OR_INCOMPLETE: &str = "(NOT EXISTS (SELECT 1 FROM explore.mirror_state WHERE mirror = 'worlds' AND last_complete_pass_at IS NOT NULL) OR EXISTS (SELECT 1 FROM explore.place_indexed parent WHERE parent.world AND lower(parent.world_name) = w.name))";
 
 pub(super) fn scene_row(row: sqlx::postgres::PgRow, places: &PlacesComponent) -> Option<PlaceRow> {
-    let mut place = row_to_place(row, places.content_origin());
+    let mut place = row_to_place(row, places.content_origin(), places.asset_domain());
     place.scene_place = true;
     let parse = |value: &str| -> Option<(i32, i32)> {
         let (x, y) = crate::auth::pointer::parse_pointer(value)?;
@@ -892,7 +892,7 @@ mod tests {
                 .is_none()
         );
         let standalone =
-            super::super::PlacesComponent::new(pool.clone(), "https://content.example");
+            super::super::PlacesComponent::new(pool.clone(), "https://content.example", None);
         assert!(
             standalone
                 .find_by_id_for(&mirrored_id, None)
@@ -1083,7 +1083,8 @@ mod tests {
         sqlx::query("INSERT INTO explore.user_favorites (\"user\",entity_id) SELECT '0xprofile',md5('scene-' || i)::uuid::text FROM generate_series(0,9) i").execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO explore.user_favorites (\"user\",entity_id) VALUES ('0xprofile','not-a-uuid')").execute(&pool).await.unwrap();
         sqlx::query("ANALYZE").execute(&pool).await.unwrap();
-        let places = super::super::PlacesComponent::new(pool.clone(), "https://content.example");
+        let places =
+            super::super::PlacesComponent::new(pool.clone(), "https://content.example", None);
         let selected: String = sqlx::query_scalar("SELECT md5('scene-1')::uuid::text")
             .fetch_one(&pool)
             .await

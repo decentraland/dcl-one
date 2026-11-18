@@ -460,9 +460,22 @@ fn ts(r: &sqlx::postgres::PgRow, col: &str) -> Option<DateTime<Utc>> {
     r.try_get::<Option<DateTime<Utc>>, _>(col).unwrap_or(None)
 }
 
+pub(super) fn place_image_url(
+    value: Option<&str>,
+    content_origin: Option<&ContentOrigin>,
+    asset_domain: Option<&str>,
+) -> Option<String> {
+    let value = value?;
+    let sanitized = sanitize_image_url(Some(value), content_origin)?;
+    // Match the stored URL because sanitization drops default ports and normalizes dot segments.
+    let mapped = asset_domain.and_then(|domain| crate::node_assets::node_asset_url(value, domain));
+    Some(mapped.unwrap_or(sanitized))
+}
+
 pub(super) fn row_to_place(
     r: sqlx::postgres::PgRow,
     content_origin: Option<&ContentOrigin>,
+    asset_domain: Option<&str>,
 ) -> PlaceRow {
     let viewer_favorite = r.try_get::<bool, _>("viewer_favorite").ok();
     let viewer_like = r.try_get::<Option<bool>, _>("viewer_like").ok().flatten();
@@ -489,11 +502,12 @@ pub(super) fn row_to_place(
                 .unwrap_or(None)
                 .as_deref(),
         ),
-        image: sanitize_image_url(
+        image: place_image_url(
             r.try_get::<Option<String>, _>("image")
                 .unwrap_or(None)
                 .as_deref(),
             content_origin,
+            asset_domain,
         ),
         owner: r.try_get::<Option<String>, _>("owner").unwrap_or(None),
         positions: r.try_get::<Vec<String>, _>("positions").unwrap_or_default(),
@@ -621,6 +635,69 @@ pub(crate) fn sample_row() -> PlaceRow {
 #[cfg(test)]
 mod wire_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn place_images_point_at_the_node() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let place_image = "https://peer-ec1.decentraland.org/content/contents/bafyA";
+        let cdn_image = "https://cdn.example/p.png";
+        let cases = [
+            (
+                Some("node.example"),
+                Some(place_image),
+                Some("https://node.example/content/contents/bafyA"),
+            ),
+            (
+                Some("node.example"),
+                Some("https://worlds-content-server.decentraland.org/contents/1b79"),
+                Some("https://node.example/worlds-content-server/contents/1b79"),
+            ),
+            (
+                Some("node.example"),
+                Some("https://api.decentraland.org/v2/map.png?center=1,1"),
+                Some("https://node.example/api/v2/map.png?center=1,1"),
+            ),
+            (Some("node.example"), Some(cdn_image), Some(cdn_image)),
+            (Some("node.example"), Some("javascript:alert(1)"), None),
+            (Some("node.example"), None, None),
+            (
+                Some("node.example"),
+                Some("https://peer-ec1.decentraland.org:443/content/contents/bafyA"),
+                Some(place_image),
+            ),
+            (
+                Some("node.example"),
+                Some("https://peer-ec1.decentraland.org/content/contents/unused/../bafyA"),
+                Some(place_image),
+            ),
+            (None, Some(place_image), Some(place_image)),
+        ];
+        for (asset_domain, image, expected) in cases {
+            let state = crate::ExploreState::new(
+                pool.clone(),
+                crate::Settings {
+                    asset_rewrite_domain: asset_domain.map(str::to_owned),
+                    ..crate::Settings::for_tests()
+                },
+                None,
+            );
+            let row = sqlx::query(
+                "SELECT 'place'::text AS id, '0,0'::text AS base_position, $1::text AS image",
+            )
+            .bind(image)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            let place = row_to_place(
+                row,
+                state.places.content_origin(),
+                state.places.asset_domain(),
+            );
+            assert_eq!(place.image.as_deref(), expected, "{image:?}");
+        }
+    }
 
     #[test]
     fn base_place_omits_destination_only_fields_and_carries_read_path_fields() {
