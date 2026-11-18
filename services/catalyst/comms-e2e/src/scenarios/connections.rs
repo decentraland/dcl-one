@@ -6,6 +6,7 @@ use anyhow::{Result, anyhow, bail};
 use catalyst_comms::pulse::hardening::DisconnectReason;
 
 use super::connections_support::*;
+use super::waits::holds_for_async;
 use crate::archipelago::{
     ArchipelagoBot, ArchipelagoOptions, ArchipelagoOutcome, KICKED_NEW_SESSION, socket_url,
 };
@@ -317,16 +318,28 @@ async fn stale_socket_reconnect(ctx: Ctx) -> Result<()> {
     // once the new socket heartbeats, the wallet is one peer, and stays one
     again.heartbeat(here);
     expect_peer_count(&ctx, &wallet, 1).await?;
-    for _ in 0..8 {
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        let peers = crate::oracle::peers(api(&ctx)?).await?;
-        let held = crate::oracle::of_wallet(&peers, &wallet).len();
-        if held != 1 {
-            bail!(
-                "the wallet was listed once and then {held} time(s) while its new socket was connected"
-            );
-        }
-    }
+    let api_url = api(&ctx)?.clone();
+    holds_for_async(
+        &ctx,
+        "the statistics route lists the wallet once while its new socket is connected",
+        Duration::from_secs(4),
+        Duration::from_millis(500),
+        || {
+            let (api_url, wallet) = (api_url.clone(), wallet.clone());
+            async move {
+                let peers = crate::oracle::peers(&api_url)
+                    .await
+                    .map_err(|error| format!("{error:#}"))?;
+                let held = crate::oracle::of_wallet(&peers, &wallet).len();
+                if held == 1 {
+                    Ok(())
+                } else {
+                    Err(format!("it was listed once and then {held} time(s)"))
+                }
+            }
+        },
+    )
+    .await?;
     again
         .alive()
         .map_err(|reason| anyhow!("the new socket: {reason}"))?;
