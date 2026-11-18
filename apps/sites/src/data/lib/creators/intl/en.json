@@ -1084,13 +1084,6 @@
     "description": "The link may be broken or the page may have moved.",
     "go_home": "Go back home"
   },
-  "nav": {
-    "overview": "Overview",
-    "collections": "Collections",
-    "scenes": "Scenes",
-    "land": "Land/World",
-    "curation": "Curation"
-  },
   "footer": {
     "newsletterTitle": "Get the weekly highlights in your inbox",
     "newsletterFrameTitle": "Newsletter signup",

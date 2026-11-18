@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useSyncExternalStore } from "react";
+import { useEffect } from "react";
 import { redirect, useLocation, useNavigate } from "react-router";
 import { dehydrate, HydrationBoundary, QueryClient } from "@tanstack/react-query";
 
@@ -12,15 +12,9 @@ import { latestPosts } from "@/data/lib/create-landing/blog-posts.server";
 import { liveScenesQuery } from "@/data/lib/create-landing/live-scenes";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import CreateLanding from "@/features/create-landing/CreateLanding";
+import { SubNav } from "@/features/creators/components/SubNav";
 
 import type { Route } from "./+types/create._index";
-
-// The Create section's tabs. Loaded apart from the landing, which every visitor downloads, and drawn in the
-// browser only: their stylesheet arrives with them, so server-rendered tabs would show unstyled first. They
-// overlay the hero, so nothing moves when they appear.
-const SubNav = lazy(() => import("@/features/creators/components/SubNav").then((m) => ({ default: m.SubNav })));
-
-const subscribeNever = () => () => {};
 
 export const meta = () => [
   { title: "Create in Decentraland | Decentraland" },
@@ -65,7 +59,6 @@ export async function clientLoader(): Promise<null> {
 export default function CreateRoute({ loaderData }: Route.ComponentProps) {
   const navigate = useNavigate();
   const { search, hash } = useLocation();
-  const inBrowser = useSyncExternalStore(subscribeNever, () => true, () => false);
 
   useEffect(() => {
     if (isDesktopShell() || creatorHubHost(window)) navigate(`/create/home${search}${hash}`, { replace: true });
@@ -74,11 +67,7 @@ export default function CreateRoute({ loaderData }: Route.ComponentProps) {
   return (
     <HydrationBoundary state={loaderData?.dehydratedState}>
       <SitesChrome active="create" overlayNav>
-        {inBrowser ? (
-          <Suspense fallback={null}>
-            <SubNav overlay />
-          </Suspense>
-        ) : null}
+        <SubNav landing />
         <CreateLanding />
       </SitesChrome>
     </HydrationBoundary>
