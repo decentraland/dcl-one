@@ -25,7 +25,7 @@ use common::{
         AppConfig, AvatarDynamicState, CursorLocks, EngineMovementControl, GraphicsSettings,
         HeadSync, NoRenderApp, PermissionType, PermissionUsed, PermissionValue, PointAtSync,
         PrimaryCamera, PrimaryCameraRes, PrimaryPlayerRes, PrimaryUser, SceneGlobalLight,
-        SceneLoadDistance, SystemAudio, TimeOfDay, ToolTips,
+        SceneLoadDistance, ShowOutOfBounds, SystemAudio, TimeOfDay, ToolTips,
     },
     util::UtilsPlugin,
 };
@@ -129,6 +129,13 @@ pub fn assemble(
     // lights, visibility, pointer results) and comms' microphone and video. Must precede the
     // plugins: the gates are read at plugin-build time.
     app.insert_resource(NoRenderApp);
+    // A scene server keeps what reaches out of a scene's bounds solid in the runs where its
+    // clients do, or the two sides' raycasts and triggers would disagree.
+    app.insert_resource(ShowOutOfBounds::for_run(
+        false,
+        launch.preview,
+        &map_realm_name(realm),
+    ));
 
     // ---- render-free plugin set (mirrors scene_runner TestPlugins) ----
     app.add_plugins(FrameCountPlugin)
@@ -374,5 +381,42 @@ fn drain_permissions(mut manager: ResMut<PermissionManager>, config: Res<AppConf
             Some(PermissionValue::Allow)
         );
         req.sender.send(allow);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The scene server's app for a run, as `assemble` builds it.
+    fn assembled(preview: bool, realm: &str) -> App {
+        let mut app = App::new();
+        app.add_plugins(TaskPoolPlugin::default());
+        let launch = LaunchOptions {
+            preview,
+            ..Default::default()
+        };
+        assemble(
+            &mut app,
+            AppConfig::default(),
+            &launch,
+            realm,
+            true,
+            Wallet::default(),
+        );
+        app
+    }
+
+    #[test]
+    fn a_scene_server_shows_what_is_out_of_bounds_in_the_runs_its_clients_do() {
+        let shows = |preview, realm| {
+            assembled(preview, realm)
+                .world()
+                .resource::<ShowOutOfBounds>()
+                .0
+        };
+        assert!(shows(true, "https://realm.example.test/main"));
+        assert!(shows(false, "http://127.0.0.1:8000"));
+        assert!(!shows(false, "https://realm.example.test/main"));
     }
 }
