@@ -1,6 +1,6 @@
 // The single notifications module (see CONVENTIONS.md): components enqueue toasts here and the
 // global <Toasts /> renders them — never ad-hoc toast systems.
-import { create } from 'zustand'
+import { createStore } from '@/data/lib/creators/store'
 
 export const TOAST_DURATION_MS = 5000
 
@@ -27,7 +27,7 @@ type NotificationsState = {
 
 let nextToastId = 1
 
-export const useNotifications = create<NotificationsState>()(set => ({
+export const useNotifications = createStore<NotificationsState>(set => ({
   toasts: [],
   showToast: (message, { type = 'success', durationMs = TOAST_DURATION_MS } = {}) => {
     const id = nextToastId++

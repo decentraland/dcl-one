@@ -1,7 +1,7 @@
 // Session-only state of the preview mannequin: who it is (body shape, colors, base outfit), what it
 // wears from the collection, and which emote plays. The editor and the live preview share it.
 import { BodyShape, PreviewEmote } from '@dcl/schemas'
-import { create } from 'zustand'
+import { createStore } from '@/data/lib/creators/store'
 import {
   getRandomBaseWearables,
   getRandomBodyShape,
@@ -55,7 +55,7 @@ export type AvatarPreviewState = AvatarColors & {
 
 const initialColors = getRandomColors()
 
-export const useAvatarPreview = create<AvatarPreviewState>()((set, get) => ({
+export const useAvatarPreview = createStore<AvatarPreviewState>((set, get) => ({
   bodyShape: getRandomBodyShape(),
   ...initialColors,
   baseWearables: null,

@@ -1,4 +1,4 @@
-import { create } from 'zustand'
+import { createStore } from '@/data/lib/creators/store'
 import { identify, reset as resetAnalytics, track } from '@/data/lib/creators/analytics'
 import { logout, restoreSession, signInRedirect, type Session } from '@/data/lib/creators/auth'
 import { setCurrentAddressReader } from '@/data/lib/creators/currentAddress'
@@ -31,7 +31,7 @@ function safeWalletName(name: string | undefined): string | null {
   return clean ? clean : null
 }
 
-export const useWallet = create<WalletState>((set, get) => ({
+export const useWallet = createStore<WalletState>((set, get) => ({
   session: null,
   restored: false,
   connecting: false,

@@ -1,4 +1,4 @@
-import { create } from 'zustand'
+import { createStore } from '@/data/lib/creators/store'
 
 const KEY = 'creators:locale'
 
@@ -24,7 +24,7 @@ type LocaleState = {
   setLocale: (locale: Locale) => void
 }
 
-export const useLocale = create<LocaleState>(set => ({
+export const useLocale = createStore<LocaleState>(set => ({
   locale: getPreferredLocale(),
   setLocale: locale => {
     try {

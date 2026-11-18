@@ -1,6 +1,6 @@
 // Collections whose chain→server publish sync is running in this tab, so a page mount doesn't start a second one
 // and the publishing tab doesn't offer to publish again while its own transaction is still pending.
-import { create } from 'zustand'
+import { createStore } from '@/data/lib/creators/store'
 
 type PublishSyncState = {
   syncing: ReadonlySet<string>
@@ -8,7 +8,7 @@ type PublishSyncState = {
   end: (collectionId: string) => void
 }
 
-export const usePublishSyncStore = create<PublishSyncState>(set => ({
+export const usePublishSyncStore = createStore<PublishSyncState>(set => ({
   syncing: new Set(),
   start: collectionId => set(state => ({ syncing: new Set(state.syncing).add(collectionId) })),
   end: collectionId =>
