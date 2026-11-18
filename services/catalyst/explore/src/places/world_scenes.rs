@@ -8,7 +8,7 @@ use axum::extract::{OriginalUri, Path, Query, State};
 use axum::http::{HeaderMap, Method};
 use sqlx::Row;
 
-use super::rows::{place_columns, row_to_place, viewer_columns};
+use super::rows::{place_columns, row_to_place, viewer_columns, world_thumbnail_key};
 use super::{PlaceRow, PlacesComponent};
 use crate::SharedState;
 use crate::shared::errors::{ApiDataTotal, ApiError};
@@ -20,7 +20,16 @@ const PARENT_VISIBILITY: &str = "NOT EXISTS (SELECT 1 FROM explore.place_indexed
 const PARENT_PRESENT_OR_INCOMPLETE: &str = "(NOT EXISTS (SELECT 1 FROM explore.mirror_state WHERE mirror = 'worlds' AND last_complete_pass_at IS NOT NULL) OR EXISTS (SELECT 1 FROM explore.place_indexed parent WHERE parent.world AND lower(parent.world_name) = w.name))";
 
 pub(super) fn scene_row(row: sqlx::postgres::PgRow, places: &PlacesComponent) -> Option<PlaceRow> {
+    let thumbnail_hash: Option<String> = row.get("world_thumbnail_hash");
     let mut place = row_to_place(row, places.content_origin(), places.asset_domain());
+    if let Some(domain) = places.asset_domain()
+        && let Some(hash) = thumbnail_hash.as_deref()
+        && world_thumbnail_key(hash).is_some()
+    {
+        place.image = Some(format!(
+            "https://{domain}/worlds-content-server/contents/{hash}"
+        ));
+    }
     place.scene_place = true;
     let parse = |value: &str| -> Option<(i32, i32)> {
         let (x, y) = crate::auth::pointer::parse_pointer(value)?;
@@ -78,7 +87,7 @@ impl PlacesComponent {
            0::integer AS likes, 0::integer AS dislikes, 0::integer AS favorites,
            s.created_at AS deployed_at, false AS disabled,
            COALESCE(m.highlighted, wm.highlighted, false) AS highlighted,
-           true AS world, w.name AS world_name,
+           true AS world, w.name AS world_name, w.thumbnail_hash AS world_thumbnail_hash,
            {local} AS local,
            jsonb_build_object(
                'positions', to_jsonb(s.parcels),
@@ -217,7 +226,7 @@ impl PlacesComponent {
             .collect();
         let scene_rows = typed_scene_rows(&self.scene_rows_sql(3));
         let sql = format!(
-            "SELECT {}{} FROM ({scene_rows}) place_indexed WHERE place_identity = ANY($1){}",
+            "SELECT {}, world_thumbnail_hash{} FROM ({scene_rows}) place_indexed WHERE place_identity = ANY($1){}",
             place_columns(),
             viewer_columns(2),
             if local_only { " AND local" } else { "" }
@@ -247,7 +256,7 @@ impl PlacesComponent {
         // so a concurrent retirement cannot cause a fallback to upstream.
         let scene_rows = typed_scene_rows(&self.scene_rows_sql(3));
         let sql = format!(
-            "WITH scene AS (SELECT {}{} FROM ({scene_rows}) place_indexed WHERE place_identity = $1) \
+            "WITH scene AS (SELECT {}, world_thumbnail_hash{} FROM ({scene_rows}) place_indexed WHERE place_identity = $1) \
              SELECT scene.*, p.identity::text AS canonical_id FROM explore.world_scene_place p \
              LEFT JOIN scene ON scene.id = p.identity::text WHERE p.identity = $1",
             place_columns(),
@@ -295,7 +304,7 @@ impl PlacesComponent {
         self.require_discoverable_world(&world).await?;
         let scene_rows = typed_scene_rows(&self.scene_rows_sql(3));
         let sql = format!(
-            "WITH visible AS (SELECT {}{} FROM ({scene_rows}) place_indexed WHERE world_name = $1{}), \
+            "WITH visible AS (SELECT {}, world_thumbnail_hash{} FROM ({scene_rows}) place_indexed WHERE world_name = $1{}), \
              page AS (SELECT * FROM visible ORDER BY deployed_at DESC NULLS LAST, id LIMIT $4 OFFSET $5) \
              SELECT page.*, totals.total FROM (SELECT count(*)::bigint AS total FROM visible) totals \
              LEFT JOIN page ON true ORDER BY deployed_at DESC NULLS LAST, id",

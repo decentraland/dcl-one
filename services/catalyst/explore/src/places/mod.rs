@@ -42,7 +42,7 @@ use query::{
 pub use rows::{
     ActiveRows, CategoryTarget, PlaceListFilters, PlaceOrderBy, PlaceRow, PlaceStatusRow, WorldRow,
 };
-use rows::{WORLD_THUMBNAIL_SQL, place_columns, place_image_url, row_to_place, viewer_columns};
+use rows::{WORLD_THUMBNAIL_JOIN, place_columns, place_image_url, row_to_place, viewer_columns};
 
 type CategoryCounts = Vec<(String, i64)>;
 type ParcelAliases = Arc<HashMap<String, String>>;
@@ -380,7 +380,7 @@ impl PlacesComponent {
         viewer: Option<&str>,
     ) -> Result<Option<PlaceRow>, ApiError> {
         let sql = format!(
-            "SELECT {}{} FROM explore.place_indexed WHERE id = $1",
+            "SELECT {}, world_thumbnail_hash{} FROM explore.place_indexed {WORLD_THUMBNAIL_JOIN} WHERE id = $1",
             place_columns(),
             viewer.map(|_| viewer_columns(2)).unwrap_or_default()
         );
@@ -588,7 +588,7 @@ impl PlacesComponent {
         viewer: Option<&str>,
     ) -> Result<Option<PlaceRow>, ApiError> {
         let sql = format!(
-            "SELECT {}{} FROM explore.place_indexed \
+            "SELECT {}, world_thumbnail_hash{} FROM explore.place_indexed {WORLD_THUMBNAIL_JOIN} \
              WHERE world IS TRUE AND (id = $1 OR lower(world_name) = lower($1)) \
              ORDER BY (id = $1) DESC, {} DESC LIMIT 1",
             place_columns(),
@@ -635,10 +635,10 @@ impl PlacesComponent {
         }
         let latest = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT DISTINCT ON (lower(world_name)) lower(world_name) AS name, \
-             raw->>'image' AS image, {WORLD_THUMBNAIL_SQL} AS world_thumbnail_hash, \
+             raw->>'image' AS image, world_thumbnail_hash, \
              raw->>'contact_name' AS contact_name, \
              raw->>'contact_email' AS contact_email, creator_address, raw->>'sdk' AS sdk, deployed_at \
-             FROM explore.place_indexed \
+             FROM explore.place_indexed {WORLD_THUMBNAIL_JOIN} \
              WHERE world IS TRUE AND id <> lower(world_name) AND lower(world_name) = ANY($1) \
              AND disabled IS FALSE{} \
              ORDER BY lower(world_name), deployed_at DESC NULLS LAST",
@@ -842,9 +842,10 @@ fn list_sql_from(
                 ORDER BY {order_clause}
                 LIMIT ${limit} OFFSET ${offset}
             )
-            SELECT {cols}{rank_col}{viewer_cols}{total}
+            SELECT {cols}, world_thumbnail_hash{rank_col}{viewer_cols}{total}
             FROM explore.place_indexed{indexed_join}
             JOIN page USING (id)
+            {WORLD_THUMBNAIL_JOIN}
             ORDER BY {order_clause}
             "#,
             cols = place_columns(),
@@ -875,9 +876,10 @@ fn list_sql_from(
                 ORDER BY {order_clause}
                 LIMIT ${limit} OFFSET ${offset}
             )
-            SELECT {projection}{cols}{rank_col}{viewer_cols}{total}
+            SELECT {projection}{cols}, world_thumbnail_hash{rank_col}{viewer_cols}{total}
             FROM {relation}{recount_join}
             JOIN page USING (id)
+            {WORLD_THUMBNAIL_JOIN}
             ORDER BY {order_clause}
             "#,
             cols = place_columns(),
