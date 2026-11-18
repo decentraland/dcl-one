@@ -26,7 +26,7 @@ fn variant_bytes() -> Vec<u8> {
 fn served_path_of(format: &str, id: &str) -> String {
     let prefix = match format {
         "glb-br" => "m2",
-        "glb" => "g1",
+        "glb" => "g4",
         _ => "t2",
     };
     format!("bevy/{prefix}/{ORIGINAL_CID}_{}", &id[id.len() - 6..])
@@ -60,7 +60,8 @@ fn parses_a_v3_manifest() {
                 "{ORIGINAL_CID}": [
                     "bevy/t2/{ORIGINAL_CID}_srgb",
                     "bevy/m1/{ORIGINAL_CID}",
-                    "bevy/g1/{ORIGINAL_CID}",
+                    "bevy/g4/{ORIGINAL_CID}",
+                    "bevy/g4z9e12/{ORIGINAL_CID}_0123456789abcdef",
                     "bevy/x1/{ORIGINAL_CID}",
                     "bevy/../etc/passwd",
                     "bevy/t2/a.br",
@@ -91,7 +92,12 @@ fn parses_a_v3_manifest() {
                 "ktx2-bc"
             ),
             (&*format!("bevy/m1/{ORIGINAL_CID}"), "model", "glb-br"),
-            (&*format!("bevy/g1/{ORIGINAL_CID}"), "model", "glb"),
+            (&*format!("bevy/g4/{ORIGINAL_CID}"), "model", "glb"),
+            (
+                &*format!("bevy/g4z9e12/{ORIGINAL_CID}_0123456789abcdef"),
+                "model",
+                "glb"
+            ),
         ]
     );
 }
@@ -141,10 +147,15 @@ fn selects_the_first_variant_this_client_takes() {
         Some(served_path(OTHER_CID))
     );
 
-    // `glb` embeds KTX2 under KHR_texture_basisu, which the glTF loader rejects: never taken
+    // `glb` (its embedded images BC KTX2, unwrapped by the glTF loader) is taken for a `.glb`,
+    // on a GPU with BC textures
     let glb = [variant(VARIANT_CID, "model", "glb")];
-    assert!(supported_format(&glb[0]).is_none());
-    assert!(select_variant(&glb, "models/a.glb", true, none_bad).is_none());
+    assert!(supported_format(&glb[0]).is_some());
+    assert!(select_variant(&glb, "models/a.glb", true, none_bad).is_some());
+    assert!(select_variant(&glb, "models/A.GLB", true, none_bad).is_some());
+    assert!(select_variant(&glb, "models/a.glb", false, none_bad).is_none());
+    assert!(select_variant(&glb, "models/a.gltf", true, none_bad).is_none());
+    assert!(select_variant(&glb, "images/a.png", true, none_bad).is_none());
     // `glb-br` is fetched as a Brotli copy only a browser decodes: native leaves it untaken and
     // loads the original model (the web build takes it for `.glb` files)
     let brotli = [variant(VARIANT_CID, "model", "glb-br")];
@@ -152,9 +163,10 @@ fn selects_the_first_variant_this_client_takes() {
     assert!(select_variant(&brotli, "models/a.glb", true, none_bad).is_none());
     assert_eq!(
         taken_formats(),
-        "ktx2-bc (BC1/BC5/BC7, unwrapped to DDS by the image loaders); not glb-br, glb"
+        "ktx2-bc (BC1/BC5/BC7, unwrapped to DDS by the image loaders), \
+         glb (embedded BC1/BC5/BC7, unwrapped to DDS by the glTF loader); not glb-br"
     );
-    assert!(!could_have_variant("a.glb"));
+    assert!(could_have_variant("a.glb"));
     // the earlier mesh format is not in the schema any more
     assert!(supported_format(&variant(VARIANT_CID, "model", "glb-meshopt")).is_none());
     // a kind/format pair the schema does not have
@@ -455,11 +467,13 @@ async fn a_wearable_entity_fetches_its_manifest_and_reads_its_variants() {
                 metadata: None,
             },
         );
-        // as `request_collectibles` registers it: the catalyst's contents, not the realm's
+        // as `request_collectibles` registers it: the catalyst's contents, not the realm's. The
+        // name is reserved and never resolves, so a read of the original fails the test and
+        // reaches no host.
         context.modifiers.insert(
             WEARABLE.to_owned(),
             crate::IpfsModifier {
-                base_url: Some("https://peer.decentraland.org/content/contents/".to_owned()),
+                base_url: Some("https://catalyst.invalid/content/contents/".to_owned()),
             },
         );
     }
@@ -475,6 +489,15 @@ async fn a_wearable_entity_fetches_its_manifest_and_reads_its_variants() {
     let _ = io.bevy_variants.bc.set(true);
 
     io.request_bevy_variants(WEARABLE);
+    // A read waits for the manifest only until its deadline, then reads the original. The
+    // deadline has its own test; this one reads after the manifest is there.
+    let mut manifest = io.bevy_variants.manifest(WEARABLE).unwrap();
+    let state = manifest
+        .wait_for(|state| !matches!(state, ManifestState::Pending))
+        .await
+        .unwrap()
+        .clone();
+    assert!(matches!(state, ManifestState::Loaded(_)), "{state:?}");
     let path = PathBuf::from(&IpfsPath::new(IpfsType::new_content_file(
         WEARABLE.to_owned(),
         "male/tex.png".to_owned(),
@@ -564,6 +587,163 @@ async fn a_missing_variant_falls_back_to_the_original() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// A `g` variant: a GLB (its embedded images BC KTX2), served at its own path (native has no
+/// Brotli decoder). The reader checks only the GLB magic; the glTF loader decodes the images.
+fn glb_variant() -> (Vec<u8>, String) {
+    let mut file = b"glTF".to_vec();
+    file.extend_from_slice(&2u32.to_le_bytes());
+    file.extend_from_slice(&12u32.to_le_bytes());
+    let cid = crate::content_hash::raw_cid(&file);
+    (file, cid)
+}
+
+#[tokio::test]
+async fn a_glb_variant_is_read_as_served() {
+    let (io, dir) = io_with_cache("glb");
+    let (served, cid) = glb_variant();
+    let variant_route = format!("/{}", served_path_of("glb", &cid));
+    let original_route = format!("/contents/{ORIGINAL_CID}");
+    let (base, log) = serve(vec![
+        (variant_route.clone(), served.clone()),
+        (original_route.clone(), b"original glb".to_vec()),
+    ])
+    .await;
+    scene_with_variant_of(&io, &base, "models/a.glb", "model", "glb", &cid).await;
+    let path = content_path("models/a.glb");
+
+    // the loader reads the GLB as served, and the cache holds it under a digest of its url
+    assert_eq!(read_all(&io, &path).await, served);
+    assert!(io.served_bevy_variant(&path));
+    let name = cache_name(&base, &served_path_of("glb", &cid));
+    assert_eq!(std::fs::read(dir.join(&name)).unwrap(), served);
+    assert!(!dir.join(ORIGINAL_CID).exists());
+    assert_eq!(read_all(&io, &path).await, served);
+
+    assert_eq!(requests_for(&log, &variant_route), 1);
+    assert_eq!(requests_for(&log, &original_route), 0);
+    let session = io.bevy_variants.session.lock().unwrap();
+    assert_eq!(session.served_by_format.get("glb"), Some(&[1, 1]));
+    drop(session);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A `g` variant that is not a binary glTF at all falls back before the loader sees it: the
+/// original is read instead, the copy dropped and the variant not asked for again.
+#[tokio::test]
+async fn a_glb_variant_that_is_not_a_glb_falls_back_to_the_original() {
+    let (io, dir) = io_with_cache("glb-not-glb");
+    let served = b"<html>not found</html>".to_vec();
+    let cid = crate::content_hash::raw_cid(&served);
+    let variant_route = format!("/{}", served_path_of("glb", &cid));
+    let original_route = format!("/contents/{ORIGINAL_CID}");
+    let (base, log) = serve(vec![
+        (variant_route.clone(), served),
+        (original_route.clone(), b"original glb".to_vec()),
+    ])
+    .await;
+    scene_with_variant_of(&io, &base, "models/a.glb", "model", "glb", &cid).await;
+    let path = content_path("models/a.glb");
+
+    assert_eq!(read_all(&io, &path).await, b"original glb");
+    assert!(!io.served_bevy_variant(&path));
+    let name = cache_name(&base, &served_path_of("glb", &cid));
+    assert!(!dir.join(&name).exists());
+    {
+        let session = io.bevy_variants.session.lock().unwrap();
+        assert!(session.recent[0].reason.starts_with("invalid glb variant"));
+        assert_eq!(session.fallbacks_by_format.get("glb"), Some(&1));
+        assert!(session.bad.contains(&served_path_of("glb", &cid)));
+    }
+    assert_eq!(read_all(&io, &path).await, b"original glb");
+    assert_eq!(requests_for(&log, &variant_route), 1);
+    assert_eq!(requests_for(&log, &original_route), 2);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A `glb` variant whose embedded KTX2 does not unwrap fails the `Gltf` load, not the read: the
+/// `Gltf` fallback marks the variant bad and hands back its cached copy to drop, so the model
+/// reloads from its original.
+#[test]
+fn a_glb_model_that_fails_to_load_is_reloaded_from_the_original() {
+    let variants = BevyVariants::default();
+    let path = content_path("models/a.glb");
+    variants.served(
+        &path,
+        ServedVariant {
+            scene: SCENE.to_owned(),
+            file: "models/a.glb".to_owned(),
+            variant: served_path_of("glb", VARIANT_CID),
+            format: "glb".to_owned(),
+            url: "https://abgen.example/bevy/g4/variant".to_owned(),
+        },
+        false,
+    );
+    // an image fallback does not take a model
+    assert!(variants
+        .decode_failed(&path, "x", <Image as VariantAsset>::FORMATS)
+        .is_none());
+    assert!(variants.is_served(&path));
+    assert_eq!(
+        variants
+            .decode_failed(
+                &path,
+                "unsupported texture format",
+                <Gltf as VariantAsset>::FORMATS
+            )
+            .as_deref(),
+        Some("https://abgen.example/bevy/g4/variant")
+    );
+    assert!(!variants.is_served(&path));
+    assert!(variants.is_bad(&served_path_of("glb", VARIANT_CID)));
+    let session = variants.session.lock().unwrap();
+    assert_eq!(session.fallbacks_by_format.get("glb"), Some(&1));
+    assert!(session.recent[0]
+        .reason
+        .starts_with("glb variant failed to load"));
+}
+
+/// An avatar waits on a model whose `glb` variant failed: from the failure until the
+/// original's reload is over, `model_reload_pending` holds. A `glb-br` copy's failure never
+/// reloads, so nothing waits on it.
+#[test]
+fn a_failed_glb_model_is_pending_until_its_original_reloads() {
+    let variants = BevyVariants::default();
+    let path = content_path("wearable.glb");
+    variants.served(
+        &path,
+        ServedVariant {
+            scene: SCENE.to_owned(),
+            file: "wearable.glb".to_owned(),
+            variant: served_path_of("glb", VARIANT_CID),
+            format: "glb".to_owned(),
+            url: "https://abgen.example/bevy/g4/variant".to_owned(),
+        },
+        false,
+    );
+    // failed, the fallback not yet run: still served from the variant
+    assert!(variants.model_reload_pending(&path));
+    variants.decode_failed(&path, "x", <Gltf as VariantAsset>::FORMATS);
+    variants.reload_started(&path);
+    assert!(variants.model_reload_pending(&path));
+    variants.reload_finished(&path);
+    assert!(!variants.model_reload_pending(&path));
+
+    let br = content_path("draco.glb");
+    variants.served(
+        &br,
+        ServedVariant {
+            scene: SCENE.to_owned(),
+            file: "draco.glb".to_owned(),
+            variant: served_path_of("glb-br", VARIANT_CID),
+            format: "glb-br".to_owned(),
+            url: "https://abgen.example/bevy/m2/variant.br".to_owned(),
+        },
+        false,
+    );
+    assert!(!variants.model_reload_pending(&br));
+    assert!(!variants.model_reload_pending(&content_path("never-a-variant.glb")));
+}
+
 #[test]
 fn a_variant_that_fails_to_decode_is_marked_bad_once() {
     let variants = BevyVariants::default();
@@ -583,17 +763,41 @@ fn a_variant_that_fails_to_decode_is_marked_bad_once() {
     // reloaded from the original, and the url of the copy to drop handed back
     assert_eq!(
         variants
-            .decode_failed(&path, "unsupported texture format")
+            .decode_failed(&path, "unsupported texture format", &["ktx2-bc"])
             .as_deref(),
         Some("https://abgen.example/bevy/t3/variant")
     );
     assert!(!variants.is_served(&path));
     assert!(variants.is_bad(&served_path(VARIANT_CID)));
     // an asset that was never a variant is not reloaded
-    assert!(variants.decode_failed(&path, "again").is_none());
     assert!(variants
-        .decode_failed(&content_path("other.png"), "x")
+        .decode_failed(&path, "again", &["ktx2-bc"])
         .is_none());
+    assert!(variants
+        .decode_failed(&content_path("other.png"), "x", &["ktx2-bc"])
+        .is_none());
+}
+
+#[test]
+fn a_glb_br_model_that_fails_to_load_is_not_reloaded() {
+    let variants = BevyVariants::default();
+    let path = content_path("models/a.glb");
+    variants.served(
+        &path,
+        ServedVariant {
+            scene: SCENE.to_owned(),
+            file: "models/a.glb".to_owned(),
+            variant: served_path_of("glb-br", VARIANT_CID),
+            format: "glb-br".to_owned(),
+            url: "https://abgen.example/bevy/m2/variant.br".to_owned(),
+        },
+        false,
+    );
+    // the glTF fallback takes only `glb`: a `glb-br` copy is the original, its failure the
+    // original's own
+    assert!(variants.decode_failed(&path, "draco", &["glb"]).is_none());
+    assert!(variants.is_served(&path));
+    assert!(!variants.is_bad(&served_path_of("glb-br", VARIANT_CID)));
 }
 
 #[test]
@@ -620,13 +824,14 @@ fn the_debug_snapshot_reports_state_and_fallbacks() {
     variants.fail(
         SCENE,
         "tex.png",
-        Some(VARIANT_CID),
+        Some(&variant(VARIANT_CID, "texture", "ktx2-bc")),
         "fetch: refused".to_owned(),
     );
     let snapshot = snapshot_of(&variants);
     assert_eq!(snapshot["base"], "http://localhost:5147");
     assert_eq!(snapshot["state"], "on");
     assert_eq!(snapshot["fallbacks"], 1);
+    assert_eq!(snapshot["fallbacksByFormat"], "ktx2-bc: 1");
     assert!(snapshot["recentFallbacks"]
         .as_str()
         .unwrap()

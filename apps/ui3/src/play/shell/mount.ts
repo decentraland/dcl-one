@@ -4,7 +4,7 @@
 // separate processes. The signed-in identity's key stays here: the app asks for the public
 // identity and for signatures, and never reads the origin's localStorage itself.
 import { exitUrl } from '../host'
-import { authLoginUrl, authReturnUrl } from '@explorer-core/features/auth/sso'
+import { authLoginUrl, isLoginMethod, authReturnUrl } from '@explorer-core/features/auth/sso'
 import { ANALYTICS_SESSION_PARAM, ANON_USER_ID_PARAM, dropAttributionParams } from '@explorer-core/lib/analytics'
 import { AUTH_RETURN_PARAM } from '@explorer-core/features/auth/sso'
 import { migratePrefs } from '@explorer-core/lib/prefs'
@@ -12,9 +12,12 @@ import { currentLogin, request } from './login'
 import { onInWorld } from '@explorer-core/shell/googleTag'
 import { PAGE_DIR } from '../lib/publicUrl'
 import { loadOnce } from '../lib/loadOnce'
+import { reloadPage } from '@explorer-core/lib/reloadPage'
+import { dropDestination } from '@explorer-core/lib/startScreenUrl'
 import { shellResponse } from '@explorer-core/lib/shellReply'
 import type { ShellShop, ShellShopWallet } from './shop/purchase'
 import type { ShellDonate } from './donate/donation'
+import type { ShellGift } from './gift/gifting'
 
 // Runs the web shell on Sites' /play page: mounts the app document (/play/app.html) in an iframe of its
 // own process, answers its identity/sign requests, and registers the service worker that gives the
@@ -49,6 +52,26 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
 
   let frame: HTMLIFrameElement | null = null
   let mounting = false
+  // Set by the app's sign-out: the old app's URL sync must not write its place back before the reload.
+  let signedOut = false
+  // Back, a closed tab or a typed address would drop the session: while the app says one runs
+  // (bevy-shell:session), the browser asks first. The page's own exits (sign-in, the untrusted-link
+  // gate) go through leave().
+  let live = false
+  let leaving = false
+  function leave(go: () => void): void {
+    leaving = true
+    go()
+  }
+  // Back from the sign-in site can show this page again as it was left: it asks again from then on.
+  addEventListener('pageshow', () => {
+    leaving = false
+  })
+  function confirmLeave(e: BeforeUnloadEvent): void {
+    if (leaving || !live) return
+    e.preventDefault()
+    e.returnValue = ''
+  }
   function mount(): void {
     if (mounting) return
     mounting = true
@@ -87,14 +110,16 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
     f.addEventListener('load', () => f.focus())
     document.body.appendChild(f)
     frame = f
+    addEventListener('beforeunload', confirmLeave)
     dropAttributionParams([AUTH_RETURN_PARAM])
   }
 
   // The in-world Shop's purchases (shop/purchase), loaded on the app's first shop.* request: this page
   // holds the login and the wallet, shows the buyer the purchase dialog over the app and signs.
-  // Shop and Donate share the one dialog over the app: each refuses as busy while the other's is up.
+  // Shop, Donate and Gift share the one dialog over the app: each refuses as busy while another's is up.
   let loadedShop: ShellShop | null = null
   let loadedDonate: ShellDonate | null = null
+  let loadedGift: ShellGift | null = null
   const shopWallet = loadOnce(async () => (await options.shopWallet?.()) ?? null)
   const shellShop: () => Promise<ShellShop> = loadOnce(() =>
     Promise.all([import('./shop/purchase'), import('./shop/overlay'), shopWallet()]).then(([purchase, overlay, wallet]) => {
@@ -104,8 +129,8 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
         ui: overlay.createShopOverlay(() => frame?.focus()),
         post: (event) => frame?.contentWindow?.postMessage(event, location.origin),
         openExternal: (url) => void window.open(url, '_blank', 'noopener'),
-        signIn: () => location.assign(authLoginUrl(authReturnUrl(entryUrl))),
-        otherDialogOpen: () => loadedDonate?.dialogOpen() === true
+        signIn: () => leave(() => location.assign(authLoginUrl(authReturnUrl(entryUrl)))),
+        otherDialogOpen: () => loadedDonate?.dialogOpen() === true || loadedGift?.dialogOpen() === true
       })
       return loadedShop
     })
@@ -119,9 +144,23 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
         ui: overlay.createDonateOverlay(() => frame?.focus()),
         post: (event) => frame?.contentWindow?.postMessage(event, location.origin),
         openExternal: (url) => void window.open(url, '_blank', 'noopener'),
-        otherDialogOpen: () => loadedShop?.dialogOpen() === true
+        otherDialogOpen: () => loadedShop?.dialogOpen() === true || loadedGift?.dialogOpen() === true
       })
       return loadedDonate
+    })
+  )
+  // Gift (shell/gift), loaded on the app's first gift.* request, with the same wallet as the Shop's.
+  const shellGift: () => Promise<ShellGift> = loadOnce(() =>
+    Promise.all([import('./gift/gifting'), import('./gift/overlay'), shopWallet()]).then(([gifting, overlay, wallet]) => {
+      loadedGift = gifting.createShellGift({
+        login: currentLogin,
+        wallet,
+        ui: overlay.createGiftOverlay(() => frame?.focus()),
+        post: (event) => frame?.contentWindow?.postMessage(event, location.origin),
+        openExternal: (url) => void window.open(url, '_blank', 'noopener'),
+        otherDialogOpen: () => loadedShop?.dialogOpen() === true || loadedDonate?.dialogOpen() === true
+      })
+      return loadedGift
     })
   )
 
@@ -154,21 +193,29 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
             ? (await shellShop()).request(method, m.params)
             : method.startsWith('donate.')
               ? (await shellDonate()).request(method, m.params)
-              : request(m.method, m.params)
+              : method.startsWith('gift.')
+                ? (await shellGift()).request(method, m.params)
+                : request(m.method, m.params)
         )
         f.contentWindow?.postMessage(response, location.origin)
         break
       }
       // the engine's URL sync (engine/boot.js set_url_params), mirrored into the address bar
       case 'bevy-shell:url':
-        if (typeof m.search === 'string' && (m.search === '' || m.search[0] === '?')) {
+        if (!signedOut && typeof m.search === 'string' && (m.search === '' || m.search[0] === '?')) {
           history.replaceState(null, '', location.pathname + m.search + location.hash)
         }
         break
       // sign-in: the same-origin auth site, returning here
       case 'bevy-shell:auth-login':
         if (typeof m.session === 'string') sessionStorage.setItem(ANALYTICS_SESSION_KEY, m.session)
-        location.assign(authLoginUrl(authReturnUrl(entryUrl)))
+        leave(() =>
+          location.assign(authLoginUrl(authReturnUrl(entryUrl), undefined, isLoginMethod(m.loginMethod) ? m.loginMethod : undefined))
+        )
+        break
+      // a sign-in is under way or landed, or the app is back on its start screen
+      case 'bevy-shell:session':
+        live = m.live === true
         break
       // the session's first move in world: the Google Ads conversion (googleTag.ts), and GA4's ids
       // back to the app for Segment
@@ -178,17 +225,35 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
       // the untrusted-link gate's exit (library/ui/apps/hud/features/gate/UntrustedLaunchGate.tsx), to the
       // host's fixed address
       case 'bevy-shell:exit':
-        window.close()
-        location.replace(exitUrl())
+        leave(() => {
+          window.close()
+          location.replace(exitUrl())
+        })
+        break
+      // the Me panel's Sign Out in world (library/ui/apps/hud/features/gate/signOutOfWorld.ts): the stored
+      // sign-in and the place in the address bar go, and the page loads again on the start screen,
+      // which ends the engine session
+      case 'bevy-shell:sign-out':
+        signedOut = true
+        try {
+          await request('logout', undefined)
+        } catch (error) {
+          // the stored sign-in is still there, so a reload would sign the same account in again
+          signedOut = false
+          console.error('sign-out: the stored sign-in could not be removed', error)
+          f.contentWindow?.postMessage({ type: 'bevy-shell:sign-out-failed' }, location.origin)
+          break
+        }
+        dropDestination()
+        leave(reloadPage)
         break
     }
   })
 
   // The service worker gives app.html its isolation header and strips the host's COEP from this
-  // page (deploy/web/service_worker.js), and the engine's IPFS cache depends on it. A first visit or
-  // a hard reload bypasses it, and an earlier version's worker isolates this page, so reload ONCE
-  // when the current one is active; the flag stops a broken worker from reload-looping. Until then
-  // the app is not mounted.
+  // page (deploy/web/service_worker.js). A first visit or a hard reload bypasses it, and an earlier
+  // version's worker isolates this page, so reload ONCE when the current one is active; the flag
+  // stops a broken worker from reload-looping. Until then the app is not mounted.
   const FLAG = 'coi_sw_reloaded'
   if (outOfScope) {
     // leaving for the in-scope url

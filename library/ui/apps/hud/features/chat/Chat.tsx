@@ -9,14 +9,16 @@ import type { ChatLine, ChatState, Conversation } from '../session/useEngineSess
 import type { DmUserState, MessageReaction, NearbyMember } from '@explorer-core/engine/protocol'
 import { Avatar, ControlButton, DclLogo, MaskIcon, Tooltip, Translate, VerifiedBadge, VoiceBars } from '../../design'
 import { EmojiPicker } from './EmojiPicker'
-import { AutoTranslateButton } from './AutoTranslateButton'
-import { ConversationMenu } from './ConversationMenu'
+import { EmojiButton } from './EmojiButton'
+import { EmojiSuggestList, emojiSuggestionAt, moveSelection, tokenAtCaret } from './EmojiSuggestList'
+import { ConversationMenu, MENU_LAYER } from './ConversationMenu'
+import { HeartIcon } from './ChatIcons'
 import { ConversationRail } from './ConversationRail'
 import { CommunityHeader } from './CommunityHeader'
 import { clearPingMode } from './ping'
 import { roleLabel } from '@explorer-core/features/communities/roles'
 import { displaySender, isSystem, memberLabel, senderColor, shortAddr, splitName, usePartner } from './chatIdentity'
-import { EMOJI_BY_CODE, EMOJI_BY_GLYPH, QUICK_REACTIONS, loadRecents, searchByShortcode, type Emoji } from './emojiData'
+import { EMOJI_BY_CODE, EMOJI_BY_GLYPH, QUICK_REACTIONS, loadRecents, type Emoji } from './emojiData'
 import { MessageText } from './chatText'
 import { mentionsMe } from '@explorer-core/features/chat/chatParse'
 import { autoTranslates, clearAutoTranslate, getTranslation, hasTranslatableText, languageName, requestTranslation, showOriginal, type Translation } from '@explorer-core/features/chat/translation'
@@ -115,16 +117,6 @@ type Suggestions =
   | { kind: 'emoji'; items: Emoji[]; start: number; end: number; sel: number }
   | { kind: 'mention'; items: NearbyMember[]; start: number; end: number; sel: number }
 
-/** The ":emoji" or "@name" word ending at the caret, if any. */
-export function tokenAtCaret(value: string, caret: number): { kind: 'emoji' | 'mention'; query: string; start: number } | null {
-  const before = value.slice(0, caret)
-  const m = before.match(/(?:^|\s)([@:])(\S*)$/)
-  if (!m) return null
-  const query = m[2]
-  const start = caret - query.length - 1
-  if (m[1] === ':') return /^[\w+-]{2,}$/.test(query) && !/https?$/i.test(before.slice(0, start)) ? { kind: 'emoji', query, start } : null
-  return /^[A-Za-z0-9]{1,15}$/.test(query) ? { kind: 'mention', query, start } : null
-}
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
@@ -507,7 +499,7 @@ type MemberEntry = NearbyMember & { role?: string }
 
 function MembersOverlay({
   title = 'Nearby',
-  empty = 'No one nearby',
+  empty,
   members,
   speaking,
   onOpen,
@@ -525,7 +517,7 @@ function MembersOverlay({
   return (
     <div className={styles.membersPanel}>
       <header className={`${styles.nav} ${styles.membersHeader}`}>
-        <ControlButton variant="dark" aria-label="Back" onClick={onBack}>
+        <ControlButton variant="dark" aria-label="Back" autoFocus onClick={onBack}>
           <MaskIcon src={arrowLeftIcon} size={12} className={styles.backIcon} />
         </ControlButton>
         <span className={styles.navTitle} title={title}>{title}&nbsp; -</span>
@@ -539,7 +531,8 @@ function MembersOverlay({
       </header>
       <div className={styles.membersList}>
         {members.length === 0 ? (
-          <div className={styles.empty}>{empty}</div>
+          // alone in Nearby the list is bare: the words are for screen readers
+          <div className={empty != null ? styles.empty : styles.srOnly}>{empty ?? 'No one nearby'}</div>
         ) : (
           members.map((m) => <MemberRow key={m.address} member={m} role={m.role} speaking={speaking.has(m.address.toLowerCase())} onOpen={onOpen} />)
         )}
@@ -620,11 +613,10 @@ function DmHeader({ conversation, onClose, onDelete, onOpenProfile }: {
             </ControlButton>
           </Tooltip>
         )}
-        <AutoTranslateButton channel={conversation.address} />
         <ConversationMenu
           channel={conversation.address}
           entries={[
-            { label: 'Delete chat history', danger: true, onClick: onDelete },
+            { label: 'Delete Chat History', danger: true, onClick: onDelete },
             { label: 'Close conversation', onClick: onClose }
           ]}
         />
@@ -658,7 +650,9 @@ export function Chat({
   const [sug, setSug] = useState<Suggestions | null>(null)
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
-  const [dim, setDim] = useState(false)
+  // Focus anywhere in the panel (a title bar button, the members list, the options menu) keeps the
+  // chat active, as the input's does: only a click outside lets go of it.
+  const [within, setWithin] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
@@ -680,13 +674,41 @@ export function Chat({
   // "active" = the user is interacting → show the full solid panel + chrome.
   // A profile card opened from the chat keeps it active, so the view under the card stays put.
   const [cardOpen, setCardOpen] = useState(false)
-  const active = open && (hovered || focused || picker || cardOpen || reacting != null)
+  const active = open && (hovered || focused || within || picker || cardOpen || reacting != null)
   const bare = !active // collapsed or idle-open → borderless translucent input only
+  // `within` is where the focus is, read from the document, not kept from focus and blur events: a
+  // focused control that unmounts (the members list's Back, a menu entry that closes its menu, a
+  // rail tab's close, the panel itself going away) fires no blur. Read again whenever the focus or
+  // the pointer does something, once more after the handlers of a click or a key have changed the
+  // tree, and when the view under the focus changes.
+  const syncWithin = useCallback(() => {
+    const at = document.activeElement
+    const root = rootRef.current
+    setWithin(at != null && at !== document.body && ((root?.contains(at) ?? false) || at.closest(`[${MENU_LAYER}]`) != null))
+  }, [])
+  useEffect(() => {
+    let later: ReturnType<typeof setTimeout> | null = null
+    const check = (): void => {
+      syncWithin()
+      if (later != null) clearTimeout(later)
+      later = setTimeout(() => {
+        later = null
+        syncWithin()
+      }, 0)
+    }
+    const events = ['focusin', 'pointerdown', 'click', 'keyup'] as const
+    for (const name of events) document.addEventListener(name, check)
+    return () => {
+      for (const name of events) document.removeEventListener(name, check)
+      if (later != null) clearTimeout(later)
+    }
+  }, [syncWithin])
+  useEffect(syncWithin, [syncWithin, open, hidden, chat.channel, showMembers, picker, cardOpen, reacting])
   useEffect(() => chat.setActive(active), [active, chat.setActive])
   // The DM or community shown, if the channel is one; the rail appears once any tab exists.
   const conversation = chat.channel === 'Nearby' ? null : (chat.conversations.find((c) => c.address === chat.channel) ?? null)
   const community = chat.channel === 'Nearby' ? null : (chat.communities.find((c) => c.key === chat.channel) ?? null)
-  const hasRail = open && (chat.conversations.length > 0 || chat.communities.length > 0)
+  const hasRail = open // Nearby's tab is on the rail even with no other conversation
   // A community's online members as people: its members list, and who @-mentions can name.
   const communityMembers = community?.members
   const communityPeople = useMemo(
@@ -705,15 +727,6 @@ export function Chat({
     if (open) liveFrom.current = lastId + 1
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
-
-  // Idle and unhovered, the messages dim after 10s; a new message or any interaction restores them.
-  const IDLE_DIM_MS = 10_000
-  useEffect(() => {
-    setDim(false)
-    if (!open || active) return
-    const t = setTimeout(() => setDim(true), IDLE_DIM_MS)
-    return () => clearTimeout(t)
-  }, [open, active, lastId])
 
   const rows = useMemo(() => {
     const out: ({ kind: 'day'; ts: number; id: string } | { kind: 'msg'; line: ChatLine })[] = []
@@ -992,9 +1005,8 @@ export function Chat({
     const word = tokenAtCaret(value, caret)
     if (word == null) return setSug(null)
     if (word.kind === 'emoji') {
-      const items = searchByShortcode(word.query, 50)
-      if (items.length > 0) return setSug({ kind: 'emoji', items, start: word.start, end: caret, sel: 0 })
-      return setSug(null)
+      const emoji = emojiSuggestionAt(value, caret)
+      return setSug(emoji == null ? null : { kind: 'emoji', ...emoji })
     }
     const q = word.query.toLowerCase()
     const nearby = new Set(chat.members.map((m) => m.address.toLowerCase()))
@@ -1046,8 +1058,7 @@ export function Chat({
     if (e.nativeEvent.isComposing) return
     if (sug && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       e.preventDefault()
-      const n = sug.items.length
-      setSug({ ...sug, sel: (sug.sel + (e.key === 'ArrowDown' ? 1 : n - 1)) % n })
+      setSug(moveSelection(sug, e.key === 'ArrowDown' ? 1 : -1))
     } else if (sug && (e.key === 'Enter' || e.key === 'Tab')) {
       e.preventDefault()
       accept(sug, sug.sel)
@@ -1098,6 +1109,12 @@ export function Chat({
       onClick={focusFromPanel}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      onFocus={syncWithin}
+      onBlur={(e) => {
+        const to = e.relatedTarget as Element | null
+        if (to != null && (e.currentTarget.contains(to) || to.closest(`[${MENU_LAYER}]`) != null)) return
+        setWithin(false)
+      }}
     >
       <div className={styles.main}>
       {open && conversation != null && (
@@ -1133,7 +1150,6 @@ export function Chat({
             <span className={styles.navTitle}>Nearby</span>
           </div>
           <div className={styles.navRight}>
-            <AutoTranslateButton channel="Nearby" />
             <ControlButton
               variant="faint"
               shape="pill"
@@ -1145,21 +1161,24 @@ export function Chat({
               <MaskIcon src={playersIcon} size={18} />
               {chat.members.length}
             </ControlButton>
-            <ConversationMenu channel="Nearby" />
-            {!hasRail && (
-              <>
-                <span className={styles.navDivider} aria-hidden="true" />
-                <ControlButton variant="dark" aria-label="Close chat" onClick={chat.toggle}>
-                  <MaskIcon src={closeIcon} size={10} />
-                </ControlButton>
-              </>
-            )}
+            <ConversationMenu
+              channel="Nearby"
+              entries={[{
+                label: 'Delete Chat History',
+                danger: true,
+                onClick: () => {
+                  chat.deleteHistory('Nearby')
+                  clearAutoTranslate('Nearby')
+                  clearPingMode('Nearby')
+                }
+              }]}
+            />
           </div>
         </header>
       )}
 
       {open && (
-        <div ref={listRef} className={`${styles.messages} ${dim ? styles.dim : ''}`.trim()} onScroll={() => hoverReaction(null)}>
+        <div ref={listRef} className={styles.messages} onScroll={() => hoverReaction(null)}>
           {rows.map((r) =>
             r.kind === 'day' ? (
               <DaySeparator key={r.id} ts={r.ts} />
@@ -1207,24 +1226,12 @@ export function Chat({
         </div>
       )}
 
-      {active && sug && (
-        <div className={`${styles.suggest} ${sug.kind === 'emoji' ? styles.suggestEmoji : styles.suggestPeople}`}>
+      {active && sug?.kind === 'emoji' && <EmojiSuggestList className={styles.suggestAt} suggestion={sug} onAccept={(i) => accept(sug, i)} />}
+
+      {active && sug?.kind === 'mention' && (
+        <div className={`${styles.suggest} ${styles.suggestAt} ${styles.suggestPeople}`}>
           <ul className={styles.suggestList} role="listbox">
-            {sug.kind === 'emoji'
-              ? sug.items.map((e, i) => (
-                  <li key={e.code} role="option" aria-selected={i === sug.sel}>
-                    <button
-                      type="button"
-                      className={`${styles.suggestItem} ${i === sug.sel ? styles.suggestActive : ''}`.trim()}
-                      onMouseDown={(ev) => ev.preventDefault()}
-                      onClick={() => accept(sug, i)}
-                    >
-                      <span className={styles.suggestGlyph}>{e.emoji}</span>
-                      <span className={styles.suggestName}>{e.expression}</span>
-                    </button>
-                  </li>
-                ))
-              : sug.items.map((m, i) => (
+            {sug.items.map((m, i) => (
                   <li key={m.address} role="option" aria-selected={i === sug.sel}>
                     <button
                       type="button"
@@ -1285,14 +1292,7 @@ export function Chat({
         )}
         {focused && draft.length > 0 && <CharRing len={draft.length} />}
         {!bare && blockedState == null && (
-          <button
-            type="button"
-            className={`${styles.emojiBtn} ${picker ? styles.emojiOn : ''}`.trim()}
-            aria-label="Emoji"
-            aria-pressed={picker}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={toggleEmoji}
-          />
+          <EmojiButton className={styles.emojiBtn} open={picker} onToggle={toggleEmoji} />
         )}
       </form>
 
@@ -1312,6 +1312,21 @@ export function Chat({
       )}
       </div>
       {hasRail && <ConversationRail chat={chat} onClose={chat.toggle} />}
+      {blockedState == null && (
+        <button
+          type="button"
+          className={styles.heart}
+          aria-label="Heart"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            openIfClosed()
+            insertAtCaret('\u2764\uFE0F')
+            inputRef.current?.focus()
+          }}
+        >
+          <HeartIcon />
+        </button>
+      )}
       {open && pillTip != null && <PillTip label={pillTip.label} top={pillTip.top} center={pillTip.center} />}
       {open && reactingLine != null && reacting != null && !reactPicker && (
         <div ref={reactRef} className={styles.reactionLayer}>

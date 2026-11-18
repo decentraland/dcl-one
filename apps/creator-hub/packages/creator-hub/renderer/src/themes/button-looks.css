@@ -1,0 +1,104 @@
+/*
+ * The Creator Hub button looks, on the ui3 Button. A button takes `hub-button`, one colour class
+ * (`hub-button--primary`, `--secondary`, `--info` or `--inherit`) and, for the outlined look,
+ * `hub-button--outlined`. A split button (`SplitButton`) pairs two of them.
+ */
+
+/* Two hub-button classes on the disabled selector: over the disabled rule of the text and outline looks. */
+.hub-button.btn,
+.hub-button.hub-button.btn:disabled {
+  min-width: 64px;
+  padding: 5px 20px;
+  color: var(--white);
+  font-weight: 400;
+}
+
+.hub-button + .hub-button,
+.hub-button + .SplitButton,
+.SplitButton + .hub-button,
+.SplitButton + .SplitButton {
+  margin-left: 10px;
+}
+
+.hub-button.btn svg,
+.hub-button.btn svg path {
+  color: white;
+  fill: white;
+}
+
+.hub-button.btn.btn--lg.btn--primary.hub-button--primary {
+  padding: 8px 22px;
+  font-weight: 600;
+}
+
+/* Color primary */
+.hub-button.btn.hub-button--primary {
+  background-color: var(--dcl) !important;
+}
+
+.hub-button.btn.hub-button--primary:hover:not(:disabled) {
+  background-color: var(--primary-hover) !important;
+}
+
+/* Color secondary */
+.hub-button.btn.hub-button--secondary {
+  background-color: var(--dark-gray) !important;
+}
+
+.hub-button.btn.hub-button--secondary:hover:not(:disabled) {
+  background-color: var(--darker-gray) !important;
+}
+
+.hub-button.btn.hub-button--primary:disabled,
+.hub-button.btn.hub-button--secondary:disabled {
+  opacity: 0.2 !important;
+  cursor: not-allowed !important;
+}
+
+/* Color info */
+.hub-button.btn.hub-button--info {
+  background-color: initial;
+  border: 1px solid var(--white);
+  padding: 2px 10px;
+}
+
+.hub-button.btn.hub-button--info:hover:not(:disabled) {
+  background-color: var(--light-gray);
+}
+
+/* The outline is an inset shadow, so the padding takes the 1px a border had. */
+.hub-button.btn.hub-button--outlined {
+  padding: 6px 21px;
+  background-color: transparent !important;
+}
+
+/* Split button: the main button and its menu button meet with square inner corners. */
+.SplitButton {
+  display: inline-flex;
+  border-radius: var(--ctl-radius);
+}
+
+.SplitButton .hub-button.btn {
+  min-width: 40px;
+}
+
+.SplitButton .hub-button.btn:not(.SplitButton-menu) {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right: 1px solid var(--dcl-hover);
+}
+
+.SplitButton .hub-button.btn.hub-button--secondary:not(.SplitButton-menu) {
+  border-right-color: var(--light-gray);
+}
+
+.hub-button.SplitButton-menu {
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  margin-left: 0 !important;
+  border-right: none !important;
+}
+
+.hub-button.btn:disabled {
+  opacity: 0.2;
+}

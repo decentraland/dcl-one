@@ -6,28 +6,36 @@ use serde_json::{json, Value};
 use super::{BevyVariants, ManifestState};
 use crate::IpfsResource;
 
-pub(super) fn register(app: &mut App) {
-    app.add_console_command::<BevyVariantsCommand, _>(bevy_variants_state)
-        .add_debug_section(DebugSection {
-            title: "Optimized variants",
-            query: "/bevy_variants",
-            fields: &[
-                ("Variants base url", "base"),
-                ("State", "state"),
-                ("Formats taken", "formats"),
-                (
-                    "Scene manifests (loaded / none / failed / not eligible / pending)",
-                    "manifestCounts",
-                ),
-                ("Scene manifests", "manifests"),
-                ("Variants served (downloaded / from cache)", "served"),
-                ("Variants served by format", "servedByFormat"),
-                ("Fallbacks to the original", "fallbacks"),
-                ("Recent fallbacks", "recentFallbacks"),
-            ],
-            actions: &[],
-            inputs: &[],
-        });
+pub(super) struct BevyVariantsDebugPanelPlugin;
+
+impl Plugin for BevyVariantsDebugPanelPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_console_command::<BevyVariantsCommand, _>(bevy_variants_state)
+            .add_debug_section(DebugSection {
+                title: "Optimized variants",
+                query: "/bevy_variants",
+                fields: &[
+                    ("Variants base url", "base"),
+                    ("State", "state"),
+                    ("Formats taken", "formats"),
+                    (
+                        "Scene manifests (loaded / none / failed / not eligible / pending)",
+                        "manifestCounts",
+                    ),
+                    ("Scene manifests", "manifests"),
+                    ("Variants served (downloaded / from cache)", "served"),
+                    ("Variants served by format", "servedByFormat"),
+                    ("Fallbacks to the original", "fallbacks"),
+                    (
+                        "Fallbacks from a chosen variant, by format",
+                        "fallbacksByFormat",
+                    ),
+                    ("Recent fallbacks", "recentFallbacks"),
+                ],
+                actions: &[],
+                inputs: &[],
+            });
+    }
 }
 
 /// The abgen Bevy variants client: base url, per-scene manifests, variants served, fallbacks.
@@ -114,11 +122,20 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
                 .join("\n")
         }),
         "fallbacks": session.fallbacks,
+        "fallbacksByFormat": (!session.fallbacks_by_format.is_empty()).then(|| {
+            session
+                .fallbacks_by_format
+                .iter()
+                .map(|(format, count)| format!("{format}: {count}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }),
         "recentFallbacks": (!recent.is_empty()).then(|| recent.join("\n")),
         "unavailable": {
             "base": "Off: --bevy-variants-url, ?bevyVariants= or bevy_variants_url in the config is `off`.",
             "manifests": "No scene has asked for a manifest yet.",
             "servedByFormat": "No variant has been served.",
+            "fallbacksByFormat": "No chosen variant has fallen back.",
             "recentFallbacks": "No file has fallen back to its original.",
         },
     })

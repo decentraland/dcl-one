@@ -13,7 +13,9 @@ use bevy::tasks::IoTaskPool;
 use bevy::{app::ScheduleRunnerPlugin, log::LogPlugin, prelude::*};
 use clap::Parser;
 use common::{
-    structs::{AppConfig, AppError, IVec2Arg, PreviewMode, SceneLoadDistance},
+    structs::{
+        AppConfig, AppError, IVec2Arg, PreviewMode, SceneLoadDistance, StartupScene, StartupScenes,
+    },
     util::{TaskCompat, TaskExt},
 };
 use comms::{
@@ -26,11 +28,13 @@ use comms::{
 use dcl_deno_ipc::init_runtime;
 use dcl_types::SceneLogMessage;
 use ipfs::{map_realm_name, IpfsAssetServer};
+use restricted_actions::process_startup_scenes;
 use scene_runner::{
     initialize_scene::{PortableScenes, PortableSource, SceneHash, SceneLoading},
     renderer_context::RendererSceneContext,
 };
 use system_api_types::launch_options::{help_heading::HEADLESS, LaunchOptions};
+use user_input::avatar_movement::AvatarMovementPlugin;
 use wallet::{
     delegation::{StorageDelegation, StorageDelegations},
     sign_request, Wallet,
@@ -182,6 +186,9 @@ fn parse_args() -> Args {
         usage_error(
             "--automation-token and --automation-port are for a client run: --server-mode takes no console server",
         );
+    }
+    if args.server_mode && args.launch.portables.is_some() {
+        usage_error("--portables is for a client run: --server-mode runs no startup scenes");
     }
     args
 }
@@ -411,6 +418,24 @@ fn main() -> AppExit {
         if let Some(server) = args.automation.server() {
             app.add_plugins(server);
         }
+        // a client walks like the desktop one: the startup portables (the movement scene by
+        // default) drive the player through the scene movement controller
+        app.add_plugins(AvatarMovementPlugin)
+            .insert_resource(StartupScenes {
+                scenes: args
+                    .launch
+                    .portable_sources()
+                    .map(|source| StartupScene {
+                        source: source.to_owned(),
+                        super_user: false,
+                        preview: false,
+                        hot_reload: None,
+                        hash: None,
+                        failed: false,
+                    })
+                    .collect(),
+            })
+            .add_systems(Update, process_startup_scenes);
     }
     if args.orchestrated {
         // never load by player position — scenes come ONLY from the control channel
@@ -661,25 +686,25 @@ fn reap_scene_contexts(
     live: Query<&RendererSceneContext>,
     loading: Query<&SceneHash, With<SceneLoading>>,
 ) {
-    crdt_contexts.0.retain(|hash, context| {
+    let present: std::collections::HashSet<&str> = live
+        .iter()
+        .map(|ctx| &*ctx.hash)
+        .chain(loading.iter().map(|SceneHash(hash)| hash.as_str()))
+        .collect();
+    let reaped = comms::global_crdt::CrdtContexts::reap(&mut crdt_contexts, |hash| {
         if hash.is_empty() {
             // the shared context
             return true;
         }
         // a wanted scene keeps its context even while unqueued (a mint in flight, a room still
         // being re-dialled): its room points at it and the scene reloads into it
-        if portables.contains_key(hash)
-            || orch.wanted.contains_key(hash)
-            || live.iter().any(|ctx| *ctx.hash == **hash)
-            || loading.iter().any(|loading_hash| &loading_hash.0 == hash)
-        {
-            return true;
-        }
-        if let Ok(mut c) = commands.get_entity(*context) {
+        portables.contains_key(hash) || orch.wanted.contains_key(hash) || present.contains(hash)
+    });
+    for context in reaped {
+        if let Ok(mut c) = commands.get_entity(context) {
             c.despawn();
         }
-        false
-    });
+    }
 }
 
 /// The adapter a scene room was dialled with.
@@ -1013,11 +1038,16 @@ fn reconcile_scene_rooms(
             }
         }
     }
-    orch.removed.retain(|scene_id| {
-        rooms.iter().any(|(_, room, ..)| room.0 == *scene_id)
-            || live.iter().any(|ctx| &*ctx.hash == scene_id.as_str())
-            || loading.iter().any(|SceneHash(hash)| hash == scene_id)
-    });
+    if !orch.removed.is_empty() {
+        let present: std::collections::HashSet<&str> = rooms
+            .iter()
+            .map(|(_, room, ..)| room.0.as_str())
+            .chain(live.iter().map(|ctx| &*ctx.hash))
+            .chain(loading.iter().map(|SceneHash(hash)| hash.as_str()))
+            .collect();
+        orch.removed
+            .retain(|scene_id| present.contains(scene_id.as_str()));
+    }
     let OrchestratedScenes { wanted, removed } = &mut *orch;
     for (scene_id, wanted) in wanted.iter_mut() {
         if removed.contains(scene_id) {

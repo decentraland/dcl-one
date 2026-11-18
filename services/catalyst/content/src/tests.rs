@@ -271,11 +271,13 @@ async fn edge_case_fixtures_replay_exactly() {
     // The write fixture is a node that takes deploys (upstream outside `READ_ONLY`).
     node.state.attach_writes(
         true,
-        std::sync::Arc::new(super::write_deployer::WriteDeployer::with_optional_eip1654(
-            node.state.pool.clone(),
-            node.state.storage.clone(),
-            None,
-        )),
+        std::sync::Arc::new(
+            super::write_deployer::WriteDeployer::with_partial_validation_for_tests(
+                node.state.pool.clone(),
+                node.state.storage.clone(),
+                None,
+            ),
+        ),
     );
 
     let mut failures = Vec::new();
@@ -512,8 +514,7 @@ async fn about_carries_the_comms_block_and_its_health_gates_the_realm() {
             "protocol": "v3",
             "commitHash": "abc",
             "usersCount": 4,
-            "adapter": "fixed-adapter:archipelago:wss://realm.example/ws",
-            "fixedAdapter": "archipelago:wss://realm.example/ws"
+            "adapter": "archipelago:archipelago:wss://realm.example/ws"
         })
     );
     assert_eq!(body["acceptingUsers"], true);

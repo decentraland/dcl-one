@@ -5,7 +5,7 @@ import { act, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Sidebar } from '@hud/features/sidebar/Sidebar'
 import { renderSettled, fakeSession } from '@hud/test/harness'
-import { PopupHost } from '@hud/design/popups'
+import { DebugPanelHost } from '@hud/features/debug/DebugPanel'
 import { requestDebugPanel } from '@hud/features/debug/useDebugPanel'
 import * as boot from '../lib/bootMode'
 
@@ -13,13 +13,15 @@ import * as boot from '../lib/bootMode'
 afterEach(() => vi.restoreAllMocks())
 
 describe('Sidebar on react-web', () => {
-  it('Shop opens the shop with the web client utm source, between Backpack and Camera', async () => {
+  it('Shop opens the shop with the web client utm source, between Discover and System, and opens no panel', async () => {
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
     await renderSettled(<Sidebar session={fakeSession()} />)
     const labels = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))
-    expect(labels.slice(labels.indexOf('Backpack'), labels.indexOf('Camera') + 1)).toEqual(['Backpack', 'Shop', 'Camera'])
+    expect(labels.slice(labels.indexOf('Discover'), labels.indexOf('System') + 1)).toEqual(['Discover', 'Shop', 'System'])
     await userEvent.click(screen.getByRole('button', { name: 'Shop' }))
     expect(open).toHaveBeenCalledWith('https://decentraland.org/shop?utm_source=bevy-web-client', '_blank', 'noopener')
+    expect(screen.queryByRole('dialog', { name: 'Shop' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Shop' })).toHaveAttribute('aria-pressed', 'false')
   })
 
 })
@@ -29,7 +31,7 @@ it.each([true, false])('routes the Session support action through the host that 
   const open = vi.spyOn(window, 'open').mockReturnValue(null)
   const session = fakeSession()
   session.runDebugCommand = vi.fn(async (line) => line === '/debug_panel' ? '[]' : 'false')
-  await renderSettled(<><Sidebar session={session} /><PopupHost /></>)
+  await renderSettled(<><Sidebar session={session} /><DebugPanelHost session={session} /></>)
   act(() => requestDebugPanel('Session', vi.fn()))
   const panel = within(await screen.findByRole('dialog', { name: 'Debug panel' }))
   await userEvent.click(await panel.findByRole('button', { name: 'Report a bug' }))

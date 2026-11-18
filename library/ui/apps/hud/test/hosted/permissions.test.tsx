@@ -291,6 +291,21 @@ describe('triggered uses + badge', () => {
     act(() => h.session().chat.send('/reload'))
     expect(h.session().permissions.triggered).toHaveLength(0)
   })
+
+  it("is cleared, with the visit answers, by the minimap's Reload Scene as by /reload", async () => {
+    const h = renderSession()
+    await enter(h)
+    h.driver.emit(USED)
+    h.driver.emit(REQ)
+    act(() => h.session().permissions.resolve(7, true, 'visit'))
+    h.driver.emit(SCENE_INFO)
+    expect(h.session().permissions.triggered).toHaveLength(1)
+    expect(h.session().permissions.visit).toHaveLength(1)
+    act(() => h.session().minimap.reloadScene())
+    expect(h.session().permissions.triggered).toHaveLength(0)
+    expect(h.session().permissions.visit).toHaveLength(0)
+    expect(h.driver.sent).toContainEqual({ kind: 'reloadScene' })
+  })
 })
 
 describe('badge after the list was opened', () => {

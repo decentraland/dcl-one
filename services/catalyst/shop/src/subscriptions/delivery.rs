@@ -26,7 +26,7 @@ use chrono::NaiveDateTime;
 use serde_json::json;
 use sqlx::PgPool;
 
-use crate::social::notifications::email::{EmailSender, SendFailure};
+use crate::shared::notifications::SendFailure;
 
 pub const BATCH: i64 = 100;
 pub const MAX_ATTEMPTS: i32 = 5;
@@ -49,28 +49,24 @@ pub struct OnSaleItem {
     pub item_name: Option<String>,
 }
 
-/// What the deliveries worker sends with. The production one is the
-/// notifications module's SendGrid sender; tests plug a recorder in.
+/// What the deliveries worker sends with. `serve` plugs in the notifications
+/// module's SendGrid sender, which supplies [`send_html`](Self::send_html);
+/// tests plug a recorder in.
 #[async_trait::async_trait]
 pub trait AvailabilityMailer: Send + Sync {
     fn is_configured(&self) -> bool;
-    /// Sends the "your item is available again" email; the provider's message id when it gives one.
-    async fn send_item_available(
+
+    /// Sends one rendered email; the provider's message id when it gives one.
+    async fn send_html(
         &self,
         to: &str,
-        item_name: Option<&str>,
-        item_url: &str,
-        unsubscribe_url: &str,
-        outbox_id: i64,
+        subject: &str,
+        html: &str,
+        text: &str,
+        custom_args: &serde_json::Value,
     ) -> Result<Option<String>, SendFailure>;
-}
 
-#[async_trait::async_trait]
-impl AvailabilityMailer for EmailSender {
-    fn is_configured(&self) -> bool {
-        self.html_configured()
-    }
-
+    /// Sends the "your item is available again" email; the provider's message id when it gives one.
     async fn send_item_available(
         &self,
         to: &str,
@@ -112,6 +108,8 @@ pub fn escape_html(value: &str) -> String {
     out
 }
 
+pub const ITEM_AVAILABLE_SUBJECT: &str = "An item you asked about is available again";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedEmail {
     pub subject: String,
@@ -121,13 +119,14 @@ pub struct RenderedEmail {
 
 /// The "your item is available again" email: web2 copy only (no wallets,
 /// chains or MANA), inline styles, one call to action deep-linking the item,
-/// every interpolated value HTML-escaped; the subject and text are plain.
+/// every interpolated value HTML-escaped; the subject is fixed text (the item
+/// name is the creator's) and the text is plain.
 pub fn render_item_available_email(
     item_name: &str,
     item_url: &str,
     unsubscribe_url: Option<&str>,
 ) -> RenderedEmail {
-    let subject = format!("{item_name} is available again");
+    let subject = ITEM_AVAILABLE_SUBJECT.to_string();
     let mut text = format!(
         "Good news — {item_name} is available again in the Decentraland shop.\n\nView it here: {item_url}\n\nYou are receiving this because you asked to be notified when it came back. There is nothing else you need to do."
     );

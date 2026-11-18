@@ -1,9 +1,8 @@
 // Writes `assistant-manifest.json` for a Creator Hub release: the system prompt, the tools and
 // the skills denylist this build gives the AI assistant, with the same hashes the app puts in
-// every shared turn (Assistant Insights matches them). Run through vite-node, so it reads the
-// sources with the main process's aliases:
-//   npx vite-node --config scripts/assistant-manifest/vite.config.js \
-//     scripts/assistant-manifest/index.ts -- <out.json> <app version> <dcl-one commit>
+// every shared turn (Assistant Insights matches them). Run through Vite (run.mjs), so it reads
+// the sources with the main process's aliases:
+//   node scripts/assistant-manifest/run.mjs <out.json> <app version> <dcl-one commit>
 import fs from 'fs';
 
 import { buildAssistantManifest } from '../../main/src/modules/ai-sharing/manifest';

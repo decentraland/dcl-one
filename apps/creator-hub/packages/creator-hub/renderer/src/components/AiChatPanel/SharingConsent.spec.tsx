@@ -1,11 +1,10 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import type { AiSharingView } from '/shared/types/ai';
 
 import { en } from '/@/modules/store/translation/locales';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
 import { SharingConsentCard, SharingStatusChip, TurnRating } from './SharingConsent';
@@ -19,7 +18,7 @@ function renderBoth(sharing: AiSharingView) {
     onSetConversationShared: vi.fn(),
   };
   render(
-    <ThemeProvider theme={dark}>
+    <>
       <SharingStatusChip
         sharing={sharing}
         {...handlers}
@@ -28,7 +27,7 @@ function renderBoth(sharing: AiSharingView) {
         sharing={sharing}
         {...handlers}
       />
-    </ThemeProvider>,
+    </>,
   );
   return handlers;
 }
@@ -183,14 +182,14 @@ describe('when rating a shared reply', () => {
   function renderRating(props: Partial<Parameters<typeof TurnRating>[0]> = {}) {
     const onRate = vi.fn();
     render(
-      <ThemeProvider theme={dark}>
+      <>
         <TurnRating
           sharing={on}
           recordId="r1"
           onRate={onRate}
           {...props}
         />
-      </ThemeProvider>,
+      </>,
     );
     return onRate;
   }

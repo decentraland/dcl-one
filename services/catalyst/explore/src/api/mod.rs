@@ -1,6 +1,6 @@
 //! The explorer-api surface unity-explorer hits at boot, served in-process:
 //! the realm-provider about doc over this node's own sync status
-//! ([`realm_provider`]), the uncached asset-bundle registry gateway
+//! ([`realm_provider`]), the asset-bundle Registry gateway
 //! ([`registry`]), and four mirrors with a local overlay and a
 //! persisted pass marker: dcl-lists ([`lists`]), the config denylist
 //! ([`denylist`]), the feature flags ([`feature_flags`]) and the
@@ -43,11 +43,11 @@ pub mod world_manifest;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::get;
 use anyhow::Context as _;
 use axum::Router;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use serde_json::json;
 use sqlx::PgPool;
 use tower_http::cors::CorsLayer;
@@ -67,7 +67,7 @@ pub struct Sources {
     pub denylist: String,
     /// The feature-flags document itself (`.../explorer.json`).
     pub feature_flags: String,
-    /// Registry reads without a cache (see [`registry`]): a loopback URL is the
+    /// Uncached Registry source reads (see [`registry`]): a loopback URL is the
     /// local abgen runtime, any other a public Registry; empty serves `200 []`
     /// to the boot reads.
     pub registry: String,
@@ -203,6 +203,8 @@ pub struct Settings {
     pub opensea: opensea::Settings,
     /// `ONBOARDING_API_KEY`: the bearer of `/onboarding/*`; unset, both routes answer 401.
     pub onboarding_api_key: Option<String>,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`: peers whose `X-Real-IP` names the client.
+    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
 }
 
 impl Settings {
@@ -315,6 +317,7 @@ impl Settings {
                 .onboarding_api_key
                 .clone()
                 .filter(|k| !k.trim().is_empty()),
+            trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
         }
     }
 
@@ -355,6 +358,7 @@ impl Settings {
                 ..opensea::Settings::defaults()
             },
             onboarding_api_key: None,
+            trusted_proxy_cidrs: Vec::new(),
         }
     }
 
@@ -478,20 +482,22 @@ pub struct State {
     pub content: Arc<ContentState>,
     /// Shared with social's referral checks, which read it in place.
     pub denylist: Arc<denylist::Snapshot>,
-    pub flags: feature_flags::Snapshot,
+    /// Shared with social, which marks official posts from it (`communities::features`).
+    pub flags: Arc<feature_flags::Snapshot>,
     pub map: map::MapState,
     pub ab_cdn: ab_cdn::Cache,
     pub satellite: satellite::SatelliteState,
     pub world_manifest: world_manifest::WorldManifestState,
     pub posters: posters::PosterState,
     pub opensea: opensea::Runtime,
-    /// The `/auth-api` sign-in relay's requests and identities (process state).
-    pub auth_api: auth_api::AuthApiState,
     /// The operator's runtime key/value map (process state).
     pub runtime_config: runtime_config::RuntimeConfigState,
-    /// The onboarding checkpoints (process state), shared with the Segment
-    /// webhooks that forward them (`social::segment_webhooks`).
+    /// The onboarding checkpoints (`explore_api.onboarding_checkpoints` over
+    /// this pool), shared with the Segment webhooks that forward them
+    /// (`social::segment_webhooks`).
     pub onboarding: Arc<onboarding::OnboardingState>,
+    /// `GET /asset-bundle-registry/denylist`'s read of `content.denylist`.
+    pub registry_denylist: registry::LocalDenylist,
     /// The ONE EIP-1654 validator, attached after construction (`attach_eip1654`).
     pub eip1654: std::sync::OnceLock<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
 }
@@ -517,22 +523,25 @@ impl State {
             settings.ab_cdn_cache_dir.clone(),
             settings.ab_cdn_cache_max_bytes,
         )?;
+        let onboarding = Arc::new(onboarding::OnboardingState::new(pool.clone()));
         let state = Arc::new(Self {
             settings,
             pool,
             http,
             content,
             denylist: Arc::default(),
-            flags: feature_flags::Snapshot::default(),
+            flags: Arc::new(feature_flags::Snapshot::from_document(
+                feature_flags::embedded_document(),
+            )),
             map: map::MapState::new(),
             ab_cdn,
             satellite: satellite::SatelliteState::new(settings_budget.0, settings_budget.1),
             world_manifest: world_manifest::WorldManifestState::default(),
             posters: posters::PosterState::default(),
             opensea: opensea::Runtime::default(),
-            auth_api: auth_api::AuthApiState::default(),
             runtime_config: runtime_config::RuntimeConfigState::default(),
-            onboarding: Arc::default(),
+            onboarding,
+            registry_denylist: Default::default(),
             eip1654: std::sync::OnceLock::new(),
         });
         state
@@ -540,9 +549,7 @@ impl State {
             .reload(&state.pool)
             .await
             .context("loading the mirrored denylist")?;
-        state
-            .flags
-            .reload(&state.pool, &app)
+        feature_flags::reload(&state.flags, &state.pool, &app)
             .await
             .context("loading the mirrored feature flags")?;
         state
@@ -790,12 +797,11 @@ pub(crate) fn json_error(status: StatusCode, message: impl Into<String>) -> Resp
     (status, axum::Json(json!({ "error": message.into() }))).into_response()
 }
 
+/// A 500 whose body names only `context`, a fixed text: `err` (a database or
+/// pool error, say) goes to the log, never to the caller.
 pub(crate) fn internal_error(context: &str, err: impl std::fmt::Display) -> Response {
     tracing::error!(%err, "{context}");
-    json_error(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        format!("{context}: {err}"),
-    )
+    json_error(StatusCode::INTERNAL_SERVER_ERROR, context)
 }
 
 #[cfg(test)]
@@ -805,4 +811,15 @@ pub(crate) mod tests_support {
         super::tests::node_without_db_state(super::Settings::for_tests(super::Sources::defaults()))
             .await
     }
+
+    /// A state over `pool` (the auth-api DB tests; one per replica).
+    pub async fn state_on_pool(pool: sqlx::PgPool) -> super::Shared {
+        super::tests::node_on_pool_state(
+            super::Settings::for_tests(super::Sources::defaults()),
+            pool,
+        )
+        .await
+    }
+
+    pub(crate) use super::tests::{ScratchDb, scratch_database};
 }

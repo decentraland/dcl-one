@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { releaseHarness } from './release-harness'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { findBrowser, openSession } from '../figma/review/scripts/capture-browser.mjs'
 
 let server: Server
@@ -32,7 +32,7 @@ async function resolveWash(token: string): Promise<string> {
   )
 }
 
-async function click(selector: string) {
+async function click(selector: string, waitForEntry = true) {
   const point = await evaluate<{ x: number; y: number }>(`(() => {
     const element = document.querySelector(${JSON.stringify(selector)});
     const rect = element.getBoundingClientRect();
@@ -53,17 +53,43 @@ async function click(selector: string) {
   await evaluate(
     'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
   )
+  if (waitForEntry)
+    await evaluate(
+      `Promise.all(Array.from(document.querySelectorAll('[data-testid=navbar-panel]')).flatMap(panel=>panel.getAnimations().map(animation=>animation.finished.catch(()=>{}))))`
+    )
 }
 
-async function key(value: 'Tab' | 'Escape', shift = false) {
+async function waitForExit() {
+  await evaluate(
+    `Promise.all(Array.from(document.querySelectorAll('[data-exiting]')).flatMap(panel=>panel.getAnimations().map(animation=>animation.finished.catch(()=>{}))))`
+  )
+  await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+}
+
+async function touch(selector: string, waitForClosing = true) {
+  const point = await evaluate<{ x: number; y: number }>(
+    `(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`
+  )
+  await session.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ ...point, radiusX: 1, radiusY: 1, force: 1, id: 1 }]
+  })
+  await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+  if (waitForClosing) await waitForExit()
+}
+
+async function key(value: 'Tab' | 'Escape' | 'Enter', shift = false, waitForClosing = true) {
   for (const type of ['keyDown', 'keyUp'])
     await session.send('Input.dispatchKeyEvent', {
       type,
       key: value,
       code: value,
-      windowsVirtualKeyCode: value === 'Tab' ? 9 : 27,
+      text: value === 'Enter' && type === 'keyDown' ? '\r' : undefined,
+      windowsVirtualKeyCode: value === 'Tab' ? 9 : value === 'Enter' ? 13 : 27,
       modifiers: type === 'keyDown' && shift ? 8 : 0
     })
+  if (value === 'Escape' && waitForClosing) await waitForExit()
 }
 
 beforeAll(() => {
@@ -142,6 +168,14 @@ async function prepareHarness() {
   session = await startup
 }
 
+afterEach(async () => {
+  if (session) {
+    await session.send('Emulation.setTouchEmulationEnabled', { enabled: false })
+    await session.send('Emulation.setEmulatedMedia', { features: [] })
+    await session.send('Animation.setPlaybackRate', { playbackRate: 1 })
+  }
+})
+
 afterAll(async () => {
   startupController.abort(new Error('NavBar composition fixture disposed'))
   await preparation?.catch(() => undefined)
@@ -198,12 +232,7 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
       expect(await evaluate("document.querySelector('[role=status]').textContent")).toBe(
         'Connections: 1'
       )
-      await session.send('Input.dispatchKeyEvent', {
-        type: 'keyDown',
-        key: 'Escape',
-        code: 'Escape',
-        windowsVirtualKeyCode: 27
-      })
+      await key('Escape')
       expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(true)
       expect(
         await evaluate('document.querySelector("#account-control").getAttribute("aria-expanded")')
@@ -220,13 +249,10 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
         code: 'Tab',
         windowsVirtualKeyCode: 9
       })
-      expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Close menu')
-      await session.send('Input.dispatchKeyEvent', {
-        type: 'keyDown',
-        key: 'Escape',
-        code: 'Escape',
-        windowsVirtualKeyCode: 27
-      })
+      expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
+        'Decentraland home'
+      )
+      await key('Escape')
       expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Open menu')
       expect(await evaluate('document.querySelectorAll("#balance-action").length')).toBe(1)
       await click('button[aria-label="Open menu"]')
@@ -235,15 +261,533 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
       expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Open menu')
     }, 30_000)
   }
-  for (const width of [360, 390, 1440]) {
+  it('should traverse the complete single-header and lower-panel sequence in both directions', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.navigate(origin + '?surface-proof')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('button[aria-label="Open menu"]');n++)await new Promise(r=>setTimeout(r,50))})()`
+    )
+    await click('button[aria-label="Open menu"]')
+    const active = () =>
+      evaluate<string>(
+        `document.activeElement.getAttribute('aria-label') || document.activeElement.textContent.trim()`
+      )
+    expect(await active()).toBe('Close menu')
+    for (const label of [
+      'Discover',
+      'Docs',
+      'Blog',
+      'Photos',
+      'Buy credits',
+      'Connect wallet',
+      'Decentraland home',
+      'Close menu'
+    ]) {
+      await key('Tab')
+      expect(await active()).toBe(label)
+    }
+    for (const label of [
+      'Decentraland home',
+      'Connect wallet',
+      'Buy credits',
+      'Photos',
+      'Blog',
+      'Docs',
+      'Discover',
+      'Close menu'
+    ]) {
+      await key('Tab', true)
+      expect(await active()).toBe(label)
+    }
+    await key('Escape')
+    expect(await active()).toBe('Open menu')
+    expect(await evaluate('document.body.style.overflow')).not.toBe('hidden')
+  }, 30_000)
+
+  it('should keep the original header toggle usable through actual touch activation', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.send('Emulation.setTouchEmulationEnabled', { enabled: true })
+    await session.navigate(origin + '?surface-proof')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('button[aria-label="Open menu"]');n++)await new Promise(r=>setTimeout(r,50))})()`
+    )
+    for (const expected of ['Close menu', 'Open menu']) {
+      await touch(`button[aria-label="${expected === 'Close menu' ? 'Open menu' : 'Close menu'}"]`)
+      expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe(expected)
+      expect(await evaluate(`document.querySelectorAll('nav[aria-label="Main"]').length`)).toBe(1)
+    }
+  }, 30_000)
+
+  it('should preserve the touch sign-in opener through a native portal handoff', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.send('Emulation.setTouchEmulationEnabled', { enabled: true })
+    await session.navigate(origin + '?surface-proof&portal&geometry&signed-out')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('button[aria-label="Open menu"]');n++)await new Promise(r=>setTimeout(r,50))})()`
+    )
+    await touch('button[aria-label="Open menu"]')
+    expect(
+      await evaluate(
+        `Array.from(document.querySelectorAll('[role=dialog] button')).filter(button=>button.textContent==='Sign in').length`
+      )
+    ).toBe(1)
+    await touch('nav[aria-label="Main"] button:not([aria-label]):not([aria-expanded])')
+    expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(false)
+    expect(await evaluate('!!document.querySelector("dialog[open]")')).toBe(true)
+    await key('Escape')
+    expect(await evaluate('document.activeElement.textContent')).toBe('Sign in')
+    expect(await evaluate('!!document.querySelector("dialog")')).toBe(false)
+  }, 30_000)
+
+  it('should scroll long lower-menu content while the real header and page position stay fixed', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.navigate(origin + '?surface-proof&long')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('button[aria-label="Open menu"]');n++)await new Promise(r=>setTimeout(r,50));scrollTo(0,200)})()`
+    )
+    await click('button[aria-label="Open menu"]')
+    expect(
+      await evaluate(
+        `(()=>{const p=document.querySelector('[data-testid=navbar-panel]');return p.scrollHeight>p.clientHeight})()`
+      )
+    ).toBe(true)
+    await evaluate(
+      `document.querySelector('[data-testid=navbar-panel] a[href="#route-39"]').scrollIntoView({block:'center'})`
+    )
+    expect(
+      await evaluate(
+        `(()=>{const p=document.querySelector('[data-testid=navbar-panel]');return {scroll:p.scrollTop>0,page:scrollY,header:document.querySelector('nav[aria-label="Main"]').getBoundingClientRect().bottom,locked:document.body.style.overflow}})()`
+      )
+    ).toEqual({ scroll: true, page: 200, header: 64, locked: 'hidden' })
+    await click('[data-testid=navbar-panel] a[href="#route-39"]')
+    expect(await evaluate('location.hash')).toBe('#route-39')
+    expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(false)
+    expect(await evaluate('document.body.style.overflow')).not.toBe('hidden')
+  }, 30_000)
+
+  for (const mode of ['keyboard', 'pointer']) {
+    it(`should retain modal ownership for ${mode} interaction above an offset header`, async () => {
+      await session.send('Emulation.setDeviceMetricsOverride', {
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: true
+      })
+      await session.navigate(origin + '?surface-proof&offset')
+      await evaluate(
+        `(async()=>{for(let n=0;n<100&&!document.querySelector('#page-outside');n++)await new Promise(r=>setTimeout(r,50));const b=document.querySelector('#page-outside');b.style.cssText='position:fixed;top:0;left:0;height:20px;z-index:5';window.outsideClicks=0;b.addEventListener('click',()=>outsideClicks++)})()`
+      )
+      await click('button[aria-label="Open menu"]')
+      if (mode === 'keyboard') {
+        await evaluate(`document.querySelector('#page-outside').focus()`)
+        await key('Escape')
+      } else {
+        await click('#page-outside')
+        expect(await evaluate('outsideClicks')).toBe(0)
+      }
+      expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(false)
+      expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Open menu')
+    }, 30_000)
+  }
+
+  it('should preserve caller sticky positioning on the outer mobile navigation root', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.navigate(origin + '?class-sticky')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('.caller-sticky');n++)await new Promise(r=>setTimeout(r,50));const style=document.createElement('style');style.textContent='.caller-sticky{position:sticky;top:24px;z-index:10}main{min-height:2200px}';document.head.append(style);scrollTo(0,200);await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))})()`
+    )
+    expect(
+      await evaluate(`document.querySelector('nav[aria-label="Main"]').getBoundingClientRect().top`)
+    ).toBe(24)
+    await click('button[aria-label="Open menu"]')
+    expect(
+      await evaluate(`document.querySelector('[role=dialog]').classList.contains('caller-sticky')`)
+    ).toBe(true)
+    expect(
+      await evaluate(
+        `document.querySelector('[data-testid=navbar-panel]').getBoundingClientRect().top`
+      )
+    ).toBe(88)
+    await key('Escape')
+  }, 30_000)
+
+  it('should ignore lower-panel scroll while observing scroll ancestors of the header', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.navigate(origin + '?surface-proof&long')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('button[aria-label="Open menu"]');n++)await new Promise(r=>setTimeout(r,50));await document.fonts.ready})()`
+    )
+    await click('button[aria-label="Open menu"]')
+    await evaluate(
+      `(async()=>{await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));window.measureCalls=0;const h=document.querySelector('nav[aria-label="Main"]'),measure=h.getBoundingClientRect.bind(h);h.getBoundingClientRect=()=>{measureCalls++;return measure()};document.querySelector('[data-testid=navbar-panel]').scrollTop=200;await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))})()`
+    )
+    expect(await evaluate('measureCalls')).toBe(0)
+    await evaluate(
+      `scrollTo(0,200);new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))`
+    )
+    expect(await evaluate('measureCalls')).toBeGreaterThan(0)
+    await key('Escape')
+  }, 30_000)
+
+  for (const width of [360, 390, 768, 1023]) {
+    for (const preference of ['no-preference', 'reduce']) {
+      it(`should reveal the whole lower panel downward with ${preference} motion at ${width}px`, async () => {
+        await session.send('Emulation.setDeviceMetricsOverride', {
+          width,
+          height: 844,
+          deviceScaleFactor: 1,
+          mobile: true
+        })
+        await session.send('Emulation.setTouchEmulationEnabled', { enabled: true })
+        await session.send('Emulation.setEmulatedMedia', {
+          features: [{ name: 'prefers-reduced-motion', value: preference }]
+        })
+        await session.navigate(origin + '?surface-proof&motion')
+        await evaluate(
+          `(async()=>{for(let n=0;n<100&&!document.querySelector('#page-under-motion');n++)await new Promise(r=>setTimeout(r,50))})()`
+        )
+        await click('button[aria-label="Open menu"]', false)
+        const reduced = preference === 'reduce'
+        expect(await evaluate(`matchMedia('(prefers-reduced-motion:reduce)').matches`)).toBe(
+          reduced
+        )
+        expect(
+          await evaluate(
+            `document.querySelector('[data-testid=navbar-panel]').getAnimations().length`
+          )
+        ).toBe(reduced ? 0 : 1)
+        if (!reduced)
+          await evaluate(
+            `(()=>{const a=document.querySelector('[data-testid=navbar-panel]').getAnimations()[0];a.pause();a.currentTime=0;window.entryAnimation=a})()`
+          )
+        const hit = () =>
+          evaluate(
+            `(()=>{const panel=document.querySelector('[data-testid=navbar-panel]'),modal=document.querySelector('[role=dialog]'),top=document.elementFromPoint(200,80),bottom=document.elementFromPoint(200,820),header=document.querySelector('button[aria-label="Close menu"]');return{top:panel.contains(top),bottom:panel.contains(bottom),owned:modal.contains(bottom),header:header.contains(document.elementFromPoint(header.getBoundingClientRect().x+20,32)),locked:document.body.style.overflow==='hidden',focus:modal.contains(document.activeElement),opacity:getComputedStyle(panel).opacity,y:panel.getBoundingClientRect().y,height:panel.getBoundingClientRect().height}})()`
+          )
+        expect(await hit()).toEqual({
+          top: reduced,
+          bottom: reduced,
+          owned: true,
+          header: true,
+          locked: true,
+          focus: true,
+          opacity: '1',
+          y: 64,
+          height: 780
+        })
+        if (!reduced) {
+          await evaluate(`entryAnimation.currentTime=90`)
+          expect(await hit()).toMatchObject({
+            top: true,
+            bottom: false,
+            owned: true,
+            header: true,
+            locked: true,
+            opacity: '1'
+          })
+          await evaluate(`entryAnimation.currentTime=180`)
+          expect(await hit()).toMatchObject({
+            top: true,
+            bottom: true,
+            owned: true,
+            header: true,
+            locked: true
+          })
+          await key('Escape')
+          await click('button[aria-label="Open menu"]', false)
+          await evaluate(
+            `(()=>{const a=document.querySelector('[data-testid=navbar-panel]').getAnimations()[0];a.pause();a.currentTime=90})()`
+          )
+        }
+        await touch('#page-under-motion')
+        expect(await evaluate('location.hash')).not.toBe('#under-motion')
+        if (await evaluate('!!document.querySelector("[role=dialog]")')) await key('Escape')
+        expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
+          'Open menu'
+        )
+        expect(await evaluate('document.body.style.overflow')).not.toBe('hidden')
+      }, 30_000)
+    }
+  }
+
+  it('should immediately expose lower-panel keyboard focus during an unfinished entry', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }]
+    })
+    await session.navigate(origin + '?surface-proof&motion')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('#page-under-motion');n++)await new Promise(r=>setTimeout(r,50))})()`
+    )
+    await click('button[aria-label="Open menu"]', false)
+    await evaluate(
+      `(()=>{const a=document.querySelector('[data-testid=navbar-panel]').getAnimations()[0];a.pause();a.currentTime=0})()`
+    )
+    await key('Tab')
+    expect(await evaluate('document.activeElement.textContent')).toBe('Discover')
+    expect(
+      await evaluate(
+        `(()=>{const p=document.querySelector('[data-testid=navbar-panel]'),a=document.activeElement,r=a.getBoundingClientRect();return {animations:p.getAnimations().length,visible:a.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)),bottom:p.contains(document.elementFromPoint(200,820)),locked:document.body.style.overflow==='hidden',header:document.querySelector('nav[aria-label="Main"]').getBoundingClientRect().bottom}})()`
+      )
+    ).toEqual({ animations: 0, visible: true, bottom: true, locked: true, header: 64 })
+    await key('Tab', true)
+    expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Close menu')
+    expect(
+      await evaluate(`document.querySelector('[data-testid=navbar-panel]').getAnimations().length`)
+    ).toBe(0)
+    await click('[data-testid=navbar-panel] a[href="#blog"]')
+    expect(await evaluate('location.hash')).toBe('#blog')
+    expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Open menu')
+  }, 30_000)
+
+  it('should never restart entry after the reduced-motion preference completes it', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }]
+    })
+    await session.navigate(origin + '?surface-proof&motion')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('#page-under-motion');n++)await new Promise(r=>setTimeout(r,50))})()`
+    )
+    await click('button[aria-label="Open menu"]', false)
+    await evaluate(
+      `(()=>{const a=document.querySelector('[data-testid=navbar-panel]').getAnimations()[0];a.pause();a.currentTime=0})()`
+    )
+    for (const value of ['reduce', 'no-preference']) {
+      await session.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-reduced-motion', value }]
+      })
+      await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+      expect(
+        await evaluate(
+          `(()=>{const p=document.querySelector('[data-testid=navbar-panel]');return {animations:p.getAnimations().length,bottom:p.contains(document.elementFromPoint(200,820))}})()`
+        )
+      ).toEqual({ animations: 0, bottom: true })
+    }
+    await key('Escape')
+  }, 30_000)
+
+  it('should finish its own entry without treating child animations as completion', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }]
+    })
+    await session.navigate(origin + '?surface-proof&motion')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('#page-under-motion');n++)await new Promise(r=>setTimeout(r,50))})()`
+    )
+    await click('button[aria-label="Open menu"]', false)
+    await evaluate(
+      `(()=>{const p=document.querySelector('[data-testid=navbar-panel]'),a=p.getAnimations()[0];a.pause();a.currentTime=0;p.querySelector('#balance-action').dispatchEvent(new AnimationEvent('animationend',{bubbles:true,animationName:'child'}));window.entryAnimation=a})()`
+    )
+    expect(
+      await evaluate(
+        `document.querySelector('[data-testid=navbar-panel]').hasAttribute('data-entry-revealed')`
+      )
+    ).toBe(false)
+    await evaluate(
+      `entryAnimation.finish();new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))`
+    )
+    expect(
+      await evaluate(
+        `(()=>{const p=document.querySelector('[data-testid=navbar-panel]');return {complete:p.hasAttribute('data-entry-revealed'),animations:p.getAnimations().length,bottom:p.contains(document.elementFromPoint(200,820))}})()`
+      )
+    ).toEqual({ complete: true, animations: 0, bottom: true })
+    await key('Escape')
+  }, 30_000)
+
+  it('should include native summary and exclude closed details descendants from the modal cycle', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.navigate(origin + '?surface-proof&details')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('button[aria-label="Open menu"]');n++)await new Promise(r=>setTimeout(r,50))})()`
+    )
+    await click('button[aria-label="Open menu"]')
+    await evaluate(`document.querySelector('a[aria-label="Decentraland home"]').focus()`)
+    await key('Tab', true)
+    expect(await evaluate('document.activeElement.id')).toBe('wallet-summary')
+    await key('Tab')
+    expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
+      'Decentraland home'
+    )
+    await key('Tab', true)
+    await key('Enter')
+    await key('Tab')
+    expect(await evaluate('document.activeElement.id')).toBe('wallet-inside')
+    await key('Tab')
+    expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
+      'Decentraland home'
+    )
+    await key('Escape')
+    expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Open menu')
+  }, 30_000)
+
+  for (const position of ['offset', 'sticky']) {
+    it(`should track the actual ${position} header bottom through scroll and resize`, async () => {
+      await session.send('Emulation.setDeviceMetricsOverride', {
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: true
+      })
+      await session.navigate(origin + '?surface-proof&' + position)
+      await evaluate(
+        `(async()=>{for(let n=0;n<100&&!document.querySelector('button[aria-label="Open menu"]');n++)await new Promise(r=>setTimeout(r,50))})()`
+      )
+      await click('button[aria-label="Open menu"]')
+      const measure = () =>
+        evaluate<{
+          bottom: number
+          top: number
+          height: number
+          viewport: number
+          locked: boolean
+        }>(
+          `(()=>{const h=document.querySelector('nav[aria-label="Main"]').getBoundingClientRect(),p=document.querySelector('[data-testid=navbar-panel]').getBoundingClientRect();return {bottom:h.bottom,top:p.top,height:p.height,viewport:innerHeight,locked:document.body.style.overflow==='hidden'}})()`
+        )
+      let bounds = await measure()
+      expect(bounds.top).toBe(position === 'offset' ? 88 : 144)
+      expect(bounds.top).toBe(bounds.bottom)
+      expect(bounds.height + bounds.top).toBe(bounds.viewport)
+      expect(bounds.locked).toBe(true)
+      await evaluate(
+        `scrollTo(0,200);new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))`
+      )
+      bounds = await measure()
+      expect(bounds.top).toBe(bounds.bottom)
+      expect(bounds.top).toBe(88)
+      await session.send('Emulation.setDeviceMetricsOverride', {
+        width: 768,
+        height: 700,
+        deviceScaleFactor: 1,
+        mobile: true
+      })
+      await evaluate(`new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))`)
+      bounds = await measure()
+      expect(bounds.top).toBe(bounds.bottom)
+      expect(bounds.height + bounds.top).toBe(700)
+      expect(
+        await evaluate(
+          `document.querySelector('[data-testid=navbar-panel]').contains(document.elementFromPoint(767,699))`
+        )
+      ).toBe(true)
+      await key('Escape')
+      expect(await evaluate('document.body.style.overflow')).not.toBe('hidden')
+      expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Open menu')
+    }, 30_000)
+  }
+
+  it('should hand header notification activation to the actual portalled native dialog', async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    })
+    await session.navigate(origin + '?surface-proof&portal&geometry')
+    await evaluate(
+      `(async()=>{for(let n=0;n<100&&!document.querySelector('button[aria-label="Open menu"]');n++)await new Promise(r=>setTimeout(r,50))})()`
+    )
+    await click('button[aria-label="Open menu"]')
+    await click('button[aria-label="Notifications, 1 unread"]')
+    expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(false)
+    expect(await evaluate('!!document.querySelector("dialog[open]")')).toBe(true)
+    expect(
+      await evaluate(
+        `document.querySelectorAll('button[aria-label="Notifications, 1 unread"]').length`
+      )
+    ).toBe(1)
+    // Native dialogs may visit the browser-chrome/body focus boundary between cycles.
+    // Background page controls must remain inert and NavBar must not steal that ownership.
+    for (let index = 0; index < 4; index++) {
+      await key('Tab')
+      expect(
+        await evaluate(
+          `(()=>{const d=document.querySelector('dialog');return {modal:d.matches(':modal'),owned:d.contains(document.activeElement)||document.activeElement===document.body}})()`
+        )
+      ).toEqual({ modal: true, owned: true })
+      expect(
+        await evaluate(
+          `(()=>{const outside=document.querySelector('#page-outside');outside.focus();return document.activeElement===outside})()`
+        )
+      ).toBe(false)
+    }
+    await key('Escape')
+    expect(await evaluate('!!document.querySelector("dialog")')).toBe(false)
+    expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
+      'Notifications, 1 unread'
+    )
+    await click('button[aria-label="Open menu"]')
+    await click('button[aria-label="Account: Ada"]')
+    await evaluate(`document.querySelector('a[href="#profile"]').focus()`)
+    await key('Escape')
+    expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(true)
+    expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Account: Ada')
+    await key('Escape')
+    expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(false)
+    expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Open menu')
+  }, 30_000)
+
+  for (const width of [360, 390, 414, 768, 1023, 1024, 1440]) {
     for (const surface of ['solid', 'overlay']) {
       it(`should preserve the production surface and viewport overlays at ${width}px on ${surface}`, async () => {
         await session.send('Emulation.setDeviceMetricsOverride', {
           width,
           height: 844,
           deviceScaleFactor: 1,
-          mobile: false
+          mobile: width < 1024
         })
+        await session.send('Emulation.setTouchEmulationEnabled', { enabled: width < 1024 })
         const errorStart = session.runtimeErrors.length
         await session.navigate(origin + '?surface-proof&surface=' + surface)
         await evaluate(
@@ -286,27 +830,38 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
           await evaluate("document.documentElement.style.scrollbarGutter = 'auto'")
           await click('button[aria-label="Open menu"]')
           expect(await evaluate('document.documentElement.clientWidth')).toBe(width)
+          if (width === 768 || width === 1023) {
+            expect(
+              await evaluate(
+                `(()=>{const entries=Array.from(document.querySelectorAll('[data-balance]'));return {count:entries.length,lower:entries.every(entry=>!!entry.closest('[data-testid=navbar-panel]'))}})()`
+              )
+            ).toEqual({ count: 2, lower: true })
+          }
           const measure = await evaluate(
-            `(()=>{const d=document.querySelector('[role=dialog]'),layer=d.parentElement,r=d.getBoundingClientRect(),l=layer.getBoundingClientRect();return{dialog:{x:r.x,y:r.y,width:r.width,height:r.height},layer:{x:l.x,y:l.y,width:l.width,height:l.height},background:getComputedStyle(d).backgroundColor,bottomInside:d.contains(document.elementFromPoint(innerWidth-1,innerHeight-1)),bottomBackdrop:document.elementFromPoint(1,innerHeight-1)===layer.firstElementChild}})()`
+            `(()=>{const d=document.querySelector('[data-testid=navbar-panel]'),layer=d.parentElement,r=d.getBoundingClientRect(),l=layer.getBoundingClientRect();return{dialog:{x:r.x,y:r.y,width:r.width,height:r.height},layer:{x:l.x,y:l.y,width:l.width,height:l.height},background:getComputedStyle(d).backgroundColor,filter:getComputedStyle(d).backdropFilter,shadow:getComputedStyle(d).boxShadow,bottomInside:d.contains(document.elementFromPoint(innerWidth-1,innerHeight-1)),bottomBackdrop:document.elementFromPoint(1,innerHeight-1)===layer.firstElementChild}})()`
           )
           expect(measure).toMatchObject({
-            dialog: { x: width - 360, y: 0, width: 360, height: 844 },
-            layer: { x: 0, y: 0, width, height: 844 },
-            bottomInside: true
+            dialog: { x: 0, y: 64, width, height: 780 },
+            layer: { x: 0, y: 64, width, height: 780 },
+            background: await resolveWash('--dcl-bg-surface-overlay'),
+            filter: 'blur(12.5px)',
+            bottomInside: true,
+            bottomBackdrop: false
           })
-          expect((measure as { background: string }).background).toMatch(/^rgb\(/)
-          if (width > 360)
-            expect((measure as { bottomBackdrop: boolean }).bottomBackdrop).toBe(true)
+          expect((measure as { shadow: string }).shadow).toMatch(
+            /^(rgba\(0, 0, 0, 0\.5\)|color\(srgb 0 0 0 \/ 0\.5\)) 0px 4px 16px 0px$/
+          )
+          await evaluate(`document.querySelector('a[aria-label="Decentraland home"]').focus()`)
           await key('Tab', true)
           expect(await evaluate('document.activeElement.id')).toBe('account-control')
           await key('Tab')
           expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
-            'Close menu'
+            'Decentraland home'
           )
           await evaluate(
-            `document.querySelector('[role=dialog]').scrollTop=10000;document.querySelector('[role=dialog] a[href="#blog"]').scrollIntoView({block:'end'})`
+            `document.querySelector('[data-testid=navbar-panel]').scrollTop=10000;document.querySelector('[data-testid=navbar-panel] a[href="#blog"]').scrollIntoView({block:'end'})`
           )
-          await click('[role=dialog] a[href="#blog"]')
+          await click('[data-testid=navbar-panel] a[href="#blog"]')
           expect(await evaluate('location.hash')).toBe('#blog')
           expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(false)
           await click('button[aria-label="Open menu"]')
@@ -314,7 +869,19 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
           expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
             'Open menu'
           )
+          await click('button[aria-label="Open menu"]')
+          await click('button[aria-label="Close menu"]')
+          expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(false)
+          expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe(
+            'Open menu'
+          )
         } else {
+          expect(
+            await evaluate(
+              `document.querySelector('button[aria-label="Open menu"]').getClientRects().length`
+            )
+          ).toBe(0)
+          expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(false)
           const trigger = 'button[aria-controls]:not([aria-label])'
           await click(trigger)
           const popup = await evaluate(
@@ -354,6 +921,7 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
   for (const width of [991, 992, 1023, 1024, 1440]) {
     for (const surface of ['solid', 'overlay']) {
       it(`should keep account geometry stable across balance states at ${width}px on ${surface}`, async () => {
+        expect(await evaluate('navigator.maxTouchPoints')).toBe(0)
         await session.send('Emulation.setDeviceMetricsOverride', {
           width,
           height: 900,
@@ -434,3 +1002,197 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
     }
   }
 })
+
+for (const width of [360, 390, 768, 1023]) {
+  for (const preference of ['no-preference', 'reduce']) {
+    it(`should reveal the inverse upward exit without releasing modal ownership for ${preference} at ${width}px`, async () => {
+      await session.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: true
+      })
+      await session.send('Emulation.setTouchEmulationEnabled', { enabled: true })
+      await session.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-reduced-motion', value: preference }]
+      })
+      await session.navigate(origin + '?surface-proof&motion')
+      await evaluate(
+        `(async()=>{for(let n=0;n<100&&!document.querySelector('#page-under-motion');n++)await new Promise(r=>setTimeout(r,50))})()`
+      )
+      await click('button[aria-label="Open menu"]')
+      await session.send('Animation.enable')
+      await session.send('Animation.setPlaybackRate', { playbackRate: 0 })
+      await click('button[aria-label="Close menu"]', false)
+      if (preference === 'reduce') {
+        expect(await evaluate(`!!document.querySelector('[data-testid=navbar-panel]')`)).toBe(false)
+      } else {
+        expect(
+          await evaluate(
+            `(()=>{const p=document.querySelector('[data-testid=navbar-panel]');return p&&{closing:p.hasAttribute('data-exiting'),inert:p.inert,animations:p.getAnimations().length,locked:document.body.style.overflow==='hidden',focus:document.activeElement.getAttribute('aria-label'),header:document.querySelector('nav').getBoundingClientRect().height}})()`
+          )
+        ).toEqual({
+          closing: true,
+          inert: true,
+          animations: 1,
+          locked: true,
+          focus: 'Close menu',
+          header: 64
+        })
+        const pixels = async () => {
+          const shot = (await session.send('Page.captureScreenshot', {
+            format: 'png',
+            fromSurface: true
+          })) as { data: string }
+          return evaluate<{ top: number[]; bottom: number[] }>(
+            `(async()=>{const image=new Image();image.src='data:image/png;base64,'+${JSON.stringify(shot.data)};await image.decode();const canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;const context=canvas.getContext('2d');context.drawImage(image,0,0);return{top:Array.from(context.getImageData(32,80,1,1).data),bottom:Array.from(context.getImageData(32,820,1,1).data)}})()`
+          )
+        }
+        const initialPaint = await pixels()
+        await evaluate(
+          `(()=>{const a=document.querySelector('[data-testid=navbar-panel]').getAnimations()[0];a.pause();a.currentTime=90;window.exitAnimation=a})()`
+        )
+        const partialPaint = await pixels()
+        expect(partialPaint.top).toEqual(initialPaint.top)
+        expect(partialPaint.bottom).not.toEqual(initialPaint.bottom)
+        await evaluate('exitAnimation.currentTime=179')
+        expect((await pixels()).top).not.toEqual(initialPaint.top)
+        await evaluate('exitAnimation.currentTime=90')
+        expect(
+          await evaluate(
+            `(()=>{const p=document.querySelector('[data-testid=navbar-panel]'),hit=document.elementFromPoint(200,820);return{clip:getComputedStyle(p).clipPath,blocked:document.querySelector('[role=dialog]').contains(hit),locked:document.body.style.overflow==='hidden'}})()`
+          )
+        ).toMatchObject({ blocked: true, locked: true })
+        await touch('#page-under-motion', false)
+        expect(await evaluate('location.hash')).not.toBe('#under-motion')
+        await evaluate(
+          `exitAnimation.finish();new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))`
+        )
+        expect(await evaluate(`!!document.querySelector('[data-testid=navbar-panel]')`)).toBe(false)
+      }
+      expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Open menu')
+      expect(await evaluate('document.body.style.overflow')).not.toBe('hidden')
+    }, 30_000)
+  }
+}
+
+async function preparePausedExit(query = '?surface-proof&motion') {
+  await session.send('Emulation.setDeviceMetricsOverride', {
+    width: 390,
+    height: 844,
+    deviceScaleFactor: 1,
+    mobile: true
+  })
+  await session.send('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }]
+  })
+  await session.navigate(origin + query)
+  await evaluate(
+    `(async()=>{for(let n=0;n<100&&!document.querySelector('#page-under-motion');n++)await new Promise(r=>setTimeout(r,50))})()`
+  )
+  await click('button[aria-label="Open menu"]')
+  await session.send('Animation.enable')
+  await session.send('Animation.setPlaybackRate', { playbackRate: 0 })
+  await click('button[aria-label="Close menu"]', false)
+}
+
+it('should retain the starting clip and completion owner across repeated closing requests', async () => {
+  await session.send('Emulation.setDeviceMetricsOverride', {
+    width: 390,
+    height: 844,
+    deviceScaleFactor: 1,
+    mobile: true
+  })
+  await session.send('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }]
+  })
+  await session.navigate(origin + '?surface-proof&motion')
+  await evaluate(
+    `(async()=>{for(let n=0;n<100&&!document.querySelector('#page-under-motion');n++)await new Promise(r=>setTimeout(r,50))})()`
+  )
+  await session.send('Animation.enable')
+  await session.send('Animation.setPlaybackRate', { playbackRate: 0 })
+  await click('button[aria-label="Open menu"]', false)
+  const clip = await evaluate<string>(
+    `(()=>{const p=document.querySelector('[data-testid=navbar-panel]'),a=p.getAnimations()[0];a.pause();a.currentTime=90;return getComputedStyle(p).clipPath})()`
+  )
+  await key('Escape', false, false)
+  expect(
+    await evaluate(
+      `document.querySelector('[data-testid=navbar-panel]').style.getPropertyValue('--drawer-exit-from')`
+    )
+  ).toBe(clip)
+  await evaluate(
+    `window.pendingExit=document.querySelector('[data-testid=navbar-panel]').getAnimations()[0];pendingExit.pause();pendingExit.currentTime=90`
+  )
+  await key('Escape', false, false)
+  expect(
+    await evaluate(
+      `(()=>{const p=document.querySelector('[data-testid=navbar-panel]');return{same:p.getAnimations()[0]===pendingExit,clip:p.style.getPropertyValue('--drawer-exit-from'),locked:document.body.style.overflow==='hidden'}})()`
+    )
+  ).toEqual({ same: true, clip, locked: true })
+  await evaluate('pendingExit.finish()')
+  await waitForExit()
+  expect(await evaluate(`!!document.querySelector('[data-testid=navbar-panel]')`)).toBe(false)
+}, 30000)
+
+it('should ignore an interrupted exit completion after the header reopens the menu', async () => {
+  await preparePausedExit()
+  await evaluate(
+    `window.pendingExit=document.querySelector('[data-testid=navbar-panel]').getAnimations()[0]`
+  )
+  await click('button[aria-label="Close menu"]', false)
+  await evaluate(
+    'pendingExit.finished.catch(()=>{});new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))'
+  )
+  expect(
+    await evaluate(
+      `(()=>{const p=document.querySelector('[data-testid=navbar-panel]');return{modal:!!document.querySelector('[role=dialog]'),inert:p.inert,animations:p.getAnimations().length,locked:document.body.style.overflow==='hidden',label:document.activeElement.getAttribute('aria-label')}})()`
+    )
+  ).toEqual({ modal: true, inert: false, animations: 0, locked: true, label: 'Close menu' })
+}, 30000)
+
+it('should immediately release a pending exit when reduced motion is enabled', async () => {
+  await preparePausedExit()
+  await session.send('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-reduced-motion', value: 'reduce' }]
+  })
+  await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+  expect(
+    await evaluate(
+      `({modal:!!document.querySelector('[role=dialog]'),locked:document.body.style.overflow==='hidden',label:document.activeElement.getAttribute('aria-label')})`
+    )
+  ).toEqual({ modal: false, locked: false, label: 'Open menu' })
+  await session.send('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }]
+  })
+  expect(await evaluate(`!!document.querySelector('[role=dialog]')`)).toBe(false)
+}, 30000)
+
+it('should discard a pending exit when desktop navigation takes ownership', async () => {
+  await preparePausedExit()
+  await session.send('Emulation.setDeviceMetricsOverride', {
+    width: 1024,
+    height: 844,
+    deviceScaleFactor: 1,
+    mobile: false
+  })
+  await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+  expect(
+    await evaluate(
+      `({modal:!!document.querySelector('[role=dialog]'),locked:document.body.style.overflow==='hidden',focus:document.activeElement.getAttribute('aria-label'),height:document.querySelector('nav').getBoundingClientRect().height})`
+    )
+  ).toEqual({ modal: false, locked: false, focus: 'Decentraland home', height: 80 })
+}, 30000)
+
+it('should release a pending exit before a known native sign-in portal takes focus', async () => {
+  await preparePausedExit('?surface-proof&motion&portal&signed-out&geometry')
+  await click('nav button[class*="signIn"]')
+  expect(
+    await evaluate(
+      `({drawer:!!document.querySelector('[data-testid=navbar-panel]'),native:!!document.querySelector('dialog:modal'),locked:document.body.style.overflow==='hidden'})`
+    )
+  ).toEqual({ drawer: false, native: true, locked: false })
+  await key('Escape')
+  expect(await evaluate('document.activeElement.textContent')).toBe('Sign in')
+}, 30000)

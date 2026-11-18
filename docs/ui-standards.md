@@ -162,6 +162,14 @@ Components need visible focus, keyboard interaction, labels, sufficient
 contrast and reduced-motion support. Do not override reduced-motion rules
 from a component module.
 
+A component that cannot meet one of these rules records a named exception
+here, with its measurement, reason, scope and the change that removes it.
+Each exception covers only its stated scope.
+
+| Exception                    | Measurement                                                                                                                                                                                                                                       | Reason                                                                                                                                           | Scope                                                                                                                                              | Removed by                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `titlebar-selected-contrast` | Snow (#fcfcfc, Figma `neutrals/snow`) label and icon on #ff7439 (Figma `color/action-secondary`, `--dcl-primary-alt-primary-alt` here; `--dcl-action-secondary` names the same value): 2.62:1 at 16px/600, below 4.5:1 (AA) and 3:1 (large text). | The design system's Explorer selected-state pair from Figma title bar 16959:168 ("explorer (orange when selected)"), chosen by the design owner. | The selected TitleBar section, Explorer variant only. On web pages, the Figma web variant (white when selected, dark label) is the compliant path. | A Figma palette change for that state. |
+
 ### Migrating existing styles
 
 A migration covers one bounded component and its consumers, and is scheduled
@@ -191,6 +199,15 @@ migration. Do not rewrite unrelated components or tokens in the same change.
   SDK toolchain's
   `apps/dcl-scene-cli/scripts/`, `src/templates/` and `testdata/`. It is a
   best-effort check: a pass does not prove the change follows this standard.
+- `make check` and CI also run `tooling/ui_standards.py --token-floor`. For
+  each stylesheet of the surfaces that use the shared foundations (the
+  `FLOOR_PATHS` of the script) it fails when the `var(--dcl-` uses drop
+  below, or the uses of an `apps/ui3` `atoms/primitives.css` property rise
+  above, the counts in `tooling/ui-token-floor.json`, and when that file
+  records a stylesheet that is not there. After a deliberate change (a moved
+  or removed stylesheet, a count that must change), run
+  `python3 tooling/ui_standards.py --write-token-floor` and commit the file
+  with the change.
 - Report checks that could not run or failed. Documentation-only changes need
   link, structure and content checks, not an application build.
 
@@ -241,7 +258,7 @@ UI.
 
 Use the public `@dcl/one-ui/foundations` entry for foundation-only consumers. The Explorer HUD imports tokens and icons from this entry and keeps generated components outside its compiled source and build fingerprint. The root `@dcl/one-ui` entry remains the public foundation and component surface. Shared foundation CSS continues to use the existing CSS subpaths.
 
-The Explorer HUD records its computed shared-library import closure in `rendering/bevy-explorer/source/react-web/shared-inputs.json`. The owned root inventory contains every tracked file under `rendering/bevy-explorer/source/react-web/src` plus `app.html` and `index.html`. Any edit, addition, deletion or rename of those roots, including comment-only edits, requires regenerating this manifest before CI planning or strict artifact acceptance. Other owned files, including bridge-scene and web-engine sources, become controls only when the actual compiler or Vite graph reaches them; changes to those recorded controls, shared imports or resolver configuration also require regeneration. Unreached owned files remain covered by the separate Explorer source fingerprint. From the repository root, run `npm --prefix rendering/bevy-explorer/source/react-web run gen:shared-inputs` with locked dependencies and canonical Rust-generated bindings available. Local Vite/Vitest configuration still supports ordinary owned-source edits, and native staleness still invokes the existing rebuild without updating the manifest. `npm run check:shared-inputs` recomputes the compiler, web/native bundle and CSS-processor graphs in CI. The manifest binds all tracked HUD roots and resolver/font identity controls separately from the actually reached UI, Shop and Catalyst API source files. Selection and artifact checks validate each revision's own hashes, reject stale head metadata and conservatively rebuild when a historical revision has no contract. Vite, native stale checks and the pure Nix fileset read the same checked graph. The engine-generated bindings (`library/explorer-core/engine/generated`) are not in it: the engine build produces them and the Sites import compares the tracked copy with its own.
+The Explorer HUD records its computed shared-library import closure in `rendering/bevy-explorer/source/react-web/shared-inputs.json`. The owned root inventory contains every tracked file under `rendering/bevy-explorer/source/react-web/src` plus `app.html` and `index.html`. Any edit, addition, deletion or rename of those roots, including comment-only edits, requires regenerating this manifest before CI planning or strict artifact acceptance. Other owned files, including bridge-scene and web-engine sources, become controls only when the actual compiler or Vite graph reaches them; changes to those recorded controls, shared imports or resolver configuration also require regeneration. Unreached owned files remain covered by the separate Explorer source fingerprint. From the repository root, run `pnpm --dir rendering/bevy-explorer/source/react-web run gen:shared-inputs` with locked dependencies and canonical Rust-generated bindings available. Local Vite/Vitest configuration still supports ordinary owned-source edits, and native staleness still invokes the existing rebuild without updating the manifest. `pnpm run check:shared-inputs` recomputes the compiler, web/native bundle and CSS-processor graphs in CI. The manifest binds all tracked HUD roots and resolver/font identity controls separately from the actually reached UI, Shop and Catalyst API source files. Selection and artifact checks validate each revision's own hashes, reject stale head metadata and conservatively rebuild when a historical revision has no contract. Vite, native stale checks and the pure Nix fileset read the same checked graph. The engine-generated bindings (`library/explorer-core/engine/generated`) are not in it: the engine build produces them and the Sites import compares the tracked copy with its own.
 
 The manifest also witnesses the immediate names and kinds in the finite ancestor directories of actually reached shared files. Adding, removing or renaming a candidate can change import resolution and requires regeneration even when no recorded body changed; editing an unconsumed existing body does not. Git readers compare exact tracked and physical namespaces. Nix checks the original source before filtering; filtered archives allow only an expected namespace subset while requiring every selected file/control and refusing new names. Installed and named private output directories are separate; similarly prefixed regular files remain witnessed. Unsupported historical contracts rebuild conservatively; current heads require a contract produced by the canonical command.
 
@@ -378,7 +395,7 @@ import { theme } from "@dcl/one-ui/foundations";
 import "@dcl/one-ui/foundations.css";
 ```
 
-`@dcl/one-ui` exposes the shared source and foundation styles. Before using these imports, each application configures the package name and CSS subpaths in both its TypeScript paths and bundler aliases, allows access to shared sources and deduplicates React and React DOM. Assets must work in every supported target, including native CEF.
+`@dcl/one-ui` exposes the shared source and foundation styles ([ADR](adr/2026-11-09-shared-ui-import-name.md)). Before using these imports, each application configures the package name and CSS subpaths in both its TypeScript paths and bundler aliases, allows access to shared sources and deduplicates React and React DOM. Assets must work in every supported target, including native CEF.
 
 Build inputs, dependency resolution, HUD provenance and CI selection must
 include the shared sources so that changes invalidate the affected artifacts.

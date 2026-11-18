@@ -1,4 +1,5 @@
 //! Comms-owned durable ban removals; no network call runs in a SQL transaction.
+use crate::gatekeeper::admission::cluster::safety::{DispatchPhase, DispatchState};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -436,10 +437,19 @@ async fn discover(state: &CommsState, row: &Intent) -> Result<()> {
         if !current(&state.pool, row).await? {
             return Ok(());
         }
-        let Some(wallet) = address_from_identity(&participant.identity) else {
-            continue;
+        // A Cast watcher's identity is synthetic; its token carries the wallet.
+        let actor = match address_from_identity(&participant.identity) {
+            Some(wallet) => {
+                Address::parse(&wallet).map_err(|_| anyhow!("invalid participant wallet"))?
+            }
+            None => match super::streaming::cast::watcher_wallet(
+                &participant.identity,
+                &participant.attributes,
+            ) {
+                Some(wallet) => wallet,
+                None => continue,
+            },
         };
-        let actor = Address::parse(&wallet).map_err(|_| anyhow!("invalid participant wallet"))?;
         if authorized(state, row, &actor).await? {
             add_target(state, row, room, sid, &participant.identity, &actor).await?;
         }
@@ -1100,17 +1110,29 @@ mod tests {
         tx.commit().await.unwrap();
         let direct = format!("{}-browser", actor.as_str().to_uppercase());
         let same_device = format!("{}-desktop", device_actor.as_str());
+        // Cast watchers: a synthetic identity, the wallet in a signed attribute.
+        let watcher = format!("watch:device-room:{}", Uuid::new_v4());
+        let other_watcher = format!("watch:device-room:{}", Uuid::new_v4());
+        let anonymous_watcher = format!("watch:device-room:{}", Uuid::new_v4());
         {
             let mut f = fixture.lock().unwrap();
             f.rooms = serde_json::json!({"rooms":[{"name":"device-room","sid":"D"}]});
-            f.rosters.insert("device-room".into(),serde_json::json!({"participants":[{"identity":direct},{"identity":same_device},{"identity":unrelated.as_str()}]}));
+            f.rosters.insert(
+                "device-room".into(),
+                serde_json::json!({"participants":[
+                    {"identity":direct},{"identity":same_device},{"identity":unrelated.as_str()},
+                    {"identity":watcher,"attributes":{"dcl.castWatcher":actor.as_str()}},
+                    {"identity":other_watcher,"attributes":{"dcl.castWatcher":unrelated.as_str()}},
+                    {"identity":anonymous_watcher},
+                ]}),
+            );
         }
         for _ in 0..4 {
             assert_eq!(step(&state, &root_key).await, 0);
         }
         let mut removed = fixture.lock().unwrap().removed.clone();
         removed.sort();
-        let mut expected = vec![direct, same_device];
+        let mut expected = vec![direct, same_device, watcher];
         expected.sort();
         assert_eq!(removed, expected);
         sqlx::query("DELETE FROM social.user_bans WHERE id=$1")
@@ -1297,7 +1319,7 @@ mod tests {
         .unwrap();
         room_closed(&pool, &room, "ISLAND-SID").await.unwrap();
         let restarted =
-            crate::gatekeeper::admission::cluster::safety::SafetyStore::new(pool.clone());
+            crate::gatekeeper::admission::cluster::safety::SafetyStore::unfenced_test(pool.clone());
         assert!(restarted.authorize(actor.as_str(), None, 0).await.is_err());
         assert!(
             restarted
@@ -1591,8 +1613,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn durable_unleased_moderation_job_survives_unknown_recovered_island_and_removes_voice_target()
-     {
+    async fn durable_moderation_pass_survives_unknown_recovered_island_and_removes_voice_target() {
         if std::env::var("CATALYST_TEST_DATABASE_URL")
             .ok()
             .is_none_or(|value| value.trim().is_empty())
@@ -1648,42 +1669,24 @@ mod tests {
         state.island_safety.elapse_quarantine_for_test(initial, 123);
         fixture.lock().unwrap().failures = 1;
         connection(&pool, &voice, &other).await.unwrap();
-        let state = Arc::new(state);
-        let jobs = Jobs::new();
-        assert!(jobs.leases().is_none());
-        spawn_jobs(&state, &jobs);
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                let report = jobs.report();
-                let job = report
-                    .iter()
-                    .find(|r| r.name == "comms-livekit-ban-removal")
-                    .unwrap();
-                assert_ne!(
-                    job.state,
-                    crate::jobs::JobState::Failed,
-                    "{:?}",
-                    job.last_error
-                );
-                if fixture
-                    .lock()
-                    .unwrap()
-                    .removed
-                    .contains(&other.as_str().to_owned())
-                    && job.passes >= 2
-                {
-                    assert_eq!(job.state, crate::jobs::JobState::Running);
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("ordinary voice removal still progresses after island RPC uncertainty");
+        // Two passes of the primary job. Each must succeed despite the
+        // uncertain island RPC (a failed pass fails the whole job).
+        for _ in 0..2 {
+            pass(&state)
+                .await
+                .expect("island RPC uncertainty must not fail the whole job");
+        }
+        assert!(
+            fixture
+                .lock()
+                .unwrap()
+                .removed
+                .contains(&other.as_str().to_owned()),
+            "ordinary voice removal still progresses after island RPC uncertainty"
+        );
         assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM social.island_cleanup_dispatches WHERE wallet=$1 AND phase='quarantine_final' AND state='dispatched'").bind(&actor).fetch_one(&pool).await.unwrap(),1);
         assert!(state.island_safety.snapshot(actor.as_str()).await.is_err());
         assert_eq!(fixture.lock().unwrap().remove_calls, 3);
-        jobs.shutdown(Duration::from_secs(2)).await;
         server.abort();
         drop(state);
         pool.close().await;
@@ -1724,11 +1727,11 @@ mod tests {
                 f.create_failures = usize::from(create_fails);
             }
             // Actual primary callback is the sole final-attempt runner.
-            run_batch(&state).await.unwrap();
+            pass(&state).await.unwrap();
             if create_fails {
                 assert!(state.island_safety.snapshot(actor.as_str()).await.is_err());
                 assert_eq!(fixture.lock().unwrap().create_calls, 1);
-                run_batch(&state).await.unwrap();
+                pass(&state).await.unwrap();
             }
             let (status,phase,root,target,generation,cutoff):(String,String,String,String,Uuid,i64)=sqlx::query_as("SELECT state,phase,intent_root_key,intent_target_key,intent_generation,cutoff FROM social.island_cleanup_dispatches WHERE wallet=$1 ORDER BY fence_generation DESC LIMIT 1").bind(&actor).fetch_one(&pool).await.unwrap();
             assert_eq!(
@@ -1747,8 +1750,8 @@ mod tests {
             assert_eq!(calls, if create_fails { 4 } else { 3 });
             let (mut restart, _, other_server) = sfu_fixture(pool.clone()).await;
             restart.livekit = state.livekit.clone();
-            run_batch(&restart).await.unwrap();
-            run_batch(&restart).await.unwrap();
+            pass(&restart).await.unwrap();
+            pass(&restart).await.unwrap();
             assert_eq!(fixture.lock().unwrap().remove_calls, calls);
             let lease = restart
                 .island_safety
@@ -1800,30 +1803,23 @@ mod tests {
             .execute(&mut *blocker)
             .await
             .unwrap();
-        let state = Arc::new(state);
-        let jobs = Jobs::new();
-        spawn_jobs(&state, &jobs);
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                assert!(
-                    jobs.report()
-                        .iter()
-                        .all(|r| r.state != crate::jobs::JobState::Failed),
-                    "wallet contention must not fail whole job"
-                );
-                if fixture
-                    .lock()
-                    .unwrap()
-                    .removed
-                    .contains(&other.as_str().to_owned())
-                {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("ordinary voice RPC despite held island wallet");
+        // Two passes of the primary job: the first discovers the voice room's
+        // participant, the second removes it. In each, the held wallet only
+        // times out its own lock and the pass still succeeds (a failed pass
+        // fails the whole job).
+        for _ in 0..2 {
+            pass(&state)
+                .await
+                .expect("wallet contention must not fail whole job");
+        }
+        assert!(
+            fixture
+                .lock()
+                .unwrap()
+                .removed
+                .contains(&other.as_str().to_owned()),
+            "ordinary voice RPC despite held island wallet"
+        );
         assert_eq!(
             sqlx::query_scalar::<_, String>(
                 "SELECT state FROM social.island_cleanup_dispatches WHERE dispatch_id=$1"
@@ -1835,17 +1831,11 @@ mod tests {
             "quarantine"
         );
         blocker.rollback().await.unwrap();
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                if state.island_safety.snapshot(actor.as_str()).await.is_ok() {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("next maintenance progresses");
-        jobs.shutdown(Duration::from_secs(2)).await;
+        pass(&state).await.unwrap();
+        assert!(
+            state.island_safety.snapshot(actor.as_str()).await.is_ok(),
+            "next maintenance progresses"
+        );
         server.abort();
         liveness_drop_pool(&pool, &admin, &db_name).await;
     }
@@ -1867,8 +1857,8 @@ mod tests {
             .await
             .unwrap();
         fixture.lock().unwrap().missing_room = true;
-        run_batch(&state).await.unwrap();
-        run_batch(&state).await.unwrap();
+        pass(&state).await.unwrap();
+        pass(&state).await.unwrap();
         {
             let f = fixture.lock().unwrap();
             assert_eq!((f.remove_calls, f.create_calls), (1, 0));
@@ -1896,9 +1886,9 @@ mod tests {
             .connect_lazy_with(pool.connect_options().as_ref().clone());
         unavailable.close().await;
         state.island_safety =
-            crate::gatekeeper::admission::cluster::safety::SafetyStore::new(unavailable);
-        assert!(run_batch(&state).await.is_err());
-        assert!(run_batch(&state).await.is_err());
+            crate::gatekeeper::admission::cluster::safety::SafetyStore::unfenced_test(unavailable);
+        assert!(pass(&state).await.is_err());
+        assert!(pass(&state).await.is_err());
         assert!(
             fixture
                 .lock()
@@ -1944,29 +1934,20 @@ mod tests {
             .execute(&mut *blocker)
             .await
             .unwrap();
-        let state = Arc::new(state);
-        let jobs = Jobs::new();
-        spawn_jobs(&state, &jobs);
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                assert!(
-                    jobs.report()
-                        .iter()
-                        .all(|r| r.state != crate::jobs::JobState::Failed)
-                );
-                if fixture
-                    .lock()
-                    .unwrap()
-                    .removed
-                    .contains(&other.as_str().to_owned())
-                {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("ordinary voice despite contended compaction wallet");
+        // Two passes of the primary job, as in the quarantine case above.
+        for _ in 0..2 {
+            pass(&state)
+                .await
+                .expect("wallet contention must not fail whole job");
+        }
+        assert!(
+            fixture
+                .lock()
+                .unwrap()
+                .removed
+                .contains(&other.as_str().to_owned()),
+            "ordinary voice despite contended compaction wallet"
+        );
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
                 "SELECT count(*) FROM social.island_cleanup_dispatches WHERE dispatch_id=$1"
@@ -1978,31 +1959,86 @@ mod tests {
             1
         );
         blocker.rollback().await.unwrap();
-        tokio::time::timeout(Duration::from_secs(5), async {
+        pass(&state).await.unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM social.island_cleanup_dispatches WHERE dispatch_id=$1",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            0,
+            "next bounded maintenance compacts released wallet"
+        );
+        assert_eq!(
+            state.island_safety.snapshot(actor.as_str()).await.unwrap(),
+            floor
+        );
+        server.abort();
+        liveness_drop_pool(&pool, &admin, &name).await;
+    }
+
+    #[tokio::test]
+    async fn durable_spawned_primary_job_removes_voice_target_and_keeps_running() {
+        assert!(
+            std::env::var("CATALYST_TEST_DATABASE_URL").is_ok(),
+            "real PostgreSQL required"
+        );
+        let (pool, admin, name) = liveness_isolated_pool().await;
+        let (state, fixture, server) = sfu_fixture(pool.clone()).await;
+        let voice = crate::rooms::private_voice_chat_room_name(&Uuid::new_v4());
+        let target = wallet();
+        fixture.lock().unwrap().rooms = serde_json::json!({"rooms":[{"name":voice,"sid":"VOICE"}]});
+        fixture.lock().unwrap().rosters.insert(
+            voice.clone(),
+            serde_json::json!({"participants":[{"identity":target.as_str()}]}),
+        );
+        connection(&pool, &voice, &target).await.unwrap();
+        let state = Arc::new(state);
+        let jobs = Jobs::new();
+        spawn_jobs(&state, &jobs);
+        // Waits on the job's own state; the bound only ends a hang.
+        tokio::time::timeout(Duration::from_secs(60), async {
             loop {
-                if sqlx::query_scalar::<_, i64>(
-                    "SELECT count(*) FROM social.island_cleanup_dispatches WHERE dispatch_id=$1",
-                )
-                .bind(id)
-                .fetch_one(&pool)
-                .await
-                .unwrap()
-                    == 0
-                {
+                let report = jobs.report();
+                let job = report
+                    .iter()
+                    .find(|r| r.name == "comms-livekit-ban-removal")
+                    .expect("removal job registered");
+                assert_ne!(
+                    job.state,
+                    crate::jobs::JobState::Failed,
+                    "{:?}",
+                    job.last_error
+                );
+                let removed = fixture
+                    .lock()
+                    .unwrap()
+                    .removed
+                    .contains(&target.as_str().to_owned());
+                if removed && job.passes >= 2 {
+                    assert_eq!(job.state, crate::jobs::JobState::Running);
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
         .await
-        .expect("next bounded maintenance compacts released wallet");
-        assert_eq!(
-            state.island_safety.snapshot(actor.as_str()).await.unwrap(),
-            floor
-        );
+        .expect("spawned job removes the voice target and keeps running");
         jobs.shutdown(Duration::from_secs(2)).await;
         server.abort();
+        drop(state);
         liveness_drop_pool(&pool, &admin, &name).await;
+    }
+
+    /// One pass of the `comms-livekit-ban-removal` job body, shared by every
+    /// test that drives the job directly. The bound only ends a hang: each
+    /// contended wallet gives up at its own lock timeout.
+    async fn pass(state: &CommsState) -> Result<()> {
+        tokio::time::timeout(Duration::from_secs(60), run_batch(state))
+            .await
+            .expect("a maintenance pass ends")
     }
 
     async fn liveness_isolated_pool() -> (sqlx::PgPool, sqlx::PgPool, String) {
@@ -2075,10 +2111,10 @@ async fn begin_island_dispatch(
         let dispatch = SafetyStore::dispatch(&mut lease.tx, id)
             .await
             .map_err(|_| anyhow!("invalid island dispatch"))?;
-        existing_obligation = dispatch.state == "settled_late";
+        existing_obligation = dispatch.state == DispatchState::SettledLate;
         if matches!(
-            dispatch.state.as_str(),
-            "dispatched" | "quarantine" | "confirmed"
+            dispatch.state,
+            DispatchState::Dispatched | DispatchState::Quarantine | DispatchState::Confirmed
         ) {
             lease
                 .commit()
@@ -2162,7 +2198,9 @@ async fn drive_island_dispatch(
     identity: &str,
     connection: bool,
 ) -> Result<bool> {
-    use crate::gatekeeper::admission::cluster::safety::Settlement;
+    use crate::gatekeeper::admission::cluster::safety::{
+        QuarantinePolicy, RemovalOutcome, Settlement, classify_removal,
+    };
     let mut dispatch = dispatch.clone();
     let service = state.room_service();
     for repair in 0..2 {
@@ -2175,32 +2213,26 @@ async fn drive_island_dispatch(
         } else {
             call.await
         };
-        let settlement = match outcome {
-            Ok(_) => {
-                if state.cluster.self_hosted_token_quarantine && dispatch.phase == "initial" {
-                    Settlement::Quarantine(
-                        crate::gatekeeper::admission::cluster::MAX_ISLAND_TOKEN_TTL_SECONDS
-                            + 60
-                            + 2,
-                    )
-                } else if !state.cluster.self_hosted_token_quarantine
-                    && chrono::Utc::now().timestamp_millis().max(0) as u64 + 1000
-                        >= dispatch.cutoff.saturating_mul(1000)
-                {
-                    Settlement::SettledLate
-                } else {
-                    Settlement::Confirmed
-                }
-            }
+        let classified = match outcome {
+            Ok(_) => RemovalOutcome::Positive,
             Err(RoomServiceError::RemovalRejected | RoomServiceError::RemovalRoomMissing) => {
-                if dispatch.phase == "quarantine_final" {
-                    Settlement::SettledLate
-                } else {
-                    Settlement::Rejected
-                }
+                RemovalOutcome::Rejected
             }
-            Err(_) => return Err(IslandDispatchUncertain.into()),
+            Err(_) => RemovalOutcome::Unknown,
         };
+        let quarantine = if state.cluster.self_hosted_token_quarantine {
+            QuarantinePolicy::Enabled { applies: true }
+        } else {
+            QuarantinePolicy::Disabled
+        };
+        let settlement = classify_removal(
+            classified,
+            dispatch.phase,
+            quarantine,
+            chrono::Utc::now().timestamp_millis().max(0) as u64,
+            dispatch.cutoff,
+        )
+        .ok_or(IslandDispatchUncertain)?;
         if !matches!(
             state
                 .island_safety
@@ -2211,7 +2243,7 @@ async fn drive_island_dispatch(
             return Err(anyhow!("island settlement was not recorded"));
         }
         if matches!(outcome, Err(RoomServiceError::RemovalRoomMissing))
-            && dispatch.phase == "quarantine_final"
+            && dispatch.phase == DispatchPhase::QuarantineFinal
             && repair == 0
         {
             // Definite absence is recorded, never treated as revocation. Establish
@@ -2242,10 +2274,10 @@ async fn remove_island(
     let Some(mut dispatch) = begin_island_dispatch(state, row, actor, room, identity).await? else {
         return finish(&state.pool, row).await.map_err(Into::into);
     };
-    if dispatch.state == "confirmed" {
+    if dispatch.state == DispatchState::Confirmed {
         return finish(&state.pool, row).await.map_err(Into::into);
     }
-    if dispatch.state == "quarantine" {
+    if dispatch.state == DispatchState::Quarantine {
         let Some(final_dispatch) = state
             .island_safety
             .begin_quarantine_final(dispatch.dispatch_id)

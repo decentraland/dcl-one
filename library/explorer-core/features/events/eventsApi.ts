@@ -11,12 +11,32 @@ export const LIVE_COUNT_REFRESH_MS = 3 * 60 * 1000
 export type EventsList = 'live' | 'upcoming'
 
 /** An event from the public, unsigned list; the service may leave out the optional fields. */
-export type DclEvent = Pick<EventData, 'id' | 'name' | 'x' | 'y'> &
-  Partial<Pick<EventData, 'image' | 'server' | 'world' | 'live' | 'user_name' | 'connected_addresses'>>
+export type DclEvent = Pick<EventData, 'id' | 'name' | 'x' | 'y'> & { start_at: string } & Partial<
+    Pick<
+      EventData,
+      | 'description'
+      | 'image'
+      | 'server'
+      | 'world'
+      | 'live'
+      | 'finish_at'
+      | 'next_start_at'
+      | 'next_finish_at'
+      | 'duration'
+      | 'highlighted'
+      | 'total_attendees'
+      | 'user_name'
+      | 'connected_addresses'
+    >
+  >
 
-export async function fetchEvents(list: EventsList, signal?: AbortSignal): Promise<DclEvent[]> {
-  const res = await fetch(`${EVENTS_API}?list=${list}`, { signal })
-  if (!res.ok) throw new Error(`Events service returned ${res.status}`)
+/** `connected` asks for who is at each event now (`connected_addresses`); without it the service sends none. */
+export async function fetchEvents(list: EventsList, { signal, connected = false }: { signal?: AbortSignal; connected?: boolean } = {}): Promise<DclEvent[]> {
+  const res = await fetch(`${EVENTS_API}?list=${list}${connected ? '&with_connected_users=true' : ''}`, { signal })
+  if (!res.ok) {
+    void res.body?.cancel()
+    throw new Error(`Events service returned ${res.status}`)
+  }
   const body = (await res.json()) as { ok?: boolean; data?: DclEvent[] }
   if (body.ok === false || !Array.isArray(body.data)) throw new Error('Events service returned an unexpected response')
   return body.data

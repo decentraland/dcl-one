@@ -373,11 +373,25 @@ describe('outside access to the MCP server', () => {
     });
   });
 
-  describe('when an agent asks for access', () => {
+  // fs.watch can deliver late while the whole suite runs in parallel, so a wait allows 5 s. Each
+  // case's timeout stays well above its waits, so a late event fails at waitFor with its own
+  // message, not at the test limit.
+  const WATCH = { timeout: 5_000 };
+
+  describe('when an agent asks for access', { timeout: 15_000 }, () => {
     const request = () => fs.writeFileSync(accessRequestFilePath(mocks.userData), '');
-    // fs.watch delivers late while the whole suite runs in parallel; vi.waitFor's 1 s default
-    // made the first case flaky in `npm run test:unit`.
-    const WATCH = { timeout: 5_000 };
+    // On macOS a write in the moment after the watch starts can come before the system delivers
+    // events to it, most often while the whole suite runs. While the request file is still there
+    // (not handled yet), each check writes it again, so the watch sees a later write. The handler
+    // removes the file first, so a handled request is never written again.
+    const untilHandled = (check: () => void) =>
+      vi.waitFor(
+        () => {
+          if (fs.existsSync(accessRequestFilePath(mocks.userData))) request();
+          check();
+        },
+        { ...WATCH, interval: 250 },
+      );
 
     describe('and access is off', () => {
       it('should ask the creator once, consume the request and grant nothing', async () => {
@@ -385,9 +399,8 @@ describe('outside access to the MCP server', () => {
 
         request();
 
-        await vi.waitFor(
-          () => expect(mocks.send).toHaveBeenCalledWith(AI_EXTERNAL_ACCESS_REQUESTED),
-          WATCH,
+        await untilHandled(() =>
+          expect(mocks.send).toHaveBeenCalledWith(AI_EXTERNAL_ACCESS_REQUESTED),
         );
         expect(fs.existsSync(accessRequestFilePath(mocks.userData))).toBe(false);
         expect(mocks.writeConfig).not.toHaveBeenCalled();
@@ -415,7 +428,7 @@ describe('outside access to the MCP server', () => {
 
         request();
 
-        await vi.waitFor(() => expect(fs.existsSync(discoveryFile())).toBe(true), WATCH);
+        await untilHandled(() => expect(fs.existsSync(discoveryFile())).toBe(true));
         expect(m.takeExternalAccessRequest()).toBe(false);
       });
     });

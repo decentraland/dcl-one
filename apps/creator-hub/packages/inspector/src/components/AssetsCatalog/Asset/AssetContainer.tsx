@@ -1,6 +1,7 @@
 import React, { useEffect, useCallback, useMemo, useState, useRef } from 'react';
 
-import { Logo, Popup, PopupContent } from 'decentraland-ui';
+import DclLogomark from '@ui/atoms/DclLogomark';
+import Tooltip from '@ui/atoms/Tooltip';
 
 import {
   getBuiltInEmote,
@@ -155,7 +156,7 @@ const SmartItemTooltipContent: React.FC<{ asset: AssetType }> = ({ asset }) => {
             <div className="SmartItemTooltipAuthor">
               <span>Created by</span>{' '}
               {isFoundationAuthor ? (
-                <Logo />
+                <DclLogomark size={16} />
               ) : (
                 author?.avatar && (
                   <img
@@ -189,18 +190,15 @@ const SmartItemTooltip: React.FC<{
   }
 
   return (
-    <Popup
-      className="SmartItemTooltip"
-      position="right center"
-      context={assetRef.current}
+    <Tooltip
+      anchor={assetRef.current}
       open={open}
-      hideOnScroll={false}
-      wide
-    >
-      <PopupContent>
-        <SmartItemTooltipContent asset={asset} />
-      </PopupContent>
-    </Popup>
+      side="right"
+      content={<SmartItemTooltipContent asset={asset} />}
+      tipClassName="SmartItemTooltip"
+      keepInViewport
+      bare
+    />
   );
 };
 

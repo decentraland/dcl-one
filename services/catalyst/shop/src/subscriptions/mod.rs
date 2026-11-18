@@ -35,13 +35,13 @@ mod tests;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::{erase, get};
 use axum::Json;
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{OriginalUri, Query, State as Extract};
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use serde::Deserialize;
 use serde_json::json;
 use sqlx::PgPool;
@@ -164,7 +164,7 @@ pub fn shop_router(state: SharedState) -> Router {
     let api = Router::new()
         .route(
             "/v1/notify-requests",
-            get(read).post(create).delete(unsubscribe),
+            get(read).post(erase(create)).delete(erase(unsubscribe)),
         )
         .with_state(state);
     DataWrites::guard(api, enabled)
@@ -209,10 +209,7 @@ impl IntoResponse for ApiError {
 
 fn signed_fetch_error(e: SignedFetchError) -> ApiError {
     match e {
-        SignedFetchError::MalformedChain { detail }
-            if detail.starts_with("invalid metadata content")
-                || detail.contains("non-canonical metadata") =>
-        {
+        SignedFetchError::MalformedChain { ref detail } if e.is_metadata_refusal() => {
             ApiError::bad_request(format!("Invalid signer: {detail}"))
         }
         other => {
@@ -274,6 +271,11 @@ pub fn is_email(s: &str) -> bool {
         && !local.contains("..")
 }
 
+/// Pending notify requests one wallet may hold.
+pub const MAX_PENDING_PER_WALLET: i64 = 50;
+/// Pending notify requests one email address may receive, across wallets.
+pub const MAX_PENDING_PER_EMAIL: i64 = 20;
+
 pub fn validate_create(req: &CreateNotifyRequest) -> Result<(), String> {
     if !crate::market::is_valid_eth_address(&req.contract_address) {
         return Err("contractAddress must be a 0x-prefixed 40-hex-char address".into());
@@ -311,16 +313,24 @@ async fn create(
         .map_err(|e| ApiError::bad_request(format!("invalid request body: {e}")))?;
     validate_create(&req).map_err(ApiError::bad_request)?;
     let contract = req.contract_address.to_ascii_lowercase();
-    state
+    let stored = state
         .store
-        .upsert(
+        .upsert_capped(
             &address,
             &req.email,
             &contract,
             &req.item_id,
             req.chain_id as i32,
+            MAX_PENDING_PER_WALLET,
+            MAX_PENDING_PER_EMAIL,
         )
         .await?;
+    if !stored {
+        return Err(ApiError::Status(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many pending notify requests for this wallet or email".into(),
+        ));
+    }
     tracing::info!(address = %address, contract = %contract, item_id = %req.item_id, "notify request upserted");
     Ok((StatusCode::CREATED, Json(json!({ "ok": true }))).into_response())
 }

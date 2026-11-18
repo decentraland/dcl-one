@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatAddress, isAddress, normalizeAddress } from './ethereum';
+import { checkAddressCheckSum, formatAddress, isAddress } from './ethereum';
 
 describe('when formatting an address for display', () => {
   it('should keep the first twelve and last eight characters', () => {
@@ -30,28 +30,6 @@ describe('when formatting an address for display', () => {
   });
 });
 
-describe('when comparing two spellings of one address', () => {
-  it('should fold the 0x prefix into one identity', () => {
-    expect(normalizeAddress('5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed')).toBe(
-      normalizeAddress('0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed'),
-    );
-  });
-
-  it('should fold checksum casing into one identity', () => {
-    expect(normalizeAddress('0x5AAEB6053F3E94C9B9A09F33669435E7EF1BEAED')).toBe(
-      normalizeAddress('0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed'),
-    );
-  });
-});
-
-describe('when normalizing an address', () => {
-  it('should return a lowercase, 0x-prefixed address', () => {
-    expect(normalizeAddress('0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed')).toBe(
-      '0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed',
-    );
-  });
-});
-
 describe('when validating an address', () => {
   it.each([
     ['lowercase', '0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed'],
@@ -69,5 +47,20 @@ describe('when validating an address', () => {
 
   it('should reject a shortened display address', () => {
     expect(isAddress('0x5aAeb6053F...Ef1BeAed')).toBe(false);
+  });
+});
+
+describe('when checking the checksum of an address', () => {
+  it.each([
+    '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed',
+    '0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359',
+    '0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB',
+    '0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb',
+  ])('should accept the EIP-55 reference address %s', address => {
+    expect(checkAddressCheckSum(address)).toBe(true);
+  });
+
+  it('should reject a reference address with the case of one letter changed', () => {
+    expect(checkAddressCheckSum('0xFB6916095ca1df60bB79Ce92cE3Ea74c37c5d359')).toBe(false);
   });
 });

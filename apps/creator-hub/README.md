@@ -89,7 +89,7 @@ creator-hub/
 Before starting, ensure you have the following installed:
 
 - **Node.js** 22.x or higher ([Download](https://nodejs.org/))
-- **npm** (comes with Node.js, preferred over yarn)
+- **pnpm**, at the version `package.json` pins (`corepack enable` provides it)
 - **Git** ([Download](https://git-scm.com/downloads))
 - **Docker** (optional, required for local asset-packs content server development)
 
@@ -151,7 +151,7 @@ Notes for reviewers:
   visible mesh on scenes that split the two.
 - If you change any code under `packages/inspector` (including the Bevy agent),
   rerun `make build-inspector` — the app serves a **prebuilt** inspector bundle,
-  so running the Creator Hub in watch mode (`cd packages/creator-hub && npm run
+  so running the Creator Hub in watch mode (`cd packages/creator-hub && pnpm run
   start`) does not hot-reload inspector changes.
 
   To get live reload instead, point the app at the inspector's own dev server by
@@ -159,9 +159,9 @@ Notes for reviewers:
 
   ```bash
   # terminal 1 — inspector dev server, pinned to that port
-  cd packages/inspector && VITE_INSPECTOR_PORT=8123 npm run start
+  cd packages/inspector && VITE_INSPECTOR_PORT=8123 pnpm run start
   # terminal 2 — the app, pointing its iframe there
-  cd packages/creator-hub && VITE_INSPECTOR_PORT=8123 npm run start
+  cd packages/creator-hub && VITE_INSPECTOR_PORT=8123 pnpm run start
   ```
 
   This works for Bevy as well as Babylon: the dev server fronts esbuild with a
@@ -174,7 +174,7 @@ Notes for reviewers:
   The Bevy **agent** is a separate SDK7 project, but you don't have to remember
   that: the inspector's `copy-bevy-agent` step (part of both `start` and `build`)
   rebuilds `agents/bevy` whenever its sources are newer than its bundle. Note a
-  running watch server does NOT re-run it — restart `npm run start` (or run `make
+  running watch server does NOT re-run it — restart `pnpm run start` (or run `make
   build-bevy-agent`) after an agent change.
 
 ## 📋 Makefile Commands
@@ -207,8 +207,8 @@ The project uses a Makefile to manage common development tasks:
 
 | Command          | Description                           |
 | ---------------- | ------------------------------------- |
-| `make lint`      | Run ESLint across all packages        |
-| `make lint-fix`  | Fix ESLint issues automatically       |
+| `make lint`      | Run oxlint across all packages        |
+| `make lint-fix`  | Fix oxlint issues automatically       |
 | `make format`    | Format code with Prettier             |
 | `make typecheck` | Run TypeScript type checking          |
 | `make test`      | Run unit tests for all packages       |
@@ -216,10 +216,9 @@ The project uses a Makefile to manage common development tasks:
 
 ### Dependency Management
 
-| Command              | Description                                             |
-| -------------------- | ------------------------------------------------------- |
-| `make sync-deps`     | Synchronize dependencies across packages using syncpack |
-| `make lint-packages` | Check for dependency mismatches                         |
+| Command              | Description                     |
+| -------------------- | ------------------------------- |
+| `make lint-packages` | Check for dependency mismatches |
 
 ### Cleanup Commands
 
@@ -236,21 +235,21 @@ The project uses a Makefile to manage common development tasks:
 cd packages/asset-packs
 
 # Development
-npm run start          # Start SDK7 dev server (port 8001) and watch for changes
+pnpm run start          # Start SDK7 dev server (port 8001) and watch for changes
 
 # Building
-npm run build          # Build all (SDK7 scene, library, catalog)
-npm run build:js       # Build SDK7 scene (bin/index.js)
-npm run build:lib      # Build TypeScript library
-npm run build:catalog  # Generate catalog.json
+pnpm run build          # Build all (SDK7 scene, library, catalog)
+pnpm run build:js       # Build SDK7 scene (bin/index.js)
+pnpm run build:lib      # Build TypeScript library
+pnpm run build:catalog  # Generate catalog.json
 
 # Asset Management
-npm run validate       # Validate all assets
-npm run upload         # Upload assets to content server
-npm run download       # Download assets from content server
+pnpm run validate       # Validate all assets
+pnpm run upload         # Upload assets to content server
+pnpm run download       # Download assets from content server
 
 # Type checking
-npm run typecheck      # Type check the library
+pnpm run typecheck      # Type check the library
 ```
 
 ### Inspector Scripts
@@ -259,17 +258,17 @@ npm run typecheck      # Type check the library
 cd packages/inspector
 
 # Development
-npm run start          # Start in watch mode
+pnpm run start          # Start in watch mode
 
 # Building
-npm run build          # Build the inspector
+pnpm run build          # Build the inspector
 
 # Testing
-npm run test           # Run unit tests
-npm run test:e2e       # Run end-to-end tests
+pnpm run test           # Run unit tests
+pnpm run test:e2e       # Run end-to-end tests
 
 # Type checking
-npm run typecheck      # Type check the inspector
+pnpm run typecheck      # Type check the inspector
 ```
 
 ### Creator Hub Scripts
@@ -278,21 +277,21 @@ npm run typecheck      # Type check the inspector
 cd packages/creator-hub
 
 # Development
-npm run start          # Start in watch mode
+pnpm run start          # Start in watch mode
 
 # Building
-npm run build          # Build all parts (main, preload, renderer)
-npm run build:main     # Build main process
-npm run build:preload  # Build preload scripts
-npm run build:renderer # Build renderer (React app)
+pnpm run build          # Build all parts (main, preload, renderer)
+pnpm run build:main     # Build main process
+pnpm run build:preload  # Build preload scripts
+pnpm run build:renderer # Build renderer (React app)
 
 # Testing
-npm run test           # Run all tests
-npm run test:e2e       # Run end-to-end tests
-npm run test:unit      # Run unit tests
+pnpm run test           # Run all tests
+pnpm run test:e2e       # Run end-to-end tests
+pnpm run test:unit      # Run unit tests
 
 # Type checking
-npm run typecheck      # Type check all parts
+pnpm run typecheck      # Type check all parts
 ```
 
 ## 🔄 CI/CD Workflow
@@ -314,7 +313,9 @@ The main workflow orchestrates all CI processes and runs on:
 4. **Drop Pre-release** - Create pre-release artifacts
 5. **Asset Packs Build** - Build, validate, and publish asset-packs package
 6. **Inspector Build** - Build and publish inspector package (depends on asset-packs)
-7. **Creator Hub Build** - Build and publish creator hub
+7. **Creator Hub Build** - Build the creator hub; publish it only on a release run
+
+A run on `main` publishes the installers only when the merged pull request has the `release:creator-hub` label, or when a manual run on `main` sets `release`. Every other run builds the unsigned test installers.
 
 ### Test Workflow (`tests.yml`)
 
@@ -348,30 +349,30 @@ Handles inspector package deployment:
 
 Handles desktop application builds:
 
-- **Multi-platform Builds** - macOS and Windows
-- **Code Signing** - Automatic code signing for both platforms
+- **Multi-platform Builds** - macOS, Windows and Linux (x64 AppImage and deb), for Ubuntu 22.04 and later or any system with glibc 2.35 and later
+- **Code Signing** - Automatic code signing for macOS and Windows
 - **Notarization** - macOS notarization
 - **Artifact Distribution** - Uploads to S3 and GitHub releases
-- **PR Testing** - Provides download links for PR testing
+- **PR Testing** - Provides download links for PR testing; a pull request builds the macOS and Windows installers only with the `ci:desktop` label, and the Linux installers only with the `ci:linux` label (label, then push or reopen)
 
 ## 🏗️ Architecture
 
 ### Monorepo Structure
 
-The project uses npm workspaces to manage the monorepo:
+The project uses a pnpm workspace (`pnpm-workspace.yaml`) to manage the monorepo:
 
-```json
-{
-  "workspaces": ["packages/*"]
-}
+```yaml
+packages:
+  - packages/*
+  - packages/inspector/agents/protocol
 ```
 
 ### Dependency Management
 
-- **syncpack** is used to synchronize dependencies across packages
+- `make lint-packages` checks that the packages agree on the version of each dependency they share
 - Shared dependencies are defined in the root `package.json`
 - Package-specific dependencies are in each package's `package.json`
-- The `@dcl/inspector` dependency is managed specially in `.syncpackrc.json`
+- The `@dcl/inspector` and `@dcl/asset-packs` dependencies are local packages, so that check skips them
 
 ### Protocol Buffers
 
@@ -389,7 +390,7 @@ For a detailed guide to how the three packages connect and communicate at runtim
 
 - **Creator Hub**: Uses Vitest for main, preload, renderer, and shared tests
 - **Inspector**: Uses Vitest for unit tests
-- Run with `make test` or `npm run test` in individual packages
+- Run with `make test` or `pnpm run test` in individual packages
 
 ### End-to-End Tests
 
@@ -414,14 +415,14 @@ packages/inspector/test/e2e/       # Inspector E2E tests
    ```bash
    make init                    # Initial setup
    cd packages/creator-hub
-   npm run start               # Start creator hub in watch mode
+   pnpm run start               # Start creator hub in watch mode
    ```
 
 2. **In another terminal:**
 
    ```bash
    cd packages/inspector
-   npm run start               # Start inspector in watch mode
+   pnpm run start               # Start inspector in watch mode
    ```
 
 3. **Before Committing:**
@@ -441,7 +442,7 @@ To develop with local asset-packs integration (for testing new assets or Smart I
 
    ```bash
    cd packages/asset-packs
-   npm run start  # Starts SDK7 server on port 8001
+   pnpm run start  # Starts SDK7 server on port 8001
    ```
 
 3. **In another terminal, start docker content server:**
@@ -455,14 +456,14 @@ To develop with local asset-packs integration (for testing new assets or Smart I
 
    ```bash
    cd packages/asset-packs
-   npm run upload  # Uploads assets to http://localhost:9000
+   pnpm run upload  # Uploads assets to http://localhost:9000
    ```
 
 5. **In another terminal, start inspector dev server:**
 
    ```bash
    cd packages/inspector
-   npm start  # Starts on port 8000
+   pnpm start  # Starts on port 8000
    ```
 
 6. **In another terminal, start Creator Hub:**
@@ -471,7 +472,7 @@ To develop with local asset-packs integration (for testing new assets or Smart I
    cd packages/creator-hub
    cp .env.example .env  # First time only
    # Edit .env and update VITE_ASSET_PACKS_JS_PATH with your absolute path
-   npm start  # Starts on default port
+   pnpm start  # Starts on default port
    ```
 
 7. **Configure environment variables in `packages/creator-hub/.env`:**
@@ -502,10 +503,9 @@ xattr -c /Applications/Decentraland\ Creator\ Hub.app/
 
 ### Code Quality
 
-- **ESLint** - Code linting with custom rules
+- **oxlint** - Code linting with custom rules
 - **Prettier** - Code formatting
 - **TypeScript** - Static type checking
-- **syncpack** - Dependency synchronization
 
 ## 📦 Publishing
 
@@ -526,7 +526,7 @@ xattr -c /Applications/Decentraland\ Creator\ Hub.app/
 
 ### Creator Hub App
 
-- Multi-platform builds (macOS, Windows)
+- Multi-platform builds (macOS, Windows, Linux)
 - Code signed and notarized
 - Distributed via GitHub releases and S3
 - PR builds available for testing
@@ -584,15 +584,6 @@ netstat -ano | findstr :8000
 
 ```bash
 xattr -c /Applications/Decentraland\ Creator\ Hub.app/
-```
-
-**npm Permission Errors**:
-
-```bash
-# Don't use sudo! Instead, fix npm permissions:
-mkdir ~/.npm-global
-npm config set prefix '~/.npm-global'
-# Add to PATH: export PATH=~/.npm-global/bin:$PATH
 ```
 
 #### Build Failures
@@ -667,13 +658,13 @@ docker-compose down
 
 ```bash
 make typecheck  # Check all packages
-npm run typecheck --workspace=packages/inspector  # Specific package
+pnpm --filter @dcl/inspector run typecheck  # Specific package
 ```
 
 **Missing Types**:
 
 ```bash
-npm install --save-dev @types/package-name
+pnpm add --save-dev @types/package-name
 ```
 
 ### Getting Help

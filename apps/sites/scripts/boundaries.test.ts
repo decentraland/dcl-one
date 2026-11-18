@@ -59,7 +59,6 @@ const WAIVED = new Set([
   "src/data/lib/catalyst/creator-hub/wearable-publish-collection.ts -> @/features/creator-hub/wearable-publish-collection/machine",
   "src/data/lib/catalyst/creator-hub/wearable-publish-collection.ts -> @/features/creator-hub/wearable-publish-collection/PublishCollectionWizard",
   "src/data/lib/catalyst/landings/rsvp.ts -> @/features/social/rsvp-event/machine",
-  "src/data/lib/catalyst/landings/subscriptions.ts -> @/features/social/event-subscriptions/machine",
 ]);
 
 function importViolations(): { key: string; message: string }[] {
@@ -160,9 +159,7 @@ describe("layer boundaries", () => {
         }
       }
     }
-    expect(found.sort()).toEqual([
-      "src/core/lib/landings/creator-hub-download.server.ts -> data",
-    ]);
+    expect(found.sort()).toEqual([]);
   });
 
   it("only the routes layer holds SSR entry points and route modules", () => {

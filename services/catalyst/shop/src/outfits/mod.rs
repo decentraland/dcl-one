@@ -27,12 +27,12 @@ mod tests;
 
 use std::sync::Arc;
 
+use crate::shared::routing::{erase, get, post};
 use axum::Json;
 use axum::body::{Body, Bytes};
 use axum::extract::{OriginalUri, Path, Query, State as Extract};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
 use axum::{Router, extract::Request};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -117,11 +117,14 @@ impl State {
 pub fn shop_router(state: SharedState) -> Router {
     let enabled = state.settings.writes_enabled;
     let api = Router::new()
-        .route("/v1/outfits", get(list_published).post(create))
+        .route("/v1/outfits", get(list_published).post(erase(create)))
         .route("/v1/outfits/all", get(list_all))
         .route("/v1/outfits/thumbnails", post(upload_thumbnail))
         .route("/v1/outfits/thumbnails/{hash}", get(thumbnail))
-        .route("/v1/outfits/{id}", get(one).put(replace).delete(remove))
+        .route(
+            "/v1/outfits/{id}",
+            get(one).put(erase(replace)).delete(erase(remove)),
+        )
         .with_state(state);
     DataWrites::guard(api, enabled)
 }
@@ -198,11 +201,8 @@ impl IntoResponse for ApiError {
 /// other refusal is the static 401 body.
 fn signed_fetch_error(e: SignedFetchError) -> ApiError {
     match e {
-        SignedFetchError::MalformedChain { detail }
-            if detail.starts_with("invalid metadata content")
-                || detail.contains("non-canonical metadata") =>
-        {
-            ApiError::bad_request("invalid_signer", detail)
+        SignedFetchError::MalformedChain { ref detail } if e.is_metadata_refusal() => {
+            ApiError::bad_request("invalid_signer", detail.clone())
         }
         other => {
             tracing::debug!(error = %other, "signed-fetch verification failed for an outfits route");
@@ -395,16 +395,10 @@ pub fn can_read(outfit: &Outfit, caller: Option<&str>, settings: &Settings) -> b
 fn js_number_or(raw: Option<&String>, default: i64) -> i64 {
     match raw {
         None => default,
-        Some(s) => {
-            let t = s.trim();
-            if t.is_empty() {
-                return default;
-            }
-            match t.parse::<f64>() {
-                Ok(n) if n.is_finite() && n.trunc() != 0.0 => n.trunc() as i64,
-                _ => default,
-            }
-        }
+        Some(s) => match catalyst_shared::js::number_from_str(s) {
+            n if n.is_finite() && n.trunc() != 0.0 => n.trunc() as i64,
+            _ => default,
+        },
     }
 }
 

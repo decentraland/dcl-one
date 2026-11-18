@@ -8,7 +8,7 @@ import react from '@vitejs/plugin-react'
 import { INTER_FILES, SHARED_ALIASES, SHARED_DEDUPE, SHARED_TREES } from './vite.shared'
 
 // Dev-only: run the bridge scene's live preview (`sdk-commands start` on :8100 — the engine's
-// default systemScene in dev, with scene hot-reload) alongside vite, so `npm run dev` is the ONE
+// default systemScene in dev, with scene hot-reload) alongside vite, so `pnpm run dev` is the ONE
 // command. If :8100 is already serving (your own terminal, or Playwright's webServer), leave it
 // alone. The child outlives vite's restarts and is stopped when the dev server's process ends, with
 // sdk-commands' own children (a detached group on POSIX, taskkill's tree on Windows), so none
@@ -40,7 +40,7 @@ function bridgeScenePreview(): Plugin {
           if (!path) throw new Error('package.json names no sdk-commands bin')
           script = join(pkgDir, path)
         } catch (error) {
-          console.warn(`[bridge-scene] cannot start @dcl/sdk-commands (run npm install in react-web/bridge-scene): ${error}`)
+          console.warn(`[bridge-scene] cannot start @dcl/sdk-commands (run pnpm install in react-web/bridge-scene): ${error}`)
           return
         }
         // Windows has no process group to signal, so the tree is stopped with taskkill.
@@ -186,12 +186,36 @@ function coiHeadersExceptAuth(): Plugin {
   }
 }
 
+/** `HUD_REACT_PROFILING=1` at build time: the HUD is built on React's profiling build, the
+ *  production build in which <Profiler> reports commits, slower on every commit. Off by
+ *  default, and never in the native bundle. */
+const HUD_REACT_PROFILING = process.env.HUD_REACT_PROFILING === '1'
+
+/** Resolves react-dom/client to React's profiling build, the production build in which
+ *  <Profiler> reports commits. */
+function reactProfilingBuild(): Plugin {
+  return {
+    name: 'react-profiling-build',
+    config: () => ({ resolve: { alias: [{ find: /^react-dom\/client$/, replacement: 'react-dom/profiling' }] } })
+  }
+}
+
+// The short commit this HUD is built from, '' without a git checkout (the sign-in screens' corner).
+function hudBuild(): string {
+  const out = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' })
+  return out.status === 0 ? out.stdout.trim() : ''
+}
+
 export default defineConfig(({ command, mode }) => ({
   // ?native=1 (CEF HUD mode) is honoured only where it's legitimate: the bundle:native build
   // (--mode native) that CEF loads from disk, and the dev server (react_hud_cef.rs supports
   // REACT_HUD_URL at a vite dev server). Deployed web builds compile it FALSE so a crafted
   // link can't switch them into native mode and skip the launch gates (see src/App.tsx MODE).
-  define: { __NATIVE_HUD__: JSON.stringify(command === 'serve' || mode === 'native') },
+  define: {
+    __NATIVE_HUD__: JSON.stringify(command === 'serve' || mode === 'native'),
+    __HUD_REACT_PROFILING__: JSON.stringify(HUD_REACT_PROFILING && mode !== 'native'),
+    __HUD_BUILD__: JSON.stringify(hudBuild())
+  },
   // Production is served from a VERSIONED CDN subpath (cdn.decentraland.org/<pkg>/<version>/ —
   // see deploy/web/scripts/prebuild.js), so built asset URLs can't be origin-absolute. CI passes
   // PUBLIC_URL for an absolute CDN base; otherwise './' (relative → works from any path, e.g. a
@@ -203,13 +227,13 @@ export default defineConfig(({ command, mode }) => ({
   resolve: { alias: SHARED_ALIASES, dedupe: SHARED_DEDUPE },
   plugins: [
     react(),
+    ...(HUD_REACT_PROFILING && mode !== 'native' ? [reactProfilingBuild()] : []),
     bridgeScenePreview(),
     coiHeadersExceptAuth(),
     serveStatic('/engine/', '../deploy/web/engine'),
-    // The IPFS-cache service worker, at the ROOT so its scope covers the page (like prod). The
-    // engine tags cacheable asset fetches with an X-IPFS header for it; without a SW to strip
-    // that header the requests need a CORS preflight, which the peer catalysts reject — no
-    // scenes, no avatars. (serveStatic handles a single file fine: rel resolves to the root.)
+    // The service worker, at the ROOT so its scope covers the page (like prod): page isolation
+    // headers and the editor's preview realm. (serveStatic handles a single file fine: rel
+    // resolves to the root.)
     serveStatic('/service_worker.js', '../deploy/web/service_worker.js'),
     // importScripts'd by the service worker (the editor's preview realm), so it sits beside it.
     serveStatic('/preview_realm.js', '../deploy/web/preview_realm.js'),

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Chat } from '../../features/chat/Chat'
 import { SettingsPanel } from '../../features/settings/SettingsPanel'
@@ -34,6 +34,9 @@ beforeEach(() => {
   resetPingPrefs()
 })
 afterEach(() => vi.restoreAllMocks())
+
+// The auto-translate switch of the open conversation menu.
+const autoTranslateSwitch = (): HTMLElement => within(screen.getByRole('menuitemcheckbox', { name: /Auto-Translate/ })).getByRole('switch')
 
 describe('translation languages', () => {
   it('matches browser tags to the server languages', () => {
@@ -169,8 +172,9 @@ describe('chat translation', () => {
     renderChat([line({ channel: '0xbob' })], '0xbob')
     await act(async () => {})
     expect(requests).toHaveLength(0)
-    expect(screen.getByRole('button', { name: 'Auto-translate' })).toHaveAttribute('aria-pressed', 'false')
-    await userEvent.click(screen.getByRole('button', { name: 'Auto-translate' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Conversation options' }))
+    expect(autoTranslateSwitch()).toHaveAttribute('aria-checked', 'false')
+    await userEvent.click(autoTranslateSwitch())
     expect(await screen.findByText('hello')).toBeInTheDocument()
     expect(JSON.parse(getPref(PREF.chatAutoTranslateChannels) ?? '{}')).toEqual({ '0xbob': true })
   })
@@ -215,13 +219,13 @@ describe('chat translation', () => {
     setAutoTranslate('Nearby', true)
     renderChat([line({})])
     expect(await screen.findByText('hello')).toBeInTheDocument()
-    const toggle = screen.getByRole('button', { name: 'Auto-translate' })
-    expect(toggle.className).not.toMatch(/autoTranslateOff/)
-    await userEvent.click(toggle)
+    await userEvent.click(screen.getByRole('button', { name: 'Conversation options' }))
+    expect(autoTranslateSwitch()).toHaveAttribute('aria-checked', 'true')
+    await userEvent.click(autoTranslateSwitch())
     expect(screen.getByText('hola')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'See translation' })).toBeInTheDocument()
-    expect(toggle.className).toMatch(/autoTranslateOff/)
-    await userEvent.click(toggle)
+    expect(autoTranslateSwitch()).toHaveAttribute('aria-checked', 'false')
+    await userEvent.click(autoTranslateSwitch())
     expect(screen.getByText('hello')).toBeInTheDocument()
   })
 
@@ -231,8 +235,9 @@ describe('chat translation', () => {
     setAutoTranslate('0xcat', false)
     renderChat([], '0xbob')
     await userEvent.click(screen.getByRole('button', { name: 'Conversation options' }))
-    await userEvent.click(screen.getByText('Delete chat history'))
-    expect(screen.getByRole('button', { name: 'Auto-translate' })).toHaveAttribute('aria-pressed', 'true')
+    await userEvent.click(screen.getByText('Delete Chat History'))
+    await userEvent.click(screen.getByRole('button', { name: 'Conversation options' }))
+    expect(autoTranslateSwitch()).toHaveAttribute('aria-checked', 'true')
     expect(JSON.parse(getPref(PREF.chatAutoTranslateChannels) ?? '{}')).toEqual({ '0xcat': false })
   })
 
@@ -276,12 +281,14 @@ describe('translation settings', () => {
   it('the Chat tab holds the auto-translate default, kept as a HUD pref', async () => {
     render(
       <SettingsPanel
+        lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }}
         settings={{ ...fakeSession().settings, open: true, list: [] }}
         bindings={fakeSession().bindings}
         profile={fakeProfileState()}
         onNavigate={vi.fn()}
       />
     )
+    await userEvent.click(screen.getByRole('tab', { name: 'Chat' }))
     await userEvent.click(screen.getByRole('switch', { name: 'Auto-Translate New Conversations' }))
     expect(getPref(PREF.chatAutoTranslateDefault)).toBe('true')
   })
@@ -290,12 +297,14 @@ describe('translation settings', () => {
     setPingMode('community:c1', 'all')
     render(
       <SettingsPanel
+        lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }}
         settings={{ ...fakeSession().settings, open: true, list: [] }}
         bindings={fakeSession().bindings}
         profile={fakeProfileState()}
         onNavigate={vi.fn()}
       />
     )
+    await userEvent.click(screen.getByRole('tab', { name: 'Chat' }))
     await userEvent.click(screen.getByRole('button', { name: 'Notification Ping' }))
     await userEvent.click(screen.getByRole('option', { name: 'Mentions Only' }))
     expect(getPref(PREF.chatPingDefault)).toBe('mentions')
@@ -310,12 +319,14 @@ describe('translation settings', () => {
     setPingMode('community:c1', 'mentions')
     render(
       <SettingsPanel
+        lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }}
         settings={{ ...fakeSession().settings, open: true, list: [] }}
         bindings={fakeSession().bindings}
         profile={fakeProfileState()}
         onNavigate={vi.fn()}
       />
     )
+    await userEvent.click(screen.getByRole('tab', { name: 'Chat' }))
     await userEvent.click(screen.getByRole('button', { name: /Reset all defaults/ }))
     expect(screen.getByRole('switch', { name: 'Auto-Translate New Conversations' })).not.toBeChecked()
     expect(JSON.parse(getPref(PREF.chatAutoTranslateChannels) ?? '{}')).toEqual({})

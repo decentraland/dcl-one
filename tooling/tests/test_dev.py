@@ -3,6 +3,7 @@ import importlib.util
 import base64
 import contextlib
 import hashlib
+import hmac
 import gzip
 import io
 import shlex
@@ -19,6 +20,7 @@ import tempfile
 import textwrap
 import time
 import unittest
+import urllib.request
 from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location('foundation_dev', Path(__file__).parents[1] / 'dev.py')
@@ -84,6 +86,99 @@ class DevTest(unittest.TestCase):
         livekit = dev.project(self.config)['processes']['livekit']
         self.assertEqual(livekit['readiness_probe']['http_get']['port'], signaling)
         self.assertIn('livekit', dev.SERVICES)
+
+    def test_stream_keys_reach_the_stacks_own_rtmp_ingress(self):
+        valkey, rtmp, relay, health = dev.ingress_ports(self.config)
+        block = range(self.config['port'], self.config['port'] + 10)
+        self.assertFalse({valkey, rtmp, relay, health} & set(block), "outside the stack's full block")
+        self.assertEqual(len({valkey, rtmp, relay, health}), 4)
+        # LiveKit and the ingress meet in the stack's Valkey; the server hands out the ingress's RTMP URL.
+        yaml = dev.livekit_yaml(self.config)
+        password = self.config['VALKEY_PASSWORD']
+        self.assertGreaterEqual(len(password), 32)
+        for line in ('redis:', f'  address: 127.0.0.1:{valkey}', f'  password: {password}', 'ingress:',
+                     f'  rtmp_base_url: rtmp://127.0.0.1:{rtmp}/x'):
+            self.assertIn(line + '\n', yaml)
+        ingress = dev.ingress_yaml(self.config)
+        signaling = dev.livekit_ports(self.config)[0]
+        for line in (f"api_key: {self.config['LIVEKIT_API_KEY']}", f"api_secret: {self.config['LIVEKIT_API_SECRET']}",
+                     f'ws_url: ws://127.0.0.1:{signaling}', f'  address: 127.0.0.1:{valkey}', f'  password: {password}',
+                     f'rtmp_port: {rtmp}', 'whip_port: -1', f'http_relay_port: {relay}', f'health_port: {health}',
+                     # A busy development machine still takes a stream.
+                     '  rtmp_cpu_cost: 0.01', '  min_idle_ratio: 0.001'):
+            self.assertIn(line + '\n', ingress)
+        processes = dev.project(self.config)['processes']
+        self.assertEqual(processes['livekit']['depends_on'], {'valkey': {'condition': 'process_healthy'}})
+        self.assertEqual(processes['ingress']['depends_on'], {'livekit': {'condition': 'process_healthy'}})
+        self.assertEqual(processes['ingress']['readiness_probe']['http_get'],
+                         {'host': '127.0.0.1', 'port': health, 'path': '/'})
+        self.assertIn('valkey-ready', processes['valkey']['readiness_probe']['exec']['command'])
+        self.assertTrue({'valkey', 'ingress'} <= set(dev.SERVICES))
+        for line in ('bind 127.0.0.1', f'port {valkey}', f'requirepass {password}', 'save ""', 'appendonly no'):
+            self.assertIn(line + '\n', dev.valkey_conf(self.config))
+        with patch.object(dev, 'started', return_value='start'), patch.object(dev.os, 'execvpe') as execvpe:
+            dev.task('valkey')
+        program, argv, env = execvpe.call_args.args
+        conf = self.state / 'valkey.conf'
+        self.assertEqual((program, argv), ('valkey-server', ['valkey-server', str(conf)]))
+        self.assertNotIn(password, ' '.join(argv), 'the password stays out of ps')
+        self.assertEqual(conf.read_text(), dev.valkey_conf(self.config))
+        self.assertEqual(conf.stat().st_mode & 0o777, 0o600)
+        with patch.object(dev, 'started', return_value='start'), patch.object(dev.os, 'execvpe') as execvpe:
+            dev.task('ingress')
+        program, argv, env = execvpe.call_args.args
+        self.assertEqual((program, argv), ('ingress', ['ingress']))
+        self.assertEqual(env['INGRESS_CONFIG_BODY'], ingress, 'the secret travels in the environment, not argv')
+        self.assertIn('PATH', env, 'the ingress starts its per-stream handlers from PATH')
+
+    def test_behind_a_public_origin_streamers_get_the_origins_host(self):
+        for origin, host in (('https://dev.example:8443', 'dev.example'), ('https://[2001:db8::1]', '[2001:db8::1]')):
+            config = {**self.config, 'public_origin': origin}
+            rtmp = dev.ingress_ports(config)[1]
+            self.assertEqual(dev.rtmp_base_url(config), f'rtmp://{host}:{rtmp}/x')
+            self.assertIn(f'  rtmp_base_url: {dev.rtmp_base_url(config)}\n', dev.livekit_yaml(config))
+            # status prints what the server hands out.
+            with patch.object(dev, 'pc', return_value=subprocess.CompletedProcess([], 0)), \
+                    patch.object(dev, 'tls_files', return_value=None), contextlib.redirect_stdout(io.StringIO()) as out, \
+                    patch.object(dev, 'settings', return_value=config):
+                dev.status()
+            self.assertIn(f'RTMP ingress: {dev.rtmp_base_url(config)}', out.getvalue())
+
+    def test_a_stack_running_since_before_the_ingress_asks_for_a_full_restart(self):
+        old_graph = {name: {} for name in dev.project(self.config)['processes'] if name not in ('valkey', 'ingress')}
+        dev.save_json(self.state / 'process-compose.json', {'processes': old_graph})
+        self.assertEqual(dev.stale_graph(self.config), {'valkey', 'ingress'})
+        with patch.object(dev, 'supervisor_running', return_value=True):
+            # LiveKit's config now names Valkey, which the old graph never started.
+            with self.assertRaisesRegex(RuntimeError, 'predates ingress, valkey.*down, then foundation-dev up'):
+                dev.prepare_supervisor()
+            with patch.object(dev.sys, 'argv', ['foundation-dev', 'restart', 'livekit']), \
+                    patch.object(dev, 'pc') as pc, self.assertRaisesRegex(RuntimeError, 'predates'):
+                dev.main()
+            pc.assert_not_called()
+        dev.save_json(self.state / 'process-compose.json', {'processes': dev.project(self.config)['processes']})
+        self.assertEqual(dev.stale_graph(self.config), set())
+        dev.save_json(self.state / 'process-compose.json', {'processes': {'postgres': {}}})
+        self.assertEqual(dev.stale_graph(self.config), set(), 'a PostgreSQL-only run has its own check')
+
+    def test_a_stack_created_before_the_ingress_gets_a_free_block_and_keeps_it(self):
+        old = {k: v for k, v in self.config.items() if k != 'ingress_port'}
+        dev.save_json(dev.SETTINGS, old)
+        start = old['port'] + 10000
+        with socket.socket() as busy:
+            # A held port in the first candidate block moves the ingress to the next one.
+            busy.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                busy.bind(('127.0.0.1', start + 2))
+            except OSError:
+                self.skipTest('the test port block is busy')
+            busy.listen()
+            self.assertFalse(dev.ingress_ports_free(start))
+            upgraded = dev.settings()
+        self.assertEqual({k: upgraded[k] for k in old}, old)
+        self.assertGreater(upgraded['ingress_port'], start)
+        self.assertEqual(upgraded['ingress_port'] % 10, start % 10)
+        self.assertEqual(dev.settings(create=True), upgraded, 'the block is stable once written')
 
     def test_a_slow_postgres_probe_does_not_stop_a_healthy_database(self):
         probe = dev.project(self.config)['processes']['postgres']['readiness_probe']
@@ -189,6 +284,87 @@ class DevTest(unittest.TestCase):
         cli('wait', '--postgres-only', '--timeout', '30')
         self.assertEqual(dev.sql(config, 'SELECT value FROM preserved', 'scratch_fixture'), 'saved')
 
+    def postgres_argv(self, disposable_env, stderr=None):
+        """The PostgreSQL argv of a start with initdb and the version check stubbed; output goes to stderr if given."""
+        def fake_run(argv, **kwargs):
+            if argv[0] == 'initdb':
+                Path(argv[2]).mkdir(parents=True)
+                (Path(argv[2]) / 'PG_VERSION').write_text('18\n')
+            return subprocess.CompletedProcess(argv, 0, 'postgres (PostgreSQL) 18.6\n')
+        env = {k: v for k, v in os.environ.items() if k != 'FOUNDATION_DEV_DISPOSABLE_POSTGRES'}
+        if disposable_env is not None:
+            env['FOUNDATION_DEV_DISPOSABLE_POSTGRES'] = disposable_env
+        with patch.dict(os.environ, env, clear=True), patch.object(dev, 'run', side_effect=fake_run), \
+                patch.object(dev.os, 'execvpe') as execvpe, \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr or io.StringIO()):
+            dev.postgres(self.config)
+        program, argv, _ = execvpe.call_args.args
+        self.assertEqual(program, 'postgres')
+        return argv
+
+    def test_postgres_keeps_full_durability_by_default(self):
+        argv = self.postgres_argv(None)
+        for setting in ('fsync=off', 'synchronous_commit=off', 'full_page_writes=off'):
+            self.assertNotIn(setting, argv)
+        self.assertEqual(list((self.state / 'postgres').iterdir()), [self.state / 'postgres/PG_VERSION'])
+
+    def test_disposable_test_cluster_runs_without_durability(self):
+        argv = self.postgres_argv('1')
+        settings = [argv[i + 1] for i, arg in enumerate(argv) if arg == '-c']
+        for setting in ('fsync=off', 'synchronous_commit=off', 'full_page_writes=off',
+                        'max_locks_per_transaction=256'):
+            self.assertIn(setting, settings)
+        self.assertIn('fsync=off', self.postgres_argv('1'), 'a restart keeps the settings')
+
+    def test_existing_cluster_keeps_durability_when_the_disposable_flag_is_set(self):
+        self.postgres_argv(None)
+        stderr = io.StringIO()
+        argv = self.postgres_argv('1', stderr)
+        self.assertNotIn('fsync=off', argv, 'a cluster created without the flag may hold real data')
+        self.assertIn('FOUNDATION_DEV_DISPOSABLE_POSTGRES ignored', stderr.getvalue())
+
+    def test_disposable_flag_needs_an_exact_value(self):
+        for value in ('', '0', 'true', 'yes'):
+            with self.subTest(value=value):
+                shutil.rmtree(self.state / 'postgres', ignore_errors=True)
+                self.assertNotIn('fsync=off', self.postgres_argv(value))
+
+    @unittest.skipUnless(shutil.which('initdb') and shutil.which('postgres') and shutil.which('psql')
+                         and os.getuid() != 0, 'requires PostgreSQL')
+    def test_disposable_settings_start_a_real_cluster(self):
+        data = self.state / 'pg'
+        subprocess.run(['initdb', '-D', data, '-U', 'foundation', '--auth=trust'], check=True,
+                       capture_output=True)
+        log = self.state / 'pg.log'
+        # The free port is released before PostgreSQL binds it, so another process can take it in between;
+        # one retry on a new port covers that race.
+        for attempt in range(2):
+            with socket.socket() as sock:
+                sock.bind(('127.0.0.1', 0))
+                port = sock.getsockname()[1]
+            argv = ['postgres', '-D', str(data), '-h', '127.0.0.1', '-p', str(port), '-k', '']
+            for setting in dev.DISPOSABLE_POSTGRES_SETTINGS:
+                argv += ['-c', setting]
+            with log.open('w') as stderr:
+                server = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=stderr)
+            self.addCleanup(server.wait, 30)
+            self.addCleanup(server.send_signal, signal.SIGINT)
+            query = ['psql', '-X', '-Atq', '-h', '127.0.0.1', '-p', str(port), '-U', 'foundation', '-d', 'postgres']
+            deadline = time.monotonic() + 30
+            while server.poll() is None and subprocess.run([*query, '-c', 'SELECT 1'], capture_output=True).returncode != 0:
+                self.assertLess(time.monotonic(), deadline, 'PostgreSQL did not start:\n' + log.read_text())
+                time.sleep(0.2)
+            if server.poll() is None:
+                break
+            if attempt or 'already in use' not in log.read_text():
+                self.fail('PostgreSQL exited at startup:\n' + log.read_text())
+        shown = subprocess.run([*query, '-c', 'SELECT name, setting FROM pg_settings WHERE name IN '
+                                "('fsync','synchronous_commit','full_page_writes','wal_level') ORDER BY name"],
+                               check=True, capture_output=True, text=True).stdout.split()
+        self.assertEqual(shown, ['fsync|off', 'full_page_writes|off', 'synchronous_commit|off', 'wal_level|minimal'])
+        subprocess.run([*query, '-c', 'CREATE DATABASE scratch'], check=True, capture_output=True)
+        subprocess.run([*query, '-c', 'DROP DATABASE scratch WITH (FORCE)'], check=True, capture_output=True)
+
     def test_livekit_gets_its_config_through_the_environment_not_argv(self):
         with patch.dict(os.environ, {'DATABASE_URL': 'postgresql://production.invalid/db'}), \
                 patch.object(dev, 'started', return_value='start'), \
@@ -206,10 +382,40 @@ class DevTest(unittest.TestCase):
         env = dev.pulse_env(self.config, self.state / 'cert.pem', self.state / 'key.pem')
         self.assertEqual(env['COMMS_MODERATOR_TOKEN'], token)
         self.assertEqual(env['PULSE_BANS_URL'], f"http://127.0.0.1:{self.config['port']}/comms-gatekeeper/bans")
+        self.assertNotIn('AUTHORITATIVE_SERVER_ADDRESS', env)
+        host = '0x1111111111111111111111111111111111111111'
+        hosted = dev.pulse_env({**self.config, 'AUTHORITATIVE_SERVER_ADDRESS': host},
+                               self.state / 'cert.pem', self.state / 'key.pem')
+        self.assertEqual(hosted['AUTHORITATIVE_SERVER_ADDRESS'], host)
         older = {k: v for k, v in self.config.items() if k != 'MODERATOR_TOKEN'}
         dev.save_json(dev.SETTINGS, older)
         self.assertEqual({k: dev.settings()[k] for k in older}, older, 'a stack from before the token keeps its secrets')
         self.assertTrue(dev.settings()['MODERATOR_TOKEN'])
+
+    def test_scenes_reach_their_third_party_services_through_the_nodes_proxy(self):
+        self.assertEqual(dev.runtime_env(self.config)['SCENE_PROXY_HOSTS'], ','.join(dev.SCENE_PROXY_HOSTS))
+        own = {**self.config, 'scene_proxy_hosts': ['rooms.example.test', 'files.example.test']}
+        self.assertEqual(dev.runtime_env(own)['SCENE_PROXY_HOSTS'], 'rooms.example.test,files.example.test')
+        self.assertEqual(dev.runtime_env({**self.config, 'scene_proxy_hosts': []})['SCENE_PROXY_HOSTS'], '')
+        with self.assertRaises(SystemExit):
+            dev.runtime_env({**self.config, 'scene_proxy_hosts': 'rooms.example.test'})
+
+    def test_profile_images_render_here_once_the_avatar_renderer_is_built(self):
+        with patch.dict(os.environ, {}, clear=False), patch.object(dev, 'AVATAR_RENDER_BIN', self.state / 'missing'):
+            os.environ.pop('FOUNDATION_DEV_AVATAR_RENDER_BIN', None)
+            env = dev.runtime_env({**self.config, 'profile': 'mirror'})
+        self.assertNotIn('PROFILE_IMAGES_RENDER_ENABLED', env)
+        self.assertEqual(env['PROFILE_IMAGES_ORIGIN_URL'], 'https://profile-images.decentraland.org')
+        renderer = self.state / 'avatar_render'
+        renderer.write_text('#!/bin/sh\n')
+        renderer.chmod(0o755)
+        with patch.dict(os.environ, {'FOUNDATION_DEV_AVATAR_RENDER_BIN': str(renderer)}):
+            env = dev.runtime_env({**self.config, 'profile': 'mirror'})
+        self.assertEqual(env['PROFILE_IMAGES_RENDER_ENABLED'], 'true')
+        self.assertEqual(env['PROFILE_IMAGES_RENDERER'], 'bevy')
+        self.assertEqual(env['PROFILE_IMAGES_AVATAR_RENDER_BIN'], str(renderer))
+        self.assertEqual(env['PROFILE_IMAGES_ORIGIN_URL'], 'https://profile-images.decentraland.org',
+                         'the upstream stays the last resort')
 
     def test_a_stack_created_before_livekit_gets_a_pair_and_keeps_its_secrets(self):
         old = {k: v for k, v in self.config.items() if not k.startswith('LIVEKIT_')}
@@ -237,11 +443,14 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['PULSE_WT_ENABLED'], 'true')
         self.assertEqual((env['PULSE_WT_CERT_PATH'], env['PULSE_WT_KEY_PATH']), (str(certificate), str(key)))
         self.assertTrue(Path(env['PULSE_REPLAY_STATE_PATH']).is_relative_to(self.state))
-        self.assertNotIn('DATABASE_URL', env)
+        self.assertEqual(env['DATABASE_URL'], dev.database_url(self.config))
+        self.assertEqual(env['PULSE_V4_AUDIENCE'], dev.pulse_about_env(self.config)['COMMS_V4_PULSE_AUDIENCE'])
+        self.assertEqual(dev.runtime_env(self.config)['ARCHIPELAGO_CONTROL_V4_AUDIENCE'], env['PULSE_V4_AUDIENCE'])
+        self.assertEqual(dev.runtime_env(self.config)['DATABASE_URL'], env['DATABASE_URL'])
         self.assertEqual(env['PULSE_NATS_URL'], dev.nats_url(self.config), "the stack's own broker, not the shell's")
         pulse = dev.project(self.config)['processes']['pulse']
         self.assertEqual(pulse['readiness_probe']['http_get']['port'], metrics)
-        self.assertEqual(pulse['depends_on'], {'api-build': {'condition': 'process_completed_successfully'},
+        self.assertEqual(pulse['depends_on'], {'api': {'condition': 'process_healthy'},
                                                'nats': {'condition': 'process_healthy'}})
         self.assertIn('pulse', dev.SERVICES)
         with patch.object(dev, 'started', return_value='start'), \
@@ -251,6 +460,40 @@ class DevTest(unittest.TestCase):
         binary, argv, env = execve.call_args.args
         self.assertEqual((Path(binary).name, argv[1:]), ('catalyst', ['pulse']))
         self.assertEqual(env, dev.pulse_env(self.config, certificate, key))
+
+    def test_api_process_readiness_can_start_pulse_before_whole_stack_about_is_healthy(self):
+        processes = dev.project(self.config)['processes']
+        pulse_ready = False
+        observed = []
+        api_url = f"http://127.0.0.1:{self.config['port']}"
+
+        def response(url, timeout):
+            observed.append(url)
+            if url == api_url + '/about' and not pulse_ready:
+                raise dev.urllib.error.HTTPError(url, 503, 'Pulse not ready', {}, None)
+            return contextlib.nullcontext(type('Response', (), {'status': 200})())
+
+        def start_pulse(_delay):
+            nonlocal pulse_ready
+            mirrors.assert_not_called()
+            pulse_ready = True
+
+        listing = subprocess.CompletedProcess([], 0, stdout='[]')
+        with patch.object(dev.urllib.request, 'urlopen', side_effect=response), \
+                patch.object(dev, 'pc', return_value=listing), \
+                patch.object(dev, 'backoff_delays', return_value=iter([0])), \
+                patch.object(dev.time, 'sleep', side_effect=start_pulse), \
+                patch.object(dev, 'wait_first_mirror_pass', return_value=0) as mirrors:
+            probe = processes['api']['readiness_probe']['http_get']
+            # The real /status route answers 200 after schema/state/listener setup,
+            # while /about includes the still-absent Pulse heartbeat.
+            with dev.urllib.request.urlopen(api_url + probe['path'], timeout=3) as ready:
+                self.assertEqual(ready.status, 200)
+            self.assertEqual(processes['pulse']['depends_on']['api'], {'condition': 'process_healthy'})
+            self.assertEqual(dev.wait_ready(10), 0)
+        self.assertTrue(pulse_ready)
+        self.assertEqual(observed.count(api_url + '/about'), 2)
+        mirrors.assert_called_once()
 
     def test_the_stacks_own_nats_carries_pulses_cluster_feed_to_archipelago(self):
         client, monitor = dev.nats_ports(self.config)
@@ -370,13 +613,103 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['COMMS_V4_PULSE_WEBTRANSPORT_URL'], f'https://127.0.0.1:{dev.pulse_ports(self.config)[0]}')
         self.assertTrue(env['COMMS_V4_PULSE_AUDIENCE'])
 
-    @unittest.skipUnless(shutil.which('livekit-server'), 'livekit-server is supplied by nix develop')
-    def test_livekit_server_starts_on_the_generated_config(self):
-        signaling = dev.livekit_ports(self.config)[0]
-        if not dev.ports_free(self.config['port']):
-            self.skipTest('the test port block is busy')
-        server = subprocess.Popen(['livekit-server'], env={'PATH': os.environ['PATH'],
-                                                            'LIVEKIT_CONFIG': dev.livekit_yaml(self.config)},
+    def test_a_public_origin_is_what_the_realm_advertises(self):
+        config = {**self.config, 'public_origin': 'https://dev.example.test:5443'}
+        env = dev.runtime_env(config)
+        self.assertEqual(env['PUBLIC_URL'], 'https://dev.example.test:5443')
+        self.assertEqual(env['COMMS_FIXED_ADAPTER'], 'archipelago:wss://dev.example.test:5443/ws')
+        self.assertEqual(env['COMMS_ADAPTER'], 'fixed-adapter:' + env['COMMS_FIXED_ADAPTER'])
+        self.assertEqual(env['LIVEKIT_WS_URL'], 'wss://dev.example.test:5443', 'players reach LiveKit through the front')
+        self.assertEqual(env['LIVEKIT_HOST'], f'ws://127.0.0.1:{dev.livekit_ports(config)[0]}', 'the API still dials loopback')
+        self.assertEqual(env['DEV_ALLOWED_HOSTS'], '.dev.example.test', 'the host and its subdomains')
+        self.assertEqual(dev.runtime_env({**self.config, 'public_origin': 'http://10.0.0.5:5443'})['DEV_ALLOWED_HOSTS'],
+                         '10.0.0.5')
+        self.assertEqual(env['HTTP_TRUSTED_PROXY_CIDRS'], '127.0.0.1/32,::1/128', 'the front is the loopback peer')
+        self.assertEqual((env['HTTP_SERVER_HOST'], env['HOST']), ('127.0.0.1', '127.0.0.1'), 'the front is the only listener')
+        # The web Explorer dials Pulse at the page's host and port over UDP, which the front cannot carry.
+        self.assertEqual(dev.pulse_ports(config)[0], 5443)
+        about = dev.pulse_about_env(config)
+        self.assertEqual(about['COMMS_V4_PULSE_WEBTRANSPORT_URL'], 'https://dev.example.test:5443')
+        self.assertEqual(about['COMMS_V4_PULSE_AUDIENCE'], 'dev.example.test:5443')
+        self.assertEqual(dev.pulse_env(config, Path('c'), Path('k'))['PULSE_WT_BIND'], '0.0.0.0:5443')
+        portless = {**self.config, 'public_origin': 'http://dev.example.test'}
+        self.assertEqual(dev.pulse_ports(portless)[0], dev.WEB_PULSE_PORT, "the engine's default when the page has no port")
+        self.assertEqual(dev.runtime_env(portless)['COMMS_FIXED_ADAPTER'], 'archipelago:ws://dev.example.test/ws')
+        loopback = dev.runtime_env(self.config)
+        self.assertEqual(loopback['PUBLIC_URL'], f"http://127.0.0.1:{self.config['port'] + 2}")
+        self.assertNotIn('LIVEKIT_WS_URL', loopback)
+        self.assertNotIn('DEV_ALLOWED_HOSTS', loopback)
+        self.assertNotIn('HTTP_TRUSTED_PROXY_CIDRS', loopback)
+        self.assertEqual(dev.pulse_env(self.config, Path('c'), Path('k'))['PULSE_WT_BIND'],
+                         f"127.0.0.1:{self.config['port'] + 2}")
+
+    def test_the_public_origin_is_an_origin_taken_on_first_startup(self):
+        for bad in ('dev.example.test', 'https://dev.example.test/play', 'https://dev.example.test?x=1',
+                    'ftp://dev.example.test', 'https://user@dev.example.test'):
+            with self.assertRaisesRegex(ValueError, 'origin'):
+                dev.public_origin(bad)
+        self.assertEqual(dev.public_origin('https://dev.example.test/'), 'https://dev.example.test')
+        self.assertIsNone(dev.public_origin('local'))
+        self.assertIsNone(dev.public_origin(None))
+        self.assertIsNone(self.config.get('public_origin'), 'the default stack stays on loopback')
+        state = self.state / 'public'
+        state.mkdir()
+        with patch.object(dev, 'STATE', state), patch.object(dev, 'SETTINGS', state / 'settings.json'), \
+                patch.dict(os.environ, {'FOUNDATION_DEV_PUBLIC_ORIGIN': 'https://dev.example.test:5443',
+                                        'FOUNDATION_DEV_PORT': '6300'}):
+            self.assertEqual(dev.settings(create=True)['public_origin'], 'https://dev.example.test:5443')
+            self.assertEqual(json.loads((state / 'settings.json').read_text())['public_origin'],
+                             'https://dev.example.test:5443', 'the installed service has no environment')
+        with self.assertRaisesRegex(ValueError, 'go together'):
+            dev.origin_settings({'FOUNDATION_DEV_PUBLIC_ORIGIN': 'https://dev.example.test',
+                                 'FOUNDATION_DEV_TLS_CERT': '/unused'})
+        with self.assertRaisesRegex(ValueError, 'FOUNDATION_DEV_PUBLIC_ORIGIN'):
+            dev.origin_settings({'FOUNDATION_DEV_TLS_CERT': '/unused', 'FOUNDATION_DEV_TLS_KEY': '/unused'})
+
+    def test_a_developers_certificate_replaces_the_generated_pulse_pair(self):
+        # The settings keep resolved paths, and the macOS temporary directory is behind a link.
+        certificate, key = (self.state / 'dev.crt').resolve(), (self.state / 'dev.key').resolve()
+        config = {**self.config, 'public_origin': 'https://dev.example.test'}
+        with self.assertRaisesRegex(RuntimeError, 'missing'):
+            dev.origin_settings({}, 'https://dev.example.test', str(certificate), str(key))
+        certificate.write_text('cert'), key.write_text('key')
+        config.update(dev.origin_settings({}, 'https://dev.example.test', str(certificate), str(key)))
+        dev.save_json(dev.SETTINGS, config)
+        self.assertEqual(dev.pulse_certificate(config), (certificate, key))
+        self.assertFalse((self.state / 'pulse').exists(), 'nothing generated beside the given pair')
+        with patch.object(dev, 'started', return_value='start'), patch.object(dev.os, 'execve') as execve:
+            dev.task('pulse')
+        self.assertEqual(execve.call_args.args[2]['PULSE_WT_CERT_PATH'], str(certificate))
+        self.assertEqual(execve.call_args.args[2]['PULSE_WT_BIND'], f'0.0.0.0:{dev.WEB_PULSE_PORT}')
+        # Without one, the generated certificate names the public host so a pinned browser can match it.
+        generated, _ = dev.pulse_certificate({**self.config, 'public_origin': 'https://dev.example.test'})
+        text = subprocess.run(['openssl', 'x509', '-in', generated, '-noout', '-ext', 'subjectAltName'],
+                              capture_output=True, text=True, check=True).stdout
+        self.assertIn('DNS:dev.example.test', text)
+        self.assertIn('IP Address:127.0.0.1', text)
+
+    def test_the_origin_command_reconfigures_a_stopped_stack(self):
+        out = io.StringIO()
+        with patch.object(dev, 'supervisor_running', return_value=True), \
+                patch.object(dev.sys, 'argv', ['foundation-dev', 'origin', 'https://dev.example.test']):
+            with self.assertRaisesRegex(RuntimeError, 'foundation-dev down'):
+                dev.main()
+        with patch.object(dev, 'supervisor_running', return_value=False), contextlib.redirect_stdout(out), \
+                patch.object(dev.sys, 'argv', ['foundation-dev', 'origin', 'https://dev.example.test:5443']):
+            dev.main()
+        self.assertEqual(dev.settings()['public_origin'], 'https://dev.example.test:5443')
+        self.assertIn('https://dev.example.test:5443', out.getvalue())
+        with patch.object(dev.sys, 'argv', ['foundation-dev', 'env']), contextlib.redirect_stdout(out):
+            dev.main()
+        self.assertIn("FOUNDATION_DEV_PUBLIC_URL=https://dev.example.test:5443", out.getvalue())
+        with patch.object(dev, 'supervisor_running', return_value=False), contextlib.redirect_stdout(out), \
+                patch.object(dev.sys, 'argv', ['foundation-dev', 'origin', 'local']):
+            dev.main()
+        self.assertIsNone(dev.settings()['public_origin'])
+        self.assertEqual(dev.runtime_env(dev.settings())['PUBLIC_URL'], f"http://127.0.0.1:{self.config['port'] + 2}")
+
+    def start_server(self, argv, env):
+        server = subprocess.Popen(argv, env={'PATH': os.environ['PATH'], **env},
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         def stop():
@@ -387,19 +720,63 @@ class DevTest(unittest.TestCase):
                 server.kill()
                 server.wait()
         self.addCleanup(stop)
-        deadline = time.monotonic() + 20
+        return server
+
+    def wait_http_ok(self, server, port, name, timeout=20):
+        deadline = time.monotonic() + timeout
         for delay in dev.backoff_delays(deadline):
             try:
-                with socket.create_connection(('127.0.0.1', signaling), timeout=1) as sock:
+                with socket.create_connection(('127.0.0.1', port), timeout=1) as sock:
                     sock.sendall(b'GET / HTTP/1.0\r\n\r\n')
-                    self.assertIn(b'OK', sock.recv(4096))
-                    break
+                    self.assertIn(b'200', sock.recv(4096).split(b'\r\n')[0])
+                    return
             except OSError:
-                self.assertIsNone(server.poll(), 'livekit-server exited')
-                self.assertLess(time.monotonic(), deadline, 'livekit-server did not answer')
+                self.assertIsNone(server.poll(), f'{name} exited')
+                self.assertLess(time.monotonic(), deadline, f'{name} did not answer')
                 time.sleep(min(delay, max(0, deadline - time.monotonic())))
-        else:
-            self.fail('livekit-server did not answer')
+        self.fail(f'{name} did not answer')
+
+    @unittest.skipUnless(shutil.which('livekit-server') and shutil.which('valkey-server') and shutil.which('ingress'),
+                         'livekit-server, valkey and livekit-ingress are supplied by nix develop')
+    def test_livekit_and_its_ingress_start_on_the_generated_config(self):
+        if not dev.ports_free(self.config['port']) or not dev.ingress_ports_free(self.config['ingress_port']):
+            self.skipTest('the test port block is busy')
+        conf = self.state / 'valkey.conf'
+        conf.write_text(dev.valkey_conf(self.config))
+        valkey = self.start_server(['valkey-server', str(conf)], {})
+        deadline = time.monotonic() + 20
+        while not dev.valkey_ready(self.config):
+            self.assertIsNone(valkey.poll(), 'valkey-server exited')
+            self.assertLess(time.monotonic(), deadline, 'valkey-server did not answer')
+            time.sleep(0.1)
+        livekit = self.start_server(['livekit-server'], {'LIVEKIT_CONFIG': dev.livekit_yaml(self.config)})
+        self.wait_http_ok(livekit, dev.livekit_ports(self.config)[0], 'livekit-server')
+        ingress = self.start_server(['ingress'], {'INGRESS_CONFIG_BODY': dev.ingress_yaml(self.config)})
+        # The first start on a fresh store scans GStreamer's plugins first.
+        self.wait_http_ok(ingress, dev.ingress_ports(self.config)[3], 'ingress', timeout=300)
+        # The request /scene-stream-access makes (IngressClient::create_ingress): the server answers
+        # with the stack's RTMP listener, which a streaming app then pushes to.
+        info = self.livekit_twirp('Ingress', 'CreateIngress', {'ingressAdmin': True}, {
+            'inputType': 'RTMP_INPUT', 'name': 'room-ingress', 'roomName': 'room', 'participantIdentity': 'streamer'})
+        # The server answers in proto field names (`stream_key`, `ingress_id`), which the API's
+        # parse_ingress reads (twirp_answers_in_proto_field_names_are_read in shared/src/livekit.rs).
+        self.assertEqual(info['url'], f'rtmp://127.0.0.1:{dev.ingress_ports(self.config)[1]}/x')
+        self.assertTrue(info['stream_key'] and info['ingress_id'])
+        self.assertNotIn('streamKey', info)
+
+    def livekit_twirp(self, service, method, grant, body):
+        def b64(raw):
+            return base64.urlsafe_b64encode(raw).rstrip(b'=').decode()
+        now = int(time.time())
+        claims = {'iss': self.config['LIVEKIT_API_KEY'], 'nbf': now - 5, 'exp': now + 60, 'video': grant}
+        unsigned = b64(json.dumps({'alg': 'HS256', 'typ': 'JWT'}).encode()) + '.' + b64(json.dumps(claims).encode())
+        signature = hmac.new(self.config['LIVEKIT_API_SECRET'].encode(), unsigned.encode(), hashlib.sha256).digest()
+        request = urllib.request.Request(
+            f'http://127.0.0.1:{dev.livekit_ports(self.config)[0]}/twirp/livekit.{service}/{method}',
+            data=json.dumps(body).encode(), method='POST',
+            headers={'Authorization': f'Bearer {unsigned}.{b64(signature)}', 'Content-Type': 'application/json'})
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return json.load(response)
 
     def test_persistent_settings_do_not_rotate_secrets(self):
         warning = io.StringIO()

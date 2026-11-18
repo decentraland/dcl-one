@@ -34,6 +34,14 @@ use super::{Settings, State};
 use crate::comms::gatekeeper::voice::db::{PendingPrivateCall, VoiceDb};
 use crate::jobs::Jobs;
 
+/// A pool on a closed port: every acquire fails after 500 ms instead of sqlx's 30 s default.
+pub(crate) fn closed_pool() -> sqlx::PgPool {
+    sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(Duration::from_millis(500))
+        .connect_lazy("postgres://localhost/unused")
+        .unwrap()
+}
+
 mod auxiliary_source_cases;
 mod community_voice;
 mod connectivity;
@@ -196,24 +204,26 @@ fn procedure_ctx(ctx: &Context, me: &str, transport_id: u32) -> ProcedureContext
 }
 
 #[tokio::test]
-async fn is_friendship_blocked_is_bidirectional() {
+async fn friendship_probe_reads_blocks_in_both_directions() {
     let Some(pool) = scratch_pool().await else {
         return;
     };
     let db = Db::new(pool);
     let (a, b) = (addr("fb01"), addr("fb02"));
-    assert!(!db.is_friendship_blocked(&a, &b).await.unwrap());
+    let probe = db.friendship_probe(&a, &b).await.unwrap();
+    assert!(!probe.blocked && !probe.blocked_by);
     db.block_user(&a, &b).await.unwrap();
     assert!(
-        db.is_friendship_blocked(&a, &b).await.unwrap(),
+        db.friendship_probe(&a, &b).await.unwrap().blocked,
         "blocker side"
     );
     assert!(
-        db.is_friendship_blocked(&b, &a).await.unwrap(),
+        db.friendship_probe(&b, &a).await.unwrap().blocked_by,
         "blocked side too"
     );
     db.unblock_user(&a, &b).await.unwrap();
-    assert!(!db.is_friendship_blocked(&a, &b).await.unwrap());
+    let probe = db.friendship_probe(&a, &b).await.unwrap();
+    assert!(!probe.blocked && !probe.blocked_by);
     cleanup_pair(&db, &a, &b).await;
 }
 
@@ -640,7 +650,7 @@ async fn private_messages_settings_keeps_input_order_and_schema_defaults() {
             .is_empty()
     );
     assert_eq!(
-        db.friend_addresses_unblocked(&me).await.unwrap(),
+        db.connectivity_friends_page(&me, "", true).await.unwrap(),
         vec![friend.clone()],
         "a block in either direction hides the friend"
     );
@@ -880,9 +890,7 @@ async fn sweep_tick_issues_no_delete_until_a_call_is_due() {
 
 #[tokio::test]
 async fn self_call_is_forbidden_before_any_read() {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .connect_lazy("postgres://localhost/unused")
-        .unwrap();
+    let pool = closed_pool();
     let ctx = test_ctx(
         Db::new(pool.clone()),
         Arc::new(FakeVoiceRooms::new(pool.clone())),
@@ -912,9 +920,7 @@ async fn self_call_is_forbidden_before_any_read() {
 
 #[tokio::test]
 async fn a_missing_voice_runtime_refuses_the_call_explicitly() {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .connect_lazy("postgres://localhost/unused")
-        .unwrap();
+    let pool = closed_pool();
     let ctx = test_ctx(
         Db::new(pool),
         Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
@@ -1185,7 +1191,7 @@ async fn drop_community(pool: &PgPool, id: Uuid) {
 }
 
 #[tokio::test]
-async fn community_role_ignores_members_of_a_soft_deleted_community() {
+async fn community_voice_gate_ignores_members_of_a_soft_deleted_community() {
     let Some(pool) = scratch_pool().await else {
         return;
     };
@@ -1193,14 +1199,20 @@ async fn community_role_ignores_members_of_a_soft_deleted_community() {
     let owner = addr("cv01");
     let live = seed_community(&pool, true, &owner, "owner").await;
     assert_eq!(
-        db.community_role(&live.to_string(), &owner).await.unwrap(),
+        db.community_voice_gate(live, &owner, &owner)
+            .await
+            .unwrap()
+            .a
+            .role,
         Some("owner".to_string())
     );
     let deleted = seed_community(&pool, false, &owner, "owner").await;
     assert_eq!(
-        db.community_role(&deleted.to_string(), &owner)
+        db.community_voice_gate(deleted, &owner, &owner)
             .await
-            .unwrap(),
+            .unwrap()
+            .a
+            .role,
         None,
         "a soft-deleted community grants no role"
     );
@@ -1337,9 +1349,13 @@ async fn a_former_owner_cannot_start_or_end_voice_chat_in_a_deleted_community() 
 
 #[tokio::test]
 async fn community_voice_start_join_and_ban_semantics() {
-    let Some(pool) = scratch_pool().await else {
+    // Other fixtures' fake media pollers must not clear this room's generation.
+    let Some(database) =
+        fanout::OwnedDatabase::new("fanout", crate::db::scratch::Schema::Full, 8).await
+    else {
         return;
     };
+    let pool = database.pool.clone();
     let db = Db::new(pool.clone());
     let voice = Arc::new(FakeVoiceRooms::new(pool.clone()));
     let ctx = test_ctx(db.clone(), voice.clone());
@@ -1518,6 +1534,7 @@ async fn community_voice_start_join_and_ban_semantics() {
     );
 
     drop_community(&pool, community).await;
+    database.drop().await;
 }
 
 struct Server {
@@ -1540,11 +1557,7 @@ async fn spawn_server_with(
     settings: Settings,
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
 ) -> Server {
-    let pool = pool.unwrap_or_else(|| {
-        sqlx::postgres::PgPoolOptions::new()
-            .connect_lazy("postgres://localhost/unused")
-            .unwrap()
-    });
+    let pool = pool.unwrap_or_else(closed_pool);
     let ctx = test_ctx(
         Db::new(pool.clone()),
         Arc::new(FakeVoiceRooms::new(pool.clone())),
@@ -2058,11 +2071,7 @@ async fn a_malformed_request_body_is_a_400_remote_error() {
     let mut def = super::drpc::service_module_definition::ServiceModuleDefinition::<Context>::new();
     let svc = Arc::new(SocialServiceImpl);
     let ctx = test_ctx(
-        Db::new(
-            sqlx::postgres::PgPoolOptions::new()
-                .connect_lazy("postgres://localhost/unused")
-                .unwrap(),
-        ),
+        Db::new(closed_pool()),
         Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
     );
     {

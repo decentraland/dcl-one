@@ -62,10 +62,10 @@ mod tests;
 
 use std::sync::Arc;
 
+use crate::shared::routing::{erase, get, post};
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, OriginalUri};
 use axum::http::HeaderMap;
-use axum::routing::{get, post};
 use sqlx::PgPool;
 
 use crate::auth::eip1654::Eip1654Validator;
@@ -189,6 +189,9 @@ pub struct State {
     /// The process's shared chain reader, attached by `serve`. Profile claims
     /// are user-authored and cannot establish NAME ownership.
     pub chain_index: std::sync::OnceLock<Arc<crate::chain_index::ChainIndex>>,
+    /// Explore's explorer-flags document, attached once explore is up: the official wallets
+    /// (`features::official_wallets`). Unattached, no post is official.
+    pub explorer_flags: std::sync::OnceLock<Arc<crate::explore::api::feature_flags::Snapshot>>,
     /// The communities mirror's upstream, set when its job is attached: the
     /// listing then answers that mirror's copy ([`copies`]).
     pub mirror_source: std::sync::OnceLock<String>,
@@ -284,6 +287,7 @@ impl State {
             worlds: std::sync::OnceLock::new(),
             updates: std::sync::OnceLock::new(),
             chain_index: std::sync::OnceLock::new(),
+            explorer_flags: std::sync::OnceLock::new(),
             mirror_source: std::sync::OnceLock::new(),
             pass_markers: copies::Markers::new(copies::MARKER_TTL),
             sources: copies::Sources::bounded(copies::MARKER_TTL, copies::SOURCES_CAP),
@@ -368,6 +372,11 @@ impl State {
 
     pub fn set_chain_index(&self, index: Arc<crate::chain_index::ChainIndex>) {
         let _ = self.chain_index.set(index);
+    }
+
+    /// Attaches explore's explorer-flags document, which names the official wallets (once).
+    pub fn set_explorer_flags(&self, flags: Arc<crate::explore::api::feature_flags::Snapshot>) {
+        let _ = self.explorer_flags.set(flags);
     }
 
     pub(crate) async fn has_owned_name(&self, wallet: &Address) -> Result<bool, CommError> {
@@ -527,12 +536,12 @@ impl State {
         if place_ids.is_empty() || !self.settings.places_ownership_check {
             return Ok(());
         }
-        let mut unique: Vec<String> = Vec::new();
-        for id in place_ids {
-            if !unique.contains(id) {
-                unique.push(id.clone());
-            }
-        }
+        let mut seen = std::collections::HashSet::with_capacity(place_ids.len());
+        let unique: Vec<String> = place_ids
+            .iter()
+            .filter(|id| seen.insert(id.as_str()))
+            .cloned()
+            .collect();
         if !self
             .explore
             .places
@@ -587,7 +596,7 @@ pub fn router(state: SharedState) -> Router {
     Router::new()
         .route(
             "/v1/communities",
-            get(communities::get_communities).post(communities::create_community),
+            get(communities::get_communities).post(erase(communities::create_community)),
         )
         .route("/v2/communities", get(communities::get_communities_v2))
         .route(
@@ -597,50 +606,51 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/v1/communities/{id}",
             get(communities::get_community)
-                .put(communities::update_community)
-                .patch(communities::update_community_partially)
-                .delete(communities::delete_community),
+                .put(erase(communities::update_community))
+                .patch(erase(communities::update_community_partially))
+                .delete(erase(communities::delete_community)),
         )
         .route("/v2/communities/{id}", get(communities::get_community_v2))
         .route(
             "/v1/communities/{id}/members",
-            get(members::get_members).post(members::add_member),
+            get(members::get_members).post(erase(members::add_member)),
         )
         .route("/v2/communities/{id}/members", get(members::get_members_v2))
         .route(
             "/v1/communities/{id}/members/{address}",
-            axum::routing::delete(members::remove_member).patch(members::update_member_role),
+            crate::shared::routing::delete(members::remove_member)
+                .patch(erase(members::update_member_role)),
         )
         .route(
             "/v1/communities/{id}/members/{address}/bans",
-            post(members::ban_member).delete(members::unban_member),
+            post(members::ban_member).delete(erase(members::unban_member)),
         )
         .route("/v1/communities/{id}/bans", get(members::get_bans))
         .route("/v2/communities/{id}/bans", get(members::get_bans_v2))
         .route(
             "/v1/communities/{id}/places",
-            get(places::get_places).post(places::add_places),
+            get(places::get_places).post(erase(places::add_places)),
         )
         .route(
             "/v1/communities/{id}/places/{placeId}",
-            axum::routing::delete(places::remove_place),
+            crate::shared::routing::delete(places::remove_place),
         )
         .route(
             "/v1/communities/{id}/posts",
-            get(posts::get_posts).post(posts::create_post),
+            get(posts::get_posts).post(erase(posts::create_post)),
         )
         .route("/v2/communities/{id}/posts", get(posts::get_posts_v2))
         .route(
             "/v1/communities/{id}/posts/{postId}",
-            axum::routing::delete(posts::delete_post).patch(posts::edit_post),
+            crate::shared::routing::delete(posts::delete_post).patch(erase(posts::edit_post)),
         )
         .route(
             "/v1/communities/{id}/posts/{postId}/like",
-            post(posts::like_post).delete(posts::unlike_post),
+            post(posts::like_post).delete(erase(posts::unlike_post)),
         )
         .route(
             "/v1/communities/{id}/requests",
-            get(requests::get_community_requests).post(requests::create_request),
+            get(requests::get_community_requests).post(erase(requests::create_request)),
         )
         .route(
             "/v2/communities/{id}/requests",
@@ -648,7 +658,7 @@ pub fn router(state: SharedState) -> Router {
         )
         .route(
             "/v1/communities/{id}/requests/{requestId}",
-            axum::routing::patch(requests::update_request_status),
+            crate::shared::routing::patch(requests::update_request_status),
         )
         .route(
             "/v1/communities/{id}/managed",
@@ -656,7 +666,7 @@ pub fn router(state: SharedState) -> Router {
         )
         .route(
             "/v1/members/{address}/communities",
-            get(members::get_member_communities).post(members::member_communities_by_ids),
+            get(members::get_member_communities).post(erase(members::member_communities_by_ids)),
         )
         .route(
             "/v1/members/{address}/requests",
@@ -674,8 +684,8 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/v1/referral-progress",
             get(referral::get_referral_progress)
-                .post(referral::create_referral)
-                .patch(referral::update_referral_signed_up),
+                .post(erase(referral::create_referral))
+                .patch(erase(referral::update_referral_signed_up)),
         )
         .route("/v1/referral-email", post(referral::add_referral_email))
         .route("/v1/client-login", post(referral::client_login))
@@ -695,17 +705,20 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/v1/mutes",
             get(mutes::get_mutes)
-                .post(mutes::add_mute)
-                .delete(mutes::remove_mute),
+                .post(erase(mutes::add_mute))
+                .delete(erase(mutes::remove_mute)),
         )
         .route("/v1/friends", get(friends::list_friends))
         .route(
             "/v1/friends/{peer}/messages",
-            get(friends::get_messages).post(friends::send_message),
+            get(friends::get_messages).post(erase(friends::send_message)),
         )
         .route("/federation/communities/snapshot", get(fed::snapshot))
         .route("/federation/communities/changes", get(fed::changes))
-        .route("/federation/communities/content", post(fed::put_content))
+        .route(
+            "/federation/communities/content",
+            post(fed::put_content).layer(DefaultBodyLimit::max(fed::MAX_CONTENT_BYTES)),
+        )
         .route("/federation/communities/content/gc", post(fed::gc_content))
         .route(
             "/federation/communities/content/{hash}",

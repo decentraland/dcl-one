@@ -23,20 +23,23 @@
 //! closes it, is a row of [`paths::CREDIT_PATHS`]; [`paths::ALIASES`] pairs
 //! each renamed route with its legacy paths.
 
+// Production routes go through `shared::routing` (shop/clippy.toml); test routers may use axum's.
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
+#[cfg(test)]
 pub(crate) use catalyst_comms as comms;
 pub(crate) use catalyst_config::config;
 pub(crate) use catalyst_content as content;
 #[cfg(test)]
 pub(crate) use catalyst_db as db;
-pub(crate) use catalyst_explore as explore;
 pub(crate) use catalyst_fed as fed;
 pub(crate) use catalyst_jobs as jobs;
 pub(crate) use catalyst_land_authz as land_authz;
 pub(crate) use catalyst_price as price;
 pub(crate) use catalyst_shared as shared;
-pub(crate) use catalyst_social as social;
 pub(crate) use catalyst_storage as storage;
 pub(crate) use dcl_auth as auth;
 pub(crate) use dcl_http as http;
@@ -68,8 +71,9 @@ mod test_db;
 
 use std::sync::Arc;
 
+use crate::shared::routing::any;
 use axum::Router;
-use axum::routing::{MethodRouter, any};
+use axum::routing::MethodRouter;
 
 pub use policy::{
     Authoritative, CartLine, Eligibility, Facts, GroupTotal, Quote, Reason, Refusal,
@@ -156,13 +160,10 @@ fn pending(source: &'static str) -> MethodRouter {
 /// never shadowed.
 pub fn pending_router() -> Router {
     Router::new()
-        .route("/v1/users/{address}", pending("shop-credits-users"))
         .route(
             "/v1/users/{address}/credits/stream",
             pending("shop-credits-users"),
         )
-        .route("/v1/users/{address}/status", pending("shop-credits-users"))
-        .route("/v1/credit-program/season", pending("shop-credits-program"))
         .route(
             "/v2/credit-program/seasons",
             pending("shop-credits-program"),
@@ -213,4 +214,16 @@ mod router_tests {
             "nothing to configure: it is unwritten"
         );
     }
+}
+
+/// Production routes stay on `shared::routing` (see `shared::routing::guard`).
+#[cfg(test)]
+#[test]
+fn production_routes_use_shared_routing() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let found = crate::shared::routing::guard::direct_axum_routes(&src);
+    assert!(
+        found.is_empty(),
+        "use crate::shared::routing instead of axum's method routers at {found:?}"
+    );
 }

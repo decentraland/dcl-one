@@ -1,0 +1,24 @@
+# A flat node_modules: the scene's bundle and its source map ship inside @dcl/inspector.
+nodeLinker: hoisted
+# The engine's companion @dcl/sdk-commands depends on a @dcl/protocol tarball served by the SDK CDN.
+blockExoticSubdeps: false
+overrides:
+  # @dcl/quests-client asks for the "latest" @dcl/sdk; this keeps it on the project's version.
+  '@dcl/quests-client>@dcl/sdk': 7.22.6-25007982108.commit-83012ab
+  # @dcl/sdk-commands only starts `typescript/lib/tsc` as a process, so it can use the TypeScript of Creator Hub.
+  '@dcl/sdk-commands>typescript': 7.0.2
+  # One protobufjs for every package that asks for one.
+  protobufjs: 7.6.6
+  # extract-zip 2 has no fixed release. packages/zip-extract has the same call and makes no link.
+  extract-zip: file:../../../zip-extract
+  # Left out, so the scene bundles the asset-packs the inspector above it uses.
+  '@dcl/inspector>@dcl/asset-packs': '-'
+  # One @dcl/protocol for the whole project: the tarball @dcl/sdk-commands pins.
+  '@dcl/protocol': https://sdk-team-cdn.decentraland.org/@dcl/protocol/branch//dcl-protocol-1.0.0-25001674716.commit-044c893.tgz
+patchedDependencies:
+  # TypeScript 7 does not export `lib/tsc`. The patch finds the file from the package folder.
+  '@dcl/sdk-commands@7.22.6-25007982108.commit-83012ab': patches/@dcl__sdk-commands@7.22.6-25007982108.commit-83012ab.patch
+allowBuilds:
+  '@dcl/sdk-commands': false
+  esbuild: false
+  protobufjs: false

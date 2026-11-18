@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Authenticator } from '@dcl/crypto';
-import { createUnsafeIdentity } from '@dcl/crypto/dist/crypto';
-import { signedHeaderFactory } from 'decentraland-crypto-fetch';
 
+import { createIdentity, createIdentityKeys, signWithKeys } from '../../renderer/src/lib/identity';
+import { signedHeaders } from '../../renderer/src/lib/signedFetch';
 import { parseRetryAfter, request, resolveUrl } from '../src/modules/metrics';
 
 const BASE = 'https://creators-data.decentraland.zone/v1';
@@ -105,15 +104,15 @@ describe('request', () => {
     });
 
     it('should forward every header the renderer signer produces', async () => {
-      const wallet = createUnsafeIdentity();
-      const identity = await Authenticator.initializeAuthChain(
-        wallet.address,
-        createUnsafeIdentity(),
+      const throwawayWallet = createIdentityKeys();
+      const identity = await createIdentity(
+        throwawayWallet.address,
+        createIdentityKeys(),
         10,
-        async message => Authenticator.createSignature(wallet, message),
+        message => signWithKeys(throwawayWallet, message),
       );
       const signed = Object.fromEntries(
-        signedHeaderFactory()(identity, 'post', '/v1/metrics', {}).entries(),
+        (await signedHeaders(identity, 'post', '/v1/metrics', {})).entries(),
       );
       const fetchSpy = stubFetch({ text: () => Promise.resolve('{}') });
 

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { spawn } from 'child_process';
+// Before 'vite': it sets the allocator option that Rolldown reads when it loads.
+import '../../../scripts/rolldown-env.js';
 import { build, createServer } from 'vite';
 import electronPath from 'electron';
 
@@ -16,8 +18,8 @@ const logLevel = 'warn';
 function setupTypeChecker() {
   const processes = ['main', 'preload', 'renderer'].map(pkg => {
     const tsc = spawn(
-      'npx',
-      ['tsc', '-w', '--preserveWatchOutput', '--noEmit', '-p', `${pkg}/tsconfig.json`],
+      'pnpm',
+      ['exec', 'tsc', '-w', '--preserveWatchOutput', '--noEmit', '-p', `${pkg}/tsconfig.json`],
       {
         stdio: 'inherit',
         shell: true,

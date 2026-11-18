@@ -4,7 +4,10 @@
 use alloy_core::primitives::Address;
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
-use collectibles::{wearables::WearableCategory, Collectibles, Emote};
+use collectibles::{
+    wearables::{WearableCategory, WearableUrn},
+    Collectibles, Emote,
+};
 use common::{
     structs::{EmoteMask, PrimaryUser},
     util::AsH160,
@@ -17,35 +20,40 @@ use serde_json::{json, Value};
 use crate::{
     animate::{ActiveEmote, ActiveEmoteSource, EmotePlayback, MaskedEmote},
     avatar_texture::BoothAvatar,
-    AvatarDefinition, AvatarLoaded, AvatarProcessed, AvatarSelection, PreviousAvatar,
+    requested_body, AvatarDefinition, AvatarLoadFailures, AvatarLoaded, AvatarProcessed,
+    AvatarSelection, PreviousAvatar,
 };
 
-pub(super) fn register(app: &mut App) {
-    app.add_console_command::<AvatarStateCommand, _>(avatar_state_cmd);
+pub(super) struct AvatarStatePlugin;
 
-    app.add_debug_section(DebugSection {
-        title: "Avatar",
-        query: "/avatar_state --panel",
-        fields: &[
-            ("Body shape", "rendered.bodyShape"),
-            ("Address", "address"),
-            ("Rendered wearables", "rendered.wearables"),
-            ("Hidden slots", "rendered.hidden"),
-            ("Equipped emotes", "selected.emotes"),
-            ("Animation", "emote.urn"),
-            ("Animation source", "emote.source"),
-        ],
-        actions: &[(
-            "Play wave",
-            "/emote urn:decentraland:off-chain:base-emotes:wave",
-        )],
-        inputs: &[DebugInput {
-            label: "Play emote (URN or equipped slot)",
-            field: "",
-            command: "/emote {value}",
-            kind: DebugInputKind::Text,
-        }],
-    });
+impl Plugin for AvatarStatePlugin {
+    fn build(&self, app: &mut App) {
+        app.add_console_command::<AvatarStateCommand, _>(avatar_state_cmd);
+
+        app.add_debug_section(DebugSection {
+            title: "Avatar",
+            query: "/avatar_state --panel",
+            fields: &[
+                ("Body shape", "rendered.bodyShape"),
+                ("Address", "address"),
+                ("Rendered wearables", "rendered.wearables"),
+                ("Hidden slots", "rendered.hidden"),
+                ("Equipped emotes", "selected.emotes"),
+                ("Animation", "emote.urn"),
+                ("Animation source", "emote.source"),
+            ],
+            actions: &[(
+                "Play wave",
+                "/emote urn:decentraland:off-chain:base-emotes:wave",
+            )],
+            inputs: &[DebugInput {
+                label: "Play emote (URN or equipped slot)",
+                field: "",
+                command: "/emote {value}",
+                kind: DebugInputKind::Text,
+            }],
+        });
+    }
 }
 
 /// Report, as JSON, what avatars are selected to wear, what was built from that and the emote they
@@ -127,6 +135,35 @@ struct AvatarReport {
     emote: Option<EmoteState>,
     /// the upper-body emote overlaying it, while one plays
     upper_body_emote: Option<EmoteState>,
+    load_failures: LoadFailures,
+}
+
+/// The files the avatar could not be built from, which its builds leave out
+#[derive(Default)]
+struct LoadFailures {
+    bodies: Vec<String>,
+    wearables: Vec<String>,
+    /// both the selected body and the default body failed: nothing renders
+    no_body: bool,
+}
+
+impl LoadFailures {
+    fn read(failures: Option<&AvatarLoadFailures>, selection: &AvatarSelection) -> Self {
+        let Some(failures) = failures else {
+            return Self::default();
+        };
+        let sorted = |urns: &bevy::platform::collections::HashSet<WearableUrn>| {
+            let mut urns: Vec<_> = urns.iter().map(ToString::to_string).collect();
+            urns.sort_unstable();
+            urns
+        };
+        Self {
+            bodies: sorted(&failures.bodies),
+            wearables: sorted(&failures.wearables),
+            no_body: AvatarLoadFailures::body(Some(failures), requested_body(&selection.shape.0))
+                .is_none(),
+        }
+    }
 }
 
 /// What the avatar is told to wear, as written: not resolved, not defaulted
@@ -143,8 +180,6 @@ struct Selected {
 /// others hide) and what is hidden
 struct Rendered {
     processed: bool,
-    /// processed without ever loading: nothing renders
-    failed: bool,
     body_shape: String,
     /// (category slot, urn)
     wearables: Vec<(&'static str, String)>,
@@ -176,7 +211,6 @@ impl AvatarReport {
             },
             "rendered": self.rendered.as_ref().map(|rendered| json!({
                 "processed": rendered.processed,
-                "failed": rendered.failed,
                 "bodyShape": rendered.body_shape,
                 "wearables": rendered
                     .wearables
@@ -187,6 +221,11 @@ impl AvatarReport {
             })),
             "emote": self.emote.as_ref().map(EmoteState::to_json),
             "upperBodyEmote": self.upper_body_emote.as_ref().map(EmoteState::to_json),
+            "loadFailures": {
+                "bodies": self.load_failures.bodies,
+                "wearables": self.load_failures.wearables,
+                "noBody": self.load_failures.no_body,
+            },
         })
     }
 }
@@ -241,6 +280,7 @@ fn avatar_state_cmd(
         Has<BoothAvatar>,
         Option<&UserProfile>,
         Has<crate::RetryRenderAvatar>,
+        Option<&AvatarLoadFailures>,
     )>,
     renders: Query<(&AvatarDefinition, Has<AvatarProcessed>, Has<AvatarLoaded>)>,
     super_user_scenes: Query<(), With<SuperUserScene>>,
@@ -281,6 +321,7 @@ fn avatar_state_cmd(
         is_booth,
         profile,
         resolving,
+        failures,
     ) in &avatars
     {
         let (kind, address) = if is_primary {
@@ -313,8 +354,11 @@ fn avatar_state_cmd(
             })
             .and_then(|child| renders.get(child).ok());
 
+        let load_failures = LoadFailures::read(failures, selection);
         let render_reason = match render {
-            Some((_, true, false)) => "The avatar model failed to load.",
+            _ if load_failures.no_body => {
+                "Neither the avatar's body nor the default body could be built."
+            }
             Some(_) => "The avatar model is being built.",
             None if resolving => "Resolving the avatar's body and wearables.",
             None => "No avatar model has been built.",
@@ -339,11 +383,10 @@ fn avatar_state_cmd(
                 force_render: shape.force_render.clone(),
                 from_scene: selection.scene.is_some(),
             },
-            rendered: render.map(|(definition, processed, loaded)| {
+            rendered: render.map(|(definition, processed, _)| {
                 let definition = &definition.render;
                 Rendered {
                     processed,
-                    failed: processed && !loaded,
                     body_shape: definition.body_shape.clone(),
                     wearables: definition
                         .wearables
@@ -357,6 +400,7 @@ fn avatar_state_cmd(
             upper_body_emote: emote
                 .and_then(|(_, masked)| masked.active_request())
                 .map(|playback| emote_state(playback, ActiveEmoteSource::TriggeredEmote, false)),
+            load_failures,
         };
         if command.panel {
             let mut state = report.to_json();
@@ -419,11 +463,14 @@ mod tests {
         assert_eq!(query(&mut app, &[]), json!([]));
         assert!(query(&mut app, &["--panel"])["unavailable"][""].is_string());
 
-        app.world_mut().spawn((
-            PrimaryUser::default(),
-            selection(),
-            crate::RetryRenderAvatar,
-        ));
+        let player = app
+            .world_mut()
+            .spawn((
+                PrimaryUser::default(),
+                selection(),
+                crate::RetryRenderAvatar,
+            ))
+            .id();
         let panel = query(&mut app, &["--panel"]);
         assert_eq!(panel["kind"], "player");
         assert!(panel["rendered"].is_null());
@@ -436,6 +483,26 @@ mod tests {
         assert_eq!(all[0]["kind"], "player");
         assert!(all[0].get("unavailable").is_none());
         assert_eq!(query(&mut app, &[])[0], all[0]);
+        assert_eq!(all[0]["loadFailures"]["noBody"], false);
+
+        // the default body failed too: the player has no body to build
+        let default_body = collectibles::base_wearables::default_bodyshape_urn();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(AvatarLoadFailures {
+                bodies: [default_body.clone()].into_iter().collect(),
+                ..default()
+            });
+        let panel = query(&mut app, &["--panel"]);
+        assert_eq!(panel["loadFailures"]["noBody"], true);
+        assert_eq!(
+            panel["loadFailures"]["bodies"],
+            json!([default_body.to_string()])
+        );
+        assert_eq!(
+            panel["unavailable"]["rendered"],
+            "Neither the avatar's body nor the default body could be built."
+        );
     }
 
     fn report() -> AvatarReport {
@@ -451,7 +518,6 @@ mod tests {
             },
             rendered: Some(Rendered {
                 processed: true,
-                failed: false,
                 body_shape: "urn:decentraland:off-chain:base-avatars:basefemale".to_owned(),
                 wearables: vec![(
                     "eyes",
@@ -468,6 +534,11 @@ mod tests {
                 idle: true,
             }),
             upper_body_emote: None,
+            load_failures: LoadFailures {
+                bodies: Vec::new(),
+                wearables: vec!["urn:decentraland:off-chain:base-avatars:cap".to_owned()],
+                no_body: false,
+            },
         }
     }
 
@@ -487,7 +558,6 @@ mod tests {
                 },
                 "rendered": {
                     "processed": true,
-                    "failed": false,
                     "bodyShape": "urn:decentraland:off-chain:base-avatars:basefemale",
                     "wearables": [{
                         "category": "eyes",
@@ -504,6 +574,11 @@ mod tests {
                     "idle": true,
                 },
                 "upperBodyEmote": null,
+                "loadFailures": {
+                    "bodies": [],
+                    "wearables": ["urn:decentraland:off-chain:base-avatars:cap"],
+                    "noBody": false,
+                },
             })
         );
     }

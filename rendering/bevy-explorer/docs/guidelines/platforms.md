@@ -50,6 +50,14 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
 - **Exit work runs before `Last`.** On `AppExit`, `close_rooms_on_app_exit` blocks in `Last`
   (`comms`), so on web a system in `Last` may never run again. Anything that must reach the page
   at exit, such as the benchmark stream's final bytes, runs in `Update`.
+- **Content cache writes go through `web_cache`.** Every write to the Cache API cache
+  `ipfs-path-cache-v2` goes through `web_cache::store` or `web_cache::put`
+  (`crates/ipfs/src/web_cache.rs`; outside that file, `store` is reached through `keep` and
+  `share`). There the write is counted toward the next trim, retried after a trim when it fails
+  for quota, and recorded as a use. A write that bypasses them is none of these: the cache can
+  outgrow its cap unnoticed, and the entry ranks as unused until it is read. Reads go through
+  `web_cache::find`, which records the use. How the cap and the least-recently-used eviction
+  work is in `web_cache.rs` and `deploy/web/service_worker.js`.
 - **Two GPUs: Chrome takes the low-power one.** On a laptop with integrated and discrete GPUs,
   Chrome's WebGPU renders on the integrated one while native wgpu takes the discrete one: on one
   laptop the same web build ran much slower (measurements (evidence supplied for the task)).
@@ -93,7 +101,9 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   `export CEF_PATH="$(cygpath -w ~/.local/share/cef)"` after `just setup-cef`.
 - **A PR runs the Windows and macOS tests only for platform inputs.** A Rust change under
   `rendering/bevy-explorer/source` runs clippy, the native test suite on Linux, the headless smoke
-  test and the web build (`tooling/bevy-ci.py` at the dcl-one root selects them). The suite adds
+  test and the web build (`tooling/bevy-ci.py` at the dcl-one root selects them). A draft does not
+  run the test suite and the headless smoke test: they start when the PR is marked ready for
+  review, or on the next push with the `ci:engine` label. The suite adds
   Windows and macOS when the PR changes the root `Cargo.toml`, a `build*.rs`, `.cargo`, the
   toolchain, `local-harness/benchmark`, `local-harness/web-driver`, a file or folder named
   `windows` or `macos`, the locked package set in `Cargo.lock`, or a CI input outside the engine
@@ -145,8 +155,8 @@ difference of two timestamps that empty compute passes write with `timestamp_wri
 `wgpu::Features::TIMESTAMP_QUERY` on the render device. The engine sets no `WgpuSettings` of its
 own (the web render worker uses the default too), so Bevy's default `Functionality` priority
 requests every feature the adapter reports, and the feature is on wherever the backend exposes
-it. Without it the engine logs one info line under `gpu_time` and has no GPU time. In the fork's
-wgpu (`robtfm/wgpu` `e25f3d4`, 24.0.5):
+it. Without it the engine logs one info line under `gpu_time` and has no GPU time. In the
+Explorer's wgpu (upstream `v24.0.5` plus the series in `rendering/bevy-explorer/patches/wgpu`):
 
 | Backend | `TIMESTAMP_QUERY` | Tick period | Checked on hardware |
 |---|---|---|---|

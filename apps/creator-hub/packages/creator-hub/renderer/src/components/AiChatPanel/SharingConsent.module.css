@@ -1,4 +1,4 @@
-/* Values from the decentraland-ui2 dark theme the app renders with (8px spacing unit). */
+/* Values from the Figma board for AI sharing, on the app's tokens. */
 
 .cardHeader {
   display: flex;
@@ -128,6 +128,15 @@
   color: var(--dcl-silver);
 }
 
+.rateButton svg {
+  font-size: 14px;
+}
+
+/* One thumb icon: turned upside down for "down". */
+.rateButton svg[data-direction="down"] {
+  transform: rotate(180deg);
+}
+
 .rateButton[aria-pressed="true"] {
   color: var(--palette-neutral-softWhite);
 }
@@ -136,7 +145,6 @@
   width: 240px;
   padding: 10px 0;
   background: var(--onyx);
-  background-image: none;
   border: 1px solid var(--white-10);
   border-radius: 12px;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);

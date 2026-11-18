@@ -27,7 +27,8 @@
 //! - Rental status sync (`open -> executed | cancelled | claimed`): the
 //!   `rentals` chain index ([`index`], `shop.rental_event`, the Rentals
 //!   contract's own logs instead of the rentals subgraph the old crate
-//!   configured and never ran), behind `SHOP_RENTALS_INDEX_ENABLED`;
+//!   configured and never ran), on whenever a chain-1 endpoint is configured
+//!   unless `SHOP_RENTALS_INDEX_ENABLED=false`;
 //!   `GET /v1/rentals-index` reports its cursor. Until it publishes, a
 //!   listing keeps the status it was posted with and the rent quote
 //!   (`shop::mana`) reads the nonces on chain.
@@ -63,10 +64,10 @@ mod tests;
 
 use std::sync::Arc;
 
+use crate::shared::routing::{erase, get, patch, post};
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::HeaderMap;
-use axum::routing::{get, patch};
 use sqlx::PgPool;
 
 use crate::auth::eip1654::Eip1654Validator;
@@ -205,8 +206,7 @@ pub fn router(state: SharedState) -> Router {
     let v1 = Router::new()
         .route(
             "/rentals-listings",
-            axum::routing::post(handlers::create_rentals_listing)
-                .get(handlers::get_rentals_listings),
+            post(handlers::create_rentals_listing).get(erase(handlers::get_rentals_listings)),
         )
         .route(
             "/rentals-listings/{id}",

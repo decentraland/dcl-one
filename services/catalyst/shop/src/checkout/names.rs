@@ -5,14 +5,13 @@ use axum::http::HeaderMap;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::broker::{mark_error, set_buy_sent};
+use super::broker::{rebroadcast_recorded_buy, send_recorded_buy};
 use crate::checkout::calls::{
-    BrokerCall, PurchaseMode, build_mana_approve, build_name_mint, build_name_secondary,
-    build_name_transfer, minted_token_id_from_logs, parse_address, parse_token_id, parse_wei,
-    parse_wei_allow_zero,
+    PurchaseMode, build_mana_approve, build_name_mint, build_name_secondary, build_name_transfer,
+    minted_token_id_from_logs, parse_address, parse_token_id, parse_wei, parse_wei_allow_zero,
 };
 use crate::checkout::claims::{
-    Claim, NamePurchaseClaim, NameTransferClaim, claim_name_purchase, claim_name_transfer,
+    BrokerPurchaseClaim, Claim, NameTransferClaim, claim_broker_purchase, claim_name_transfer,
 };
 use crate::evm::SharedState;
 use crate::evm::contracts_addrs::NameContracts;
@@ -187,25 +186,31 @@ pub async fn buy(
     let custody_hex = format!("{beneficiary:#x}");
     let buyer_hex = format!("{buyer:#x}");
 
-    let claim = claim_name_purchase(
+    let claimed_at = crate::evm::now();
+    let claim = claim_broker_purchase(
         &state.pool,
-        &NamePurchaseClaim {
+        &BrokerPurchaseClaim {
             key: &key,
-            registrar: &registrar_hex,
-            name: name_for_row.as_deref(),
+            collection: &registrar_hex,
+            item_id: name_for_row.as_deref(),
             token_id: token_id_for_row.as_deref(),
             buyer_address: &buyer_hex,
-            custody_address: &custody_hex,
+            escrow_address: &custody_hex,
             price_wei: &price_wei.to_string(),
             chain_id: chain_id as i64,
             mode: mode.as_str(),
+            trade_hashed_signature: None,
+            usd_amount_wei: None,
+            mana_usd_rate_wei: None,
         },
-        crate::evm::now(),
+        claimed_at,
     )
     .await?;
 
-    let tx_hash = if claim.claimed {
-        drive_name_buy(&state, signer, &key, mode, call, registrar, beneficiary).await?
+    let tx_hash = if claim.claimed || claim.rearmed {
+        let tx = send_recorded_buy(&state, signer, &key, claimed_at, call).await?;
+        confirm_name_buy(&state, signer, &key, mode, registrar, beneficiary, &tx).await?;
+        tx
     } else {
         resume_name_buy(&state, signer, &key, mode, registrar, beneficiary, claim).await?
     };
@@ -225,28 +230,6 @@ pub async fn buy(
         "txHash": tx_hash,
         "mode": mode.as_str(),
     })))
-}
-
-async fn drive_name_buy(
-    state: &SharedState,
-    signer: &DirectSigner,
-    key: &str,
-    mode: PurchaseMode,
-    call: BrokerCall,
-    registrar: Address,
-    beneficiary: Address,
-) -> Result<String, ApiError> {
-    let tx = match signer.send_direct_call(call.to, call.data).await {
-        Ok(h) => h,
-        Err(e) => {
-            mark_error(state, key).await;
-            return Err(e);
-        }
-    };
-    set_buy_sent(state, key, &tx).await?;
-
-    confirm_name_buy(state, signer, key, mode, registrar, beneficiary, &tx).await?;
-    Ok(tx)
 }
 
 async fn confirm_name_buy(
@@ -309,20 +292,34 @@ async fn resume_name_buy(
         "reverted" => Err(ApiError::RelayReverted(format!(
             "name buy {key:?} reverted on a prior attempt; not re-broadcasting"
         ))),
+        // A claim that records its transaction before sending is re-armed by
+        // the claim itself; an `error` reaching here lost a concurrent re-arm,
+        // or is a claim kept from before that rule, whose failure cannot
+        // prove nothing was sent.
         "error" => {
-            if !claim.rearmed {
+            let write_ahead: bool = sqlx::query_scalar(
+                "SELECT write_ahead FROM shop.broker_purchases WHERE idempotency_key = $1",
+            )
+            .bind(key)
+            .fetch_optional(&state.pool)
+            .await?
+            .unwrap_or(false);
+            if write_ahead {
                 return Err(ApiError::Conflict(format!(
-                    "name buy {key:?} changed state concurrently; retry"
+                    "name buy {key:?} is being re-armed by a concurrent request; retry"
                 )));
             }
             Err(ApiError::Conflict(format!(
-                "name buy {key:?} previously failed before broadcast and was re-armed; retry to re-broadcast"
+                "name buy {key:?} failed under a claim that did not record its transaction \
+                 before sending; it may have been broadcast, so it is not bought again \u{2014} \
+                 reconcile manually"
             )))
         }
         "sent" => {
             let tx = tx_hash.ok_or_else(|| {
                 ApiError::Internal(format!("name buy {key:?} is 'sent' without a tx_hash"))
             })?;
+            rebroadcast_recorded_buy(state, signer, key, &tx).await?;
             confirm_name_buy(state, signer, key, mode, registrar, beneficiary, &tx).await?;
             Ok(tx)
         }

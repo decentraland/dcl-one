@@ -56,11 +56,15 @@
 
 # sdk
 # UNASSIGNED /library/js-sdk-toolchain/
+# UNASSIGNED /library/hashing/
 # UNASSIGNED /.github/workflows/sdk.yml
 
 # database
 /schemas/ @decentraland/apis
 /services/catalyst/db/ @decentraland/apis
+/tooling/migration/ @decentraland/apis
+/tooling/tests/migration_*.py @decentraland/apis
+/tooling/tests/test_migration.py @decentraland/apis
 
 # creator-sdk
 /apps/dcl-scene-cli/ @decentraland/client
@@ -109,6 +113,13 @@
 /apps/bevy-explorer/ @decentraland/client
 /.github/workflows/bevy-explorer-*.yml @decentraland/client
 /.github/actions/bevy-explorer-*/ @decentraland/client
+/tooling/bevy-*.py @decentraland/client
+/tooling/patched-sources.py @decentraland/client
+/tooling/vendor-provenance.py @decentraland/client
+/tooling/tests/test_bevy_*.py @decentraland/client
+/infra/dev/explorer-shell-hook.sh @decentraland/client
+/infra/packages/bevy-explorer-native.nix @decentraland/client
+/infra/packages/bevy-explorer.nix @decentraland/client
 
 # explorer-rust
 /rendering/bevy-explorer/source/crates/ @robtfm
@@ -120,9 +131,8 @@
 /rendering/bevy-explorer/source/local-harness/benchmark/ @robtfm
 /rendering/bevy-explorer/source/local-harness/presence/harness-util/ @robtfm
 /rendering/bevy-explorer/source/vendor/ @robtfm
-/rendering/bevy-explorer/bevy/ @robtfm
-/rendering/bevy-explorer/cargo-patches.toml @robtfm
-/rendering/bevy-explorer/forks.toml @robtfm
+/rendering/bevy-explorer/vendor/ @robtfm
+/rendering/bevy-explorer/patches/ @robtfm
 
 # uuav-native
 /library/uuav/ @decentraland/client
@@ -130,6 +140,10 @@
 /tooling/native-lock/ @decentraland/client
 /.github/workflows/uuav-native.yml @decentraland/client
 /.github/workflows/uuav-verify.yml @decentraland/client
+
+# avatar-preview
+/rendering/avatar-preview/ @decentraland/client
+/.github/workflows/avatar-preview*.yml @decentraland/client
 
 # quality
 /services/catalyst/tests/ @decentraland/qa

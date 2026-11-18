@@ -23,6 +23,10 @@ use dcl_component::proto_components::{
     },
     social_service::v2::PrivateMessagePrivacySetting,
 };
+pub use platform::{
+    default_color_grading, scatter_bloom, BLOOM_SCATTER, GRADING_MIDTONES_RANGE,
+    GRADING_SHADOWS_WEIGHT,
+};
 use serde::{Deserialize, Serialize};
 use system_api_types::SatelliteView;
 pub use system_api_types::{PermissionLevel, PermissionType, PermissionValue, PointerTargetType};
@@ -62,6 +66,27 @@ impl Default for PrimaryUser {
             block_walk: false,
             block_jump: false,
             block_emote: false,
+        }
+    }
+}
+
+/// The walk, jog and run speeds (m/s) the primary user's locomotion currently allows, after area
+/// modifiers and the active scene locomotion settings. Written by the movement plugin; read to
+/// express the player's speed as a gait.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct LocomotionSpeeds {
+    pub walk: f32,
+    pub jog: f32,
+    pub run: f32,
+}
+
+impl Default for LocomotionSpeeds {
+    fn default() -> Self {
+        let user = PrimaryUser::default();
+        Self {
+            walk: user.walk_speed,
+            jog: user.jog_speed,
+            run: user.run_speed,
         }
     }
 }
@@ -433,6 +458,33 @@ pub struct PrimaryCamera {
     pub scene_override: Option<CameraOverride>,
 }
 
+/// Where the camera sits relative to the player, with a scene's override applied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CameraView {
+    FirstPerson,
+    ThirdPerson,
+    Cinematic,
+}
+
+impl PrimaryCamera {
+    /// The camera is in first person when it is this close behind the player.
+    pub const FIRST_PERSON_DISTANCE: f32 = 0.05;
+
+    /// The view in effect: a scene's override wins over the player's own zoom.
+    pub fn view(&self) -> CameraView {
+        let distance = match self.scene_override {
+            Some(CameraOverride::Cinematic(_)) => return CameraView::Cinematic,
+            Some(CameraOverride::Distance(distance)) => distance,
+            None => self.distance,
+        };
+        if distance <= Self::FIRST_PERSON_DISTANCE {
+            CameraView::FirstPerson
+        } else {
+            CameraView::ThirdPerson
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CinematicSettings {
     pub origin: Entity,
@@ -582,6 +634,8 @@ pub struct AppConfig {
     pub scene_imposter_multisample_amount: f32,
     pub scene_imposter_bake: SceneImposterBake,
     pub parcel_grass_setting: ParcelGrassSetting,
+    /// The landscape distance in metres ([`LandscapeDistance`]), read at startup.
+    pub landscape_distance: f32,
     pub sysinfo_visible: bool,
     pub scene_log_to_console: bool,
     pub max_avatars: usize,
@@ -595,6 +649,7 @@ pub struct AppConfig {
     pub scene_permissions: HashMap<String, HashMap<PermissionType, PermissionValue>>,
     pub inputs: InputMapSerialized,
     pub point_at_marker_visibility: PointAtMarkerVisibility,
+    pub chat_bubble_visibility: ChatBubbleVisibility,
     /// Who may DM the local user. Owned by the social service, so never persisted here: the
     /// slot mirrors the server value and the social crate upserts user changes to it. `None`
     /// until either the user or the server has set it.
@@ -649,6 +704,7 @@ impl Default for AppConfig {
             scene_imposter_multisample_amount: 0.0,
             scene_imposter_bake: SceneImposterBake::Off,
             parcel_grass_setting: Default::default(),
+            landscape_distance: LandscapeDistance::default().0,
             sysinfo_visible: false,
             scene_log_to_console: false,
             max_avatars: 20,
@@ -662,6 +718,7 @@ impl Default for AppConfig {
             scene_permissions: Default::default(),
             inputs: Default::default(),
             point_at_marker_visibility: Default::default(),
+            chat_bubble_visibility: Default::default(),
             dm_privacy: None,
             camera_smoothing: Default::default(),
             language: None,
@@ -917,9 +974,14 @@ pub struct GraphicsSettings {
     pub avatar_ghosts: bool,
     /// bytes of throttled asset uploads to the gpu per frame; 0 = unlimited
     pub gpu_bytes_per_frame: usize,
-    /// share of the screen's device pixels the web canvas renders at
+    /// share of the window's device pixels the world renders at, upscaled to the window with FSR
+    /// (`visuals::upscale`); the UI stays at full resolution
     pub render_scale: f32,
 }
+
+/// The ambient brightness setting at which the Trilight ambient is the sky preset's
+/// (visuals::sky_envmap).
+pub const AMBIENT_BRIGHTNESS_DEFAULT: i32 = 50;
 
 impl Default for GraphicsSettings {
     fn default() -> Self {
@@ -934,13 +996,13 @@ impl Default for GraphicsSettings {
             shadow_caster_count: 0,
             window: WindowSetting::Windowed,
             // fullscreen_res: FullscreenResSetting(UVec2::new(1280,720)),
-            fog: FogSetting::Atmospheric,
+            fog: FogSetting::On,
             bloom: BloomSetting::Low,
             dof: DofSetting::High,
             ssao: SsaoSetting::Off,
             sky_reflections: SkyReflectionSetting::High,
             oob: 2.0,
-            ambient_brightness: 50,
+            ambient_brightness: AMBIENT_BRIGHTNESS_DEFAULT,
             cel_shading: true,
             avatar_outline: true,
             avatar_ghosts: true,
@@ -1046,6 +1108,16 @@ pub const SUN_CASCADE_4_SPLITS: [f32; 3] = [0.102, 0.282, 0.474];
 pub const SPOT_SHADOW_MAX_DISTANCE: f32 = 20.0;
 pub const MIN_CASCADE: f32 = 0.1;
 
+/// A light with its own cascades (the lobby stage's key light): the shadow settings only turn its
+/// shadows on or off.
+#[derive(Component)]
+pub struct StageLight;
+
+/// The camera that shows the lobby stage, drawn with no post-processing: the bloom setting
+/// leaves it alone.
+#[derive(Component)]
+pub struct StageCamera;
+
 /// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows.
 pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShadowConfig> {
     if distance <= 0.0 {
@@ -1100,8 +1172,8 @@ pub struct FullscreenResSetting(pub UVec2);
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FogSetting {
     Off,
-    Basic,
-    Atmospheric,
+    #[serde(alias = "Basic", alias = "Atmospheric")]
+    On,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1152,6 +1224,32 @@ pub struct SceneLoadDistance {
     pub load: f32,
     pub unload: f32, // additional
     pub load_imposter: f32,
+}
+
+/// The landscape distance in metres: how far the hills are displaced and the cliffs are drawn.
+/// Set from the config's `landscape_distance` at startup ([`LandscapeDistance::from_config`]).
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct LandscapeDistance(pub f32);
+
+impl LandscapeDistance {
+    pub const MIN: f32 = 500.0;
+    pub const MAX: f32 = 7000.0;
+
+    /// The config's value held to [`Self::MIN`]..=[`Self::MAX`]; a value that is not a number
+    /// gives the default.
+    pub fn from_config(metres: f32) -> Self {
+        if metres.is_nan() {
+            Self::default()
+        } else {
+            Self(metres.clamp(Self::MIN, Self::MAX))
+        }
+    }
+}
+
+impl Default for LandscapeDistance {
+    fn default() -> Self {
+        Self(1000.0)
+    }
 }
 
 #[derive(Debug)]
@@ -1266,8 +1364,8 @@ pub struct SceneMeta {
     pub spawn_points: Option<Vec<SpawnPoint>>,
     pub skybox_config: Option<SkyboxConfig>,
     pub authoritative_multiplayer: Option<bool>,
-    /// `featureToggles`: a host scene's switches, of which `portableExperiences` is read
-    /// ([`PortableExperiencesToggle`]). Kept as raw json so a value of another shape never
+    /// `featureToggles`: a host scene's switches, of which `portableExperiences`
+    /// ([`PortableExperiencesToggle`]) and `nearbyVoiceChat` are read. Kept as raw json so a value of another shape never
     /// fails the scene.json.
     pub feature_toggles: Option<serde_json::Value>,
 }
@@ -1281,6 +1379,16 @@ impl SceneMeta {
             .and_then(serde_json::Value::as_str)
             .map(|value| value.parse().unwrap_or_default())
             .unwrap_or_default()
+    }
+
+    /// Whether nearby voice stays on while the player stands in this scene: `nearbyVoiceChat`
+    /// absent, not a string, empty or `enabled` (any case); any other string turns it off.
+    pub fn nearby_voice_chat_enabled(&self) -> bool {
+        self.feature_toggles
+            .as_ref()
+            .and_then(|toggles| toggles.get("nearbyVoiceChat"))
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(|value| value.is_empty() || value.eq_ignore_ascii_case("enabled"))
     }
 }
 
@@ -1306,6 +1414,9 @@ impl std::str::FromStr for PortableExperiencesToggle {
         }
     }
 }
+
+#[derive(Component)]
+pub struct NearbyVoiceDisabled;
 
 pub trait PermissionStrings {
     fn active(&self) -> &str;
@@ -1552,7 +1663,7 @@ pub struct EngineMovementControl {
     pub penetration_bounds: (DVec3, DVec3),
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MoveKind {
     #[default]
     Idle,
@@ -1681,10 +1792,12 @@ pub struct SceneGlobalLight {
     /// setting below the horizon at night while the light follows the moon
     pub sun_illuminance: f32,
     pub sun_direction: Vec3,
-    /// the ambient light the sky env map is levelled towards: white at the ambient brightness
-    /// setting unless a scene overrides it, as a tint and a multiplier
+    /// a tint and a multiplier on the Trilight ambient and on the floor the sky reflections are
+    /// levelled towards (visuals::sky_envmap): white at 1 unless a scene overrides it
     pub ambient_color: Color,
     pub ambient_brightness: f32,
+    /// a scene hid the sun and moon discs (not their light)
+    pub sun_hidden: bool,
     pub layers: RenderLayers,
 }
 
@@ -1793,6 +1906,65 @@ pub enum AppError {
 pub struct MicState {
     pub available: bool,
     pub enabled: bool,
+    /// Nearby voice is off where the player stands: the scene turns it off, or the scene room
+    /// refused the player as banned. Nobody nearby is heard and the mic stays closed. Written
+    /// through [`MicState::set_scene_disabled`] and [`MicState::set_scene_banned`].
+    #[serde(default)]
+    scene_blocked: bool,
+    /// The scene the player stands in turns nearby voice off.
+    #[serde(skip)]
+    scene_disabled: bool,
+    /// The current scene's room refused the player as banned.
+    #[serde(skip)]
+    scene_banned: bool,
+    /// Counts the mic opens the scene refused.
+    #[serde(default)]
+    pub refusals: u32,
+}
+
+impl MicState {
+    pub fn scene_blocked(&self) -> bool {
+        self.scene_blocked
+    }
+
+    pub fn scene_disabled(&self) -> bool {
+        self.scene_disabled
+    }
+
+    pub fn scene_banned(&self) -> bool {
+        self.scene_banned
+    }
+
+    /// Leaving the scene does not reopen the mic.
+    pub fn set_scene_disabled(&mut self, disabled: bool) {
+        self.scene_disabled = disabled;
+        self.update_scene_blocked();
+    }
+
+    /// Being admitted again does not reopen the mic.
+    pub fn set_scene_banned(&mut self, banned: bool) {
+        self.scene_banned = banned;
+        self.update_scene_blocked();
+    }
+
+    fn update_scene_blocked(&mut self) {
+        self.scene_blocked = self.scene_disabled || self.scene_banned;
+        if self.scene_blocked {
+            self.enabled = false;
+        }
+    }
+
+    pub fn refuse(&mut self) {
+        self.refusals = self.refusals.wrapping_add(1);
+    }
+
+    /// Closing the mic is never refused.
+    pub fn request_enabled(&mut self, enabled: bool) {
+        if enabled && self.available && self.scene_blocked {
+            self.refuse();
+        }
+        self.enabled = self.available && !self.scene_blocked && enabled;
+    }
 }
 
 #[derive(Debug, Resource, Default)]
@@ -1830,6 +2002,20 @@ pub enum GlobalCrdtStateUpdate {
     /// changes (camera zoom etc.).
     CameraFov(f32),
 }
+
+/// The animation graph nodes an avatar or a glTF container exposes: the default clip, and the
+/// named clips with the time each was last played. Scenes drive them through their animator,
+/// avatars through emote playback.
+#[derive(Component, Default)]
+pub struct Clips {
+    pub default: Option<AnimationNodeIndex>,
+    pub named: HashMap<String, (AnimationNodeIndex, f32)>,
+}
+
+/// A remote player's avatar; comms' `ForeignPlayer` requires it. Avatar systems that
+/// treat remote and local emotes differently read this instead of the comms type.
+#[derive(Component, Default, Debug, Clone, Copy)]
+pub struct ForeignAvatar;
 
 // used for responses to scenes which require strict monotonic timestamps
 // by convention we use T = the protobuf struct containing the timestamp (e.g. PbPointerEventsResult, PbTriggerAreaResult)
@@ -1997,6 +2183,15 @@ pub enum PointAtMarkerVisibility {
     None,
 }
 
+/// Which chat messages open a bubble over their sender's nametag.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChatBubbleVisibility {
+    #[default]
+    All,
+    NearbyOnly,
+    None,
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CameraSmoothing {
     Raw,
@@ -2038,6 +2233,123 @@ mod tests {
     use crate::inputs::CommonInputAction;
 
     #[test]
+    fn fog_reads_the_old_variants_as_on() {
+        for old in ["\"Basic\"", "\"Atmospheric\"", "\"On\""] {
+            assert_eq!(
+                serde_json::from_str::<FogSetting>(old).unwrap(),
+                FogSetting::On
+            );
+        }
+    }
+
+    #[test]
+    fn grading_brightens_shadows_and_keeps_gamma_neutral() {
+        let g = default_color_grading();
+        // the shadows weight w adds 4w to the (1, 1, 1) multiplier
+        assert_eq!(g.shadows.gain, 1.0 + 4.0 * GRADING_SHADOWS_WEIGHT);
+        assert_eq!(g.shadows.lift, 0.0);
+        assert_eq!(
+            (g.shadows.gamma, g.midtones.gamma, g.highlights.gamma),
+            (1.0, 1.0, 1.0)
+        );
+        assert_eq!(g.global.midtones_range, GRADING_MIDTONES_RANGE);
+    }
+
+    const TONEMAPPING_SHADER: &str = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/rendering/bevy-explorer/bevy/crates/bevy_core_pipeline/src/tonemapping/tonemapping_shared.wgsl"
+    ));
+
+    /// bevy_core_pipeline's `sectional_color_grading` (tonemapping_shared.wgsl): the weight of
+    /// the shadows section for a colour whose channels average `level`.
+    fn bevy_shadows_weight(level: f32) -> f32 {
+        const LEVEL_MARGIN: f32 = 0.1;
+        let midtones = (level - GRADING_MIDTONES_RANGE.start) / (2.0 * LEVEL_MARGIN) + 0.5;
+        1.0 - midtones.clamp(0.0, 1.0)
+    }
+
+    /// The shader the function above stands for: the shadows section fades into the midtones.
+    /// With the fade given to the highlights instead, the shadow gain ends at a hard step, and
+    /// a pixel just above the step comes out darker than one just below it: a dark rim along
+    /// every shadow edge, and blotches wherever a shaded surface straddles the step.
+    #[test]
+    fn bevy_fades_the_shadows_section_into_the_midtones() {
+        assert!(TONEMAPPING_SHADER.contains("const LEVEL_MARGIN: f32 = 0.1;"));
+        let fade = TONEMAPPING_SHADER
+            .split("level < midtone_range.x + LEVEL_MARGIN")
+            .nth(1)
+            .and_then(|rest| rest.split("} else if").next())
+            .expect("the shadows to midtones fade");
+        assert!(fade.contains("levels.x = 1.0 - levels.y;"), "{fade}");
+    }
+
+    #[test]
+    fn grading_shadow_band_follows_the_smoothstep() {
+        // the target band: `1 - smoothstep(start, end, luma)` with the
+        // limits 0 and 0.3
+        let target = |level: f32| {
+            let t = (level / 0.3).clamp(0.0, 1.0);
+            1.0 - t * t * (3.0 - 2.0 * t)
+        };
+        for step in 0..=100 {
+            let level = step as f32 / 100.0;
+            let (ours, theirs) = (bevy_shadows_weight(level), target(level));
+            assert!((ours - theirs).abs() < 0.08, "{level}: {ours} vs {theirs}");
+        }
+    }
+
+    #[test]
+    fn grading_never_darkens_a_brighter_pixel() {
+        let gain = default_color_grading().shadows.gain;
+        let graded = |level: f32| level * (1.0 + (gain - 1.0) * bevy_shadows_weight(level));
+        for step in 0..1000 {
+            let (darker, brighter) = (step as f32 / 1000.0, (step + 1) as f32 / 1000.0);
+            assert!(graded(darker) < graded(brighter), "{darker}");
+        }
+    }
+
+    /// bevy_core_pipeline's `compute_blend_factor` (bloom/mod.rs): the blend constant of the
+    /// upsample pass that adds mip `mip` of `max_mip` into the finer one; mip 0 is the composite.
+    fn bevy_bloom_blend(b: &bevy::core_pipeline::bloom::Bloom, mip: f32, max_mip: f32) -> f32 {
+        let lf_boost = (1.0
+            - (1.0 - mip / max_mip).powf(1.0 / (1.0 - b.low_frequency_boost_curvature)))
+            * b.low_frequency_boost;
+        b.intensity + lf_boost
+    }
+
+    #[test]
+    fn bloom_weighs_mips_by_scatter() {
+        let b = scatter_bloom();
+        assert_eq!(b.prefilter.threshold, 1.0);
+        // the knee is threshold * 0.5; bevy: knee = threshold * softness
+        assert_eq!(b.prefilter.threshold_softness, 0.5);
+        assert_eq!(b.high_pass_frequency, 1.0);
+        // a scatter bloom folds lerp(fine, coarse, s) over the chain and adds the result once: mip i weighs
+        // (1 - s) s^i. bevy adds mip i with weight blend(0) * blend(1) * .. * blend(i).
+        let max_mip = 7.0;
+        let mut weight = 1.0;
+        for mip in 0..=7 {
+            weight *= bevy_bloom_blend(&b, mip as f32, max_mip);
+            let scatter = (1.0 - BLOOM_SCATTER) * BLOOM_SCATTER.powi(mip);
+            assert!(
+                (weight - scatter).abs() < 0.002,
+                "mip {mip}: bevy {weight} vs scatter {scatter}"
+            );
+        }
+    }
+
+    #[test]
+    fn landscape_distance_from_config_is_clamped() {
+        let from = |metres| LandscapeDistance::from_config(metres).0;
+        assert_eq!(from(1000.0), 1000.0);
+        assert_eq!(from(0.0), LandscapeDistance::MIN);
+        assert_eq!(from(-50.0), LandscapeDistance::MIN);
+        assert_eq!(from(20_000.0), LandscapeDistance::MAX);
+        assert_eq!(from(f32::INFINITY), LandscapeDistance::MAX);
+        assert_eq!(from(f32::NAN), LandscapeDistance::default().0);
+    }
+
+    #[test]
     fn sun_cascades_split_the_shadow_distance() {
         let high = sun_cascades(ShadowSetting::High, 100.0).unwrap();
         assert_eq!(high.bounds, vec![10.2, 28.2, 47.4, 100.0]);
@@ -2068,6 +2380,93 @@ mod tests {
                 avatar: 10,
             }
         );
+    }
+
+    #[test]
+    fn the_mic_stays_closed_after_leaving_a_scene_that_turns_nearby_voice_off() {
+        let mut mic = MicState {
+            available: true,
+            enabled: true,
+            ..Default::default()
+        };
+        mic.set_scene_disabled(true);
+        assert!(mic.scene_blocked && !mic.enabled);
+        mic.set_scene_disabled(false);
+        assert!(!mic.scene_blocked && !mic.enabled);
+    }
+
+    #[test]
+    fn a_scene_ban_and_a_scene_turning_voice_off_block_nearby_voice_until_both_clear() {
+        let mut mic = MicState {
+            available: true,
+            enabled: true,
+            ..Default::default()
+        };
+        mic.set_scene_banned(true);
+        assert!(mic.scene_blocked && !mic.enabled, "a ban closes the mic");
+        mic.set_scene_disabled(true);
+        mic.set_scene_banned(false);
+        assert!(mic.scene_blocked, "the scene still turns voice off");
+        mic.request_enabled(true);
+        assert!(!mic.enabled);
+        mic.set_scene_disabled(false);
+        assert!(!mic.scene_blocked && !mic.enabled);
+        mic.request_enabled(true);
+        assert!(mic.enabled);
+    }
+
+    #[test]
+    fn a_scene_that_turns_nearby_voice_off_counts_each_refused_open() {
+        let mut mic = MicState {
+            available: true,
+            enabled: false,
+            ..Default::default()
+        };
+        mic.set_scene_disabled(true);
+        mic.request_enabled(true);
+        assert!(!mic.enabled);
+        assert_eq!(mic.refusals, 1);
+        mic.request_enabled(false);
+        assert_eq!(mic.refusals, 1, "closing the mic is never refused");
+
+        mic.available = false;
+        mic.request_enabled(true);
+        assert_eq!(mic.refusals, 1, "no mic to refuse");
+
+        mic.available = true;
+        mic.set_scene_disabled(false);
+        mic.request_enabled(true);
+        assert!(mic.enabled);
+        assert_eq!(mic.refusals, 1);
+    }
+
+    #[test]
+    fn a_scene_turns_nearby_voice_off_with_any_value_but_enabled() {
+        let enabled = |toggles: &str| {
+            let meta: SceneMeta = serde_json::from_str(&format!(
+                r#"{{"main":"index.js","scene":{{"base":"0,0","parcels":["0,0"]}}{toggles}}}"#
+            ))
+            .unwrap();
+            meta.nearby_voice_chat_enabled()
+        };
+        assert!(enabled(""));
+        assert!(enabled(r#","featureToggles":{}"#));
+        assert!(enabled(r#","featureToggles":{"voiceChat":"disabled"}"#));
+        assert!(enabled(r#","featureToggles":{"nearbyVoiceChat":""}"#));
+        assert!(enabled(
+            r#","featureToggles":{"nearbyVoiceChat":"enabled"}"#
+        ));
+        assert!(enabled(
+            r#","featureToggles":{"nearbyVoiceChat":"ENABLED"}"#
+        ));
+        assert!(!enabled(
+            r#","featureToggles":{"nearbyVoiceChat":"disabled"}"#
+        ));
+        assert!(!enabled(r#","featureToggles":{"nearbyVoiceChat":"off"}"#));
+        // values of another shape are ignored rather than failing the scene.json
+        assert!(enabled(r#","featureToggles":{"nearbyVoiceChat":false}"#));
+        assert!(enabled(r#","featureToggles":{"nearbyVoiceChat":1}"#));
+        assert!(enabled(r#","featureToggles":["disabled"]"#));
     }
 
     #[test]

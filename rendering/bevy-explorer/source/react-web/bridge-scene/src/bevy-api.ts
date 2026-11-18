@@ -16,6 +16,7 @@ import type {
   CommunityVoiceUpdate,
   DmHistoryEntryData,
   DmUserStateData,
+  ListenedCommunity,
   VoiceChatAction,
   VoiceChatState,
   VoiceMessage,
@@ -26,6 +27,8 @@ import type {
   HoverEvent,
   HomeScene,
   LiveSceneInfo,
+  LobbyStage,
+  WorldAccessVerdict,
   PermanentPermissionItem,
   PermissionRequestEvent,
   PhotoModeState,
@@ -36,6 +39,7 @@ import type {
   SceneLoadingUi,
   SetAvatarData,
   SetSinglePermission,
+  TextureOptimizationStatus,
   Vector3,
   WelcomeState,
   WorldAccessEvent
@@ -76,8 +80,8 @@ export type SocialApi = {
   /** Community members coming online or going offline (never away); the local user's own
    *  updates say which communities they are in. */
   getCommunityConnectivityStream: () => Promise<AsyncIterable<CommunityMemberConnectivityData>>
-  /** The community channels the local user listens to, as community ids; replaces the set. */
-  setCommunityChannels: (ids: string[]) => void
+  /** The communities whose chat channels the local user listens to; replaces the set. */
+  setCommunityChannels: (communities: ListenedCommunity[]) => void
 }
 
 /** Private calls and community streams (BevyApi.voiceChat.*), generated from the Rust structs. */
@@ -93,7 +97,7 @@ export type VoiceChatApi = {
 
 export type ChatStreamMessage = ChatMessage
 export type SceneLoadingState = SceneLoadingUi
-export type MicState = { enabled: boolean; available: boolean }
+export type MicState = { enabled: boolean; available: boolean; scene_blocked: boolean; refusals: number }
 
 // World-entity hover events. targetType: 0=WORLD, 1=UI, 2=AVATAR. eventType: PointerEventType.
 // eventInfo.maxPlayerDistance absent/null → the entry is range-gated by camera distance only (the
@@ -143,6 +147,13 @@ export type PermissionUsedRaw = {
 
 export type BevyApiInterface = {
   getHomeScene: () => Promise<HomeScene>
+  /** null takes the lobby stage down. */
+  setLobbyStage?: (stage: LobbyStage | null) => Promise<void>
+  quit?: () => void
+  /** Whether the local user may enter a world (`name.dcl.eth`), by the realm change's own check. */
+  getWorldAccess?: (world: string) => Promise<WorldAccessVerdict>
+  /** Pin the home scene the engine boots into and the HUD's home actions go to. */
+  setHomeScene: (home: { realm: string; parcel: { x: number; y: number } }) => Promise<void>
   /** What the welcome page must show for the signed-in account (all false when the host shows none). */
   getWelcome?: () => Promise<WelcomeState>
   /** The welcome page's accept: records the terms for this install. A held new profile deploys with
@@ -172,6 +183,9 @@ export type BevyApiInterface = {
    *  UiCanvasInformation.interactable_area. */
   setInteractableArea: (area: { left: number; top: number; right: number; bottom: number }) => void
   sendChat: (message: string, channel: string) => void
+  /** Replace the text of the chat bubble still showing `messageId` (its translation, or the
+   *  original back); a message no bubble shows is ignored. */
+  setChatBubbleText: (messageId: string, message: string) => void
   getChatStream: () => Promise<AsyncIterable<ChatStreamMessage>>
   /** Add or remove the local user's reaction to a chat message; echoed on getChatReactionStream. */
   sendChatReaction: (channel: string, messageId: string, emoji: string, remove: boolean) => void
@@ -181,6 +195,9 @@ export type BevyApiInterface = {
   getSystemActionStream: () => Promise<AsyncIterable<SystemActionEvent>>
   getSceneLoadingUIStream: () => Promise<AsyncIterable<SceneLoadingState>>
   getAnalyticsEventStream: () => Promise<AsyncIterable<AnalyticsEvent>>
+  /** The preview server's texture import status (preview mode only). Optional: absent on runtimes
+   *  whose SystemApi predates it. */
+  getTextureOptimizationStream?: () => Promise<AsyncIterable<TextureOptimizationStatus>>
   getHoverStream: () => Promise<AsyncIterable<SystemHoverEvent>>
   getProximityStream: () => Promise<AsyncIterable<SystemProximityEvent>>
   getConnectivityStream: () => Promise<AsyncIterable<ConnectivitySnapshot>>

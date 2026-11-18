@@ -1,0 +1,14 @@
+name       = "bevy"
+upstream   = "https://github.com/bevyengine/bevy"
+commit     = "383b3510455c431f34cf3f2c6e3c2d40eddce744"
+ref        = "v0.16.1"
+origin     = "https://github.com/robtfm/bevy"
+origin_rev = "dac1ac9ce08aa610e6f2aa7eef1e4e99130c196a"
+# origin_rev is the head of branch release-0.16-dcl; the series continues with commits of this repository.
+license    = "(MIT OR Apache-2.0) AND Zlib"
+paths      = ["."]
+exclude    = [".gitattributes", ".github", "assets", "examples/wasm/assets"]
+base_tree  = "4f1453a1670d25c35dad4580cbdc46e8233638cc"
+tree       = "7a962f7231727577f6013cb3adc2f656193945ea"
+rev        = "0e9b70d58b880d671bfe831f2cc26caa5bd3a305"
+nix_hash   = "sha256-KZ11CKJEIO/fpAJZSnytxaP/X7GSjvPNT0l1RXyg3zU="

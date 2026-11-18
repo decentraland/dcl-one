@@ -310,7 +310,7 @@ impl Signed {
     ) -> Result<i64, DeployFailure> {
         let mut uploads = vec![self.entity.clone()];
         uploads.extend(self.files.iter().cloned());
-        WriteDeployer::with_optional_eip1654(pool.clone(), storage.clone(), None)
+        WriteDeployer::with_partial_validation_for_tests(pool.clone(), storage.clone(), None)
             .with_forwarder(forward.cloned())
             .deploy_entity(uploads, &self.entity_id, self.chain.clone(), "LOCAL")
             .await
@@ -424,8 +424,12 @@ impl Lab {
         state.attach_writes(
             writes,
             Arc::new(
-                WriteDeployer::with_optional_eip1654(self.pool.clone(), self.storage.clone(), None)
-                    .with_forwarder(forwarding.then(|| self.forwarder.clone())),
+                WriteDeployer::with_partial_validation_for_tests(
+                    self.pool.clone(),
+                    self.storage.clone(),
+                    None,
+                )
+                .with_forwarder(forwarding.then(|| self.forwarder.clone())),
             ),
         );
         super::super::build_router(Arc::new(state))
@@ -632,14 +636,9 @@ async fn a_local_deploy_is_forwarded_unchanged_and_accepted() {
 }
 
 /// A requeue is a content write: it answers the content 503 while the
-/// switch is off and while the restore stamps hold it, before it looks the
-/// record up.
+/// switch is off, before it looks the record up.
 #[tokio::test]
-async fn a_requeue_waits_for_the_content_switch_and_the_restore_stamps() {
-    use crate::shared::writes::restore::{
-        lab::{HOUR, StampLab},
-        scoped,
-    };
+async fn a_requeue_waits_for_the_content_switch() {
     let Some(lab) = Lab::new(5).await else { return };
     let retry = "/content/forwarding/bafynothing/retry";
     let (status, body) = call(
@@ -651,23 +650,13 @@ async fn a_requeue_waits_for_the_content_switch_and_the_restore_stamps() {
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body["error"], super::super::writes::DISABLED_MESSAGE);
-    let app = lab.admin_app(true);
-    let stamps = StampLab::fresh();
-    scoped(stamps.stamps.clone(), async {
-        assert_eq!(
-            call(&app, "POST", retry, Some("forward-admin")).await.0,
-            StatusCode::NOT_FOUND,
-            "fresh stamps let the requeue look the record up"
-        );
-        stamps.advance(30 * HOUR);
-        let (status, body) = call(&app, "POST", retry, Some("forward-admin")).await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(
-            body["error"],
-            "content writes are held on this node: the last complete backup (backup.json) is 31 h old, past WRITES_BACKUP_MAX_AGE_HOURS=26"
-        );
-    })
-    .await;
+    assert_eq!(
+        call(&lab.admin_app(true), "POST", retry, Some("forward-admin"))
+            .await
+            .0,
+        StatusCode::NOT_FOUND,
+        "the switch on lets the requeue look the record up"
+    );
     lab.cleanup().await;
 }
 
@@ -1002,7 +991,7 @@ async fn a_locally_refused_deploy_is_never_queued() {
         .deploy(&lab.pool, &lab.storage, Some(&lab.forwarder))
         .await
         .unwrap_err();
-    assert!(matches!(err, DeployFailure::Rejected(_)), "{err:?}");
+    assert!(matches!(err, DeployFailure::Rejected(_, _)), "{err:?}");
     assert!(lab.row(&refused.entity_id).await.is_none());
 
     // An entity older than the pointer's current one.
@@ -1013,7 +1002,13 @@ async fn a_locally_refused_deploy_is_never_queued() {
         .deploy(&lab.pool, &lab.storage, Some(&lab.forwarder))
         .await
         .unwrap_err();
-    assert!(matches!(err, DeployFailure::Rejected(_)), "{err:?}");
+    assert!(
+        matches!(
+            err,
+            DeployFailure::Rejected(crate::write_deployer::RejectionKind::Superseded, _)
+        ),
+        "{err:?}"
+    );
     assert!(lab.row(&older.entity_id).await.is_none());
     assert!(
         lab.row(&newer.entity_id).await.is_none(),

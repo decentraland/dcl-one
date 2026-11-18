@@ -1,0 +1,25 @@
+/* The looks of Button beyond button.css. Each rule names a class of this module, so a button that asks for
+   none of them keeps the looks of button.css. A rule that sets a property button.css also sets names the
+   class of button.css too, so it wins in any load order. */
+
+:global(.btn).block { display: flex; width: 100%; }
+
+/* The icon slot. A host fits it with --btn-icon-size and --btn-icon-margin. */
+.icon { display: inline-flex; flex: 0 0 auto; margin: var(--btn-icon-margin, 0); font-size: var(--btn-icon-size, 1.25em); }
+
+.text { background: transparent; color: var(--btn-tone, var(--brand)); }
+.text:not(:disabled):not(:global(.is-disabled)):hover { background: color-mix(in srgb, var(--btn-tone, var(--brand)) 8%, transparent); }
+.outline { background: transparent; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--btn-tone, var(--brand)) 50%, transparent); color: var(--btn-tone, var(--brand)); }
+.outline:not(:disabled):not(:global(.is-disabled)):hover { background: color-mix(in srgb, var(--btn-tone, var(--brand)) 8%, transparent); box-shadow: inset 0 0 0 1px var(--btn-tone, var(--brand)); }
+:global(.btn).text:disabled, :global(.btn).text:global(.is-disabled),
+:global(.btn).outline:disabled, :global(.btn).outline:global(.is-disabled) { background: transparent; color: var(--btn-off-ink, var(--ctl-disabled-ink, var(--ink-45))); }
+:global(.btn).outline:disabled, :global(.btn).outline:global(.is-disabled) { box-shadow: inset 0 0 0 1px var(--fill-5); }
+
+/* The neutral tone: the text colour of the host, for actions that should not stand out. Its rules also name
+   [data-tone] so they outweigh the [data-tone] rules of button.css. */
+.neutral[data-tone] { --btn-tone: var(--btn-neutral, var(--text)); }
+:global(.btn--primary).neutral[data-tone] { color: var(--btn-neutral-ink, var(--bg, #161518)); }
+:global(.btn--primary).neutral[data-tone]:not(:disabled):not(:global(.is-disabled)):hover { background: var(--btn-neutral-hover, color-mix(in srgb, var(--btn-tone) 85%, #000)); }
+/* The neutral text and outline looks keep their colour when the button is disabled: --btn-off-ink. */
+.text.neutral[data-tone],
+.outline.neutral[data-tone] { --btn-off-ink: var(--btn-neutral-text, var(--btn-tone)); color: var(--btn-neutral-text, var(--btn-tone)); }

@@ -408,7 +408,8 @@ CREATE TABLE shop.nft_contract (
 -- nftAddress for the three legacy order kinds, whose emitter is the
 -- marketplace); `amount` is the order price or the v1 issued id; `detail`
 -- the legacy order id, the v1 wearable id, the registered subdomain or the
--- Update's data string.
+-- Update's data string; `tx_hash` the transaction of an `order_successful`
+-- (NULL on other kinds and on rows indexed before it was recorded).
 CREATE TABLE shop.nft_event (
     network text NOT NULL,
     block_number bigint NOT NULL,
@@ -423,6 +424,7 @@ CREATE TABLE shop.nft_event (
     amount numeric(78,0),
     expires_at bigint,
     detail text,
+    tx_hash varchar(66),
     PRIMARY KEY (network, block_number, log_index),
     CONSTRAINT nft_event_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT nft_event_kind_known CHECK (kind IN (
@@ -16170,7 +16172,7 @@ CREATE INDEX rental_event_signer_idx ON shop.rental_event (signer, new_index) WH
 -- A reorg rewind or a late nft backfill within 1,000 blocks of the head moves
 -- the rows of the producers that read that index back, never below their
 -- seed (notice_cursor::plan_replay); reorg-stable ids keep the replay
--- idempotent. Workload: seven rows, one update per producer page.
+-- idempotent. Workload: ten rows, one update per producer page.
 CREATE TABLE shop.notification_cursor (
     producer text PRIMARY KEY,
     end_time bigint,
@@ -16182,7 +16184,8 @@ CREATE TABLE shop.notification_cursor (
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     -- Exactly notice_cursor::PRODUCERS (a test compares them).
     CONSTRAINT notification_cursor_producer_known CHECK (producer IN ('transfer_received', 'royalties_earned',
-        'rental_started', 'rental_ended', 'sales:traded:ethereum', 'sales:traded:matic', 'sales:order_successful:matic')),
+        'rental_started', 'rental_ended', 'sales:traded:ethereum', 'sales:traded:matic', 'sales:order_successful:matic',
+        'sales:mint:matic', 'sales:bid_accepted:matic', 'royalties:bid_accepted:matic')),
     CONSTRAINT notification_cursor_end_time_shape CHECK ((producer = 'rental_ended') = (end_time IS NOT NULL)),
     CONSTRAINT notification_cursor_seed_end_time_shape CHECK ((producer = 'rental_ended') = (seed_end_time IS NOT NULL))
 );
@@ -16376,6 +16379,15 @@ CREATE INDEX fed_seen_nonces_expires_idx ON shop.fed_seen_nonces (expires_at);
 -- by idempotency key BEFORE the broadcast; the reconciler settles it from
 -- receipts. `price_wei` is the execution-time MANA charge; the two usd
 -- columns keep a USD-pegged trade's signed amount and the oracle rate used.
+-- A leg's signed transaction (`signed_tx`, `forward_signed_tx`) is recorded
+-- with its hash before it is broadcast, so a resume re-sends those bytes and
+-- signs no second transaction for the leg unless a finalized transaction
+-- holds the recorded one's nonce, so it can never mine: two such looks at
+-- least ten minutes apart (the first kept in `dead_seen_at`) release the
+-- leg, and its hash is kept in `released_tx_hashes` (buy) or
+-- `released_forward_tx_hashes` (forward). `write_ahead` marks
+-- a claim made under that rule: only such a claim with no recorded
+-- transaction is ever bought afresh.
 CREATE TABLE shop.broker_purchases (
     id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     idempotency_key text,
@@ -16394,6 +16406,12 @@ CREATE TABLE shop.broker_purchases (
     chain_id bigint NOT NULL,
     mode text NOT NULL,
     status text NOT NULL DEFAULT 'sent',
+    signed_tx text,
+    forward_signed_tx text,
+    write_ahead boolean NOT NULL DEFAULT false,
+    dead_seen_at timestamp without time zone,
+    released_tx_hashes text[],
+    released_forward_tx_hashes text[],
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     CONSTRAINT broker_purchases_status_known
@@ -16575,6 +16593,10 @@ CREATE TABLE shop.item_notify_requests (
 -- AND status = 'pending' AND id > $after ORDER BY id LIMIT 100; and the
 -- availability watcher's distinct pending items.
 CREATE INDEX item_notify_requests_pending_idx ON shop.item_notify_requests (contract_address, item_id, id) WHERE status = 'pending';
+
+-- The per-mailbox cap on new requests (case and +tag folded):
+-- WHERE regexp_replace(lower(email), '\+[^@]*@', '@') = $1 AND status = 'pending'.
+CREATE INDEX item_notify_requests_pending_email_idx ON shop.item_notify_requests (regexp_replace(lower(email), '\+[^@]*@', '@')) WHERE status = 'pending';
 
 -- The delivery outbox of the waitlist (the SQS hop of shop-server as a
 -- local transactional row): an item's on-sale transition inserts one row
@@ -16778,8 +16800,9 @@ CREATE INDEX tip_claim_created_at ON shop.tip_claim (created_at);
 -- The sales log on Polygon (the `sales` chain index,
 -- src/shop/market/sales_index.rs): a primary mint through the
 -- CollectionStore (`mint`: a mirrored collection's Issue whose `_caller` is
--- the store; `buyer` the beneficiary, `item_id` the item sold at the item's
--- price, `shop.items`) and the ERC721BidV2 lifecycle (`bid_created` with the
+-- the store; `buyer` the beneficiary, `item_id` the item sold, `price` what
+-- the store's `Bought` in the same transaction charged for it, NULL on rows
+-- indexed before it was read) and the ERC721BidV2 lifecycle (`bid_created` with the
 -- bidder in `buyer`, the price and the expiry in unix seconds;
 -- `bid_accepted` with the seller and the price; `bid_cancelled`), each with
 -- the venue in `emitter`, the asset and its transaction. Workload: one row

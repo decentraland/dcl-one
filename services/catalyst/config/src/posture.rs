@@ -10,17 +10,13 @@
 //! - `island` sends no request to Decentraland or any third party: no sync,
 //!   mirror, index, poll, relay or fallback, and the map URLs are its own.
 //! - `journey` is the scratch-database test stack: an island with every
-//!   write domain open, no restore stamp and no chain access checks.
+//!   write domain open and no chain access checks.
 
 use std::fmt::Write as _;
 
 use crate::config::Config;
 
 pub const ENV: &str = "NODE_POSTURE";
-
-/// `WRITES_RESTORE_STAMP_DIR`: where the backup and restore-drill stamps the
-/// write gate reads live (the write gate's own key).
-pub const RESTORE_STAMP_DIR: &str = "WRITES_RESTORE_STAMP_DIR";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Posture {
@@ -51,22 +47,16 @@ impl Posture {
         match self {
             Posture::Mirror => {
                 "follows Decentraland: peer sync, mirrors, chain indexes and polls, the RPC relay and \
-                 the CDN fallbacks; local writes open behind the restore stamp"
+                 the CDN fallbacks; local writes open when switched on"
             }
             Posture::Island => {
                 "no request to Decentraland or any third party; this node is its own authority and \
-                 its map URLs are its own; local writes open behind the restore stamp"
+                 its map URLs are its own; local writes open when switched on"
             }
             Posture::Journey => {
-                "the scratch-database test stack: no upstream traffic, every write domain open, no \
-                 restore stamp"
+                "the scratch-database test stack: no upstream traffic, every write domain open"
             }
         }
-    }
-
-    /// Mirror and island hold real data: a write switch needs the restore stamp.
-    pub fn writes_need_restore_stamp(self) -> bool {
-        self != Posture::Journey
     }
 }
 
@@ -125,8 +115,8 @@ const fn upstream(family: &'static str, key: &'static str, url: &'static str) ->
     row(family, key, Is(url), Is(""), Is(""))
 }
 
-/// Shut under mirror and island until the operator opens it (behind the
-/// restore stamp); open on the journey stack's scratch database.
+/// Shut under mirror and island until the operator opens it; open on the
+/// journey stack's scratch database.
 const fn write(key: &'static str) -> Row {
     row("writes", key, Is("false"), Is("false"), Is("true"))
 }
@@ -153,13 +143,6 @@ fn mainnet(lookup: &Lookup) -> bool {
 
 fn credits_manager(lookup: &Lookup) -> Option<String> {
     mainnet(lookup).then(|| CREDITS_MANAGER_MAINNET.to_string())
-}
-
-/// History pruning drops superseded peer deployments; a node taking local
-/// deploys keeps its history.
-fn prune_unless_content_writes(lookup: &Lookup) -> Option<String> {
-    let writes = lookup("CONTENT_WRITES_ENABLED").is_some_and(|v| v.trim() == "true");
-    Some((!writes).to_string())
 }
 
 fn denylist_or_decentraland(lookup: &Lookup) -> Option<String> {
@@ -190,16 +173,8 @@ const ROWS: &[Row] = &[
         "https://asset-bundle-registry.decentraland.org/denylist",
     ),
     same("sync", "PHASED_SYNC", "true"),
-    row(
-        "sync",
-        "CONTENT_HISTORY_PRUNE_ENABLED",
-        From(
-            "true, false while CONTENT_WRITES_ENABLED=true",
-            prune_unless_content_writes,
-        ),
-        Is("false"),
-        Is("false"),
-    ),
+    // Independent of CONTENT_WRITES_ENABLED: local deploys are never pruned.
+    mirrored("sync", "CONTENT_HISTORY_PRUNE_ENABLED"),
     mirrored("mirrors", "EXPLORER_MIRRORS_ENABLED"),
     mirrored("mirrors", "PLACES_MIRROR_UPSTREAM"),
     mirrored("mirrors", "EVENTS_MIRROR_UPSTREAM"),
@@ -289,6 +264,16 @@ const ROWS: &[Row] = &[
         "community compliance",
         "OPENAI_BASE_URL",
         "https://api.openai.com/v1",
+    ),
+    upstream(
+        "notification email",
+        "SENDGRID_API_URL",
+        "https://api.sendgrid.com",
+    ),
+    upstream(
+        "notification email",
+        "DISPOSABLE_EMAIL_DOMAINS_URL",
+        "https://raw.githubusercontent.com/disposable-email-domains/disposable-email-domains/main/disposable_email_blocklist.conf",
     ),
     upstream(
         "mirrors",
@@ -694,7 +679,7 @@ pub fn startup_line(config: &Config) -> String {
 }
 
 /// The combinations serve and the indexer refuse to start with. `env` is the
-/// process environment (`NODE_POSTURE` and the write gate's stamp directory).
+/// process environment.
 pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
     let from_env = env(ENV).filter(|v| !v.trim().is_empty());
     let posture = match (&config.node.node_posture, &from_env) {
@@ -747,32 +732,6 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
         refuse_followers(posture, env)?;
         refuse_remote_hosts(posture, config, env)?;
         refuse_third_party_secrets(posture, env)?;
-    }
-    if posture.writes_need_restore_stamp() {
-        let open: Vec<&str> = [
-            (
-                "CONTENT_WRITES_ENABLED",
-                config.writes.content_writes_enabled,
-            ),
-            ("CREATE_WRITES_ENABLED", config.create.create_writes_enabled),
-            ("DATA_WRITES_ENABLED", config.writes.data_writes_enabled),
-            ("SOCIAL_WRITES_ENABLED", config.writes.social_writes_enabled),
-            ("WORLDS_WRITES_ENABLED", config.worlds.worlds_writes_enabled),
-            ("OPS_WRITES_ENABLED", config.ops.ops_writes_enabled),
-        ]
-        .into_iter()
-        .filter_map(|(key, on)| on.then_some(key))
-        .collect();
-        if !open.is_empty() && env(RESTORE_STAMP_DIR).is_none_or(|d| d.trim().is_empty()) {
-            anyhow::bail!(
-                "{ENV}={} holds real data, so local writes sit behind the restore stamp, but {} \
-                 {} on with no {RESTORE_STAMP_DIR}: set it (the backup and drill stamps) or turn \
-                 the writes off",
-                posture.name(),
-                open.join(", "),
-                if open.len() == 1 { "is" } else { "are" },
-            );
-        }
     }
     if posture == Posture::Mirror {
         refuse_chain_read_third_party(config, env)?;
@@ -936,12 +895,14 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("COMMUNITIES_CDN_URL", LINK),
     ("SERVICE_BASE_URL", LINK),
     ("FIRST_WEAR_IMAGE_BASE", LINK),
+    ("NOTIFICATIONS_CDN_URL", LINK),
     ("MAP_EXTERNAL_BASE_URL", LINK),
     ("MAP_IMAGE_BASE_URL", LINK),
     ("CAMERA_REEL_API_URL", LINK),
     ("CAMERA_REEL_BUCKET_URL", LINK),
     ("BFF_URL", LINK),
     ("BUILDER_URL", LINK),
+    ("CAST2_URL", LINK),
 ];
 const DATABASE: &str = "this node's own database";
 const LINK: &str = "a link clients follow; the node never dials it";
@@ -1147,7 +1108,11 @@ const THIRD_PARTY_SECRETS: &[(&str, Option<&str>, &str)] = &[
         Some("OPENAI_BASE_URL"),
         "community compliance Responses API",
     ),
-    ("SENDGRID_API_KEY", None, "SendGrid's mail API"),
+    (
+        "SENDGRID_API_KEY",
+        Some("SENDGRID_API_URL"),
+        "SendGrid's mail API",
+    ),
     ("SLACK_BOT_TOKEN", None, "Slack Web API"),
     (
         "ANALYTICS_API_TOKEN",

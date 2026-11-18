@@ -1,9 +1,7 @@
 /* Figma "Share conversations to improve Creator Hub" (5624:13545), on the app's tokens. */
 
-.toggle :global(.MuiFormControlLabel-label) {
-  color: var(--palette-neutral-softWhite);
-  font-size: 16px;
-  font-weight: 600;
+.toggle {
+  --toggle-disabled-cursor: default;
 }
 
 .description {

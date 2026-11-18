@@ -252,7 +252,7 @@ pub struct ParticipantInfo {
     /// `permission.canUpdateMetadata` (either proto-JSON spelling); `None`
     /// when the two spellings disagree or the value is not a bool.
     pub can_update_metadata: Option<bool>,
-    /// `joinedAt`, unix seconds; `None` when absent or malformed.
+    /// `joined_at` (or `joinedAt`), unix seconds; `None` when absent or malformed.
     pub joined_at: Option<i64>,
 }
 
@@ -330,6 +330,43 @@ async fn bounded_admin_body(
         bytes.extend_from_slice(&chunk);
     }
     Ok(bytes)
+}
+
+/// Runs one admin call under [`ADMIN_REQUEST_TIMEOUT`]; an elapsed deadline is
+/// a request failure.
+async fn within_admin_deadline<T>(
+    call: impl Future<Output = Result<T, RoomServiceError>>,
+) -> Result<T, RoomServiceError> {
+    tokio::time::timeout(ADMIN_REQUEST_TIMEOUT, call)
+        .await
+        .map_err(|_| RoomServiceError::Request)?
+}
+
+/// Sends one Twirp POST with the bearer token, a JSON body and the per-request
+/// deadline. The caller classifies the status, because RoomService and Ingress
+/// map failures differently.
+async fn twirp_post(
+    http: &reqwest::Client,
+    url: String,
+    token: &str,
+    body: &serde_json::Value,
+) -> Result<reqwest::Response, RoomServiceError> {
+    http.post(url)
+        .bearer_auth(token)
+        .timeout(ADMIN_REQUEST_TIMEOUT)
+        .json(body)
+        .send()
+        .await
+        .map_err(|_| RoomServiceError::Request)
+}
+
+/// Reads a bounded response body as JSON.
+async fn twirp_json(
+    response: reqwest::Response,
+    limit: usize,
+) -> Result<serde_json::Value, RoomServiceError> {
+    serde_json::from_slice(&bounded_admin_body(response, limit).await?)
+        .map_err(|_| RoomServiceError::InvalidResponse)
 }
 
 // Protobuf JSON may omit repeated fields for empty lists. A present null or
@@ -439,8 +476,8 @@ pub struct OccupancyRoom {
 pub struct OccupancyParticipant {
     pub identity: String,
     pub sid: String,
-    /// When the participant joined, in milliseconds (`joinedAtMs`, else
-    /// `joinedAt` seconds); 0 when LiveKit sent neither.
+    /// When the participant joined, in milliseconds (`joined_at_ms`, else
+    /// `joined_at` seconds; or their camelCase spellings); 0 when LiveKit sent neither.
     pub joined_at_ms: i64,
 }
 
@@ -499,9 +536,12 @@ fn recovery_participants(
             if !identities.insert(identity.clone()) || !sids.insert(sid.clone()) {
                 return Err(RoomServiceError::InvalidResponse);
             }
-            let joined_at_ms = json_i64(value.get("joinedAtMs"))
+            let joined_at_ms = json_i64(proto_field(value, "joined_at_ms", "joinedAtMs"))
                 .filter(|ms| *ms > 0)
-                .or_else(|| json_i64(value.get("joinedAt")).map(|s| s.saturating_mul(1000)))
+                .or_else(|| {
+                    json_i64(proto_field(value, "joined_at", "joinedAt"))
+                        .map(|s| s.saturating_mul(1000))
+                })
                 .unwrap_or(0);
             Ok(OccupancyParticipant {
                 identity,
@@ -709,22 +749,12 @@ impl<'a> RoomServiceClient<'a> {
         limit: usize,
     ) -> Result<serde_json::Value, RoomServiceError> {
         let strict_removal = method == "RemoveParticipant" && body.get("revokeTokenTs").is_some();
-        tokio::time::timeout(ADMIN_REQUEST_TIMEOUT, async {
+        within_admin_deadline(async {
             let token = room_admin_token(&self.api_key, &self.api_secret, room)?;
-            let resp = self
-                .http
-                .post(self.endpoint(method))
-                .bearer_auth(&token)
-                .timeout(ADMIN_REQUEST_TIMEOUT)
-                .json(&body)
-                .send()
-                .await
-                .map_err(|_| RoomServiceError::Request)?;
+            let resp = twirp_post(self.http, self.endpoint(method), &token, &body).await?;
             let status = resp.status();
             if strict_removal && !status.is_success() {
-                let bytes = bounded_admin_body(resp, limit).await?;
-                let error: serde_json::Value = serde_json::from_slice(&bytes)
-                    .map_err(|_| RoomServiceError::InvalidResponse)?;
+                let error = twirp_json(resp, limit).await?;
                 return Err(
                     match (
                         status.as_u16(),
@@ -753,11 +783,9 @@ impl<'a> RoomServiceClient<'a> {
                 }
                 return Err(RoomServiceError::Status(status.as_u16()));
             }
-            serde_json::from_slice(&bounded_admin_body(resp, limit).await?)
-                .map_err(|_| RoomServiceError::InvalidResponse)
+            twirp_json(resp, limit).await
         })
         .await
-        .map_err(|_| RoomServiceError::Request)?
     }
 
     /// Complete, SID-preserving reads for occupancy only. Caller includes permit
@@ -834,6 +862,17 @@ impl<'a> RoomServiceClient<'a> {
             Err(RoomServiceError::NotFound) => Ok(Removal::Absent),
             Err(e) => Err(e),
         }
+    }
+
+    /// The room, created with LiveKit's defaults when it does not exist yet
+    /// (upstream's `getRoom`), so room metadata can be written before anyone
+    /// joins it.
+    pub async fn ensure_room(&self, room: &str) -> Result<(), RoomServiceError> {
+        if self.get_room_info(room).await?.is_none() {
+            self.call("CreateRoom", room, serde_json::json!({ "name": room }))
+                .await?;
+        }
+        Ok(())
     }
 
     /// Create an empty room only after a definite missing-room removal rejection. Creation
@@ -1131,6 +1170,39 @@ impl<'a> RoomServiceClient<'a> {
         Ok(())
     }
 
+    /// Rewrites the string array `field` of the room's metadata in one read and
+    /// one write under the metadata lock: `rewrite` gets the current strings
+    /// (non-strings are dropped) and returns the new array. Nothing is written
+    /// when it is unchanged or the room is missing.
+    pub async fn rewrite_room_metadata_array(
+        &self,
+        room: &str,
+        field: &str,
+        rewrite: impl FnOnce(Vec<String>) -> Vec<String>,
+    ) -> Result<(), RoomServiceError> {
+        let _guard = room_metadata_write_lock().lock().await;
+        let Some(info) = self.get_room_info(room).await? else {
+            return Ok(());
+        };
+        let mut metadata = parse_room_metadata(info.get("metadata").and_then(|m| m.as_str()));
+        let current: Vec<String> = match metadata.get(field) {
+            Some(serde_json::Value::Array(a)) => a
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let updated = rewrite(current.clone());
+        if updated == current {
+            return Ok(());
+        }
+        metadata.insert(
+            field.to_string(),
+            serde_json::Value::Array(updated.into_iter().map(serde_json::Value::String).collect()),
+        );
+        self.write_room_metadata(room, metadata).await
+    }
+
     pub async fn remove_from_room_metadata_array(
         &self,
         room: &str,
@@ -1199,17 +1271,9 @@ impl<'a> IngressClient<'a> {
         method: &str,
         body: serde_json::Value,
     ) -> Result<serde_json::Value, RoomServiceError> {
-        tokio::time::timeout(ADMIN_REQUEST_TIMEOUT, async {
+        within_admin_deadline(async {
             let token = ingress_admin_token(&self.api_key, &self.api_secret)?;
-            let resp = self
-                .http
-                .post(self.endpoint(method))
-                .bearer_auth(&token)
-                .timeout(ADMIN_REQUEST_TIMEOUT)
-                .json(&body)
-                .send()
-                .await
-                .map_err(|_| RoomServiceError::Request)?;
+            let resp = twirp_post(self.http, self.endpoint(method), &token, &body).await?;
             let status = resp.status();
             if !status.is_success() {
                 let bytes = admin_body(resp).await?;
@@ -1219,11 +1283,9 @@ impl<'a> IngressClient<'a> {
                 }
                 return Err(RoomServiceError::Status(status.as_u16()));
             }
-            serde_json::from_slice(&admin_body(resp).await?)
-                .map_err(|_| RoomServiceError::InvalidResponse)
+            twirp_json(resp, ADMIN_RESPONSE_BYTES).await
         })
         .await
-        .map_err(|_| RoomServiceError::Request)?
     }
 
     pub async fn list_ingress(&self, room: &str) -> Result<Vec<IngressInfo>, RoomServiceError> {
@@ -1318,7 +1380,10 @@ fn ingress_streaming_state(
     }
     let status = items
         .iter()
-        .find(|item| item.get("ingressId").and_then(|v| v.as_str()) == Some(ingress_id))
+        .find(|item| {
+            proto_field(item, "ingress_id", "ingressId").and_then(|v| v.as_str())
+                == Some(ingress_id)
+        })
         .and_then(|item| item.get("state"))
         .and_then(|state| state.get("status"));
     Ok(match status {
@@ -1336,16 +1401,25 @@ fn ingress_streaming_state(
     })
 }
 
+/// A field of a Twirp response. LiveKit's Twirp server answers with the proto
+/// field names (`stream_key`), the protojson default is lowerCamelCase
+/// (`streamKey`); either is read.
+fn proto_field<'a>(
+    v: &'a serde_json::Value,
+    snake: &str,
+    camel: &str,
+) -> Option<&'a serde_json::Value> {
+    v.get(snake).or_else(|| v.get(camel))
+}
+
 fn parse_ingress(v: &serde_json::Value) -> IngressInfo {
     IngressInfo {
-        ingress_id: v
-            .get("ingressId")
+        ingress_id: proto_field(v, "ingress_id", "ingressId")
             .and_then(|s| s.as_str())
             .unwrap_or_default()
             .to_string(),
         url: v.get("url").and_then(|s| s.as_str()).map(String::from),
-        stream_key: v
-            .get("streamKey")
+        stream_key: proto_field(v, "stream_key", "streamKey")
             .and_then(|s| s.as_str())
             .map(String::from),
     }
@@ -1378,7 +1452,7 @@ fn parse_participant(p: &serde_json::Value) -> ParticipantInfo {
                     (None, None) => Some(false),
                 },
             ),
-        joined_at: p.get("joinedAt").and_then(|t| match t {
+        joined_at: proto_field(p, "joined_at", "joinedAt").and_then(|t| match t {
             serde_json::Value::String(s) => s.parse().ok(),
             other => other.as_i64(),
         }),
@@ -2255,6 +2329,40 @@ mod tests {
 #[cfg(test)]
 mod streaming_state_tests {
     use super::*;
+
+    #[test]
+    fn twirp_answers_in_proto_field_names_are_read() {
+        // CreateIngress as livekit-server 1.13.11 answered it to the API's request.
+        let created = serde_json::json!({"ingress_id":"IN_JdFrFZ4zqHUW", "name":"t",
+            "stream_key":"Hya8EjynB7EW", "url":"rtmp://127.0.0.1:17891/x", "input_type":"RTMP_INPUT",
+            "bypass_transcoding":false, "enable_transcoding":true, "room_name":"room1",
+            "participant_identity":"obs", "reusable":true,
+            "state":{"status":"ENDPOINT_INACTIVE", "error":"", "tracks":[]}});
+        let info = parse_ingress(&created);
+        assert_eq!(info.ingress_id, "IN_JdFrFZ4zqHUW");
+        assert_eq!(info.url.as_deref(), Some("rtmp://127.0.0.1:17891/x"));
+        assert_eq!(info.stream_key.as_deref(), Some("Hya8EjynB7EW"));
+        let listed = serde_json::json!({"items":[
+            {"ingress_id":"IN_JdFrFZ4zqHUW","state":{"status":"ENDPOINT_PUBLISHING"}}]});
+        assert_eq!(
+            ingress_streaming_state(&listed, "IN_JdFrFZ4zqHUW").unwrap(),
+            Some(true)
+        );
+        let participant = parse_participant(&serde_json::json!({"sid":"PA_1","identity":"obs",
+            "joined_at":"1700000000","joined_at_ms":"1700000000123",
+            "permission":{"can_update_metadata":true}}));
+        assert_eq!(participant.joined_at, Some(1_700_000_000));
+        assert_eq!(participant.can_update_metadata, Some(true));
+        let occupancy = recovery_participants(&serde_json::json!({"participants":[
+            {"identity":"obs","sid":"PA_1","joined_at":"1700000000","joined_at_ms":"1700000000123"},
+            {"identity":"cam","sid":"PA_2","joined_at":1700000001}]}))
+        .unwrap();
+        assert_eq!(
+            occupancy.iter().map(|p| p.joined_at_ms).collect::<Vec<_>>(),
+            [1_700_000_000_123, 1_700_000_001_000]
+        );
+    }
+
     #[test]
     fn ingress_states_are_conservative_and_exact() {
         for (status, expected) in [

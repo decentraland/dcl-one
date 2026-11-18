@@ -17,21 +17,21 @@ checklist**. Keep it current: when you add a domain or a rule, add it here.
 
 ```bash
 # from react-web/ — Node 24 (`.nvmrc`); on Node 20 vitest reports "no tests" and the SDK build fails
-npm run typecheck          # tsc, the app and the shared HUD UI (library/ui/apps/hud)
-npm test                   # tier 1 — the unit tests present at this revision, the shared HUD UI's included
+pnpm run typecheck          # tsc, the app and the shared HUD UI (library/ui/apps/hud)
+pnpm test                   # tier 1 — the unit tests present at this revision, the shared HUD UI's included
 # With the authorized visual suite and configuration present:
-npm run test:visual        # tier 1.5 — visual regression (headless, no engine)
-(cd bridge-scene && npm run build && npm run lint)   # the SDK's type check + eslint (must be 0 errors)
+pnpm run test:visual        # tier 1.5 — visual regression (headless, no engine)
+(cd bridge-scene && pnpm run build && pnpm run lint)   # the SDK's type check + eslint (must be 0 errors)
 ```
 
 The bridge scene is type-checked by `sdk-commands build`, not bare `tsc` — its tsconfig trips
 TypeScript's deprecation errors under the installed compiler.
 
-`test:visual` reuses whatever is already serving `:5173` (and `npm run dev` reuses `:8100`), so in a
+`test:visual` reuses whatever is already serving `:5173` (and `pnpm run dev` reuses `:8100`), so in a
 worktree make sure those aren't another checkout's servers, or run your own on other ports
 (`E2E_URL=http://localhost:5174`).
 
-If `test:visual` reports diffs, open the Playwright HTML report (`npx playwright show-report`) and
+If `test:visual` reports diffs, open the Playwright HTML report (`pnpm exec playwright show-report`) and
 look at the **expected vs actual vs diff** images. Either it's a real regression (fix it) or an
 intended change (refresh the baseline — see §2).
 
@@ -55,9 +55,9 @@ room status. An initial `connecting` room stays quiet during ordinary scene cros
 
 | Tier | Command | What it proves | Engine? | Deterministic? |
 |------|---------|----------------|---------|----------------|
-| **1 — contract** | `npm test` | Every page→scene API call posts the exact wire message, and every scene→page message updates state. Component clicks fire the right action. | no (FakeDriver) | yes |
-| **1.5 — visual** | `npm run test:visual` | Every DOM **domain renders correctly** — layout, colour, tokens, spacing — diffed against a committed baseline PNG. | no (`?mock=1`) | yes |
-| **2 — engine** | `npm run test:e2e` | The guest-reachable calls actually **round-trip through the real bevy engine + bridge scene**. | yes (headed, WebGPU) | partly |
+| **1 — contract** | `pnpm test` | Every page→scene API call posts the exact wire message, and every scene→page message updates state. Component clicks fire the right action. | no (FakeDriver) | yes |
+| **1.5 — visual** | `pnpm run test:visual` | Every DOM **domain renders correctly** — layout, colour, tokens, spacing — diffed against a committed baseline PNG. | no (`?mock=1`) | yes |
+| **2 — engine** | `pnpm run test:e2e` | The guest-reachable calls actually **round-trip through the real bevy engine + bridge scene**. | yes (headed, WebGPU) | partly |
 
 Tier 1 is the contract net (every call, including ones a guest can't reach). Tier 1.5 is the
 *appearance* net (the thing humans notice). Tier 2 is the *it-actually-talks-to-the-engine* net.
@@ -103,7 +103,7 @@ it). Its contract is tier-1: `library/ui/apps/hud/test/integratedGpuGuide.test.t
 
 **Updating baselines** (only when the change is intentional):
 ```bash
-npm run test:visual:update      # regenerates the PNGs
+pnpm run test:visual:update      # regenerates the PNGs
 git add e2e/visual.spec.ts-snapshots && git diff --cached --stat   # then EYEBALL the new PNGs
 ```
 Never blind-update. A baseline refresh in a PR must be reviewed image-by-image.
@@ -149,7 +149,7 @@ from the communities the account is a member of; `library/ui/apps/hud/test/hoste
 `apps/bevy-explorer/e2e/specs/community-chat.test.ts` with a member account), creating, editing
 and deleting a community (it needs an account with a claimed NAME), linking places to it (an account
 that owns a LAND or a World with a deployed scene; `library/ui/apps/hud/test/hosted/communities.clicks.test.tsx` covers the
-form, the places picker, the card's ADD PLACE and place delete, the content-check screens, the picture checks, the card's Edit and Delete, the member row and menu, and the browse grid's search, paging and card buttons; `library/ui/apps/hud/test/hosted/communities.invites.test.tsx` covers the Invites & Requests section and its counter, accepting and rejecting invites, the card's Banned, Join Requests and Invited sections, the Invite to Community submenu and the notifications that open a card; acting on a member needs a second account in a community the first owns or moderates, an invite or a join request needs a second account too, and finding a community past the first browse page needs a service with more than 20) — these need seeded
+form, the places picker, the card's ADD PLACE and place delete, the content-check screens, the picture checks, the card's Edit and Delete, the member row and menu, and the browse grid's search, paging and card buttons; `library/ui/apps/hud/test/hosted/communities.invites.test.tsx` covers the Invites & Requests section and its counter, accepting and rejecting invites, the card's Banned, Join Requests and Invited sections, the Invite to Community submenu and the notifications that open a card; `library/ui/apps/hud/test/hosted/communities.announcements.test.tsx` covers the Announcements tab's paging, posting, deleting, liking, marks and toasts, and `src/test/bridgeCommunities.test.ts` the bridge's posts calls and the service's official mark; posting needs an owner or moderator account, and the official mark an author in the explorer feature flags' `alfa-official-wallets` list on a dcl-one node; acting on a member needs a second account in a community the first owns or moderates, an invite or a join request needs a second account too, and finding a community past the first browse page needs a service with more than 20) — these need seeded
 data and are covered deterministically in tier 1. **TODO to deepen tier 2** (would need engine query commands or
 fixtures): map *UI* teleport by clicking a parcel, a `/mic_state` query to confirm the mic toggle,
 logout via the profile chip.
@@ -158,42 +158,67 @@ logout via the profile chip.
 
 ## 4. World-space UI — agent / manual checklist (can't be mocked)
 
-The 3D nametags, the pointer-lock crosshair, and projected proximity tips are drawn **in the engine
-scene**, not the DOM, so `?mock=1` can't show them and screenshots can't be deterministic. Verify
-these by hand (or have an agent drive the Chrome extension against a live world) after any change to
-`bridge-scene/src/domains/{nametags,pointer,proximity,avatarPointer}.*`:
+The 3D nametags, the pointer-lock crosshair, and projected proximity tips are drawn **in the engine**
+(the nametags by `crates/avatar/src/nametag`, the rest by the bridge scene), not the DOM, so `?mock=1`
+can't show them and screenshots can't be deterministic. Verify these by hand (or have an agent drive
+the Chrome extension against a live world) after any change to `crates/avatar/src/nametag` or
+`bridge-scene/src/domains/{pointer,proximity,avatarPointer}.*`. `/nametag_state` reports every shown
+tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test bubble:
 
 - [ ] **Nametags** appear above every avatar's head, follow them while walking, and **face the camera**.
-- [ ] Name **colour** = profile custom colour if set, else the address-hash palette; **claimed** names
-      show the verified seal, **unclaimed** show `#abcd` tight to the name.
+- [ ] Name **colour** = a claimed name's custom colour if set, else the hue hashed from the name (the
+      colour the HUD shows for it); **claimed** names show the verified seal, **unclaimed** show `#abcd`
+      tight to the name, dimmed. The name stays on one line.
+      A name written with its own tag (`Ada#ffff`) still shows the address' tag, and a guest
+      shows no seal whatever its profile claims.
 - [ ] A name colour picked on the passport reaches the tag once the passport closes, on your own
       avatar and, for other players, on theirs, without a rename or a reload.
-- [ ] **Fixed world scale — never a giant.** A tag is a constant *world* size (it shrinks with distance,
-      like the old SDK scene); it must NEVER balloon into a screen-filling pill when the camera pulls back
-      or when its `AvatarAttach` fails to bind. (We dropped the old constant-on-screen scaling precisely
-      because it turned a stranded tag into a giant.)
-- [ ] **Exactly one tag per address — no duplicates / orphans / pile-up.** None accumulate over a long
-      session, after alt-tabbing away and back, or across a comms/livekit blip's leave→enter churn (the
-      classic regression). They're pooled — one reusable entity per wallet, never destroyed (engine entity
-      removal is unreliable for attached entities; we show/hide instead).
-- [ ] Tags **fade out** past ~20–40 m. Your **own** tag shows above your head in third person and is
-      hidden in first person.
+- [ ] **Constant size on screen.** A tag looks the same size at 3 m and at 39 m, and at any field of
+      view; its text is sharp at both. It sits clear of what the avatar wears on its head, and follows
+      the head through emotes with no lag.
+- [ ] **Exactly one tag per player — no duplicates / orphans / pile-up.** None accumulate over a long
+      session, after alt-tabbing away and back, or across a comms/livekit blip's leave→enter churn. A
+      player who leaves takes their tag with them at once. `/nametag_state` counts the tags as
+      `shown` and `hidden`: together, one per player with a profile.
+- [ ] Tags show from 2 m to 40 m from the camera, **fading out** from 20 m, and not behind a wall.
+      Your **own** tag shows above your head in third person and is hidden in first person.
 - [ ] **Crosshair** shows when the camera is locked (mouse hidden) and hides when the cursor is free.
 - [ ] **Hover / proximity prompts** ("Press E…") show on interactables and sit on the right entity.
-- [ ] **Community chat bubbles** (`bridge-scene/src/domains/{chat,nametags}.*`): a message said in a
-      community chat by a player standing nearby shows as their bubble with the community's name on
-      a smaller, dimmer, left-aligned row above their name, cut short with an ellipsis (and over
-      your own head for your own); a Nearby message shows no such row, and a DM no bubble at all.
-- [ ] **Hushed badge** (`bridge-scene/src/domains/{nearbyMutes,voice,nametags}.*`): while a player whose
-      nearby voice you muted (profile menu, Hush) is talking, their tag shows the red hushed icon in
-      place of the green speaking bars, and nothing when they are quiet; Hear brings the bars back.
-      The same player talking in a private call or community stream with you, which the mute leaves
-      audible, shows the green bars.
-- [ ] **Lobby stage** (`bridge-scene/src/domains/avatarPreview.tsx`, lobby region): after sign-in the
-      page's stand-in (backdrop + snapshot) crossfades to the engine stage with the live avatar centred;
+- [ ] **Chat bubbles**: a message opens its author's tag into a bubble with a tail for 5 s (a new
+      message restarts it); a long message wraps and is cut at 100 characters with an ellipsis; a message that @-mentions you has a pink-to-purple
+      ring. A message said in a **community** chat by a player standing nearby shows the community's
+      name on a smaller, dimmer row above their name, cut short with an ellipsis (and over your own
+      head for your own); a **DM** shows a green `DM` tag after the name, and your own names who it is
+      for when they are around. The Chat bubbles setting (All / Nearby only / None) picks which show.
+      A translated message replaces the bubble's text.
+- [ ] **Voice badges**: a talking player's tag shows three green bars swinging; your own shows three
+      dots while your microphone is open and you are quiet. While a player whose nearby voice you muted
+      (profile menu, Hush) is talking, their tag shows the red hushed icon in place of the bars, and
+      nothing when they are quiet; Hear brings the bars back. The same player talking in a private call
+      or community stream with you, which the mute leaves audible, shows the green bars.
+- [ ] **Lobby stage** (`crates/system_ui/src/lobby_stage`, `bridge-scene/src/domains/avatarPreview.tsx`,
+      lobby region): after sign-in the page's stand-in (the chosen look's backdrop + snapshot)
+      crossfades to the engine's 3D stage: backdrop, floor dissolving into it, podium, props, mist,
+      dust and vignette around the live avatar, which waves, plays an idle emote every 8–20 s and
+      turns when dragged. Settings → Lobby, in the full page or the lobby's compact Settings, switches
+      the look at once (Halloween 2026, Game World).
       Customize opens the Backpack modal with the avatar through its hole and hands the stage back on
       close; Jump In loads the world (the hold is released) and a failed trip returns to the lobby.
-      The `lobby` baseline only shows the stand-in (mock has no engine).
+- [ ] **Lobby page** (`features/lobby`): the widgets sit on the four corner grids as the stored layout
+      says; edit mode (the pencil) frames them, drags them with the others making room, lists the
+      ones off the grids in Customize Lobby, and Save keeps the layout across a reload while Cancel,
+      Back and Escape drop the changes. From the startup lobby, Map, Places, Events and Go to pick
+      where the world starts. VIEW ALL opens Places, Events, Communities and Gallery compact in the
+      lobby's section modal: Communities four cards a row, Gallery five columns of 292x219, and a
+      photo opened there covers the whole screen, its Jump In closing the photo and the modal. The
+      profile menu's Settings opens there too: the full page's tabs and fields under its own header,
+      on the tab last picked in either.
+- [ ] **Sign-in stage** (`avatarPreview.tsx`, signin region): a new account's look and name screens
+      show its avatar on the golden podium at the right, over the sign-in background (vignette and
+      drifting logo pattern) drawn by the engine across the whole screen. The page's background fades
+      out only once the engine reports `signinStageReady`, and comes back at once on Back. Picking a
+      look or body type changes the avatar in place. Check a 16:9 window and a much wider or taller one.
+      Mock has no engine, so the page's background stays.
 
 ---
 
@@ -212,8 +237,8 @@ Run through this on every diff (it encodes `AGENTS.md`):
       throttled, not doing work every frame for free.
 - [ ] **Tests** — tier 1 still green; **a new/changed domain has a tier-1.5 baseline**; world-space
       changes ran the §4 checklist.
-- [ ] **Both projects typecheck** (`npm run typecheck` + `cd bridge-scene && npm run build`), and the
-      bridge scene lints clean (`npm run lint` there).
+- [ ] **Both projects typecheck** (`pnpm run typecheck` + `cd bridge-scene && pnpm run build`), and the
+      bridge scene lints clean (`pnpm run lint` there).
 - [ ] **No secrets / `.env` or working reports** staged; review the staged paths under the
       repository-root `AGENTS.md` rules. Use an imperative commit subject without AI attribution.
 
@@ -233,7 +258,7 @@ Run through this on every diff (it encodes `AGENTS.md`):
 3. Add a tier-1 test for its API contract + clicks beside the shared code: `library/explorer-core/test/`
    for core code, `library/ui/apps/hud/test/hosted/` for UI and session code (`src/test/` only for this
    host's own files).
-4. Add a screenshot to `e2e/visual.spec.ts` and run `npm run test:visual:update`.
+4. Add a screenshot to `e2e/visual.spec.ts` and run `pnpm run test:visual:update`.
 5. If it's world-space (engine-drawn), add a line to the §4 checklist instead of a screenshot.
 6. List its expectations here.
 
@@ -317,16 +342,29 @@ back as `analyticsSession`). Expectations:
   shell and the app take the attribution params (`utm_*`, `gad_*`, ad click ids such as `gclid`,
   the landing page's anonymous id) off the address bar (`dropAttributionParams`), so a copied link
   or a reload does not attribute again; the Google tag gets them from what the shell kept at load.
-- **Sign-in** (`useEngineSession`): with no session the guest start page (`GuestStartPage`) is
-  AVATAR_NAMING, its ACCEPT AND PLAY a LETS_GO click and CONTINUE WITH AN ACCOUNT (sign in or
-  sign up) a SIGN_IN click; the guest account is created only on that click, and the welcome page
-  it then needs is answered with the picked name instead of shown. COMEBACK (after a failed stored
-  sign-in), ACCOUNT_GUEST_CREATE, AUTH_BROWSER_OPEN, AUTH_SUCCESS {login_type}, AUTH_ERROR {error};
-  clicks lets_go, use_another_account, try_again. `Guest Wallet Creation` wraps the
-  thirdweb guest step (`features/auth/guestWalletEvent.ts`).
-- **Welcome / lobby**: WELCOME or AVATAR_NAMING, AUTH_DEPLOY_SUCCESS; clicks LETS_GO,
-  NAME_RANDOMIZE; LOBBY, PLACES_PICKER; clicks JUMP_IN {kind, place_id|event_id}, CUSTOMIZE,
-  NOTIFICATIONS, CLOSE (`LobbyHome.tsx`).
+- **Sign-in** (`useEngineSession`): with no session the first screen (`features/startup`) is
+  ACCOUNT_HOME, its PLAY AS GUEST a PLAY_GUEST click and LOGIN
+  OR SIGNUP a SIGN_IN click; the guest account is created only on that click. After any sign-in,
+  Verifying shows until the account's welcome answer (an existing account's terms are accepted for
+  it); a new account (AVATAR_NAMING) picks a starting look and a name, deploys on JUMP IN and goes
+  straight in, AUTH_DEPLOY_SUCCESS. LOGIN OR SIGNUP opens the methods screen: Google,
+  MetaMask and More options leave for the sign-in page with `?loginMethod=` (SIGN_IN, AUTH_BROWSER_OPEN
+  {method}); an email code is sent and checked in the HUD (the web shell or the bridge scene makes
+  the thirdweb calls) and its account signs in as fully_registered. COMEBACK (after a failed stored
+  sign-in), ACCOUNT_GUEST_CREATE, AUTH_BROWSER_OPEN, AUTH_SUCCESS {login_type}, AUTH_ERROR
+  {error}. `Guest Wallet Creation` wraps the
+  thirdweb guest step (`features/auth/guestWalletEvent.ts`). A stored sign-in with a day or less
+  left is forgotten at startup (`getStoredLogin`), so the player gets the first screen and the auth
+  site asks for a new sign-in; a run already going keeps its sign-in until it expires.
+- **Welcome / lobby**: WELCOME or AVATAR_NAMING, AUTH_DEPLOY_SUCCESS; click LETS_GO (JUMP IN on the
+  name screen); LOBBY, PLACES_PICKER; clicks JUMP_IN {kind, place_id|event_id}, CUSTOMIZE,
+  NOTIFICATIONS, CLOSE (`LobbyHome.tsx`). The lobby's own events, named as the Unity explorer
+  reports them so both clients' lobby data reads alike (`features/lobby/lobbyAnalytics.ts`):
+  `lobby_opened` and `lobby_closed` {source,
+  is_startup, duration_sec}; `place_card_clicked` and `place_jumped_in` {place_id, place_name,
+  place_coords, highlighted, from_section}; `event_card_clicked` and `event_jumped_in` {event_id,
+  event_name, event_coords, highlighted, from_section}; `jump_to_friend_clicked` {receiver_id,
+  friend_position}; `places_section_opened`, `events_section_opened`.
 - **Loading**: the engine's, not the page's. LOADING_START {position, realm, when}, LOADING_END
   {position, status} and LOADING_TIMEOUT after 90 s follow its own loading screen
   (`crates/analytics/src/loading.rs`), the one `sceneLoading` mirrors here.
@@ -376,6 +414,80 @@ owns the mode as a surface. Expectations:
   (the overlay's buttons, bindings, notice and effect); the e2e camera scenarios
   (`apps/bevy-explorer/e2e/specs/camera.test.ts`) drive the real engine.
 
+## Preview texture optimization
+
+A scene preview served by `dcl-scene-cli start` reports its background texture import on the
+preview socket; the engine relays it (`textureOptimization`, from `getTextureOptimizationStream`,
+`bridge-scene/src/domains/textureOptimization.ts`) and the shared HUD's
+`library/ui/apps/hud/features/preview/textureOptimizationToast.ts` shows it as one toast per scene, under its own key. Expectations:
+
+- With the project's setting on: `running` updates one busy progress toast in place, with no
+  Dismiss (the next update would bring it back), until 60 s pass with no update (the CLI stopped,
+  the socket dropped or the player left the realm), when it goes and the scene's progress is
+  forgotten; `ready` shows
+  the size saved and **Reload** (accessible name "Reload scene to see optimized textures"), which
+  posts `reloadScene` with the status's scene id; `failed` says how many textures stay PNG, or that
+  the import failed, with Dismiss and no action. With it off, nothing shows.
+- A `ready` marked `replay` (the preview server's last status, sent again as the socket connects)
+  offers **Reload** only when the HUD showed that scene's progress, since the run ended while the
+  socket was down. Otherwise it leaves the toast as it is: the scene was loaded from those files.
+- `?mock=1&textures=1` plays a run and the Reload offer.
+- Tests: `library/ui/apps/hud/test/textureOptimization.test.tsx` (the Toast primitive's keyed, persistent and action
+  toasts; each state; the replay rule; the stale progress timeout; one toast per scene; Reload
+  through the session),
+  `src/test/bridgeTextureOptimization.test.ts` (the relay).
+
+## Gallery (camera reel)
+
+The Gallery page and the passport's Photos tab (`library/ui/apps/hud/features/gallery`, bridge `domains/gallery.ts`).
+Expectations:
+
+- **Paging**: a reel is read 100 photos a page, the next page when fewer than 12 loaded photos remain
+  past the last one on screen, and paging stops once the reel's total is loaded or the service sends
+  a short page (counted before url-less images are dropped) (`useReelList`). Every Gallery open reads
+  again from the top. Your own reel goes through the bridge, signed (private photos included), its
+  replies matched by `requestId` (`bridgeCall`). The passport reads the PUBLIC reel from the HUD
+  itself, unsigned (`publicReels.ts`), since every bridge request is signed; `?mock=1` swaps in the
+  mock bridge's reels.
+- **Failures**: a failed first page shows an error with RETRY, never the empty reel; a failed later
+  page ends the grid with a RETRY row, and paging waits for it instead of asking on every scroll.
+- **The grid** (`ReelGrid`) mounts only the rows near the viewport; it reports what is on screen only
+  once it has measured it. Gallery: 6 x 306x230 with month headers; passport: 4 columns at 272:201,
+  no headers. A thumbnail is disabled until its image has loaded.
+- **The options menu** (`design/AnchoredMenu` around `ContextMenu`): Set as Public, Share on X, Copy
+  Link, Download, Delete, in that order (`reelActions.ts`, `useOwnReelActions.ts`). The passport offers
+  it only on your own passport, and making a photo private there drops it at once (back in place if
+  the write fails). It is portaled with `--ui-scale`, opens below-right of the ⋮ and flips or clamps
+  at the screen edges: check it visually near the edges. On native, Download needs the engine's CEF
+  download handler (`crates/cef_offscreen`): it saves to `Downloads` under the home folder and
+  reports how each save ended, and the toast waits for that report. That toast shows the folder,
+  which opens in the file manager on a click (once per toast); web has no such link. Share on X on native asks the
+  bridge scene to open the post in the user's browser (`openExternalUrl`, `https:` only); on web
+  it opens a tab.
+- Tests: in `library/ui/apps/hud/test/`, `hosted/gallery.test.tsx` (the session calls),
+  `hosted/gallery.page.test.tsx` (paging, failures, the menu and its actions),
+  `profile.passport.test.tsx` (passport photos) and `reelGrid.test.tsx` (rows, virtualization, menu
+  placement); here, `src/test/bridgeGallery.test.ts` (the bridge's requests and replies).
+
+## Map
+
+The full-screen map (`library/ui/apps/hud/features/map`, core in `library/explorer-core/features/map`).
+Expectations:
+
+- **Signed reads and writes go through the bridge:** places by parcel, the destinations search, likes,
+  favourites and a place's photos in `domains/places.ts`; events at parcels and reminders through the
+  events domain's own `getEvents` and `setEventAttending`. Each request kind has its own answer kind
+  that echoes `request` (a reminder's names its event), and every request is answered, a failed one
+  with `failed`. The points-of-interest list and the connected players are plain fetches.
+- **Ids:** the map and the Events page both send `getEvents`; their ids come from one sequence
+  (`engine/requestIds.ts`), so each takes only the answers to its own requests.
+- **Nothing draws per frame:** the camera writes custom properties on the viewport; the sea is one
+  image (`assets/map/sea.webp`) placed in the world layer like a satellite tile.
+- **Home:** the map reads the session's home and sets it with `setHomeScene`; Set as Home does not
+  clear it.
+- Tests: `library/explorer-core/test/{navmap,mapCore}.test.ts`, `library/ui/apps/hud/test/hosted/map.page.test.tsx`,
+  `hosted/home.session.test.tsx`, `mapEventInfo.test.tsx`; here, `src/test/bridgePlaces.test.ts` and
+  `bridgeEvents.test.ts`. Visual baseline: `panel-map`.
 
 ## Donate
 
@@ -395,3 +507,25 @@ web shell; null here, so this HUD shows no Donate). The shared HUD names a place
 - Tests: `library/ui/apps/hud/test/donate.test.tsx` (gating, open, emote, notification),
   `library/explorer-core/test/donatePlace.test.ts`; the shell's side in `apps/ui3/src/play/test/donateShell.test.ts`
   and `donateGuard.test.ts`. No visual baseline: the panel is drawn by the `/play` shell, not by `?mock=1`.
+
+## Gifting
+
+Sending an owned wearable or emote to another player, where the host can sign the transfer (`@hud-host`'s
+`gifting`: the Sites `/play` web shell; null here outside `?mock=1`, whose fake host sends nothing). The shared HUD
+draws the picker and names a token and a recipient (`features/gifting`); the shell checks both, asks the player to
+confirm them in its own overlay, draws the transfer and signs (`apps/ui3/src/play/shell/gift`, [ADR](../../../../docs/adr/2026-11-16-play-shell-signs-gifts.md)).
+Expectations:
+
+- **Where it shows:** the profile card of chat names, nametags and the friend row (after View Profile), the
+  community card's member menu (after Call; greyed for a blocked member, either way), and another player's
+  passport options (before Block). Not in the voice-stream panel's menu, not on your own card, not for a guest sender or a guest recipient.
+  Whether the session may gift is asked as each of those surfaces opens, as Donate's host is asked (`useGiftingAvailable`); nothing is cached.
+- **The picker** reads 16 owned on-chain items a page through the bridge's `giftingQuery`, newest first, with the
+  search on the server. A pending gift doesn't count as a copy; an equipped single copy is covered and can't be
+  picked; SEND GIFT sends the newest-transferred copy neither worn nor pending, and refuses an item that isn't a
+  Polygon collection item with a toast.
+- **A `transfer_received` notification** opens the gift-received popup (`features/gifting/GiftReceivedPopup.tsx`),
+  on every host: the item comes from the notification's token URI.
+- Tests: `library/ui/apps/hud/test/hosted/gift*.test.tsx`, `library/explorer-core/test/gift*.test.ts`,
+  `src/test/bridgeGifting.test.ts`; the shell's side in `apps/ui3/src/play/test/giftShell.test.ts`, `giftGuard.test.ts`
+  and `giftProtocol.test.ts`. The picker shows in `?mock=1`; the transfer panels are drawn by the `/play` shell.

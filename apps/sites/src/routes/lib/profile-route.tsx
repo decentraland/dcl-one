@@ -1,6 +1,5 @@
-import { HydrationBoundary, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
-import { useLocation, useNavigate, useParams, useRouteError, useRouteLoaderData } from "react-router";
+import { HydrationBoundary } from "@tanstack/react-query";
+import { useParams, useRouteError, useRouteLoaderData } from "react-router";
 
 import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
 
@@ -8,6 +7,7 @@ import { normalizeAddress } from "@/data/lib/catalyst/social/profile";
 import { profileKeys } from "@/data/lib/profile/queries";
 import { isProfileError, profileErrorAddress, profileErrorReason, type ProfileErrorReason } from "@/features/profile/errors";
 import { ProfilePage } from "@/features/profile/ProfilePage";
+import { useFailedReadRecovery } from "@/features/components/useFailedReadRecovery";
 
 import type { ProfileLoaderData } from "./profile-loader.server";
 
@@ -45,33 +45,19 @@ const COPY: Record<ProfileErrorReason, (address: string) => { title: string; bod
 
 /**
  * The document request's 404/503 response and a client navigation's failed profile read render the
- * same screen. Retry and leaving both drop the failed profile read, so the next visit asks again.
+ * same screen. Retry resets only failed reads without data; leaving additionally requires the read
+ * to be inactive and idle. Newer data and requests remain owned by their current observers.
  */
 export function ProfileErrorBoundary() {
   const error = useRouteError();
   const params = useParams();
-  const client = useQueryClient();
-  const navigate = useNavigate();
-  const location = useLocation();
   const address = normalizeAddress(params.address);
   // A bug is the root boundary's to show, not a profile failure.
   if (!isProfileError(error)) throw error;
   const reason = profileErrorReason(error);
   const copy = COPY[reason](profileErrorAddress(error) ?? params.address ?? "");
 
-  useEffect(
-    () => () => {
-      void client.resetQueries({ queryKey: profileKeys.profile(address), exact: true });
-    },
-    [client, address],
-  );
-
-  const retry = async () => {
-    await client.resetQueries({ queryKey: profileKeys.profile(address), exact: true });
-    // A navigation to the same URL clears the router's error, which a revalidation does not for an
-    // error thrown while rendering.
-    void navigate(`${location.pathname}${location.search}`, { replace: true });
-  };
+  const retry = useFailedReadRecovery(profileKeys.profile(address));
 
   return (
     <main className="landings-profile" role="alert">

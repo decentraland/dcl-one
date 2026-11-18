@@ -77,8 +77,8 @@ pub mod mirrors;
 pub mod neighbours;
 pub mod nft_index;
 pub mod nft_reads;
-pub mod notice_cursor;
 pub mod nfts;
+pub mod notice_cursor;
 pub mod orders;
 pub mod owners;
 pub mod prices;
@@ -114,12 +114,12 @@ pub(crate) mod tests;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::{any, delete, erase, get, post};
 use anyhow::Context;
 use axum::Json;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
-use axum::routing::{any, get, post};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower_http::timeout::TimeoutLayer;
@@ -244,6 +244,9 @@ pub struct MarketSettings {
     pub indexes: chain_walk::IndexSettings,
     /// The tip forward's thresholds and pending cap.
     pub tips: tips::TipSettings,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`: peers whose `X-Real-IP` names the client
+    /// (the tip forward's and the trade post's per-address limits).
+    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
 }
 
 /// No derived `Debug`: `admin_token` is a bearer. Prints whether one is set,
@@ -283,6 +286,7 @@ impl Default for MarketSettings {
             marketplace_base_url: "https://decentraland.org/marketplace".to_string(),
             indexes: chain_walk::IndexSettings::default(),
             tips: tips::TipSettings::default(),
+            trusted_proxy_cidrs: Vec::new(),
         }
     }
 }
@@ -327,6 +331,7 @@ impl MarketSettings {
             marketplace_base_url: marketplace_base_url.trim_end_matches('/').to_string(),
             indexes: chain_walk::IndexSettings::default(),
             tips: tips::TipSettings::default(),
+            trusted_proxy_cidrs: Vec::new(),
         })
     }
 
@@ -339,6 +344,11 @@ impl MarketSettings {
     /// The tip forward's knobs (`main.rs` fills them from `Config`).
     pub fn with_tips(mut self, tips: tips::TipSettings) -> Self {
         self.tips = tips;
+        self
+    }
+
+    pub fn with_trusted_proxies(mut self, cidrs: Vec<ipnet::IpNet>) -> Self {
+        self.trusted_proxy_cidrs = cidrs;
         self
     }
 }
@@ -482,6 +492,15 @@ impl Settings {
     }
 }
 
+/// This node's `/profile-images`, whose faces the profile responses warm;
+/// `serve` attaches social's renderer.
+pub trait ProfileFaces: Send + Sync {
+    /// Whether it serves a face the profile never uploaded: it has an origin or a renderer.
+    fn derives_faces(&self) -> bool;
+    /// Starts producing these profile entities' faces.
+    fn warm(&self, entities: Vec<String>);
+}
+
 pub struct MarketplaceState {
     pub pool: PgPool,
     pub http: crate::http::Outbound,
@@ -519,7 +538,7 @@ pub struct MarketplaceState {
     pub(crate) denylist: Arc<crate::content::Denylist>,
     /// `/profile-images`, attached once the social states exist: the faces a
     /// response points at are warmed there.
-    pub(crate) profile_images: std::sync::OnceLock<crate::social::profile_images::SharedState>,
+    pub(crate) profile_images: std::sync::OnceLock<Arc<dyn ProfileFaces>>,
     /// decentraland.org's `dapps` rollout flags as this node enforces them (`features`); every flag off until read.
     pub(crate) dapps_flags: Arc<features::DappsFlags>,
     /// Where `dapps_flags` is read from (`SHOP_FEATURE_FLAGS_*`).
@@ -533,6 +552,12 @@ pub struct MarketplaceState {
 pub type SharedState = Arc<MarketplaceState>;
 
 impl MarketplaceState {
+    /// The LAND and estate registries of `ETH_NETWORK`; `None` for a
+    /// network without them.
+    pub fn land_network(&self) -> Option<crate::land_authz::LandNetwork> {
+        crate::land_authz::land_network(&self.settings.eth_network)
+    }
+
     pub fn new(pool: PgPool, http: crate::http::Outbound, settings: Settings) -> Self {
         let index = Arc::new(ChainIndex::new(http.clone(), settings.index_settings()));
         Self {
@@ -592,10 +617,7 @@ impl MarketplaceState {
 
     /// Attaches this node's `/profile-images`, whose faces the profile
     /// responses warm; `false` when one is already attached.
-    pub fn attach_profile_images(
-        &self,
-        images: crate::social::profile_images::SharedState,
-    ) -> bool {
+    pub fn attach_profile_images(&self, images: Arc<dyn ProfileFaces>) -> bool {
         self.profile_images.set(images).is_ok()
     }
 
@@ -606,7 +628,7 @@ impl MarketplaceState {
             || self
                 .profile_images
                 .get()
-                .is_some_and(|images| images.origin.is_some() || images.render_queue.is_some())
+                .is_some_and(|images| images.derives_faces())
     }
 
     /// Warms the faces of these profile entities when they point at this
@@ -616,7 +638,7 @@ impl MarketplaceState {
             return;
         }
         if let Some(images) = self.profile_images.get() {
-            images.warm(entities);
+            images.warm(entities.into_iter().collect());
         }
     }
 
@@ -667,6 +689,8 @@ impl MarketplaceState {
             self.pool.clone(),
             self.settings.market.marketplace_base_url.clone(),
             self.settings.market.indexes.nft_enabled,
+            self.settings.market.indexes.sales_enabled,
+            self.settings.market.mirrors_enabled,
             jobs,
         );
         transfer_notices::spawn(self, jobs);
@@ -734,7 +758,7 @@ impl MarketplaceState {
 /// Refuses to walk an endpoint that serves another chain than `expected`:
 /// the walk would read another network's logs into this one's rows.
 pub(crate) async fn ensure_chain(
-    rpc: &crate::land_authz::indexer::Rpc<'_>,
+    rpc: &crate::chain_index::rpc::Rpc<'_>,
     expected: i64,
 ) -> anyhow::Result<()> {
     let v = rpc.call("eth_chainId", serde_json::json!([])).await?;
@@ -812,7 +836,7 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
                         let (state, nft_indexes, ctx) = (&state, &nft_indexes, &ctx);
                         async move {
                             let Some(url) = rpc_url(state, *net) else { return Ok(()) };
-                            let rpc = crate::land_authz::indexer::Rpc::at(&state.http, &url);
+                            let rpc = crate::chain_index::rpc::Rpc::at(&state.http, &url);
                             let progress = |m: String| ctx.progress(m);
                             let outcome = if name == chain_walk::INDEXER_NFT {
                                 if !nft_index::mirror_complete(&state.pool, *net).await {
@@ -856,7 +880,7 @@ pub fn shop_admin_router(state: SharedState) -> Router {
         .route("/admin/moderation/flags", get(admin::list_flags))
         .route(
             "/admin/moderation/{kind}/{hash}/flag",
-            post(admin::set_flag).delete(admin::clear_flag),
+            post(admin::set_flag).delete(erase(admin::clear_flag)),
         )
         .route("/admin/disputes", get(admin::list_disputes))
         .route(
@@ -912,13 +936,8 @@ impl AssetKey {
 
     /// Parses `<contract>-<id>`; the network is the caller's (a URN or a query parameter).
     pub fn parse(network: &str, wire: &str) -> Option<Self> {
-        let (contract, id) = wire.trim().split_once('-')?;
-        let contract = contract.to_ascii_lowercase();
-        let is_addr = contract
-            .strip_prefix("0x")
-            .is_some_and(|h| h.len() == 40 && h.bytes().all(|b| b.is_ascii_hexdigit()));
-        let is_id = !id.is_empty() && id.len() <= 78 && id.bytes().all(|b| b.is_ascii_digit());
-        (is_addr && is_id).then(|| Self::new(network, &contract, id))
+        let (contract, id) = self::wire::split_item_wire_id(wire)?;
+        Some(Self::new(network, &contract, &id))
     }
 }
 
@@ -1153,7 +1172,7 @@ pub fn market_router(state: SharedState) -> Router {
         .route(
             "/v1/trades",
             get(trades::get_trades)
-                .post(listings::post_trade)
+                .post(erase(listings::post_trade))
                 .layer(DefaultBodyLimit::max(256 * 1024)),
         )
         .route("/v1/trades-mirror", get(trades::get_mirror_status))
@@ -1162,37 +1181,40 @@ pub fn market_router(state: SharedState) -> Router {
             "/v1/trades/{hashed_signature}/accept",
             get(trade_events::get_trade_accepted_event),
         )
-        .route("/v1/lists", get(lists::get_lists).post(lists::create_list))
+        .route(
+            "/v1/lists",
+            get(lists::get_lists).post(erase(lists::create_list)),
+        )
         .route(
             "/v1/lists/{id}",
             get(lists::get_list_route)
-                .put(lists::update_list_route)
-                .delete(lists::delete_list_route),
+                .put(erase(lists::update_list_route))
+                .delete(erase(lists::delete_list_route)),
         )
         .route(
             "/v1/lists/{id}/picks",
-            get(lists::get_list_picks).post(lists::add_pick_to_list_route),
+            get(lists::get_list_picks).post(erase(lists::add_pick_to_list_route)),
         )
         .route(
             "/v1/lists/{id}/picks/{item_id}",
-            axum::routing::delete(lists::delete_pick_in_list_route),
+            delete(lists::delete_pick_in_list_route),
         )
         .route(
             "/v1/lists/{id}/access",
-            post(lists::create_access_route).delete(lists::delete_access_route),
+            post(lists::create_access_route).delete(erase(lists::delete_access_route)),
         )
         .route("/v1/picks/stats", get(lists::get_picks_stats))
         .route("/v1/picks/{item_id}/stats", get(lists::get_item_pick_stats))
         .route(
             "/v1/picks/{item_id}",
             get(lists::get_picks_by_item)
-                .post(lists::pick_unpick_in_bulk)
-                .delete(lists::unpick_everywhere),
+                .post(erase(lists::pick_unpick_in_bulk))
+                .delete(erase(lists::unpick_everywhere)),
         )
         .route(
             "/v1/coupons",
             get(crate::coupons::get_coupons)
-                .post(crate::coupons::add_coupon)
+                .post(erase(crate::coupons::add_coupon))
                 .layer(DefaultBodyLimit::max(64 * 1024)),
         )
         .route("/v1/coupons/{id}", get(crate::coupons::get_coupon))
@@ -1215,7 +1237,7 @@ pub fn market_router(state: SharedState) -> Router {
         .route("/federation/market/changes", get(federation::changes))
         .route(
             "/v1/admin/moderation/{kind}/{hash}/flag",
-            post(admin::set_flag).delete(admin::clear_flag),
+            post(admin::set_flag).delete(erase(admin::clear_flag)),
         )
         .route("/v1/admin/disputes", get(admin::list_disputes))
         .route(

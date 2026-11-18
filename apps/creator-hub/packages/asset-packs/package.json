@@ -8,34 +8,18 @@
     "url": "https://decentraland.org"
   },
   "bugs": "https://github.com/decentraland/dcl-one/issues",
-  "dependencies": {
-    "@types/glob": "^8.1.0",
-    "glob": "^11.0.0",
-    "mitt": "^3.0.1"
-  },
   "devDependencies": {
-    "@aws-sdk/client-s3": "^3.405.0",
-    "@aws-sdk/lib-storage": "^3.405.0",
+    "@aws-sdk/client-s3": "^3.1169.0",
+    "@aws-sdk/lib-storage": "^3.1169.0",
+    "@dcl/ecs-math": "2.1.0",
     "@dcl/hashing": "^3.0.4",
     "@dcl/js-runtime": "7.29.0",
     "@dcl/react-ecs": "7.29.0",
     "@dcl/sdk": "7.29.0",
     "@dcl/sdk-commands": "7.29.0",
-    "@types/mime-types": "^2.1.1",
-    "@types/node-fetch": "^2.6.4",
-    "concurrently": "^8.2.1",
-    "dotenv": "^16.3.1",
-    "fp-future": "^1.0.1",
-    "mime-types": "^2.1.35",
-    "node-fetch": "^2.7.0",
-    "nodemon": "^3.0.1",
-    "p-queue": "^7.4.1",
     "prettier": "3.5.3",
-    "rimraf": "6.0.1",
-    "serve": "^14.2.1",
-    "serve-handler": "^6.1.5",
-    "ts-node": "^10.9.1",
-    "typescript": "5.5.3"
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
   },
   "files": [
     "dist",
@@ -61,21 +45,22 @@
     "directory": "apps/creator-hub/packages/asset-packs"
   },
   "scripts": {
-    "build": "npm run build:lib && npm run build:js && npm run build:catalog",
-    "build:catalog": "ts-node --project tsconfig.scripts.json ./scripts/catalog.ts",
-    "build:js": "sdk-commands build",
+    "build": "pnpm run build:lib && pnpm run build:js && pnpm run build:catalog",
+    "build:catalog": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ./scripts/catalog.ts",
+    "build:js": "sdk-commands build --skip-install",
     "build:lib": "tsc --project tsconfig.lib.json",
-    "download": "ts-node --project tsconfig.scripts.json ./scripts/download.ts",
-    "migrate": "ts-node --project tsconfig.scripts.json ./scripts/migrate.ts",
-    "start": "concurrently \"npm run start:js\" \"npm run start:lib\" \"npm run start:catalog\"",
-    "start:catalog": "nodemon --watch packs -x \"npm run build:catalog\"",
-    "start:dev": "concurrently \"npm run start:js -- --data-layer\" \"npm run start:lib\" \"npm run start:catalog\"",
-    "start:js": "sdk-commands start --no-browser --port 8001",
-    "start:lib": "npm run build:lib -- --watch",
-    "test": "vitest run --passWithNoTests",
+    "download": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ./scripts/download.ts",
+    "migrate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ./scripts/migrate.ts",
+    "start": "pnpm run \"/^start:(js|lib|catalog)$/\"",
+    "start:catalog": "node --watch-path=packs --watch-preserve-output --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ./scripts/catalog.ts",
+    "start:dev": "pnpm run \"/^start:(js:data-layer|lib|catalog)$/\"",
+    "start:js": "sdk-commands start --skip-install --no-browser --port 8001",
+    "start:js:data-layer": "pnpm run start:js --data-layer",
+    "start:lib": "pnpm run build:lib -- --watch",
+    "test": "node ../../scripts/rolldown.js vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit -p tsconfig.lib.json",
-    "upload": "ts-node --project tsconfig.scripts.json ./scripts/upload.ts",
-    "validate": "ts-node --project tsconfig.scripts.json ./scripts/validate.ts"
+    "upload": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ./scripts/upload.ts",
+    "validate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ./scripts/validate.ts"
   },
   "typings": "dist/definitions.d.ts"
 }

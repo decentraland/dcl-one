@@ -1,9 +1,30 @@
 {
   "compilerOptions": {
+    "target": "es2020",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "pretty": true,
+    "forceConsistentCasingInFileNames": true,
+    "allowSyntheticDefaultImports": true,
+    "experimentalDecorators": true,
+    "exactOptionalPropertyTypes": false,
+    "inlineSourceMap": true,
+    "sourceMap": false,
+    "removeComments": true,
+    "inlineSources": true,
+    "useDefineForClassFields": false,
+    "preserveConstEnums": true,
     "allowJs": true,
+    "jsx": "react",
+    "jsxFactory": "ReactEcs.createElement",
+    "alwaysStrict": true,
     "strict": true,
-    "baseUrl": "."
+    "strictNullChecks": true,
+    "strictBindCallApply": true,
+    "strictFunctionTypes": true,
+    "strictPropertyInitialization": true,
+    "lib": ["ES2020"],
+    "types": ["@dcl/js-runtime"]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"],
-  "extends": "@dcl/sdk/types/tsconfig.ecs7.json"
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
 }

@@ -10,8 +10,11 @@ import {
   useRouteLoaderData,
 } from "react-router";
 
+// The shared tokens, not foundations.css: the Inter faces are the app's own (@ui/atoms/inter.css, through primitives.css).
+import "@dcl/one-ui/foundations/colors/colors.css";
+import "@dcl/one-ui/foundations/spacing/spacing.css";
+import "@dcl/one-ui/foundations/layout/layout.css";
 import "@ui/atoms/primitives.css";
-import "@dcl/one-ui/foundations.css";
 import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
 
 import SignInModalHost from "@/features/components/auth/SignInModalHost";
@@ -22,6 +25,7 @@ import RoutePending, { NAV_PENDING_SCRIPT } from "@/features/components/chrome/R
 import EmbedBridge from "@/features/components/chrome/EmbedBridge";
 import { reloadingForAccount } from "@/features/components/chrome/explorer-host";
 import SyncEngineBridge from "@/features/components/creator-hub/SyncEngineBridge";
+import NotFoundPage from "@/features/not-found/NotFoundPage";
 import StatusPage from "@ui/components/StatusPage";
 import { EMBED_BOOT_SCRIPT } from "@ui/web/frames/embed";
 import type { ShouldRevalidateFunctionArgs } from "react-router";
@@ -45,10 +49,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const segmentWriteKey = process.env.SEGMENT_WRITE_KEY || process.env.VITE_SEGMENT_WRITE_KEY || "";
   const segmentApiHost = process.env.SEGMENT_API_HOST || process.env.VITE_SEGMENT_API_HOST || "";
   const docsBase = (typeof process !== "undefined" && process.env.DOCS_BASE) || "";
+  const commitHash = (typeof process !== "undefined" && process.env.COMMIT_HASH) || "";
+  const pulseServer = (typeof process !== "undefined" && process.env.PUBLIC_PULSE_SERVER) || "";
   const catalystBase = browserCatalystBase();
   const shopApiMode = serverShopApiMode();
   const wallet = readWallet(request);
-  const committee = wallet
+  // Only the Creator Hub reads the committee seat: other pages do not ask the node for the curation committee.
+  const committee = wallet && isCreatorPath(new URL(request.url).pathname)
     ? await isCommitteeMember(wallet, request.signal).catch(() => false)
     : false;
   return {
@@ -58,9 +65,12 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     segmentWriteKey,
     segmentApiHost,
     docsBase,
+    commitHash,
+    pulseServer,
     catalystBase,
     shopApiMode,
     wallet,
+    /** The curation committee seat; read only for a Creator Hub path, false on every other path. */
     committee,
     /**
      * The session id, also on a first visit, for a page whose own loader does not run on a client
@@ -68,6 +78,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
      */
     sid: pageSid(request, context),
   };
+}
+
+const CREATOR_PATH = /^\/(create|creator-hub)(\/|$)/;
+function isCreatorPath(pathname: string): boolean {
+  return CREATOR_PATH.test(pathname);
 }
 
 export function shouldRevalidate({
@@ -86,6 +101,10 @@ export function shouldRevalidate({
   if (currentUrl.pathname === nextUrl.pathname) {
     return false;
   }
+  // Entering the Creator Hub reads the committee seat the page before it did not.
+  if (isCreatorPath(nextUrl.pathname) && !isCreatorPath(currentUrl.pathname)) {
+    return true;
+  }
   return defaultShouldRevalidate;
 }
 
@@ -98,7 +117,7 @@ export function meta(_args: Route.MetaArgs) {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData("root") as
-    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; catalystBase?: string; shopApiMode?: string }
+    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; commitHash?: string; pulseServer?: string; catalystBase?: string; shopApiMode?: string }
     | undefined;
   const publicEnv = JSON.stringify({
     thirdwebClientId: data?.thirdwebClientId ?? "",
@@ -107,6 +126,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
     SEGMENT_WRITE_KEY: data?.segmentWriteKey ?? "",
     SEGMENT_API_HOST: data?.segmentApiHost ?? "",
     docsBase: data?.docsBase ?? "",
+    commitHash: data?.commitHash ?? "",
+    pulseServer: data?.pulseServer ?? "",
   }).replace(/</g, "\\u003c");
   const catalystBase = data?.catalystBase
     ? `;window.__CATALYST_BASE__=${JSON.stringify(data.catalystBase).replace(/</g, "\\u003c")}`
@@ -313,6 +334,8 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
   }
 
   useEffect(() => {
+    // The error page is hydrated too: the pending bar the head script started goes away as App's does.
+    document.documentElement.removeAttribute("data-nav-loading");
     if (isRouteError) {
       if (routeStatus === 404 && appHydrated) {
         try {
@@ -362,5 +385,7 @@ function RouteErrorView({
 }: {
   error: { status: number; statusText?: string; data?: unknown };
 }) {
+  // A dead link lands on the page decentraland.org shows, with the 404 status kept.
+  if (error.status === 404) return <NotFoundPage />;
   return <StatusPage status={error.status} />;
 }

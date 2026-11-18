@@ -13,7 +13,9 @@ const RealBroadcastChannel = self.BroadcastChannel;
 // postMessage carries killToken.
 const workerPostMessage = self.postMessage.bind(self);
 const workerClose = self.close.bind(self);
-self.fetch = createSceneFetch(self.fetch.bind(self));
+// The node's routing map, given by INIT_WORKER before scene code exists; null until then.
+let sceneRoutes = null;
+self.fetch = createSceneFetch(self.fetch.bind(self), () => sceneRoutes);
 // Stack traces are only ever formatted the default way: scene code can't install a formatter.
 Object.defineProperty(Error, "prepareStackTrace", {
   get: () => undefined,
@@ -132,7 +134,7 @@ function createJsContext(wasmApi, context) {
   // two scenes agreeing on a bucket name would have a shared filesystem.
   deleteFromPrototypeChain(self.navigator, "storage");
   deleteFromPrototypeChain(self.navigator, "storageBuckets");
-  // the page's service worker registration (and its cache routes) is no scene's business
+  // Scenes cannot access the page's service worker registration.
   deleteFromPrototypeChain(self.navigator, "serviceWorker");
   // the scene server's one-per-scene lock (headless.js) is held by name, which a scene could take
   deleteFromPrototypeChain(self.navigator, "locks");
@@ -190,22 +192,7 @@ function createJsContext(wasmApi, context) {
         get() {
           return (...args) => {
             // wrap ops to inject context arg
-            const result = wasmApi[exportName](context, ...args);
-            if (result && typeof result.then === "function") {
-              // async op: track it while its future is live, so the teardown drain can
-              // name what is still holding scene state if it fails to drain.
-              // .then(dec, dec) not .finally: the derived promise must never reject
-              // (the caller handles the original; a rejecting clone would surface as
-              // an unhandled rejection)
-              outstandingOps.set(exportName, (outstandingOps.get(exportName) || 0) + 1);
-              const dec = () => {
-                const n = outstandingOps.get(exportName) || 0;
-                if (n > 1) outstandingOps.set(exportName, n - 1);
-                else outstandingOps.delete(exportName);
-              };
-              result.then(dec, dec);
-            }
-            return result;
+            return wasmApi[exportName](context, ...args);
           };
         },
       });
@@ -394,65 +381,18 @@ function postToEngine(message) {
 var killFlags = new Int32Array(new SharedArrayBuffer(16));
 const KILL = 0, IN_RUST = 1, PARK = 2;
 
-// Async ops whose futures are currently live (name -> count), maintained by the op
-// wrapper. Purely diagnostic: names what still holds scene state when the teardown
-// drain gives up (e.g. read-stream ops whose engine-side sender is never dropped).
-const outstandingOps = new Map();
-
 // Single teardown for every exit path: the graceful loop exit, the scene-error exit, and
 // the engine's SHUTDOWN escalation. Posts the ack in all cases — it tells engine.js not to
 // escalate further and to drop its worker map entry.
 //
 // The relay goes first: it is all that holds engine-side state, and nothing after needs it.
-// The scene state can only be freed once nothing else references it: async ops hold a state
-// reference (and the context wrapper's borrow) for as long as their future lives. With the
-// relay gone their channels are closed, so parked ops resume, complete inertly and drop their
-// references — wait for that (bounded, under engine.js's escalation grace). A future awaiting
-// something that never resolves keeps its reference forever; then the state is left for the
-// worker's exit to discard. It is all in the scene runtime's own memory.
-const DRAIN_TIMEOUT_MS = 4000;
+// The scene state is not freed here: it is all in the scene runtime's own memory, which only
+// this worker references, so it goes with the worker. That includes the state an async op's
+// future holds while it awaits something that never resolves, so the close waits for none.
 var toreDown = false;
 function tearDown() {
   if (toreDown) return;
   toreDown = true;
-  relayFinish?.();
-  if (!relayFinish || wasmContext === undefined) {
-    finishTearDown(true);
-    return;
-  }
-  const startedAt = performance.now();
-  const drain = () => {
-    const refs = wasmContext.ref_count();
-    if (refs > 1 && performance.now() - startedAt < DRAIN_TIMEOUT_MS) {
-      setTimeout(drain, 100);
-      return;
-    }
-    if (refs > 1) {
-      // dropping under live references would panic — skip the drop and leave it
-      const parked = [...outstandingOps].map(([op, n]) => (n > 1 ? `${op} x${n}` : op)).join(", ");
-      console.warn(`[Sandbox Worker] scene ${sceneId}: ${refs - 1} op future(s) still hold scene state after ${DRAIN_TIMEOUT_MS}ms (${parked || "untracked"})`);
-      wasmContext = undefined;
-      finishTearDown(false);
-      return;
-    }
-    // refs == 1 still holds at the drop: nothing interleaves a sync block
-    let stateFreed = false;
-    try {
-      sceneApi.drop_context(wasmContext);
-      stateFreed = true;
-    } catch (e) {
-      console.error(`[Sandbox Worker] scene ${sceneId}: error dropping scene context:`, e);
-    }
-    wasmContext = undefined;
-    finishTearDown(stateFreed);
-  };
-  drain();
-}
-
-function finishTearDown(stateFreed) {
-  if (!stateFreed) {
-    console.warn(`[Sandbox Worker] scene ${sceneId}: scene state still in use; leaking thread state`);
-  }
   relayFinish?.();
   console.debug(`[Sandbox Worker] scene ${sceneId}: teardown complete`);
   postToEngine({ type: "SHUTDOWN_COMPLETE", sceneId });
@@ -679,6 +619,7 @@ self.onmessage = async (event) => {
     killToken = event.data.payload.killToken;
     shutdownToken = event.data.payload.shutdownToken;
     killFlags = new Int32Array(event.data.payload.killFlags);
+    sceneRoutes = event.data.payload.sceneRoutes instanceof Map ? event.data.payload.sceneRoutes : null;
 
     if (!compiledModule || !sharedMemory) {
       console.error("[Sandbox Worker] Invalid payload received.");
@@ -828,11 +769,11 @@ function createWebStorageProxy(ops) {
         }
 
         // Handle direct property access like `localStorage.myKey`
-        return ops.op_storage_get(String(prop));
+        return ops.op_webstorage_get(String(prop));
       },
 
       set(_target, prop, value, _receiver) {
-        ops.op_storage_set(String(prop), String(value));
+        ops.op_webstorage_set(String(prop), String(value));
         return true;
       },
 

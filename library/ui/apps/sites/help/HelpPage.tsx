@@ -8,7 +8,7 @@ type HelpPageProps<Id extends string = string> = {
   tabs: readonly HelpTab<Id>[]
   activeTab: Id
   onTabChange: (id: Id) => void
-  /** The system status control: beside the title on phones, at the right of the content on wider screens. */
+  /** The system status control: at the right of the content from 1280px, at the top right on narrower screens. */
   status: ReactNode
   /** The active tab's section. */
   children: ReactNode
@@ -18,7 +18,8 @@ type HelpPageProps<Id extends string = string> = {
 
 /**
  * The help center frame: the title, intro and section tabs in a left column, the active section beside them and
- * the system status at the right. Phones stack it, with the status beside the title and the tabs wrapping onto rows.
+ * the system status at the right. Under 1280px the status moves to the top right; tablets and phones stack the page,
+ * with the status beside the title and the tabs in a row (wrapping onto rows on phones).
  */
 function HelpPage<Id extends string>({
   title,

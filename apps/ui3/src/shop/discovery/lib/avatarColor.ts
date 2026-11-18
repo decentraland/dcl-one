@@ -42,7 +42,7 @@ const hex = (c: number) =>
     .toString(16)
     .padStart(2, "0");
 
-export function getDisplayName(name: string | null | undefined, hasClaimedName: boolean | null | undefined, ethAddress: string | null | undefined): string {
+export function getDisplayName(name: string | null | undefined, hasClaimedName: boolean | null | undefined, ethAddress?: string | null): string {
   let validated = "";
   for (const ch of (name ?? "").split("")) if (ALPHANUMERIC.test(ch)) validated += ch;
   if (!validated) return "";
@@ -54,6 +54,13 @@ export function getAvatarBackgroundColor(displayName: string | null | undefined)
   if (!displayName) return DEFAULT_COLOR;
   const [r, g, b] = hsvToRgb(fnv1a32(displayName) / UINT32_MAX, 0.75, 1);
   return `#${hex(r)}${hex(g)}${hex(b)}`;
+}
+
+/** A coloured disc with the name's first letter, as a data URL, for a creator without a face. */
+export function syntheticAvatar(name: string): string {
+  const initial = (name.match(ALPHANUMERIC)?.[0] ?? "?").toUpperCase();
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" fill="${getAvatarBackgroundColor(name)}"/><text x="16" y="22" text-anchor="middle" font-family="sans-serif" font-size="18" font-weight="700" fill="white">${initial}</text></svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
 // from: shop@3a322cf9:app/src/components/CreatorBadge/CreatorBadge.tsx (colorForAddress, initialFor): the

@@ -1,9 +1,9 @@
 import { Provider } from 'react-redux';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { zeroAddress } from 'viem';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 
 import { useAuth } from '/@/hooks/useAuth';
 import { LandType, RoleType, type Land } from '/@/lib/land';
@@ -65,12 +65,12 @@ async function renderField(names: Name[]) {
   });
   render(
     <Provider store={store as never}>
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <DomainName
           land={land}
           project={toLandProject(land, [], hash => hash)}
         />
-      </ThemeProvider>
+      </TestProviders>
     </Provider>,
   );
   await act(async () => {});
@@ -97,10 +97,12 @@ describe('DomainName', () => {
 
   beforeEach(() => {
     vi.stubGlobal('fetch', fetchSpy);
+    document.documentElement.style.setProperty('--error', '#FB3B3B');
   });
 
   afterEach(() => {
     cleanup();
+    document.documentElement.style.removeProperty('--error');
     vi.unstubAllGlobals();
     fetchSpy.mockReset();
     vi.mocked(sendLandTransaction).mockClear();
@@ -169,6 +171,54 @@ describe('DomainName', () => {
         buildLinkName({ subdomain: 'plaza.dcl.eth', resolver: RESOLVER }, '0x'),
       );
       expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('when the change button opens the list from the keyboard', () => {
+    const key = (name: string) => fireEvent.keyDown(document.activeElement!, { key: name });
+
+    beforeEach(async () => {
+      await renderField([
+        {
+          subdomain: 'plaza.dcl.eth',
+          resolver: RESOLVER,
+          content: encodeLandRedirect({ x: 96, y: 15 }),
+        },
+        { subdomain: 'park.dcl.eth', resolver: RESOLVER, content: '' },
+      ]);
+      const change = screen.getByRole('button', { name: 'Change Domain Name' });
+      change.focus();
+      await act(async () => fireEvent.click(change));
+    });
+
+    it('should move the focus to the field of the open list', () => {
+      expect(screen.getByRole('listbox')).toBeTruthy();
+      expect(document.activeElement).toBe(screen.getByRole('combobox', { name: 'Domain Name' }));
+    });
+
+    it('should pick an option with the arrow keys and Enter', () => {
+      key('End');
+      key('ArrowUp');
+      key('ArrowDown');
+
+      const combobox = screen.getByRole('combobox', { name: 'Domain Name' });
+      expect(combobox.getAttribute('aria-activedescendant')).toBe(
+        screen.getByRole('option', { name: 'park.dcl.eth' }).id,
+      );
+
+      key('Enter');
+
+      expect(screen.queryByRole('listbox')).toBeNull();
+      expect(
+        within(screen.getByRole('dialog')).getByRole('button', { name: 'Set Domain Name' }),
+      ).toBeTruthy();
+    });
+
+    it('should keep the focus on the field when Escape closes the list', () => {
+      key('Escape');
+
+      expect(screen.queryByRole('listbox')).toBeNull();
+      expect(document.activeElement).toBe(screen.getByRole('combobox', { name: 'Domain Name' }));
     });
   });
 });

@@ -22,17 +22,17 @@ The transport and asset params `buildInspectorUrl` (`creator-hub/renderer/src/co
 - **`dataLayerRpcParentUrl`** is always sent, for *both* renderers. It carries the parent-window scene-RPC control channel — host-to-inspector feature flags, notifications, file/dir open. Babylon additionally uses it as its data-layer transport.
 - **`dataLayerRpcWsUrl`** and **`bevyRealm`** are sent only on the Bevy path, and the WS takes precedence over `dataLayerRpcParentUrl` *for the data layer*: sharing the realm's websocket keeps entity ids aligned with the engine so forwarded edits land on the right entities. It does not supersede the control channel, which is why `dataLayerRpcParentUrl` is still sent alongside it — drop it and host feature flags (`SceneMinimap`, for one) never arrive.
 - **`bevyPosition`** is the scene's real parcel base coord (`project.scene.base`), where the engine loads the scene.
-- **`bevySystemScene`** points at the super-user editor-agent portable experience (viewport pick and gizmo), a static realm at `inspector/public/bevy-agent` served same-origin by the inspector's http-server. The engine GETs `<systemScene>/about` and the realm export nests `<realmName>/about`, which is why the path segment is doubled (`/bevy-agent/bevy-agent`). `VITE_BEVY_SYSTEM_SCENE` overrides it to point at a dev server.
+- **`bevySystemScene`** points at the super-user editor-agent portable experience (viewport pick and gizmo), a static realm at `inspector/public/bevy-agent` served same-origin by the inspector's static server (`main/src/modules/static-server.ts`). The engine GETs `<systemScene>/about` and the realm export nests `<realmName>/about`, which is why the path segment is doubled (`/bevy-agent/bevy-agent`). `VITE_BEVY_SYSTEM_SCENE` overrides it to point at a dev server.
 - **`binIndexJsUrl`** and **`contentUrl`** exist for local `@dcl/asset-packs` development, or for pointing the inspector at another environment such as `.zone`. `binIndexJsUrl` defaults to the inspector's own `bin/index.js`; setting both `VITE_ASSET_PACKS_JS_PORT` and `VITE_ASSET_PACKS_JS_PATH` redirects it at a local content server, and `VITE_ASSET_PACKS_CONTENT_URL` adds `contentUrl`, which is otherwise left to the inspector's default.
 
 ## Testing the UI Designer
 
 Two environments run the UI Designer, and they differ in ways that decide what a given change can be verified in.
 
-- **Standalone dev inspector** (`npm run start` in `packages/inspector`, open the printed port). Fastest loop, but limited:
+- **Standalone dev inspector** (`pnpm run start` in `packages/inspector`, open the printed port). Fastest loop, but limited:
   - It runs the **Babylon** renderer, so `sdk.renderer.sceneRun`, `editorCamera`, and `interaction` are absent. The toolbar's Play/Pause/Stop, camera dropdown, and interact toggle only render under **Bevy**, so they can't be exercised here.
   - Its scene is the in-memory `feeded-local-fs` fixture, which re-seeds on every reload. Anything that must survive a reload — notably 2D/3D mode persistence (`inspector::UIState.uiDesignerOpen`) — can't be verified here.
-- **Creator Hub app.** Loads the inspector iframe from `packages/inspector/public` at runtime, so rebuilding the inspector's `public/` (the `npm run start` watch) is enough — no Creator Hub rebuild. Use it to test the Bevy scene-run controls and mode persistence.
+- **Creator Hub app.** Loads the inspector iframe from `packages/inspector/public` at runtime, so rebuilding the inspector's `public/` (the `pnpm run start` watch) is enough — no Creator Hub rebuild. Use it to test the Bevy scene-run controls and mode persistence.
 
 ### Browser automation traps
 

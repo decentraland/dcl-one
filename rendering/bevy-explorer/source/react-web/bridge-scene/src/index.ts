@@ -14,6 +14,7 @@ import { renderSceneUi } from './ui'
 import { registerSession } from './domains/session'
 import { registerConnectivity } from './domains/connectivity'
 import { registerAnalytics } from './domains/analytics'
+import { registerTextureOptimization } from './domains/textureOptimization'
 import { registerProfile } from './domains/profile'
 import { registerFriends } from './domains/friends'
 import { registerChat } from './domains/chat'
@@ -23,6 +24,7 @@ import { registerUiSound } from './domains/uiSound'
 import { registerEmotes } from './domains/emotes'
 import { registerWearables, sendEquipped } from './domains/wearables'
 import { registerCatalog } from './domains/catalog'
+import { registerGifting } from './domains/gifting'
 import { registerOutfits } from './domains/outfits'
 import { registerRandomizer } from './domains/randomizer'
 import { registerAvatarDraft } from './domains/avatarDraft'
@@ -32,6 +34,9 @@ import { registerSettings } from './domains/settings'
 import { registerCommunities } from './domains/communities'
 import { registerEvents } from './domains/events'
 import { registerGallery } from './domains/gallery'
+import { registerPlaces } from './domains/places'
+import { registerLobby } from './domains/lobby'
+import { registerMapPlayers } from './domains/mapPlayers'
 import { registerWorld } from './domains/world'
 import { registerVoice } from './domains/voice'
 import { registerVoiceChat } from './domains/voiceChat'
@@ -45,7 +50,6 @@ import { registerPermissions } from './domains/permissions'
 import { registerPortables } from './domains/portables'
 import { registerWorldAccess } from './domains/worldAccess'
 import { registerEditor } from './domains/editor'
-import { initNametags } from './domains/nametags'
 
 export function main(): void {
   const _log = console.log
@@ -55,6 +59,7 @@ export function main(): void {
     registerSession(ctx)
     registerConnectivity(ctx)
     registerAnalytics(ctx)
+    registerTextureOptimization(ctx)
     registerProfile(ctx)
     registerFriends(ctx)
     registerChat(ctx)
@@ -66,6 +71,7 @@ export function main(): void {
     registerEmotes(ctx)
     registerWearables(ctx)
     registerCatalog(ctx)
+    registerGifting(ctx)
     registerOutfits(ctx)
     registerRandomizer(ctx)
     registerAvatarDraft(ctx, async () => {
@@ -77,6 +83,9 @@ export function main(): void {
     registerCommunities(ctx)
     registerEvents(ctx)
     registerGallery(ctx)
+    registerPlaces(ctx)
+    registerLobby(ctx)
+    registerMapPlayers(ctx)
     registerWorld(ctx)
     registerPointer(ctx)
     registerProximity(ctx)
@@ -103,7 +112,4 @@ export function main(): void {
   // 0.6..1.3, so they only ever agreed near 1920x1080). `screenInset: 'none'` likewise keeps
   // 0,0 at the screen's top-left, which is the origin those rects are measured from.
   ReactEcsRenderer.setUiRenderer(renderSceneUi, { virtualWidth: 0, virtualHeight: 0, screenInset: 'none' })
-
-  // World-space UI the DOM can't track smoothly: the billboarded nametag above each avatar's head.
-  initNametags()
 }

@@ -46,7 +46,7 @@ pub struct LivekitRoomPlugin;
 
 impl Plugin for LivekitRoomPlugin {
     fn build(&self, app: &mut App) {
-        super::control::register(app);
+        app.add_plugins(super::control::RoomControlPlugin);
         app.add_observer(livekit_transport_added);
         app.add_observer(initiate_room_connection);
         app.add_observer(create_local_participant);
@@ -685,7 +685,14 @@ fn record_disconnect(
             commands.entity(entity).try_insert(ServerRoomTerminal);
         } else if reason == DisconnectReason::DuplicateIdentity {
             record_identity_conflict(commands, recovery, scope);
-        } else if island {
+        } else if island
+            || matches!(
+                scope.map(|scope| &scope.0),
+                Some(crate::access_status::AccessScope::Scene(_))
+            )
+        {
+            // The island owner or the scene gatekeeper decides whether the player may return; a
+            // scene ban comes back as a refusal that keeps checking for the unban.
             // ConnectionStateChanged can already have started the backoff.
             if recovery.failure != Some(FailureKind::Transient) {
                 recovery.fail(now, AdmissionError::new(FailureKind::Transient));
@@ -749,6 +756,43 @@ mod disconnect_tests {
         world.run_system_once(try_reconnect).unwrap();
         assert!(world.get::<RefreshIsland>(owner).is_some());
         assert!(world.get::<RoomSuspended>(island).is_some());
+    }
+
+    #[test]
+    fn participant_removed_from_a_scene_room_asks_the_gatekeeper_again() {
+        let mut world = World::new();
+        let room = world
+            .spawn((
+                CredentialRequest {
+                    method: "POST",
+                    url: "https://rooms.example/scene".into(),
+                    metadata: "{}".into(),
+                },
+                LivekitTransport {
+                    address: String::new(),
+                },
+            ))
+            .id();
+        let mut recovery = RoomRecovery::default();
+        record_disconnect(
+            &mut world.commands(),
+            room,
+            &mut recovery,
+            Some(&RoomAccessScope(AccessScope::Scene("scene".into()))),
+            DisconnectReason::ParticipantRemoved,
+            false,
+            0.0,
+        );
+        assert_eq!(recovery.failure, Some(FailureKind::Transient));
+        world.entity_mut(room).insert(recovery);
+        world.init_resource::<Time>();
+        world.run_system_once(try_reconnect).unwrap();
+        assert!(world.get::<NeedsAdapter>(room).is_none());
+        world
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(5));
+        world.run_system_once(try_reconnect).unwrap();
+        assert!(world.get::<NeedsAdapter>(room).is_some());
     }
 
     #[test]

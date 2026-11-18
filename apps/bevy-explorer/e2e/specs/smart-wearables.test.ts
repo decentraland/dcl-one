@@ -14,7 +14,7 @@
 // `smart wearable fixture started` and shows one UI label, read through the scene commands after
 // `/set_scene` points them at it. The stop goes through `/stop_portable`, the console line the
 // HUD's `Stop` sends, and the restart through the HUD's `Portable experiences` popover. Build the
-// fixture first: `npm run build-scenes -- smart-wearable`.
+// fixture first: `pnpm run build-scenes smart-wearable`.
 //
 // The third serves the same project as a parcel scene at the spawn, its `scene.json` rewritten to
 // `featureToggles.portableExperiences: disabled`: standing in it pauses the fixture (blocked, still
@@ -74,7 +74,7 @@ try {
   fixture = await buildPreviewWearable(FIXTURE_DIR, PREVIEW_WEARABLE_URN)
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error)
-  fixtureError = new Error(`the smart-wearable fixture is not ready (${message}); run \`npm run build-scenes -- smart-wearable\` in apps/bevy-explorer/e2e`, { cause: error })
+  fixtureError = new Error(`the smart-wearable fixture is not ready (${message}); run \`pnpm run build-scenes smart-wearable\` in apps/bevy-explorer/e2e`, { cause: error })
 }
 
 // An ephemeral port: the visual realm holds the configured one in the same process.
@@ -185,7 +185,9 @@ scenario(
     await waitFixtureLive(explorer)
     await explorer.hud.wait({ role: 'button', name: `Stop ${FIXTURE_NAME}` }, { timeoutMs: 10_000 })
   },
-  { session: PREVIEW_SESSION }
+  // The preview's last scenario: every open client renders on the one GPU, and the next boot (the
+  // disabling realm's) could find no adapter with this one still up.
+  { session: PREVIEW_SESSION, closeSession: true }
 )
 
 scenario(
@@ -205,7 +207,7 @@ scenario(
     assert.equal(live?.hash, scene.hash, `"${FIXTURE_TITLE}" left /live_scenes while paused`)
     assert.ok((await explorer.liveScenes()).some((candidate) => candidate.title === HOST_TITLE && !candidate.portable), `"${HOST_TITLE}" is not the parcel scene`)
   },
-  { session: DISABLING_SESSION }
+  { session: DISABLING_SESSION, closeSession: true }
 )
 
 scenario(

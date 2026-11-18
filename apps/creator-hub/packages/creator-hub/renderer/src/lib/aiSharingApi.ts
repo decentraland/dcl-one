@@ -100,7 +100,9 @@ async function send<T>(
   }
   let headers: Record<string, string>;
   try {
-    headers = buildSignedHeaders(
+    // buildSignedHeaders reads the account and its identity before its first await, so the check
+    // above still names the signer.
+    headers = await buildSignedHeaders(
       apiUrl(),
       path,
       method.toLowerCase() as 'get' | 'post' | 'put',

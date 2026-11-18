@@ -1,15 +1,9 @@
 import { useEffect, useState } from 'react';
-import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
-import ChevronRightIcon from '@mui/icons-material/ChevronRight';
-import {
-  Box,
-  CircularProgress,
-  FormControlLabel,
-  IconButton,
-  Switch,
-  Tooltip,
-  Typography,
-} from 'decentraland-ui2';
+import IconButton from '@ui/atoms/IconButton';
+import Spinner from '@ui/atoms/Spinner';
+import Text from '@ui/atoms/Text';
+import Tooltip from '@ui/atoms/Tooltip';
+import { ChevronRightIcon, DeleteOutlineIcon } from '@ui/atoms/icons-material';
 
 import { hasSharingConsent } from '/shared/types/ai-sharing';
 
@@ -23,6 +17,8 @@ import {
 } from '/@/modules/store/aiSharing';
 import type { TranslationPath } from '/@/modules/store/translation/types';
 import { getCurrentLocale, t } from '/@/modules/store/translation/utils';
+
+import { ToggleRow } from '../../ToggleRow';
 
 import styles from './AiSharingSection.module.css';
 
@@ -88,28 +84,25 @@ export function AiSharingSection() {
   return (
     <>
       <hr className="AiDivider" />
-      <Box
+      <div
         className="AiField"
         data-signed-out={signedOut}
       >
-        <FormControlLabel
-          className={styles.toggle}
-          control={
-            <Switch
-              checked={sharing}
-              disabled={signedOut || (!sharing && !offered)}
-              onChange={(_event, checked) => void dispatch(aiSharingActions.decide(checked))}
-            />
-          }
-          label={label('label')}
-        />
-        <Typography
+        <div className={styles.toggle}>
+          <ToggleRow
+            checked={sharing}
+            disabled={signedOut || (!sharing && !offered)}
+            label={label('label')}
+            onChange={checked => void dispatch(aiSharingActions.decide(checked))}
+          />
+        </div>
+        <Text
           variant="body2"
-          color="text.secondary"
+          tone="secondary"
           className={`AiHint ${styles.description}`}
         >
           {label('description')}
-        </Typography>
+        </Text>
 
         {signedOut ? (
           <p className={`AiHint ${styles.signin}`}>
@@ -123,7 +116,7 @@ export function AiSharingSection() {
             </button>
           </p>
         ) : (
-          <Box className={styles.body}>
+          <div className={styles.body}>
             {sharing && (
               <div className={styles.lines}>
                 <p className={styles.title}>
@@ -229,7 +222,7 @@ export function AiSharingSection() {
                     <p className={`${styles.line} ${styles.gray}`}>
                       {when(turn.startedAt)} · {turn.prompt.text}
                     </p>
-                    <Tooltip title={label('viewer_delete')}>
+                    <Tooltip label={label('viewer_delete')}>
                       <span>
                         <IconButton
                           size="small"
@@ -246,7 +239,7 @@ export function AiSharingSection() {
                     </Tooltip>
                   </div>
                 ))}
-                {shared.status === 'loading' && <CircularProgress size={14} />}
+                {shared.status === 'loading' && <Spinner size={14} />}
                 {shared.next !== null && shared.status === 'loaded' && (
                   <button
                     type="button"
@@ -316,7 +309,7 @@ export function AiSharingSection() {
                     </div>
                   );
                 })}
-                {digests.status === 'loading' && <CircularProgress size={14} />}
+                {digests.status === 'loading' && <Spinner size={14} />}
                 {digests.next !== null && digests.status === 'loaded' && (
                   <button
                     type="button"
@@ -328,9 +321,9 @@ export function AiSharingSection() {
                 )}
               </div>
             )}
-          </Box>
+          </div>
         )}
-      </Box>
+      </div>
     </>
   );
 }
@@ -358,7 +351,6 @@ function ListToggle({
       <ChevronRightIcon
         className={styles.chevron}
         data-open={open}
-        aria-hidden
       />
       {children}
     </button>

@@ -52,6 +52,9 @@ pub fn create_runtime(
     preview: bool,
     kill_flag: KillFlag,
 ) -> (JsRuntime, Option<InspectorServer>) {
+    #[cfg(test)]
+    crate::test_platform();
+
     // add fetch stack
     let net = deno_net::deno_net::init_ops_and_esm::<NP>(None, None);
     let web = deno_web::deno_web::init_ops_and_esm::<TP>(
@@ -838,6 +841,24 @@ mod tests {
             r#"if (typeof Deno === "undefined") { throw new Error("client behaviour changed"); }"#,
         )
         .unwrap();
+    }
+
+    /// A scene server has no player to partition `localStorage` by, and no business writing to
+    /// its host's disk: every storage op must raise there.
+    #[test]
+    fn local_storage_raises_on_a_scene_server() {
+        for call in [
+            "localStorage.length",
+            "localStorage.key(0)",
+            "localStorage.getItem('k')",
+            "localStorage.setItem('k', 'v')",
+            "localStorage.removeItem('k')",
+            "localStorage.clear()",
+            "Object.keys(localStorage)",
+        ] {
+            let err = run_scene(true, call).expect_err(call);
+            assert!(err.contains("scene server"), "{call}: {err}");
+        }
     }
 
     /// `deno_net`'s ops are registered, unwrapped, and reachable from any scene that gets at

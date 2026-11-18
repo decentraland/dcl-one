@@ -17,7 +17,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::progress::{Applied, ApplyOptions, apply_progress};
+use super::progress::{Applied, ApplyOptions, TierGrant, apply_progress, apply_progress_granting};
 use super::{DEFAULT_ASSET_BASE_URL, Settings, SharedState, State, router};
 use crate::identity::Address;
 use crate::notifications::errors::ApiError;
@@ -104,7 +104,26 @@ async fn own_badge(pool: &PgPool, steps: i32) -> String {
     id
 }
 
+/// A presence configuration outside any window: the badge is servable and
+/// nothing counts toward it.
+async fn configure_presence(pool: &PgPool, id: &str) {
+    sqlx::query(
+        "INSERT INTO social.presence_badges (badge_id, location_kind, world_name, \
+           window_start, window_end, mode, required_seconds) \
+         VALUES ($1, 'world', 'nowhere.dcl.eth', '2000-01-01', '2000-01-02', 'visit', 0)",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 async fn drop_badge(pool: &PgPool, id: &str) {
+    sqlx::query("DELETE FROM social.presence_badges WHERE badge_id = $1")
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM social.badge_definitions WHERE id = $1")
         .bind(id)
         .execute(pool)
@@ -142,6 +161,11 @@ async fn cors_headers_on_get_and_preflight() {
     );
     assert_eq!(headers.get("access-control-allow-origin").unwrap(), "*");
     assert!(headers.get("access-control-allow-methods").is_some());
+    assert_eq!(
+        headers.get("access-control-max-age").unwrap(),
+        "86400",
+        "upstream's maxAge"
+    );
 }
 
 #[tokio::test]
@@ -962,8 +986,11 @@ async fn the_admin_routes_are_bearer_gated() {
             ),
         )
         .await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{method}");
-        assert_eq!(body["error"], json!("admin token not configured"));
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{method}");
+        assert_eq!(
+            body,
+            json!({"error": "Not Authorized", "message": "Invalid authorization header"})
+        );
     }
 
     let state = state(Settings {
@@ -972,14 +999,18 @@ async fn the_admin_routes_are_bearer_gated() {
     })
     .await
     .unwrap();
-    for presented in [None, Some("Bearer wrong"), Some("Basic s3cret")] {
+    for (presented, message) in [
+        (None, "Authorization header is missing"),
+        (Some("Basic s3cret"), "Authorization header is missing"),
+        (Some("Bearer wrong"), "Invalid authorization header"),
+    ] {
         let (status, _, body) = send(
             app(state.clone()),
             request("DELETE", &path("open_for_business"), presented, None),
         )
         .await;
-        assert_eq!(status, StatusCode::FORBIDDEN);
-        assert_eq!(body["error"], json!("missing or invalid bearer token"));
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body, json!({"error": "Not Authorized", "message": message}));
     }
     let bearer = Some("Bearer s3cret");
     let (status, _, body) = send(
@@ -1186,7 +1217,7 @@ async fn the_catalog_routes_are_bearer_gated_and_validate() {
             admin_request(method, &uri, Some("anything"), Some(body.clone())),
         )
         .await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{method}");
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{method}");
     }
     let state = admin_state().await.unwrap();
     for bearer in [None, Some("wrong")] {
@@ -1195,7 +1226,7 @@ async fn the_catalog_routes_are_bearer_gated_and_validate() {
             admin_request("PUT", &uri, bearer, Some(body.clone())),
         )
         .await;
-        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
     let pool = state.badges.pool();
     let exists: bool =
@@ -1666,4 +1697,265 @@ async fn unpublishing_is_refused_with_only_a_progress_row() {
     assert!(published, "a refused unpublish changes nothing");
     assert!(catalog_audit(&pool, &id).await.is_empty());
     drop_badge(&pool, &id).await;
+}
+
+/// A published tiered badge of this test's own, tiers at 1, 2 and 3 steps.
+async fn own_tiered_badge(pool: &PgPool) -> String {
+    let id = format!("own_{}", Uuid::new_v4().simple());
+    sqlx::query(
+        "INSERT INTO social.badge_definitions (id, name, description, category, is_tier, published_at) \
+         VALUES ($1, 'Own', 'Own badge', 'Socializer', true, timezone('UTC', now()))",
+    )
+    .bind(&id)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO social.badge_tiers (badge_id, tier_id, tier_name, criteria_steps, ordinal) \
+         VALUES ($1, 't1', 'One', 1, 0), ($1, 't2', 'Two', 2, 1), ($1, 't3', 'Three', 3, 2)",
+    )
+    .bind(&id)
+    .execute(pool)
+    .await
+    .unwrap();
+    id
+}
+
+#[tokio::test]
+async fn a_write_achieves_the_tiers_its_grant_allows() {
+    let Some(state) = state(Settings::default()).await else {
+        return;
+    };
+    let pool = state.badges.pool().clone();
+    let id = own_tiered_badge(&pool).await;
+    let opts = ApplyOptions {
+        at: chrono::Utc::now().naive_utc(),
+        notify: Some(CDN),
+        granted_by: None,
+    };
+    let write = |addr: Address, grant: TierGrant, steps: i32| {
+        let (pool, id) = (pool.clone(), id.clone());
+        async move {
+            let mut tx = pool.begin().await.unwrap();
+            let applied = apply_progress_granting(&mut tx, &addr, &id, &opts, grant, |p| {
+                p.steps = p.steps.max(steps)
+            })
+            .await
+            .unwrap();
+            tx.commit().await.unwrap();
+            applied
+        }
+    };
+
+    // upstream's `find`: one tier per event, the lowest one reached
+    let addr = fresh_address();
+    let Applied::Written(c) = write(addr.clone(), TierGrant::OnePerWrite, 3).await else {
+        panic!()
+    };
+    assert_eq!(
+        (c.new_tiers, c.completed, c.notified),
+        (vec!["t1".into()], false, 1)
+    );
+    let p = progress(&pool, &addr, &id).await.unwrap();
+    assert_eq!((p.0, p.1, p.2.as_deref()), (3, None, Some("t1")));
+    let Applied::Written(c) = write(addr.clone(), TierGrant::OnePerWrite, 3).await else {
+        panic!()
+    };
+    assert_eq!((c.new_tiers, c.completed), (vec!["t2".into()], false));
+    let Applied::Written(c) = write(addr.clone(), TierGrant::OnePerWrite, 3).await else {
+        panic!()
+    };
+    assert_eq!((c.new_tiers, c.completed), (vec!["t3".into()], true));
+    assert_eq!(badge_notifications(&pool, &addr).await.len(), 3);
+
+    // a recount: one tier per step gained
+    let addr = fresh_address();
+    let Applied::Written(c) = write(addr.clone(), TierGrant::OnePerStep, 2).await else {
+        panic!()
+    };
+    assert_eq!(c.new_tiers, ["t1", "t2"]);
+    assert_eq!(
+        write(addr.clone(), TierGrant::OnePerStep, 2).await,
+        Applied::Unchanged
+    );
+
+    // traveler, backfills and grants: every reached tier
+    let addr = fresh_address();
+    let Applied::Written(c) = write(addr.clone(), TierGrant::Reached, 3).await else {
+        panic!()
+    };
+    assert_eq!((c.new_tiers.len(), c.completed), (3, true));
+    assert_eq!(
+        progress(&pool, &addr, &id).await.unwrap().2.as_deref(),
+        Some("t3")
+    );
+    drop_badge(&pool, &id).await;
+}
+
+#[tokio::test]
+async fn a_badge_published_ahead_of_its_code_is_served_and_warned() {
+    let Some(state) = state(Settings::default()).await else {
+        return;
+    };
+    let pool = state.badges.pool().clone();
+    let id = own_badge(&pool, 1).await;
+    let addr = fresh_address();
+    let mut tx = pool.begin().await.unwrap();
+    let opts = ApplyOptions {
+        at: chrono::Utc::now().naive_utc(),
+        notify: None,
+        granted_by: None,
+    };
+    apply_progress(&mut tx, &addr, &id, &opts, |p| p.steps = 1)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let served = |state: SharedState| {
+        let (id, addr) = (id.clone(), addr.clone());
+        async move {
+            let (_, list) = get(app(state.clone()), "/badges/badges").await;
+            let (one, _) = get(app(state.clone()), &format!("/badges/badges/{id}")).await;
+            let (_, mine) = get(
+                app(state),
+                &format!("/badges/users/{}/badges", addr.as_str()),
+            )
+            .await;
+            let listed = find(&list["data"], &id).is_some();
+            let earned = mine.to_string().contains(&id);
+            (listed, one, earned)
+        }
+    };
+
+    // served so admin grants stay visible; only the startup check names it
+    assert_eq!(served(state.clone()).await, (true, StatusCode::OK, true));
+    assert!(
+        state
+            .badges
+            .warn_ahead_of_code()
+            .await
+            .unwrap()
+            .contains(&id)
+    );
+    assert!(
+        !state
+            .badges
+            .warn_ahead_of_code()
+            .await
+            .unwrap()
+            .contains(&"traveler".to_string()),
+        "an evaluated badge is servable"
+    );
+
+    // a presence configuration evaluates it
+    configure_presence(&pool, &id).await;
+    assert!(
+        !state
+            .badges
+            .warn_ahead_of_code()
+            .await
+            .unwrap()
+            .contains(&id)
+    );
+    sqlx::query("DELETE FROM social.presence_badges WHERE badge_id = $1")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // an archived badge needs no evaluator
+    sqlx::query(
+        "UPDATE social.badge_definitions SET archived_at = timezone('UTC', now()) WHERE id = $1",
+    )
+    .bind(&id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(served(state.clone()).await, (true, StatusCode::OK, true));
+    assert!(
+        !state
+            .badges
+            .warn_ahead_of_code()
+            .await
+            .unwrap()
+            .contains(&id)
+    );
+    drop_badge(&pool, &id).await;
+}
+
+#[tokio::test]
+async fn admins_upload_catalog_art_to_the_assets_directory() {
+    let dir = std::env::temp_dir().join(format!(
+        "catalyst-badges-upload-{}",
+        Uuid::new_v4().simple()
+    ));
+    let Some(state) = state(Settings {
+        admin_token: Some("s3cret".into()),
+        assets_dir: Some(dir.clone()),
+        ..Settings::default()
+    })
+    .await
+    else {
+        return;
+    };
+    let png = b"\x89PNG\r\n\x1a\nart".to_vec();
+    let put = |path: &str, bearer: Option<&str>, body: &[u8]| {
+        let mut req = Request::builder()
+            .method("PUT")
+            .uri(format!("/badges/assets/{path}"));
+        if let Some(token) = bearer {
+            req = req.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        req.header(header::CONTENT_TYPE, "image/png")
+            .body(Body::from(body.to_vec()))
+            .unwrap()
+    };
+    let path = "traveler/starter/2d/normal.png";
+    let (status, _, _) = send(app(state.clone()), put(path, None, &png)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    for (bad, body, expected) in [
+        (
+            "traveler/starter/2d/normal.png",
+            &b"GIF89a"[..],
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "traveler/starter/2d/normal.jpg",
+            &png[..],
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "traveler/nope/2d/normal.png",
+            &png[..],
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "unknown_badge/2d/normal.png",
+            &png[..],
+            StatusCode::NOT_FOUND,
+        ),
+    ] {
+        let (status, _, _) = send(app(state.clone()), put(bad, Some("s3cret"), body)).await;
+        assert_eq!(status, expected, "{bad}");
+    }
+    // past the router's 1 MiB limit: the route's own limit applies
+    let large = [&png[..], &vec![0u8; 2 * super::MAX_BODY_BYTES]].concat();
+    let (status, _, _) = send(app(state.clone()), put(path, Some("s3cret"), &large)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _, _) = send(app(state.clone()), put(path, Some("s3cret"), &png)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let get = Request::builder()
+        .uri(format!("/badges/assets/{path}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app(state.clone()).oneshot(get).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    assert_eq!(&bytes[..], &png[..]);
+
+    let no_dir = admin_state().await.unwrap();
+    let (status, _, _) = send(app(no_dir), put(path, Some("s3cret"), &png)).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use super::super::{CommsState, errors::ApiError};
 use crate::Address;
-use crate::explore::places::removed::{PlaceContext, RemovedPlaces};
+use crate::gatekeeper::removed_places::{PlaceContext, RemovedPlaces};
 use crate::interfaces::{StreamingNotification, StreamingNotificationKind};
 use crate::jobs::{Jobs, PeriodicCfg};
 
@@ -97,27 +97,107 @@ where
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CleanupCommand {
+    IdleReplacement,
+    Reset,
+    Revoke,
+    KeyExpiry,
+    DurationExpiry,
+}
+
+impl CleanupCommand {
+    fn notification(self) -> Option<StreamingNotificationKind> {
+        match self {
+            Self::IdleReplacement => None,
+            Self::Reset => Some(StreamingNotificationKind::KeyReset),
+            Self::Revoke => Some(StreamingNotificationKind::KeyRevoke),
+            Self::KeyExpiry => Some(StreamingNotificationKind::KeyExpired),
+            Self::DurationExpiry => Some(StreamingNotificationKind::TimeExceeded),
+        }
+    }
+
+    fn permits_running(self) -> bool {
+        self != Self::IdleReplacement
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Expiry {
+    Key,
+    Duration,
+}
+
+impl Expiry {
+    fn command(self) -> CleanupCommand {
+        match self {
+            Self::Key => CleanupCommand::KeyExpiry,
+            Self::Duration => CleanupCommand::DurationExpiry,
+        }
+    }
+}
+
 /// Capture the recipient and metadata before a destructive transition, outside SQL locks.
 pub(super) async fn enqueue(
     state: &CommsState,
     id: Uuid,
-    kind: Option<&str>,
-    force: bool,
+    command: CleanupCommand,
 ) -> Result<bool, ApiError> {
+    match prepare(state, id, command).await? {
+        Some(prepared) => Ok(prepared.record(&state.pool).await?),
+        None => Ok(false),
+    }
+}
+
+/// A cleanup intent with its notification context resolved, recorded by the
+/// caller's executor: a replacement records it in the transaction that stores
+/// the new credential.
+pub(super) struct Prepared {
+    id: Uuid,
+    command: CleanupCommand,
+    version: i64,
+    event: Option<StreamingNotification>,
+    context: Option<serde_json::Value>,
+}
+
+impl Prepared {
+    /// Deactivates the credential and records its cleanup; false when it
+    /// changed since `prepare` (or is gone).
+    pub(super) async fn record<'e, E: sqlx::PgExecutor<'e>>(
+        &self,
+        executor: E,
+    ) -> Result<bool, sqlx::Error> {
+        enqueue_prepared(
+            executor,
+            self.id,
+            self.command,
+            self.version,
+            self.event.as_ref(),
+            self.context.as_ref(),
+        )
+        .await
+    }
+}
+
+/// `None` when the credential is no longer active.
+pub(super) async fn prepare(
+    state: &CommsState,
+    id: Uuid,
+    command: CleanupCommand,
+) -> Result<Option<Prepared>, ApiError> {
     let snapshot: Option<(String,i64)> = sqlx::query_as("SELECT place_id,streaming_state_version FROM social.scene_stream_access WHERE id=$1 AND active")
         .bind(id).fetch_optional(&state.pool).await?;
     let Some((place_id, version)) = snapshot else {
-        return Ok(false);
+        return Ok(None);
     };
     let context = RemovedPlaces::new(state.pool.clone())
         .place(&place_id)
         .await?;
-    let event = if let (Some(kind), Some(context)) = (kind, context.as_ref()) {
-        let kind = notification_kind(kind)?;
+    let event = if let (Some(kind), Some(context)) = (command.notification(), context.as_ref()) {
         let key = format!("{}-{id}", kind.as_str());
         match tokio::time::timeout(
             Duration::from_secs(5),
-            super::super::moderation::maintenance::prepare_streaming_for_context(
+            super::notifications::prepare_streaming_for_context(
                 state,
                 context,
                 &key,
@@ -140,17 +220,13 @@ pub(super) async fn enqueue(
         .map(serde_json::to_value)
         .transpose()
         .map_err(|_| ApiError::internal("stream context serialization failed"))?;
-    enqueue_prepared(
-        &state.pool,
+    Ok(Some(Prepared {
         id,
-        kind,
-        force,
+        command,
         version,
-        event.as_ref(),
-        context.as_ref(),
-    )
-    .await
-    .map_err(Into::into)
+        event,
+        context,
+    }))
 }
 
 fn notification_kind(kind: &str) -> Result<StreamingNotificationKind, ApiError> {
@@ -163,15 +239,16 @@ fn notification_kind(kind: &str) -> Result<StreamingNotificationKind, ApiError> 
     }
 }
 
-async fn enqueue_prepared(
-    pool: &PgPool,
+async fn enqueue_prepared<'e, E: sqlx::PgExecutor<'e>>(
+    executor: E,
     id: Uuid,
-    kind: Option<&str>,
-    force: bool,
+    command: CleanupCommand,
     version: i64,
     event: Option<&StreamingNotification>,
     context: Option<&serde_json::Value>,
 ) -> Result<bool, sqlx::Error> {
+    let kind = command.notification().map(|kind| kind.as_str());
+    let force = command.permits_running();
     // The predicate rechecks expiry and the webhook version after the snapshot lookup.
     let changed:Option<Uuid> = sqlx::query_scalar(
         "WITH removed AS (UPDATE social.scene_stream_access SET active=false,streaming=false \
@@ -183,19 +260,19 @@ async fn enqueue_prepared(
          SELECT id,place_id,ingress_id,$2,COALESCE($5,timezone('UTC',now())),timezone('UTC',now()),$6,$7,$8 FROM removed \
          ON CONFLICT(access_id) DO NOTHING RETURNING access_id")
         .bind(id).bind(kind).bind(force).bind(version).bind(event.map(|e| e.occurred_at))
-        .bind(event.map(|e| &e.recipient)).bind(event.map(|e| &e.metadata)).bind(context).fetch_optional(pool).await?;
+        .bind(event.map(|e| &e.recipient)).bind(event.map(|e| &e.metadata)).bind(context).fetch_optional(executor).await?;
     Ok(changed.is_some())
 }
 
 async fn expire_streams(state: &CommsState) -> Result<(), ApiError> {
-    expire(state, true).await
+    expire(state, Expiry::Duration).await
 }
 async fn expire_keys(state: &CommsState) -> Result<(), ApiError> {
-    expire(state, false).await
+    expire(state, Expiry::Key).await
 }
 
-async fn expire(state: &CommsState, streaming: bool) -> Result<(), ApiError> {
-    let query = if streaming {
+async fn expire(state: &CommsState, expiry: Expiry) -> Result<(), ApiError> {
+    let query = if matches!(expiry, Expiry::Duration) {
         "SELECT id FROM social.scene_stream_access WHERE active AND streaming AND streaming_start_time<=timezone('UTC',now())-interval '4 hours' AND (cleanup_retry_at IS NULL OR cleanup_retry_at<=timezone('UTC',now())) ORDER BY streaming_start_time,id LIMIT $1"
     } else {
         "SELECT id FROM social.scene_stream_access WHERE active AND COALESCE(expiration_time,created_at+interval '4 days')<=timezone('UTC',now()) AND (cleanup_retry_at IS NULL OR cleanup_retry_at<=timezone('UTC',now())) ORDER BY COALESCE(expiration_time,created_at+interval '4 days'),id LIMIT $1"
@@ -204,13 +281,8 @@ async fn expire(state: &CommsState, streaming: bool) -> Result<(), ApiError> {
         .bind(BATCH)
         .fetch_all(&state.pool)
         .await?;
-    let kind = if streaming {
-        "streaming_time_exceeded"
-    } else {
-        "streaming_key_expired"
-    };
     for id in ids {
-        if let Err(error) = enqueue(state, id, Some(kind), true).await {
+        if let Err(error) = enqueue(state, id, expiry.command()).await {
             // Historic rows with no resolvable owner remain explicit retry work; don't
             // deactivate them and lose the only remaining source of notification context.
             sqlx::query("UPDATE social.scene_stream_access SET cleanup_retry_at=timezone('UTC',now())+interval '10 minutes' WHERE id=$1 AND active")
@@ -292,6 +364,40 @@ async fn cleanup(state: &CommsState, target: Option<Uuid>) -> Result<(), ApiErro
     Ok(())
 }
 
+/// The Cast publishers the cleaned-up credential admitted leave its room
+/// (`cast::evict_revoked_publishers`); a credential that replaced it in the
+/// same place and room keeps its own publishers.
+async fn evict_publishers(state: &CommsState, row: &Cleanup) -> Result<(), ApiError> {
+    let room: Option<String> =
+        sqlx::query_scalar("SELECT room_id FROM social.scene_stream_access WHERE id = $1")
+            .bind(row.access_id)
+            .fetch_optional(&state.pool)
+            .await?
+            .flatten();
+    let Some(room) = room.filter(|r| !r.is_empty()) else {
+        return Ok(());
+    };
+    let successor: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM social.scene_stream_access \
+         WHERE place_id = $1 AND active AND id <> $2 AND room_id = $3 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(&row.place_id)
+    .bind(row.access_id)
+    .bind(&room)
+    .fetch_optional(&state.pool)
+    .await?;
+    super::cast::evict_revoked_publishers(state, &row.place_id, &room, successor).await
+}
+
+/// How long a reset intent waits for its replacement credential before it
+/// is delivered as a revocation.
+const RESET_REPLACEMENT_GRACE: chrono::Duration = chrono::Duration::hours(1);
+
+/// Revokes first: the RTMP ingress is deleted (and `ingress_deleted`
+/// recorded) before anything else, so a room-service failure while evicting
+/// the WebRTC publishers never leaves the revoked key accepting RTMP. Eviction
+/// and the notification follow; either failing retries the row, which skips
+/// the ingress already deleted.
 async fn deliver(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), ApiError> {
     if !row.ingress_deleted {
         if let Some(id) = row.ingress_id.as_deref().filter(|id| !id.is_empty()) {
@@ -306,6 +412,7 @@ async fn deliver(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), A
             return Err(ApiError::internal("stream cleanup lease lost"));
         }
     }
+    evict_publishers(state, row).await?;
     let Some(kind_str) = row.notification_kind.as_deref() else {
         return Ok(());
     };
@@ -322,6 +429,18 @@ async fn deliver(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), A
             return Ok(());
         }
         if kind == StreamingNotificationKind::KeyReset && !replacement {
+            // A replacement commits with its reset intent (`replace_access`), so one still
+            // missing after the grace period never will (an intent from before that, or the
+            // replacement revoked in turn): the reset is delivered as the revocation it is.
+            let now = chrono::Utc::now().naive_utc();
+            if now - row.occurred_at > RESET_REPLACEMENT_GRACE {
+                sqlx::query("UPDATE social.scene_stream_cleanup SET notification_kind='streaming_key_revoke', recipient=NULL, metadata=NULL \
+                    WHERE access_id=$1 AND claim_token=$2 AND notification_kind='streaming_key_reset'")
+                    .bind(row.access_id).bind(token).execute(&state.pool).await?;
+                return Err(ApiError::internal(
+                    "stream reset without a replacement: delivered as a revocation on retry",
+                ));
+            }
             return Err(ApiError::internal(
                 "stream reset awaiting replacement credential",
             ));
@@ -342,7 +461,7 @@ async fn deliver(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), A
                 .map_err(|_| ApiError::internal("stream context snapshot invalid"))?;
             tokio::time::timeout(
                 Duration::from_secs(5),
-                super::super::moderation::maintenance::prepare_streaming_for_context(
+                super::notifications::prepare_streaming_for_context(
                     state,
                     &context,
                     &key,
@@ -357,7 +476,7 @@ async fn deliver(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), A
             // after ingress cleanup. Never fabricate a notification recipient.
             tokio::time::timeout(
                 Duration::from_secs(5),
-                super::super::moderation::maintenance::prepare_streaming_for_place(
+                super::notifications::prepare_streaming_for_place(
                     state,
                     &row.place_id,
                     &key,
@@ -449,6 +568,36 @@ async fn clear_stale(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cleanup_commands_keep_persisted_labels_and_reject_non_cleanup_kinds() {
+        for (command, label) in [
+            (CleanupCommand::Reset, "streaming_key_reset"),
+            (CleanupCommand::Revoke, "streaming_key_revoke"),
+            (CleanupCommand::KeyExpiry, "streaming_key_expired"),
+            (CleanupCommand::DurationExpiry, "streaming_time_exceeded"),
+        ] {
+            assert_eq!(command.notification().unwrap().as_str(), label);
+            assert_eq!(
+                notification_kind(label).unwrap(),
+                command.notification().unwrap()
+            );
+            assert!(command.permits_running());
+        }
+        assert!(CleanupCommand::IdleReplacement.notification().is_none());
+        assert!(!CleanupCommand::IdleReplacement.permits_running());
+        for invalid in [
+            "streaming_place_updated",
+            "",
+            "STREAMING_KEY_RESET",
+            "unknown",
+        ] {
+            assert_eq!(
+                notification_kind(invalid).unwrap_err().message,
+                "unknown streaming notification kind"
+            );
+        }
+    }
 
     #[tokio::test(start_paused = true)]
     async fn production_ttl_orchestration_reconciles_during_owner_backlog_and_failure() {
@@ -607,61 +756,35 @@ mod tests {
             occurred_at: chrono::Utc::now().naive_utc(),
         };
         assert!(
-            !enqueue_prepared(&pool, id, None, false, 0, None, None)
+            !enqueue_prepared(&pool, id, CleanupCommand::IdleReplacement, 0, None, None)
                 .await
                 .unwrap()
         );
-        let active: bool =
-            sqlx::query_scalar("SELECT active FROM social.scene_stream_access WHERE id=$1")
-                .bind(id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert!(active);
-        sqlx::query("UPDATE social.scene_stream_access SET streaming=false WHERE id=$1")
-            .bind(id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        let unchanged: (bool, bool, bool) = sqlx::query_as(
+            "SELECT active,streaming,EXISTS(SELECT 1 FROM social.scene_stream_cleanup WHERE access_id=$1) FROM social.scene_stream_access WHERE id=$1",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(unchanged, (true, true, false));
+        // Revoke intentionally permits a running stream; IdleReplacement is the
+        // only non-forced command exposed by the lifecycle API.
         // A start/end webhook after metadata capture invalidates that snapshot.
         assert!(
-            !enqueue_prepared(
-                &pool,
-                id,
-                Some("streaming_key_revoke"),
-                true,
-                1,
-                Some(&event),
-                None
-            )
-            .await
-            .unwrap()
+            !enqueue_prepared(&pool, id, CleanupCommand::Revoke, 1, Some(&event), None)
+                .await
+                .unwrap()
         );
         assert!(
-            enqueue_prepared(
-                &pool,
-                id,
-                Some("streaming_key_revoke"),
-                false,
-                0,
-                Some(&event),
-                None
-            )
-            .await
-            .unwrap()
+            enqueue_prepared(&pool, id, CleanupCommand::Revoke, 0, Some(&event), None)
+                .await
+                .unwrap()
         );
         assert!(
-            !enqueue_prepared(
-                &pool,
-                id,
-                Some("streaming_key_reset"),
-                true,
-                0,
-                Some(&event),
-                None
-            )
-            .await
-            .unwrap()
+            !enqueue_prepared(&pool, id, CleanupCommand::Reset, 0, Some(&event), None)
+                .await
+                .unwrap()
         );
         let facts: (bool,String,bool) = sqlx::query_as("SELECT a.active,c.notification_kind,c.ingress_deleted FROM social.scene_stream_access a JOIN social.scene_stream_cleanup c ON a.id=c.access_id WHERE a.id=$1")
             .bind(id).fetch_one(&pool).await.unwrap();
@@ -684,38 +807,47 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        // The same idle command succeeds once the stream has stopped and commits
+        // its cleanup intent together with deactivation, without a notification.
+        let idle = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.scene_stream_access(id,place_id,streaming_url,streaming_key,generated_by,streaming) VALUES($1,$2,'rtmp://example.org','idle-key','test',false)")
+            .bind(idle).bind(format!("idle-test-{idle}")).execute(&pool).await.unwrap();
+        assert!(
+            enqueue_prepared(&pool, idle, CleanupCommand::IdleReplacement, 0, None, None)
+                .await
+                .unwrap()
+        );
+        let idle_facts: (bool, bool, Option<String>) = sqlx::query_as(
+            "SELECT a.active,a.streaming,c.notification_kind FROM social.scene_stream_access a JOIN social.scene_stream_cleanup c ON a.id=c.access_id WHERE a.id=$1",
+        ).bind(idle).fetch_one(&pool).await.unwrap();
+        assert_eq!(idle_facts, (false, false, None));
+        sqlx::query("DELETE FROM social.scene_stream_cleanup WHERE access_id=$1")
+            .bind(idle)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM social.scene_stream_access WHERE id=$1")
+            .bind(idle)
+            .execute(&pool)
+            .await
+            .unwrap();
+
         // The accepted four-day credential deadline also revokes a running stream.
         let running = Uuid::new_v4();
         sqlx::query("INSERT INTO social.scene_stream_access(id,place_id,streaming_url,streaming_key,generated_by,streaming,expiration_time) VALUES($1,$2,'rtmp://example.org','test-key','test',true,timezone('UTC',now())+interval '4 days')")
             .bind(running).bind(format!("deadline-test-{running}")).execute(&pool).await.unwrap();
         assert!(
-            !enqueue_prepared(
-                &pool,
-                running,
-                Some("streaming_key_expired"),
-                true,
-                0,
-                None,
-                None
-            )
-            .await
-            .unwrap()
+            !enqueue_prepared(&pool, running, CleanupCommand::KeyExpiry, 0, None, None)
+                .await
+                .unwrap()
         );
         sqlx::query("UPDATE social.scene_stream_access SET expiration_time=timezone('UTC',now())-interval '1 second' WHERE id=$1")
             .bind(running).execute(&pool).await.unwrap();
         // Unresolved historic owner does not prevent durable revocation intent.
         assert!(
-            enqueue_prepared(
-                &pool,
-                running,
-                Some("streaming_key_expired"),
-                true,
-                0,
-                None,
-                None
-            )
-            .await
-            .unwrap()
+            enqueue_prepared(&pool, running, CleanupCommand::KeyExpiry, 0, None, None)
+                .await
+                .unwrap()
         );
         let stopped: bool = sqlx::query_scalar(
             "SELECT NOT active AND NOT streaming FROM social.scene_stream_access WHERE id=$1",

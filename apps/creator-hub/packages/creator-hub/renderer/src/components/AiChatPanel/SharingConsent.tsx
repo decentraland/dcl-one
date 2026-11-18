@@ -1,18 +1,19 @@
 import { useState } from 'react';
-import CloseIcon from '@mui/icons-material/Close';
-import ChevronRightIcon from '@mui/icons-material/ChevronRight';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import ThumbDownIcon from '@mui/icons-material/ThumbDown';
-import ThumbDownOutlinedIcon from '@mui/icons-material/ThumbDownOutlined';
-import ThumbUpIcon from '@mui/icons-material/ThumbUp';
-import ThumbUpOutlinedIcon from '@mui/icons-material/ThumbUpOutlined';
-import { IconButton, Popover, Tooltip } from 'decentraland-ui2';
+import IconButton from '@ui/atoms/IconButton';
+import Popover from '@ui/atoms/Popover';
+import Tooltip from '@ui/atoms/Tooltip';
+import {
+  ChevronRightIcon,
+  CloseIcon,
+  ExpandMoreIcon,
+  ThumbUpAltIcon,
+} from '@ui/atoms/icons-material';
 
 import type { AiSharingView } from '/shared/types/ai';
 
 import { t } from '/@/modules/store/translation/utils';
 
-import { BillingBody, BillingCard, BillingTitle } from './component.styled';
+import chatStyles from './component.module.css';
 import styles from './SharingConsent.module.css';
 
 export interface SharingProps {
@@ -33,26 +34,27 @@ export function SharingConsentCard({ sharing, onShareDecision, onShareNotNow }: 
   }
   const signedOut = sharing.status === 'signin';
   return (
-    <BillingCard
+    <div
+      className={chatStyles.billingCard}
       role="region"
       aria-label={t('editor.ai.sharing.card_title')}
     >
       <div className={styles.cardHeader}>
-        <BillingTitle>{t('editor.ai.sharing.card_title')}</BillingTitle>
-        <Tooltip title={t('editor.ai.sharing.not_now')}>
+        <span className={chatStyles.billingTitle}>{t('editor.ai.sharing.card_title')}</span>
+        <Tooltip label={t('editor.ai.sharing.not_now')}>
           <IconButton
             size="small"
             className={styles.close}
             aria-label={t('editor.ai.sharing.not_now')}
             onClick={onShareNotNow}
           >
-            <CloseIcon sx={{ fontSize: 16 }} />
+            <CloseIcon fontSize="small" />
           </IconButton>
         </Tooltip>
       </div>
-      <BillingBody>
+      <span className={chatStyles.billingBody}>
         {signedOut ? t('editor.ai.sharing.signin_body') : t('editor.ai.sharing.card_body')}
-      </BillingBody>
+      </span>
       {!signedOut && (
         <>
           <div className={styles.details}>
@@ -101,7 +103,7 @@ export function SharingConsentCard({ sharing, onShareDecision, onShareNotNow }: 
           </div>
         </>
       )}
-    </BillingCard>
+    </div>
   );
 }
 
@@ -142,13 +144,13 @@ export function SharingStatusChip({
         />
       </button>
       <Popover
-        anchorEl={anchor}
+        anchor={anchor}
         open={anchor !== null}
         onClose={close}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-        disableScrollLock
-        slotProps={{ paper: { className: styles.menu } }}
+        placement="bottom-end"
+        offset={6}
+        bare
+        className={styles.menu}
       >
         <div
           role="group"
@@ -234,28 +236,17 @@ export function TurnRating({
     return null;
   }
   const choices = [
-    {
-      value: 'up',
-      label: t('editor.ai.sharing.rate_up'),
-      on: ThumbUpIcon,
-      off: ThumbUpOutlinedIcon,
-    },
-    {
-      value: 'down',
-      label: t('editor.ai.sharing.rate_down'),
-      on: ThumbDownIcon,
-      off: ThumbDownOutlinedIcon,
-    },
+    { value: 'up', label: t('editor.ai.sharing.rate_up') },
+    { value: 'down', label: t('editor.ai.sharing.rate_down') },
   ] as const;
   return (
     <div className={styles.rating}>
-      {choices.map(({ value, label, on: OnIcon, off: OffIcon }) => {
+      {choices.map(({ value, label }) => {
         const pressed = rating === value;
-        const Icon = pressed ? OnIcon : OffIcon;
         return (
           <Tooltip
             key={value}
-            title={label}
+            label={label}
           >
             <IconButton
               size="small"
@@ -264,7 +255,10 @@ export function TurnRating({
               aria-pressed={pressed}
               onClick={() => onRate(pressed ? null : value)}
             >
-              <Icon sx={{ fontSize: 14 }} />
+              <ThumbUpAltIcon
+                fontSize="inherit"
+                data-direction={value}
+              />
             </IconButton>
           </Tooltip>
         );

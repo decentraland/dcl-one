@@ -6,22 +6,23 @@
 //! lease (through the economy broker) and the reconciler. Every mutation
 //! audits into `ops.admin_audit` with the server-chosen actor.
 
+use crate::shared::routing::{delete, erase, get, post, put};
 use axum::Json;
 use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, get, post, put};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 
 use crate::credits::SharedState;
 use crate::credits::admin::{
     FlagBody, RequireAdmin, normalize_address, paginate, validate_currency, validate_escrow_ref,
-    validate_idempotency_key, validate_positive_amount, validate_price_cents, validate_sku,
-    validated_reason,
+    validate_idempotency_key, validate_positive_amount, validate_price_cents, validated_reason,
+    validated_studio_name,
 };
 use crate::credits::admin_store::{GrantRequest, PackAdminRow, PackSpec};
 use crate::credits::errors::ApiError;
+use crate::credits::packs::validate_sku;
 use crate::credits::reconcile::ReconcileReport;
 
 pub fn router() -> Router<SharedState> {
@@ -29,10 +30,13 @@ pub fn router() -> Router<SharedState> {
         .route("/admin/credits/grant", post(grant_credits))
         .route("/admin/credits/revoke", post(revoke_credits))
         .route("/admin/users/{address}/block", post(block_user))
-        .route("/admin/flags", get(list_flags).post(flag_wallets))
+        .route("/admin/flags", get(list_flags).post(erase(flag_wallets)))
         .route("/admin/flags/{address}", delete(unflag_wallet))
-        .route("/admin/packs", get(list_packs).post(create_pack))
-        .route("/admin/packs/{sku}", put(update_pack).delete(delete_pack))
+        .route("/admin/packs", get(list_packs).post(erase(create_pack)))
+        .route(
+            "/admin/packs/{sku}",
+            put(update_pack).delete(erase(delete_pack)),
+        )
         .route("/admin/purchases", get(list_purchases))
         .route("/admin/checkouts", get(list_checkouts))
         .route("/admin/ledger", get(list_ledger))
@@ -53,10 +57,13 @@ pub fn shop_router() -> Router<SharedState> {
         .route("/admin/credits/grant", post(grant_credits))
         .route("/admin/credits/revoke", post(revoke_credits))
         .route("/admin/users/{address}/block", post(block_user))
-        .route("/admin/flags", get(list_flags).post(flag_wallets))
+        .route("/admin/flags", get(list_flags).post(erase(flag_wallets)))
         .route("/admin/flags/{address}", delete(unflag_wallet))
-        .route("/admin/packs", get(list_packs).post(create_pack))
-        .route("/admin/packs/{sku}", put(update_pack).delete(delete_pack))
+        .route("/admin/packs", get(list_packs).post(erase(create_pack)))
+        .route(
+            "/admin/packs/{sku}",
+            put(update_pack).delete(erase(delete_pack)),
+        )
         .route("/admin/purchases", get(list_purchases))
         .route("/admin/checkouts", get(list_checkouts))
         .route("/admin/credits/ledger", get(list_ledger))
@@ -78,6 +85,9 @@ pub struct GrantBody {
     reason: Option<String>,
     #[serde(rename = "idempotencyKey", default)]
     idempotency_key: Option<String>,
+    /// Grant only: the studio the notice names as the giver.
+    #[serde(rename = "studioName", default)]
+    studio_name: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -97,19 +107,35 @@ async fn grant_credits(
     let address = normalize_address(&b.address)?;
     let amount = validate_positive_amount(&b.amount)?;
     let reason = validated_reason(&b.reason)?;
-    let idempotency_key = validate_idempotency_key(&b.idempotency_key)?;
+    let studio_name = validated_studio_name(&b.studio_name)?;
+    let mut idempotency_key = validate_idempotency_key(&b.idempotency_key)?;
+    // A recovered MANA top-up takes the claim's own key and is paid for, like the claim.
+    let topup = match idempotency_key
+        .as_deref()
+        .and_then(super::topup::recovered_topup_key)
+    {
+        Some(key) => {
+            idempotency_key = Some(key?);
+            true
+        }
+        None => false,
+    };
     let actor = admin.audit_actor_description();
-    let detail = json!({ "address": address, "amount": amount, "reason": reason, "idempotencyKey": idempotency_key });
+    let mut detail = json!({ "address": address, "amount": amount, "reason": reason, "idempotencyKey": idempotency_key });
+    if let Some(studio) = &studio_name {
+        detail["studioName"] = json!(studio);
+    }
     let outcome = state
         .credits
         .admin_grant_credits(GrantRequest {
             address: &address,
             amount: &amount,
-            kind: "grant",
+            kind: if topup { "purchase" } else { "grant" },
             reason: reason.as_deref(),
             actor: Some(&actor),
             idempotency_key: idempotency_key.as_deref(),
             detail: &detail,
+            studio_name: studio_name.as_deref(),
         })
         .await?;
     Ok(Json(GrantOut {
@@ -483,9 +509,10 @@ async fn refund_checkout(
         .await?
         .ok_or_else(|| ApiError::not_found("checkout not found"))?;
 
+    // re-checked under the checkout's lock by the refund
     if checkout.status != "fulfilling" && checkout.status != "fulfilled" {
         return Err(ApiError::conflict(
-            "checkout is not refundable (only a debited, not-yet-reversed checkout in 'fulfilling'/'fulfilled' can be manually refunded)",
+            crate::credits::checkout::NOT_MANUALLY_REFUNDABLE,
         ));
     }
 

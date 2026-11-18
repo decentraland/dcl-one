@@ -28,6 +28,7 @@ use super::signer::DirectSigner;
 use super::transfer_shortfall;
 use super::upstream::UpstreamForwarder;
 use super::{QUOTA_WINDOW_SECS, Settings};
+use crate::types::is_hex_address;
 
 #[derive(Debug, Clone)]
 pub struct TransactionData {
@@ -243,6 +244,12 @@ pub enum ReservationDisposition {
     Keep,
 }
 
+/// Whether a failed send leaves the buyer's quota slot consumed. Only an error that proves
+/// nothing went out releases it, and only those are answered with `"not_sent": true`, the
+/// evidence a client takes to sign again: `RelayReverted` (gas estimation reverted, or a relayer
+/// that created no transaction), `RelayerFailed` (a lookup before signing), `HighCongestion`,
+/// `RelayerUnavailable`, and validation. Anything that can follow a send attempt is
+/// `RelayerTimeout`, answered without it.
 pub fn reservation_disposition(err: &ApiError) -> ReservationDisposition {
     if is_post_broadcast(err) {
         return ReservationDisposition::Keep;
@@ -255,10 +262,7 @@ pub fn reservation_disposition(err: &ApiError) -> ReservationDisposition {
 }
 
 fn is_post_broadcast(err: &ApiError) -> bool {
-    matches!(
-        err,
-        ApiError::RelayReverted(_) | ApiError::RelayerTimeout(_)
-    )
+    matches!(err, ApiError::RelayerTimeout(_))
 }
 
 fn is_pre_broadcast(err: &ApiError) -> bool {
@@ -268,6 +272,7 @@ fn is_pre_broadcast(err: &ApiError) -> bool {
             | ApiError::InvalidSalePrice(_)
             | ApiError::InvalidContractAddress(_)
             | ApiError::InvalidTransaction(_)
+            | ApiError::RelayReverted(_)
             | ApiError::HighCongestion(_)
             | ApiError::RelayerFailed(_)
             | ApiError::RelayerUnavailable(_)
@@ -406,6 +411,55 @@ impl TransactionComponent {
         contract_address: &str,
         now: NaiveDateTime,
     ) -> Result<(), ApiError> {
+        self.reserve(
+            max_transactions_per_day,
+            None,
+            sender,
+            session_id,
+            chain_id,
+            contract_address,
+            now,
+        )
+        .await
+    }
+
+    /// [`Self::reserve_quota`] for a call that is no sale or credits spend: it
+    /// also counts toward the relayer's daily budget across every address
+    /// (`free_budget`, 0 is no limit), checked and taken under one global lock.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn reserve_free_call(
+        &self,
+        max_transactions_per_day: i64,
+        free_budget: i64,
+        sender: &MetaTxSender,
+        session_id: &str,
+        chain_id: u64,
+        contract_address: &str,
+        now: NaiveDateTime,
+    ) -> Result<(), ApiError> {
+        self.reserve(
+            max_transactions_per_day,
+            Some(free_budget),
+            sender,
+            session_id,
+            chain_id,
+            contract_address,
+            now,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn reserve(
+        &self,
+        max_transactions_per_day: i64,
+        free_budget: Option<i64>,
+        sender: &MetaTxSender,
+        session_id: &str,
+        chain_id: u64,
+        contract_address: &str,
+        now: NaiveDateTime,
+    ) -> Result<(), ApiError> {
         let user_address = sender.as_str();
         if !is_hex_address(user_address) || !is_session_id(session_id) {
             return Err(ApiError::Internal(
@@ -415,6 +469,27 @@ impl TransactionComponent {
         let contract = contract_address.to_lowercase();
         let window_start = now - chrono::Duration::seconds(QUOTA_WINDOW_SECS);
         let mut tx = self.pool.begin().await?;
+        if let Some(budget) = free_budget.filter(|b| *b > 0) {
+            // Global lock first, then the user's: one order, no deadlock.
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtext('relay-free-budget'))")
+                .execute(&mut *tx)
+                .await?;
+            let used: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM (SELECT 1 FROM economy.transactions \
+                 WHERE free_call AND created_at >= $1 LIMIT $2) used",
+            )
+            .bind(window_start)
+            .bind(budget)
+            .fetch_one(&mut *tx)
+            .await?;
+            if used >= budget {
+                tracing::warn!(budget, "relay budget for free calls is spent for the day");
+                return Err(ApiError::RelayBudgetSpent(
+                    "The relayer's daily budget for non-sale transactions is spent; try again later"
+                        .into(),
+                ));
+            }
+        }
         sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
             .bind(user_address)
             .execute(&mut *tx)
@@ -424,8 +499,8 @@ impl TransactionComponent {
                SELECT COUNT(*) AS n FROM economy.transactions \
                WHERE user_address = $1 AND created_at >= $5\
              ), ins AS (\
-               INSERT INTO economy.transactions (user_address, session_id, chain_id, contract_address, created_at) \
-               SELECT $1, $2, $3, $4, $6 FROM used \
+               INSERT INTO economy.transactions (user_address, session_id, chain_id, contract_address, created_at, free_call) \
+               SELECT $1, $2, $3, $4, $6, $8 FROM used \
                WHERE used.n < $7 \
                RETURNING id\
              ) \
@@ -438,6 +513,7 @@ impl TransactionComponent {
         .bind(window_start)
         .bind(now)
         .bind(max_transactions_per_day)
+        .bind(free_budget.is_some())
         .fetch_one(&mut *tx)
         .await?;
         tx.commit().await?;
@@ -786,11 +862,28 @@ fn check_sale_price(settings: &Settings, tx: &TransactionData) -> Result<(), Api
     Ok(())
 }
 
-pub fn is_hex_address(s: &str) -> bool {
-    match s.strip_prefix("0x") {
-        Some(rest) => rest.len() == 40 && rest.bytes().all(|b| b.is_ascii_hexdigit()),
-        None => false,
+/// A sale that passes the floor, or a credits manager's `useCredits`: never
+/// held back by the relayer's budget for free calls. A sale at the floor
+/// between two wallets of one owner counts as paid too: the floor is its cost.
+pub fn is_paid_call(settings: &Settings, tx: &TransactionData) -> bool {
+    let Ok(contract) = tx.params[0].trim().parse::<Address>() else {
+        return false;
+    };
+    let full_data = hex_to_bytes(&tx.params[1]).unwrap_or_default();
+    let credits_manager = super::meta_tx::audited_domains_for(settings.collections_chain_id)
+        .iter()
+        .any(|(a, d)| *a == contract && d.label.starts_with("CreditsManager"));
+    if credits_manager {
+        // Only a credits spend; the manager's other functions are free calls.
+        // Both executeMetaTransaction forms (split and combined signature).
+        return abi::decode_meta_tx_full(&full_data).is_some_and(|m| {
+            m.function_signature.get(..4) == Some(&crate::policy_entry::USE_CREDITS_SELECTOR[..])
+        });
     }
+    let Some(kind) = abi::sale_target(settings.collections_chain_id, contract) else {
+        return false;
+    };
+    abi::get_sale_price(&full_data, settings.collections_chain_id, kind).is_some()
 }
 
 fn is_hex_data(s: &str) -> bool {
@@ -1008,6 +1101,7 @@ mod tests {
             ApiError::InvalidSchema("bad".into()),
             ApiError::InvalidContractAddress("bad".into()),
             ApiError::InvalidSalePrice("bad".into()),
+            ApiError::RelayReverted("gas estimation reverted".into()),
             ApiError::HighCongestion("busy".into()),
             ApiError::RelayerFailed("network".into()),
             ApiError::RelayerUnavailable("off".into()),
@@ -1022,16 +1116,40 @@ mod tests {
 
     #[test]
     fn post_broadcast_errors_keep_the_slot() {
+        let err = ApiError::RelayerTimeout("too slow".into());
+        assert_eq!(
+            reservation_disposition(&err),
+            ReservationDisposition::Keep,
+            "{err:?} is post-broadcast/indeterminate and must keep the slot consumed"
+        );
+    }
+
+    /// The send errors that prove nothing went out release the slot, and are the ones the relay
+    /// answers as `not_sent`: a client may sign again. An error that can follow a send keeps the
+    /// slot and is answered without it.
+    #[test]
+    fn only_a_send_error_that_proves_nothing_went_out_frees_the_slot() {
         for err in [
-            ApiError::RelayReverted("reverted".into()),
-            ApiError::RelayerTimeout("too slow".into()),
+            ApiError::InvalidTransaction("bad".into()),
+            ApiError::InvalidSchema("bad".into()),
+            ApiError::InvalidContractAddress("bad".into()),
+            ApiError::InvalidSalePrice("bad".into()),
+            ApiError::RelayReverted("gas estimation reverted".into()),
+            ApiError::RelayerFailed("eth_getTransactionCount failed".into()),
+            ApiError::HighCongestion("fee above the cap".into()),
+            ApiError::RelayerUnavailable("paused".into()),
         ] {
             assert_eq!(
                 reservation_disposition(&err),
-                ReservationDisposition::Keep,
-                "{err:?} is post-broadcast/indeterminate and must keep the slot consumed"
+                ReservationDisposition::Release,
+                "{err:?}"
             );
         }
+        let after_a_send = ApiError::RelayerTimeout("may have been broadcast".into());
+        assert_eq!(
+            reservation_disposition(&after_a_send),
+            ReservationDisposition::Keep
+        );
     }
 
     #[test]

@@ -4,6 +4,8 @@ import react from "@vitejs/plugin-react";
 // @ts-expect-error -- plain JS helper, shared with the two vite configs so the
 import { validateAlias } from "./vite.validate.js";
 
+const ui = (file: string) => fileURLToPath(new URL("../../library/ui/" + file, import.meta.url));
+
 export default defineConfig({
   resolve: {
     alias: [
@@ -14,13 +16,16 @@ export default defineConfig({
       { find: "@hud-host", replacement: fileURLToPath(new URL("./src/play/host.ts", import.meta.url)) },
       { find: "@hud", replacement: fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url)) },
       { find: "@explorer-core", replacement: fileURLToPath(new URL("../../library/explorer-core", import.meta.url)) },
+      { find: /^@dcl\/one-ui$/, replacement: ui("index.ts") },
+      { find: /^@dcl\/one-ui\//, replacement: ui("") },
     ],
     // library/ has no node_modules of its own: viem, React and the testing packages the shared HUD's test
     // harness imports resolve to ui3's copies.
     dedupe: ["viem", "react", "react-dom", "@noble/curves", "@noble/hashes", "@testing-library/react", "@testing-library/user-event", "@testing-library/dom", "@testing-library/jest-dom"],
   },
-  // The HUD UI lives outside this app; its assets load through the dev server like ui3's own.
-  server: { fs: { allow: [".", fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url)), fileURLToPath(new URL("../../library/explorer-core", import.meta.url))] } },
+  // The HUD UI and the Sites assets (the bar's wordmark) live outside this app; their assets load through the dev
+  // server like ui3's own.
+  server: { fs: { allow: [".", fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url)), fileURLToPath(new URL("../../library/explorer-core", import.meta.url)), fileURLToPath(new URL("../../library/ui/apps/sites/assets", import.meta.url))] } },
   plugins: [react()],
   test: {
     environment: "jsdom",
@@ -34,9 +39,20 @@ export default defineConfig({
         test: {
           name: "ui3",
           include: ["src/**/*.test.{ts,tsx}"],
-          exclude: ["src/play/**"],
+          exclude: ["src/play/**", "src/**/*.browser.test.ts"],
           setupFiles: ["src/test/setup.ts"],
           css: true,
+        },
+      },
+      {
+        // Tests that drive Chrome or Chromium over the DevTools protocol. `pnpm test` leaves them out;
+        // `pnpm test:browser` runs them, with BROWSER_PATH or CHROME_PATH naming the browser when it is not
+        // in a usual place.
+        extends: true,
+        test: {
+          name: "ui3-browser",
+          include: ["src/**/*.browser.test.ts"],
+          environment: "node",
         },
       },
       {

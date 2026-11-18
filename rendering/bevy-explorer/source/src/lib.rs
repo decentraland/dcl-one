@@ -10,6 +10,7 @@ mod gpu_memory;
 mod memory;
 #[cfg(test)]
 mod memory_tests;
+pub mod perf;
 #[cfg(target_arch = "wasm32")]
 mod web;
 pub mod world_state;
@@ -30,6 +31,7 @@ use ban_block::BanBlockPlugin;
 use bevy::window::{PresentMode, WindowResolution};
 use bevy::{
     app::{PluginGroupBuilder, Propagate, TaskPoolThreadAssignmentPolicy},
+    core_pipeline::prepass::DepthPrepass,
     log::LogPlugin,
     prelude::*,
     render::view::RenderLayers,
@@ -47,9 +49,9 @@ use common::{
     inputs::InputMap,
     sets::SetupSets,
     structs::{
-        AppConfig, AvatarDynamicState, HeadSync, IVec2Arg, PointAtSync, PrimaryCamera,
-        PrimaryCameraRes, PrimaryPlayerRes, SceneImposterBake, SceneLoadDistance, ShowOutOfBounds,
-        StartupScene, StartupScenes, Version, GROUND_RENDERLAYER,
+        AppConfig, AvatarDynamicState, HeadSync, IVec2Arg, LandscapeDistance, PointAtSync,
+        PrimaryCamera, PrimaryCameraRes, PrimaryPlayerRes, SceneImposterBake, SceneLoadDistance,
+        ShowOutOfBounds, StartupScene, StartupScenes, Version, GROUND_RENDERLAYER,
     },
     util::UtilsPlugin,
 };
@@ -78,12 +80,9 @@ use scene_runner::{
     OutOfWorld, SceneRunnerPlugin,
 };
 use social::SocialPlugin;
-use system_api_types::{
-    launch_options::{
-        help_heading::{DEBUG, SETTINGS, SYSTEM_SCENES},
-        ClientOptions, LaunchOptions,
-    },
-    web_params::DEFAULT_PORTABLES,
+use system_api_types::launch_options::{
+    help_heading::{DEBUG, SETTINGS, SYSTEM_SCENES},
+    ClientOptions, LaunchOptions,
 };
 use system_bridge::{settings::NewCameraEvent, NativeUi, SystemBridgePlugin};
 #[cfg(not(target_arch = "wasm32"))]
@@ -120,8 +119,46 @@ pub const DISTRIBUTION: &str = "web";
 pub const CONFIG_READ_ATTEMPTS: u32 = 3;
 pub const CONFIG_READ_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// The settings file of the Explorer's config directory, or the defaults where there is none.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn serialized_app_config() -> AppConfig {
+    let config_file = platform::project_directories()
+        .unwrap()
+        .config_dir()
+        .join("config.json");
+    let mut base_config = read_config_file(&config_file)
+        .map(|f| {
+            info!("config file loaded from {config_file:?}");
+            AppConfig::from_json(&f)
+        })
+        .unwrap_or_else(|| {
+            warn!("config file not read from {config_file:?}, generating default");
+            Default::default()
+        });
+    base_config.reset_outdated_settings();
+
+    base_config
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_config_file(config_file: &std::path::Path) -> Option<Vec<u8>> {
+    for _ in 0..CONFIG_READ_ATTEMPTS {
+        match std::fs::read(config_file) {
+            Ok(f) => return Some(f),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(e) => {
+                warn!("failed to read config.json: {e}");
+                std::thread::sleep(CONFIG_READ_RETRY_PAUSE);
+            }
+        }
+    }
+    None
+}
+
 pub mod headless;
 pub mod launch;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod offline_app;
 
 pub struct DecentralandApp(App);
 
@@ -360,11 +397,8 @@ impl DecentralandArguments {
 
     /// `--portables` / `?portables=`, else the default set.
     pub fn startup_scenes(&self) -> Vec<StartupScene> {
-        self.client
-            .portables
-            .as_deref()
-            .unwrap_or(DEFAULT_PORTABLES)
-            .split(';')
+        self.launch
+            .portable_sources()
             .map(|source| StartupScene {
                 source: source.to_owned(),
                 super_user: false,
@@ -486,6 +520,9 @@ impl DecentralandApp {
                     .collect(),
             })
             .insert_resource(ShowOutOfBounds(show_out_of_bounds))
+            .insert_resource(LandscapeDistance::from_config(
+                decentraland_app_config.app_config.landscape_distance,
+            ))
             .insert_resource(SceneLoadDistance {
                 load: if decentraland_app_config.arguments.launch.preview {
                     1.0
@@ -741,6 +778,20 @@ impl DecentralandApp {
         // (the first render frame warns, under `gpu_time`, about any node they do not)
         app.add_plugins(GpuTimePlugin);
 
+        // what the explorer measures about itself: the sampler, the frame-time breakdown and their
+        // debug panel section; with the `performance-profiler` feature, the scope profiler, Bevy's
+        // per-pass render timings (not in a `tracy` build, whose GPU context they would double)
+        // and its system information on Windows and Linux
+        app.add_plugins(perf::PerformanceMonitoringPlugin);
+        #[cfg(all(
+            feature = "performance-profiler",
+            not(feature = "tracy"),
+            not(target_arch = "wasm32")
+        ))]
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+        #[cfg(all(feature = "performance-profiler", any(windows, target_os = "linux")))]
+        app.add_plugins(bevy::diagnostic::SystemInformationDiagnosticsPlugin);
+
         // Systems
         app.configure_sets(Startup, SetupSets::Init.before(SetupSets::Main));
         app.add_systems(Startup, setup.in_set(SetupSets::Init));
@@ -754,7 +805,7 @@ impl DecentralandApp {
         app.add_console_command::<SceneThreadsCommand, _>(scene_threads);
         app.add_console_command::<FpsCommand, _>(set_fps);
         app.add_console_command::<SessionGraphicsCommand, _>(session_graphics);
-        debug_panel::register(&mut app);
+        app.add_plugins(debug_panel::MemoryDebugPanelPlugin);
 
         app
     }
@@ -809,6 +860,9 @@ fn setup(
                 ..Default::default()
             },
             default_camera_components(),
+            // the jump marker projects onto the depth prepass; the graphics settings add the
+            // normal prepass while the avatar outline is on
+            DepthPrepass,
             Projection::from(PerspectiveProjection {
                 far: 100000.0,
                 ..Default::default()

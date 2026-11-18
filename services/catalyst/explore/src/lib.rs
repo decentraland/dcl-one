@@ -9,6 +9,10 @@
 //! and `GET /api/status` reports how fresh each catalogue is. Writes (favorites,
 //! likes, RSVPs, event/schedule creation, reports) arrive with stage 5.
 
+// Production routes go through `shared::routing` (explore/clippy.toml); test routers may use axum's.
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_config::config;
 pub(crate) use catalyst_content as content;
@@ -29,10 +33,12 @@ pub mod fed;
 pub mod filecache;
 pub mod imposters;
 pub(crate) mod json_date;
+mod keyed_locks;
 pub mod mirror_state;
 pub mod moderation_hooks;
 pub mod opensea;
 pub mod places;
+pub mod rate;
 pub mod sanitize;
 pub mod schema_functions;
 pub mod validate;
@@ -42,6 +48,7 @@ use std::sync::Arc;
 use crate::shared::signed_fetch;
 use std::time::Duration;
 
+use crate::shared::routing::{any, erase, get, patch, post, put};
 use anyhow::{Context, bail};
 use axum::Json;
 use axum::Router;
@@ -49,7 +56,6 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::Response;
-use axum::routing::{get, patch, post, put};
 use serde::Serialize;
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -179,6 +185,11 @@ pub struct Settings {
     pub jump_in_site_url: String,
     /// Backend asset mount derived from the node public URL, never the events website.
     pub events_asset_base_url: String,
+    /// `PUBLIC_URL`: this node's own origin; issued URLs (report uploads)
+    /// are built on it, never on request headers.
+    pub public_url: String,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`: peers whose `X-Real-IP` names the client.
+    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
     /// This node's realm name, the `serverName` a place's `realms_detail`
     /// carries.
     pub realm_name: String,
@@ -252,16 +263,20 @@ impl Settings {
             events_base_url: "https://events.decentraland.org".to_string(),
             jump_in_site_url: "https://decentraland.org/jump".to_string(),
             events_asset_base_url: Self::events_asset_base_for("http://localhost"),
+            public_url: "http://localhost".to_string(),
+            trusted_proxy_cidrs: Vec::new(),
             realm_name: "main".to_string(),
         }
     }
 }
 
 /// The 503 message of an operator write while `OPS_WRITES_ENABLED` is off.
-pub const OPERATOR_WRITES_DISABLED: &str = "operator writes are disabled on this node (OPS_WRITES_ENABLED=false): a backup restore has to be demonstrated before this node accepts operator writes";
+pub const OPERATOR_WRITES_DISABLED: &str =
+    "operator writes are disabled on this node (OPS_WRITES_ENABLED=false)";
 
 /// The 503 message of a user write while `DATA_WRITES_ENABLED` is off.
-pub const USER_WRITES_DISABLED: &str = "explore writes are disabled on this node (DATA_WRITES_ENABLED=false): a backup restore has to be demonstrated before this node accepts user writes";
+pub const USER_WRITES_DISABLED: &str =
+    "explore writes are disabled on this node (DATA_WRITES_ENABLED=false)";
 
 pub struct ExploreState {
     pub pool: PgPool,
@@ -337,25 +352,21 @@ impl ExploreState {
         self
     }
 
-    /// A user write may proceed: `DATA_WRITES_ENABLED` is on and the
-    /// restore stamps vouch for this node.
+    /// A user write may proceed: `DATA_WRITES_ENABLED` is on.
     pub fn user_writes(&self) -> Result<(), ApiError> {
-        match crate::shared::writes::refusal(self.settings.user_writes_enabled) {
-            None => Ok(()),
-            Some(r) => Err(ApiError::WritesDisabled(
-                r.message("explore", USER_WRITES_DISABLED),
-            )),
+        if self.settings.user_writes_enabled {
+            Ok(())
+        } else {
+            Err(ApiError::WritesDisabled(USER_WRITES_DISABLED.into()))
         }
     }
 
-    /// An operator write may proceed: `OPS_WRITES_ENABLED` is on and the
-    /// restore stamps vouch for this node.
+    /// An operator write may proceed: `OPS_WRITES_ENABLED` is on.
     pub fn operator_writes(&self) -> Result<(), ApiError> {
-        match crate::shared::writes::ops_refusal(self.settings.operator_writes_enabled) {
-            None => Ok(()),
-            Some(r) => Err(ApiError::WritesDisabled(
-                r.message("operator", OPERATOR_WRITES_DISABLED),
-            )),
+        if self.settings.operator_writes_enabled {
+            Ok(())
+        } else {
+            Err(ApiError::WritesDisabled(OPERATOR_WRITES_DISABLED.into()))
         }
     }
 
@@ -578,12 +589,15 @@ impl ExploreState {
                         cancelled = out.cancelled,
                         "world catalogue mirrored from upstream"
                     );
-                    if !out.complete && !out.cancelled {
-                        anyhow::bail!(
-                            "worlds pass incomplete: {} failed pages, {} failed rows",
-                            out.failed_pages,
-                            out.failed_rows
-                        );
+                    if let Some(error) = mirror_pass_failure(
+                        "worlds",
+                        out.complete || out.cancelled,
+                        out.fetched_all,
+                        out.resumed_from,
+                        out.failed_pages,
+                        out.failed_rows,
+                    ) {
+                        anyhow::bail!(error);
                     }
                     Ok(())
                 }
@@ -629,12 +643,15 @@ impl ExploreState {
                         cancelled = out.cancelled,
                         "event catalogue mirrored from upstream"
                     );
-                    if !out.complete && !out.cancelled {
-                        anyhow::bail!(
-                            "events pass incomplete: {} failed pages, {} failed rows",
-                            out.failed_pages,
-                            out.failed_rows
-                        );
+                    if let Some(error) = mirror_pass_failure(
+                        "events",
+                        out.complete || out.cancelled,
+                        out.fetched_all,
+                        out.resumed_from,
+                        out.failed_pages,
+                        out.failed_rows,
+                    ) {
+                        anyhow::bail!(error);
                     }
                     Ok(())
                 }
@@ -656,6 +673,37 @@ impl ExploreState {
             });
         }
     }
+}
+
+/// The error a finished fail-open mirror pass reports to its job, if any. A
+/// resumed pass is incomplete by design (its cursor cannot prove the
+/// interrupted run skipped nothing), so one that fetched every page it asked
+/// for, up to the listing's end, and stored every row is not a job failure;
+/// its incompleteness stays on `explore.mirror_state`. A pass that skipped a
+/// page or stopped at the offset ceiling is one.
+fn mirror_pass_failure(
+    leg: &str,
+    complete_or_cancelled: bool,
+    fetched_all: bool,
+    resumed_from: Option<i64>,
+    failed_pages: usize,
+    failed_rows: usize,
+) -> Option<String> {
+    let resumed_cleanly = resumed_from.is_some() && fetched_all && failed_rows == 0;
+    if complete_or_cancelled || resumed_cleanly {
+        return None;
+    }
+    let short = if fetched_all {
+        ""
+    } else {
+        "; the listing was not fetched to its end"
+    };
+    let resumed = resumed_from
+        .map(|offset| format!("; resumed at offset {offset}"))
+        .unwrap_or_default();
+    Some(format!(
+        "{leg} pass incomplete: {failed_pages} failed pages, {failed_rows} failed rows{short}{resumed}"
+    ))
 }
 
 /// `GET /openapi.json`: the events document under `/events`, the places one elsewhere.
@@ -803,7 +851,7 @@ pub fn router(state: SharedState) -> Router {
     Router::new()
         .route(
             "/api/places",
-            get(pl::get_place_list).post(pl::post_place_list_by_id),
+            get(pl::get_place_list).post(erase(pl::post_place_list_by_id)),
         )
         .route("/api/places/status", post(pl::post_place_status_list_by_id))
         .route("/api/places/{place_id}", get(pl::get_place))
@@ -820,7 +868,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/api/places/{place_id}/ranking", put(pa::put_place_ranking))
         .route(
             "/api/places/{place_id}/ranking-exclusion",
-            put(pa::put_place_ranking_exclusion).delete(pa::delete_place_ranking_exclusion),
+            put(pa::put_place_ranking_exclusion).delete(erase(pa::delete_place_ranking_exclusion)),
         )
         .route(
             "/api/places/{place_id}/highlight",
@@ -828,11 +876,11 @@ pub fn router(state: SharedState) -> Router {
         )
         .route(
             "/api/places/{place_id}/disable",
-            put(pa::put_place_disable).patch(pa::patch_place_disable),
+            put(pa::put_place_disable).patch(erase(pa::patch_place_disable)),
         )
         .route(
             "/api/places/{place_id}/featured",
-            put(pa::put_place_featured).delete(pa::delete_place_featured),
+            put(pa::put_place_featured).delete(erase(pa::delete_place_featured)),
         )
         .route("/api/categories", get(pl::get_categories))
         .route("/api/map", get(pl::get_map_places))
@@ -840,7 +888,7 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/destinations",
             get(destinations::get_destinations_list)
-                .post(destinations::post_destinations_list_by_id),
+                .post(erase(destinations::post_destinations_list_by_id)),
         )
         .route("/api/worlds", get(pl::get_world_list))
         .route("/api/worlds/{world_id}", get(pl::get_world))
@@ -857,7 +905,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/api/worlds/{world_id}/ranking", put(pa::put_world_ranking))
         .route(
             "/api/worlds/{world_id}/ranking-exclusion",
-            put(pa::put_world_ranking_exclusion).delete(pa::delete_world_ranking_exclusion),
+            put(pa::put_world_ranking_exclusion).delete(erase(pa::delete_world_ranking_exclusion)),
         )
         .route(
             "/api/worlds/{world_id}/highlight",
@@ -865,7 +913,7 @@ pub fn router(state: SharedState) -> Router {
         )
         .route(
             "/api/worlds/{world_id}/featured",
-            put(pa::put_world_featured).delete(pa::delete_world_featured),
+            put(pa::put_world_featured).delete(erase(pa::delete_world_featured)),
         )
         .route(
             "/api/destinations/ranking",
@@ -873,33 +921,42 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/places/place", get(places::social::inject_place_metadata))
         .route("/places/world", get(places::social::inject_world_metadata))
-        .route("/api/pois", get(pa::get_pois).post(pa::post_poi))
+        .route("/api/pois", get(pa::get_pois).post(erase(pa::post_poi)))
         .route(
             "/api/pois/{position}",
-            patch(pa::patch_poi).delete(pa::delete_poi),
+            patch(pa::patch_poi).delete(erase(pa::delete_poi)),
         )
         .route("/api/reports", get(pr::get_reports))
         .route("/api/reports/{id}", patch(pr::patch_report))
-        .route("/api/report", post(pr::post_report))
-        .route("/api/report/upload/{filename}", put(pr::put_report_upload))
+        .route(
+            "/api/report",
+            post(pr::post_report)
+                .layer(axum::extract::DefaultBodyLimit::max(pr::REPORT_BODY_LIMIT)),
+        )
+        .route(
+            "/api/report/upload/{filename}",
+            put(pr::put_report_upload)
+                .layer(axum::extract::DefaultBodyLimit::max(pr::UPLOAD_BODY_LIMIT)),
+        )
         .route(
             "/v1/destinations",
-            get(pv1::get_v1_destinations_list).post(destinations::post_v1_destinations_list),
+            get(pv1::get_v1_destinations_list).post(erase(destinations::post_v1_destinations_list)),
         )
         .route("/v1/destinations/{id}", get(pv1::get_v1_destination))
         .route(
             "/v1/destinations/{id}/favorites",
-            put(pi::put_v1_destination_favorites).delete(pi::delete_v1_destination_favorites),
+            put(pi::put_v1_destination_favorites)
+                .delete(erase(pi::delete_v1_destination_favorites)),
         )
         .route(
             "/v1/destinations/{id}/likes",
-            put(pi::put_v1_destination_likes).delete(pi::delete_v1_destination_likes),
+            put(pi::put_v1_destination_likes).delete(erase(pi::delete_v1_destination_likes)),
         )
         .route("/v1/categories", get(pv1::get_v1_categories))
         .route("/api/world_names", get(pl::get_world_names_list))
         .route(
             "/api/events",
-            get(ev::get_event_list).post(evw::create_event),
+            get(ev::get_event_list).post(erase(evw::create_event)),
         )
         .route("/api/events/search", post(ev::post_event_search))
         .route("/api/events/attending", get(ev::get_attending_event_list))
@@ -908,37 +965,37 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/events/{event_id}",
             get(ev::get_event)
-                .patch(evw::patch_event)
-                .delete(evw::delete_event),
+                .patch(erase(evw::patch_event))
+                .delete(erase(evw::delete_event)),
         )
         .route(
             "/api/events/{event_id}/attendees",
             get(ev::get_event_attendees)
-                .post(evw::create_event_attendee)
-                .delete(evw::delete_event_attendee),
+                .post(erase(evw::create_event_attendee))
+                .delete(erase(evw::delete_event_attendee)),
         )
         .route(
             "/api/schedules",
-            get(ev::get_schedule_list).post(evp::create_schedule),
+            get(ev::get_schedule_list).post(erase(evp::create_schedule)),
         )
         .route(
             "/api/schedules/{schedule_id}",
-            get(ev::get_schedule_by_id).patch(evp::patch_schedule),
+            get(ev::get_schedule_by_id).patch(erase(evp::patch_schedule)),
         )
         .route("/api/profiles/settings", get(evp::list_profile_settings))
         .route(
             "/api/profiles/me/settings",
-            get(evp::get_my_profile_settings).patch(evp::update_my_profile_settings),
+            get(evp::get_my_profile_settings).patch(erase(evp::update_my_profile_settings)),
         )
         .route(
             "/api/profiles/{profile_id}/settings",
-            get(evp::get_profile_settings).patch(evp::update_profile_settings),
+            get(evp::get_profile_settings).patch(erase(evp::update_profile_settings)),
         )
         .route(
             "/api/profiles/subscriptions",
             get(evp::get_profile_subscriptions)
-                .post(evp::create_profile_subscription)
-                .delete(evp::delete_profile_subscription),
+                .post(erase(evp::create_profile_subscription))
+                .delete(erase(evp::delete_profile_subscription)),
         )
         .route("/api/poster", post(events::posters::upload_poster))
         .route(
@@ -979,11 +1036,11 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/api/status", get(status))
         .route("/openapi.json", get(openapi_json))
-        .route("/api", axum::routing::any(api_not_found))
-        .route("/api/{*rest}", axum::routing::any(api_not_found))
+        .route("/api", any(api_not_found))
+        .route("/api/{*rest}", any(api_not_found))
         // express fell through to the catch-all on a known path with another
         // method; axum's 405 answers the same JSON 404 (a per-route default).
-        .method_not_allowed_fallback(api_not_found)
+        .method_not_allowed_fallback(erase(api_not_found))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             copies::gate,
@@ -1001,6 +1058,36 @@ pub fn router(state: SharedState) -> Router {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_cleanly_resumed_mirror_pass_is_not_a_job_failure() {
+        use super::mirror_pass_failure;
+        assert_eq!(mirror_pass_failure("worlds", true, true, None, 0, 0), None);
+        assert_eq!(
+            mirror_pass_failure("worlds", false, true, Some(100), 0, 0),
+            None
+        );
+        assert_eq!(
+            mirror_pass_failure("events", false, false, None, 1, 0).as_deref(),
+            Some(
+                "events pass incomplete: 1 failed pages, 0 failed rows; \
+                 the listing was not fetched to its end"
+            )
+        );
+        assert_eq!(
+            mirror_pass_failure("worlds", false, true, Some(100), 0, 2).as_deref(),
+            Some("worlds pass incomplete: 0 failed pages, 2 failed rows; resumed at offset 100")
+        );
+        // A resumed pass that stopped at the offset ceiling has no failed
+        // page or row, yet it did not reach the listing's end.
+        assert_eq!(
+            mirror_pass_failure("events", false, false, Some(500), 0, 0).as_deref(),
+            Some(
+                "events pass incomplete: 0 failed pages, 0 failed rows; \
+                 the listing was not fetched to its end; resumed at offset 500"
+            )
+        );
+    }
+
     #[test]
     fn settings_debug_redacts_the_optional_webhook_and_other_credentials() {
         let mut settings = super::Settings::for_tests();
@@ -1842,47 +1929,48 @@ mod tests {
         assert_eq!(h["access-control-allow-origin"], "https://example.com");
     }
 
-    /// The explore writes' two switches wait on the restore stamps too: a
-    /// stale drill stamp answers the 503 naming the stamp and its age.
+    /// Each explore switch alone decides its writes; off answers the 503
+    /// with the switch's message and a `Retry-After`.
     #[tokio::test]
-    async fn a_stale_restore_stamp_holds_explore_writes_and_names_it() {
-        use crate::shared::writes::restore::{
-            Stamp,
-            lab::{DAY, StampLab},
-            scoped,
-        };
+    async fn the_explore_switches_alone_decide_their_writes() {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://nobody@127.0.0.1:1/nowhere")
             .unwrap();
-        let state = ExploreState::new(
-            pool,
-            Settings {
-                user_writes_enabled: true,
-                operator_writes_enabled: true,
-                ..Settings::for_tests()
-            },
-            None,
-        );
-        let lab = StampLab::fresh();
-        scoped(lab.stamps.clone(), async {
-            assert!(state.user_writes().is_ok());
-            assert!(state.operator_writes().is_ok());
-            lab.write_aged(Stamp::Drill, 8 * DAY + DAY / 2);
-            let held = |r: Result<(), ApiError>| match r {
-                Err(ApiError::WritesDisabled(m)) => m.into_owned(),
-                other => panic!("{other:?}"),
-            };
-            assert_eq!(
-                held(state.user_writes()),
-                "explore writes are held on this node: the last passing restore drill (drill.json) is 8 d 12 h old, past WRITES_DRILL_MAX_AGE_DAYS=8"
-            );
-            assert!(
-                held(state.operator_writes()).starts_with("operator writes are held on this node: ")
-            );
-            let res = axum::response::IntoResponse::into_response(state.user_writes().unwrap_err());
-            assert_eq!(res.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
-            assert_eq!(res.headers()[axum::http::header::RETRY_AFTER], "3600");
-        })
-        .await;
+        let state = |on: bool| {
+            ExploreState::new(
+                pool.clone(),
+                Settings {
+                    user_writes_enabled: on,
+                    operator_writes_enabled: on,
+                    ..Settings::for_tests()
+                },
+                None,
+            )
+        };
+        let on = state(true);
+        assert!(on.user_writes().is_ok());
+        assert!(on.operator_writes().is_ok());
+        let off = state(false);
+        let refused = |r: Result<(), ApiError>| match r {
+            Err(ApiError::WritesDisabled(m)) => m.into_owned(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(refused(off.user_writes()), USER_WRITES_DISABLED);
+        assert_eq!(refused(off.operator_writes()), OPERATOR_WRITES_DISABLED);
+        let res = axum::response::IntoResponse::into_response(off.user_writes().unwrap_err());
+        assert_eq!(res.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(res.headers()[axum::http::header::RETRY_AFTER], "3600");
     }
+}
+
+/// Production routes stay on `shared::routing` (see `shared::routing::guard`).
+#[cfg(test)]
+#[test]
+fn production_routes_use_shared_routing() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let found = crate::shared::routing::guard::direct_axum_routes(&src);
+    assert!(
+        found.is_empty(),
+        "use crate::shared::routing instead of axum's method routers at {found:?}"
+    );
 }

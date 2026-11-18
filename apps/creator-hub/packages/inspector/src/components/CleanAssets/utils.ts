@@ -57,6 +57,27 @@ function scanObjectForAssets(obj: any, addAsset: (path: string) => void): void {
 }
 
 /**
+ * Scans the param values of a Script component. Each script keeps its params as a JSON string
+ * (`layout`), which the generic scan sees as one non-path string, so a file picked in a param
+ * (`@format image` and the like) would otherwise count as unused.
+ */
+function scanScriptLayouts(script: unknown, addAsset: (path: string) => void): void {
+  const items = (script as { value?: { layout?: string }[] } | undefined)?.value ?? [];
+  for (const item of items) {
+    if (!item?.layout) continue;
+    try {
+      const params = JSON.parse(item.layout)?.params;
+      if (!params || typeof params !== 'object') continue;
+      for (const param of Object.values(params)) {
+        scanObjectForAssets((param as { value?: unknown } | null)?.value, addAsset);
+      }
+    } catch (e) {
+      // A layout that doesn't parse holds no params to scan.
+    }
+  }
+}
+
+/**
  * Collects all asset file paths referenced in the scene by recursively
  * scanning all components for asset path strings
  * @param sdk The SDK context
@@ -101,6 +122,7 @@ export function collectUsedAssets(sdk: SdkContextValue): Set<string> {
           } else {
             // Generic scan for all other components
             scanObjectForAssets(componentData, addAsset);
+            if (componentDef === components.Script) scanScriptLayouts(componentData, addAsset);
           }
         }
       }

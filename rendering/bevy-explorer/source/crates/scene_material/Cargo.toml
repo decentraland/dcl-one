@@ -5,6 +5,14 @@ edition = "2021"
 
 [lib]
 
+[features]
+# WebGL2 has no storage buffers: the scene-bounds cell table is left out of the materials, so a
+# bounded scene fades by its rectangle only. For a WebGL2 build that shows no scenes (the avatar
+# preview, rendering/avatar-preview); the Explorer builds for WebGPU. The material's pipeline
+# pushes `NO_SCENE_CELLS`, which leaves the table out of scene_bounds.wgsl, so the material and the
+# shader drop it together on any backend.
+webgl2 = []
+
 [dependencies]
 bevy = { workspace = true }
 common = { workspace = true }
@@ -12,7 +20,7 @@ boimp = { workspace = true }
 nonmax = { workspace = true }
 
 [dev-dependencies]
-assets = { workspace = true, features = ["test-support"] }
+pipeline_test = { workspace = true }
 # present only to enable the naga_oil `override_any` feature in a per-crate test build, as the
 # root crate does for the app (see [workspace.dependencies]); not referenced from Rust
 naga_oil = { workspace = true }

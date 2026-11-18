@@ -14,7 +14,7 @@
   z-index: var(--z-modal);
   display: flex;
   flex-direction: column;
-  background: linear-gradient(150deg, #1c0d33 0%, #3a1660 55%, #5a2185 100%);
+  background: var(--lava-1);
   font-family: var(--font-family);
   overflow: hidden;
   contain: layout paint;
@@ -43,8 +43,8 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 20px;
-  height: 70px;
+  gap: 12px;
+  height: 66px;
   padding: 0 20px;
   background: var(--menu-bar);
   flex: none;
@@ -53,25 +53,49 @@
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 5px;
   height: 27px;
 }
 .brandName {
-  font-size: var(--type-22);
-  font-weight: var(--fw-bold);
+  font-size: 24.5px;
+  font-weight: 800;
+  letter-spacing: -0.045em;
   color: var(--text);
 }
 /* off the flow, so the tabs stay centred */
-.lobby {
+.lobby.lobby {
   position: absolute;
-  left: 265px;
+  left: 214px;
   top: 12px;
+  width: 104px;
+  height: 42px;
+  padding: 0;
+  gap: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  border-radius: 10px;
+  background: transparent;
+  font-size: var(--type-14);
+  font-weight: var(--fw-bold);
+  text-transform: uppercase;
 }
+.lobby.lobby:hover {
+  background: var(--menu-tab-hover);
+}
+/* centred on the bar whatever sits at its ends */
 .menu {
+  position: absolute;
+  left: 50%;
+  top: 4px;
+  transform: translateX(-50%);
   display: flex;
   align-items: center;
   gap: 2px;
-  margin: 0 auto;
+}
+.end {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
 }
 .menuItem {
   display: flex;
@@ -79,7 +103,7 @@
   align-items: center;
   width: 140px;
   height: 58px;
-  padding: 2px 0 0;
+  padding: 0;
   border: none;
   border-radius: var(--r-sm);
   background: transparent;
@@ -97,6 +121,7 @@
   justify-content: center;
   width: 36px;
   height: 36px;
+  margin-top: 2px;
 }
 .menuItem:hover {
   background: var(--menu-tab-hover);
@@ -108,8 +133,9 @@
 }
 .menuLabel {
   height: 20px;
+  margin-top: -2px;
   font-size: var(--type-14);
-  font-weight: var(--fw-semibold);
+  font-weight: var(--fw-bold);
   line-height: 20px;
   text-transform: uppercase;
 }
@@ -150,16 +176,18 @@
   position: relative;
   z-index: 1;
   height: 4px;
-  margin-top: -4px;
   flex: none;
   background: var(--menu-rainbow);
 }
 
 .body {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 22px clamp(20px, 6vw, 120px);
+  /* a share of the canvas's width, not the window's: the body is laid out before the scale */
+  --menu-gutter: clamp(20px, calc(6vw / var(--ui-scale)), 120px);
+  padding: 22px var(--menu-gutter);
   overflow-y: auto;
 }
 /* Engine view fills the body with no chrome; events pass through to the scene. */
@@ -167,4 +195,42 @@
   padding: 0;
   overflow: hidden;
   pointer-events: none;
+}
+
+/* the shared backdrop fills the overlay under the bar; the page scrolls over it */
+.backdropSlot.backdropSlot {
+  top: 70px;
+}
+
+/* Over the startup lobby: a card 190px in from the sides and 100px from top and bottom, the lobby
+   dimmed around it, and of the menu bar only the close button. A page's title row ends short of
+   that button by --menu-title-end, which the page's own header reads. A layer of the page that
+   covers the whole card, the button too, takes --menu-cover-z. */
+.card {
+  left: calc(190px * var(--ui-scale));
+  top: calc(100px * var(--ui-scale));
+  width: calc(100% / var(--ui-scale) - 380px);
+  height: calc(100% / var(--ui-scale) - 200px);
+  border-radius: 20px;
+  box-shadow: 0 0 0 300vmax var(--scrim-card);
+  --menu-title-end: 86px;
+  --menu-cover-z: 6;
+}
+.cardBar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  height: 68px;
+  padding-right: 18px;
+  pointer-events: none;
+}
+.cardClose {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  background: var(--scrim-control);
+  pointer-events: auto;
 }
