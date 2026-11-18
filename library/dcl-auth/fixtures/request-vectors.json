@@ -1,0 +1,4619 @@
+{
+ "generator": "node v24.18.0, @dcl/crypto-middleware 6.5.0, @dcl/crypto 3.9.0",
+ "now": 1795007112143,
+ "vectors": [
+  {
+   "name": "cf: GET",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.157Z\",\"signature\":\"0xe659f11e19056f41af312d587778cd304561e53d3aa522c3f7f2e5fc1806021f56b902adda8645688f238ece14ad8a0c2257c333dccc796c3dc2c45cb93b47b81b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "th: GET",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xAa55Df7630cD325Aa0B35eeE7E2D78028cf5C557\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x4d0419c3fbfeA8fA48b7DB4faD38618aA73107ae\\nExpiration: 2026-11-18T13:15:12.159Z\",\"signature\":\"0x3ae952d9b54087c86d25dc71abb79b887357c8fa9647868f002d782601743a8965fa8c781686bebc26cdd60e063feaf669a50646869344ec997d9e7e6d82c4091c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x8a7212c67f0f1efefe27f36ad41adc7e9c44afcb87f674652ffc5878d22779b67378d9abe15bc2008f5e58a30bd79c2fe61dfd1ed62a2524a3aac758c5e0cbcc1c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xaa55df7630cd325aa0b35eee7e2d78028cf5c557",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "cf: POST metadata",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.157Z\",\"signature\":\"0xe659f11e19056f41af312d587778cd304561e53d3aa522c3f7f2e5fc1806021f56b902adda8645688f238ece14ad8a0c2257c333dccc796c3dc2c45cb93b47b81b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"signer\\\":\\\"dcl:explorer\\\",\\\"intent\\\":\\\"x\\\"}\",\"signature\":\"0xc3f0022897294ac7b6c5bbf573b78ca422a574da0ba0a7dca582576362949e0237b921740cf335912cfb67d9814fb5dbb1eba6bee48b53617eb460b90608cad51b\"}"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"signer\":\"dcl:explorer\",\"intent\":\"x\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "signer": "dcl:explorer",
+     "intent": "x"
+    }
+   }
+  },
+  {
+   "name": "th: POST metadata",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xAa55Df7630cD325Aa0B35eeE7E2D78028cf5C557\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x4d0419c3fbfeA8fA48b7DB4faD38618aA73107ae\\nExpiration: 2026-11-18T13:15:12.159Z\",\"signature\":\"0x3ae952d9b54087c86d25dc71abb79b887357c8fa9647868f002d782601743a8965fa8c781686bebc26cdd60e063feaf669a50646869344ec997d9e7e6d82c4091c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"signer\\\":\\\"dcl:explorer\\\",\\\"intent\\\":\\\"x\\\"}\",\"signature\":\"0x8621896a7a1ae065c0b52996ec0b416ae3b8185451ea2c09acd52a8b7e8915d947b0b22982c013d19cab6d27642642b231ec6f17a8fb33cdc0f56c0c5f4a84ac1c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"signer\":\"dcl:explorer\",\"intent\":\"x\"}"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xaa55df7630cd325aa0b35eee7e2d78028cf5c557",
+    "metadata": {
+     "signer": "dcl:explorer",
+     "intent": "x"
+    }
+   }
+  },
+  {
+   "name": "cf: reordered keys",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.157Z\",\"signature\":\"0xe659f11e19056f41af312d587778cd304561e53d3aa522c3f7f2e5fc1806021f56b902adda8645688f238ece14ad8a0c2257c333dccc796c3dc2c45cb93b47b81b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"intent\\\":\\\"x\\\",\\\"signer\\\":\\\"dcl:explorer\\\"}\",\"signature\":\"0x0fb706c4c91817cb92656760986c39ab3d8e7af618a86caf0d78463d32dc5c1a04edff0630ae1fe7d4cbdf2543d899b752939b7194ebcae2045365a31f79b5411c\"}"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"intent\":\"x\",\"signer\":\"dcl:explorer\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "intent": "x",
+     "signer": "dcl:explorer"
+    }
+   }
+  },
+  {
+   "name": "th: mixed-case metadata",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xAa55Df7630cD325Aa0B35eeE7E2D78028cf5C557\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x4d0419c3fbfeA8fA48b7DB4faD38618aA73107ae\\nExpiration: 2026-11-18T13:15:12.159Z\",\"signature\":\"0x3ae952d9b54087c86d25dc71abb79b887357c8fa9647868f002d782601743a8965fa8c781686bebc26cdd60e063feaf669a50646869344ec997d9e7e6d82c4091c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"Signer\\\":\\\"DCL:Explorer\\\",\\\"realmName\\\":\\\"Example.dcl.eth\\\",\\\"sceneId\\\":\\\"QmAbCdEf\\\"}\",\"signature\":\"0xfb6215a2a37a487414fb738d9a4b6773c278087df88f9953d3a58cbe145305e416b347c30928f1b2dd194eaa613d102a997bafcd15d789e7f7b4fc3971995de11b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"Signer\":\"DCL:Explorer\",\"realmName\":\"Example.dcl.eth\",\"sceneId\":\"QmAbCdEf\"}"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xaa55df7630cd325aa0b35eee7e2d78028cf5c557",
+    "metadata": {
+     "Signer": "DCL:Explorer",
+     "realmName": "Example.dcl.eth",
+     "sceneId": "QmAbCdEf"
+    }
+   }
+  },
+  {
+   "name": "th: uppercase path",
+   "method": "GET",
+   "path": "/V1/Users/0xAbC/Profile",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xAa55Df7630cD325Aa0B35eeE7E2D78028cf5C557\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x4d0419c3fbfeA8fA48b7DB4faD38618aA73107ae\\nExpiration: 2026-11-18T13:15:12.159Z\",\"signature\":\"0x3ae952d9b54087c86d25dc71abb79b887357c8fa9647868f002d782601743a8965fa8c781686bebc26cdd60e063feaf669a50646869344ec997d9e7e6d82c4091c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/users/0xabc/profile:1795007112143:{}\",\"signature\":\"0x7dc29a6f38d31b9fcf5bde2924fdf16cc6cf2fbf18e59a8c79f05b647cadeb1b21e6446e2630efc763b06cbb590e37bad2925dc0a18c58ff1cf9911582a5e7c81c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/V1/Users/0xAbC/Profile",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xaa55df7630cd325aa0b35eee7e2d78028cf5c557",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "th-direct: GET",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xAa55Df7630cD325Aa0B35eeE7E2D78028cf5C557\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x4d0419c3fbfeA8fA48b7DB4faD38618aA73107ae\\nExpiration: 2026-11-18T13:15:12.159Z\",\"signature\":\"0x3ae952d9b54087c86d25dc71abb79b887357c8fa9647868f002d782601743a8965fa8c781686bebc26cdd60e063feaf669a50646869344ec997d9e7e6d82c4091c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x8a7212c67f0f1efefe27f36ad41adc7e9c44afcb87f674652ffc5878d22779b67378d9abe15bc2008f5e58a30bd79c2fe61dfd1ed62a2524a3aac758c5e0cbcc1c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xaa55df7630cd325aa0b35eee7e2d78028cf5c557",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "cf: mixed-case metadata",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.157Z\",\"signature\":\"0xe659f11e19056f41af312d587778cd304561e53d3aa522c3f7f2e5fc1806021f56b902adda8645688f238ece14ad8a0c2257c333dccc796c3dc2c45cb93b47b81b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"Signer\\\":\\\"DCL:Explorer\\\",\\\"realmName\\\":\\\"Example.dcl.eth\\\",\\\"sceneId\\\":\\\"QmAbCdEf\\\"}\",\"signature\":\"0xb72bc0c49acfba7dd10044b637d9b4fd4d39bd4af2d1bcedca0c986905e1b5b96443a35a30aa5ea1b3868b9123e346e0058daa1ddebcbbc14fdc309e7784b1271c\"}"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"Signer\":\"DCL:Explorer\",\"realmName\":\"Example.dcl.eth\",\"sceneId\":\"QmAbCdEf\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "Signer": "DCL:Explorer",
+     "realmName": "Example.dcl.eth",
+     "sceneId": "QmAbCdEf"
+    }
+   }
+  },
+  {
+   "name": "cf: Latin-1 metadata",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.157Z\",\"signature\":\"0xe659f11e19056f41af312d587778cd304561e53d3aa522c3f7f2e5fc1806021f56b902adda8645688f238ece14ad8a0c2257c333dccc796c3dc2c45cb93b47b81b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"intent\\\":\\\"x\\\",\\\"realm\\\":{\\\"serverName\\\":\\\"niño\\\"}}\",\"signature\":\"0x37f2b636cdec37c090652e34a5e0a193641a3d9d543ef2652ea84a25795038652095e3d2e1e0e002f5ec9bcabb68ec1278773a4d71236f8be939f5799264cdb41b\"}"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"intent\":\"x\",\"realm\":{\"serverName\":\"niño\"}}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "intent": "x",
+     "realm": {
+      "serverName": "niño"
+     }
+    }
+   }
+  },
+  {
+   "name": "cf: path with query",
+   "method": "GET",
+   "path": "/v1/items",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.157Z\",\"signature\":\"0xe659f11e19056f41af312d587778cd304561e53d3aa522c3f7f2e5fc1806021f56b902adda8645688f238ece14ad8a0c2257c333dccc796c3dc2c45cb93b47b81b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/items:1795007112143:{}\",\"signature\":\"0x3766b7e89e7dcfd92334886654d0381021f5a9bf22bd09bd370f45d9546094cd4d26adb709d560ed5872ff28206d89dc3c5cec78b60299e1971159e0a167fe991c\"}"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ]
+   ],
+   "local": "/v1/items",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "th: path with query, signed with it",
+   "method": "GET",
+   "path": "/v1/items",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xAa55Df7630cD325Aa0B35eeE7E2D78028cf5C557\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x4d0419c3fbfeA8fA48b7DB4faD38618aA73107ae\\nExpiration: 2026-11-18T13:15:12.159Z\",\"signature\":\"0x3ae952d9b54087c86d25dc71abb79b887357c8fa9647868f002d782601743a8965fa8c781686bebc26cdd60e063feaf669a50646869344ec997d9e7e6d82c4091c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/items?limit=10:1795007112143:{}\",\"signature\":\"0x3f85c0f66e2d954e9e43aef83f2f7e7b76665453727d91993ac50e525cc31c60266b494b27e56071b4606c25e22c58ee7cdc5920dc32b9951f7fff08a284e54e1b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/items",
+   "options": {},
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "cf: uppercase path",
+   "method": "GET",
+   "path": "/V1/Users/0xAbC/Profile",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.157Z\",\"signature\":\"0xe659f11e19056f41af312d587778cd304561e53d3aa522c3f7f2e5fc1806021f56b902adda8645688f238ece14ad8a0c2257c333dccc796c3dc2c45cb93b47b81b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/users/0xabc/profile:1795007112143:{}\",\"signature\":\"0x0c5555d675791384f70899cdae2eae549daa288957b47a8e7c3f4791778f528b2f92b3c5086b620881917b4e22d778c55e4eae1a85ee15d414a03358c17e0dff1c\"}"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ]
+   ],
+   "local": "/V1/Users/0xAbC/Profile",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "cf: lowercase method",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.157Z\",\"signature\":\"0xe659f11e19056f41af312d587778cd304561e53d3aa522c3f7f2e5fc1806021f56b902adda8645688f238ece14ad8a0c2257c333dccc796c3dc2c45cb93b47b81b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"signer\\\":\\\"dcl:explorer\\\",\\\"intent\\\":\\\"x\\\"}\",\"signature\":\"0xc3f0022897294ac7b6c5bbf573b78ca422a574da0ba0a7dca582576362949e0237b921740cf335912cfb67d9814fb5dbb1eba6bee48b53617eb460b90608cad51b\"}"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"signer\":\"dcl:explorer\",\"intent\":\"x\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "signer": "dcl:explorer",
+     "intent": "x"
+    }
+   }
+  },
+  {
+   "name": "cf: GET +canonicalMetadataKeys",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.157Z\",\"signature\":\"0xe659f11e19056f41af312d587778cd304561e53d3aa522c3f7f2e5fc1806021f56b902adda8645688f238ece14ad8a0c2257c333dccc796c3dc2c45cb93b47b81b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {
+    "canonicalMetadataKeys": [
+     "signer"
+    ]
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "th: GET +canonicalMetadataKeys",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xAa55Df7630cD325Aa0B35eeE7E2D78028cf5C557\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x4d0419c3fbfeA8fA48b7DB4faD38618aA73107ae\\nExpiration: 2026-11-18T13:15:12.159Z\",\"signature\":\"0x3ae952d9b54087c86d25dc71abb79b887357c8fa9647868f002d782601743a8965fa8c781686bebc26cdd60e063feaf669a50646869344ec997d9e7e6d82c4091c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x8a7212c67f0f1efefe27f36ad41adc7e9c44afcb87f674652ffc5878d22779b67378d9abe15bc2008f5e58a30bd79c2fe61dfd1ed62a2524a3aac758c5e0cbcc1c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {
+    "canonicalMetadataKeys": [
+     "signer"
+    ]
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xaa55df7630cd325aa0b35eee7e2d78028cf5c557",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "cf: POST metadata +canonicalMetadataKeys",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.157Z\",\"signature\":\"0xe659f11e19056f41af312d587778cd304561e53d3aa522c3f7f2e5fc1806021f56b902adda8645688f238ece14ad8a0c2257c333dccc796c3dc2c45cb93b47b81b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"signer\\\":\\\"dcl:explorer\\\",\\\"intent\\\":\\\"x\\\"}\",\"signature\":\"0xc3f0022897294ac7b6c5bbf573b78ca422a574da0ba0a7dca582576362949e0237b921740cf335912cfb67d9814fb5dbb1eba6bee48b53617eb460b90608cad51b\"}"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"signer\":\"dcl:explorer\",\"intent\":\"x\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {
+    "canonicalMetadataKeys": [
+     "signer"
+    ]
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "signer": "dcl:explorer",
+     "intent": "x"
+    }
+   }
+  },
+  {
+   "name": "th: POST metadata +canonicalMetadataKeys",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xAa55Df7630cD325Aa0B35eeE7E2D78028cf5C557\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x4d0419c3fbfeA8fA48b7DB4faD38618aA73107ae\\nExpiration: 2026-11-18T13:15:12.159Z\",\"signature\":\"0x3ae952d9b54087c86d25dc71abb79b887357c8fa9647868f002d782601743a8965fa8c781686bebc26cdd60e063feaf669a50646869344ec997d9e7e6d82c4091c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"signer\\\":\\\"dcl:explorer\\\",\\\"intent\\\":\\\"x\\\"}\",\"signature\":\"0x8621896a7a1ae065c0b52996ec0b416ae3b8185451ea2c09acd52a8b7e8915d947b0b22982c013d19cab6d27642642b231ec6f17a8fb33cdc0f56c0c5f4a84ac1c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"signer\":\"dcl:explorer\",\"intent\":\"x\"}"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {
+    "canonicalMetadataKeys": [
+     "signer"
+    ]
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xaa55df7630cd325aa0b35eee7e2d78028cf5c557",
+    "metadata": {
+     "signer": "dcl:explorer",
+     "intent": "x"
+    }
+   }
+  },
+  {
+   "name": "cf: reordered keys +canonicalMetadataKeys",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.157Z\",\"signature\":\"0xe659f11e19056f41af312d587778cd304561e53d3aa522c3f7f2e5fc1806021f56b902adda8645688f238ece14ad8a0c2257c333dccc796c3dc2c45cb93b47b81b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"intent\\\":\\\"x\\\",\\\"signer\\\":\\\"dcl:explorer\\\"}\",\"signature\":\"0x0fb706c4c91817cb92656760986c39ab3d8e7af618a86caf0d78463d32dc5c1a04edff0630ae1fe7d4cbdf2543d899b752939b7194ebcae2045365a31f79b5411c\"}"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"intent\":\"x\",\"signer\":\"dcl:explorer\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {
+    "canonicalMetadataKeys": [
+     "signer"
+    ]
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "intent": "x",
+     "signer": "dcl:explorer"
+    }
+   }
+  },
+  {
+   "name": "th: mixed-case metadata +canonicalMetadataKeys",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xAa55Df7630cD325Aa0B35eeE7E2D78028cf5C557\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x4d0419c3fbfeA8fA48b7DB4faD38618aA73107ae\\nExpiration: 2026-11-18T13:15:12.159Z\",\"signature\":\"0x3ae952d9b54087c86d25dc71abb79b887357c8fa9647868f002d782601743a8965fa8c781686bebc26cdd60e063feaf669a50646869344ec997d9e7e6d82c4091c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"Signer\\\":\\\"DCL:Explorer\\\",\\\"realmName\\\":\\\"Example.dcl.eth\\\",\\\"sceneId\\\":\\\"QmAbCdEf\\\"}\",\"signature\":\"0xfb6215a2a37a487414fb738d9a4b6773c278087df88f9953d3a58cbe145305e416b347c30928f1b2dd194eaa613d102a997bafcd15d789e7f7b4fc3971995de11b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"Signer\":\"DCL:Explorer\",\"realmName\":\"Example.dcl.eth\",\"sceneId\":\"QmAbCdEf\"}"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {
+    "canonicalMetadataKeys": [
+     "signer"
+    ]
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xaa55df7630cd325aa0b35eee7e2d78028cf5c557",
+    "metadata": {
+     "Signer": "DCL:Explorer",
+     "realmName": "Example.dcl.eth",
+     "sceneId": "QmAbCdEf"
+    }
+   }
+  },
+  {
+   "name": "th: uppercase path +canonicalMetadataKeys",
+   "method": "GET",
+   "path": "/V1/Users/0xAbC/Profile",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xAa55Df7630cD325Aa0B35eeE7E2D78028cf5C557\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x4d0419c3fbfeA8fA48b7DB4faD38618aA73107ae\\nExpiration: 2026-11-18T13:15:12.159Z\",\"signature\":\"0x3ae952d9b54087c86d25dc71abb79b887357c8fa9647868f002d782601743a8965fa8c781686bebc26cdd60e063feaf669a50646869344ec997d9e7e6d82c4091c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/users/0xabc/profile:1795007112143:{}\",\"signature\":\"0x7dc29a6f38d31b9fcf5bde2924fdf16cc6cf2fbf18e59a8c79f05b647cadeb1b21e6446e2630efc763b06cbb590e37bad2925dc0a18c58ff1cf9911582a5e7c81c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/V1/Users/0xAbC/Profile",
+   "options": {
+    "canonicalMetadataKeys": [
+     "signer"
+    ]
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xaa55df7630cd325aa0b35eee7e2d78028cf5c557",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "th-direct: GET +canonicalMetadataKeys",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xAa55Df7630cD325Aa0B35eeE7E2D78028cf5C557\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x4d0419c3fbfeA8fA48b7DB4faD38618aA73107ae\\nExpiration: 2026-11-18T13:15:12.159Z\",\"signature\":\"0x3ae952d9b54087c86d25dc71abb79b887357c8fa9647868f002d782601743a8965fa8c781686bebc26cdd60e063feaf669a50646869344ec997d9e7e6d82c4091c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x8a7212c67f0f1efefe27f36ad41adc7e9c44afcb87f674652ffc5878d22779b67378d9abe15bc2008f5e58a30bd79c2fe61dfd1ed62a2524a3aac758c5e0cbcc1c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {
+    "canonicalMetadataKeys": [
+     "signer"
+    ]
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xaa55df7630cd325aa0b35eee7e2d78028cf5c557",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "cf: mixed-case metadata +canonicalMetadataKeys",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.157Z\",\"signature\":\"0xe659f11e19056f41af312d587778cd304561e53d3aa522c3f7f2e5fc1806021f56b902adda8645688f238ece14ad8a0c2257c333dccc796c3dc2c45cb93b47b81b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"Signer\\\":\\\"DCL:Explorer\\\",\\\"realmName\\\":\\\"Example.dcl.eth\\\",\\\"sceneId\\\":\\\"QmAbCdEf\\\"}\",\"signature\":\"0xb72bc0c49acfba7dd10044b637d9b4fd4d39bd4af2d1bcedca0c986905e1b5b96443a35a30aa5ea1b3868b9123e346e0058daa1ddebcbbc14fdc309e7784b1271c\"}"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"Signer\":\"DCL:Explorer\",\"realmName\":\"Example.dcl.eth\",\"sceneId\":\"QmAbCdEf\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {
+    "canonicalMetadataKeys": [
+     "signer"
+    ]
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "Signer": "DCL:Explorer",
+     "realmName": "Example.dcl.eth",
+     "sceneId": "QmAbCdEf"
+    }
+   }
+  },
+  {
+   "name": "cf: Latin-1 metadata +canonicalMetadataKeys",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.157Z\",\"signature\":\"0xe659f11e19056f41af312d587778cd304561e53d3aa522c3f7f2e5fc1806021f56b902adda8645688f238ece14ad8a0c2257c333dccc796c3dc2c45cb93b47b81b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"intent\\\":\\\"x\\\",\\\"realm\\\":{\\\"serverName\\\":\\\"niño\\\"}}\",\"signature\":\"0x37f2b636cdec37c090652e34a5e0a193641a3d9d543ef2652ea84a25795038652095e3d2e1e0e002f5ec9bcabb68ec1278773a4d71236f8be939f5799264cdb41b\"}"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"intent\":\"x\",\"realm\":{\"serverName\":\"niño\"}}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {
+    "canonicalMetadataKeys": [
+     "signer"
+    ]
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "intent": "x",
+     "realm": {
+      "serverName": "niño"
+     }
+    }
+   }
+  },
+  {
+   "name": "cf: path with query +canonicalMetadataKeys",
+   "method": "GET",
+   "path": "/v1/items",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.157Z\",\"signature\":\"0xe659f11e19056f41af312d587778cd304561e53d3aa522c3f7f2e5fc1806021f56b902adda8645688f238ece14ad8a0c2257c333dccc796c3dc2c45cb93b47b81b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/items:1795007112143:{}\",\"signature\":\"0x3766b7e89e7dcfd92334886654d0381021f5a9bf22bd09bd370f45d9546094cd4d26adb709d560ed5872ff28206d89dc3c5cec78b60299e1971159e0a167fe991c\"}"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ]
+   ],
+   "local": "/v1/items",
+   "options": {
+    "canonicalMetadataKeys": [
+     "signer"
+    ]
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "th: path with query, signed with it +canonicalMetadataKeys",
+   "method": "GET",
+   "path": "/v1/items",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xAa55Df7630cD325Aa0B35eeE7E2D78028cf5C557\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x4d0419c3fbfeA8fA48b7DB4faD38618aA73107ae\\nExpiration: 2026-11-18T13:15:12.159Z\",\"signature\":\"0x3ae952d9b54087c86d25dc71abb79b887357c8fa9647868f002d782601743a8965fa8c781686bebc26cdd60e063feaf669a50646869344ec997d9e7e6d82c4091c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/items?limit=10:1795007112143:{}\",\"signature\":\"0x3f85c0f66e2d954e9e43aef83f2f7e7b76665453727d91993ac50e525cc31c60266b494b27e56071b4606c25e22c58ee7cdc5920dc32b9951f7fff08a284e54e1b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/items",
+   "options": {
+    "canonicalMetadataKeys": [
+     "signer"
+    ]
+   },
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "cf: uppercase path +canonicalMetadataKeys",
+   "method": "GET",
+   "path": "/V1/Users/0xAbC/Profile",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.157Z\",\"signature\":\"0xe659f11e19056f41af312d587778cd304561e53d3aa522c3f7f2e5fc1806021f56b902adda8645688f238ece14ad8a0c2257c333dccc796c3dc2c45cb93b47b81b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/users/0xabc/profile:1795007112143:{}\",\"signature\":\"0x0c5555d675791384f70899cdae2eae549daa288957b47a8e7c3f4791778f528b2f92b3c5086b620881917b4e22d778c55e4eae1a85ee15d414a03358c17e0dff1c\"}"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ]
+   ],
+   "local": "/V1/Users/0xAbC/Profile",
+   "options": {
+    "canonicalMetadataKeys": [
+     "signer"
+    ]
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "cf: lowercase method +canonicalMetadataKeys",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.157Z\",\"signature\":\"0xe659f11e19056f41af312d587778cd304561e53d3aa522c3f7f2e5fc1806021f56b902adda8645688f238ece14ad8a0c2257c333dccc796c3dc2c45cb93b47b81b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"signer\\\":\\\"dcl:explorer\\\",\\\"intent\\\":\\\"x\\\"}\",\"signature\":\"0xc3f0022897294ac7b6c5bbf573b78ca422a574da0ba0a7dca582576362949e0237b921740cf335912cfb67d9814fb5dbb1eba6bee48b53617eb460b90608cad51b\"}"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"signer\":\"dcl:explorer\",\"intent\":\"x\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {
+    "canonicalMetadataKeys": [
+     "signer"
+    ]
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "signer": "dcl:explorer",
+     "intent": "x"
+    }
+   }
+  },
+  {
+   "name": "x-original-path: gateway prefix",
+   "method": "POST",
+   "path": "/v1/x",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.157Z\",\"signature\":\"0xe659f11e19056f41af312d587778cd304561e53d3aa522c3f7f2e5fc1806021f56b902adda8645688f238ece14ad8a0c2257c333dccc796c3dc2c45cb93b47b81b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/social-api/v1/x:1795007112143:{\\\"signer\\\":\\\"dcl:explorer\\\",\\\"intent\\\":\\\"x\\\"}\",\"signature\":\"0x1a7767b44347fb63a22e9e829eeeed1aeb69964a48faafbbdc3c632d2a5598f94daf08e56a270bd07d6d0f5f739451fd3edd5fcfcdd51d55fba73056841adb4d1b\"}"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"signer\":\"dcl:explorer\",\"intent\":\"x\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-original-path",
+     "/social-api/v1/x?foo=1"
+    ]
+   ],
+   "local": "/v1/x",
+   "options": {},
+   "rust": {
+    "status": 200,
+    "reason": "x-original-path names the path the client signed"
+   },
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "x-original-path: another route",
+   "method": "POST",
+   "path": "/v1/x",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.157Z\",\"signature\":\"0xe659f11e19056f41af312d587778cd304561e53d3aa522c3f7f2e5fc1806021f56b902adda8645688f238ece14ad8a0c2257c333dccc796c3dc2c45cb93b47b81b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/other/v1/y:1795007112143:{\\\"signer\\\":\\\"dcl:explorer\\\",\\\"intent\\\":\\\"x\\\"}\",\"signature\":\"0xbdab0ea2eb36086d9addf454edad805e682d86a244b62e2d87a7adb07971d4460deb65b7f80927a85e73397fb815e127d4f6c3e1d38b0a8e918d4fa49dcc661e1b\"}"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"signer\":\"dcl:explorer\",\"intent\":\"x\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-original-path",
+     "/other/v1/y"
+    ]
+   ],
+   "local": "/v1/x",
+   "options": {},
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "explorer: scene metadata",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"origin\\\":\\\"https://signcheck.example.invalid\\\",\\\"sceneId\\\":\\\"QmFakeSceneIdAbC\\\",\\\"parcel\\\":\\\"0,0\\\",\\\"tld\\\":\\\"org\\\",\\\"network\\\":\\\"mainnet\\\",\\\"isGuest\\\":false,\\\"realm\\\":{\\\"hostname\\\":\\\"signcheck.example.invalid\\\",\\\"protocol\\\":\\\"v3\\\",\\\"serverName\\\":\\\"Example.dcl.eth\\\"},\\\"signer\\\":\\\"decentraland-kernel-scene\\\"}\",\"signature\":\"0x74a25c2080d75301fc121ee1d82779920321c179ad5e5318538c19dfb6ec6510026c3fcfe88b72840137a49e36e248ce38f5bfaf84a937c6d9999530a59d61011b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"origin\":\"https://signcheck.example.invalid\",\"sceneId\":\"QmFakeSceneIdAbC\",\"parcel\":\"0,0\",\"tld\":\"org\",\"network\":\"mainnet\",\"isGuest\":false,\"realm\":{\"hostname\":\"signcheck.example.invalid\",\"protocol\":\"v3\",\"serverName\":\"Example.dcl.eth\"},\"signer\":\"decentraland-kernel-scene\"}"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "origin": "https://signcheck.example.invalid",
+     "sceneId": "QmFakeSceneIdAbC",
+     "parcel": "0,0",
+     "tld": "org",
+     "network": "mainnet",
+     "isGuest": false,
+     "realm": {
+      "hostname": "signcheck.example.invalid",
+      "protocol": "v3",
+      "serverName": "Example.dcl.eth"
+     },
+     "signer": "decentraland-kernel-scene"
+    }
+   }
+  },
+  {
+   "name": "explorer: empty metadata header",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:\",\"signature\":\"0x68f092abf42eef064e4bd876a9207816c27961685947727b4086aed73df721a3429853068ef4fd70a788bd248d21b385830adaf2c92f89840887a8a49dc283d71c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     ""
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 400
+   }
+  },
+  {
+   "name": "explorer: uppercase path",
+   "method": "GET",
+   "path": "/V1/Ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/V1/Ping",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "scene-cli: two-link chain",
+   "method": "PUT",
+   "path": "/world/example.dcl.eth/settings",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"put:/world/example.dcl.eth/settings:1795007112143:{\\\"access\\\":{\\\"type\\\":\\\"allow-list\\\",\\\"wallets\\\":[\\\"0xabc\\\"]}}\",\"signature\":\"0x4ed20b7cdcd92cc3339ba93245dd787f254af2c559b73ef710a729ea8f5e5e2c252dccba0aabd258d40c5b69fda1bfcb94a604033dbf280302b369227a6f5a4f1c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"access\":{\"type\":\"allow-list\",\"wallets\":[\"0xabc\"]}}"
+    ]
+   ],
+   "local": "/world/example.dcl.eth/settings",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "access": {
+      "type": "allow-list",
+      "wallets": [
+       "0xabc"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "scene-cli storage: folded payload",
+   "method": "PUT",
+   "path": "/values/high-score",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"put:/values/high-score:1795007112143:{\\\"realm\\\":{\\\"servername\\\":\\\"example.dcl.eth\\\"},\\\"realmname\\\":\\\"example.dcl.eth\\\",\\\"parcel\\\":\\\"0,0\\\"}\",\"signature\":\"0x4568676b9d01b33736147939f40c08b06bb558097606bfc9b6146252354376ae618c031a10ffd8e0bd5bff178699f62d8565f750df4e56ded652e1b0cd9915541b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"realm\":{\"serverName\":\"example.dcl.eth\"},\"realmName\":\"example.dcl.eth\",\"parcel\":\"0,0\"}"
+    ]
+   ],
+   "local": "/values/high-score",
+   "options": {},
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "scene-cli storage: folded payload +canonicalMetadataKeys",
+   "method": "PUT",
+   "path": "/values/high-score",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"put:/values/high-score:1795007112143:{\\\"realm\\\":{\\\"servername\\\":\\\"example.dcl.eth\\\"},\\\"realmname\\\":\\\"example.dcl.eth\\\",\\\"parcel\\\":\\\"0,0\\\"}\",\"signature\":\"0x4568676b9d01b33736147939f40c08b06bb558097606bfc9b6146252354376ae618c031a10ffd8e0bd5bff178699f62d8565f750df4e56ded652e1b0cd9915541b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"realm\":{\"serverName\":\"example.dcl.eth\"},\"realmName\":\"example.dcl.eth\",\"parcel\":\"0,0\"}"
+    ]
+   ],
+   "local": "/values/high-score",
+   "options": {
+    "canonicalMetadataKeys": [
+     "signer"
+    ]
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "realm": {
+      "serverName": "example.dcl.eth"
+     },
+     "realmName": "example.dcl.eth",
+     "parcel": "0,0"
+    }
+   }
+  },
+  {
+   "name": "scene-cli storage: folded lowercase payload",
+   "method": "PUT",
+   "path": "/values/high-score",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"put:/values/high-score:1795007112143:{\\\"parcel\\\":\\\"0,0\\\"}\",\"signature\":\"0x5565ef42e791376f1f702097c5cdfeb164761a58d523196c715e29399d9a834d79ede1e8e7dec62a2562ebe689c6ce207727a7a273a69637c99bd2b65c86958d1c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"parcel\":\"0,0\"}"
+    ]
+   ],
+   "local": "/values/high-score",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "parcel": "0,0"
+    }
+   }
+  },
+  {
+   "name": "raw: whitespace in metadata",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{ \\\"intent\\\" :\\t\\\"x\\\" ,  \\\"signer\\\":\\\"dcl:explorer\\\" }\",\"signature\":\"0xd53013ffc50a6696994eeb1a6d6a9f740cbc852ed78edb63e6c8c7067b9ba60e7b3b1c64572fb7a1742b5beb0dc8c484f0e5a9105f6d2f8d25703145dfb6b8ca1b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{ \"intent\" :\t\"x\" ,  \"signer\":\"dcl:explorer\" }"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "intent": "x",
+     "signer": "dcl:explorer"
+    }
+   }
+  },
+  {
+   "name": "raw: re-spaced after signing",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"intent\\\":\\\"x\\\"}\",\"signature\":\"0x6b4a9a5fd4c2c0de6764e3a2d694f60803cd196b302a101463c38ab22e3b84b14dc629420bfdbf6f08265278d1b6a370f5f4d1090ac75648047df63092f3b0441c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{ \"intent\": \"x\" }"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {},
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "raw: re-cased after signing",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"intent\\\":\\\"x\\\"}\",\"signature\":\"0x6b4a9a5fd4c2c0de6764e3a2d694f60803cd196b302a101463c38ab22e3b84b14dc629420bfdbf6f08265278d1b6a370f5f4d1090ac75648047df63092f3b0441c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"Intent\":\"x\"}"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {},
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "raw: re-cased after signing +canonicalMetadataKeys",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"intent\\\":\\\"x\\\"}\",\"signature\":\"0x6b4a9a5fd4c2c0de6764e3a2d694f60803cd196b302a101463c38ab22e3b84b14dc629420bfdbf6f08265278d1b6a370f5f4d1090ac75648047df63092f3b0441c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"Intent\":\"x\"}"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {
+    "canonicalMetadataKeys": [
+     "signer"
+    ]
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "Intent": "x"
+    }
+   }
+  },
+  {
+   "name": "metadata null",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:null\",\"signature\":\"0x1ecc46627e85130916371960f6ab1042ab6db84f4a37895404f5cc48240b24ef5bb2f79e95f9d9f6633b11ab2f3e86e6c1c50c7c90f7d9d8e38893b351b257c11b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "null"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "metadata absent",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:\",\"signature\":\"0x68f092abf42eef064e4bd876a9207816c27961685947727b4086aed73df721a3429853068ef4fd70a788bd248d21b385830adaf2c92f89840887a8a49dc283d71c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "metadata absent, signed as {}",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "metadata empty string",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:\",\"signature\":\"0x68f092abf42eef064e4bd876a9207816c27961685947727b4086aed73df721a3429853068ef4fd70a788bd248d21b385830adaf2c92f89840887a8a49dc283d71c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     ""
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 400
+   }
+  },
+  {
+   "name": "metadata array",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:[]\",\"signature\":\"0x0700b6e0e73c371859da5c8b80a2a1e938de79dcff963fefc0cc5cf0df62ceb322fde8393d6d337a4bf9ab0a7aaf5532b97c4229d88398be6abe7f2d461daa041b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "[]"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 400
+   }
+  },
+  {
+   "name": "metadata header repeated",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"a\\\":1}\",\"signature\":\"0x80a579ff963085c35bf9959630e34400ea53e12c12a2d6cea6e35c11adb5a3bf41fcc1097a6ae9c4bfa6c734520d5ae03d98306d04cc8e0fe2cf1ab429d264641c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"a\":1}"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"a\":1}"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {},
+   "expected": {
+    "status": 400
+   }
+  },
+  {
+   "name": "validator: scene refused",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"signer\\\":\\\"decentraland-kernel-scene\\\"}\",\"signature\":\"0x7e400f7fbcbdbfd6f8db2c98316c3f6e767e758d46bd105f7e23af1ab4c4ad3f2a40ca8e82e0d7cdcb6c9ef69cadcc03287518bb21218c4842da5f370642bb321b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"signer\":\"decentraland-kernel-scene\"}"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {
+    "metadataValidator": "rejectIfSigner:decentraland-kernel-scene"
+   },
+   "expected": {
+    "status": 400
+   }
+  },
+  {
+   "name": "validator: explorer passes",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"signer\\\":\\\"dcl:explorer\\\"}\",\"signature\":\"0x9f8dcfb6973f975b3024488580e3573ad358db9968a2a1a1a3630cc87cc7727831b5f027d3e8ebf0d768ecab07adf1f1cc8a39fb8298b8735d64383ab2a0c97c1c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"signer\":\"dcl:explorer\"}"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {
+    "metadataValidator": "rejectIfSigner:decentraland-kernel-scene"
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "signer": "dcl:explorer"
+    }
+   }
+  },
+  {
+   "name": "validator: required signer",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"signer\\\":\\\"decentraland-kernel-scene\\\"}\",\"signature\":\"0x7e400f7fbcbdbfd6f8db2c98316c3f6e767e758d46bd105f7e23af1ab4c4ad3f2a40ca8e82e0d7cdcb6c9ef69cadcc03287518bb21218c4842da5f370642bb321b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"signer\":\"decentraland-kernel-scene\"}"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {
+    "metadataValidator": "requireSigner:decentraland-kernel-scene"
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "signer": "decentraland-kernel-scene"
+    }
+   }
+  },
+  {
+   "name": "legacy payload",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"signer\\\":\\\"dcl:explorer\\\",\\\"realmname\\\":\\\"example.dcl.eth\\\"}\",\"signature\":\"0x32d459866530f7ff53c2c34aa9ef193c8ea54efc9b515ba8ca57143ce1ffe68332eb7a296b7014872f78bf47555d6b4537ca4822ed8bc96e05a58ad69edfa1021c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"signer\":\"dcl:explorer\",\"realmName\":\"Example.dcl.eth\"}"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {},
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "legacy payload +canonicalMetadataKeys",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"signer\\\":\\\"dcl:explorer\\\",\\\"realmname\\\":\\\"example.dcl.eth\\\"}\",\"signature\":\"0x32d459866530f7ff53c2c34aa9ef193c8ea54efc9b515ba8ca57143ce1ffe68332eb7a296b7014872f78bf47555d6b4537ca4822ed8bc96e05a58ad69edfa1021c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"signer\":\"dcl:explorer\",\"realmName\":\"Example.dcl.eth\"}"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {
+    "canonicalMetadataKeys": [
+     "signer"
+    ]
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "signer": "dcl:explorer",
+     "realmName": "Example.dcl.eth"
+    }
+   }
+  },
+  {
+   "name": "legacy payload, folded key",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"signer\\\":\\\"dcl:explorer\\\"}\",\"signature\":\"0x9f8dcfb6973f975b3024488580e3573ad358db9968a2a1a1a3630cc87cc7727831b5f027d3e8ebf0d768ecab07adf1f1cc8a39fb8298b8735d64383ab2a0c97c1c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"Signer\":\"dcl:explorer\"}"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {
+    "canonicalMetadataKeys": [
+     "signer"
+    ]
+   },
+   "expected": {
+    "status": 400
+   }
+  },
+  {
+   "name": "legacy payload, nested path",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"realm\\\":{\\\"servername\\\":\\\"a\\\"}}\",\"signature\":\"0xe1e4222d90bc3843867052e47fac8254cfca790cd4d3ebdb92da91e48521747819970d3bede5044536363bd5457471951ccde7454da76fc53cec03595fe53f6f1b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"realm\":{\"serverName\":\"a\"}}"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {
+    "canonicalMetadataKeys": [
+     "realm.serverName"
+    ]
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "realm": {
+      "serverName": "a"
+     }
+    }
+   }
+  },
+  {
+   "name": "legacy payload, folded nested key",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"realm\\\":{\\\"servername\\\":\\\"a\\\"}}\",\"signature\":\"0xe1e4222d90bc3843867052e47fac8254cfca790cd4d3ebdb92da91e48521747819970d3bede5044536363bd5457471951ccde7454da76fc53cec03595fe53f6f1b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"realm\":{\"servername\":\"a\"}}"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {
+    "canonicalMetadataKeys": [
+     "realm.serverName"
+    ]
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {
+     "realm": {
+      "servername": "a"
+     }
+    }
+   }
+  },
+  {
+   "name": "expired delegation, folded key +canonicalMetadataKeys",
+   "method": "POST",
+   "path": "/v1/action",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:05:12.142Z\",\"signature\":\"0xdcaeaf29ab020868dd029e4ef77bf3bec22366ca1e0ef5afeae793f4d077ec3c241d2c85872c3170b89462e6ba087f954a6cd2d290a012ecddf08f5cdd870ebf1b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/action:1795007112143:{\\\"Signer\\\":\\\"x\\\"}\",\"signature\":\"0x8fda35d3140305899f280cb90ef0a3d53688d420dcfd7a9d0e55033feabe42c11db10821b86828668acf2335a2ece9e5455dc3c57acff0747ddff4bbac472caa1c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{\"Signer\":\"x\"}"
+    ]
+   ],
+   "local": "/v1/action",
+   "options": {
+    "canonicalMetadataKeys": [
+     "signer"
+    ]
+   },
+   "expected": {
+    "status": 400
+   }
+  },
+  {
+   "name": "chain: link 1 empty",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     ""
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 400
+   }
+  },
+  {
+   "name": "chain: link 2 empty, link 3 present",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     ""
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ],
+    [
+     "x-identity-auth-chain-3",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "chain: link at index 10",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ],
+    [
+     "x-identity-auth-chain-10",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 400
+   }
+  },
+  {
+   "name": "chain: empty link at index 10",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ],
+    [
+     "x-identity-auth-chain-10",
+     ""
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "chain: link at index 3, max 3",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ],
+    [
+     "x-identity-auth-chain-3",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {
+    "maxChainLength": 3
+   },
+   "expected": {
+    "status": 400
+   }
+  },
+  {
+   "name": "chain: three links, max 3",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {
+    "maxChainLength": 3
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "chain: link repeated",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 400
+   }
+  },
+  {
+   "name": "chain: not JSON",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 400
+   }
+  },
+  {
+   "name": "chain: SIGNER without signature",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 400
+   }
+  },
+  {
+   "name": "chain: unknown link type",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_THING\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "chain: one link",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 400
+   }
+  },
+  {
+   "name": "chain: signature without 0x",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "chain: high-s signature",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687bfe80c23bb826a3135bafb29a30b215d0bc0c3303546b0d8c20d62a016ee2255f1c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "rust": {
+    "status": 401,
+    "reason": "high-s signatures are refused"
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "chain: signed entity mid-chain",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"0xF7268508ef28c0910388172bC049c11a4a90326C\",\"signature\":\"0x04b912064dbab580e90ef0be094b67c57880c9f723e6ae1bc7a6b66611c331f071575abed6a604f21a73023be70e39fe8ab29f5baca78e451594a701c0ca69551b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x144b435c5630fd91091568451c56639d7f3cca621b26ad44e0c103a6ee81e7e350f6eef5d1e19aefada7e19d916157bf03342ea9a247f292f611adf037c9653e1c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "rust": {
+    "status": 401,
+    "reason": "only delegations sit between the SIGNER and the last link"
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "chain: identity only",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "chain: delegation expired",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:05:12.143Z\",\"signature\":\"0x7614da123583e2f6c71ea9593ee75ff69f77a00c3dc79dc013750d33d7dcd37204b67d50dd076f2d2e6f4639ac6a1be2fcdb7ac8781f01b857ea3145bae803d01b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "chain: delegation expires 1 ms later",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:05:12.144Z\",\"signature\":\"0x21c7909690c9a00a38835bcee546738b5a8da0c8eece78671803feb24e6a474b74c8ea52b29a181b2e0a4758bac90f6bb458528964efbdafe93511a014ac1f651c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "chain: two delegations",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x015359cD2DdA4c2F3136Fd291398cd5Ac10AA6B7\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x65c502b5cf0eb1e57d41d8255e50452ad7658097dcd844b414831be9b7cd75b51165f2d820f96f0f44e72da8e6d097574ad3a7732fcd16cd23a6a22bc6fa46d51c\"}"
+    ],
+    [
+     "x-identity-auth-chain-3",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x001ed21e2ab899010c3170948fd906a36ff4b506e81451871d52cae27fe432700dc3d74d1da82c458f61b304734ca455ff5da14fb9940333d4a4a20ab1a12ae01c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "chain: wrong key",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x001ed21e2ab899010c3170948fd906a36ff4b506e81451871d52cae27fe432700dc3d74d1da82c458f61b304734ca455ff5da14fb9940333d4a4a20ab1a12ae01c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "expiration: Thu Nov 19 2026 13:05:12 GMT+0000 (Coordinated Universal Time)",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: Thu Nov 19 2026 13:05:12 GMT+0000 (Coordinated Universal Time)\",\"signature\":\"0x344eeca57535c3ecac452f37e9e27cf7b2524c27268d3f64e77c9d2a4415a9e647738551be38328183fb3161f6a7de3edebd1ce43ada444248532f8dd722128f1b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "expiration: Thu, 19 Nov 2026 13:05:12 GMT",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: Thu, 19 Nov 2026 13:05:12 GMT\",\"signature\":\"0x4ad5ba251a8c26ab20144aff9751ba75f4c758aef27146ad67512e4346a94d6f7685acaf8d0b3c20c5e4df116276ec199071c2ebdfbfebd9f66cb1e8f59106fe1c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "expiration: 2026-11-19",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-19\",\"signature\":\"0x1a71842e0dd7623e2550a04d4eba33475a2164a2c54cb1991571e8d776d82d3c7e8f973fd7c0565868ad44b9a4274d4ae7763764621c11b5b1d8a75c890792631c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "expiration: 2026-11-19T13:05:12",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-19T13:05:12\",\"signature\":\"0x1e08780183b55f10f663e584fba299d8336101c9269130fc2ded90fad648682a131cf3e28ee751dbd2256d86a439a3a3c2141dd39f94976c8e32ec81bdcde9221c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "expiration: Feb 13, 2099 3:31 PM",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: Feb 13, 2099 3:31 PM\",\"signature\":\"0x16285d500bf3473fa93373422b5aed6dd44c6b43bfbfb359e3a13307fa4c96b142eea13a60703c3219410d3280b8d5128e8a5844612e68bf032413d60cf9e09e1c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "expiration: next Tuesday",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: next Tuesday\",\"signature\":\"0xadd5e76c61438376e53cac79f268be526fa304f5cacd1804b44883a05ef1dc620df64344b95734ac6d58631fbc08e175281c0c1da92d94207192595c1efced001b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "timestamp: absent",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping::{}\",\"signature\":\"0xf8229cb7746f9a8e0583a26bf543d9e010142d0f40a7704c72a0598a846bdc0e41f430bea2ab85788842f982ec1ccd8db895170fd6b75bf5ad98de75556eb6881c\"}"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "timestamp: empty",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping::{}\",\"signature\":\"0xf8229cb7746f9a8e0583a26bf543d9e010142d0f40a7704c72a0598a846bdc0e41f430bea2ab85788842f982ec1ccd8db895170fd6b75bf5ad98de75556eb6881c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     ""
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "timestamp: not a number",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:soon:{}\",\"signature\":\"0xbdce9531e567adc72b9b273f21924e0274d5e94e7e916a9e1fcd6529c658f0251082a15e641ec6c628ed44d193a12586017ea4311ef4a513ba1694523fa417711c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "soon"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 400
+   }
+  },
+  {
+   "name": "timestamp: exponent",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1e3:{}\",\"signature\":\"0x112dc1cc5a51c2cde357c7596a39656ca5e3b4b8c4d10dc68e93625f3e8b14671d29ef8898faa3dba72377657bf4f0691554fd2480f6998df54055d414a9943d1b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1e3"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "rust": {
+    "status": 400,
+    "reason": "digits only"
+   },
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "timestamp: leading space",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping: 1795007112143:{}\",\"signature\":\"0x12475c315c57f49e88d8dffb36c25ecc7f6c7ebff747a28a3225dffb160a73146f0045fcb26c44474341192d59d26448a6d1d46f86f74a702975fdb6775a49db1b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     " 1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "rust": {
+    "status": 400,
+    "reason": "digits only"
+   },
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "timestamp: negative",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:-5:{}\",\"signature\":\"0xe88131420055bb4e436746748ccf4ecc82e6d8df69c0914c0fbba3763a0c1b883013d5132ebf77838223eb0cb5da0320d2674ade182cb8385bcea6420fd4ee0c1c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "-5"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "rust": {
+    "status": 400,
+    "reason": "digits only"
+   },
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "timestamp: decimal",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143.0:{}\",\"signature\":\"0x6694c0b341dc830a9808fe9faf9ca5752a7ad61dece6c9dc93a855ced5a8538703e9aa1118d8b51c01fae1c604b022c924475c6c66badd27b0e8dd8649deba2d1c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143.0"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "rust": {
+    "status": 400,
+    "reason": "digits only"
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "timestamp: leading zero",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:01795007112143:{}\",\"signature\":\"0x4433cbb20eb9e291e9974c7b7cf64f12f8d37a2c289bf4b5c8c35bc685c21cf8136e4a4abf5135494b4ab99bf063ed300f9772a0ba73e1e19c5087080e35678f1c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "01795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "timestamp: window start",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007052143:{}\",\"signature\":\"0x6e9fafbd29afdbafd5a3a88a29821359be92e3e1e48e89652ff67262bea526b914e2d18681031c22f50bd5be81ffc7db7360d3b4cf14cce9ef8346487b1793c51c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007052143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "timestamp: expired by 1 ms",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007052142:{}\",\"signature\":\"0xc4c9d3169e8050216e180b198c53e520b0c9087e74a1dc5d11704c47fa5624033f9ce8b1d28c031cff2d577db791d6560f29ca414b83a07ecc88aa08ff8fb3311c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007052142"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "timestamp: window end",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007172143:{}\",\"signature\":\"0x1fc97041a9855d2582d8f990915f846433dab9e0de5a7aa55fbf0465879dc9e432664a27c1b3201c165051a78a20cf14ac4d5b420c3fee8d220442a6484fe6fb1c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007172143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "timestamp: future by 1 ms",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007172144:{}\",\"signature\":\"0x72f6f57537c49c5174bd411430f20c7c8ba5963557ec5dc5ac7222ced853e0cf0a78a5c95399cb8401d960674488efa58a26b778db116b9031c918d48d6269381b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007172144"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "timestamp: huge",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:999999999999999999999999999999:{}\",\"signature\":\"0x0f05843917c8a2396b1f4bb53d9cb79d4b401a528921a061c9160219757da0c3462c4b2e5ae5629785e47d3d54509f31e32707268944d6f22ab291b4c27d25721c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "999999999999999999999999999999"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "timestamp: repeated",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143, 1795007112143:{}\",\"signature\":\"0x2b79fe039dd88401297d99d185499a6ef7c9b862fbf722bcd4c3e17a630de8762e0ffd199411ccd4be4e056b0763ea600c52f5818f1c5ec45cef64c1ef6f9a011c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143, 1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 400
+   }
+  },
+  {
+   "name": "timestamp: 5 min window",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795006813143:{}\",\"signature\":\"0x7793a7906fbbf5f0e6c1096a774cf63ec717261ea90f87704a7000c02e0f131b1c363029447bf20203ace1742f4ea97d5a5607b207fdb0f731e6965fb9a755711b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795006813143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {
+    "expiration": 300000
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "timestamp: 5 min window, 61 s ahead",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007173143:{}\",\"signature\":\"0x46dc5983502d6a0fd204dc1c720e181759aabfb2502e73083d425444f414c70a4d868ee1e0bb27d08873ade3bc59a8503f3e5da70b940576aafe4494cd4763c91b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007173143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {
+    "expiration": 300000
+   },
+   "rust": {
+    "status": 401,
+    "reason": "the future side stops at 60 s"
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "eip1654: accepted",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0x1234567890123456789012345678901234567890\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EIP_1654_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {
+    "provider": "accept"
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0x1234567890123456789012345678901234567890",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "eip1654: refused",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0x1234567890123456789012345678901234567890\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EIP_1654_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {
+    "provider": "reject"
+   },
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "eip1654: rpc down",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0x1234567890123456789012345678901234567890\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EIP_1654_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {
+    "provider": "down"
+   },
+   "expected": {
+    "status": 503
+   }
+  },
+  {
+   "name": "eip1654: precompile address",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0x00000000000000000000000000000000000000ff\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EIP_1654_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795007112143:{}\",\"signature\":\"0x873f4d1c55918e8201b17b7dc919cea3298d8e10b1ce42a4117351be85d4687b017f3dc447d95ceca4504d65cf4dea2dfea2a9e35add92af9efc348b61541be21b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {
+    "provider": "accept"
+   },
+   "rust": {
+    "status": 401,
+    "reason": "addresses 0x00..00 to 0x00..ff are not asked"
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0x00000000000000000000000000000000000000ff",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "scoped: granted",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\\nAllow: insights:logs-read\\nAllow: other:x\",\"signature\":\"0xde76a48a77cfd4ae822a59491e8cfd0b60022d7d9aa7f59f571e5ac6bb764d1d33b65ebbf5c968735fea95f2578f4fac29b1249d4f6df4a3589c810b28d735b21b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read"
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {},
+    "scope": {
+     "service": "insights",
+     "expiration": 1795007712143,
+     "grants": [
+      {
+       "service": "insights",
+       "operation": "logs-read"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "scoped: wildcard",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\\nAllow: insights:*\",\"signature\":\"0x39b2f5bea25419e72313056f1ab97cc97ca6d2a6c85089d99407b4a5209a75d9622a05f2bf0edc817cafc1c08bfe6bc139fc18034432acdc8b0353ce442e2f8b1b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read"
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {},
+    "scope": {
+     "service": "insights",
+     "expiration": 1795007712143,
+     "grants": [
+      {
+       "service": "insights",
+       "operation": "*"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "scoped: denied",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\\nAllow: insights:logs-write\",\"signature\":\"0x84a3e855ac9989b3a5f0a75df9994fe3ea46d35e19d995b8cd7224459ad4d5046440131afa419c460c5841cae70eeccc26822f7dd552818d608727120c8b5f091b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read"
+   },
+   "expected": {
+    "status": 403,
+    "code": "SCOPED_OPERATION_DENIED"
+   }
+  },
+  {
+   "name": "scoped: no service",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\\nAllow: insights:logs-read\",\"signature\":\"0xe7004f03973e50d67c3ac4bd4f6d53b23a55186fb33e1740f0808b6230c5a4831075f122524493d6bce37456c989da18d89abdc360ac9d7529bcc5af7771a8911c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {},
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "scoped: grants another service",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\\nAllow: other:logs-read\",\"signature\":\"0x74a9d8edd1bceceb6d82039e99fc0b8950a34192bc59efaf9431f1df1513e3216c9e8dea9aad45de9013af390e46c36a393939e90040e440212643c2f0eac22c1b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read"
+   },
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "scoped: no route operation",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\\nAllow: insights:logs-read\",\"signature\":\"0xe7004f03973e50d67c3ac4bd4f6d53b23a55186fb33e1740f0808b6230c5a4831075f122524493d6bce37456c989da18d89abdc360ac9d7529bcc5af7771a8911c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights"
+   },
+   "expected": {
+    "status": 403,
+    "code": "SCOPED_OPERATION_REQUIRED"
+   }
+  },
+  {
+   "name": "scoped: route operation undefined",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\\nAllow: insights:logs-read\",\"signature\":\"0xe7004f03973e50d67c3ac4bd4f6d53b23a55186fb33e1740f0808b6230c5a4831075f122524493d6bce37456c989da18d89abdc360ac9d7529bcc5af7771a8911c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": {
+     "fn": "none"
+    }
+   },
+   "expected": {
+    "status": 403,
+    "code": "SCOPED_OPERATION_REQUIRED"
+   }
+  },
+  {
+   "name": "scoped: lifetime at cap",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-19T13:05:12.143Z\\nAllow: insights:logs-read\",\"signature\":\"0xb1360ac86a3670ba7e9f1d7ab4c6fbded9dfc47ff2f9d503cae88364f47f6f5b2058c94950024b4896b089cc29cd024a130deea4f0c7eb3e8421b20a8e77f9271c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read"
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {},
+    "scope": {
+     "service": "insights",
+     "expiration": 1795093512143,
+     "grants": [
+      {
+       "service": "insights",
+       "operation": "logs-read"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "scoped: lifetime over cap",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-19T13:05:12.144Z\\nAllow: insights:logs-read\",\"signature\":\"0x0a91e1d74bbfd4d9b402ac43e8081492598be89848adcd5d8430d097abe383467d14665a0ea2b387759c684ecca142fc0c64aeed23ca58f2a1c29a7dd90db4771c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read"
+   },
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "scoped: lifetime 1h cap",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-18T14:05:12.144Z\\nAllow: insights:logs-read\",\"signature\":\"0x72cff45d30bb6892de7972eaa677cf8089b4d598d98fe97fcdcb15310123769555cb7fe7d993d6f441f49879c4b307a31c1baaf601226ecdda693f0c8d38a3761c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read",
+    "maxScopedLoginLifetime": 3600000
+   },
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "scoped: expired",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:05:12.143Z\\nAllow: insights:logs-read\",\"signature\":\"0xf438df4eeb051b8a2b536a57f77d1612993209c580014d8fa63b6e9cf9c78237775faab09fe1ead200880c4ca010d6c3d22a284dabe282faaa577363e30d035c1b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read"
+   },
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "scoped: resource granted",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\\nAllow: insights:logs-read for scene:a\",\"signature\":\"0x0b6de017d7b2a57a74614e02e67ccc8ca962c7369918875a7395372bda9e2a524fc7e1970471441797c345ab1b95aadbf3eabaa5d8bc14cf9389aecd1b261aa51c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read",
+    "resource": "scene:a"
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {},
+    "scope": {
+     "service": "insights",
+     "expiration": 1795007712143,
+     "grants": [
+      {
+       "service": "insights",
+       "operation": "logs-read",
+       "resource": "scene:a"
+      }
+     ]
+    },
+    "resource": "scene:a"
+   }
+  },
+  {
+   "name": "scoped: resource denied",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\\nAllow: insights:logs-read for scene:a\",\"signature\":\"0x0b6de017d7b2a57a74614e02e67ccc8ca962c7369918875a7395372bda9e2a524fc7e1970471441797c345ab1b95aadbf3eabaa5d8bc14cf9389aecd1b261aa51c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read",
+    "resource": "scene:b"
+   },
+   "expected": {
+    "status": 403,
+    "code": "SCOPED_OPERATION_DENIED"
+   }
+  },
+  {
+   "name": "scoped: grant limited, route has none",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\\nAllow: insights:logs-read for scene:a\",\"signature\":\"0x0b6de017d7b2a57a74614e02e67ccc8ca962c7369918875a7395372bda9e2a524fc7e1970471441797c345ab1b95aadbf3eabaa5d8bc14cf9389aecd1b261aa51c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read"
+   },
+   "expected": {
+    "status": 403,
+    "code": "SCOPED_OPERATION_DENIED"
+   }
+  },
+  {
+   "name": "scoped: resource unresolved",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\\nAllow: insights:logs-read\",\"signature\":\"0xe7004f03973e50d67c3ac4bd4f6d53b23a55186fb33e1740f0808b6230c5a4831075f122524493d6bce37456c989da18d89abdc360ac9d7529bcc5af7771a8911c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read",
+    "resource": {
+     "fn": "none"
+    }
+   },
+   "expected": {
+    "status": 403,
+    "code": "SCOPED_RESOURCE_REQUIRED"
+   }
+  },
+  {
+   "name": "scoped: resource throws",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\\nAllow: insights:logs-read\",\"signature\":\"0xe7004f03973e50d67c3ac4bd4f6d53b23a55186fb33e1740f0808b6230c5a4831075f122524493d6bce37456c989da18d89abdc360ac9d7529bcc5af7771a8911c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read",
+    "resource": {
+     "fn": "throw"
+    }
+   },
+   "expected": {
+    "status": 403,
+    "code": "SCOPED_RESOLUTION_FAILED"
+   }
+  },
+  {
+   "name": "scoped: resource malformed",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\\nAllow: insights:logs-read\",\"signature\":\"0xe7004f03973e50d67c3ac4bd4f6d53b23a55186fb33e1740f0808b6230c5a4831075f122524493d6bce37456c989da18d89abdc360ac9d7529bcc5af7771a8911c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read",
+    "resource": "scene a"
+   },
+   "expected": {
+    "status": 403,
+    "code": "SCOPED_RESOURCE_REQUIRED"
+   }
+  },
+  {
+   "name": "scoped: after a delegation",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x015359cD2DdA4c2F3136Fd291398cd5Ac10AA6B7\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0xe4c224b5546b27541863888b034476eb7c90597c3101ca9740f1eea1858b46d2042afd7dd67f5dee8be5c9dba85c42e0a6aadcb424c9b2d7e8b0d2aa3f36d2c01c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\\nAllow: insights:logs-read\",\"signature\":\"0x80b5d4b8a328a16ae18129f4ebff4deaea862021c45de093002f49045c93db9d6cda394e07682f6de4d70b5d15b1f29f7f716203b3c4cd0291edc01dc4b0593d1b\"}"
+    ],
+    [
+     "x-identity-auth-chain-3",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read"
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {},
+    "scope": {
+     "service": "insights",
+     "expiration": 1795007712143,
+     "grants": [
+      {
+       "service": "insights",
+       "operation": "logs-read"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "scoped: identity only",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\\nAllow: insights:logs-read\",\"signature\":\"0xe7004f03973e50d67c3ac4bd4f6d53b23a55186fb33e1740f0808b6230c5a4831075f122524493d6bce37456c989da18d89abdc360ac9d7529bcc5af7771a8911c\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read"
+   },
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "scoped: optional, denied",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\\nAllow: insights:logs-write\",\"signature\":\"0x84a3e855ac9989b3a5f0a75df9994fe3ea46d35e19d995b8cd7224459ad4d5046440131afa419c460c5841cae70eeccc26822f7dd552818d608727120c8b5f091b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read",
+    "optional": true
+   },
+   "expected": {
+    "status": 403,
+    "code": "SCOPED_OPERATION_DENIED"
+   }
+  },
+  {
+   "name": "full login: route with operation",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read"
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {}
+   }
+  },
+  {
+   "name": "full login: route resource",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read",
+    "resource": "scene:a"
+   },
+   "expected": {
+    "status": 200,
+    "auth": "0xe6c14034722e67020f9bc1f38763bf5167a6824a",
+    "metadata": {},
+    "resource": "scene:a"
+   }
+  },
+  {
+   "name": "full login: malformed resource",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read",
+    "resource": "scene a"
+   },
+   "expected": {
+    "status": 403,
+    "code": "SCOPED_RESOURCE_REQUIRED"
+   }
+  },
+  {
+   "name": "full login: resource unresolved",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read",
+    "resource": {
+     "fn": "none"
+    }
+   },
+   "expected": {
+    "status": 403,
+    "code": "SCOPED_RESOURCE_REQUIRED"
+   }
+  },
+  {
+   "name": "scoped: expiration not toISOString",
+   "method": "GET",
+   "path": "/v1/logs",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_SCOPED_EPHEMERAL\",\"payload\":\"Decentraland Scoped Login\\nEphemeral: 0x594e4b6143d5436425ae0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12Z\\nAllow: insights:logs-read\",\"signature\":\"0x87aabed17d21ee02dc6bb5a5cd8285edd6bd04be616f1ae985c498e2969fa20c2cdfaa5da85f50f080055fe78ab64e13029d551114c2f84408872adeb78a02f61c\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/logs:1795007112143:{}\",\"signature\":\"0xf6d31b2052c37985365b0d527db0894ef3d812077aa9a3f3d69cad274e76d176093904bc2c55a9c6feeb4ed678cd587d916f79a8f47b1fad3991fb7aad737d201b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795007112143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/logs",
+   "options": {
+    "service": "insights",
+    "operation": "logs-read"
+   },
+   "expected": {
+    "status": 401
+   }
+  },
+  {
+   "name": "optional: no headers",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [],
+   "local": "/v1/ping",
+   "options": {
+    "optional": true
+   },
+   "expected": {
+    "status": 200,
+    "anonymous": true
+   }
+  },
+  {
+   "name": "optional: expired",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [
+    [
+     "x-identity-auth-chain-0",
+     "{\"type\":\"SIGNER\",\"payload\":\"0xe6C14034722E67020F9bc1F38763bF5167A6824a\",\"signature\":\"\"}"
+    ],
+    [
+     "x-identity-auth-chain-1",
+     "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x594E4b6143d5436425aE0c92f686893af13b3fb9\\nExpiration: 2026-11-18T13:15:12.143Z\",\"signature\":\"0x599483ea7cb259ccdc434e02d016bf0d185b2082e331c05e73d4a4ce8d94738f115238c5d5614af0fbe1437c69ec3d2bcf4f376dc21e8724426d888c3cf3d5a61b\"}"
+    ],
+    [
+     "x-identity-auth-chain-2",
+     "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/ping:1795006992143:{}\",\"signature\":\"0x02ae42cdf8dfcc81a00581c97ae2e9589f3726e2d5ce5434c56114b14f18f77d35c23a77e8b3d1b5fbd8c7be550397d0733704537e9b204ebf09832cd4713d7d1b\"}"
+    ],
+    [
+     "x-identity-timestamp",
+     "1795006992143"
+    ],
+    [
+     "x-identity-metadata",
+     "{}"
+    ]
+   ],
+   "local": "/v1/ping",
+   "options": {
+    "optional": true
+   },
+   "expected": {
+    "status": 200,
+    "anonymous": true
+   }
+  },
+  {
+   "name": "no headers",
+   "method": "GET",
+   "path": "/v1/ping",
+   "headers": [],
+   "local": "/v1/ping",
+   "options": {},
+   "expected": {
+    "status": 400
+   }
+  }
+ ]
+}

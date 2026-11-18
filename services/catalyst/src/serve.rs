@@ -255,7 +255,12 @@ pub async fn serve(
     let eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>> = config
         .content
         .eth_rpc_url()?
-        .map(|url| crate::auth::cached_rpc_validator(url, http_client.raw().clone()));
+        .map(|url| {
+            // Its own client: a redirect would hand the check to another node.
+            let client = crate::auth::rpc_client().context("EIP-1654 RPC client")?;
+            anyhow::Ok(crate::auth::cached_rpc_validator(url, client))
+        })
+        .transpose()?;
 
     // The content validator of the local write path (src/content/validator):
     // the old catalyrst-validator rules over the ONE pool (the escrow

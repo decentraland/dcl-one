@@ -1,0 +1,3273 @@
+{
+ "generator": "node v24.18.0, TZ=UTC, Date.parse",
+ "cases": [
+  {
+   "input": "2020",
+   "expected": 1577836800000
+  },
+  {
+   "input": "2020-02",
+   "expected": 1580515200000
+  },
+  {
+   "input": "2020-02-13",
+   "expected": 1581552000000
+  },
+  {
+   "input": "+002020-02-13",
+   "expected": 1581552000000
+  },
+  {
+   "input": "-000001-01-01",
+   "expected": -62198755200000
+  },
+  {
+   "input": "-000000-01-01",
+   "expected": 978307200000
+  },
+  {
+   "input": "+275760-09-13",
+   "expected": 8640000000000000
+  },
+  {
+   "input": "+275760-09-13T00:00:00.000Z",
+   "expected": 8640000000000000
+  },
+  {
+   "input": "+275760-09-13T00:00:00.001Z",
+   "expected": null
+  },
+  {
+   "input": "-271821-04-20",
+   "expected": -8640000000000000
+  },
+  {
+   "input": "-271821-04-20T00:00:00.000Z",
+   "expected": -8640000000000000
+  },
+  {
+   "input": "-271821-04-19T23:59:59.999Z",
+   "expected": null
+  },
+  {
+   "input": "+999999-01-01",
+   "expected": null
+  },
+  {
+   "input": "0000-01-01",
+   "expected": -62167219200000
+  },
+  {
+   "input": "0049-01-01",
+   "expected": -60620832000000
+  },
+  {
+   "input": "0099-12-31",
+   "expected": -59011545600000
+  },
+  {
+   "input": "2020-02-13T18:31",
+   "expected": 1581618660000
+  },
+  {
+   "input": "2020-02-13T18:31Z",
+   "expected": 1581618660000
+  },
+  {
+   "input": "2020-02-13T18:31:10",
+   "expected": 1581618670000
+  },
+  {
+   "input": "2020-02-13T18:31:10Z",
+   "expected": 1581618670000
+  },
+  {
+   "input": "2020-02-13T18:31:10.334Z",
+   "expected": 1581618670334
+  },
+  {
+   "input": "2020-02-13T18:31:10.3Z",
+   "expected": 1581618670300
+  },
+  {
+   "input": "2020-02-13T18:31:10.33Z",
+   "expected": 1581618670330
+  },
+  {
+   "input": "2020-02-13T18:31:10.3345Z",
+   "expected": 1581618670334
+  },
+  {
+   "input": "2020-02-13T18:31:10.123456789Z",
+   "expected": 1581618670123
+  },
+  {
+   "input": "2020-02-13T18:31:10.0001234567Z",
+   "expected": 1581618670001
+  },
+  {
+   "input": "2020-02-13T18:31:10.000000001Z",
+   "expected": 1581618670000
+  },
+  {
+   "input": "2020-02-13T18:31:10.Z",
+   "expected": null
+  },
+  {
+   "input": "2020-02-13T18:31:10.000+03:00",
+   "expected": 1581607870000
+  },
+  {
+   "input": "2020-02-13T18:31:10-03:00",
+   "expected": 1581629470000
+  },
+  {
+   "input": "2020-02-13T18:31:10+0300",
+   "expected": 1581607870000
+  },
+  {
+   "input": "2020-02-13T18:31:10-0330",
+   "expected": 1581631270000
+  },
+  {
+   "input": "2020-02-13T18:31:10+24:00",
+   "expected": null
+  },
+  {
+   "input": "2020-02-13T18:31:10+23:59",
+   "expected": 1581532330000
+  },
+  {
+   "input": "2020-02-13T18:31:10+3:00",
+   "expected": null
+  },
+  {
+   "input": "2020-02-13T18:31:10+03",
+   "expected": null
+  },
+  {
+   "input": "2020-02-13T18:31:10+03:0",
+   "expected": null
+  },
+  {
+   "input": "2020-02-13T18:31:10+0360",
+   "expected": null
+  },
+  {
+   "input": "2020-02-13T18:31:10z",
+   "expected": 1581618670000
+  },
+  {
+   "input": "2020-02-13t18:31:10Z",
+   "expected": 1581618670000
+  },
+  {
+   "input": "2020-02-13t18:31:10z",
+   "expected": 1581618670000
+  },
+  {
+   "input": "2020-02-13T24:00",
+   "expected": 1581638400000
+  },
+  {
+   "input": "2020-02-13T24:00:00",
+   "expected": 1581638400000
+  },
+  {
+   "input": "2020-02-13T24:00:00.000Z",
+   "expected": 1581638400000
+  },
+  {
+   "input": "2020-02-13T24:00:01Z",
+   "expected": null
+  },
+  {
+   "input": "2020-02-13T24:01Z",
+   "expected": null
+  },
+  {
+   "input": "2020-02-13T24:00:00.001Z",
+   "expected": null
+  },
+  {
+   "input": "2020-02-13T23:60Z",
+   "expected": null
+  },
+  {
+   "input": "2020-02-13T23:59:60Z",
+   "expected": null
+  },
+  {
+   "input": "2020-02-13T25:00Z",
+   "expected": null
+  },
+  {
+   "input": "2020-02-13T1:00Z",
+   "expected": null
+  },
+  {
+   "input": "2020-02-13T18",
+   "expected": null
+  },
+  {
+   "input": "2020-02-13T18:31:10.334Zjunk",
+   "expected": null
+  },
+  {
+   "input": "2020-02-13T",
+   "expected": null
+  },
+  {
+   "input": "2020-02-30",
+   "expected": 1583020800000
+  },
+  {
+   "input": "2020-02-31",
+   "expected": 1583107200000
+  },
+  {
+   "input": "2021-02-29",
+   "expected": 1614556800000
+  },
+  {
+   "input": "2020-04-31",
+   "expected": 1588291200000
+  },
+  {
+   "input": "2020-02-32",
+   "expected": null
+  },
+  {
+   "input": "2020-00-10",
+   "expected": null
+  },
+  {
+   "input": "2020-13-01",
+   "expected": null
+  },
+  {
+   "input": "2020-1-13",
+   "expected": 1578873600000
+  },
+  {
+   "input": "2020-02-3",
+   "expected": 1580688000000
+  },
+  {
+   "input": "20200213",
+   "expected": null
+  },
+  {
+   "input": "2020-0213",
+   "expected": null
+  },
+  {
+   "input": "2020-02-13Z",
+   "expected": 1581552000000
+  },
+  {
+   "input": "2020-02-13 Z",
+   "expected": 1581552000000
+  },
+  {
+   "input": "2020-02-13 18:31:10",
+   "expected": 1581618670000
+  },
+  {
+   "input": "2020-02-13 18:31:10Z",
+   "expected": 1581618670000
+  },
+  {
+   "input": "2020-02-13 18:31:10.334Z",
+   "expected": 1581618670334
+  },
+  {
+   "input": "2020-02-13 18:31:10 GMT",
+   "expected": 1581618670000
+  },
+  {
+   "input": "2020-02-13 18:31:10 +0300",
+   "expected": 1581607870000
+  },
+  {
+   "input": "2020-02-13 18:31:10+03:00",
+   "expected": 1581607870000
+  },
+  {
+   "input": "2020-02-13 18:31",
+   "expected": 1581618660000
+  },
+  {
+   "input": "2020-02-13T18:31:10.334Z ",
+   "expected": null
+  },
+  {
+   "input": " 2020-02-13T18:31:10.334Z",
+   "expected": null
+  },
+  {
+   "input": " 2020-02-13",
+   "expected": 1581552000000
+  },
+  {
+   "input": "2020-02-13 ",
+   "expected": 1581552000000
+  },
+  {
+   "input": "2020-02-13T18:31:10.334+00:00",
+   "expected": 1581618670334
+  },
+  {
+   "input": "2020-02-13T18:31:10.334-00:00",
+   "expected": 1581618670334
+  },
+  {
+   "input": "2020/02/13",
+   "expected": 1581552000000
+  },
+  {
+   "input": "2020/02/13 18:31:10",
+   "expected": 1581618670000
+  },
+  {
+   "input": "2020/2/3",
+   "expected": 1580688000000
+  },
+  {
+   "input": "2020.02.13",
+   "expected": 1581552000000
+  },
+  {
+   "input": "13.02.2020",
+   "expected": null
+  },
+  {
+   "input": "02/13/2020",
+   "expected": 1581552000000
+  },
+  {
+   "input": "13/02/2020",
+   "expected": null
+  },
+  {
+   "input": "2/13",
+   "expected": 982022400000
+  },
+  {
+   "input": "2/13/20",
+   "expected": 1581552000000
+  },
+  {
+   "input": "2/13/49",
+   "expected": 2496787200000
+  },
+  {
+   "input": "2/13/50",
+   "expected": -627436800000
+  },
+  {
+   "input": "2/13/99",
+   "expected": 918864000000
+  },
+  {
+   "input": "2/13/100",
+   "expected": -59007744000000
+  },
+  {
+   "input": "1",
+   "expected": 978307200000
+  },
+  {
+   "input": "12",
+   "expected": 1007164800000
+  },
+  {
+   "input": "99",
+   "expected": 915148800000
+  },
+  {
+   "input": "100",
+   "expected": -59011459200000
+  },
+  {
+   "input": "-1",
+   "expected": 978307200000
+  },
+  {
+   "input": "+1",
+   "expected": 978307200000
+  },
+  {
+   "input": "1581618670000",
+   "expected": null
+  },
+  {
+   "input": "1581618670",
+   "expected": null
+  },
+  {
+   "input": "0",
+   "expected": 946684800000
+  },
+  {
+   "input": "Thu, 13 Feb 2020 18:31:10 GMT",
+   "expected": 1581618670000
+  },
+  {
+   "input": "Thu, 13 Feb 2020 18:31:10 UTC",
+   "expected": 1581618670000
+  },
+  {
+   "input": "Thu, 13 Feb 2020 18:31:10 UT",
+   "expected": 1581618670000
+  },
+  {
+   "input": "Thu, 13 Feb 2020 18:31:10 Z",
+   "expected": 1581618670000
+  },
+  {
+   "input": "Thu, 13 Feb 2020 18:31:10 +0000",
+   "expected": 1581618670000
+  },
+  {
+   "input": "Thu, 13 Feb 2020 15:31:10 -0300",
+   "expected": 1581618670000
+  },
+  {
+   "input": "Thu, 13 Feb 2020 15:31:10 EST",
+   "expected": 1581625870000
+  },
+  {
+   "input": "Thu, 13 Feb 2020 15:31:10 EDT",
+   "expected": 1581622270000
+  },
+  {
+   "input": "Thu, 13 Feb 2020 15:31:10 CST",
+   "expected": 1581629470000
+  },
+  {
+   "input": "Thu, 13 Feb 2020 15:31:10 CDT",
+   "expected": 1581625870000
+  },
+  {
+   "input": "Thu, 13 Feb 2020 15:31:10 MST",
+   "expected": 1581633070000
+  },
+  {
+   "input": "Thu, 13 Feb 2020 15:31:10 MDT",
+   "expected": 1581629470000
+  },
+  {
+   "input": "Thu, 13 Feb 2020 15:31:10 PST",
+   "expected": 1581636670000
+  },
+  {
+   "input": "Thu, 13 Feb 2020 15:31:10 PDT",
+   "expected": 1581633070000
+  },
+  {
+   "input": "Thu, 13 Feb 2020 15:31:10 CET",
+   "expected": null
+  },
+  {
+   "input": "Thu, 13 Feb 2020 15:31 GMT",
+   "expected": 1581607860000
+  },
+  {
+   "input": "Thu, 13 Feb 2020 GMT",
+   "expected": 1581552000000
+  },
+  {
+   "input": "13 Feb 2020 18:31:10 GMT",
+   "expected": 1581618670000
+  },
+  {
+   "input": "13 Feb 2020 18:31:10",
+   "expected": 1581618670000
+  },
+  {
+   "input": "13 Feb 2020",
+   "expected": 1581552000000
+  },
+  {
+   "input": "Thu, 13 Feb 20 18:31:10 GMT",
+   "expected": 1581618670000
+  },
+  {
+   "input": "Thu, 13 Feb 49 18:31:10 GMT",
+   "expected": 2496853870000
+  },
+  {
+   "input": "Thu, 13 Feb 50 18:31:10 GMT",
+   "expected": -627370130000
+  },
+  {
+   "input": "Thu, 13 Feb 0020 18:31:10 GMT",
+   "expected": 1581618670000
+  },
+  {
+   "input": "Mon, 13 Feb 2020 18:31:10 GMT",
+   "expected": 1581618670000
+  },
+  {
+   "input": "Thu 13 Feb 2020 18:31:10 GMT",
+   "expected": 1581618670000
+  },
+  {
+   "input": "Thu Feb 13 2020 15:31:10 GMT-0300 (Argentina Standard Time)",
+   "expected": 1581618670000
+  },
+  {
+   "input": "Thu Feb 13 2020 15:31:10 GMT-0300",
+   "expected": 1581618670000
+  },
+  {
+   "input": "Thu Feb 13 2020 15:31:10 GMT-03:00",
+   "expected": 1581618670000
+  },
+  {
+   "input": "Thu Feb 13 2020 15:31:10 GMT-3",
+   "expected": 1581618670000
+  },
+  {
+   "input": "Thu Feb 13 2020 15:31:10 GMT+0530",
+   "expected": 1581588070000
+  },
+  {
+   "input": "Thu Feb 13 2020 15:31:10 GMT+05:30",
+   "expected": 1581588070000
+  },
+  {
+   "input": "Thu Feb 13 2020 15:31:10 GMT+12345",
+   "expected": null
+  },
+  {
+   "input": "Thu Feb 13 2020 15:31:10 GMT-",
+   "expected": null
+  },
+  {
+   "input": "Sat Feb 15 2020 16:53:08 GMT+0000 (Coordinated Universal Time)",
+   "expected": 1581785588000
+  },
+  {
+   "input": "Fri Feb 14 2020 12:55:44 GMT-0500 (Eastern Standard Time)",
+   "expected": 1581702944000
+  },
+  {
+   "input": "Wed Aug 07 7112 17:52:35 GMT-0300 (Argentina Standard Time)",
+   "expected": 162284763155000
+  },
+  {
+   "input": "Thu Feb 13 2020 15:31:10 GMT-0300 (nested (paren) zone)",
+   "expected": 1581618670000
+  },
+  {
+   "input": "Thu Feb 13 2020 15:31:10 GMT-0300 (unclosed",
+   "expected": 1581618670000
+  },
+  {
+   "input": "Thu Feb 13 2020 15:31:10 GMT-0300 junk",
+   "expected": 1592073070000
+  },
+  {
+   "input": "Thu Feb 13 2020 15:31:10 (zone) GMT",
+   "expected": 1581607870000
+  },
+  {
+   "input": "Thu Feb 13 2020",
+   "expected": 1581552000000
+  },
+  {
+   "input": "Feb 13 2020",
+   "expected": 1581552000000
+  },
+  {
+   "input": "Feb 13, 2020",
+   "expected": 1581552000000
+  },
+  {
+   "input": "February 13, 2020",
+   "expected": 1581552000000
+  },
+  {
+   "input": "February 13, 2020 15:31:10",
+   "expected": 1581607870000
+  },
+  {
+   "input": "Febr 13 2020",
+   "expected": 1581552000000
+  },
+  {
+   "input": "Fe 13 2020",
+   "expected": null
+  },
+  {
+   "input": "13 February 2020 3:31 PM",
+   "expected": 1581607860000
+  },
+  {
+   "input": "Feb 13 2020 3:31 PM",
+   "expected": 1581607860000
+  },
+  {
+   "input": "Feb 13 2020 3:31 pm",
+   "expected": 1581607860000
+  },
+  {
+   "input": "Feb 13 2020 12:00 AM",
+   "expected": 1581552000000
+  },
+  {
+   "input": "Feb 13 2020 12:00 PM",
+   "expected": 1581595200000
+  },
+  {
+   "input": "Feb 13 2020 13:00 PM",
+   "expected": null
+  },
+  {
+   "input": "Feb 13 2020 0:00 AM",
+   "expected": 1581552000000
+  },
+  {
+   "input": "Feb 13 2020 PM",
+   "expected": null
+  },
+  {
+   "input": "Feb 13 2020 15:31:10.5",
+   "expected": 1581607870500
+  },
+  {
+   "input": "Feb 13 2020 15:31:10.123",
+   "expected": 1581607870123
+  },
+  {
+   "input": "Feb 13 2020 15:31:10.1234",
+   "expected": 1581607870123
+  },
+  {
+   "input": "Feb 13 2020 15.31",
+   "expected": null
+  },
+  {
+   "input": "Feb 13 2020 15:31:",
+   "expected": 1581607860000
+  },
+  {
+   "input": "Feb 13 2020 15::",
+   "expected": 1581606000000
+  },
+  {
+   "input": "Feb 13 2020 15:31:10:5",
+   "expected": 1581607870005
+  },
+  {
+   "input": "Feb 13 2020 15:31:10 +3",
+   "expected": 1581597070000
+  },
+  {
+   "input": "Feb 13 2020 15:31:10 -12",
+   "expected": 1581651070000
+  },
+  {
+   "input": "Feb 13 2020 15:31:10 +0300",
+   "expected": 1581597070000
+  },
+  {
+   "input": "Feb 13 2020 15:31:10 GMT+3",
+   "expected": 1581597070000
+  },
+  {
+   "input": "Feb 13 2020 15:31:10 UTC+0300",
+   "expected": 1581597070000
+  },
+  {
+   "input": "Feb 13 2020 15:31:10Z",
+   "expected": 1581607870000
+  },
+  {
+   "input": "Feb 13 2020 15:31:10z",
+   "expected": 1581607870000
+  },
+  {
+   "input": "Feb 13 2020 15:31:10x",
+   "expected": null
+  },
+  {
+   "input": "Feb 13 2020 15:31:10 PST",
+   "expected": 1581636670000
+  },
+  {
+   "input": "Feb 13 2020 15:31:10 pst",
+   "expected": 1581636670000
+  },
+  {
+   "input": "feb 13 2020",
+   "expected": 1581552000000
+  },
+  {
+   "input": "FEB 13 2020",
+   "expected": 1581552000000
+  },
+  {
+   "input": "Feb-13-2020",
+   "expected": 1581552000000
+  },
+  {
+   "input": "13-Feb-2020",
+   "expected": 1581552000000
+  },
+  {
+   "input": "2020-Feb-13",
+   "expected": 1581552000000
+  },
+  {
+   "input": "2020 Feb 13",
+   "expected": 1581552000000
+  },
+  {
+   "input": "Feb 2020 13",
+   "expected": 1581552000000
+  },
+  {
+   "input": "Feb 32 2020",
+   "expected": null
+  },
+  {
+   "input": "Feb 0 2020",
+   "expected": null
+  },
+  {
+   "input": "Feb 13 2020 2021",
+   "expected": 1581552000000
+  },
+  {
+   "input": "Feb",
+   "expected": null
+  },
+  {
+   "input": "Feb 13",
+   "expected": 982022400000
+  },
+  {
+   "input": "13 Feb",
+   "expected": 982022400000
+  },
+  {
+   "input": "Thu",
+   "expected": null
+  },
+  {
+   "input": "next Tuesday",
+   "expected": null
+  },
+  {
+   "input": "",
+   "expected": null
+  },
+  {
+   "input": " ",
+   "expected": null
+  },
+  {
+   "input": "Thu, 13 Feb 2020 18:31:10 GMT junk",
+   "expected": 1592073070000
+  },
+  {
+   "input": "junk Feb 13 2020",
+   "expected": 1581552000000
+  },
+  {
+   "input": "junk2020",
+   "expected": 1590969600000
+  },
+  {
+   "input": "Thu,13 Feb 2020",
+   "expected": 1581552000000
+  },
+  {
+   "input": "T10:00",
+   "expected": null
+  },
+  {
+   "input": "Thu Feb 13 2020 15:31:10 GMT-0300 (Argentina Standard Time) extra",
+   "expected": null
+  },
+  {
+   "input": "Sun Jan 01 0000 00:00:00 GMT+0000",
+   "expected": 946684800000
+  },
+  {
+   "input": "1970-01-01T00:00:00.000Z",
+   "expected": 0
+  },
+  {
+   "input": "1969-12-31T23:59:59.999Z",
+   "expected": -1
+  },
+  {
+   "input": "2099-01-01T00:00:00.000Z",
+   "expected": 4070908800000
+  },
+  {
+   "input": "2036-06-10T16:07:42",
+   "expected": 2096726862000
+  },
+  {
+   "input": "2025-01-20T22:57:11.334Z",
+   "expected": 1737413831334
+  },
+  {
+   "input": "2026-11-18T11:36:01.541Z",
+   "expected": 1795001761541
+  },
+  {
+   "input": "13/02/2020 15:31",
+   "expected": null
+  },
+  {
+   "input": "Thu Feb 13 2020 15:31:10 GMT-0300 +0100",
+   "expected": 1581604270000
+  },
+  {
+   "input": "Feb 13 2020 15:31:10 GMT GMT",
+   "expected": 1581607870000
+  },
+  {
+   "input": "Feb 13 2020 10 AM",
+   "expected": null
+  },
+  {
+   "input": "Feb 13 2020 10:00 AM PM",
+   "expected": 1581631200000
+  },
+  {
+   "input": "12:00 Feb 13 2020",
+   "expected": 1581595200000
+  },
+  {
+   "input": "15:31:10 2/13/2020",
+   "expected": 1581607870000
+  },
+  {
+   "input": "Feb 13 2020 -0300",
+   "expected": null
+  },
+  {
+   "input": "Feb 13 2020 GMT-0300",
+   "expected": 1581562800000
+  },
+  {
+   "input": "2020-02-13T18:31:10.334Z\u0000junk",
+   "expected": 1581618670334
+  },
+  {
+   "input": "2020-02-13 ",
+   "expected": 1581552000000
+  },
+  {
+   "input": "﻿2020-02-13",
+   "expected": 1581552000000
+  },
+  {
+   "input": "Thu Feb 13 2020",
+   "expected": 1581552000000
+  },
+  {
+   "input": "2020-02-13T18:31:10.334Z\n",
+   "expected": null
+  },
+  {
+   "input": "Feb 13 2020 15:31:10 GMT+0300)",
+   "expected": null
+  },
+  {
+   "input": "Feb 13 2020 (15:31:10)",
+   "expected": 1581552000000
+  },
+  {
+   "input": "(Thu) Feb 13 2020",
+   "expected": 1581552000000
+  },
+  {
+   "input": "Feb 13 2020 +",
+   "expected": null
+  },
+  {
+   "input": "Feb 13 2020 15:31:10 +",
+   "expected": null
+  },
+  {
+   "input": "1 2 3",
+   "expected": 1041465600000
+  },
+  {
+   "input": "1 2 3 4",
+   "expected": null
+  },
+  {
+   "input": "50 1 1",
+   "expected": -631152000000
+  },
+  {
+   "input": "2020 13 1",
+   "expected": null
+  },
+  {
+   "input": "32 1 1",
+   "expected": 1956528000000
+  },
+  {
+   "input": "Jan 1 1 1",
+   "expected": 978307200000
+  },
+  {
+   "input": "Jan 1 -1",
+   "expected": null
+  },
+  {
+   "input": "Jan 1 1999-",
+   "expected": 915148800000
+  },
+  {
+   "input": "+2020-02-13",
+   "expected": 1581552000000
+  },
+  {
+   "input": "+02020-02-13",
+   "expected": 1581552000000
+  },
+  {
+   "input": "-002020-02-13T10:00:00Z",
+   "expected": -125908524000000
+  },
+  {
+   "input": "+002020",
+   "expected": 1577836800000
+  },
+  {
+   "input": "2020-02-13T18:31:10.334+03:00:00",
+   "expected": null
+  },
+  {
+   "input": "2020-02-13T18:31:10.334+03:00Z",
+   "expected": null
+  },
+  {
+   "input": "2020-02-13T18:31:10.334ZZ",
+   "expected": null
+  },
+  {
+   "input": "Thu, 13 Feb 2020 18:31:10 GMT+0100",
+   "expected": 1581615070000
+  },
+  {
+   "input": "Thu, 13 Feb 2020 18:31:10 GMT+01:00",
+   "expected": 1581615070000
+  },
+  {
+   "input": "Thu, 13 Feb 2020 18:31:10 GMT-01",
+   "expected": 1581622270000
+  },
+  {
+   "input": "Thu, 01 Jan 1970 00:00:00 GMT",
+   "expected": 0
+  },
+  {
+   "input": "Fri, 31 Dec 9999 23:59:59 GMT",
+   "expected": 253402300799000
+  },
+  {
+   "input": "Sat, 13 Sep 275760 00:00:00 GMT",
+   "expected": 8640000000000000
+  },
+  {
+   "input": "Sat, 13 Sep 275760 00:00:01 GMT",
+   "expected": null
+  },
+  {
+   "input": "Tue, 20 Apr -271821 00:00:00 GMT",
+   "expected": null
+  },
+  {
+   "input": "Jan 1 1000000000",
+   "expected": null
+  },
+  {
+   "input": "Jan 1 999999999",
+   "expected": null
+  },
+  {
+   "input": "2020-02-13T18:31:10.334 Z",
+   "expected": null
+  },
+  {
+   "input": "Mar 1 2020 24:00",
+   "expected": 1583107200000
+  },
+  {
+   "input": "Mar 1 2020 24:00:01",
+   "expected": null
+  },
+  {
+   "input": "Mar 1 2020 24:30",
+   "expected": null
+  },
+  {
+   "input": "Mar 1 2020 23:60",
+   "expected": 1583103600000
+  },
+  {
+   "input": "Mar 1 2020 12:30 am",
+   "expected": 1583022600000
+  },
+  {
+   "input": "Mar 1 2020 00:30 pm",
+   "expected": 1583065800000
+  },
+  {
+   "input": "Mar 1 2020 12 pm",
+   "expected": null
+  },
+  {
+   "input": "May 5 2020",
+   "expected": 1588636800000
+  },
+  {
+   "input": "Mayday 5 2020",
+   "expected": 1588636800000
+  },
+  {
+   "input": "Dec 31 2020 23:59:59.999",
+   "expected": 1609459199999
+  },
+  {
+   "input": "Sept 5 2020",
+   "expected": 1599264000000
+  },
+  {
+   "input": "Sep 5, 2020, 10:00:00 AM",
+   "expected": 1599300000000
+  },
+  {
+   "input": "9/5/2020, 10:00:00 AM",
+   "expected": 1599300000000
+  },
+  {
+   "input": "2020-09-05, 10:00",
+   "expected": 1599300000000
+  },
+  {
+   "input": "Sat Sep 05 2020 10:00:00 UTC",
+   "expected": 1599300000000
+  },
+  {
+   "input": "Sat Sep 05 2020 10:00:00 UTC+2",
+   "expected": 1599292800000
+  },
+  {
+   "input": "Sat Sep 05 2020 10:00:00 UT-0100",
+   "expected": 1599303600000
+  },
+  {
+   "input": "Sat Sep 05 2020 10:00:00 EST+1",
+   "expected": 1599296400000
+  },
+  {
+   "input": "Sat Sep 05 2020 10:00:00 GMT+1 GMT",
+   "expected": 1599300000000
+  },
+  {
+   "input": "2020-02-13T18:31:10.334Z(comment)",
+   "expected": null
+  },
+  {
+   "input": "Feb 13 2020 15:31:10 GMT-0300 (x)(y)",
+   "expected": 1581618670000
+  },
+  {
+   "input": "UTC Feb",
+   "expected": null
+  },
+  {
+   "input": "00)31",
+   "expected": null
+  },
+  {
+   "input": "+0020200300-030000",
+   "expected": null
+  },
+  {
+   "input": ")Z+002020Thu) 0031Z",
+   "expected": null
+  },
+  {
+   "input": " 130300",
+   "expected": 4049703648000000
+  },
+  {
+   "input": ":2020-00+00202000",
+   "expected": null
+  },
+  {
+   "input": "/PMPM030000 ",
+   "expected": null
+  },
+  {
+   "input": "60",
+   "expected": -315619200000
+  },
+  {
+   "input": " :1300FebPM",
+   "expected": -21140438400000
+  },
+  {
+   "input": "Thu:2020/)-Z",
+   "expected": null
+  },
+  {
+   "input": ":)00Z",
+   "expected": 946684800000
+  },
+  {
+   "input": "030013ZZPM",
+   "expected": null
+  },
+  {
+   "input": "FebPM00Feb00Z",
+   "expected": null
+  },
+  {
+   "input": "60)PM1313",
+   "expected": null
+  },
+  {
+   "input": "60Feb/",
+   "expected": -312940800000
+  },
+  {
+   "input": "UTC Feb:+002020Feb):",
+   "expected": null
+  },
+  {
+   "input": "3120200300+002020/",
+   "expected": null
+  },
+  {
+   "input": "PMFeb/2020Feb",
+   "expected": 1580515200000
+  },
+  {
+   "input": "1360:2020",
+   "expected": null
+  },
+  {
+   "input": "00PMZThu",
+   "expected": null
+  },
+  {
+   "input": "2020PMPM",
+   "expected": null
+  },
+  {
+   "input": "UTC:",
+   "expected": null
+  },
+  {
+   "input": "31 :FebUTC+002020UTC:",
+   "expected": null
+  },
+  {
+   "input": "-60/13PM/60Thu",
+   "expected": null
+  },
+  {
+   "input": "030000ThuFeb))UTC60",
+   "expected": null
+  },
+  {
+   "input": "0300)",
+   "expected": null
+  },
+  {
+   "input": "/-Thu31PM",
+   "expected": null
+  },
+  {
+   "input": "Z:Thu:)Thu",
+   "expected": null
+  },
+  {
+   "input": "Feb+00202060",
+   "expected": 6314233219200000
+  },
+  {
+   "input": "13",
+   "expected": null
+  },
+  {
+   "input": "-/13:13PM+002020",
+   "expected": null
+  },
+  {
+   "input": "Thu/03002020/00+00202013",
+   "expected": null
+  },
+  {
+   "input": "00-00Feb",
+   "expected": null
+  },
+  {
+   "input": "-Z:)00",
+   "expected": 946684800000
+  },
+  {
+   "input": "PMPM13UTC600300",
+   "expected": null
+  },
+  {
+   "input": "PMThu//2020PM0300PM",
+   "expected": null
+  },
+  {
+   "input": "--ZZFebUTC00Thu",
+   "expected": null
+  },
+  {
+   "input": "/UTC",
+   "expected": null
+  },
+  {
+   "input": "PM",
+   "expected": null
+  },
+  {
+   "input": "600300+002020",
+   "expected": null
+  },
+  {
+   "input": "13Thu/",
+   "expected": null
+  },
+  {
+   "input": "20200300:ThuUTC/2020+002020UTC",
+   "expected": null
+  },
+  {
+   "input": "00/31",
+   "expected": null
+  },
+  {
+   "input": ")3113",
+   "expected": 36069580800000
+  },
+  {
+   "input": "030013:Feb:Thu3113",
+   "expected": null
+  },
+  {
+   "input": "006060-2020)",
+   "expected": null
+  },
+  {
+   "input": "-31",
+   "expected": null
+  },
+  {
+   "input": " 2020UTC/0300-2020-",
+   "expected": null
+  },
+  {
+   "input": "/-/",
+   "expected": null
+  },
+  {
+   "input": "Feb00000300Z6000 ",
+   "expected": null
+  },
+  {
+   "input": "31Z2020000300",
+   "expected": null
+  },
+  {
+   "input": "PM20200300",
+   "expected": null
+  },
+  {
+   "input": "-/130300",
+   "expected": 4049703648000000
+  },
+  {
+   "input": "0300ThuZPM/ThuZ",
+   "expected": null
+  },
+  {
+   "input": ": 602020+002020)Z3131",
+   "expected": null
+  },
+  {
+   "input": "1300",
+   "expected": -21143116800000
+  },
+  {
+   "input": "PM-UTC)13/",
+   "expected": null
+  },
+  {
+   "input": "+00202013 60+002020Z-",
+   "expected": null
+  },
+  {
+   "input": "03003100Thu00Feb60:PM",
+   "expected": null
+  },
+  {
+   "input": "0300+002020Thu",
+   "expected": null
+  },
+  {
+   "input": "PM60FebPM00Feb0300",
+   "expected": null
+  },
+  {
+   "input": "Thujunk+002020",
+   "expected": 1577836800000
+  },
+  {
+   "input": "+002020:/PM+00202013/0300/",
+   "expected": null
+  },
+  {
+   "input": "-+002020Thu002020",
+   "expected": null
+  },
+  {
+   "input": "312020UTCPM",
+   "expected": null
+  },
+  {
+   "input": "/PM31PM ",
+   "expected": null
+  },
+  {
+   "input": "2020:ThuUTCPM312020",
+   "expected": null
+  },
+  {
+   "input": ":)+002020",
+   "expected": 1577836800000
+  },
+  {
+   "input": ":-60ZPM",
+   "expected": null
+  },
+  {
+   "input": "2020ThuUTC",
+   "expected": null
+  },
+  {
+   "input": " Z20201320203100-)",
+   "expected": null
+  },
+  {
+   "input": ":60-PMUTC1300",
+   "expected": null
+  },
+  {
+   "input": "UTC60202000/-31",
+   "expected": null
+  },
+  {
+   "input": "/)",
+   "expected": null
+  },
+  {
+   "input": "0300Thu31",
+   "expected": null
+  },
+  {
+   "input": "000000Z:FebFeb/Thu",
+   "expected": null
+  },
+  {
+   "input": "UTC2020 Thu",
+   "expected": null
+  },
+  {
+   "input": ")03002020Feb60",
+   "expected": null
+  },
+  {
+   "input": "Feb/-Feb::13Z/",
+   "expected": 982022400000
+  },
+  {
+   "input": "Z +002020",
+   "expected": 1577836800000
+  },
+  {
+   "input": "2020:00-)",
+   "expected": null
+  },
+  {
+   "input": "31",
+   "expected": null
+  },
+  {
+   "input": "00UTC/60",
+   "expected": null
+  },
+  {
+   "input": "00)",
+   "expected": null
+  },
+  {
+   "input": "Feb:/Z602020-",
+   "expected": null
+  },
+  {
+   "input": "UTC13  ",
+   "expected": null
+  },
+  {
+   "input": "+0020202020UTC20200031Feb",
+   "expected": null
+  },
+  {
+   "input": "00/PM31PMPMUTC",
+   "expected": null
+  },
+  {
+   "input": " 0000",
+   "expected": 946684800000
+  },
+  {
+   "input": "030031030000",
+   "expected": null
+  },
+  {
+   "input": ")60:ThuPM+00202000-",
+   "expected": null
+  },
+  {
+   "input": "Z00/-00 60-0300",
+   "expected": null
+  },
+  {
+   "input": "Feb2020PM+002020",
+   "expected": null
+  },
+  {
+   "input": "3160:",
+   "expected": 37552723200000
+  },
+  {
+   "input": "PM/FebZ)312020+002020",
+   "expected": null
+  },
+  {
+   "input": "Thu3160PM+002020310300",
+   "expected": null
+  },
+  {
+   "input": ":0300:",
+   "expected": null
+  },
+  {
+   "input": "/2020:",
+   "expected": null
+  },
+  {
+   "input": "0031- ZUTC ",
+   "expected": null
+  },
+  {
+   "input": "Z 2020-6031+0020202020",
+   "expected": null
+  },
+  {
+   "input": "UTC131331ThuPM ",
+   "expected": null
+  },
+  {
+   "input": "Z)60",
+   "expected": -315619200000
+  },
+  {
+   "input": "0300",
+   "expected": -52700112000000
+  },
+  {
+   "input": "PM-000000/60PM",
+   "expected": null
+  },
+  {
+   "input": "60//ZThuThu60 31",
+   "expected": null
+  },
+  {
+   "input": ")31:136013- 60",
+   "expected": null
+  },
+  {
+   "input": "UTC)00FebPM2020202013:",
+   "expected": null
+  },
+  {
+   "input": "0300+002020/FebFeb+002020",
+   "expected": null
+  },
+  {
+   "input": "60PM:UTCThuFeb//",
+   "expected": null
+  },
+  {
+   "input": "UTC1360",
+   "expected": null
+  },
+  {
+   "input": " 13 ",
+   "expected": null
+  },
+  {
+   "input": "-00",
+   "expected": 946684800000
+  },
+  {
+   "input": ":Z13-Z60",
+   "expected": null
+  },
+  {
+   "input": " 13",
+   "expected": null
+  },
+  {
+   "input": " 602020",
+   "expected": null
+  },
+  {
+   "input": "Z -",
+   "expected": null
+  },
+  {
+   "input": "Z",
+   "expected": null
+  },
+  {
+   "input": ":",
+   "expected": null
+  },
+  {
+   "input": "3113) 0060",
+   "expected": null
+  },
+  {
+   "input": "ZUTCZ-Feb/60",
+   "expected": -312940800000
+  },
+  {
+   "input": "UTC+00202000PMPM00Thu",
+   "expected": null
+  },
+  {
+   "input": "03002020PMFeb00 /:31",
+   "expected": null
+  },
+  {
+   "input": "2020030060Z:202013:PM",
+   "expected": null
+  },
+  {
+   "input": "ThuThu-Feb:)",
+   "expected": null
+  },
+  {
+   "input": "030000PMFeb",
+   "expected": null
+  },
+  {
+   "input": "Thu-60Z/2020",
+   "expected": null
+  },
+  {
+   "input": "13/UTCThuThu2020-",
+   "expected": null
+  },
+  {
+   "input": "0000FebZ",
+   "expected": 949363200000
+  },
+  {
+   "input": ":/ )--31-/",
+   "expected": null
+  },
+  {
+   "input": "Thu)UTC60Thu2020UTC",
+   "expected": null
+  },
+  {
+   "input": "31/",
+   "expected": null
+  },
+  {
+   "input": "+002020ZThuThu",
+   "expected": null
+  },
+  {
+   "input": "13-",
+   "expected": null
+  },
+  {
+   "input": "31-",
+   "expected": null
+  },
+  {
+   "input": "0300 Thu/202031 ",
+   "expected": null
+  },
+  {
+   "input": "+00202000",
+   "expected": 6312337084800000
+  },
+  {
+   "input": " ThuPM13",
+   "expected": null
+  },
+  {
+   "input": "PM+0020201360002020",
+   "expected": null
+  },
+  {
+   "input": "Thu:Feb",
+   "expected": null
+  },
+  {
+   "input": "12345",
+   "expected": 327403382400000
+  },
+  {
+   "input": "13FebZ+002020:)60/60",
+   "expected": null
+  },
+  {
+   "input": "00Z:)2020PMFeb00",
+   "expected": null
+  },
+  {
+   "input": "0000UTC6060/PM",
+   "expected": null
+  },
+  {
+   "input": "31UTC",
+   "expected": null
+  },
+  {
+   "input": "00Thu-31//Z",
+   "expected": null
+  },
+  {
+   "input": "PM202060UTCThuPMUTC",
+   "expected": null
+  },
+  {
+   "input": "13:)+002020/0031",
+   "expected": null
+  },
+  {
+   "input": "Z31/",
+   "expected": null
+  },
+  {
+   "input": " ThuZPM",
+   "expected": null
+  },
+  {
+   "input": "- FebThuPMPM31)+002020",
+   "expected": null
+  },
+  {
+   "input": "2020Thu0300 0300+002020UTCThu-",
+   "expected": null
+  },
+  {
+   "input": "-: PM31PM31",
+   "expected": null
+  },
+  {
+   "input": "PM13Feb60",
+   "expected": null
+  },
+  {
+   "input": "::+002020-UTC",
+   "expected": 1577836800000
+  },
+  {
+   "input": "+002020Thu/2020UTC)",
+   "expected": null
+  },
+  {
+   "input": "60/ 2020-)PM0000",
+   "expected": null
+  },
+  {
+   "input": " PMZ: -2020",
+   "expected": 1577836800000
+  },
+  {
+   "input": "31 2020/Z",
+   "expected": null
+  },
+  {
+   "input": "+00202060PMPM+002020ThuThu -",
+   "expected": null
+  },
+  {
+   "input": "/",
+   "expected": null
+  },
+  {
+   "input": "030000:UTC6013Thu",
+   "expected": null
+  },
+  {
+   "input": "FebPM",
+   "expected": null
+  },
+  {
+   "input": "Z+002020 00PMZUTC2020",
+   "expected": null
+  },
+  {
+   "input": "PM/0300)",
+   "expected": null
+  },
+  {
+   "input": " Z-",
+   "expected": null
+  },
+  {
+   "input": "PMThuZ202000",
+   "expected": null
+  },
+  {
+   "input": "UTC",
+   "expected": null
+  },
+  {
+   "input": "0300:-",
+   "expected": null
+  },
+  {
+   "input": "-Thu-Z",
+   "expected": null
+  },
+  {
+   "input": "ThuFeb/-+002020",
+   "expected": 1577836800000
+  },
+  {
+   "input": "13 :-/+002020",
+   "expected": null
+  },
+  {
+   "input": "PMZ/Thu1300",
+   "expected": null
+  },
+  {
+   "input": "-PM202013-)",
+   "expected": null
+  },
+  {
+   "input": "FebUTCPM60:PM:Feb",
+   "expected": null
+  },
+  {
+   "input": "PM+002020+002020UTC+002020",
+   "expected": null
+  },
+  {
+   "input": " Feb60Thu+00202031",
+   "expected": null
+  },
+  {
+   "input": "00",
+   "expected": 946684800000
+  },
+  {
+   "input": "20202020/+00202031+00202031-Feb",
+   "expected": null
+  },
+  {
+   "input": "UTCZThu0300Feb+002020",
+   "expected": null
+  },
+  {
+   "input": "030000Thu/:0300",
+   "expected": null
+  },
+  {
+   "input": "00UTCUTC",
+   "expected": null
+  },
+  {
+   "input": "FebZ",
+   "expected": null
+  },
+  {
+   "input": "-0300-UTC/Z/",
+   "expected": -52700112000000
+  },
+  {
+   "input": ")",
+   "expected": null
+  },
+  {
+   "input": "0300)2020Feb/)31",
+   "expected": null
+  },
+  {
+   "input": "03002020+002020)PM006013",
+   "expected": null
+  },
+  {
+   "input": "2020Z13/ZFeb/)Thu",
+   "expected": null
+  },
+  {
+   "input": "0300/Z60ThuPM",
+   "expected": null
+  },
+  {
+   "input": "FebZUTCFebUTC",
+   "expected": null
+  },
+  {
+   "input": "PMUTC:ThuPM",
+   "expected": null
+  },
+  {
+   "input": "31:-UTC ",
+   "expected": null
+  },
+  {
+   "input": ")31FebThuFeb",
+   "expected": 983577600000
+  },
+  {
+   "input": ":-+0020202020ThuUTC-31",
+   "expected": null
+  },
+  {
+   "input": " 0300-",
+   "expected": -52700112000000
+  },
+  {
+   "input": "UTC )+002020)3160",
+   "expected": null
+  },
+  {
+   "input": "Feb+0020202020Feb60)0300+0020200300",
+   "expected": null
+  },
+  {
+   "input": "00- 0013",
+   "expected": null
+  },
+  {
+   "input": "UTC60)",
+   "expected": null
+  },
+  {
+   "input": "31)0300",
+   "expected": null
+  },
+  {
+   "input": "1313",
+   "expected": -20732889600000
+  },
+  {
+   "input": "310300",
+   "expected": null
+  },
+  {
+   "input": ")PMZ/UTC-60030013",
+   "expected": null
+  },
+  {
+   "input": "--0031",
+   "expected": null
+  },
+  {
+   "input": "GMT:00",
+   "expected": 946684800000
+  },
+  {
+   "input": ")  UTC030060)2020UTC",
+   "expected": null
+  },
+  {
+   "input": ":0300 -UTC",
+   "expected": null
+  },
+  {
+   "input": "6060ThuThu:+00202003002020)",
+   "expected": null
+  },
+  {
+   "input": "Thu:UTC) Thu+002020/Z",
+   "expected": 1577836800000
+  },
+  {
+   "input": "--0300",
+   "expected": -52700112000000
+  },
+  {
+   "input": "PM+00202000 )-0031)",
+   "expected": null
+  },
+  {
+   "input": "31Z+002020ZThu)-+002020",
+   "expected": null
+  },
+  {
+   "input": ") ",
+   "expected": null
+  },
+  {
+   "input": "0300+002020Feb/UTC)3160",
+   "expected": null
+  },
+  {
+   "input": "0000",
+   "expected": -62167219200000
+  },
+  {
+   "input": "0060PM +0020201360)",
+   "expected": null
+  },
+  {
+   "input": " :",
+   "expected": null
+  },
+  {
+   "input": "31600300+002020",
+   "expected": null
+  },
+  {
+   "input": "Thu-UTC-PM",
+   "expected": null
+  },
+  {
+   "input": "Z60:/+002020",
+   "expected": null
+  },
+  {
+   "input": "202060:13FebFeb)",
+   "expected": null
+  },
+  {
+   "input": "0300+00202060/PM60+002020)",
+   "expected": null
+  },
+  {
+   "input": "UTCZ0300PM2020:",
+   "expected": null
+  },
+  {
+   "input": ":/ Feb+002020:Z60PM",
+   "expected": null
+  },
+  {
+   "input": "13:Z00 ",
+   "expected": null
+  },
+  {
+   "input": " 2020000000-0300PM",
+   "expected": null
+  },
+  {
+   "input": "-000000",
+   "expected": null
+  },
+  {
+   "input": "FebPM-UTC0300ZUTC2020PM",
+   "expected": null
+  },
+  {
+   "input": "Z2020",
+   "expected": null
+  },
+  {
+   "input": "-31-: 00 :",
+   "expected": null
+  },
+  {
+   "input": "/2020/13 Thu",
+   "expected": null
+  },
+  {
+   "input": "+00202013",
+   "expected": 6312747398400000
+  },
+  {
+   "input": "+002020-00030013PM",
+   "expected": null
+  },
+  {
+   "input": "+0020206000",
+   "expected": null
+  },
+  {
+   "input": "13/0031:60/",
+   "expected": null
+  },
+  {
+   "input": "+002020316013",
+   "expected": null
+  },
+  {
+   "input": "13:131313",
+   "expected": 4081670917200000
+  },
+  {
+   "input": "202000ZZ31130300:PM",
+   "expected": null
+  },
+  {
+   "input": "-000000/Z/31UTC/Thu+002020",
+   "expected": null
+  },
+  {
+   "input": "Thu/-001300/13",
+   "expected": null
+  },
+  {
+   "input": "60PMZ+00202013",
+   "expected": null
+  },
+  {
+   "input": "00UTC/",
+   "expected": 946684800000
+  },
+  {
+   "input": "312020Feb13PM",
+   "expected": null
+  },
+  {
+   "input": "13Thu+002020/00/ 2020Z",
+   "expected": null
+  },
+  {
+   "input": "13Z31UTC",
+   "expected": null
+  },
+  {
+   "input": "00ThuFeb",
+   "expected": null
+  },
+  {
+   "input": "/)1360",
+   "expected": -19249747200000
+  },
+  {
+   "input": "ThuPMUTC13-Z",
+   "expected": null
+  },
+  {
+   "input": "+002020Feb",
+   "expected": 1580515200000
+  },
+  {
+   "input": "602020",
+   "expected": null
+  },
+  {
+   "input": "00Thu13Thu030013Thu",
+   "expected": null
+  },
+  {
+   "input": "PMThu60202000030003000300",
+   "expected": null
+  },
+  {
+   "input": "Z13PM0300",
+   "expected": null
+  },
+  {
+   "input": "PM31",
+   "expected": null
+  },
+  {
+   "input": "00PMUTCZ0300:",
+   "expected": null
+  },
+  {
+   "input": "2020+00202000",
+   "expected": null
+  },
+  {
+   "input": " 31",
+   "expected": null
+  },
+  {
+   "input": "0300:Thu)-+00202031",
+   "expected": null
+  },
+  {
+   "input": "UTC31UTC+00202031",
+   "expected": null
+  },
+  {
+   "input": "00/602020FebThu602020",
+   "expected": null
+  },
+  {
+   "input": ":0300",
+   "expected": -52700112000000
+  },
+  {
+   "input": "ThuPM600300:-Thu",
+   "expected": null
+  },
+  {
+   "input": "002020FebThu030013-UTC",
+   "expected": null
+  },
+  {
+   "input": "Thu-",
+   "expected": null
+  },
+  {
+   "input": "+00202013UTC31+002020UTC",
+   "expected": null
+  },
+  {
+   "input": ")Z+002020123FebThu+0020200300Feb",
+   "expected": null
+  },
+  {
+   "input": "ThuUTC",
+   "expected": null
+  },
+  {
+   "input": "Z31 0300:",
+   "expected": null
+  },
+  {
+   "input": ":13PMFeb//0300UTC",
+   "expected": null
+  },
+  {
+   "input": "Thu:/0300",
+   "expected": -52700112000000
+  },
+  {
+   "input": "6013-UTCZ/PM",
+   "expected": null
+  },
+  {
+   "input": "13Z00- :Thu",
+   "expected": null
+  },
+  {
+   "input": " - ))",
+   "expected": null
+  },
+  {
+   "input": "132020",
+   "expected": 4103981596800000
+  },
+  {
+   "input": "2020202000",
+   "expected": null
+  },
+  {
+   "input": "Feb))+002020Feb -",
+   "expected": null
+  },
+  {
+   "input": "0300ZPM13030060030031",
+   "expected": null
+  },
+  {
+   "input": "000300+002020UTC))0060Feb",
+   "expected": null
+  },
+  {
+   "input": "03003160+002020",
+   "expected": null
+  },
+  {
+   "input": "ZFeb ",
+   "expected": null
+  },
+  {
+   "input": "-202060)2020Thu+0020203160",
+   "expected": null
+  },
+  {
+   "input": "/:13)PM602020",
+   "expected": null
+  },
+  {
+   "input": "+002020Thu+002020Z.:2020",
+   "expected": null
+  },
+  {
+   "input": "0300-",
+   "expected": -52700112000000
+  },
+  {
+   "input": "-)):6013",
+   "expected": 127584806400000
+  },
+  {
+   "input": "030031Feb:6031",
+   "expected": null
+  },
+  {
+   "input": "Thu )ThuPM0013 /",
+   "expected": null
+  },
+  {
+   "input": "-PMZ60",
+   "expected": null
+  },
+  {
+   "input": "FebPM31Z3113UTC",
+   "expected": 36074851200000
+  },
+  {
+   "input": "PMFeb60)-0300 ",
+   "expected": null
+  },
+  {
+   "input": "+00202060FebUTCPM",
+   "expected": 6314233219200000
+  },
+  {
+   "input": ":00ThuUTC-Thu",
+   "expected": null
+  },
+  {
+   "input": "2020:1331",
+   "expected": null
+  },
+  {
+   "input": "Thu003113:/UTCThu",
+   "expected": null
+  },
+  {
+   "input": ":31",
+   "expected": null
+  },
+  {
+   "input": "Thu:Feb6003000300PMUTC31",
+   "expected": null
+  },
+  {
+   "input": "- 13PM",
+   "expected": null
+  },
+  {
+   "input": "-0300",
+   "expected": -52700112000000
+  },
+  {
+   "input": "24 0000FebUTC600300",
+   "expected": 951350400000
+  },
+  {
+   "input": "UTCPM0300-ThuFeb/60",
+   "expected": null
+  },
+  {
+   "input": "Feb2020)ZUTCFeb00 ",
+   "expected": null
+  },
+  {
+   "input": "PM2020+002020+002020)60",
+   "expected": null
+  },
+  {
+   "input": "00PMUTCUTC",
+   "expected": null
+  },
+  {
+   "input": "Feb:)",
+   "expected": null
+  },
+  {
+   "input": "2020PMPM+002020/31ThuZ)",
+   "expected": null
+  },
+  {
+   "input": "2020:Z6060-",
+   "expected": null
+  },
+  {
+   "input": "+002020Z202000:",
+   "expected": null
+  },
+  {
+   "input": "0300-:ThuUTC31",
+   "expected": null
+  },
+  {
+   "input": "/60",
+   "expected": -315619200000
+  },
+  {
+   "input": "-",
+   "expected": null
+  },
+  {
+   "input": "+002020 60ThuFeb+00202060",
+   "expected": null
+  },
+  {
+   "input": "::)PM/202013",
+   "expected": 6312747398400000
+  },
+  {
+   "input": "60UTC)ThuFeb",
+   "expected": null
+  },
+  {
+   "input": "UTCZ:+002020",
+   "expected": 1577836800000
+  },
+  {
+   "input": "202031UTC-Z",
+   "expected": null
+  },
+  {
+   "input": "31202000002020UTC",
+   "expected": null
+  },
+  {
+   "input": ")PM13)PM",
+   "expected": null
+  },
+  {
+   "input": "31/PM0300/",
+   "expected": null
+  },
+  {
+   "input": "-ZZ/60030013",
+   "expected": null
+  },
+  {
+   "input": "PMFebUTC- 0300)31",
+   "expected": null
+  },
+  {
+   "input": "PM00",
+   "expected": null
+  },
+  {
+   "input": "60) ",
+   "expected": null
+  },
+  {
+   "input": "Feb:Feb)0300Feb",
+   "expected": -52697433600000
+  },
+  {
+   "input": "2020Z -0060Z",
+   "expected": 1577836800000
+  },
+  {
+   "input": "Thu:0300Thu13 31",
+   "expected": null
+  },
+  {
+   "input": "- 3100132020",
+   "expected": null
+  },
+  {
+   "input": "PM-UTCPMPMUTC60Z60",
+   "expected": null
+  },
+  {
+   "input": "0300PMPM:",
+   "expected": null
+  },
+  {
+   "input": "FebThu31",
+   "expected": 983577600000
+  },
+  {
+   "input": "FebZ00",
+   "expected": 949363200000
+  },
+  {
+   "input": " UTC00",
+   "expected": null
+  },
+  {
+   "input": "+002020/+00202031:Feb",
+   "expected": null
+  },
+  {
+   "input": " 132020Z13FebThu",
+   "expected": 4103985312000000
+  },
+  {
+   "input": "-00:)60:Feb2020:",
+   "expected": null
+  },
+  {
+   "input": "13Thu31)0300-13+002020",
+   "expected": null
+  },
+  {
+   "input": "1313000060Feb/",
+   "expected": null
+  },
+  {
+   "input": "Thu ",
+   "expected": null
+  },
+  {
+   "input": " )",
+   "expected": null
+  },
+  {
+   "input": " +002020",
+   "expected": 1577836800000
+  },
+  {
+   "input": "20200300+002020)Feb03000300",
+   "expected": null
+  },
+  {
+   "input": "030031 )+002020",
+   "expected": null
+  },
+  {
+   "input": "PMFebPM00)ThuUTCPMUTC",
+   "expected": null
+  },
+  {
+   "input": "):Feb:",
+   "expected": null
+  },
+  {
+   "input": "2020:Thu6000",
+   "expected": null
+  },
+  {
+   "input": "202060",
+   "expected": 6314230540800000
+  },
+  {
+   "input": "31:Feb",
+   "expected": null
+  },
+  {
+   "input": "+00202013Feb",
+   "expected": 6312750076800000
+  },
+  {
+   "input": "Feb-Thu/",
+   "expected": null
+  },
+  {
+   "input": "-60PM+002020/:Thu13Thu",
+   "expected": null
+  },
+  {
+   "input": "3100Thu0300PM",
+   "expected": null
+  },
+  {
+   "input": "/PM2020:+002020 Z)",
+   "expected": null
+  },
+  {
+   "input": "/13PM00",
+   "expected": null
+  },
+  {
+   "input": "PM03002020 ::",
+   "expected": null
+  },
+  {
+   "input": "31ZUTC-PM",
+   "expected": null
+  },
+  {
+   "input": "+002020-UTC60:",
+   "expected": null
+  },
+  {
+   "input": "2020)+002020)202020200300:0300",
+   "expected": null
+  },
+  {
+   "input": "ZThu00:",
+   "expected": null
+  },
+  {
+   "input": " 60",
+   "expected": -315619200000
+  },
+  {
+   "input": "03000300+002020- )00",
+   "expected": null
+  },
+  {
+   "input": "132020+002020UTC",
+   "expected": null
+  },
+  {
+   "input": "-030031+002020) 0300+002020/",
+   "expected": null
+  },
+  {
+   "input": " -0060UTCFeb",
+   "expected": null
+  },
+  {
+   "input": "31)31-UTC31",
+   "expected": null
+  },
+  {
+   "input": "31-2020UTCUTC ",
+   "expected": null
+  },
+  {
+   "input": "130300:Thu31Feb--/",
+   "expected": null
+  },
+  {
+   "input": "60+002020:FebUTC13- 00",
+   "expected": null
+  },
+  {
+   "input": ":Z",
+   "expected": null
+  },
+  {
+   "input": "0300-:/-UTC:-UTC",
+   "expected": null
+  },
+  {
+   "input": "030013)0300FebFeb",
+   "expected": null
+  },
+  {
+   "input": "PMUTC+002020-:",
+   "expected": 1577836800000
+  },
+  {
+   "input": "-31PM 60",
+   "expected": null
+  },
+  {
+   "input": "6000--6060",
+   "expected": null
+  },
+  {
+   "input": "31:)-:)PM",
+   "expected": null
+  },
+  {
+   "input": "))Feb1360UTC",
+   "expected": -19247068800000
+  },
+  {
+   "input": "Z00-Thu132020:Thu",
+   "expected": null
+  },
+  {
+   "input": "Thu600300)+002020PM+002020",
+   "expected": null
+  },
+  {
+   "input": "13+002020UTC0300/-:",
+   "expected": null
+  },
+  {
+   "input": "PM--UTC0300:UTC60",
+   "expected": null
+  },
+  {
+   "input": "31ZThu0300",
+   "expected": null
+  },
+  {
+   "input": "600300PM0300/0300)PM",
+   "expected": null
+  },
+  {
+   "input": "3131/))60Thu-",
+   "expected": null
+  },
+  {
+   "input": "UTC)00Thu)",
+   "expected": null
+  },
+  {
+   "input": "000000Feb",
+   "expected": 949363200000
+  },
+  {
+   "input": "0300 31-60Thu)+002020",
+   "expected": null
+  },
+  {
+   "input": "Feb) ",
+   "expected": null
+  },
+  {
+   "input": "+0020201360/",
+   "expected": null
+  },
+  {
+   "input": ":PM13/31)",
+   "expected": null
+  },
+  {
+   "input": "+002020PM0300)24",
+   "expected": null
+  },
+  {
+   "input": "13 UTCUTC60Z 00+002020",
+   "expected": null
+  },
+  {
+   "input": ")0020200300UTC",
+   "expected": null
+  },
+  {
+   "input": "FebThu:Z60+002020Z",
+   "expected": null
+  },
+  {
+   "input": "/ :UTC00002020",
+   "expected": null
+  },
+  {
+   "input": "2020-Thu1360/",
+   "expected": null
+  },
+  {
+   "input": "Z/FebZ:/",
+   "expected": null
+  },
+  {
+   "input": "2020PMPM+002020",
+   "expected": null
+  },
+  {
+   "input": "0300:312020",
+   "expected": null
+  },
+  {
+   "input": "Z:60)PM130300PM/",
+   "expected": null
+  },
+  {
+   "input": ":UTC6013ZUTC",
+   "expected": null
+  },
+  {
+   "input": "31TZ13-",
+   "expected": null
+  },
+  {
+   "input": "60Thu/",
+   "expected": null
+  },
+  {
+   "input": "PM 00PMZ2020UTC PM",
+   "expected": null
+  },
+  {
+   "input": "ThuFeb",
+   "expected": null
+  },
+  {
+   "input": "ThuUTCPMPM",
+   "expected": null
+  },
+  {
+   "input": "ThuPM00",
+   "expected": null
+  },
+  {
+   "input": "31Feb)",
+   "expected": null
+  },
+  {
+   "input": "PM/60",
+   "expected": -315619200000
+  },
+  {
+   "input": "13+002020+002020/Feb 00)0300",
+   "expected": null
+  },
+  {
+   "input": "/13-Z0300",
+   "expected": null
+  },
+  {
+   "input": " FebThuZFebUTC00",
+   "expected": 949363200000
+  },
+  {
+   "input": "03002020)/- 00/31",
+   "expected": null
+  },
+  {
+   "input": "13PM00Feb",
+   "expected": null
+  },
+  {
+   "input": ":PM::+002020:60+002020Z",
+   "expected": null
+  },
+  {
+   "input": "60))-60Z3131",
+   "expected": null
+  },
+  {
+   "input": "60FebUTC",
+   "expected": -312940800000
+  },
+  {
+   "input": "131300/",
+   "expected": 4081260643200000
+  },
+  {
+   "input": "ThuZUTCPM/)+002020/31",
+   "expected": null
+  },
+  {
+   "input": " /31  :-31-",
+   "expected": null
+  },
+  {
+   "input": "PM-",
+   "expected": null
+  },
+  {
+   "input": "000031Feb)+002020",
+   "expected": null
+  },
+  {
+   "input": " PM-00",
+   "expected": 946684800000
+  },
+  {
+   "input": "60132020+002020  ",
+   "expected": null
+  },
+  {
+   "input": "Feb31030031/+002020132020-",
+   "expected": null
+  },
+  {
+   "input": "Feb+0020201331-",
+   "expected": null
+  },
+  {
+   "input": "/3113+002020-13ZFeb+002020",
+   "expected": null
+  },
+  {
+   "input": ":+002020/00+002020 ",
+   "expected": null
+  },
+  {
+   "input": "Thu03000300",
+   "expected": null
+  },
+  {
+   "input": ")Feb :60 31",
+   "expected": -310348800000
+  },
+  {
+   "input": "+002020Z/",
+   "expected": 1577836800000
+  },
+  {
+   "input": "60)UTC3100Feb31+0020200300",
+   "expected": null
+  },
+  {
+   "input": " Feb+00202013202013+002020+002020)",
+   "expected": null
+  },
+  {
+   "input": "UTC ",
+   "expected": null
+  },
+  {
+   "input": "00Z:--00Thu",
+   "expected": null
+  },
+  {
+   "input": ":/)",
+   "expected": null
+  },
+  {
+   "input": "/00",
+   "expected": 946684800000
+  },
+  {
+   "input": " :)UTC",
+   "expected": null
+  },
+  {
+   "input": "-ThuFeb",
+   "expected": null
+  },
+  {
+   "input": "030000",
+   "expected": 884541340800000
+  },
+  {
+   "input": ")PM202013",
+   "expected": null
+  },
+  {
+   "input": "13PM13:13Feb0300",
+   "expected": null
+  },
+  {
+   "input": "133131ThuFeb+002020",
+   "expected": null
+  },
+  {
+   "input": "FebFeb60PM60 ",
+   "expected": null
+  },
+  {
+   "input": "202000)Thu2020Thu",
+   "expected": null
+  },
+  {
+   "input": "PM-202031",
+   "expected": 6313315392000000
+  },
+  {
+   "input": "202013PM)FebFeb",
+   "expected": null
+  },
+  {
+   "input": "Thu PM0031",
+   "expected": null
+  },
+  {
+   "input": "/-2020UTCPMZ)13UTC",
+   "expected": null
+  },
+  {
+   "input": "+0020202020:2020",
+   "expected": null
+  },
+  {
+   "input": "/2020ZZ Z",
+   "expected": null
+  },
+  {
+   "input": "  1300UTC:",
+   "expected": -21143116800000
+  },
+  {
+   "input": "002020",
+   "expected": 1577836800000
+  },
+  {
+   "input": "313100",
+   "expected": null
+  },
+  {
+   "input": "2020+002020ThuT-3160 60",
+   "expected": null
+  },
+  {
+   "input": "Z))00",
+   "expected": 946684800000
+  },
+  {
+   "input": "Z+002020",
+   "expected": 1577836800000
+  },
+  {
+   "input": "February132020Z:60",
+   "expected": null
+  },
+  {
+   "input": ":00Z)Z",
+   "expected": null
+  },
+  {
+   "input": "3131",
+   "expected": 36637574400000
+  },
+  {
+   "input": "0300/0300)+002020",
+   "expected": null
+  },
+  {
+   "input": "20203131 UTC13Z",
+   "expected": null
+  },
+  {
+   "input": "/ThuZ:)",
+   "expected": null
+  },
+  {
+   "input": ")Z",
+   "expected": null
+  },
+  {
+   "input": "00ZUTC13PM2020",
+   "expected": null
+  },
+  {
+   "input": "-202013202060/",
+   "expected": null
+  },
+  {
+   "input": "60202020202020PMThu2020",
+   "expected": null
+  },
+  {
+   "input": "FebZUTC+002020Z00)",
+   "expected": null
+  },
+  {
+   "input": "-UTC002020",
+   "expected": null
+  },
+  {
+   "input": "PMFebThu00UTC31PM0300:",
+   "expected": null
+  },
+  {
+   "input": "ZFeb+0020200300)Feb60",
+   "expected": null
+  },
+  {
+   "input": "/13/UTC",
+   "expected": null
+  },
+  {
+   "input": "0300:",
+   "expected": -52700112000000
+  },
+  {
+   "input": "60/+002020",
+   "expected": null
+  },
+  {
+   "input": "+002020)13Feb0060PM0300+002020",
+   "expected": null
+  },
+  {
+   "input": "030031PMThuFeb60",
+   "expected": null
+  },
+  {
+   "input": "/ZPM00ZUTC+002020Z",
+   "expected": null
+  },
+  {
+   "input": "13/ 0300PM3131ThuThu",
+   "expected": null
+  },
+  {
+   "input": "UTC00:13/2020:",
+   "expected": null
+  },
+  {
+   "input": "/13",
+   "expected": null
+  },
+  {
+   "input": "Z) ",
+   "expected": null
+  },
+  {
+   "input": "6013",
+   "expected": 127584806400000
+  },
+  {
+   "input": "000300UTCUTC20200300PM",
+   "expected": null
+  },
+  {
+   "input": "PM: Feb00",
+   "expected": 949363200000
+  },
+  {
+   "input": ")00 2020",
+   "expected": null
+  },
+  {
+   "input": "UTC:FebZ",
+   "expected": null
+  },
+  {
+   "input": "00UTCZUTC ",
+   "expected": null
+  },
+  {
+   "input": "1300UTC0300:Feb2020)",
+   "expected": null
+  },
+  {
+   "input": "ThuPM:31",
+   "expected": null
+  },
+  {
+   "input": ":3160)UTC",
+   "expected": null
+  },
+  {
+   "input": "6000)202060",
+   "expected": null
+  },
+  {
+   "input": "UTCFeb/31",
+   "expected": null
+  },
+  {
+   "input": "0300+0020200300030000UTC)0300Z",
+   "expected": null
+  },
+  {
+   "input": "2020+0020200300ThuUTC",
+   "expected": null
+  },
+  {
+   "input": "2020Thu",
+   "expected": null
+  },
+  {
+   "input": "00Thu13",
+   "expected": null
+  },
+  {
+   "input": "13Thu602020PM 60:",
+   "expected": null
+  },
+  {
+   "input": "00:",
+   "expected": null
+  },
+  {
+   "input": "/)Thu--",
+   "expected": null
+  },
+  {
+   "input": "2020- :T3160ThuPM",
+   "expected": null
+  },
+  {
+   "input": "Thu+002020",
+   "expected": 1577836800000
+  },
+  {
+   "input": "UTC1360 )",
+   "expected": null
+  },
+  {
+   "input": "Z31  60310300+002020",
+   "expected": null
+  },
+  {
+   "input": "1360",
+   "expected": -19249747200000
+  },
+  {
+   "input": "PM6020202020/GMT",
+   "expected": null
+  },
+  {
+   "input": "31Thu6031",
+   "expected": null
+  },
+  {
+   "input": "Z00002020-00Thu",
+   "expected": null
+  },
+  {
+   "input": " ZZFeb2020)3113",
+   "expected": null
+  },
+  {
+   "input": ")+002020Feb60UTC",
+   "expected": null
+  },
+  {
+   "input": "60Feb2020Thu//",
+   "expected": null
+  },
+  {
+   "input": "Feb:13602020ThuThu",
+   "expected": null
+  },
+  {
+   "input": "UTC:/+002020):",
+   "expected": null
+  },
+  {
+   "input": "+002020 ",
+   "expected": 1577836800000
+  },
+  {
+   "input": "0300312020Feb310300PM",
+   "expected": null
+  },
+  {
+   "input": "31UTC13+00202000",
+   "expected": null
+  },
+  {
+   "input": "Feb13- ",
+   "expected": 982022400000
+  },
+  {
+   "input": "60UTC",
+   "expected": -315619200000
+  },
+  {
+   "input": "/Thu/60UTC+002020+002020",
+   "expected": null
+  },
+  {
+   "input": "1030020200013Thu+002020",
+   "expected": null
+  },
+  {
+   "input": "31UTC:-UTCThu31Feb-",
+   "expected": null
+  },
+  {
+   "input": "UTC:UTC0300FebFebPM2020)",
+   "expected": null
+  },
+  {
+   "input": "+002020 /+00202031",
+   "expected": null
+  },
+  {
+   "input": "0300Feb/",
+   "expected": -52697433600000
+  },
+  {
+   "input": "13Feb2020:PM310300 /",
+   "expected": null
+  },
+  {
+   "input": "600300",
+   "expected": null
+  },
+  {
+   "input": " /)",
+   "expected": null
+  },
+  {
+   "input": "UTC13030000",
+   "expected": null
+  },
+  {
+   "input": "Thu)1300+002020",
+   "expected": null
+  },
+  {
+   "input": "+002020Feb20200300/Z3103002020",
+   "expected": null
+  },
+  {
+   "input": "FebUTC0300 PM13Feb",
+   "expected": null
+  },
+  {
+   "input": ":133100Z",
+   "expected": 4138063113600000
+  },
+  {
+   "input": "PM 31ThuUTC)",
+   "expected": null
+  },
+  {
+   "input": "03003100",
+   "expected": null
+  },
+  {
+   "input": "UTC Thu)-1313",
+   "expected": -20732889600000
+  },
+  {
+   "input": "Thu)",
+   "expected": null
+  },
+  {
+   "input": "00Z+002020UTC00ThuFeb)",
+   "expected": null
+  },
+  {
+   "input": "030031Thu13",
+   "expected": null
+  },
+  {
+   "input": ")00)60",
+   "expected": null
+  },
+  {
+   "input": "31 60ThuThu0300 ",
+   "expected": null
+  },
+  {
+   "input": ")-202000/PM)",
+   "expected": null
+  },
+  {
+   "input": "+00202060:0060",
+   "expected": null
+  },
+  {
+   "input": "00)Feb0013",
+   "expected": null
+  },
+  {
+   "input": "PMPM+002020",
+   "expected": 1577836800000
+  },
+  {
+   "input": "+002020-/0300 UTC:13",
+   "expected": null
+  },
+  {
+   "input": "03000300FebThu",
+   "expected": null
+  },
+  {
+   "input": "Thu)20202020",
+   "expected": null
+  },
+  {
+   "input": "00UTC ",
+   "expected": 946684800000
+  },
+  {
+   "input": "2020Thu13 ",
+   "expected": null
+  },
+  {
+   "input": ":)0300UTCThu-Z00",
+   "expected": null
+  },
+  {
+   "input": "-Thu- /00/-",
+   "expected": null
+  }
+ ]
+}

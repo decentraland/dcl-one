@@ -1,6 +1,6 @@
-//! Memoizes EIP-1654 contract answers. Only `Ok(true)` is stored (a rejection
-//! or RPC fault is retried next time); concurrent misses for one key coalesce
-//! into a single inner call.
+//! Memoizes EIP-1654 contract answers. Only `Ok(true)` is stored, for
+//! [`DEFAULT_SUCCESS_TTL`] (a rejection or RPC fault is retried next time);
+//! concurrent misses for one key coalesce into a single inner call.
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -25,7 +25,9 @@ pub fn cached_rpc_validator(
     ))))
 }
 
-pub const DEFAULT_SUCCESS_TTL: Duration = Duration::from_secs(3600);
+/// How long a contract wallet's acceptance is reused: an owner rotation or a
+/// wallet upgrade takes effect within this window.
+pub const DEFAULT_SUCCESS_TTL: Duration = Duration::from_secs(60);
 
 pub const DEFAULT_FAILURE_TTL: Duration = Duration::from_secs(300);
 
@@ -200,6 +202,10 @@ impl Eip1654Validator for ValidationCache {
                 .validate_signature_at_block(contract_address, hash, signature, block)
         })
         .await
+    }
+
+    async fn verification_time_block(&self, started_ms: i64) -> Result<u64, AuthError> {
+        self.inner.verification_time_block(started_ms).await
     }
 }
 

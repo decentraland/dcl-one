@@ -266,7 +266,11 @@ fn derive_final_authority(chain: &AuthChain) -> Result<String, String> {
         .last()
         .ok_or_else(|| "Auth chain is required".to_string())?;
     match last.link_type {
-        AuthLinkType::SIGNER => Err("Could not get final authority from auth chain".to_string()),
+        AuthLinkType::SIGNER
+        | AuthLinkType::EcdsaScopedEphemeral
+        | AuthLinkType::EcdsaEip1654ScopedEphemeral => {
+            Err("Could not get final authority from auth chain".to_string())
+        }
         AuthLinkType::EcdsaEphemeral | AuthLinkType::EcdsaEip1654Ephemeral => {
             let (_, ephemeral, _) = parse_ephemeral_payload(&last.payload)
                 .map_err(|e| format!("Could not get final authority from auth chain: {}", e))?;
