@@ -209,7 +209,7 @@ impl HostMedia {
 
         // the browser plays HLS natively
         if let Some(url) = &url {
-            media.set_src(url);
+            slf.media.set_src(url);
         }
         // only a video's frames are read, which needs a CORS load: an audio stream from a server
         // without CORS headers still plays
