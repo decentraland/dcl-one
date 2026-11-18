@@ -5,7 +5,10 @@ launches Chrome over the DevTools protocol and gives a test what the standalone'
 and CEF input give it:
 
 - **Console commands.** `console(line)` runs `await window.engine_console_command(line)` in the
-  app frame and returns what it resolves with, or rejects with the page's message.
+  app frame and returns what it resolves with, or rejects with the page's message. A command whose
+  document is replaced or closed before it answers (a click that loads the page again) rejects at
+  once with the exported `APP_GONE` message; the next command runs in the new document once it is
+  ready.
 - **Trusted input.** `/hud_click`, `/hud_fill`, `/press_key` and `/click_at` (page side:
   `library/explorer-core/lib/hudAutomation.ts`) ask the runner for real input instead of dispatching DOM
   events, so the page sees `isTrusted` events.
