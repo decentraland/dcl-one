@@ -1703,10 +1703,13 @@ fn process_avatar(
             for (hidename, category) in hiders {
                 if parent_name.ends_with(hidename) {
                     // todo construct hides better so we don't need to scan the wearables here
+                    // HEAD is hide-only and a skin already hides it, so the face follows
+                    // `def.hides` alone: a force-rendered head keeps its face
                     if def.hides.contains(&category)
-                        || def.wearables.iter().any(|(_, w)| {
-                            w.category == WearableCategory::SKIN || w.category == category
-                        })
+                        || (category != WearableCategory::HEAD
+                            && def.wearables.iter().any(|(_, w)| {
+                                w.category == WearableCategory::SKIN || w.category == category
+                            }))
                     {
                         *vis = Visibility::Hidden;
                     }
