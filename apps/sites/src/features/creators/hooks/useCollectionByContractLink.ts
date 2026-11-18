@@ -36,7 +36,7 @@ export function useCollectionByContractLink(address: string | undefined): { isRe
     const outcome: Outcome = match ? 'found' : !isValid ? 'invalid' : collections.isError ? 'error' : 'not_found'
     track('Open collection by contract', { outcome, ...(match && { collectionId: match.id }) })
     if (match) {
-      navigate(`/collections/${match.id}`, { replace: true })
+      navigate(`/create/collections/${match.id}`, { replace: true })
       return
     }
     setSearchParams(

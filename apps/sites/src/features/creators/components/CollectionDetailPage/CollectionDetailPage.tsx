@@ -589,7 +589,7 @@ const CollectionDetailPage = () => {
         <section className={shared.panel} data-testid="collection-not-found">
           <h2 className={shared.panelTitle}>{t('collection_detail_page.not_found.title')}</h2>
           <p className={shared.panelText}>{t('collection_detail_page.not_found.description')}</p>
-          <Button type="button" variant="secondary" onClick={() => navigate('/collections')}>
+          <Button type="button" variant="secondary" onClick={() => navigate('/create/collections')}>
             {t('collection_detail_page.not_found.back')}
           </Button>
         </section>
@@ -615,7 +615,7 @@ const CollectionDetailPage = () => {
           thirdParty={thirdParty.data}
           session={session}
           page={page}
-          onBack={() => navigate({ pathname: '/collections', search: listState?.listSearch })}
+          onBack={() => navigate({ pathname: '/create/collections', search: listState?.listSearch })}
           onPageChange={goToPage}
         />
       ) : (
@@ -629,7 +629,7 @@ const CollectionDetailPage = () => {
                 data-testid="back-to-collections"
                 onClick={() =>
                   navigate({
-                    pathname: '/collections',
+                    pathname: '/create/collections',
                     search: listState?.listSearch
                   })
                 }
@@ -804,11 +804,11 @@ const CollectionDetailPage = () => {
                   forumInMenu={autoCuration}
                   onSendItems={canSend ? () => setSending(true) : undefined}
                   onCreateDiscount={canCreateDiscount ? () => openDiscount('menu') : undefined}
-                  onPreviewItems={() => navigate(`/collections/editor?collection=${collection.id}`)}
+                  onPreviewItems={() => navigate(`/create/collections/editor?collection=${collection.id}`)}
                   forumLink={showForumPost ? collection.forumLink : undefined}
                   onManageRoles={setManagingRoles}
                   onTransferOwnership={() => setTransferring(true)}
-                  onDeleted={() => navigate('/collections', { replace: true })}
+                  onDeleted={() => navigate('/create/collections', { replace: true })}
                 />
               )}
             </div>
@@ -856,7 +856,7 @@ const CollectionDetailPage = () => {
                 variant="secondary"
                 type="button"
                 data-testid="open-editor"
-                onClick={() => navigate(`/collections/editor?collection=${collection.id}`)}
+                onClick={() => navigate(`/create/collections/editor?collection=${collection.id}`)}
               >
                 <OpenEditorIcon />
                 {t(canManage ? 'collection_detail_page.open_editor' : 'collection_detail_page.open_preview')}
@@ -1138,7 +1138,7 @@ const CollectionDetailPage = () => {
             <TransferOwnershipFlow
               collection={collection}
               session={session}
-              onDone={() => navigate('/collections', { replace: true })}
+              onDone={() => navigate('/create/collections', { replace: true })}
               onClose={() => setTransferring(false)}
             />
           )}

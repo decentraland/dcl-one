@@ -103,7 +103,7 @@ export function LinkedItemActionsMenu({
         {!compact && (
           <ActionsMenuItem
             testId="item-preview"
-            onClick={() => navigate(`/collections/editor?collection=${collection.id}&item=${item.id}`)}
+            onClick={() => navigate(`/create/collections/editor?collection=${collection.id}&item=${item.id}`)}
           >
             {t('collection_detail_page.item_actions.open_in_editor')}
           </ActionsMenuItem>

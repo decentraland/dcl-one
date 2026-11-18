@@ -301,9 +301,9 @@ describe('canPushChanges', () => {
 describe('curationListUrl', () => {
   it('returns to the list with the filters it was left with', () => {
     sessionStorage.clear()
-    expect(curationListUrl()).toBe('/curation')
+    expect(curationListUrl()).toBe('/create/curation')
     rememberCurationSearch('?status=approved&page=2')
-    expect(curationListUrl()).toBe('/curation?status=approved&page=2')
+    expect(curationListUrl()).toBe('/create/curation?status=approved&page=2')
   })
 })
 

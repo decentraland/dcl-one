@@ -89,7 +89,7 @@ export function ItemActionsMenu({ item, collection, address, sync, listing, revi
   }
 
   function openEditor() {
-    navigate(`/collections/editor?collection=${collection.id}&item=${item.id}`)
+    navigate(`/create/collections/editor?collection=${collection.id}&item=${item.id}`)
   }
 
   function openSaleDialog(kind: 'update-price' | 'remove-listing') {

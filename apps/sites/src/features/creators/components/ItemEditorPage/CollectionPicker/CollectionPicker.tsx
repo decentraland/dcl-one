@@ -51,7 +51,7 @@ export function CollectionPicker({ address, onPick, testId = 'collection-picker'
         <div className={sidebar.headerRow}>
           <Link
             className={sidebar.iconButton}
-            to="/collections"
+            to="/create/collections"
             aria-label={t('item_editor.picker.back')}
             data-testid={`${testId}-back`}
           >

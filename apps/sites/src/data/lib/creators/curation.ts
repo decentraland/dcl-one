@@ -305,8 +305,8 @@ export function rememberCurationSearch(search: string): void {
 
 export function curationListUrl(): string {
   try {
-    return `/curation${window.sessionStorage.getItem(LIST_SEARCH_KEY) ?? ''}`
+    return `/create/curation${window.sessionStorage.getItem(LIST_SEARCH_KEY) ?? ''}`
   } catch {
-    return '/curation'
+    return '/create/curation'
   }
 }

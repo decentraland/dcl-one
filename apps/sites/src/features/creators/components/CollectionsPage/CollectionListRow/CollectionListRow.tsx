@@ -30,7 +30,7 @@ export function CollectionListRow({ collection }: Props) {
           <CollectionMosaic collectionId={collection.id} itemCount={collection.itemCount} showEmptyLabel={false} />
         </div>
         {/* Stretched over the whole row (see RowLink) so the row is one real link. */}
-        <Link className={styles.rowLink} to={`/collections/${collection.id}`} state={{ listSearch: search }}>
+        <Link className={styles.rowLink} to={`/create/collections/${collection.id}`} state={{ listSearch: search }}>
           <h3 className={styles.name} title={collection.name}>
             {collection.name}
           </h3>

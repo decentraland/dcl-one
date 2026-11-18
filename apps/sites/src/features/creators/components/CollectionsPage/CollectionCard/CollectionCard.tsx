@@ -28,7 +28,7 @@ export function CollectionCard({ collection }: Props) {
     <Link
       className={styles.card}
       data-testid="collection-card"
-      to={`/collections/${collection.id}`}
+      to={`/create/collections/${collection.id}`}
       state={{ listSearch: search }}
     >
       <div className={styles.media}>

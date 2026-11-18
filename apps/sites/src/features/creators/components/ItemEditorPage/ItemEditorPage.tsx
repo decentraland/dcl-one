@@ -691,7 +691,7 @@ const ItemEditorPage = () => {
         <section className={styles.statePanel} data-testid="collection-not-found">
           <h2 className={styles.stateTitle}>{t('collection_detail_page.not_found.title')}</h2>
           <p className={styles.stateText}>{t('collection_detail_page.not_found.description')}</p>
-          <Button type="button" variant="secondary" onClick={() => navigate('/collections')}>
+          <Button type="button" variant="secondary" onClick={() => navigate('/create/collections')}>
             {t('collection_detail_page.not_found.back')}
           </Button>
         </section>
@@ -787,7 +787,7 @@ const ItemEditorPage = () => {
   // else reached a published collection by link and has nowhere to go back to.
   const editBack: EditorBack | undefined = collection
     ? hasRole
-      ? { to: `/collections/${collection.id}`, label: t('item_editor.sidebar.back') }
+      ? { to: `/create/collections/${collection.id}`, label: t('item_editor.sidebar.back') }
       : isCurator
         ? { to: curationListUrl(), label: t('item_editor.review.back') }
         : undefined

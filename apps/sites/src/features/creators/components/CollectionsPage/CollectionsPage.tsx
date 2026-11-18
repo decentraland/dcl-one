@@ -87,7 +87,7 @@ const CollectionsPage = () => {
     if (resume && resume.orderId === topUpReturn.orderId) {
       const params = new URLSearchParams({ order: topUpReturn.orderId })
       if (topUpReturn.canceled) params.set('canceled', '1')
-      navigate({ pathname: `/collections/${resume.collectionId}`, search: `?${params}` }, { replace: true })
+      navigate({ pathname: `/create/collections/${resume.collectionId}`, search: `?${params}` }, { replace: true })
       return
     }
     clearTopUpResume()
@@ -124,7 +124,7 @@ const CollectionsPage = () => {
   function onCreateSubmit(name: string) {
     if (!address) return
     saveCollection.mutate(buildNewCollection(name, address), {
-      onSuccess: collection => navigate(`/collections/${collection.id}`)
+      onSuccess: collection => navigate(`/create/collections/${collection.id}`)
     })
   }
 
@@ -141,7 +141,7 @@ const CollectionsPage = () => {
           linkedContractNetwork: contract.network,
           collectionName: name
         })
-        navigate(`/collections/${saved.id}`)
+        navigate(`/create/collections/${saved.id}`)
       },
       onError: error => {
         if (!isRefusedRequest(error)) captureError(error, { flow: 'linked_create', network: contract.network })

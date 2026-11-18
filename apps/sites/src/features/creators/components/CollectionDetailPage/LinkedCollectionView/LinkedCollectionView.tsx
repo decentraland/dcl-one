@@ -507,14 +507,14 @@ export function LinkedCollectionView({ collection, thirdParty, session, page, on
             address={address}
             showRoles={false}
             onPreviewInWorld={total > 0 ? () => previewCollectionFromDetail(collection.id, total) : undefined}
-            onPreviewItems={() => navigate(`/collections/editor?collection=${collection.id}`)}
+            onPreviewItems={() => navigate(`/create/collections/editor?collection=${collection.id}`)}
             onEditUrn={canEditCollection ? () => setUrnOpen(true) : undefined}
             onEditContract={
               // A mapping edit still waiting to save would write the old contract back after the change.
               canEdit && contract && thirdParty && unsavedMappings.size === 0 ? openContract : undefined
             }
             onEditInBulk={canEdit && total > 0 ? () => bulkInputRef.current?.click() : undefined}
-            onDeleted={() => navigate('/collections', { replace: true })}
+            onDeleted={() => navigate('/create/collections', { replace: true })}
           />
         </div>
       </div>
@@ -591,7 +591,7 @@ export function LinkedCollectionView({ collection, thirdParty, session, page, on
             variant="secondary"
             type="button"
             data-testid="open-editor"
-            onClick={() => navigate(`/collections/editor?collection=${collection.id}`)}
+            onClick={() => navigate(`/create/collections/editor?collection=${collection.id}`)}
           >
             <OpenEditorIcon />
             {t('collection_detail_page.open_editor')}

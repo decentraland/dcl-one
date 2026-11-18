@@ -36,7 +36,7 @@ type Props = {
 const NO_EVENTS: CollectionEvent[] = []
 
 function reviewUrl(collection: Collection): string {
-  return `/collections/editor?collection=${collection.id}&reviewing=true`
+  return `/create/collections/editor?collection=${collection.id}&reviewing=true`
 }
 
 export function CurationRow({ collection, curation, address, onAssign }: Props) {

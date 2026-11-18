@@ -377,7 +377,7 @@ const LivePreviewPage = () => {
       file={adding.file}
       prefill={adding.prefill}
       onClose={() => setAdding(null)}
-      onDone={collectionId => navigate(`/collections/${collectionId}`)}
+      onDone={collectionId => navigate(`/create/collections/${collectionId}`)}
     />
   )
 
