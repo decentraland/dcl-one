@@ -1,5 +1,5 @@
 import { useIntl } from 'react-intl'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation } from 'react-router'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { useWallet } from '@/features/creators/store/wallet'
 import { formatTimeAgo } from '@/data/lib/creators/time'

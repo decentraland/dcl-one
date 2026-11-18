@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 
 const wallet = vi.hoisted(() => ({ session: null as { address: string; providerType?: string } | null }))
 vi.mock('@/features/creators/store/wallet', () => ({

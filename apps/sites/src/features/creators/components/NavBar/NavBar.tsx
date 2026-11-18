@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router'
 import { Network } from '@dcl/schemas/dist/dapps/network'
 import { TopNav } from '@/features/creators/components/TopNav'
 import { useWallet } from '@/features/creators/store/wallet'

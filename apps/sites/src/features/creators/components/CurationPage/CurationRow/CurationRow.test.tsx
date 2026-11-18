@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import { TranslationProvider } from '@/data/lib/creators/intl'
 import { type Collection } from '@/data/lib/creators/collections'
 import { openExternal } from '@/data/lib/creators/navigation'

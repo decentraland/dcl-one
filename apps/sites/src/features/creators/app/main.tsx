@@ -1,7 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClientProvider } from '@tanstack/react-query'
-import { BrowserRouter } from 'react-router-dom'
+import { BrowserRouter } from 'react-router'
 import { basePath } from '@/data/lib/creators/config'
 import { initAnalytics } from '@/data/lib/creators/analytics'
 import { initSentry } from '@/data/lib/creators/monitoring'

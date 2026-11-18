@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router'
 import { config } from '@/data/lib/creators/config'
 import { useAfterLoadIdle } from '@/features/creators/hooks/useAfterLoadIdle'
 import { getAnonymousId, onAnalyticsReady } from '@/data/lib/creators/analytics'

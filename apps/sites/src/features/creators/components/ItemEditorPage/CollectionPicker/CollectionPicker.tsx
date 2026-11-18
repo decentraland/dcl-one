@@ -13,7 +13,7 @@ import { cx } from '@/data/lib/creators/cx'
 import sidebar from '../ItemsSidebar/ItemsSidebar.module.css'
 import shared from '@/features/creators/styles/shared.module.css'
 import editor from '../ItemEditorPage.module.css'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 
 // The picker's rows are shorter than the collections page's cards, so it fits more per page.
 const PICKER_PAGE_SIZE = 12

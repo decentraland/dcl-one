@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useSearchParams, Link } from 'react-router-dom'
+import { useNavigate, useSearchParams, Link } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { BodyShape, type ContractNetwork } from '@dcl/schemas'
 import { ArrowBackIosNewIcon, PersonOutlineIcon } from '@/features/creators/components/Icons'

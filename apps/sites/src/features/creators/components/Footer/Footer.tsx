@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useInView } from 'react-intersection-observer'
-import { useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router'
 import { useAfterLoadIdle } from '@/features/creators/hooks/useAfterLoadIdle'
 import { useLocale, LOCALES, type Locale } from '@/features/creators/store/locale'
 import { englishMessage, useTranslation } from '@/data/lib/creators/intl'

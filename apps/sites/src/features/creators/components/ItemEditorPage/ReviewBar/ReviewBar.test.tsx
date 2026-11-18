@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import { TranslationProvider } from '@/data/lib/creators/intl'
 import { type Session } from '@/data/lib/creators/auth'
 import { type Collection } from '@/data/lib/creators/collections'

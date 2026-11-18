@@ -31,7 +31,7 @@ import { BodyShapeType, ItemType, getItemBodyShapeType, isSmartWearable, type It
 import { EditorSection } from '../EditorSection'
 import { cx } from '@/data/lib/creators/cx'
 import styles from './ItemsSidebar.module.css'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 
 export type EditorBack = { to: string; label: string }
 

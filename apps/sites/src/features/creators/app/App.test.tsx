@@ -1,7 +1,7 @@
 import { StrictMode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 vi.mock('@/features/creators/hooks/useFeatureFlag', () => ({ useFeatureFlag: () => ({ enabled: false, isLoading: false }) }))
 vi.mock('@/features/creators/hooks/useAccountWatcher', () => ({ useAccountWatcher: () => undefined }))
 vi.mock('@/features/creators/store/wallet', () => ({

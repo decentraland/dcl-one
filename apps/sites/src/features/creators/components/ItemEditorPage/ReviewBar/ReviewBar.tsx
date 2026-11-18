@@ -50,7 +50,7 @@ import { DisableCollectionFlow } from './DisableCollectionFlow'
 import { ForumVerdictModal } from './ForumVerdictModal'
 import { RejectCurationModal } from './RejectCurationModal'
 import styles from './ReviewBar.module.css'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 
 type Props = {
   session: Session

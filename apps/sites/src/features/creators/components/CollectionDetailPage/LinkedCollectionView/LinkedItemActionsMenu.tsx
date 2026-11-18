@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { useMediaQuery } from '@/features/creators/hooks/useMediaQuery'
 import { useDeleteItem } from '@/features/creators/hooks/usePublishCollection'

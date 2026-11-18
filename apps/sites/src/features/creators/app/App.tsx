@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef } from 'react'
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router'
 import { ErrorBoundary } from '@/features/creators/components/ErrorBoundary'
 import { Footer } from '@/features/creators/components/Footer'
 import { Intercom } from '@/features/creators/components/Intercom'

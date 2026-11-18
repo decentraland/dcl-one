@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useIntl } from 'react-intl'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { EditIcon } from '@/features/creators/components/Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { CollectionMosaic } from '@/features/creators/components/CollectionMosaic'

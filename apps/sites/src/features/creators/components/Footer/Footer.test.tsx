@@ -1,7 +1,7 @@
 import { afterEach, describe, it, expect, beforeEach, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import { TranslationProvider } from '@/data/lib/creators/intl'
 import { sendOverviewTrack } from '@/data/lib/creators/overviewSegment'
 import { useLocale } from '@/features/creators/store/locale'

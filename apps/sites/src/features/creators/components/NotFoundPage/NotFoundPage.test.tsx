@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import { TranslationProvider } from '@/data/lib/creators/intl'
 import { track } from '@/data/lib/creators/analytics'
 import { NotFoundPage } from './NotFoundPage'

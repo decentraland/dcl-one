@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, useLocation } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router'
 import { BodyShape } from '@dcl/schemas'
 import { TranslationProvider } from '@/data/lib/creators/intl'
 import { type Collection } from '@/data/lib/creators/collections'

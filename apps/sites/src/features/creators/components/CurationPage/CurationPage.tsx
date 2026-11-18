@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router'
 import { PersonOutlineIcon, SearchIcon } from '@/features/creators/components/Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { Button } from '@/features/creators/components/Button'
