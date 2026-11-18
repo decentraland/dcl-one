@@ -11,6 +11,7 @@ are external. Explorer images: pipeline.
 | `image-gateway` (`foundation-gateway:nix`) | `gateway` (8080) | `/tmp` |
 
 - Run API, indexer, Pulse and migrations from one `apis` digest; domain crates are not separate services.
+- The community chat message router, `catalyst-message-router`, is a separate binary that links libwebrtc (`cargo build -p catalyst-message-router --features livekit`); no image carries it ([message router](../../services/catalyst/docs/comms/comms-crate.md#message-router)).
 - The APIs image has no SDK Play embed (`PLAY_EMBED_DIR` unset) and no `scene-build.wasm`.
 - Workflows are `<component>-<task>.yml`; Quay variables `QUAY_<COMPONENT>_REPOSITORY` hold full destinations without tags.
 - Tags: `sha-<full-commit>[-<arch>]`, `main`, `v*` (not Bevy). Bevy SHA tags can change on replay: pin `repository@sha256:<digest>`.

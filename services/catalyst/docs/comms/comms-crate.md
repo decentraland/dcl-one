@@ -13,7 +13,7 @@ separate from the current runtime described here.
 - One crate, not four, evolved in place from the moved dcl-one modules.
 - Client-facing contracts (HTTP paths, room names, client wire protocol) stay compatible; NATS subjects are internal and change with both ends in one commit.
 - Services talk over core NATS, at most once; it was kept over gRPC, Zenoh and Postgres NOTIFY because it alone covers per-key events, snapshots, fan-out and request/reply.
-- The gatekeeper runs inside the primary `catalyst serve`; only the primary serves `/ws`. Pulse runs as `catalyst pulse`.
+- The gatekeeper runs inside the primary `catalyst serve`; only the primary serves `/ws`. Pulse runs as `catalyst pulse`. The community chat message router runs as its own binary, `catalyst-message-router` (crate `services/catalyst/message-router`), outside `catalyst`, so a libwebrtc fault cannot stop `serve`.
 - The shared vocabulary lives in comms; ban status has one answer, comms moderation; the MLS delivery service stays in social.
 - Friends' online status comes from Pulse's islands snapshot. Room occupancy and capacity stay on LiveKit as an interim; the target is Pulse.
 - Pulse retains unfinished takeover work in memory; gatekeeper alone applies LiveKit cleanup, confirms completion and mints under the authoritative token floor.
@@ -29,6 +29,7 @@ separate from the current runtime described here.
 | `archipelago` | primary `serve` | `/ws`, authenticated observations, socket registrations and enforcement room assignments |
 | `stats` | every `serve` | complete read-only Pulse statistics snapshots, HTTP projections, `CommsCore` and archive views; uncached enrichment through the existing content pool |
 | `gatekeeper::admission` | `serve` | scene, server-scene, world (`world_mint`) and island tokens; the Pulse room authority (`relay_authority`) |
+| `gatekeeper::message_router` | `serve` | the message router's join token, `POST /internal/message-router/token/v1` |
 | `gatekeeper::moderation`, `removal`, `removed_places` | `serve` | bans, warnings, scene admins, durable ban kicks, disabled-place cleanup (reading Explore's removal feed by shared SQL, `DATABASE.md` "Place removal feed"), room metadata repair |
 | `gatekeeper::voice`, `streaming`, `streaming_jobs`, `streaming::cast` | `serve` | private and community voice; stream access, LiveKit Ingress, streaming expiry; Cast 2.0 (`/cast/*`): stream links, streamer, watcher and presentation-bot tokens over the same stream credential, presenters in the scene room's metadata |
 | `gatekeeper::reports` | `serve` | the player report intake at `/report-user` (`/api/reports/players/presign`, the evidence `PUT`s, `/api/reports/players`); the moderator token reads `/api/reports` |
@@ -37,6 +38,7 @@ separate from the current runtime described here.
 | `presence`, `topology` | every `serve` | `/live-data`, `/wallet/{w}/connected-world`, capacity counts from LiveKit occupancy; social online from Pulse's topology |
 | `protocol` | all | Pulse proto, legacy archipelago, `bus`, `room_authority`: the only module the services share |
 | `rooms`, `world_identity`, `access`, `limits` (from `shared`), `worlds_envelope`, `writes`, `signed_fetch`, `deny_list` | library | the vocabulary worlds and social use |
+| `catalyst-message-router` (its own crate) | `catalyst-message-router` | community chat: a LiveKit participant on the private messages room that relays a member's message to the community's members (§ Message router) |
 
 Outside: access, room resolution and storage (worlds); privacy, friendships, roles, notification
 records and `/mls/*` (social); the scene runtime; LiveKit. Dropped: the relay to Decentraland's
@@ -131,6 +133,9 @@ unverified pending acceptance evidence.
 | connector ↔ gatekeeper | calls inside the primary `serve` (`CommsState::announce_session`, `IslandSockets`); `peer.*.connect`, `peer.*.disconnect`, `engine.peer.*.island_changed` are retired |
 | Pulse ↔ `serve` | core NATS, § Bus messages |
 | Pulse → gatekeeper | `GET /bans` (moderator bearer, ETag); configured `POST /internal/pulse/room-authority/v1` with dedicated HMAC key and authenticated source UUID; relay client activation remains dormant |
+| message router → gatekeeper | `POST /internal/message-router/token/v1` with the dedicated HMAC key `MESSAGE_ROUTER_KEY`, at start and on every reconnect |
+| message router → social tables | shared SQL reads of `social.communities` and `social.community_members` on its own pool (`DATABASE.md` "Message router workload") |
+| Explorer ↔ message router | data packets on the private messages room, topic `community:<id>` |
 | gatekeeper → `multiplayer-hosting` | `RoomEvent` on `comms.room_events.v1` (defined, not yet published) |
 | `multiplayer-hosting` → gatekeeper / engine | public routes / stdin-stdout JSON lines |
 
@@ -166,12 +171,58 @@ Undecodable frames close with 1007; restart closes every socket with 1012.
 **Deployment.**
 - One primary is a release gate. Every API replica sets `FLEET_JOBS_ENABLED=false` (default true). Only the primary serves WebSockets; every serve supplies read-only statistics, about and realms from its retained complete snapshot. Stop the primary before its successor starts.
 - The gateway's subdomain-prefix mapping sends `archipelago-ea-stats.<domain>` to `/archipelago-ea-stats/*` and `archipelago-ea-ws-connector.<domain>` to `/archipelago-ea-ws-connector/*`. Route both connector hosts and WebSockets to the primary. Additional host aliases require explicit proxy mappings. The complete standalone mounts sit outside shared path normalization and CORS; root content `/status` remains unchanged. Existing `/ws` and `/archipelago-ea-stats/ws` entrypoints remain, with `/archipelago-ea-ws-connector/ws` available at the connector mount. No public Pulse listener is added. Shared-root `/stats/*` aliases, including `/stats/health`, remain available at the root and are excluded from the standalone Stats mount. Optional WebSocket subprotocol names are echoed in offered order; they never select authentication or enable extended control fields.
-- Key separation: only the gatekeeper holds the LiveKit secret; the dormant relay implementation requires a room-authority answer and has no production activation; `multiplayer-hosting` will hold the authoritative key; engines run as a separate user with a scrubbed environment.
+- Key separation: only the gatekeeper holds the LiveKit secret (the message router asks it for a token); the dormant relay implementation requires a room-authority answer and has no production activation; `multiplayer-hosting` will hold the authoritative key; engines run as a separate user with a scrubbed environment.
 - Configured legacy ownership uses `ARCHIPELAGO_CONTROL_V4_AUDIENCE`. Pulse accepts that audience or `PULSE_V4_AUDIENCE` for its shared NATS control-position bridge; conflicting values fail startup. Neither setting enables public V4 authentication.
 - `DENY_LIST_URL` (or upstream's name `DENYLIST_JSON_URL`) is required in production; `NODE_POSTURE=mirror` defaults it to `https://config.decentraland.org/denylist.json`. Unset, the node warns at start and runs with the list off.
 - `BAN_SWEEP_INTERVAL_MS` (CLI `--ban-sweep-interval-ms`, default 30,000 ms) schedules connected-wallet ban checks after the first interval and on subsequent timer ticks. A tick during an unfinished pass is skipped; passes never overlap and skipped ticks do not accumulate. Checks retain a maximum concurrency of 20. Numeric prefixes are accepted, fractional milliseconds are truncated, and values below 1 or above 2,147,483,647 become 1 ms; an empty or nonnumeric value fails startup. Shutdown stops new passes while the current pass remains owned by the existing job shutdown deadline.
 - `JOBS_FIRST_PASS_NOW=true` also bypasses the ban sweep's initial delay for development/test startup; subsequent ticks retain the configured cadence.
 - `PULSE_FLAGS_URL` (HTTPS or numeric-loopback HTTP, polled every 60 s) may set only the four `PULSE_IP_LIMITER_*` values (`ENABLED` false, `MAX_CONCURRENCY` 10, `SCENE_LISTENER_MAX_CONCURRENCY` 2, `WHITELIST` empty by default).
+
+## Message router
+
+`catalyst-message-router` ports Decentraland's `comms-message-sfu` (revision
+d38ccd0885ad23028604e9a9fcc788cdfcbb81fe). It joins the private messages room
+(`PRIVATE_MESSAGES_ROOM_ID`, default `private-messages`) as
+`<MESSAGE_ROUTER_IDENTITY_PREFIX>-<MESSAGE_ROUTER_REPLICA>`. The Explorer
+(`rendering/bevy-explorer/source/crates/comms/src/community_chat.rs`) sends community chat to
+`message-router-dev-0`, or `message-router-prd-0` when its base domain is decentraland.org,
+and trusts the stamped author only from that identity; the defaults (`message-router-dev`,
+replica 0) are what a dcl-one deployment's clients address.
+
+For each data packet: no sender, its own packets and no topic are dropped; more than
+`MESSAGE_ROUTER_MAX_PACKET_SIZE_BYTES` (8192) counts `rejected_oversized`; a sender past its
+token bucket (`MESSAGE_ROUTER_RATE_LIMIT_MAX_TOKENS` 10, `_REFILL_PER_SECOND` 5, idle buckets
+swept every `_CLEANUP_INTERVAL_MS` 60,000) counts `rate_limited`. The rfc4 `Packet` must be a
+`chat` or `chat_reaction` on topic `community:<uuid>`, the room connected and the sender a
+member; it goes, with `Chat.forwarded_from` (or `ChatReaction.address`) set to the sender, to
+the other members of the active community on `community:<id>`, reliable, 100 destination
+identities per publish; a failed publish is logged and the rest still go. Anything else counts
+`failed`.
+
+Its token comes from the gatekeeper: `POST /internal/message-router/token/v1`
+(`shared::message_router`), an HMAC-SHA256 over method, path, timestamp (±30 s), nonce
+(replay-refused) and body hash with `MESSAGE_ROUTER_KEY` (32 base64url bytes, not the LiveKit
+secret, set on both sides; unset on `serve`, the route is not mounted). The body names only the
+replica; the gatekeeper's `MESSAGE_ROUTER_IDENTITY_PREFIX` fixes the identity, and the grant is
+join, subscribe and publish data on the private messages room, with no track publishing and no
+metadata update. The gateway keeps `/internal/message-router` private.
+
+Connections take a fresh token, `MESSAGE_ROUTER_CONNECT_ATTEMPTS` (5) tries
+`MESSAGE_ROUTER_CONNECT_DELAY_MS` (1,000) apart; exhausting them exits the process for its
+supervisor to restart. After a final disconnect it connects again, except for a client-initiated
+disconnect, a duplicate identity, a deleted room and the SIP reasons, after which it stays out
+of the room (not ready) until restarted.
+
+The router reads `DATABASE_URL`, `MESSAGE_ROUTER_TOKEN_URL` (https, or http to a loopback or
+private address), `MESSAGE_ROUTER_KEY` or `MESSAGE_ROUTER_KEY_FILE`, and optionally
+`MESSAGE_ROUTER_LIVEKIT_URL` (dialed instead of the URL the gatekeeper hands out),
+`MESSAGE_ROUTER_DB_MAX_CONNECTIONS` (4) and `MESSAGE_ROUTER_METRICS_BIND`
+(`127.0.0.1:5007`: `/metrics`, `/health/live`, `/health/ready` while in the room). Under
+`NODE_POSTURE` island or journey its URLs must name loopback or `PUBLIC_URL`'s host. Series:
+`message_delivery_total{outcome}` (`delivered`, `failed`, `rejected_oversized`,
+`rate_limited`), `message_delivery_latency` (milliseconds) and `livekit_connection_status`.
+Build it with `cargo build -p catalyst-message-router --features livekit`; without the
+feature the crate's library and tests build without libwebrtc.
 
 ## Statistics ownership and runtime
 

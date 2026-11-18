@@ -1138,6 +1138,25 @@ returns only the numeric status. The pinned source's complete response bodies
 are compared for accepted, sent/received requests, absent friendship and empty
 history, with V2 and anonymous controls; no performance change was measured.
 
+## Message router workload
+
+The community chat message router (`catalyst-message-router`, its own process with its own
+pool, `MESSAGE_ROUTER_DB_MAX_CONNECTIONS`, default 4, 5 s statement timeout) reads social's
+community tables by shared SQL and writes nothing. Per routed packet (a community chat message
+or reaction, at most 10 per sender in a burst and 5 per second sustained) it runs two queries:
+
+- membership: `EXISTS` over `social.community_members` on `(community_id, member_address)`,
+  one probe of `community_members_pkey`, whatever the community's state;
+- recipients: `social.communities` by `id` (its primary key) with `active`, joined to the
+  community's `social.community_members` rows through the `community_members_pkey` prefix,
+  every member but the sender, `lower(member_address)`. The result is the community's member
+  count, which the router publishes in batches of 100 identities.
+
+Inputs are a community uuid from the packet topic and the sender's LiveKit identity, lowercased
+(member addresses are stored lowercase). No table, index or column is added. Changing a column
+either query reads updates this section and the root `AGENTS.md` comms ownership in the same
+change.
+
 ## Native referral login workload
 
 `POST /social-api/v1/client-login` derives the invited wallet from ADR-44 signed
