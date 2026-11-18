@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { settings as settingsPreload } from '#preload';
+
 import { MetricsWindow, SortBy } from '../../../../../shared/types/place-analytics';
+import { watchlistFor, withWatchlist } from '../../../../../shared/types/analytics-watchlist';
 import { FilterBy } from '../../../../../shared/types/manage';
 import { AuthServerProvider } from '../../../lib/auth';
 import type { AnalyticsPlace } from '../../../lib/analyticsLocations';
@@ -393,6 +396,242 @@ describe('placeAnalytics slice', () => {
     it('should return nothing for a scene that is not in the snapshot', () => {
       expect(selectors.getPlace(store.getState(), 'land:99,99')).toBeUndefined();
       expect(selectors.getPlaceMetrics(store.getState(), 'land:99,99')).toBeUndefined();
+    });
+  });
+});
+
+describe('placeAnalytics watchlist', () => {
+  const WALLET = '0x00000000000000000000000000000000000000AA';
+  const WALLET_KEY = WALLET.toLowerCase();
+  const OTHER_WALLET = '0x0000000000000000000000000000000000000001';
+
+  /** The stored `AppSettings.analyticsWatchlist`, read and written as the preload bridge does. */
+  let stored: unknown;
+  let store: ReturnType<typeof createTestStore>;
+
+  const signInAs = (address: string) =>
+    vi.mocked(AuthServerProvider.getAccount).mockReturnValue(address);
+
+  const load = (address: string) => store.dispatch(actions.loadPinnedPlaces({ address }));
+
+  const visibleNames = () => selectors.getVisiblePlaces(store.getState()).map(p => p.name);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    stored = undefined;
+    vi.mocked(settingsPreload.getAnalyticsWatchlist).mockImplementation(async address =>
+      watchlistFor(stored, address),
+    );
+    vi.mocked(settingsPreload.setAnalyticsWatchlist).mockImplementation(
+      async (address, placeIds) => {
+        stored = withWatchlist(stored, address, placeIds);
+      },
+    );
+    vi.mocked(fetchAllDeployedWorlds).mockResolvedValue([]);
+    vi.mocked(fetchAnalyticsSnapshot).mockResolvedValue(SNAPSHOT);
+    signInAs(WALLET);
+    store = createTestStore();
+  });
+
+  describe('when a place is toggled after the stored watchlist loaded', () => {
+    beforeEach(async () => {
+      await load(WALLET_KEY);
+      await store.dispatch(actions.togglePin(NIGHTMARE.placeId));
+    });
+
+    it('should pin it in the store', () => {
+      expect(store.getState().placeAnalytics.pinnedPlaceIds).toEqual([NIGHTMARE.placeId]);
+    });
+
+    it('should save the list for the lowercased wallet', () => {
+      expect(settingsPreload.setAnalyticsWatchlist).toHaveBeenCalledWith(WALLET_KEY, [
+        NIGHTMARE.placeId,
+      ]);
+      expect(watchlistFor(stored, WALLET)).toEqual([NIGHTMARE.placeId]);
+    });
+
+    it('should save the removal when it is toggled again', async () => {
+      await store.dispatch(actions.togglePin(NIGHTMARE.placeId));
+
+      expect(store.getState().placeAnalytics.pinnedPlaceIds).toEqual([]);
+      expect(watchlistFor(stored, WALLET)).toEqual([]);
+    });
+  });
+
+  describe('when a place is toggled before the stored watchlist loaded', () => {
+    beforeEach(async () => {
+      stored = withWatchlist(undefined, WALLET, [BANANARAMA.placeId]);
+      await store.dispatch(actions.togglePin(NIGHTMARE.placeId));
+    });
+
+    it('should not replace the stored list', () => {
+      expect(settingsPreload.setAnalyticsWatchlist).not.toHaveBeenCalled();
+      expect(watchlistFor(stored, WALLET)).toEqual([BANANARAMA.placeId]);
+    });
+  });
+
+  describe('when the stored watchlist is loaded in a new session', () => {
+    beforeEach(async () => {
+      await load(WALLET_KEY);
+      await store.dispatch(actions.togglePin(BANANARAMA.placeId));
+
+      store = createTestStore();
+      await load(WALLET);
+      await store.dispatch(fetchAnalytics());
+    });
+
+    it('should restore the pins', () => {
+      const { pinnedPlaceIds, watchlist } = store.getState().placeAnalytics;
+      expect(pinnedPlaceIds).toEqual([BANANARAMA.placeId]);
+      expect(watchlist).toMatchObject({ address: WALLET_KEY, status: 'succeeded' });
+    });
+
+    it('should list the pinned places first', () => {
+      store.dispatch(actions.setSortBy(SortBy.NAME_DESC));
+
+      expect(visibleNames()).toEqual([BANANARAMA.name, NIGHTMARE.name]);
+    });
+  });
+
+  describe('when the stored value is missing or malformed', () => {
+    it('should load an empty list', async () => {
+      stored = { [WALLET_KEY]: 'not a watchlist' };
+
+      await load(WALLET_KEY);
+
+      const { pinnedPlaceIds, watchlist } = store.getState().placeAnalytics;
+      expect(pinnedPlaceIds).toEqual([]);
+      expect(watchlist.status).toBe('succeeded');
+    });
+  });
+
+  describe('when reading the stored watchlist fails', () => {
+    beforeEach(async () => {
+      vi.mocked(settingsPreload.getAnalyticsWatchlist).mockRejectedValue(new Error('no config'));
+      await load(WALLET_KEY);
+      await store.dispatch(actions.togglePin(NIGHTMARE.placeId));
+    });
+
+    it('should still pin in the store without saving over what may be stored', () => {
+      expect(store.getState().placeAnalytics.watchlist.status).toBe('failed');
+      expect(store.getState().placeAnalytics.pinnedPlaceIds).toEqual([NIGHTMARE.placeId]);
+      expect(settingsPreload.setAnalyticsWatchlist).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('when a pinned place is not in the fetched list', () => {
+    const GONE = 'world:gone.dcl.eth@0,0';
+
+    beforeEach(async () => {
+      stored = withWatchlist(undefined, WALLET, [GONE]);
+      await load(WALLET_KEY);
+      await store.dispatch(fetchAnalytics());
+    });
+
+    it('should leave it out of the list', () => {
+      expect(visibleNames()).toEqual([BANANARAMA.name, NIGHTMARE.name]);
+    });
+
+    it('should keep it stored when another place is pinned', async () => {
+      await store.dispatch(actions.togglePin(NIGHTMARE.placeId));
+
+      expect(watchlistFor(stored, WALLET)).toEqual([GONE, NIGHTMARE.placeId]);
+    });
+  });
+
+  describe('when the fetch fails or comes back empty', () => {
+    beforeEach(async () => {
+      stored = withWatchlist(undefined, WALLET, [BANANARAMA.placeId]);
+      await load(WALLET_KEY);
+    });
+
+    it('should keep the stored pins after a failed fetch', async () => {
+      vi.mocked(fetchAnalyticsSnapshot).mockRejectedValue(new Error('offline'));
+
+      await store.dispatch(fetchAnalytics());
+
+      expect(store.getState().placeAnalytics.pinnedPlaceIds).toEqual([BANANARAMA.placeId]);
+      expect(watchlistFor(stored, WALLET)).toEqual([BANANARAMA.placeId]);
+    });
+
+    it('should keep the stored pins after an empty fetch', async () => {
+      vi.mocked(fetchAnalyticsSnapshot).mockResolvedValue({
+        exportedAt: '',
+        places: [],
+        metricsByPlaceId: {},
+      });
+
+      await store.dispatch(fetchAnalytics());
+
+      expect(store.getState().placeAnalytics.pinnedPlaceIds).toEqual([BANANARAMA.placeId]);
+      expect(watchlistFor(stored, WALLET)).toEqual([BANANARAMA.placeId]);
+    });
+  });
+
+  describe('when the account switches', () => {
+    beforeEach(async () => {
+      await load(WALLET_KEY);
+      await store.dispatch(actions.togglePin(BANANARAMA.placeId));
+
+      store.dispatch(accountChanged());
+      signInAs(OTHER_WALLET);
+      await load(OTHER_WALLET);
+    });
+
+    it("should not show the previous account's pins", () => {
+      const { pinnedPlaceIds, watchlist } = store.getState().placeAnalytics;
+      expect(pinnedPlaceIds).toEqual([]);
+      expect(watchlist.address).toBe(OTHER_WALLET);
+    });
+
+    it("should save the new account's pins apart from the previous account's", async () => {
+      await store.dispatch(actions.togglePin(NIGHTMARE.placeId));
+
+      expect(watchlistFor(stored, OTHER_WALLET)).toEqual([NIGHTMARE.placeId]);
+      expect(watchlistFor(stored, WALLET)).toEqual([BANANARAMA.placeId]);
+    });
+
+    it('should bring back the first account pins when it signs in again', async () => {
+      store.dispatch(accountChanged());
+      signInAs(WALLET);
+      await load(WALLET_KEY);
+
+      expect(store.getState().placeAnalytics.pinnedPlaceIds).toEqual([BANANARAMA.placeId]);
+    });
+  });
+
+  describe('when the account switches while the previous one is loading', () => {
+    it("should drop the previous account's late answer", async () => {
+      stored = withWatchlist(undefined, WALLET, [BANANARAMA.placeId]);
+      let release: () => void = () => {};
+      vi.mocked(settingsPreload.getAnalyticsWatchlist).mockImplementationOnce(
+        address =>
+          new Promise(resolve => {
+            release = () => resolve(watchlistFor(stored, address));
+          }),
+      );
+      const late = load(WALLET_KEY);
+
+      store.dispatch(accountChanged());
+      signInAs(OTHER_WALLET);
+      await load(OTHER_WALLET);
+      release();
+      await late;
+
+      const { pinnedPlaceIds, watchlist } = store.getState().placeAnalytics;
+      expect(pinnedPlaceIds).toEqual([]);
+      expect(watchlist).toMatchObject({ address: OTHER_WALLET, status: 'succeeded' });
+    });
+  });
+
+  describe('when asked to load a wallet that is not the one signed in', () => {
+    it('should not read it', async () => {
+      signInAs(OTHER_WALLET);
+
+      await load(WALLET_KEY);
+
+      expect(settingsPreload.getAnalyticsWatchlist).not.toHaveBeenCalled();
+      expect(store.getState().placeAnalytics.watchlist.status).toBe('idle');
     });
   });
 });

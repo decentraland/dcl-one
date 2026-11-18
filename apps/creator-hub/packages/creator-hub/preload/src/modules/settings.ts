@@ -5,6 +5,7 @@ import {
   DEFAULT_DEPENDENCY_UPDATE_STRATEGY,
 } from '/shared/types/settings';
 import type { AppSettings } from '/shared/types/settings';
+import { watchlistFor, withWatchlist } from '/shared/types/analytics-watchlist';
 import { SCENES_DIRECTORY } from '/shared/paths';
 
 import { invoke } from '../services/ipc';
@@ -36,14 +37,30 @@ export async function getUpdateDependenciesStrategy() {
 }
 
 /**
- * Writes the app settings, except the AI sharing keys: the sharing decisions and requests are
- * written only by `updateAiSharingSettings`, so a screen holding an older copy of the settings
- * can't bring back a decision the creator has since changed.
+ * Writes the app settings, except the AI sharing keys and the Analytics watchlist: those are
+ * written only by `updateAiSharingSettings` and `setAnalyticsWatchlist`, so a screen holding an
+ * older copy of the settings can't bring back a decision or pins the creator has since changed.
  */
 export async function updateAppSettings(settings: AppSettings) {
   await setConfig(config => {
-    const { aiDataSharing, aiSharingPending } = config.settings ?? {};
-    config.settings = { ...settings, aiDataSharing, aiSharingPending };
+    const { aiDataSharing, aiSharingPending, analyticsWatchlist } = config.settings ?? {};
+    config.settings = { ...settings, aiDataSharing, aiSharingPending, analyticsWatchlist };
+  });
+}
+
+/** The places `address` pinned to the Analytics watchlist; none when nothing valid is stored. */
+export async function getAnalyticsWatchlist(address: string): Promise<string[]> {
+  const config = await getConfig();
+  return watchlistFor(config.settings?.analyticsWatchlist, address);
+}
+
+/** Replaces `address`'s Analytics watchlist, leaving every other wallet's and setting as stored. */
+export async function setAnalyticsWatchlist(address: string, placeIds: string[]): Promise<void> {
+  await setConfig(config => {
+    config.settings = {
+      ...config.settings,
+      analyticsWatchlist: withWatchlist(config.settings?.analyticsWatchlist, address, placeIds),
+    };
   });
 }
 

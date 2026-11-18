@@ -34,20 +34,34 @@ const SORT_OPTIONS: Array<{ label: string; value: SortBy }> = [
 
 export function AnalyticsPage() {
   const { isSignedIn, isSigningIn, signIn, wallet } = useAuth();
-  const { places, pinnedPlaceIds, sortBy, searchQuery, exportedAt, status, error } = useSelector(
-    state => state.placeAnalytics,
-  );
+  const { places, pinnedPlaceIds, watchlist, sortBy, searchQuery, exportedAt, status, error } =
+    useSelector(state => state.placeAnalytics);
   const visiblePlaces = useSelector(selectors.getVisiblePlaces);
   const dispatch = useDispatch();
   const navigate = useNavigate();
 
-  const isLoading = status === 'loading' || status === 'idle';
+  // The list waits for the wallet's stored watchlist too: a toggle before it loads would be
+  // overwritten by it, and saving that toggle would replace the stored list. A failed fetch
+  // shows its error instead.
+  const walletKey = wallet?.toLowerCase();
+  const isWatchlistPending =
+    !!walletKey && (watchlist.status === 'idle' || watchlist.status === 'loading');
+  const isLoading =
+    status === 'loading' || status === 'idle' || (status === 'succeeded' && isWatchlistPending);
 
   // One batched request answers the whole page, so revisiting it re-reads the
   // snapshot already in the store rather than asking again.
   useEffect(() => {
     if (isSignedIn && status === 'idle') dispatch(placeAnalyticsActions.fetchAnalytics());
   }, [isSignedIn, status, dispatch]);
+
+  // The slice resets on every account change; this loads the stored pins of each connected
+  // wallet, and again when the one loaded is not the wallet signed in now.
+  useEffect(() => {
+    if (walletKey && (watchlist.status === 'idle' || watchlist.address !== walletKey)) {
+      dispatch(placeAnalyticsActions.loadPinnedPlaces({ address: walletKey }));
+    }
+  }, [walletKey, watchlist.status, watchlist.address, dispatch]);
 
   // Names can change outside the app (a purchase, a granted deploy permission), so the
   // sign-in-time fetch goes stale. Refresh in the background on every visit to this tab.
@@ -73,7 +87,7 @@ export function AnalyticsPage() {
 
   const handleTogglePin = useCallback(
     (placeId: string) => {
-      dispatch(placeAnalyticsActions.togglePinnedPlace(placeId));
+      dispatch(placeAnalyticsActions.togglePin(placeId));
     },
     [dispatch],
   );
