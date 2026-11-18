@@ -78,12 +78,12 @@ function writeThumbnail(address: string, slot: number, thumbnail: string | null)
   }
 }
 
-// Other explorers read a missing alpha as 0, so every colour gets one before it is kept or deployed.
 /** The profile look's colour, which has no `a`; keeping it would make an unchanged look deploy. */
 function rgb({ r, g, b }: OutfitColor): RGBColor {
   return { r, g, b }
 }
 
+// Other explorers read a missing alpha as 0, so every colour gets one before it is kept or deployed.
 function opaque(color: RGBColor & { a?: number }): OutfitColor {
   return { r: color.r, g: color.g, b: color.b, a: color.a ?? 1 }
 }

@@ -48,6 +48,41 @@ describe('a refused outfit save or delete', () => {
     })
   })
 
+  describe('when an outfit sits in an extra slot and the player owns no name', () => {
+    const grey = { color: { r: 0.5, g: 0.5, b: 0.5, a: 1 } }
+    const outfit = { bodyShape: '', eyes: grey, hair: grey, skin: grey, wearables: [], forceRender: [] }
+    let h: Harness
+
+    beforeEach(async () => {
+      h = renderSession()
+      await enterAsGuest(h)
+      act(() => h.driver.emit({ kind: 'outfits', metadata: { outfits: [{ slot: 6, outfit }], namesForExtraSlots: [] } }))
+      act(() => h.driver.emit({ kind: 'ownedNames', names: [] }))
+    })
+
+    describe('and a save to a free slot is refused', () => {
+      beforeEach(() => {
+        expectConsoleOutput('error', [['[outfits] save of slot 1 failed:', 'Error: no names for extra slots']])
+        act(() => h.driver.emit({ kind: 'outfitSaveFailed', slot: 1, action: 'save', message: 'Error: no names for extra slots' }))
+      })
+
+      it('should say to delete the outfits in the extra slots first', () => {
+        expect(h.session().backpack.outfitError).toBe(OUTFIT_FAILED_MESSAGE.extraSlotWithoutName)
+      })
+    })
+
+    describe('and deleting that extra outfit is refused', () => {
+      beforeEach(() => {
+        expectConsoleOutput('error', [['[outfits] delete of slot 6 failed:', 'Error: failed to deploy']])
+        act(() => h.driver.emit({ kind: 'outfitSaveFailed', slot: 6, action: 'delete', message: 'Error: failed to deploy' }))
+      })
+
+      it('should say the outfit was not deleted', () => {
+        expect(h.session().backpack.outfitError).toBe(OUTFIT_FAILED_MESSAGE.delete)
+      })
+    })
+  })
+
   describe('when a save is refused while the Outfits tab is shown', () => {
     // The session's outfit error, raised from the test as the bridge's message would.
     let raise: (message: string) => void

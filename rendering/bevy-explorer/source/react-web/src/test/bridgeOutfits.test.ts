@@ -522,6 +522,35 @@ describe('the bridge outfits domain', () => {
     })
   })
 
+  describe('when a signed-in player saves and the captured picture is not a PNG data URL', () => {
+    beforeEach(() => {
+      player = { userId: '0xA', isGuest: false }
+      captureAvatarThumbnail.mockResolvedValue('https://tracker.example/pixel.gif')
+    })
+
+    it('should save the outfit without storing the picture', async () => {
+      const { request, lastOutfits } = await bridge()
+      await request({ kind: 'saveOutfit', slot: 1 })
+      expect(deployOutfits).toHaveBeenCalledOnce()
+      expect(storage.has('outfit-thumb:0xa:1')).toBe(false)
+      expect(lastOutfits()?.outfits.find((o) => o.slot === 1)?.thumbnail).toBeUndefined()
+    })
+  })
+
+  describe('when a signed-in player saves and the captured picture is over 1 MiB', () => {
+    beforeEach(() => {
+      player = { userId: '0xA', isGuest: false }
+      captureAvatarThumbnail.mockResolvedValue(PICTURE + 'A'.repeat(1024 * 1024))
+    })
+
+    it('should save the outfit without storing the picture', async () => {
+      const { request } = await bridge()
+      await request({ kind: 'saveOutfit', slot: 1 })
+      expect(deployOutfits).toHaveBeenCalledOnce()
+      expect(storage.has('outfit-thumb:0xa:1')).toBe(false)
+    })
+  })
+
   describe('when this device holds pictures from an earlier session', () => {
     beforeEach(() => {
       player = { userId: '0xA', isGuest: false }

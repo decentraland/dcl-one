@@ -202,7 +202,8 @@ export const SAVE_FAILED_MESSAGE = 'There was an error updating your avatar prof
 
 export const OUTFIT_FAILED_MESSAGE = {
   save: "Couldn't save this outfit. Try again.",
-  delete: "Couldn't delete this outfit. Try again."
+  delete: "Couldn't delete this outfit. Try again.",
+  extraSlotWithoutName: 'Outfits in slots 6 to 10 need a NAME you own. Delete them before changing your other outfits.'
 } as const
 
 /** A gift picker page request, without the id the session adds. */
@@ -1542,7 +1543,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   useEffect(() => { catalogItemsRef.current = catalogItems }, [catalogItems])
   const [outfits, setOutfits] = useState<OutfitsMetadata>({ outfits: [], namesForExtraSlots: [] })
   const [outfitsLoaded, setOutfitsLoaded] = useState(false)
-  const [outfitError, setOutfitError] = useState<string | null>(null)
+  const [outfitFailure, setOutfitFailure] = useState<{ action: 'save' | 'delete'; slot: number } | null>(null)
   const [outfitHistory, setOutfitHistory] = useState<OutfitHistory>(NO_OUTFIT_HISTORY)
   const [backpackOpen, setBackpackOpen] = useState(false)
   const [communities, setCommunities] = useState<Community[]>([])
@@ -2184,10 +2185,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'outfits':
           setOutfits(msg.metadata)
           setOutfitsLoaded(true)
-          setOutfitError(null)
+          setOutfitFailure(null)
           break
         case 'outfitSaveFailed':
-          setOutfitError(OUTFIT_FAILED_MESSAGE[msg.action])
+          setOutfitFailure({ action: msg.action, slot: msg.slot })
           console.error(`[outfits] ${msg.action} of slot ${msg.slot} failed:`, msg.message)
           break
         case 'outfitHistory':
@@ -3912,12 +3913,22 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const deleteOutfit = useCallback((slot: number) => {
     driverRef.current?.send({ kind: 'deleteOutfit', slot })
   }, [])
-  const dismissOutfitError = useCallback(() => setOutfitError(null), [])
+  const dismissOutfitError = useCallback(() => setOutfitFailure(null), [])
   // The live names lookup decides; until it answers, the outfits read does. An occupied extra slot
   // stays visible so the player can still delete it.
   const extraSlotUsed = outfits.outfits.some((o) => o.slot >= 5)
   const extraOutfitSlots =
     extraSlotUsed || (ownedNamesKnown ? ownedNames.length > 0 : outfits.namesForExtraSlots.length > 0)
+  // With no name, every change that keeps an outfit in an extra slot is refused, so say which to delete.
+  const blockedByExtraSlot =
+    outfitFailure != null &&
+    ownedNamesKnown &&
+    ownedNames.length === 0 &&
+    outfits.outfits.some((o) => o.slot >= 5 && !(outfitFailure.action === 'delete' && o.slot === outfitFailure.slot))
+  const outfitError =
+    outfitFailure == null
+      ? null
+      : OUTFIT_FAILED_MESSAGE[blockedByExtraSlot ? 'extraSlotWithoutName' : outfitFailure.action]
   const equipOutfit = useCallback((slot: number) => {
     // The bridge resolves the outfit's wearables by urn and re-emits the full `wearables` set (incl.
     // items off the loaded catalog page), which becomes the authoritative equipped set — so no
