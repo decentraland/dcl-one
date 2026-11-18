@@ -25,19 +25,47 @@ use crate::js::scene_thread;
 pub(crate) static VM_HANDLES: Lazy<Mutex<HashMap<SceneId, (IsolateHandle, KillFlag)>>> =
     Lazy::new(Default::default);
 
+// when each scene was force-terminated; entries whose thread has exited are pruned on read
+static TERMINATED: Lazy<Mutex<HashMap<SceneId, std::time::Instant>>> = Lazy::new(Default::default);
+
 /// interrupt the scene's isolate even if it is stuck in a JS loop, so the scene
-/// thread unwinds and exits. no-op if the scene thread has already exited, or
-/// for a worker blocked inside a rust op (the termination takes effect when
-/// control returns to JS). the kill flag must be set as well as terminating:
+/// thread unwinds and exits. no-op if the scene thread has already exited. a
+/// scene parked on an async op is released at once by the kill flag; one
+/// blocked inside a synchronous rust op runs on until control returns to JS
+/// (see [`zombie_scene_count`]). the kill flag must be set as well as terminating:
 /// v8's termination request is consumed once the stack unwinds, and the scene
 /// loop doesn't exit on uncaught errors, so without the flag a deterministic
 /// wedge would just re-enter its loop on the next tick.
 pub fn terminate_scene(scene_id: SceneId) {
-    if let Some((handle, kill_flag)) = VM_HANDLES.lock().unwrap().get(&scene_id) {
-        bevy::log::warn!("[{scene_id:?}] scene thread still running after kill; force-terminating");
-        kill_flag.kill();
-        handle.terminate_execution();
+    let running = match VM_HANDLES.lock().unwrap().get(&scene_id) {
+        Some((handle, kill_flag)) => {
+            bevy::log::warn!(
+                "[{scene_id:?}] scene thread still running after kill; force-terminating"
+            );
+            kill_flag.kill();
+            handle.terminate_execution();
+            true
+        }
+        None => false,
+    };
+    if running {
+        TERMINATED
+            .lock()
+            .unwrap()
+            .entry(scene_id)
+            .or_insert_with(std::time::Instant::now);
     }
+}
+
+/// Scene threads still running at least `min_age` after [`terminate_scene`] forced them.
+pub fn zombie_scene_count(min_age: std::time::Duration) -> usize {
+    let mut terminated = TERMINATED.lock().unwrap();
+    let running = VM_HANDLES.lock().unwrap();
+    terminated.retain(|id, _| running.contains_key(id));
+    terminated
+        .values()
+        .filter(|at| at.elapsed() >= min_age)
+        .count()
 }
 
 /// must be called from main thread on linux before any isolates are created

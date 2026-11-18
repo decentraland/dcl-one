@@ -320,12 +320,22 @@ pub(crate) fn scene_thread(
     });
 
     let script = match script {
+        Err(_) if kill_flag.killed() => {
+            debug!("[{scene_id:?}] scene killed during script load");
+            rt.block_on(async move {
+                drop(runtime);
+            });
+            return;
+        }
         Err(e) => {
             error!("[scene thread {scene_id:?}] script load error: {}", e);
             let _ = state
                 .borrow_mut()
                 .take::<SceneResponseSender>()
                 .try_send(SceneResponse::Error(format!("{e:?}")));
+            rt.block_on(async move {
+                drop(runtime);
+            });
             return;
         }
         Ok(script) => script,
@@ -344,8 +354,9 @@ pub(crate) fn scene_thread(
     let mut last_stats = metrics_started;
     // run startup function
     let run_start = thread_cpu_us();
-    let result =
-        rt.block_on(async { run_script(&mut runtime, &script, "onStart", |_| Vec::new()).await });
+    let result = rt.block_on(async {
+        run_script(&mut runtime, &script, "onStart", &kill_flag, |_| Vec::new()).await
+    });
     state
         .borrow_mut()
         .borrow_mut::<SceneResourceCounters>()
@@ -357,6 +368,15 @@ pub(crate) fn scene_thread(
         state.borrow().borrow::<RpcCalls>().len()
     );
 
+    // checked first: a killed scene's call fails, and the engine has already unloaded it
+    if kill_flag.killed() {
+        debug!("[{scene_id:?}] scene killed during onStart");
+        rt.block_on(async move {
+            drop(runtime);
+        });
+        return;
+    }
+
     if let Err(e) = result {
         // ignore failure to send failure
         error!("[{scene_id:?}] onStart err: {e:?}");
@@ -364,6 +384,9 @@ pub(crate) fn scene_thread(
             .borrow_mut()
             .take::<SceneResponseSender>()
             .try_send(SceneResponse::Error(format!("{e:?}")));
+        rt.block_on(async move {
+            drop(runtime);
+        });
         return;
     }
 
@@ -377,7 +400,7 @@ pub(crate) fn scene_thread(
         // run the onUpdate function
         let run_start = thread_cpu_us();
         let result = rt.block_on(async {
-            run_script(&mut runtime, &script, "onUpdate", |scope| {
+            run_script(&mut runtime, &script, "onUpdate", &kill_flag, |scope| {
                 vec![v8::Number::new(scope, dt).into()]
             })
             .await
@@ -526,10 +549,11 @@ fn thread_cpu_us() -> u64 {
 }
 
 // helper to setup, acquire, run and return results from a script function
-async fn run_script(
+pub(crate) async fn run_script(
     runtime: &mut JsRuntime,
     script: &v8::Global<v8::Value>,
     fn_name: &str,
+    kill_flag: &KillFlag,
     arg_fn: impl for<'a> Fn(&mut v8::HandleScope<'a>) -> Vec<v8::Local<'a, v8::Value>>,
 ) -> Result<(), AnyError> {
     // set up scene i/o
@@ -570,10 +594,16 @@ async fn run_script(
     let f = runtime.resolve(promise);
 
     let result = if true {
-        runtime
-            .with_event_loop_promise(f, PollEventLoopOptions::default())
-            .await
-            .map(|_| ())
+        // A killed scene can stay parked on an op that never completes (a stalled fetch,
+        // an open websocket) and isolate termination only lands once JS runs again, so
+        // abandon the call; the caller's kill check then drops the runtime and its ops.
+        tokio::select! {
+            biased;
+            result = runtime.with_event_loop_promise(f, PollEventLoopOptions::default()) => {
+                result.map(|_| ())
+            }
+            _ = kill_flag.wait() => Err(anyhow!("scene killed during {fn_name}")),
+        }
     } else {
         timeout(
             Duration::from_secs(30),

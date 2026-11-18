@@ -26,6 +26,10 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 // renderer channel closes) before its isolate is forcibly terminated
 const KILL_GRACE_PERIOD: std::time::Duration = std::time::Duration::from_secs(5);
 
+// a force-terminated scene thread still alive after this long is reported as a zombie
+const ZOMBIE_MIN_AGE: std::time::Duration = std::time::Duration::from_secs(30);
+const ZOMBIE_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or(EnvFilter::new("info")))
@@ -63,6 +67,20 @@ fn main() -> Result<()> {
 
     let f_in = rt.spawn(scene_ipc_in(recv_half, scene_sx, system_api_sx));
     let f_out = rt.spawn(scene_ipc_out(send_half, scene_rx, close_rx, system_api_rx));
+
+    rt.spawn(async {
+        let mut interval = tokio::time::interval(ZOMBIE_CHECK_INTERVAL);
+        loop {
+            interval.tick().await;
+            let zombies = dcl_deno::zombie_scene_count(ZOMBIE_MIN_AGE);
+            if zombies > 0 {
+                warn!(
+                    "{zombies} killed scene thread(s) still alive {}s+ after force-termination",
+                    ZOMBIE_MIN_AGE.as_secs()
+                );
+            }
+        }
+    });
 
     info!("IPC scene host running");
 
@@ -120,8 +138,7 @@ async fn scene_ipc_in(
 ) {
     let mut renderer_senders = HashMap::new();
 
-    // one broadcast channel per presence context; scenes subscribe to their own
-    let mut global_senders: HashMap<u64, tokio::sync::broadcast::Sender<_>> = HashMap::new();
+    let mut global_senders = ContextSenders::default();
 
     while let Ok(len) = stream.read_u64_le().await {
         let mut buffer = vec![0u8; len as usize];
@@ -130,9 +147,8 @@ async fn scene_ipc_in(
 
         match msg {
             EngineToScene::NewScene(id, new_scene_info) => {
-                let global_sx = global_senders
-                    .entry(new_scene_info.presence_context)
-                    .or_insert_with(|| tokio::sync::broadcast::channel(1000).0);
+                global_senders.sweep();
+                let global_rx = global_senders.subscribe(new_scene_info.presence_context);
                 let response_sx = dcl_deno::spawn_scene(
                     new_scene_info.initial_crdt_store,
                     new_scene_info.scene_context,
@@ -142,7 +158,7 @@ async fn scene_ipc_in(
                         SceneId(bevy::ecs::entity::Entity::from_bits(id)),
                         scene_sx.clone(),
                     ),
-                    global_sx.subscribe(),
+                    global_rx,
                     new_scene_info.storage_root,
                     new_scene_info.inspect,
                     new_scene_info.is_super.then(|| system_api_sx.clone()),
@@ -153,6 +169,9 @@ async fn scene_ipc_in(
             }
             EngineToScene::KillScene(id) => {
                 renderer_senders.remove(&id);
+                // a dying scene holds its receiver until its thread exits, so this collects
+                // contexts whose scenes have already gone
+                global_senders.sweep();
                 // dropping the sender lets a healthy scene finish its current tick and
                 // exit cleanly; force-terminate only if the thread is still around after
                 // a grace period (wedged in js, or stuck awaiting something external)
@@ -172,13 +191,7 @@ async fn scene_ipc_in(
                 let _ = sender.send(renderer_response);
             }
             EngineToScene::GlobalUpdate(presence_context, data) => {
-                // send fails only with no live subscribers: every scene of the context
-                // is gone, so drop the channel (the engine side stops sending too)
-                if let Some(sender) = global_senders.get(&presence_context) {
-                    if sender.send(data).is_err() {
-                        global_senders.remove(&presence_context);
-                    }
-                }
+                global_senders.send(presence_context, data);
             }
             EngineToScene::IpcMessage(id, ipc_message) => {
                 SCENE_IPC_CONTEXT.with(|ctx| {
@@ -204,5 +217,89 @@ async fn scene_ipc_in(
                 });
             }
         }
+    }
+}
+
+/// One broadcast channel per presence context; scenes subscribe to their own.
+struct ContextSenders<T> {
+    senders: HashMap<u64, tokio::sync::broadcast::Sender<T>>,
+}
+
+impl<T> Default for ContextSenders<T> {
+    fn default() -> Self {
+        Self {
+            senders: HashMap::new(),
+        }
+    }
+}
+
+impl<T: Clone> ContextSenders<T> {
+    fn subscribe(&mut self, context: u64) -> tokio::sync::broadcast::Receiver<T> {
+        self.senders
+            .entry(context)
+            .or_insert_with(|| tokio::sync::broadcast::channel(1000).0)
+            .subscribe()
+    }
+
+    /// Fails only with no live subscribers: every scene of the context is gone, so the
+    /// channel is dropped (the engine side stops sending too).
+    fn send(&mut self, context: u64, data: T) {
+        if let Some(sender) = self.senders.get(&context) {
+            if sender.send(data).is_err() {
+                self.senders.remove(&context);
+            }
+        }
+    }
+
+    /// Drops channels with no subscriber left, which a quiet context never reaches through `send`.
+    fn sweep(&mut self) {
+        self.senders.retain(|_, sender| sender.receiver_count() > 0);
+    }
+
+    #[cfg(test)]
+    fn contains(&self, context: u64) -> bool {
+        self.senders.contains_key(&context)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ContextSenders;
+
+    #[test]
+    fn a_context_is_dropped_once_its_last_scene_receiver_is_gone() {
+        let mut senders = ContextSenders::<u32>::default();
+        let first = senders.subscribe(1);
+        let second = senders.subscribe(1);
+        let other = senders.subscribe(2);
+
+        drop(first);
+        senders.sweep();
+        assert!(senders.contains(1));
+
+        drop(second);
+        senders.sweep();
+        assert!(!senders.contains(1));
+        assert!(senders.contains(2));
+        drop(other);
+    }
+
+    #[test]
+    fn a_scene_joining_a_swept_context_receives_its_updates() {
+        let mut senders = ContextSenders::<u32>::default();
+        drop(senders.subscribe(1));
+        senders.sweep();
+
+        let mut receiver = senders.subscribe(1);
+        senders.send(1, 7);
+        assert_eq!(receiver.try_recv().unwrap(), 7);
+    }
+
+    #[test]
+    fn sending_to_a_context_without_receivers_drops_it() {
+        let mut senders = ContextSenders::<u32>::default();
+        drop(senders.subscribe(1));
+        senders.send(1, 7);
+        assert!(!senders.contains(1));
     }
 }

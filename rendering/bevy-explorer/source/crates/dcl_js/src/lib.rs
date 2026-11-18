@@ -40,15 +40,36 @@ pub mod testing;
 // scene may never run an op again. once set, the crdt ops go inert and the scene
 // loop tears the runtime down.
 #[derive(Clone, Default)]
-pub struct KillFlag(pub std::sync::Arc<std::sync::atomic::AtomicBool>);
+pub struct KillFlag(std::sync::Arc<KillFlagInner>);
+
+#[derive(Default)]
+struct KillFlagInner {
+    killed: std::sync::atomic::AtomicBool,
+    notify: tokio::sync::Notify,
+}
 
 impl KillFlag {
     pub fn kill(&self) {
-        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.0
+            .killed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.0.notify.notify_waiters();
     }
 
     pub fn killed(&self) -> bool {
-        self.0.load(std::sync::atomic::Ordering::SeqCst)
+        self.0.killed.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Resolves once the flag is set, including when it was set before the call.
+    pub async fn wait(&self) {
+        let notified = self.0.notify.notified();
+        tokio::pin!(notified);
+        // register before checking so a kill between the check and the await still wakes us
+        notified.as_mut().enable();
+        if self.killed() {
+            return;
+        }
+        notified.await;
     }
 }
 
@@ -929,5 +950,51 @@ mod scene_log_budget_tests {
             !state.borrow().borrow::<KillFlag>().killed(),
             "a normal batch must not shut the scene down"
         );
+    }
+}
+
+#[cfg(test)]
+mod kill_flag_tests {
+    use super::KillFlag;
+    use std::future::Future;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::task::{Context, Wake, Waker};
+
+    #[derive(Default)]
+    struct Woken(AtomicBool);
+
+    impl Wake for Woken {
+        fn wake(self: Arc<Self>) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn waiting_on_an_already_killed_flag_resolves_at_once() {
+        let flag = KillFlag::default();
+        flag.kill();
+        let waker = Waker::from(Arc::new(Woken::default()));
+        let mut wait = std::pin::pin!(flag.wait());
+        assert!(wait
+            .as_mut()
+            .poll(&mut Context::from_waker(&waker))
+            .is_ready());
+    }
+
+    #[test]
+    fn a_kill_from_another_thread_wakes_a_pending_waiter() {
+        let flag = KillFlag::default();
+        let woken = Arc::new(Woken::default());
+        let waker = Waker::from(woken.clone());
+        let mut cx = Context::from_waker(&waker);
+        let mut wait = std::pin::pin!(flag.wait());
+        assert!(wait.as_mut().poll(&mut cx).is_pending());
+
+        let killer = flag.clone();
+        std::thread::spawn(move || killer.kill()).join().unwrap();
+
+        assert!(woken.0.load(Ordering::SeqCst));
+        assert!(wait.as_mut().poll(&mut cx).is_ready());
     }
 }
