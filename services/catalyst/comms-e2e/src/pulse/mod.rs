@@ -177,15 +177,18 @@ impl PulseBot {
 
     /// Dials Pulse over WebTransport and waits for the session to open. The URL's host and port
     /// are replaced by `options.via` when a fault link is in front; the certificate hash stays.
-    /// The client cannot choose its local address, so `options.bind` is an error here.
+    /// `options.bind` is the local address the QUIC endpoint binds to; it needs the certificate
+    /// hash of the target.
     pub async fn connect_webtransport(
         ctx: &Ctx,
         name: &str,
         target: &WebTransportTarget,
         options: ConnectOptions,
     ) -> Result<PulseBot> {
-        if let Some(bind) = options.bind {
-            bail!("{name}: the WebTransport client cannot bind a chosen local address ({bind})");
+        if let (Some(bind), None) = (options.bind, &target.certificate_hash) {
+            bail!(
+                "{name}: the WebTransport client binds {bind} only with a certificate hash in the stack file"
+            );
         }
         let mut url = target.url.clone();
         if let Some(via) = options.via {
@@ -207,6 +210,7 @@ impl PulseBot {
             webtransport::Dial {
                 url: url.to_string(),
                 certificate_hash,
+                local: options.bind,
                 deadline,
             },
             shared.clone(),

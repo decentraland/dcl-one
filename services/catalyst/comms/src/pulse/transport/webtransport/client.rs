@@ -7,6 +7,8 @@
 //! transport over loopback. Like the host, it is a generic byte pipe driven by
 //! repeated [`Client::service`] calls; framing/sequencing live in the C# layer.
 
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 
@@ -88,6 +90,17 @@ impl Client {
         config: ClientConfig,
         timeout: Option<Duration>,
     ) -> Result<Client, ClientError> {
+        Client::connect_within_from(config, timeout, None)
+    }
+
+    /// [`Client::connect_within`] from a chosen local address: the server counts its per-address
+    /// limits by the source address of a connection. Needs `server_cert_hash` (a client bound to
+    /// an address does not use the system trust store).
+    pub fn connect_within_from(
+        config: ClientConfig,
+        timeout: Option<Duration>,
+        local: Option<IpAddr>,
+    ) -> Result<Client, ClientError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -97,12 +110,20 @@ impl Client {
         let cert_hash = config.server_cert_hash;
 
         let connecting = async move {
-            let builder = web_transport_quinn::ClientBuilder::new();
-            let client = match cert_hash {
-                Some(hash) => builder.with_server_certificate_hashes(vec![hash]),
-                None => builder.with_system_roots(),
-            }
-            .map_err(|e| ClientError::Connect(e.to_string()))?;
+            let client = match (local, cert_hash) {
+                (Some(local), Some(hash)) => bound_client(local, hash)?,
+                (Some(_), None) => {
+                    return Err(ClientError::Config(
+                        "a client bound to a local address needs a certificate hash".to_owned(),
+                    ));
+                }
+                (None, Some(hash)) => web_transport_quinn::ClientBuilder::new()
+                    .with_server_certificate_hashes(vec![hash])
+                    .map_err(|e| ClientError::Connect(e.to_string()))?,
+                (None, None) => web_transport_quinn::ClientBuilder::new()
+                    .with_system_roots()
+                    .map_err(|e| ClientError::Connect(e.to_string()))?,
+            };
 
             let session = client
                 .connect(url)
@@ -238,4 +259,89 @@ async fn disconnect_monitor(session: Session, events_tx: Sender<ClientEvent>) {
         _ => 0,
     };
     let _ = events_tx.send(ClientEvent::Disconnected { reason });
+}
+
+/// A client whose QUIC endpoint is bound to `local` (any port) and that trusts the one server
+/// certificate with SHA-256 `hash`: what the builder does, except for the local address, which the
+/// builder does not let a caller choose.
+fn bound_client(local: IpAddr, hash: Vec<u8>) -> Result<web_transport_quinn::Client, ClientError> {
+    use web_transport_quinn::quinn;
+    let fail = |error: &dyn std::fmt::Display| ClientError::Connect(error.to_string());
+    let provider = web_transport_quinn::crypto::default_provider();
+    let mut crypto = rustls::ClientConfig::builder_with_provider(provider.clone())
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .map_err(|e| fail(&e))?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(PinnedCertificate { provider, hash }))
+        .with_no_client_auth();
+    crypto.alpn_protocols = vec![web_transport_quinn::ALPN.as_bytes().to_vec()];
+    let quic = quinn::crypto::rustls::QuicClientConfig::try_from(crypto).map_err(|e| fail(&e))?;
+    let endpoint =
+        quinn::Endpoint::client(SocketAddr::new(local, 0)).map_err(|e| fail(&e))?;
+    Ok(web_transport_quinn::Client::new(
+        endpoint,
+        quinn::ClientConfig::new(Arc::new(quic)),
+    ))
+}
+
+/// Accepts the one certificate whose SHA-256 is `hash` (the WebTransport
+/// `serverCertificateHashes` trust path).
+#[derive(Debug)]
+struct PinnedCertificate {
+    provider: Arc<rustls::crypto::CryptoProvider>,
+    hash: Vec<u8>,
+}
+
+impl rustls::client::danger::ServerCertVerifier for PinnedCertificate {
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls_pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls_pki_types::CertificateDer<'_>],
+        _server_name: &rustls_pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls_pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        let seen = web_transport_quinn::crypto::sha256(&self.provider, end_entity);
+        if seen.as_ref() == self.hash.as_slice() {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        } else {
+            Err(rustls::Error::InvalidCertificate(
+                rustls::CertificateError::UnknownIssuer,
+            ))
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls_pki_types::CertificateDer<'_>,
+        signed: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            signed,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls_pki_types::CertificateDer<'_>,
+        signed: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            signed,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.provider
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
 }
