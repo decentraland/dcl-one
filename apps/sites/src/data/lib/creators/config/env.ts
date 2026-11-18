@@ -1,36 +1,45 @@
-import { Env, getEnv } from '@dcl/ui-env'
+export enum Env {
+  DEVELOPMENT = 'dev',
+  STAGING = 'stg',
+  PRODUCTION = 'prod'
+}
 
-type SystemEnvVariables = NonNullable<Parameters<typeof getEnv>[0]>
+const DOMAIN = 'decentraland'
 
-// The production domain and its subdomains; narrower than @dcl/ui-env's "any .org / .co" rule.
-const PRODUCTION_DOMAIN = 'decentraland.org'
+const ENV_BY_NAME: Record<string, Env> = {
+  dev: Env.DEVELOPMENT,
+  development: Env.DEVELOPMENT,
+  zone: Env.DEVELOPMENT,
+  stg: Env.STAGING,
+  staging: Env.STAGING,
+  today: Env.STAGING,
+  prod: Env.PRODUCTION,
+  production: Env.PRODUCTION,
+  org: Env.PRODUCTION
+}
+
+/** The environment a Decentraland host serves: `.org` production, `.today` staging, `.zone` development. */
+function envOfHost(host: string): Env | undefined {
+  const labels = host.split(':')[0].toLowerCase().split('.')
+  const tld = labels[labels.length - 1]
+  return labels[labels.length - 2] === DOMAIN ? ENV_BY_NAME[tld] : undefined
+}
 
 export function isProductionHost(host: string): boolean {
-  const hostname = host.split(':')[0].toLowerCase()
-  return hostname === PRODUCTION_DOMAIN || hostname.endsWith(`.${PRODUCTION_DOMAIN}`)
+  return envOfHost(host) === Env.PRODUCTION
 }
 
 /**
- * The environment for this page load. `?env=` may switch a local, .zone or .today visitor to another
- * back end; a production visitor is never switched, so a link cannot make decentraland.org sign
- * requests against dev or staging services.
+ * The environment for this page load: the host's on a Decentraland domain, `fallback` anywhere else. `?env=`
+ * may switch any visitor but a production one, so a link cannot make decentraland.org sign requests against
+ * dev or staging services.
  */
-export function resolveEnv(location: Pick<Location, 'host'> | undefined, systemEnvVariables: SystemEnvVariables): Env {
-  if (location && isProductionHost(location.host)) return Env.PRODUCTION
-  return getEnv(systemEnvVariables)
-}
-
-/** Where the app is mounted on the Decentraland domains: decentraland.<tld>/create. */
-export const SITE_PATH = '/create'
-
-/**
- * The router basename for this page load: `/create` when served by-path on the Decentraland domains,
- * the root everywhere else (localhost, Vercel previews, tests). Decided from the pathname: a hostname
- * allowlist blanks the page on any host it doesn't know, and the CDN base is where the assets live, not
- * where the app is mounted.
- */
-export function resolveBasePath(pathname: string): string | undefined {
-  return pathname === SITE_PATH || pathname.startsWith(`${SITE_PATH}/`) ? SITE_PATH : undefined
+export function resolveEnv(location: Pick<Location, 'host' | 'search'> | undefined, fallback: Env): Env {
+  if (!location) return fallback
+  const ofHost = envOfHost(location.host)
+  if (ofHost === Env.PRODUCTION) return ofHost
+  const requested = new URLSearchParams(location.search).get('env')?.toLowerCase()
+  return (requested && ENV_BY_NAME[requested]) || ofHost || fallback
 }
 
 export type EnvConfig = {
@@ -39,7 +48,7 @@ export type EnvConfig = {
   getEnv: () => Env
 }
 
-/** `@dcl/ui-env`'s config surface over a pre-resolved environment. */
+/** The values of one environment, read by name. */
 export function createEnvConfig(configByEnv: Partial<Record<Env, Record<string, string>>>, env: Env): EnvConfig {
   const values = configByEnv[env]
   return {

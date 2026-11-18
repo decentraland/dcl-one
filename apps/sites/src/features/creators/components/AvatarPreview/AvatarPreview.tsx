@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { PreviewEmote, PreviewEmoteEventType, PreviewRenderer, PreviewUnityMode } from '@dcl/schemas'
-import { Env } from '@dcl/ui-env'
+import { Env } from '@/data/lib/creators/config'
 import {
   WearablePreview,
   createWearablePreviewController,

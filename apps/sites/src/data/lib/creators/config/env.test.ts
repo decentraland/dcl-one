@@ -1,44 +1,27 @@
-// @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
-import { afterEach, describe, expect, it } from 'vitest'
-import { Env } from '@dcl/ui-env'
-import { createEnvConfig, resolveBasePath, resolveEnv } from './env'
-
-const SYSTEM = { VITE_DCL_DEFAULT_ENV: 'stg' }
+import { describe, expect, it } from 'vitest'
+import { Env, createEnvConfig, resolveEnv } from './env'
 
 describe('resolveEnv', () => {
-  afterEach(() => window.history.replaceState({}, '', '/'))
-
   it('ignores ?env= on a production hostname', () => {
-    window.history.replaceState({}, '', '/collections?env=dev')
-    expect(resolveEnv({ host: 'decentraland.org' }, SYSTEM)).toBe(Env.PRODUCTION)
-    expect(resolveEnv({ host: 'play.decentraland.org:443' }, SYSTEM)).toBe(Env.PRODUCTION)
-    // Other .org hosts are not ours: the override keeps working there (previews, mirrors).
-    expect(resolveEnv({ host: 'example.org' }, SYSTEM)).toBe(Env.DEVELOPMENT)
-    expect(resolveEnv({ host: 'notdecentraland.org' }, SYSTEM)).toBe(Env.DEVELOPMENT)
+    expect(resolveEnv({ host: 'decentraland.org', search: '?env=dev' }, Env.STAGING)).toBe(Env.PRODUCTION)
+    expect(resolveEnv({ host: 'play.decentraland.org:443', search: '?env=dev' }, Env.STAGING)).toBe(Env.PRODUCTION)
   })
 
-  it('honours ?env= everywhere else and falls back to the default environment', () => {
-    window.history.replaceState({}, '', '/collections?env=dev')
-    expect(resolveEnv(window.location, SYSTEM)).toBe(Env.DEVELOPMENT)
-    window.history.replaceState({}, '', '/collections')
-    expect(resolveEnv(window.location, SYSTEM)).toBe(Env.STAGING)
-    expect(resolveEnv(undefined, SYSTEM)).toBe(Env.STAGING)
-  })
-})
-
-describe('resolveBasePath', () => {
-  it('mounts the router at /create when served by-path on the Decentraland domains', () => {
-    expect(resolveBasePath('/create')).toBe('/create')
-    expect(resolveBasePath('/create/collections/editor')).toBe('/create')
+  it('honours ?env= on hosts that are not ours', () => {
+    expect(resolveEnv({ host: 'example.org', search: '?env=dev' }, Env.STAGING)).toBe(Env.DEVELOPMENT)
+    expect(resolveEnv({ host: 'notdecentraland.org', search: '?env=dev' }, Env.STAGING)).toBe(Env.DEVELOPMENT)
   })
 
-  it('mounts the router at the root everywhere else', () => {
-    expect(resolveBasePath('')).toBeUndefined()
-    expect(resolveBasePath('/')).toBeUndefined()
-    expect(resolveBasePath('/collections')).toBeUndefined()
-    expect(resolveBasePath('/creator')).toBeUndefined()
-    expect(resolveBasePath('/@dcl/creators-site/0.0.1/')).toBeUndefined()
+  it('follows the Decentraland host, which ?env= may switch outside production', () => {
+    expect(resolveEnv({ host: 'decentraland.zone', search: '' }, Env.PRODUCTION)).toBe(Env.DEVELOPMENT)
+    expect(resolveEnv({ host: 'decentraland.today', search: '' }, Env.PRODUCTION)).toBe(Env.STAGING)
+    expect(resolveEnv({ host: 'decentraland.zone', search: '?env=prod' }, Env.STAGING)).toBe(Env.PRODUCTION)
+  })
+
+  it('falls back to the default environment anywhere else', () => {
+    expect(resolveEnv({ host: 'localhost:5212', search: '' }, Env.STAGING)).toBe(Env.STAGING)
+    expect(resolveEnv({ host: 'localhost:5212', search: '?env=nonsense' }, Env.STAGING)).toBe(Env.STAGING)
+    expect(resolveEnv(undefined, Env.STAGING)).toBe(Env.STAGING)
   })
 })
 

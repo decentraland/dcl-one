@@ -1,4 +1,4 @@
-import { Env } from '@dcl/ui-env'
+import { Env } from '@/data/lib/creators/config'
 import { config } from '@/data/lib/creators/config'
 import { track } from './analytics'
 import { openExternal, openProtocolLink } from './navigation'
