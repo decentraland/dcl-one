@@ -302,9 +302,12 @@ fn spawn_lines(text: &str) -> Vec<usize> {
     // The aliases `tokio::task` is imported under, and an open `use tokio` statement.
     let (mut task_modules, mut statement) = (Vec::<String>::new(), None::<(usize, String)>);
     for (number, line) in production_lines(text) {
-        let trimmed = line.trim();
-        if statement.is_none() && trimmed.starts_with("use tokio::") {
+        let mut trimmed = line.trim();
+        if statement.is_none()
+            && let Some(tree) = tokio_use_tree(trimmed)
+        {
             statement = Some((number, String::new()));
+            trimmed = tree;
         }
         if let Some((start, text)) = statement.as_mut() {
             text.push_str(trimmed);
@@ -312,7 +315,7 @@ fn spawn_lines(text: &str) -> Vec<usize> {
             if trimmed.contains(';') {
                 let start = *start;
                 let tree = text.replace(" as ", "@").replace(char::is_whitespace, "");
-                let tree = tree.trim_start_matches("use").trim_end_matches(';');
+                let tree = tree.trim_end_matches(';');
                 let mut paths = Vec::new();
                 use_paths("", tree, &mut paths);
                 for (path, alias) in paths {
@@ -343,6 +346,21 @@ fn spawn_lines(text: &str) -> Vec<usize> {
     found.sort_unstable();
     found.dedup();
     found
+}
+
+/// The use tree of a `use` of tokio (`pub` or `pub(..)` and a leading `::`
+/// allowed), starting at `tokio::`.
+fn tokio_use_tree(line: &str) -> Option<&str> {
+    let line = match line.strip_prefix("pub") {
+        Some(rest) if rest.starts_with('(') => rest.split_once(')')?.1.trim_start(),
+        Some(rest) if rest.starts_with(' ') => rest.trim_start(),
+        _ => line,
+    };
+    let tree = line
+        .strip_prefix("use ")?
+        .trim_start()
+        .trim_start_matches("::");
+    tree.starts_with("tokio::").then_some(tree)
 }
 
 /// The `(path, alias)` pairs a whitespace-free use tree imports under `prefix`;
@@ -564,6 +582,9 @@ fn d() { other::tk::spawn(f); }
         assert_eq!(super::spawn_lines(text), [1, 7]);
         let module = "use tokio::task;\nfn a() { task::spawn(f); }\n";
         assert_eq!(super::spawn_lines(module), [2]);
+        let exported =
+            "pub use tokio::{\n    spawn,\n};\npub(crate) use ::tokio::{\n    task::spawn,\n};\n";
+        assert_eq!(super::spawn_lines(exported), [1, 4]);
     }
 
     #[test]
