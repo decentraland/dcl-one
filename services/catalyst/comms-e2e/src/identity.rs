@@ -68,6 +68,21 @@ impl Identity {
         }
     }
 
+    /// The identity of a wallet whose private key is given (a scene listener's wallet, which the
+    /// server is configured to admit), with a device key derived from `material`. The key is
+    /// never printed or kept beyond the wallet it builds.
+    pub fn from_wallet_key(private_key_hex: &str, material: &str) -> anyhow::Result<Identity> {
+        let wallet = Wallet::from_hex(private_key_hex.trim())
+            .map_err(|_| anyhow::anyhow!("the wallet key is not a valid private key"))?;
+        Ok(Identity {
+            wallet,
+            device: derived_key("device", material, 0, 0),
+            material: material.to_owned(),
+            index: 0,
+            device_number: 0,
+        })
+    }
+
     /// The same wallet on another device: a new session key.
     pub fn second_device(&self) -> Identity {
         let device_number = self.device_number + 1;
