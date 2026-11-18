@@ -324,19 +324,28 @@ describe('createSceneObserver', () => {
 
     afterEach(() => slowOff());
 
-    it('should give up on the rest of that poll', () => {
+    it('should stop describing and report the rest as undescribed', () => {
       expect(calls.filter(call => call.startsWith('entity_components'))).toEqual([
         'entity_components 700',
       ]);
-      expect(reported).toEqual([]);
+      expect(reported).toEqual([
+        expect.objectContaining({ change: 'appeared', entity: 700, description: 'a red box' }),
+        expect.objectContaining({
+          change: 'appeared',
+          entity: null,
+          count: 1,
+          description: 'other entities (too many at once to describe)',
+        }),
+      ]);
     });
 
     describe('and the next poll runs', () => {
       beforeEach(async () => {
+        reported = [];
         await slow.poll();
       });
 
-      it('should start from a fresh baseline instead of reporting what it gave up on', () => {
+      it('should not report those entities again', () => {
         expect(reported).toEqual([]);
       });
     });

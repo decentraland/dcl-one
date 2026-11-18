@@ -353,10 +353,12 @@ export function createSceneObserver(options: SceneObserverOptions): SceneObserve
       if (added.length === 0) return;
 
       const described = new Map<number, EntityFacts>();
-      for (const id of added.slice(0, maxDescribedPerPoll)) {
+      const attempted = added.slice(0, maxDescribedPerPoll);
+      let processed = attempted.length;
+      for (const [index, id] of attempted.entries()) {
         if (now() > deadline) {
-          wasRunning = false;
-          return;
+          processed = index;
+          break;
         }
         const f = await facts(id);
         if (f) described.set(id, f);
@@ -406,7 +408,7 @@ export function createSceneObserver(options: SceneObserverOptions): SceneObserve
         });
       }
       emitGrouped('appeared', appeared);
-      const undescribed = added.length - Math.min(added.length, maxDescribedPerPoll);
+      const undescribed = added.length - processed;
       if (undescribed > 0) {
         emit({
           change: 'appeared',
