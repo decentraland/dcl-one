@@ -730,8 +730,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   at a 30 FPS cap), takes real frame times with no 250 ms cap, and is sent once per 15 s sample,
   in world and focused only, instead of once per 1000 frames of virtual time through loading
   screens and unfocused windows. The old event's own sampling was removed rather than kept beside
-  the sampler. Dashboards comparing across this change see a step from the definitions; whether
-  the event gets a schema field or a fixed 50 ms count is the analytics owners' call.
+  the sampler. Dashboards comparing across this change see a step from the definitions.
+  The event records the applied threshold, raw hiccup counts and measured sample counts for CPU
+  and, when readings are available, GPU. These counts let dashboards compute session rates.
 - **Bevy stays on the 0.16 fork for now.** Security-relevant dependencies (V8 and deno,
   libwebrtc, ffmpeg, wgpu) get bumped inside it. Whether to ever move the bevy version is an
   open discussion, not a decision.
