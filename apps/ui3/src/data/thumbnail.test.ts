@@ -1,7 +1,10 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { nodeMapImage, publicThumbnail, publicThumbnailSet } from "./thumbnail";
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
 
 test("SSR and hydrated thumbnails share the same public URL even with a different server API origin", () => {
   vi.stubEnv("CATALYST_URL", "https://catalyst.example.org");
@@ -103,6 +106,31 @@ test("another node's poster copies are sized from the upstream bucket, its own u
     expect(publicThumbnail(upload, 320)).toBe(upload);
     expect(publicThumbnailSet(upload, [320, 640])).toBeUndefined();
     for (const other of [`https://${host}/private/image.webp`, `https://${host}/poster/image.gif`]) expect(publicThumbnail(other, 320)).toBe(other);
+  }
+});
+
+test("resizes posters served from paths on the node", () => {
+  vi.stubEnv("VITE_CATALYST_URL", "");
+  vi.stubGlobal("__CATALYST_BASE__", "https://node.example");
+  for (const folder of ["poster", "poster-vertical"]) {
+    const path = `/${folder}/1ad0d5dd6a03ac29.jpg`;
+    const source = `https://node.example/events-assets-099ac00${path}`;
+    const upstream = `https://events-assets-099ac00.decentraland.org${path}`;
+    expect(publicThumbnail(source, 320)).toBe(`/media/convert?width=320&url=${encodeURIComponent(upstream)}`);
+  }
+});
+
+test("leaves unrecognized node poster paths, other origins, signed and animated posters alone", () => {
+  vi.stubEnv("VITE_CATALYST_URL", "");
+  vi.stubGlobal("__CATALYST_BASE__", "https://node.example");
+  for (const url of [
+    "https://node.example/events-assets-099ac00/private/a.webp",
+    "https://node.example/events-assets-099ac00/poster/a.gif",
+    "https://other.example/events-assets-099ac00/poster/a.webp",
+    "https://node.example/events-assets-099ac00/poster/a.webp?signature=secret",
+  ]) {
+    expect(publicThumbnail(url)).toBe(url);
+    expect(publicThumbnailSet(url, [320, 640])).toBeUndefined();
   }
 });
 
