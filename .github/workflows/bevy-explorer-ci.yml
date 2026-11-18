@@ -764,6 +764,22 @@ jobs:
         with:
           toolchain: 1.99.1
       - run: rustup component add clippy
+      # `common`'s tests include a shader from the patched Bevy tree; restored and written as in the Test Suite.
+      - name: Identify the upstream commits
+        id: bases
+        working-directory: .
+        run: echo "key=$(grep -hE '^[[:space:]]*(upstream|commit|url)[[:space:]]*=' rendering/bevy-explorer/patches/*/source.toml | git hash-object --stdin)" >> "$GITHUB_OUTPUT"
+      - name: Restore the upstream commits
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/patched-sources
+          key: bevy-explorer-patch-bases-${{ steps.bases.outputs.key }}
+          restore-keys: |
+            bevy-explorer-patch-bases-
+      - name: Rebuild the patched Bevy tree
+        env:
+          DCL_PATCHED_SOURCES_CACHE: ${{ github.workspace }}/.cache/patched-sources
+        run: python3 "$GITHUB_WORKSPACE/tooling/patched-sources.py" materialise bevy
       - name: Install protoc from the flake
         uses: ./.github/actions/bevy-explorer-tools
       - name: Install Linux build dependencies
