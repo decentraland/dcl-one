@@ -25,6 +25,8 @@ on:
       - 'Makefile'
       - '.github/workflows/development.yml'
       - '.github/workflows/bevy-explorer-benchmark.yml'
+      # tooling/tests/test_dev_workflow.py reads its label logic
+      - '.github/workflows/creator-hub-ci.yml'
       - '!**/*.md'
       - '!docs/**'
       - '!services/catalyst/docs/**'
