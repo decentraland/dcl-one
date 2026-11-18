@@ -272,7 +272,7 @@ export function Showcase(): React.JSX.Element {
         </div>
       </Section>
 
-      <Section title="ArmedButton (a confirm that gives away what can't be taken back: SEND GIFT, SEND TIP)">
+      <Section title="ArmedButton (a confirm that spends or gives away what can't be taken back: SEND GIFT, SEND TIP, BUY ITEM)">
         <ArmedShowcase />
       </Section>
 
