@@ -411,6 +411,31 @@ async function escape() {
     })
 }
 
+describe('when viewing the gallery on a phone', () => {
+  it('should keep the document within the viewport and scroll each matrix to its last state', async () => {
+    await browser.session.send('Emulation.setDeviceMetricsOverride', {
+      width: 391,
+      height: 915,
+      deviceScaleFactor: 2,
+      mobile: true
+    })
+    await ready()
+    const result = await browser.evaluate(`(()=>{
+      const width = document.documentElement.clientWidth
+      return {
+        width,
+        documentWidth: document.documentElement.scrollWidth,
+        visible: Array.from(document.querySelectorAll('[role="region"]')).map(region => {
+          region.scrollLeft = region.scrollWidth
+          const last = region.querySelector('tr:last-child td:last-child input').getBoundingClientRect()
+          return region.scrollLeft > 0 && last.left >= 0 && last.right <= width
+        })
+      }
+    })()`)
+    expect(result).toEqual({ width: 391, documentWidth: 391, visible: [true, true] })
+  })
+})
+
 describe('when the help opens near a viewport edge', () => {
   it.each([320, 1440])('should keep the open text fully inside a %ipx viewport', async (width) => {
     await browser.session.send('Emulation.setDeviceMetricsOverride', {

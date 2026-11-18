@@ -83,9 +83,12 @@ const states = [
 const cell = { padding: 8, textAlign: 'center' as const }
 const edgeHelp = 'A help text long enough to need most of the width the open text may take.'
 
+const showEdges = new URLSearchParams(location.search).has('edges')
+
 function Fixture() {
   return (
     <main
+      className={showEdges ? styles.edges : undefined}
       style={{
         minHeight: '100vh',
         padding: 24,
@@ -98,36 +101,38 @@ function Fixture() {
       {variants.map((variant) => (
         <section key={variant} aria-label={variant}>
           <h2 style={{ fontSize: 16 }}>variant={variant}</h2>
-          <table style={{ borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                <th style={cell}>size</th>
-                {states.map((state) => (
-                  <th key={state.key} style={{ ...cell, fontWeight: 400, fontSize: 12 }}>
-                    {state.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sizes.map((size) => (
-                <tr key={size}>
-                  <th style={cell}>{size}</th>
+          <div className={styles.matrix} role="region" aria-label={`${variant} checkbox states`}>
+            <table style={{ borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={cell}>size</th>
                   {states.map((state) => (
-                    <td key={state.key} style={cell}>
-                      <Checkbox
-                        id={`${variant}-${size}-${state.key}`}
-                        aria-label={`${variant} ${size} ${state.label}`}
-                        variant={variant}
-                        size={size}
-                        {...state.props}
-                      />
-                    </td>
+                    <th key={state.key} style={{ ...cell, fontWeight: 400, fontSize: 12 }}>
+                      {state.label}
+                    </th>
                   ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {sizes.map((size) => (
+                  <tr key={size}>
+                    <th style={cell}>{size}</th>
+                    {states.map((state) => (
+                      <td key={state.key} style={cell}>
+                        <Checkbox
+                          id={`${variant}-${size}-${state.key}`}
+                          aria-label={`${variant} ${size} ${state.label}`}
+                          variant={variant}
+                          size={size}
+                          {...state.props}
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
       ))}
       <h2 style={{ fontSize: 16 }}>CheckboxLabel</h2>
@@ -155,8 +160,8 @@ function Fixture() {
       </div>
       {/* With ?edges: help buttons fixed 4px from each viewport edge, to keep the open text on
           screen. Fixed, so the page's own scrollbar never covers them. */}
-      {new URLSearchParams(location.search).has('edges') && (
-        <>
+      {showEdges && (
+        <section aria-label="Viewport edges" className={styles.edgeCases}>
           <div style={{ position: 'fixed', top: 4, right: 4 }}>
             <CheckboxLabel id="label-edge-top" label="Top edge" help={edgeHelp} />
           </div>
@@ -164,9 +169,14 @@ function Fixture() {
             <CheckboxLabel id="label-edge-right" label="Right edge" help={edgeHelp} />
           </div>
           <div style={{ position: 'fixed', bottom: 8, left: 4 }}>
-            <CheckboxLabel id="label-edge-left" label="L" labelPosition="start" help={edgeHelp} />
+            <CheckboxLabel
+              id="label-edge-left"
+              label="Left edge"
+              labelPosition="start"
+              help={edgeHelp}
+            />
           </div>
-        </>
+        </section>
       )}
       <button
         type="button"
