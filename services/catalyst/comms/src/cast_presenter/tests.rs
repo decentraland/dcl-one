@@ -32,9 +32,13 @@ enum Sent {
     Shutdown,
 }
 
+/// Run once, on the bot's first data packet.
+type OnFirstData = Box<dyn FnOnce() + Send>;
+
 #[derive(Default)]
 struct FakeBot {
     sent: Mutex<Vec<Sent>>,
+    on_first_data: Mutex<Option<OnFirstData>>,
 }
 
 #[async_trait::async_trait]
@@ -53,6 +57,10 @@ impl BotLink for FakeBot {
     }
     async fn publish_data(&self, packet: Vec<u8>) -> anyhow::Result<()> {
         self.sent.lock().unwrap().push(Sent::Data(packet));
+        let hook = self.on_first_data.lock().unwrap().take();
+        if let Some(hook) = hook {
+            hook();
+        }
         Ok(())
     }
     async fn update_metadata(&self, metadata: String) -> anyhow::Result<()> {
@@ -93,6 +101,8 @@ impl FakeRoom {
 /// runs before it.
 struct FakeLauncher {
     room_metadata: String,
+    /// The room metadata once the bot sends its first data packet.
+    metadata_on_first_data: Option<String>,
     /// How long a connect takes.
     delay: Duration,
     /// The URLs bots were started for.
@@ -107,6 +117,7 @@ impl FakeLauncher {
     fn slow(room_metadata: Value, delay: Duration) -> Arc<Self> {
         Arc::new(Self {
             room_metadata: room_metadata.to_string(),
+            metadata_on_first_data: None,
             delay,
             dialed: Mutex::new(Vec::new()),
             bots: Mutex::new(Vec::new()),
@@ -144,9 +155,16 @@ impl BotLauncher for FakeLauncher {
             metadata: self.room_metadata.clone(),
             participants: 1,
         });
+        let state = Arc::new(state_tx);
+        if let Some(metadata) = self.metadata_on_first_data.clone() {
+            let state = state.clone();
+            *bot.on_first_data.lock().unwrap() = Some(Box::new(move || {
+                state.send_modify(|room| room.metadata = metadata);
+            }));
+        }
         let fake_room = FakeRoom {
             data: data_tx,
-            state: Arc::new(state_tx),
+            state,
         };
         self.bots
             .lock()
@@ -853,6 +871,35 @@ async fn presenters_navigate_and_others_are_ignored() {
     settle().await;
     assert_eq!(data_messages(&bot).last().unwrap().0["currentSlide"], 0);
     drop(presenter);
+}
+
+#[tokio::test]
+async fn a_presenter_added_during_creation_is_obeyed() {
+    // The room metadata changes after the session read its presenters and
+    // before its loop starts: the loop starts from the new list.
+    let launcher = Arc::new(FakeLauncher {
+        metadata_on_first_data: Some(r#"{"presenters":["0xlate"]}"#.into()),
+        ..Arc::try_unwrap(FakeLauncher::new(json!({"presenters": []})))
+            .ok()
+            .unwrap()
+    });
+    let presenter = Presenter::new(launcher.clone(), target(), 10);
+    presenter
+        .create(test_pdf(2), &GOOD, "Deck.pdf")
+        .await
+        .unwrap();
+    let (bot, events) = launcher.last();
+    events
+        .data(
+            "0xLATE",
+            command_packet(
+                json!({"type": "presentation:navigate", "action": "next"}),
+                "",
+            ),
+        )
+        .await;
+    settle().await;
+    assert_eq!(data_messages(&bot).last().unwrap().0["currentSlide"], 1);
 }
 
 #[tokio::test]

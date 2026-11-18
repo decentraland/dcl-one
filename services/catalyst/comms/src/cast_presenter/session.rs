@@ -556,7 +556,10 @@ impl Presenter {
     /// read before the packets that follow it.
     async fn run(self: Arc<Self>, session: Arc<Session>, mut data: mpsc::Receiver<RoomData>) {
         let mut room = session.room.clone();
+        // The presenters as of now: the metadata may have changed since
+        // `start` read it, and marking it seen must not lose that change.
         let mut metadata = room.borrow_and_update().metadata.clone();
+        session.state.lock().await.presenters = wire::presenters_from_room_metadata(&metadata);
         let mut overlay_due: Option<tokio::time::Instant> = None;
         loop {
             let packet = tokio::select! {
