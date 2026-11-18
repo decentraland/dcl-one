@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use catalyst_comms_e2e::engine::{
-    Ctx, Needs, Outcome, RunOptions, Scenario, ScenarioFuture, expect_or, expect_within,
-    holds_for, run_scenarios,
+    Ctx, Needs, Outcome, RunOptions, Scenario, ScenarioFuture, expect_or, expect_within, holds_for,
+    run_scenarios,
 };
 use catalyst_comms_e2e::stack::Stack;
 
@@ -94,7 +94,10 @@ async fn a_failed_repeat_reports_its_seed() {
         },
     )
     .await;
-    assert!(matches!(replay.results[0].outcome, Outcome::Failed { repeat: 0, .. }));
+    assert!(matches!(
+        replay.results[0].outcome,
+        Outcome::Failed { repeat: 0, .. }
+    ));
 }
 
 #[tokio::test]
@@ -137,7 +140,10 @@ async fn a_hostile_scenario_is_refused_against_a_public_host_before_it_runs() {
     let Outcome::Failed { expectation, .. } = &report.results[0].outcome else {
         panic!("expected a refusal");
     };
-    assert!(expectation.contains("refused before the first packet"), "{expectation}");
+    assert!(
+        expectation.contains("refused before the first packet"),
+        "{expectation}"
+    );
     assert_eq!(RAN.load(Ordering::SeqCst), 0);
 
     let allowed = RunOptions {
@@ -201,12 +207,17 @@ async fn runs_do_not_share_realms_or_wallets() {
 async fn expect_within_reports_what_and_when() {
     let ctx = Ctx::new(stack(), "run", "expect", 0, 1, std::env::temp_dir());
     let started = Instant::now();
-    let error = expect_within(&ctx, "the moon is full", Duration::from_millis(60), || None::<()>)
-        .await
-        .unwrap_err()
-        .to_string();
+    let error = expect_within(&ctx, "the moon is full", Duration::from_millis(60), || {
+        None::<()>
+    })
+    .await
+    .unwrap_err()
+    .to_string();
     assert!(started.elapsed() >= Duration::from_millis(60));
-    assert!(error.contains("the moon is full") && error.contains("not met after"), "{error}");
+    assert!(
+        error.contains("the moon is full") && error.contains("not met after"),
+        "{error}"
+    );
 
     // the last reason travels with the failure
     let error = expect_or(&ctx, "three peers", Duration::from_millis(30), || {
@@ -256,7 +267,10 @@ async fn holds_for_fails_at_the_first_break() {
     .await
     .unwrap_err()
     .to_string();
-    assert!(error.contains("the session lives") && error.contains("it died"), "{error}");
+    assert!(
+        error.contains("the session lives") && error.contains("it died"),
+        "{error}"
+    );
 }
 
 #[tokio::test]

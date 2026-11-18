@@ -136,7 +136,15 @@ impl Ctx {
         seed: u64,
         work_dir: PathBuf,
     ) -> Ctx {
-        Ctx::new_on(stack, run_id, scenario, repeat, seed, work_dir, Transport::Enet)
+        Ctx::new_on(
+            stack,
+            run_id,
+            scenario,
+            repeat,
+            seed,
+            work_dir,
+            Transport::Enet,
+        )
     }
 
     /// [`Ctx::new`] with the transport its Pulse bots use.
@@ -209,7 +217,10 @@ impl Ctx {
     /// The identity of actor `index`; no other run, scenario or repeat derives the same wallet.
     pub fn identity(&self, index: u32) -> Identity {
         Identity::derive(
-            &format!("{}/{}/{}", self.inner.run_id, self.inner.scenario, self.inner.repeat),
+            &format!(
+                "{}/{}/{}",
+                self.inner.run_id, self.inner.scenario, self.inner.repeat
+            ),
             index,
         )
     }
@@ -308,7 +319,11 @@ pub async fn run_scenarios(
         let started = Instant::now();
         let mut result = ScenarioResult {
             name: scenario.name.to_owned(),
-            guards: scenario.guards.iter().map(|guard| (*guard).to_owned()).collect(),
+            guards: scenario
+                .guards
+                .iter()
+                .map(|guard| (*guard).to_owned())
+                .collect(),
             outcome: Outcome::Passed,
             repeats_run: 0,
             duration_ms: 0,
@@ -317,11 +332,14 @@ pub async fn run_scenarios(
 
         if let Some(reason) = scenario.needs.missing(&stack) {
             result.outcome = Outcome::Skipped { reason };
-        } else if options.transport == Transport::WebTransport && stack.pulse_webtransport.is_none() {
+        } else if options.transport == Transport::WebTransport && stack.pulse_webtransport.is_none()
+        {
             result.outcome = Outcome::Skipped {
-                reason: "the stack file has no Pulse over WebTransport (`pulse_webtransport`)".to_owned(),
+                reason: "the stack file has no Pulse over WebTransport (`pulse_webtransport`)"
+                    .to_owned(),
             };
-        } else if let Err(refusal) = stack.ensure_safe_for(scenario.hostile, &options.allowed_hosts) {
+        } else if let Err(refusal) = stack.ensure_safe_for(scenario.hostile, &options.allowed_hosts)
+        {
             result.outcome = Outcome::Failed {
                 expectation: format!("refused before the first packet: {refusal}"),
                 seed: first_seed,
@@ -341,7 +359,11 @@ pub async fn run_scenarios(
                     options.work_dir.join(&run_id),
                     options.transport,
                 );
-                ctx.record("runner", "start", serde_json::json!({ "seed": seed, "repeat": repeat }));
+                ctx.record(
+                    "runner",
+                    "start",
+                    serde_json::json!({ "seed": seed, "repeat": repeat }),
+                );
                 let outcome = run_once(scenario, ctx.clone(), options.scenario_deadline).await;
                 result.repeats_run = repeat + 1;
                 result.notes.extend(ctx.take_notes());

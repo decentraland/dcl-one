@@ -35,12 +35,18 @@ pub enum Fault {
     /// Nothing gets through. On UDP the packets are lost; on TCP the bytes wait in the sockets.
     Stall,
     /// UDP: each packet is lost with this probability. TCP: as `Pass`.
-    Drop { share: f32 },
+    Drop {
+        share: f32,
+    },
     /// Everything arrives this much later, in order.
-    Delay { by: Duration },
+    Delay {
+        by: Duration,
+    },
     /// UDP: each packet arrives after a random wait inside the window, so packets overtake each
     /// other. TCP: as `Pass`.
-    Reorder { window: Duration },
+    Reorder {
+        window: Duration,
+    },
     /// UDP: each packet arrives twice. TCP: as `Pass`.
     Duplicate,
 }

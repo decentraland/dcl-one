@@ -20,7 +20,9 @@ pub enum Outcome {
         timeline: Vec<Entry>,
     },
     /// Not run: the stack lacks something the scenario needs. Never counted as passed.
-    Skipped { reason: String },
+    Skipped {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]

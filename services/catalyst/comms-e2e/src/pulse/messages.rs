@@ -39,7 +39,11 @@ pub fn state_in_parcel(parcel_index: i32, local: [f32; 3]) -> PlayerState {
 pub fn world_of(grid: &Grid, state: &PlayerState) -> [f32; 3] {
     grid.world(
         state.parcel_index,
-        [state.position_x_f(), state.position_y_f(), state.position_z_f()],
+        [
+            state.position_x_f(),
+            state.position_y_f(),
+            state.position_z_f(),
+        ],
     )
 }
 
@@ -98,7 +102,9 @@ pub fn resync(subject_id: u32, known_sequence: u32) -> ClientMessage {
 }
 
 pub fn profile_announcement(version: i32) -> ClientMessage {
-    wrap(Message::ProfileAnnouncement(ProfileVersionAnnouncement { version }))
+    wrap(Message::ProfileAnnouncement(ProfileVersionAnnouncement {
+        version,
+    }))
 }
 
 /// The initial state a handshake may carry: where the player already is.

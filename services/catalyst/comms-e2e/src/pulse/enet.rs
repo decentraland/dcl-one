@@ -63,7 +63,10 @@ fn run(socket: UdpSocket, target: SocketAddr, shared: Arc<Shared>, commands: Rec
         loop {
             match commands.try_recv() {
                 Ok(Command::Send { channel, bytes }) => {
-                    if let Err(error) = host.peer_mut(peer).send(channel.id(), &packet(channel, &bytes)) {
+                    if let Err(error) = host
+                        .peer_mut(peer)
+                        .send(channel.id(), &packet(channel, &bytes))
+                    {
                         shared.record("send failed", format!("{error:?}"));
                     }
                 }
@@ -83,7 +86,9 @@ fn run(socket: UdpSocket, target: SocketAddr, shared: Arc<Shared>, commands: Rec
                 Ok(Some(enet::Event::Connect { .. })) => shared.connected(),
                 Ok(Some(enet::Event::Receive { packet, .. })) => {
                     for (channel, bytes) in shared.received(packet.data()) {
-                        let _ = host.peer_mut(peer).send(channel.id(), &self::packet(channel, &bytes));
+                        let _ = host
+                            .peer_mut(peer)
+                            .send(channel.id(), &self::packet(channel, &bytes));
                     }
                 }
                 Ok(Some(enet::Event::Disconnect { data, .. })) => {

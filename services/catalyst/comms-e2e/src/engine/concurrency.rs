@@ -75,17 +75,28 @@ mod tests {
         })
         .await;
         assert_eq!(releases.len(), 32);
-        assert!(releases.iter().enumerate().all(|(position, (index, _))| position == *index));
+        assert!(
+            releases
+                .iter()
+                .enumerate()
+                .all(|(position, (index, _))| position == *index)
+        );
         let first = releases.iter().map(|(_, at)| *at).min().unwrap();
         let last = releases.iter().map(|(_, at)| *at).max().unwrap();
-        assert!(last - first < Duration::from_millis(50), "spread {:?}", last - first);
+        assert!(
+            last - first < Duration::from_millis(50),
+            "spread {:?}",
+            last - first
+        );
     }
 
     #[test]
     fn the_same_seed_gives_the_same_gaps() {
         let gaps = |seed| {
             let mut seeded = Seeded::new(seed);
-            (0..8).map(|_| seeded.gap(Duration::from_millis(100))).collect::<Vec<_>>()
+            (0..8)
+                .map(|_| seeded.gap(Duration::from_millis(100)))
+                .collect::<Vec<_>>()
         };
         assert_eq!(gaps(7), gaps(7));
         assert_ne!(gaps(7), gaps(8));

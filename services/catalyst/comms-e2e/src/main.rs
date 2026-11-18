@@ -160,7 +160,9 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
             if let Some(work_dir) = work_dir {
                 options.work_dir = work_dir;
             }
-            let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
             let outcome = runtime.block_on(run_scenarios(stack, &selection, &options));
             print!("{}", outcome.render(timeline));
             if let Some(path) = report {
@@ -186,7 +188,9 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
                 .split_once(',')
                 .and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?)))
                 .ok_or_else(|| anyhow::anyhow!("--position takes x,y"))?;
-            let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
             runtime.block_on(async move {
                 let work_dir = RunOptions::default().work_dir.join("console");
                 let ctx = Ctx::new(stack, "console", "console", 0, 1, work_dir);

@@ -153,7 +153,11 @@ impl Grid {
         if !encoder.is_valid_coordinate(x, z) {
             return None;
         }
-        let local = [world[0] - x as f32 * size, world[1], world[2] - z as f32 * size];
+        let local = [
+            world[0] - x as f32 * size,
+            world[1],
+            world[2] - z as f32 * size,
+        ];
         Some((encoder.encode(x, z), local))
     }
 
@@ -161,7 +165,11 @@ impl Grid {
     pub fn world(&self, parcel_index: i32, local: [f32; 3]) -> [f32; 3] {
         let (x, z) = self.encoder().decode(parcel_index);
         let size = self.parcel_size as f32;
-        [x as f32 * size + local[0], local[1], z as f32 * size + local[2]]
+        [
+            x as f32 * size + local[0],
+            local[1],
+            z as f32 * size + local[2],
+        ]
     }
 
     /// The centre of a parcel, at ground level.
@@ -243,7 +251,10 @@ impl Stack {
         if let Some(target) = &self.pulse_webtransport {
             hosts.push(host_of(&target.url));
         }
-        for url in [&self.pulse_metrics, &self.serve_metrics].into_iter().flatten() {
+        for url in [&self.pulse_metrics, &self.serve_metrics]
+            .into_iter()
+            .flatten()
+        {
             hosts.push(host_of(url));
         }
         if let Some(target) = &self.livekit {
@@ -293,7 +304,9 @@ fn is_local(host: &str) -> bool {
     match host.parse::<IpAddr>() {
         Ok(IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
         Ok(IpAddr::V6(ip)) => {
-            ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00 || (ip.segments()[0] & 0xffc0) == 0xfe80
+            ip.is_loopback()
+                || (ip.segments()[0] & 0xfe00) == 0xfc00
+                || (ip.segments()[0] & 0xffc0) == 0xfe80
         }
         Err(_) => false,
     }
@@ -304,7 +317,10 @@ mod tests {
     use super::*;
 
     fn stack_at(api: &str) -> Stack {
-        Stack::parse(&format!("api = \"{api}\"\npulse_enet = \"127.0.0.1:9000\"\n")).unwrap()
+        Stack::parse(&format!(
+            "api = \"{api}\"\npulse_enet = \"127.0.0.1:9000\"\n"
+        ))
+        .unwrap()
     }
 
     #[test]
@@ -312,11 +328,18 @@ mod tests {
         let public = stack_at("https://example.com");
         let refusal = public.ensure_safe_for(true, &[]).unwrap_err().to_string();
         assert!(refusal.contains("example.com"), "{refusal}");
-        public.ensure_safe_for(true, &["example.com".to_owned()]).unwrap();
+        public
+            .ensure_safe_for(true, &["example.com".to_owned()])
+            .unwrap();
         // a run that is not hostile may go anywhere
         public.ensure_safe_for(false, &[]).unwrap();
 
-        for local in ["http://127.0.0.1:5210", "http://localhost:5210", "http://10.0.0.1", "http://[::1]:80"] {
+        for local in [
+            "http://127.0.0.1:5210",
+            "http://localhost:5210",
+            "http://10.0.0.1",
+            "http://[::1]:80",
+        ] {
             stack_at(local).ensure_safe_for(true, &[]).unwrap();
         }
     }
@@ -331,12 +354,21 @@ mod tests {
     #[test]
     fn limits_default_to_the_server_constants() {
         let limits = stack_at("http://127.0.0.1:1").limits;
-        assert_eq!(limits.max_emote_duration_ms, hardening::DEFAULT_MAX_EMOTE_DURATION_MS);
+        assert_eq!(
+            limits.max_emote_duration_ms,
+            hardening::DEFAULT_MAX_EMOTE_DURATION_MS
+        );
         assert_eq!(limits.input_max_hz, hardening::DEFAULT_INPUT_MAX_HZ);
         assert_eq!(limits.input_burst, hardening::DEFAULT_INPUT_BURST);
-        assert_eq!(limits.discrete_rate_per_sec, hardening::DEFAULT_DISCRETE_RATE_PER_SEC);
+        assert_eq!(
+            limits.discrete_rate_per_sec,
+            hardening::DEFAULT_DISCRETE_RATE_PER_SEC
+        );
         assert_eq!(limits.discrete_burst, hardening::DEFAULT_DISCRETE_BURST);
-        assert_eq!(limits.max_handshake_attempts, hardening::DEFAULT_MAX_HANDSHAKE_ATTEMPTS);
+        assert_eq!(
+            limits.max_handshake_attempts,
+            hardening::DEFAULT_MAX_HANDSHAKE_ATTEMPTS
+        );
     }
 
     #[test]
@@ -351,7 +383,12 @@ mod tests {
 
     #[test]
     fn an_unknown_key_is_an_error() {
-        assert!(Stack::parse("api = \"http://127.0.0.1:1\"\npulse_enet = \"127.0.0.1:9000\"\npulse = 1\n").is_err());
+        assert!(
+            Stack::parse(
+                "api = \"http://127.0.0.1:1\"\npulse_enet = \"127.0.0.1:9000\"\npulse = 1\n"
+            )
+            .is_err()
+        );
     }
 
     #[test]

@@ -171,7 +171,13 @@ async fn start(ctx: &Ctx, preview: bool) -> Result<Subject> {
         "in world",
         serde_json::json!({ "wallet": subject.wallet, "realm": subject.realm, "position": subject.position }),
     );
-    expect_pulse(ctx, &subject.explorer, "the explorer authenticates with Pulse", Duration::from_secs(60)).await?;
+    expect_pulse(
+        ctx,
+        &subject.explorer,
+        "the explorer authenticates with Pulse",
+        Duration::from_secs(60),
+    )
+    .await?;
     Ok(subject)
 }
 
@@ -184,7 +190,12 @@ async fn pulse_state(explorer: &Explorer) -> Result<String, String> {
 
 /// Waits until the explorer says Pulse is authenticated. Its terminal state ends the wait at
 /// once: nothing brings a session back from it but a change of realm.
-async fn expect_pulse(ctx: &Ctx, explorer: &Explorer, what: &str, deadline: Duration) -> Result<()> {
+async fn expect_pulse(
+    ctx: &Ctx,
+    explorer: &Explorer,
+    what: &str,
+    deadline: Duration,
+) -> Result<()> {
     expect_async(ctx, what, deadline, CONSOLE_TICK, || async {
         match pulse_state(explorer).await?.as_str() {
             "authenticated" => Ok(()),
@@ -201,9 +212,15 @@ async fn expect_pulse(ctx: &Ctx, explorer: &Explorer, what: &str, deadline: Dura
 async fn pulse_stays(ctx: &Ctx, explorer: &Explorer, what: &str, window: Duration) -> Result<()> {
     let started = Instant::now();
     while started.elapsed() < window {
-        let state = pulse_state(explorer).await.map_err(|error| anyhow!("{what}: {error}"))?;
+        let state = pulse_state(explorer)
+            .await
+            .map_err(|error| anyhow!("{what}: {error}"))?;
         if state != "authenticated" {
-            ctx.record("expect", "broken", serde_json::json!({ "what": what, "state": state }));
+            ctx.record(
+                "expect",
+                "broken",
+                serde_json::json!({ "what": what, "state": state }),
+            );
             bail!(
                 "expected for {} s: {what}; after {} ms the explorer reports Pulse as {state}",
                 window.as_secs(),
@@ -212,7 +229,11 @@ async fn pulse_stays(ctx: &Ctx, explorer: &Explorer, what: &str, window: Duratio
         }
         tokio::time::sleep(CONSOLE_TICK).await;
     }
-    ctx.record("expect", "held", serde_json::json!({ "what": what, "for_ms": window.as_millis() as u64 }));
+    ctx.record(
+        "expect",
+        "held",
+        serde_json::json!({ "what": what, "for_ms": window.as_millis() as u64 }),
+    );
     Ok(())
 }
 
@@ -243,7 +264,13 @@ async fn move_to(explorer: &Explorer, world: [f32; 3]) -> Result<()> {
 }
 
 /// Waits until the observer holds the explorer within half a metre of `world`.
-async fn observer_sees_at(ctx: &Ctx, bot: &PulseBot, wallet: &str, world: [f32; 3], what: &str) -> Result<()> {
+async fn observer_sees_at(
+    ctx: &Ctx,
+    bot: &PulseBot,
+    wallet: &str,
+    world: [f32; 3],
+    what: &str,
+) -> Result<()> {
     expect_or(ctx, what, SOON, || {
         bot.alive()?;
         let seen = bot
@@ -252,7 +279,8 @@ async fn observer_sees_at(ctx: &Ctx, bot: &PulseBot, wallet: &str, world: [f32; 
             .map(|subject| subject.world)
             .ok_or("the observer no longer holds the explorer")?;
         let near = (seen[0] - world[0]).abs() < 0.5 && (seen[2] - world[2]).abs() < 0.5;
-        near.then_some(()).ok_or_else(|| format!("the observer holds it at {seen:?}"))
+        near.then_some(())
+            .ok_or_else(|| format!("the observer holds it at {seen:?}"))
     })
     .await
 }
@@ -270,11 +298,18 @@ async fn uplink_stall(ctx: Ctx) -> Result<()> {
     let before = bot.view().teleports;
     move_to(&subject.explorer, away).await?;
     move_to(&subject.explorer, home).await?;
-    expect_or(&ctx, "the observer sees each console move as a teleport", SOON, || {
-        bot.alive()?;
-        let seen = bot.view().teleports - before;
-        (seen >= 2).then_some(()).ok_or_else(|| format!("{seen} teleports seen for 2 moves"))
-    })
+    expect_or(
+        &ctx,
+        "the observer sees each console move as a teleport",
+        SOON,
+        || {
+            bot.alive()?;
+            let seen = bot.view().teleports - before;
+            (seen >= 2)
+                .then_some(())
+                .ok_or_else(|| format!("{seen} teleports seen for 2 moves"))
+        },
+    )
     .await?;
     let teleports_before = bot.view().teleports;
 
@@ -300,19 +335,50 @@ async fn uplink_stall(ctx: Ctx) -> Result<()> {
     // What was kept is resent when the uplink returns. The session must outlive that: not ended
     // for good by the server, and not dropped and dialled again either.
     let verdict = async {
-        expect_pulse(&ctx, &subject.explorer, "Pulse is authenticated after the stall", Duration::from_secs(20)).await?;
-        pulse_stays(&ctx, &subject.explorer, "Pulse stays authenticated after the resend", Duration::from_secs(12)).await
+        expect_pulse(
+            &ctx,
+            &subject.explorer,
+            "Pulse is authenticated after the stall",
+            Duration::from_secs(20),
+        )
+        .await?;
+        pulse_stays(
+            &ctx,
+            &subject.explorer,
+            "Pulse stays authenticated after the resend",
+            Duration::from_secs(12),
+        )
+        .await
     }
     .await;
     let view = bot.view();
-    ctx.note("teleports the observer saw from the stall", view.teleports - teleports_before);
-    ctx.note("packets dropped by the stall", subject.fronts.pulse.counters().dropped);
-    ctx.note("explorer log, disconnects", subject.explorer.log_lines("pulse: disconnected"));
+    ctx.note(
+        "teleports the observer saw from the stall",
+        view.teleports - teleports_before,
+    );
+    ctx.note(
+        "packets dropped by the stall",
+        subject.fronts.pulse.counters().dropped,
+    );
+    ctx.note(
+        "explorer log, disconnects",
+        subject.explorer.log_lines("pulse: disconnected"),
+    );
     verdict?;
     if view.count_of(&wallet) != 1 {
-        bail!("after the stall the observer holds {} subjects for the explorer, expected 1", view.count_of(&wallet));
+        bail!(
+            "after the stall the observer holds {} subjects for the explorer, expected 1",
+            view.count_of(&wallet)
+        );
     }
-    observer_sees_at(&ctx, &bot, &subject.wallet, last, "the observer sees the explorer where it last teleported").await?;
+    observer_sees_at(
+        &ctx,
+        &bot,
+        &subject.wallet,
+        last,
+        "the observer sees the explorer where it last teleported",
+    )
+    .await?;
     subject.explorer.stop().await;
     Ok(())
 }
@@ -331,10 +397,18 @@ async fn out_of_grid(ctx: Ctx) -> Result<()> {
         (grid.max_parcel_z + grid.padding + 2) as f32 * grid.parcel_size as f32 + 8.0,
     ];
     if grid.locate(outside).is_some() {
-        bail!("{outside:?} is inside the grid of this stack; the scenario needs a position outside");
+        bail!(
+            "{outside:?} is inside the grid of this stack; the scenario needs a position outside"
+        );
     }
     move_to(&subject.explorer, outside).await?;
-    pulse_stays(&ctx, &subject.explorer, "Pulse stays authenticated while the explorer is outside the grid", Duration::from_secs(8)).await?;
+    pulse_stays(
+        &ctx,
+        &subject.explorer,
+        "Pulse stays authenticated while the explorer is outside the grid",
+        Duration::from_secs(8),
+    )
+    .await?;
     // nobody can be told where it is, but it has not left
     bot.expect_alive()?;
     if bot.view().count_of(&subject.wallet) != 1 {
@@ -346,8 +420,21 @@ async fn out_of_grid(ctx: Ctx) -> Result<()> {
 
     let back = [home[0] + 16.0, 0.0, home[2]];
     move_to(&subject.explorer, back).await?;
-    observer_sees_at(&ctx, &bot, &subject.wallet, back, "the observer sees the explorer where it re-entered the grid").await?;
-    pulse_stays(&ctx, &subject.explorer, "Pulse stays authenticated after re-entry", Duration::from_secs(3)).await?;
+    observer_sees_at(
+        &ctx,
+        &bot,
+        &subject.wallet,
+        back,
+        "the observer sees the explorer where it re-entered the grid",
+    )
+    .await?;
+    pulse_stays(
+        &ctx,
+        &subject.explorer,
+        "Pulse stays authenticated after re-entry",
+        Duration::from_secs(3),
+    )
+    .await?;
     subject.explorer.stop().await;
     Ok(())
 }
@@ -365,12 +452,21 @@ async fn past_the_east_edge(ctx: Ctx) -> Result<()> {
     let parcel_z = (home[2] / size).floor() as i32;
     let outside = [parcel_x as f32 * size + 8.0, 0.0, home[2]];
     if grid.locate(outside).is_some() {
-        bail!("{outside:?} is inside the grid of this stack; the scenario needs a position outside");
+        bail!(
+            "{outside:?} is inside the grid of this stack; the scenario needs a position outside"
+        );
     }
     let encoder = grid.encoder();
     let (wrapped_x, wrapped_z) = encoder.decode(encoder.encode(parcel_x, parcel_z));
-    let far_side = [wrapped_x as f32 * size + 8.0, 0.0, wrapped_z as f32 * size + 8.0];
-    ctx.note("where an unbounded index would place the explorer", far_side);
+    let far_side = [
+        wrapped_x as f32 * size + 8.0,
+        0.0,
+        wrapped_z as f32 * size + 8.0,
+    ];
+    ctx.note(
+        "where an unbounded index would place the explorer",
+        far_side,
+    );
 
     // a second bot waits where the wrapped index points
     let far = PulseBot::enter(&ctx, "far observer", &ctx.identity(1)).await?;
@@ -381,8 +477,10 @@ async fn past_the_east_edge(ctx: Ctx) -> Result<()> {
     let started = Instant::now();
     let window = Duration::from_secs(8);
     while started.elapsed() < window {
-        bot.alive().map_err(|reason| anyhow!("the observer: {reason}"))?;
-        far.alive().map_err(|reason| anyhow!("the far observer: {reason}"))?;
+        bot.alive()
+            .map_err(|reason| anyhow!("the observer: {reason}"))?;
+        far.alive()
+            .map_err(|reason| anyhow!("the far observer: {reason}"))?;
         if far.view().count_of(&wallet) > 0 {
             let seen = far.view().of(&wallet).map(|subject| subject.world);
             bail!(
@@ -398,11 +496,24 @@ async fn past_the_east_edge(ctx: Ctx) -> Result<()> {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     ctx.record("expect", "held", serde_json::json!({ "what": "nobody sees the explorer anywhere else, and the observer still holds it", "for_ms": window.as_millis() as u64 }));
-    expect_pulse(&ctx, &subject.explorer, "Pulse is still authenticated", SOON).await?;
+    expect_pulse(
+        &ctx,
+        &subject.explorer,
+        "Pulse is still authenticated",
+        SOON,
+    )
+    .await?;
 
     let back = [home[0] + 16.0, 0.0, home[2]];
     move_to(&subject.explorer, back).await?;
-    observer_sees_at(&ctx, &bot, &subject.wallet, back, "the observer sees the explorer where it re-entered the grid").await?;
+    observer_sees_at(
+        &ctx,
+        &bot,
+        &subject.wallet,
+        back,
+        "the observer sees the explorer where it re-entered the grid",
+    )
+    .await?;
     subject.explorer.stop().await;
     Ok(())
 }
@@ -428,7 +539,14 @@ async fn stale_socket(ctx: Ctx) -> Result<()> {
     )
     .await?;
     ctx.note("transports before", &before);
-    ctx.note("connectivity before", subject.explorer.probe("/connectivity_state").await.unwrap_or(Value::Null));
+    ctx.note(
+        "connectivity before",
+        subject
+            .explorer
+            .probe("/connectivity_state")
+            .await
+            .unwrap_or(Value::Null),
+    );
 
     // The client side of every connection through the API front closes; the server side stays
     // open. The explorer knows its socket is gone; the server still counts it as connected.
@@ -442,7 +560,10 @@ async fn stale_socket(ctx: Ctx) -> Result<()> {
         Duration::from_millis(100),
         || async {
             let connectivity = subject.explorer.poll("/connectivity_state").await?;
-            let rooms = connectivity["rooms"].as_array().cloned().unwrap_or_default();
+            let rooms = connectivity["rooms"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
             let dialled = subject.fronts.api.counters().flows > flows_before;
             (dialled || rooms.iter().any(|room| room["state"] != "connected"))
                 .then_some(())
@@ -474,7 +595,13 @@ async fn stale_socket(ctx: Ctx) -> Result<()> {
     )
     .await?;
     ctx.note("connectivity after", &conflict);
-    expect_pulse(&ctx, &subject.explorer, "Pulse is still authenticated", SOON).await?;
+    expect_pulse(
+        &ctx,
+        &subject.explorer,
+        "Pulse is still authenticated",
+        SOON,
+    )
+    .await?;
     subject.explorer.stop().await;
     Ok(())
 }
@@ -487,7 +614,10 @@ async fn port_unreachable(ctx: Ctx) -> Result<()> {
         .of(&subject.wallet)
         .map(|seen| seen.subject_id)
         .ok_or_else(|| anyhow!("the observer lost the explorer before the fault"))?;
-    let (joins, leaves) = (bot.view().joins_of(&subject.wallet), bot.view().leaves_of(&subject.wallet));
+    let (joins, leaves) = (
+        bot.view().joins_of(&subject.wallet),
+        bot.view().leaves_of(&subject.wallet),
+    );
 
     // The port closes: this machine answers the explorer's packets "port unreachable", which its
     // socket reports as an error. Far shorter than any timeout of the transport.
@@ -495,16 +625,34 @@ async fn port_unreachable(ctx: Ctx) -> Result<()> {
     tokio::time::sleep(Duration::from_millis(1500)).await;
     subject.fronts.pulse.restore();
 
-    expect_pulse(&ctx, &subject.explorer, "Pulse is authenticated after the port returns", SOON).await?;
-    pulse_stays(&ctx, &subject.explorer, "Pulse stays authenticated", Duration::from_secs(5)).await?;
+    expect_pulse(
+        &ctx,
+        &subject.explorer,
+        "Pulse is authenticated after the port returns",
+        SOON,
+    )
+    .await?;
+    pulse_stays(
+        &ctx,
+        &subject.explorer,
+        "Pulse stays authenticated",
+        Duration::from_secs(5),
+    )
+    .await?;
     // The same session, not a new one: the observer never saw the explorer leave and join.
     let view = bot.view();
     let (joined, left) = (
         view.joins_of(&subject.wallet) - joins,
         view.leaves_of(&subject.wallet) - leaves,
     );
-    ctx.note("times the observer saw the explorer join and leave during the fault", (joined, left));
-    ctx.note("explorer log, Pulse failures", subject.explorer.log_lines("pulse: failed"));
+    ctx.note(
+        "times the observer saw the explorer join and leave during the fault",
+        (joined, left),
+    );
+    ctx.note(
+        "explorer log, Pulse failures",
+        subject.explorer.log_lines("pulse: failed"),
+    );
     let now = view.of(&subject.wallet).map(|seen| seen.subject_id);
     if now != Some(held) || joined != 0 || left != 0 {
         bail!(

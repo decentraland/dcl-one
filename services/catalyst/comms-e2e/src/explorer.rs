@@ -54,8 +54,13 @@ impl Fronts {
         };
         Ok(Fronts {
             api: FaultLink::tcp(ctx, "front api", target.api_front, api_real).await?,
-            pulse: FaultLink::udp(ctx, "front pulse", target.pulse_front, ctx.stack().pulse_enet)
-                .await?,
+            pulse: FaultLink::udp(
+                ctx,
+                "front pulse",
+                target.pulse_front,
+                ctx.stack().pulse_enet,
+            )
+            .await?,
             livekit_signal,
             livekit_media,
         })
@@ -236,7 +241,11 @@ impl Explorer {
                 );
             }
             // any answer, even a refusal of the call id, means the console is up
-            if self.rpc("dcl/console_result", json!({ "id": 0 })).await.is_ok() {
+            if self
+                .rpc("dcl/console_result", json!({ "id": 0 }))
+                .await
+                .is_ok()
+            {
                 return Ok(());
             }
             if started.elapsed() >= deadline {
@@ -387,9 +396,12 @@ impl Explorer {
         if !answer.ok {
             return Err(format!("{}: `{line}` failed: {}", self.name, answer.output));
         }
-        answer
-            .json()
-            .ok_or_else(|| format!("{}: `{line}` did not answer with JSON: {}", self.name, answer.output))
+        answer.json().ok_or_else(|| {
+            format!(
+                "{}: `{line}` did not answer with JSON: {}",
+                self.name, answer.output
+            )
+        })
     }
 
     /// Whether the process is still running.

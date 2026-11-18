@@ -49,8 +49,15 @@ async fn a_child_that_exits_fails_with_the_end_of_its_log() {
     .expect("a program that is not an explorer cannot open a console");
     let text = format!("{error:#}");
     // it failed when the child exited, not at the deadline
-    assert!(started.elapsed() < Duration::from_secs(20), "waited {:?}", started.elapsed());
-    assert!(text.contains("exited") && text.contains("before its console opened"), "{text}");
+    assert!(
+        started.elapsed() < Duration::from_secs(20),
+        "waited {:?}",
+        started.elapsed()
+    );
+    assert!(
+        text.contains("exited") && text.contains("before its console opened"),
+        "{text}"
+    );
     // the child's own words are in the error: the test harness complains about the first flag
     assert!(text.contains("realm"), "the log tail is missing: {text}");
     // and the failure is on the timeline for the report
@@ -69,7 +76,10 @@ async fn a_missing_binary_is_an_error_that_names_it() {
         .await
         .err()
         .expect("no binary, no explorer");
-    assert!(format!("{error:#}").contains("no-such-explorer-binary"), "{error:#}");
+    assert!(
+        format!("{error:#}").contains("no-such-explorer-binary"),
+        "{error:#}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -90,6 +100,9 @@ async fn the_fronts_relay_what_the_stack_file_names() {
 #[tokio::test]
 async fn without_an_explorer_in_the_stack_file_the_actor_says_so() {
     let ctx = ctx(support::stack_at("127.0.0.1:9".parse().unwrap()), "none");
-    let error = Fronts::start(&ctx).await.err().expect("no explorer section");
+    let error = Fronts::start(&ctx)
+        .await
+        .err()
+        .expect("no explorer section");
     assert!(error.to_string().contains("explorer"), "{error}");
 }

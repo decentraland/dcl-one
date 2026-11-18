@@ -17,13 +17,22 @@ use catalyst_comms_e2e::stack::Stack;
 fn live_ctx(name: &str) -> Ctx {
     let path = std::env::var("CE2E_STACK").expect("CE2E_STACK names the stack file");
     let stack = Arc::new(Stack::load(Path::new(&path)).unwrap());
-    Ctx::new(stack, &format!("live{}", std::process::id()), name, 0, 1, std::env::temp_dir().join("comms-e2e-tests"))
+    Ctx::new(
+        stack,
+        &format!("live{}", std::process::id()),
+        name,
+        0,
+        1,
+        std::env::temp_dir().join("comms-e2e-tests"),
+    )
 }
 
 fn options(publish_microphone: bool) -> JoinOptions {
     JoinOptions {
         publish_microphone,
-        binary: Some(PathBuf::from(std::env::var("CE2E_LIVEKIT_CLIENT").expect("CE2E_LIVEKIT_CLIENT names the client"))),
+        binary: Some(PathBuf::from(
+            std::env::var("CE2E_LIVEKIT_CLIENT").expect("CE2E_LIVEKIT_CLIENT names the client"),
+        )),
         through_front: false,
     }
 }
@@ -36,25 +45,40 @@ async fn two_clients_see_each_other_and_the_room_service_agrees() {
     let room = ctx.realm("live");
     let first_identity = ctx.identity(0).address();
     let second_identity = ctx.identity(1).address();
-    let first = LiveKitJoin::start(&ctx, "first", &service.mint_join(&room, &first_identity).unwrap(), options(true))
-        .await
-        .unwrap();
-    let second = LiveKitJoin::start(&ctx, "second", &service.mint_join(&room, &second_identity).unwrap(), options(false))
-        .await
-        .unwrap();
-    expect_or(&ctx, "each sees the other, and the first's microphone", Duration::from_secs(20), || {
-        let view = second.view();
-        if !first.view().participants.contains_key(&second_identity) {
-            return Err("the first does not see the second".to_owned());
-        }
-        if !view.participants.contains_key(&first_identity) {
-            return Err("the second does not see the first".to_owned());
-        }
-        if view.tracks_of(&first_identity, "microphone").len() != 1 {
-            return Err("the second does not see one microphone track of the first".to_owned());
-        }
-        Ok(())
-    })
+    let first = LiveKitJoin::start(
+        &ctx,
+        "first",
+        &service.mint_join(&room, &first_identity).unwrap(),
+        options(true),
+    )
+    .await
+    .unwrap();
+    let second = LiveKitJoin::start(
+        &ctx,
+        "second",
+        &service.mint_join(&room, &second_identity).unwrap(),
+        options(false),
+    )
+    .await
+    .unwrap();
+    expect_or(
+        &ctx,
+        "each sees the other, and the first's microphone",
+        Duration::from_secs(20),
+        || {
+            let view = second.view();
+            if !first.view().participants.contains_key(&second_identity) {
+                return Err("the first does not see the second".to_owned());
+            }
+            if !view.participants.contains_key(&first_identity) {
+                return Err("the second does not see the first".to_owned());
+            }
+            if view.tracks_of(&first_identity, "microphone").len() != 1 {
+                return Err("the second does not see one microphone track of the first".to_owned());
+            }
+            Ok(())
+        },
+    )
     .await
     .unwrap();
     let listed = service.participants(&room).await.unwrap();
@@ -66,7 +90,10 @@ async fn two_clients_see_each_other_and_the_room_service_agrees() {
     first.leave().await.unwrap();
     second.leave().await.unwrap();
     for entry in ctx.timeline().snapshot() {
-        println!("{} {} {} {}", entry.at_ms, entry.actor, entry.kind, entry.detail);
+        println!(
+            "{} {} {} {}",
+            entry.at_ms, entry.actor, entry.kind, entry.detail
+        );
     }
 }
 
@@ -75,11 +102,18 @@ async fn two_clients_see_each_other_and_the_room_service_agrees() {
 async fn the_same_identity_scenario_passes() {
     use catalyst_comms_e2e::engine::{Outcome, RunOptions, run_scenarios};
     let path = std::env::var("CE2E_STACK").expect("CE2E_STACK names the stack file");
-    let client = std::env::var("CE2E_LIVEKIT_CLIENT").expect("CE2E_LIVEKIT_CLIENT names the client");
-    let text = std::fs::read_to_string(path).unwrap().replace("[livekit]", &format!("[livekit]
-client = '{client}'"));
+    let client =
+        std::env::var("CE2E_LIVEKIT_CLIENT").expect("CE2E_LIVEKIT_CLIENT names the client");
+    let text = std::fs::read_to_string(path).unwrap().replace(
+        "[livekit]",
+        &format!(
+            "[livekit]
+client = '{client}'"
+        ),
+    );
     let stack = Arc::new(Stack::parse(&text).unwrap());
-    let selection = catalyst_comms_e2e::scenarios::select(Some("livekit-same-identity"), None, false);
+    let selection =
+        catalyst_comms_e2e::scenarios::select(Some("livekit-same-identity"), None, false);
     assert_eq!(selection.len(), 1);
     let report = run_scenarios(stack, &selection, &RunOptions::default()).await;
     let result = &report.results[0];
@@ -88,9 +122,16 @@ client = '{client}'"));
     }
     match &result.outcome {
         Outcome::Passed => {}
-        Outcome::Failed { expectation, timeline, .. } => {
+        Outcome::Failed {
+            expectation,
+            timeline,
+            ..
+        } => {
             for entry in timeline {
-                println!("{} {} {} {}", entry.at_ms, entry.actor, entry.kind, entry.detail);
+                println!(
+                    "{} {} {} {}",
+                    entry.at_ms, entry.actor, entry.kind, entry.detail
+                );
             }
             panic!("{expectation}");
         }
@@ -106,7 +147,14 @@ async fn a_joined_client_becomes_active_for_the_server() {
     let room = ctx.realm("active");
     let identity = ctx.identity(0).address();
     let started = std::time::Instant::now();
-    let join = LiveKitJoin::start(&ctx, "client", &service.mint_join(&room, &identity).unwrap(), options(true)).await.unwrap();
+    let join = LiveKitJoin::start(
+        &ctx,
+        "client",
+        &service.mint_join(&room, &identity).unwrap(),
+        options(true),
+    )
+    .await
+    .unwrap();
     println!("connected after {} ms", started.elapsed().as_millis());
     loop {
         let listed = service.participants(&room).await.unwrap();

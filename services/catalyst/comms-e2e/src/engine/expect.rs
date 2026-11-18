@@ -99,14 +99,25 @@ pub async fn holds_for(
         }
         tokio::time::sleep(TICK).await;
     }
-    ctx.record("expect", "held", serde_json::json!({ "what": what, "for_ms": window.as_millis() as u64 }));
+    ctx.record(
+        "expect",
+        "held",
+        serde_json::json!({ "what": what, "for_ms": window.as_millis() as u64 }),
+    );
     Ok(())
 }
 
 fn not_met(ctx: &Ctx, what: &str, started: Instant, reason: &str) -> anyhow::Error {
     let waited = started.elapsed().as_millis() as u64;
-    let reason = reason.strip_prefix("fatal:").map(str::trim).unwrap_or(reason);
-    ctx.record("expect", "not met", serde_json::json!({ "what": what, "after_ms": waited, "reason": reason }));
+    let reason = reason
+        .strip_prefix("fatal:")
+        .map(str::trim)
+        .unwrap_or(reason);
+    ctx.record(
+        "expect",
+        "not met",
+        serde_json::json!({ "what": what, "after_ms": waited, "reason": reason }),
+    );
     if reason.is_empty() {
         anyhow::anyhow!("expected: {what}; not met after {waited} ms")
     } else {

@@ -65,20 +65,29 @@ pub struct PulseView {
 impl PulseView {
     /// The subject of `wallet`, if exactly one is held.
     pub fn of(&self, wallet: &str) -> Option<&Subject> {
-        let mut matches = self.subjects.values().filter(|subject| subject.wallet == wallet);
+        let mut matches = self
+            .subjects
+            .values()
+            .filter(|subject| subject.wallet == wallet);
         let first = matches.next()?;
         matches.next().is_none().then_some(first)
     }
 
     /// How many subjects carry `wallet`. More than one is a ghost.
     pub fn count_of(&self, wallet: &str) -> usize {
-        self.subjects.values().filter(|subject| subject.wallet == wallet).count()
+        self.subjects
+            .values()
+            .filter(|subject| subject.wallet == wallet)
+            .count()
     }
 
     /// The wallets held, sorted.
     pub fn wallets(&self) -> Vec<String> {
-        let mut wallets: Vec<String> =
-            self.subjects.values().map(|subject| subject.wallet.clone()).collect();
+        let mut wallets: Vec<String> = self
+            .subjects
+            .values()
+            .map(|subject| subject.wallet.clone())
+            .collect();
         wallets.sort();
         wallets
     }
@@ -230,11 +239,16 @@ impl Session {
                     self.view.sequence_gaps += 1;
                     if self.auto_resync {
                         self.view.resyncs_requested += 1;
-                        replies.push((Channel::Reliable, messages::resync(delta.subject_id, known)));
+                        replies
+                            .push((Channel::Reliable, messages::resync(delta.subject_id, known)));
                     }
                 }
                 (
-                    if gap.is_some() { "delta with a gap" } else { "delta" },
+                    if gap.is_some() {
+                        "delta with a gap"
+                    } else {
+                        "delta"
+                    },
                     serde_json::json!({ "subject": delta.subject_id, "baseline": delta.baseline_seq, "sequence": delta.new_seq, "held": gap }),
                 )
             }
@@ -423,10 +437,22 @@ mod tests {
         assert_eq!(session.view.count_of("0xabc"), 2);
         assert!(session.view.of("0xabc").is_none());
         assert_eq!(session.view.self_joins, 1);
-        assert_eq!((session.view.joins_of("0xabc"), session.view.leaves_of("0xabc")), (2, 0));
+        assert_eq!(
+            (
+                session.view.joins_of("0xabc"),
+                session.view.leaves_of("0xabc")
+            ),
+            (2, 0)
+        );
         session.on_frame(&frame(Message::PlayerLeft(PlayerLeft { subject_id: 1 })));
         assert_eq!(session.view.count_of("0xabc"), 1);
-        assert_eq!((session.view.joins_of("0xabc"), session.view.leaves_of("0xabc")), (2, 1));
+        assert_eq!(
+            (
+                session.view.joins_of("0xabc"),
+                session.view.leaves_of("0xabc")
+            ),
+            (2, 1)
+        );
         assert_eq!(session.view.leaves_of("0xme"), 0);
         // a leave for a subject never announced is counted, not ignored
         session.on_frame(&frame(Message::PlayerLeft(PlayerLeft { subject_id: 99 })));

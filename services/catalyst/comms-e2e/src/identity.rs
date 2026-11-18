@@ -241,9 +241,18 @@ mod tests {
     #[test]
     fn identity_is_stable_and_scoped() {
         let first = Identity::derive("run-a/pulse-smoke/0", 3);
-        assert_eq!(first.address(), Identity::derive("run-a/pulse-smoke/0", 3).address());
-        assert_ne!(first.address(), Identity::derive("run-a/pulse-smoke/0", 4).address());
-        assert_ne!(first.address(), Identity::derive("run-b/pulse-smoke/0", 3).address());
+        assert_eq!(
+            first.address(),
+            Identity::derive("run-a/pulse-smoke/0", 3).address()
+        );
+        assert_ne!(
+            first.address(),
+            Identity::derive("run-a/pulse-smoke/0", 4).address()
+        );
+        assert_ne!(
+            first.address(),
+            Identity::derive("run-b/pulse-smoke/0", 3).address()
+        );
         assert!(first.address().starts_with("0x") && first.address().len() == 42);
         assert_eq!(first.address(), first.address().to_lowercase());
 

@@ -89,7 +89,9 @@ fn redact(value: serde_json::Value) -> serde_json::Value {
             serde_json::Value::Array(items.into_iter().map(redact).collect())
         }
         serde_json::Value::Object(map) => serde_json::Value::Object(
-            map.into_iter().map(|(key, value)| (key, redact(value))).collect(),
+            map.into_iter()
+                .map(|(key, value)| (key, redact(value)))
+                .collect(),
         ),
         other => other,
     }
@@ -106,7 +108,10 @@ mod tests {
         timeline.record("b", "seen", serde_json::json!({ "n": 2 }));
         let entries = timeline.snapshot();
         assert_eq!(entries.len(), 2);
-        assert_eq!((entries[0].actor.as_str(), entries[0].kind.as_str()), ("a", "sent"));
+        assert_eq!(
+            (entries[0].actor.as_str(), entries[0].kind.as_str()),
+            ("a", "sent")
+        );
         assert_eq!(entries[1].detail["n"], 2);
         assert_eq!(timeline.count("a", "sent"), 1);
         assert_eq!(timeline.count("a", "seen"), 0);
@@ -123,7 +128,10 @@ mod tests {
         let text = serde_json::to_string(&timeline.snapshot()).unwrap();
         assert!(!text.contains("abc.def.ghi"), "{text}");
         assert!(text.contains("access_token=<redacted>&x=1"), "{text}");
-        assert_eq!(redact_text("a access_token=tok b"), "a access_token=<redacted> b");
+        assert_eq!(
+            redact_text("a access_token=tok b"),
+            "a access_token=<redacted> b"
+        );
         assert_eq!(redact_text("nothing here"), "nothing here");
     }
 }
