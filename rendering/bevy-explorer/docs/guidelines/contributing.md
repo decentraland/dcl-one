@@ -132,7 +132,8 @@ this engine's design using its requirements and tests.
 - Merge main first. CI tests the merge, not the branch.
 - `cargo fmt --all`, `cargo clippy --locked --workspace --all-targets -- -D warnings`,
   `cargo test --all`. Clippy warnings are errors in CI. `common`'s tests read the patched Bevy
-  tree: write it first with `python3 tooling/patched-sources.py materialise bevy`
+  tree: write it first, from the repository root, with
+  `python3 tooling/patched-sources.py materialise bevy`
   ([bevy-fork](bevy-fork.md)).
 - The wasm build, only if the change has platform-sensitive code: `#[cfg]` branches,
   threading, atomics, blocking calls, timers, filesystem or network access, wasm-specific deps.

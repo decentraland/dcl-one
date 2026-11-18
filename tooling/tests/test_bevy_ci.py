@@ -253,6 +253,13 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn('        run: python3 "$GITHUB_WORKSPACE/tooling/patched-sources.py" materialise bevy\n', clippy)
         # Written before the file times are restored, so an unchanged tree keeps its cached times.
         self.assertLess(clippy.index('patched-sources.py" materialise bevy'), clippy.index('bevy-mtimes.py" restore'))
+        # It reads the same cache as the Test Suite: the key from the root, restored before the rebuild.
+        self.assertIn('        id: bases\n        working-directory: .\n', clippy)
+        self.assertIn('        env:\n'
+                      '          DCL_PATCHED_SOURCES_CACHE: ${{ github.workspace }}/.cache/patched-sources\n'
+                      '        run: python3 "$GITHUB_WORKSPACE/tooling/patched-sources.py" materialise bevy\n', clippy)
+        self.assertLess(clippy.index('actions/cache/restore@', clippy.index('- name: Restore the upstream commits\n')),
+                        clippy.index('patched-sources.py" materialise bevy'))
         job = jobs['test']
         python, rebuild, tests = (job.index(step) for step in (
             "python-version: '3.12'\n", 'run: python "$GITHUB_WORKSPACE/tooling/patched-sources.py" materialise bevy\n',

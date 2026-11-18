@@ -765,7 +765,8 @@ jobs:
           toolchain: 1.99.1
       - run: rustup component add clippy
       # `common`'s tests include a shader from the patched Bevy tree; restored and written as in the Test Suite.
-      # The tool reads TOML with the standard library of Python 3.11 or later; this runner's Python is 3.12.
+      # The tool reads TOML with the standard library of Python 3.11 or later and exits with a message on an
+      # older one; the hosted ubuntu-24.04 image has 3.12.
       - name: Identify the upstream commits
         id: bases
         working-directory: .
