@@ -77,12 +77,26 @@ class CefDownloadTest(unittest.TestCase):
 
     def test_failures_of_the_network_are_retried_and_a_missing_archive_is_not(self):
         unavailable = urllib.error.HTTPError(self.URL, 503, 'unavailable', {}, None)
+        self.addCleanup(unavailable.close)
         self.download(urllib.error.URLError('temporary'), unavailable, http.client.IncompleteRead(b'part'),
                       Body(b'a longer body that fails', 99), Body(b'archive', 7))
         self.assertEqual((self.target.read_bytes(), self.calls), (b'archive', (5, 4, 4)))
+        self.assertTrue(unavailable.closed)
+        missing = urllib.error.HTTPError(self.URL, 404, 'missing', {}, None)
+        self.addCleanup(missing.close)
         with self.assertRaises(urllib.error.HTTPError):
-            self.download(urllib.error.HTTPError(self.URL, 404, 'missing', {}, None), Body(b'archive', 7))
+            self.download(missing, Body(b'archive', 7))
         self.assertEqual(self.calls, (1, 0, 0))
+        self.assertTrue(missing.closed)
+
+    def test_an_http_error_is_closed_when_the_retry_budget_is_exhausted(self):
+        error = urllib.error.HTTPError(self.URL, 503, 'unavailable', {}, None)
+        self.addCleanup(error.close)
+        with patch.object(cef.time, 'monotonic', side_effect=[0, cef.RETRY_BUDGET]), \
+                self.assertRaises(urllib.error.HTTPError):
+            self.download(error)
+        self.assertEqual(self.calls, (1, 0, 0))
+        self.assertTrue(error.closed)
 
     def test_the_retries_end_with_the_budget(self):
         clock = [0.0]

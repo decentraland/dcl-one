@@ -659,7 +659,7 @@ fn resolve_voice(
             speaking.copied(),
             foreign.is_some_and(|player| mutes.is_muted(player.address)),
             is_local && mic.enabled,
-            mic.scene_blocked,
+            mic.scene_blocked(),
         );
         voice.set_if_neq(NametagVoice(badge));
     }

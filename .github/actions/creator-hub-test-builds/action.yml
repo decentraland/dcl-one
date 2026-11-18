@@ -33,11 +33,15 @@ inputs:
     required: false
     default: ''
   macos:
-    description: 'desktop: `uploaded` when the macOS build is in the bucket.'
+    description: 'desktop: `uploaded` when the macOS build is in the bucket, `skipped` when the run did not build it.'
     required: false
     default: ''
   windows:
-    description: 'desktop: `uploaded` when the Windows build is in the bucket.'
+    description: 'desktop: `uploaded` when the Windows build is in the bucket, `skipped` when the run did not build it.'
+    required: false
+    default: ''
+  linux:
+    description: 'desktop: `uploaded` when the Linux build is in the bucket, `skipped` when the run did not build it.'
     required: false
     default: ''
   macos-seconds:
@@ -46,6 +50,10 @@ inputs:
     default: ''
   windows-seconds:
     description: 'desktop: how long the Windows build took, in seconds.'
+    required: false
+    default: ''
+  linux-seconds:
+    description: 'desktop: how long the Linux build took, in seconds.'
     required: false
     default: ''
 runs:
@@ -66,8 +74,10 @@ runs:
         BRANCH: ${{ inputs.branch }}
         MACOS: ${{ inputs.macos }}
         WINDOWS: ${{ inputs.windows }}
+        LINUX: ${{ inputs.linux }}
         MACOS_SECONDS: ${{ inputs.macos-seconds }}
         WINDOWS_SECONDS: ${{ inputs.windows-seconds }}
+        LINUX_SECONDS: ${{ inputs.linux-seconds }}
       run: bash "$GITHUB_ACTION_PATH/section.sh" > "$RUNNER_TEMP/creator-hub-section.md"
     - name: Upsert the comment
       shell: bash

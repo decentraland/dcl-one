@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import { TextField } from '../TextField';
 

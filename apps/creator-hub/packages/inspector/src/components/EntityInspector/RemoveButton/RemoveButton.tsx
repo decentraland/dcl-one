@@ -1,6 +1,6 @@
 import { type HTMLAttributes, memo } from 'react';
 import { VscTrash as RemoveIcon } from 'react-icons/vsc';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 import { Button } from '../../Button';
 import './RemoveButton.css';
 

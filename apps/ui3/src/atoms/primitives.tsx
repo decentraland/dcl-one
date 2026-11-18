@@ -4,8 +4,6 @@ import "./primitives.css";
 
 type StatusKind = "online" | "away" | "offline";
 
-export const rarityColor = (r: string): string => `var(--rar-${r})`;
-
 export function hueFromSeed(seed = ""): number {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360;
@@ -115,14 +113,6 @@ export function fmt(n: number): string {
   if (n >= 1e6) return (n / 1e6).toFixed(n % 1e6 ? 1 : 0) + "M";
   if (n >= 1e3) return (n / 1e3).toFixed(n % 1e3 ? 1 : 0) + "K";
   return String(n);
-}
-
-export function ProgressBar({ value = 0, danger = false }: { value?: number; danger?: boolean }) {
-  return (
-    <span className="u-progress">
-      <span className={danger ? "is-danger" : ""} style={{ width: Math.min(100, Math.max(0, value)) + "%" }} />
-    </span>
-  );
 }
 
 export function Skeleton({ lines = 2, width = 200 }: { lines?: number; width?: number | string }) {

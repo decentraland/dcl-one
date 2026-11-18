@@ -16,7 +16,7 @@ import {
 import { FaPencilAlt } from 'react-icons/fa';
 import { AiOutlineInfoCircle as InfoIcon } from 'react-icons/ai';
 import { IoCheckmark as CheckIcon } from 'react-icons/io5';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 
 import { withSdk } from '../../hoc/withSdk';
 import {

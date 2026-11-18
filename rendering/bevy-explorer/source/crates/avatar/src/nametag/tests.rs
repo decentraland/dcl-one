@@ -268,13 +268,17 @@ fn a_scene_avatar_is_named_once_built_and_follows_its_shape() {
         app.world().get::<Speaking>(guide),
         Some(&Speaking { in_call: true })
     );
-    app.world_mut().resource_mut::<MicState>().scene_blocked = true;
+    app.world_mut()
+        .resource_mut::<MicState>()
+        .set_scene_disabled(true);
     app.update();
     assert_eq!(
         app.world().get::<NametagVoice>(guide).unwrap().0,
         Voice::Speaking
     );
-    app.world_mut().resource_mut::<MicState>().scene_blocked = false;
+    app.world_mut()
+        .resource_mut::<MicState>()
+        .set_scene_disabled(false);
 
     // an empty name takes the tag away, and a name brings it back
     for (name, shown) in [("", None), ("Guide", Some("Guide"))] {

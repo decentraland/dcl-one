@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect } from 'react';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 import type { PBPointerEvents_Entry, PBPointerEvents, PBPointerEvents_Info } from '@dcl/ecs';
 
 import { withSdk } from '../../../hoc/withSdk';

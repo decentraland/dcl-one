@@ -330,7 +330,7 @@ impl Outbox {
         let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
         let buffered = Arc::new(watch::Sender::new(0usize));
         let written = buffered.clone();
-        let writer = tokio::spawn(async move {
+        let writer = crate::shared::task::spawn(async move {
             loop {
                 let message = tokio::select! {
                     action = idle.next() => match action {
@@ -634,7 +634,7 @@ impl Session {
         ctx.admission().release(address, &self.close);
         if ctx.mark_offline(address) {
             let address = address.to_string();
-            tokio::spawn(async move {
+            crate::shared::task::spawn(async move {
                 ctx.end_private_voice_chat_on_disconnect(&address).await;
             });
         }
@@ -913,7 +913,7 @@ fn spawn_stream(
             reason: SUBSCRIPTION_OVERFLOW.1,
         },
     );
-    tokio::spawn(async move {
+    crate::shared::task::spawn(async move {
         // Upstream waits for the socket to drain before each event.
         let mut hand_off = async |data: Value| {
             buffered.wait_for(|waiting| *waiting == 0).await.is_ok()

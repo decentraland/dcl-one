@@ -1,5 +1,5 @@
 import { VscTrash as RemoveIcon } from 'react-icons/vsc';
-import cx from 'classnames';
+import { cx } from '../../../../lib/utils/cx';
 
 import type { ScriptParamArray, ScriptParamUnion } from '../types';
 import { Container } from '../../../Container';

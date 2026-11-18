@@ -8,7 +8,6 @@ import type { Place } from "../catalyst/schema";
 import {
   blogIndexToMarkdown,
   blogPostToMarkdown,
-  communityToMarkdown,
   discoverToMarkdown,
   estimateTokens,
   eventDetailToMarkdown,
@@ -322,35 +321,6 @@ describe("shopPageToMarkdown", () => {
     expect(md).toContain("- Available to mint: 3");
     expect(md).toContain("Shop page: https://example.org/shop/item/0xabc/7");
     expect(md).not.toMatch(/credit|MANA|12/);
-  });
-});
-
-describe("communityToMarkdown", () => {
-  it("renders community info, members, and events; no HTML", () => {
-    const detail = {
-      source: "live",
-      community: {
-        id: "c1", name: "Builders Guild", description: "Where scene builders meet.",
-        ownerAddress: "0xowner", ownerName: "chief", privacy: "public", membersCount: 128, role: "none",
-      },
-      members: [
-        { memberAddress: "0xm1", name: "ada", role: "owner", hasClaimedName: true, profilePictureUrl: "" },
-        { memberAddress: "0xm2", name: "", role: "member", hasClaimedName: false, profilePictureUrl: "" },
-      ],
-      events: [{ id: "ev1", name: "Build Jam", image: "", creatorName: "ada", timeLabel: "Sat 6pm" }],
-    } as unknown as Parameters<typeof communityToMarkdown>[0];
-    const md = communityToMarkdown(detail);
-    expect(md.startsWith("# Builders Guild")).toBe(true);
-    expect(md).toContain("Where scene builders meet.");
-    expect(md).toContain("- Owner: chief");
-    expect(md).toContain("- Privacy: public");
-    expect(md).toContain("- Members: 128");
-    expect(md).toContain("## Members");
-    expect(md).toContain("- ada (owner)");
-    expect(md).toContain("- 0xm2 (member)");
-    expect(md).toContain("## Events");
-    expect(md).toContain("Build Jam");
-    expect(md).not.toMatch(NO_HTML);
   });
 });
 

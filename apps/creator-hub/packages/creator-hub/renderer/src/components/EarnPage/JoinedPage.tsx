@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import { Tab } from 'decentraland-ui2';
+import { Tab, Tabs } from '@ui/atoms/Tabs';
 
 import { analytics } from '#preload';
 import { useSelector } from '#store';
@@ -14,7 +14,7 @@ import { LeaderboardTab } from './joined/LeaderboardTab';
 import { MyPlacesTab } from './joined/MyPlacesTab';
 import { PayoutsLocked } from './joined/PayoutsLocked';
 import { PayoutsTab } from './joined/PayoutsTab';
-import { GradientDefs, Page, SectionTabs, TabPanel } from './JoinedPage.styled';
+import styles from './JoinedPage.module.css';
 
 export type JoinedTab = 'leaderboard' | 'my_places' | 'payouts';
 
@@ -48,8 +48,14 @@ export function JoinedPage({
         (!payoutEnabled || state.creatorFund.payouts.data?.payouts.length === 0),
   );
   return (
-    <Page bottom={fillsWindow ? 'flush' : 'padded'}>
-      <GradientDefs aria-hidden>
+    <div
+      className={styles.page}
+      data-bottom={fillsWindow ? 'flush' : 'padded'}
+    >
+      <svg
+        className={styles.gradientDefs}
+        aria-hidden
+      >
         <defs>
           <linearGradient
             id="cf-cerise"
@@ -68,15 +74,17 @@ export function JoinedPage({
             />
           </linearGradient>
         </defs>
-      </GradientDefs>
+      </svg>
       <EarnHeader />
-      <SectionTabs
+      <Tabs
+        className={styles.sectionTabs}
         value={tab}
-        onChange={(_, value: JoinedTab) => {
+        onChange={value => {
+          const next = value as JoinedTab;
           void analytics.track('Creator Fund Tab Viewed', {
-            tab: value === 'leaderboard' && !hasClosedCycle ? 'home' : value,
+            tab: next === 'leaderboard' && !hasClosedCycle ? 'home' : next,
           });
-          onTabChange(value);
+          onTabChange(next);
         }}
         aria-label={t('earn.joined.sections')}
       >
@@ -87,17 +95,17 @@ export function JoinedPage({
             label={t(tabId === 'leaderboard' && !hasClosedCycle ? 'earn.joined.tabs.home' : label)}
             id={`${id}-${tabId}`}
             aria-controls={`${id}-panel`}
-            disableRipple
           />
         ))}
-      </SectionTabs>
-      <TabPanel
+      </Tabs>
+      <div
+        className={styles.tabPanel}
         role="tabpanel"
         id={`${id}-panel`}
         aria-labelledby={`${id}-${tab}`}
       >
         {PANELS[tab](payoutEnabled)}
-      </TabPanel>
-    </Page>
+      </div>
+    </div>
   );
 }

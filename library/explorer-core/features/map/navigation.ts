@@ -2,6 +2,7 @@
 // arrive, stop it, or jump in to it.
 
 import type { DiscoverPlace } from '../places/placesApi'
+import { isWorldPlace } from './mapApi'
 import { parcelCenter, parseParcel, type Vec2 } from './mapCoords'
 
 export interface Destination {
@@ -13,8 +14,6 @@ export interface Destination {
 
 const EMPTY_PARCEL_NAME = 'Empty parcel'
 const ARRIVAL_TOLERANCE_SQUARED = 50
-/** The player has to move this far, in squared distance from the origin, for the route to be checked again. */
-const MOVE_TOLERANCE = 300
 
 export interface NavigationStore {
   subscribe: (listener: () => void) => () => void
@@ -26,13 +25,23 @@ export interface NavigationStore {
   playerMoved: (position: Vec2) => boolean
 }
 
+/** Where a route to the place ends: its only parcel, or its base parcel; null when neither reads. */
+export function placeParcel(place: DiscoverPlace): Vec2 | null {
+  return place.positions.length === 1 ? parseParcel(place.positions[0]) : parseParcel(place.base_position)
+}
+
 export function destinationParcel(place: DiscoverPlace | null): Vec2 {
-  return (place == null ? null : place.positions.length === 1 ? parseParcel(place.positions[0]) : parseParcel(place.base_position)) ?? { x: 0, y: 0 }
+  return (place == null ? null : placeParcel(place)) ?? { x: 0, y: 0 }
+}
+
+export function isRouteTo(destination: Destination | null, place: DiscoverPlace): boolean {
+  if (destination == null || isWorldPlace(place)) return false
+  const end = placeParcel(place)
+  return end != null && destination.parcel.x === end.x && destination.parcel.y === end.y
 }
 
 export function createNavigationStore(): NavigationStore {
   let destination: Destination | null = null
-  let lastSqrMagnitude = 0
   const listeners = new Set<() => void>()
   const commit = (next: Destination | null): void => {
     destination = next
@@ -52,9 +61,8 @@ export function createNavigationStore(): NavigationStore {
       if (destination != null) commit(null)
     },
     playerMoved: (position) => {
-      const sqrMagnitude = position.x * position.x + position.y * position.y
-      if (lastSqrMagnitude !== 0 && Math.abs(sqrMagnitude - lastSqrMagnitude) <= MOVE_TOLERANCE) return false
-      lastSqrMagnitude = sqrMagnitude
+      // Checked on every report: a throttle on the change of the distance from the map's origin
+      // can skip the arrival spot, as when the player stops there or comes at it sideways.
       if (destination == null) return false
       const dx = position.x - destination.position.x
       const dy = position.y - destination.position.y

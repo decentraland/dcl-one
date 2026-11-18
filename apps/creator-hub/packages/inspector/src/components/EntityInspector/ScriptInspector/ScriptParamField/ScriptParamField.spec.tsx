@@ -384,7 +384,7 @@ describe('when a string param is tagged @format image', () => {
     format: 'image',
     tooltip: 'A panorama',
   };
-  let onUpdate: ReturnType<typeof vi.fn>;
+  let onUpdate: ReturnType<typeof vi.fn<(update: unknown) => void>>;
   const importAsset = {
     get props() {
       // React also records calls without props on the mock, so take the last real render.
@@ -394,7 +394,7 @@ describe('when a string param is tagged @format image', () => {
   };
 
   function renderTexture(param: ScriptParamString = skyboxTexture) {
-    onUpdate = vi.fn();
+    onUpdate = vi.fn<(update: unknown) => void>();
     return render(
       <ScriptParamField
         name="skyboxTexture"
