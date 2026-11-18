@@ -1847,7 +1847,7 @@
           "copy": "Copiar la dirección de la billetera",
           "edit": "Editar",
           "add": "Agregar billetera",
-          "unavailable": "Confirma tu correo para configurar tu billetera de pagos.",
+          "unavailable": "Verifica tu correo para configurar tu billetera de pagos.",
           "notify_failed": "No pudimos enviarte un correo sobre este cambio, así que no guardamos tu billetera. Vuelve a intentarlo."
         },
         "contact": {
@@ -1908,8 +1908,7 @@
           "email_verified": "Correo verificado"
         },
         "cancel": "Cancelar",
-        "error": "Algo salió mal al cargar tus pagos.",
-        "unavailable": "No disponible"
+        "error": "Algo salió mal al cargar tus pagos."
       }
     },
     "errors": {

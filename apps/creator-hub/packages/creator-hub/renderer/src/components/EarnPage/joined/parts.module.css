@@ -181,8 +181,7 @@
   cursor: default;
 }
 
-.chip[data-status="replaced"],
-.chip[data-status="unavailable"] {
+.chip[data-status="replaced"] {
   color: var(--dcl-silver);
   border-color: var(--dcl-silver);
   background-color: var(--palette-whiteTransparent-faint);
