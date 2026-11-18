@@ -380,61 +380,63 @@ impl Settings {
     }
 }
 
-pub struct CommsState {
-    pub deny_list: Arc<crate::deny_list::DenyList>,
-    pub pool: PgPool,
-    /// The guarded client: the LAND operators and the lease authorizations
-    /// (user-influenced URLs).
-    pub http: Outbound,
-    pub settings: Settings,
-    pub livekit: LiveKit,
-    pub moderation: Moderation,
-    pub bans: Arc<dyn moderation::BanStatus>,
-    pub social: Arc<dyn crate::interfaces::SocialDirectory>,
-    metadata_cursor: Mutex<Option<String>>,
-    pub voice_db: VoiceDb,
-    /// The marketplace readers (ENS names, world-name ownership); `None`
-    /// answers empty names and refuses non-admin world moderation.
-    pub marketplace: Option<Arc<crate::chain_index::ChainIndex>>,
-    /// Shop's source-complete names owner reader for moderation writes.
-    pub name_owners: Option<Arc<dyn crate::interfaces::NameOwnerReader>>,
-    /// The worlds permission core: world access, protected wallets and
-    /// scene ownership; `serve` hands in the ONE instance the worlds routes
-    /// share.
-    pub policy: Arc<dyn AccessPolicy>,
-    /// The ONE room resolver: a world's deployed scenes and the world
-    /// mints' rooms.
-    pub scenes: Arc<dyn SceneIdentity>,
-    /// The live world presence the LiveKit webhook feeds and the world
-    /// mints' capacity check reads; `serve` shares it with worlds.
-    pub presence: Arc<crate::presence::Presence>,
-    /// Contract-wallet (EIP-1654) signature check for signed-fetch chains;
-    /// `None` refuses such chains.
-    pub eip1654: Option<Arc<dyn Eip1654Validator>>,
-    pub caches: admission::scene::SceneCaches,
-    /// Where the LiveKit webhook's participant events are also handed.
-    pub room_events: Option<Arc<dyn RoomEventSink>>,
-    /// Where every verified participant event is stored before it is acknowledged.
-    pub room_event_store: Option<Arc<dyn events::RoomEventStore>>,
-    webhooks: webhook::WebhookCoordinator,
-    /// The Pulse room authority, mounted when `PULSE_ROOM_AUTHORITY_KEY` is set.
-    pub relay_authority: Option<Arc<admission::relay_authority::RelayAuthority>>,
-    /// The world comms mints' throttle and capacity (`admission::world_mint`).
-    pub world_mint: admission::world_mint::MintState,
-    pub(crate) world_access_cursor: std::sync::Mutex<Option<String>>,
-    /// The island feed's settings (`admission::cluster`); the subscriber starts with
-    /// [`Self::start_island_feed`].
-    pub cluster: admission::cluster::ClusterConfig,
-    /// `serve`'s one NATS link (`NATS_URL`), whether or not the island subscriber runs: the
-    /// subscriber and the `/ws` connector both use it, and whichever starts first dials it.
-    pub bus: Arc<dyn bus::NatsBus>,
-    /// The realm-lane fence, with a v4 audience: `/island-refresh`, the
-    /// relay authority's island rooms and the subscriber's fenced path.
-    assignments: Option<Arc<admission::cluster::fence::PgAssignmentFence>>,
-    /// The island subscriber [`Self::start_island_feed`] started. Weak: its job owns it, and it
-    /// holds this state through its gateway.
-    island_feed: Mutex<Weak<admission::cluster::subscriber::ClusterSubscriber>>,
-    pub(crate) island_safety: admission::cluster::safety::SafetyStore,
+crate::shared::send_sync_once! {
+    pub struct CommsState {
+        pub deny_list: Arc<crate::deny_list::DenyList>,
+        pub pool: PgPool,
+        /// The guarded client: the LAND operators and the lease authorizations
+        /// (user-influenced URLs).
+        pub http: Outbound,
+        pub settings: Settings,
+        pub livekit: LiveKit,
+        pub moderation: Moderation,
+        pub bans: Arc<dyn moderation::BanStatus>,
+        pub social: Arc<dyn crate::interfaces::SocialDirectory>,
+        metadata_cursor: Mutex<Option<String>>,
+        pub voice_db: VoiceDb,
+        /// The marketplace readers (ENS names, world-name ownership); `None`
+        /// answers empty names and refuses non-admin world moderation.
+        pub marketplace: Option<Arc<crate::chain_index::ChainIndex>>,
+        /// Shop's source-complete names owner reader for moderation writes.
+        pub name_owners: Option<Arc<dyn crate::interfaces::NameOwnerReader>>,
+        /// The worlds permission core: world access, protected wallets and
+        /// scene ownership; `serve` hands in the ONE instance the worlds routes
+        /// share.
+        pub policy: Arc<dyn AccessPolicy>,
+        /// The ONE room resolver: a world's deployed scenes and the world
+        /// mints' rooms.
+        pub scenes: Arc<dyn SceneIdentity>,
+        /// The live world presence the LiveKit webhook feeds and the world
+        /// mints' capacity check reads; `serve` shares it with worlds.
+        pub presence: Arc<crate::presence::Presence>,
+        /// Contract-wallet (EIP-1654) signature check for signed-fetch chains;
+        /// `None` refuses such chains.
+        pub eip1654: Option<Arc<dyn Eip1654Validator>>,
+        pub caches: admission::scene::SceneCaches,
+        /// Where the LiveKit webhook's participant events are also handed.
+        pub room_events: Option<Arc<dyn RoomEventSink>>,
+        /// Where every verified participant event is stored before it is acknowledged.
+        pub room_event_store: Option<Arc<dyn events::RoomEventStore>>,
+        webhooks: webhook::WebhookCoordinator,
+        /// The Pulse room authority, mounted when `PULSE_ROOM_AUTHORITY_KEY` is set.
+        pub relay_authority: Option<Arc<admission::relay_authority::RelayAuthority>>,
+        /// The world comms mints' throttle and capacity (`admission::world_mint`).
+        pub world_mint: admission::world_mint::MintState,
+        pub(crate) world_access_cursor: std::sync::Mutex<Option<String>>,
+        /// The island feed's settings (`admission::cluster`); the subscriber starts with
+        /// [`Self::start_island_feed`].
+        pub cluster: admission::cluster::ClusterConfig,
+        /// `serve`'s one NATS link (`NATS_URL`), whether or not the island subscriber runs: the
+        /// subscriber and the `/ws` connector both use it, and whichever starts first dials it.
+        pub bus: Arc<dyn bus::NatsBus>,
+        /// The realm-lane fence, with a v4 audience: `/island-refresh`, the
+        /// relay authority's island rooms and the subscriber's fenced path.
+        assignments: Option<Arc<admission::cluster::fence::PgAssignmentFence>>,
+        /// The island subscriber [`Self::start_island_feed`] started. Weak: its job owns it, and it
+        /// holds this state through its gateway.
+        island_feed: Mutex<Weak<admission::cluster::subscriber::ClusterSubscriber>>,
+        pub(crate) island_safety: admission::cluster::safety::SafetyStore,
+    }
 }
 
 pub type SharedState = Arc<CommsState>;

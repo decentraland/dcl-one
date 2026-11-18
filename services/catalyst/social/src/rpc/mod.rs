@@ -366,7 +366,7 @@ fn build_rpc_server(
             .release(&address, &transport.close_handle());
         if forget_ctx.mark_offline(&address) {
             let voice_ctx = forget_ctx.clone();
-            tokio::spawn(async move {
+            crate::shared::task::spawn(async move {
                 voice_ctx
                     .end_private_voice_chat_on_disconnect(&address)
                     .await;

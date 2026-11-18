@@ -407,7 +407,7 @@ impl WalletQueue {
     fn start_ready(self: &Arc<Self>, ready: Vec<(String, Work)>) {
         for (wallet, work) in ready {
             let queue = self.clone();
-            tokio::spawn(async move { queue.run(wallet, work).await });
+            crate::shared::task::spawn(async move { queue.run(wallet, work).await });
         }
     }
 

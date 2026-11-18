@@ -1018,6 +1018,10 @@
           "kind": "directory"
         },
         {
+          "name": "shop",
+          "kind": "directory"
+        },
+        {
           "name": "sites",
           "kind": "directory"
         }
@@ -5832,7 +5836,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarPreview.tsx",
-      "sha256": "8baf083613e5f7b6b73a8fe0ca9942ec5d38e96962ae882d628d0053b14a5bc3"
+      "sha256": "85338dca73d8bcd9636bb1de35eeacd78708f421f1b7fd8941c8adc0a9d1a49c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/chat.ts",
@@ -6466,7 +6470,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "9ea80f3126b873054d49a390715ad1d27f07f0a53d9ed7554cd3beb5c5a13641"
+      "sha256": "eb05f12e14581d361799b64db5bae90bee2b7770ce3dabec4487fbb53a7ce6c7"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",

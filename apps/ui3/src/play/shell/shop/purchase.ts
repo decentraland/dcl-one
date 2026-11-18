@@ -1,4 +1,4 @@
-// The web shell's side of the in-world Shop purchase (lib/shopProtocol). The HUD asks to buy items (one,
+// The web shell's side of the in-world Shop purchase (library/ui/apps/shop/shopProtocol). The HUD asks to buy items (one,
 // or its cart's); this reads their listings, the server's offers and the buyer's Credits balance itself,
 // shows the buyer the design's dialog over the app (./overlay), and on BUY ITEM settles the purchase
 // through the web Shop's own checkout (cart partition, review, the per-group executor and its rails), with
@@ -41,7 +41,7 @@ import { creditsCeil, creditsFloor, type UsdCents } from '@shop/model/money'
 import type { CartLine, GroupProgress, GroupStatus, PurchaseOffer, PurchaseState } from '@shop/model/purchase'
 import type { Session } from '@shop/model/settlement'
 import { loginExpired, rootAddress, type StoredLogin } from '@explorer-core/features/auth/sso'
-import type { ShopPurchaseItem, ShopPurchaseStep } from '../../features/shop/ui'
+import type { ShopPurchaseItem, ShopPurchaseStep } from '@dcl/one-ui/apps/shop/ui'
 import { siteUrl } from '../../lib/baseDomain'
 import {
   parseBuyRequest,
@@ -65,7 +65,7 @@ import {
   type ShopNamesMode,
   type ShopOperationState,
   type ShopWalletKind
-} from '../../lib/shopProtocol'
+} from '@dcl/one-ui/apps/shop/shopProtocol'
 import { withUtm } from '@explorer-core/lib/utm'
 import { trustedCreditsManager, type TrustedManager } from './config'
 import { createLedger, type OperationRecord } from './ledger'
@@ -161,7 +161,7 @@ export interface ShellShopServices {
   balance(account: string, client: ShopClient): Promise<UsdBalance>
   resolvers(client: ShopClient): SettlementResolvers
   reader(): ChainReader
-  /** The creator-sales rollout, which the listing reads from its module (see features/shop/flagsQuery). */
+  /** The creator-sales rollout, which the listing reads from its module (see library/ui/apps/shop/flagsQuery). */
   primeFlags(): Promise<void>
   run(deps: CheckoutDeps, group: CartGroup, resolved: Resolved): Promise<GroupResult>
   watch(deps: CheckoutDeps, progress: GroupProgress): Promise<GroupResult>

@@ -909,7 +909,7 @@ pub async fn update_community(
         && new_name.trim() != old_name.trim()
     {
         let (state, old_name, new_name) = (state.clone(), old_name.clone(), new_name.to_owned());
-        tokio::spawn(async move {
+        crate::shared::task::spawn(async move {
             let Ok(has_thumbnail) = sqlx::query_scalar::<_, bool>(
                 "SELECT EXISTS(SELECT 1 FROM social.community_thumbnails WHERE community_id=$1)",
             )
@@ -1178,7 +1178,7 @@ pub async fn delete_community(
         metadata,
     };
     let updates = state.clone();
-    tokio::spawn(async move {
+    crate::shared::task::spawn(async move {
         updates.community_deleted_update(uuid).await;
     });
     if let Some(event) = violation {
