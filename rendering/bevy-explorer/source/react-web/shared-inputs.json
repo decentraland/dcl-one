@@ -4616,6 +4616,10 @@
       "path": "library/ui/apps/hud/features/session",
       "entries": [
         {
+          "name": "PlatformBanDialog.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "SceneLoadingOverlay.module.css",
           "kind": "regular"
         },
@@ -5493,6 +5497,10 @@
           "kind": "regular"
         },
         {
+          "name": "platformBan.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "pointer.test.tsx",
           "kind": "regular"
         },
@@ -5784,7 +5792,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/engine.js",
-      "sha256": "644cba943c8a2d70ab17ac525a8455de286398aecd3e117bf976c2ed5b46e7e9"
+      "sha256": "6bacb239b7e9837420c5c92ef8fb37bfee57e5e4e46b1de1c816089a49b7d54e"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/perf_stream.js",
@@ -5816,7 +5824,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "31fc24d9dadebae432a8e1a87d9e519d4002602933d943a3c9ba62f693748a5b"
+      "sha256": "ab90de5410de6a52f811d1a6868a0edfa28c487f9c66be22feba11f50adf0c50"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/destinations.ts",
@@ -6220,7 +6228,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/session.test.tsx",
-      "sha256": "92469cc14300dee9fbfd25156636ab41ac678488737c086e94122cd70956384b"
+      "sha256": "1689b8cb6e2b4a8e9139a6ddd5978813ab1518c9122184cab937f16c5b6e33e4"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/setup.ts",
@@ -6449,7 +6457,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "f302f76b0423a53887eb6d1e19d43addb63596fa7edf1a038e108a127119ed50"
+      "sha256": "ba104d8664eb0add00f5dfe98935a5f24b727d0ce2b968fc5f32818bff974cb3"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -6769,7 +6777,7 @@
     },
     {
       "path": "library/explorer-core/lib/hudAutomation.ts",
-      "sha256": "e8b933805487a1e9b7591d98dcfcc97d0b0570a2e756d4331c4459e22818bd8e"
+      "sha256": "640bc14f946e7eaa02be8ec6fb0eccad8e1e92ec1e4bfd025b4990d5e4319e85"
     },
     {
       "path": "library/explorer-core/lib/hudScale.ts",
@@ -6941,7 +6949,7 @@
     },
     {
       "path": "library/explorer-core/test/hudAutomation.test.ts",
-      "sha256": "b93bbc6f16817f308e3f5430c62c1fc9ad1cac5e2a43bb20a9bf6dbbc0843770"
+      "sha256": "81e90466c917da2efa66b641786bba4ab66e16896140767fe4d80a85a0f4c43d"
     },
     {
       "path": "library/explorer-core/test/hudScale.test.ts",
@@ -7013,7 +7021,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "f2004d3fd9cc54f8d9b41a9829dcb3a2df6330eee5c790786c06df3c53643596"
+      "sha256": "bf0b506bcc719347237e5a3c7c84b5964bdc426440c65cd148ffbcb9503b4421"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -9261,7 +9269,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/engine/EngineHost.tsx",
-      "sha256": "e315becbede258508fff68704b303cd01867a9073958e016962aeb4e0fd4a6d9"
+      "sha256": "f2b0bd34cc3d47940d8487fb7b7792c9bbd24679bac5547ccc8cba4b90fdda2b"
     },
     {
       "path": "library/ui/apps/hud/features/engine/EngineViewport.module.css",
@@ -9924,6 +9932,10 @@
       "sha256": "306b2db94b12b8d542ed010a9ece826c15ac0e8a58bf5bdc71654da8a6886f0b"
     },
     {
+      "path": "library/ui/apps/hud/features/session/PlatformBanDialog.tsx",
+      "sha256": "2e2441c7623a79b1702446f8c83c336dbaf3f73571e50421c2a4b6823652b780"
+    },
+    {
       "path": "library/ui/apps/hud/features/session/SceneLoadingOverlay.module.css",
       "sha256": "3b148f36c23cfd00fc11156694359f5aaaed25135b9174b09f60f04c2e68adfc"
     },
@@ -9953,7 +9965,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "f9bc91079fd228b353ddaa563f4d7cdfc46b6edecef99eb5210858f8c18eea13"
+      "sha256": "d77236f27760316c596bd46b1713672fbce3166614a9689443b2fc4ae3be7890"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10281,7 +10293,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "408d16a5bf6be85751134740baaae67eb67004ef6a47346a56e839785331b8e5"
+      "sha256": "c6aa7746560bac53ca53e17964be0ebe100a67c60a2ac926bb114422df886afd"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -10610,6 +10622,10 @@
     {
       "path": "library/ui/apps/hud/test/hosted/placesDiscovery.test.tsx",
       "sha256": "8e70693e38604311fb038eaa3fb29319b479ce73ac94c898ab0d936f559af282"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/platformBan.test.tsx",
+      "sha256": "cd09486ef06301b122dffef3eacdcd0fe0a4a27a1ecc62afe5a12174e910cf8d"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/pointer.test.tsx",
@@ -14257,6 +14273,21 @@
     },
     {
       "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/session/PlatformBanDialog.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/session/PlatformBanDialog.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/session/PlatformBanDialog.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
       "to": "library/ui/apps/hud/features/session/SceneLoadingOverlay.tsx",
       "kind": "native:runtime"
     },
@@ -32421,6 +32452,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/session/PlatformBanDialog.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/PlatformBanDialog.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/PlatformBanDialog.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/session/SceneLoadingOverlay.tsx",
       "to": "library/explorer-core/lib/bugReport.ts",
       "kind": "native:runtime"
@@ -32853,6 +32899,21 @@
     {
       "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "to": "library/explorer-core/engine/profileEdit.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/engine/protocol.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/engine/protocol.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/engine/protocol.ts",
       "kind": "test:runtime"
     },
     {
@@ -41793,6 +41854,66 @@
     {
       "from": "library/ui/apps/hud/test/hosted/placesDiscovery.test.tsx",
       "to": "library/ui/apps/hud/features/places/usePlaces.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/platformBan.test.tsx",
+      "to": "library/explorer-core/engine/protocol.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/platformBan.test.tsx",
+      "to": "library/explorer-core/engine/protocol.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/platformBan.test.tsx",
+      "to": "library/explorer-core/engine/protocol.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/platformBan.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/platformBan.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/platformBan.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/platformBan.test.tsx",
+      "to": "library/ui/apps/hud/features/session/PlatformBanDialog.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/platformBan.test.tsx",
+      "to": "library/ui/apps/hud/features/session/PlatformBanDialog.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/platformBan.test.tsx",
+      "to": "library/ui/apps/hud/features/session/PlatformBanDialog.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/platformBan.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/platformBan.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/platformBan.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
       "kind": "test:runtime"
     },
     {
@@ -46602,6 +46723,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/session/PlatformBanDialog.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/session/SceneLoadingOverlay.tsx",
       "kind": "type"
     },
@@ -47338,6 +47464,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/placesDiscovery.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/platformBan.test.tsx",
       "kind": "type"
     },
     {

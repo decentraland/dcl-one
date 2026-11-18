@@ -932,6 +932,46 @@ function buildSessionServer(caller: McpCaller): {
   return { server, explorerHandles };
 }
 
+/**
+ * The tools this server offers the in-app assistant, as an MCP client lists them (name, title,
+ * description, JSON input schema), sorted by name. The Explorer's `explorer_*` tools are left
+ * out: they come from the running preview, not from Creator Hub. AI sharing hashes this list
+ * into each record, and the release manifest carries it, so both must read it from here.
+ */
+export async function listAssistantTools(): Promise<AssistantToolDefinition[]> {
+  const server = new McpServer({ name: 'creator-hub', version: '1.0.0' });
+  registerTools(server, 'assistant');
+  const [{ Client }, { InMemoryTransport }] = await Promise.all([
+    import('@modelcontextprotocol/sdk/client/index.js'),
+    import('@modelcontextprotocol/sdk/inMemory.js'),
+  ]);
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'creator-hub-tools-list', version: '1.0.0' });
+  try {
+    await server.connect(serverSide);
+    await client.connect(clientSide);
+    const { tools } = await client.listTools();
+    return tools
+      .map(t => ({
+        name: t.name,
+        title: t.title ?? null,
+        description: t.description ?? null,
+        inputSchema: t.inputSchema,
+      }))
+      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  } finally {
+    await client.close();
+    await server.close();
+  }
+}
+
+export interface AssistantToolDefinition {
+  name: string;
+  title: string | null;
+  description: string | null;
+  inputSchema: unknown;
+}
+
 // Thrown when a request body exceeds MAX_BODY_BYTES; the handler turns it into a 413.
 class BodyTooLargeError extends Error {}
 

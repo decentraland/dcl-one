@@ -11,7 +11,6 @@
 #   The Inputs job waits for the commit's Bevy Explorer / CI run and takes the web app it built
 #   (an expired one is reported, never replaced), or main's newest when the pull request changed
 #   no web input but changed the suite;
-# - after each Bevy Explorer / CI run of a push to main;
 # - nightly, against main's newest web app;
 # - by hand, against a commit's web app or main's newest.
 #
@@ -28,11 +27,8 @@
 # one per worker). Until the variable is set the scenarios job is skipped; the Inputs job's summary
 # says what would have run. That image carries MinGit alone, so the job runs its steps in
 # PowerShell, puts a pinned git-lfs on PATH before the checkout (the scenes' assets), and drives
-# Chrome where the image has it, else a pinned Chrome for Testing build. The scenes' CLI is built on a
-# hosted Windows runner and handed over, so the image needs no Rust toolchain, MSVC or bash.
-#
-# GitHub starts `workflow_run`, `schedule` and `workflow_dispatch` only from the workflow file on
-# the default branch: until this file is on main, only the pull request jobs run.
+# Chrome where the image has it, else a pinned Chrome for Testing build. The scenes' CLI is built
+# on a hosted Windows runner and handed over, so the image needs no Rust toolchain, MSVC or bash.
 name: Bevy Explorer / E2E
 'on':
   # The explorer's inputs (what Bevy Explorer / CI builds the web app from) and the suite's own.
@@ -47,9 +43,6 @@ name: Bevy Explorer / E2E
       - '.github/workflows/bevy-explorer-e2e.yml'
       - 'tooling/bevy-e2e-*.py'
       - 'tooling/tests/test_bevy_e2e_*.py'
-  workflow_run:
-    workflows: ['Bevy Explorer / CI']
-    types: [completed]
   schedule:
     - cron: '47 3 * * *'
   workflow_dispatch:
@@ -68,17 +61,15 @@ name: Bevy Explorer / E2E
         type: boolean
         default: false
 permissions: {}
-# One run per pull request (a newer push, or the `ci:e2e` label, supersedes the run in progress;
-# any other label's event is its own group and cancels nothing), per branch of one repository and
-# CI trigger for a `workflow_run`, and per ref otherwise.
+# Per pull request, a push or the `ci:e2e` label supersedes the run in progress and other events
+# cancel nothing; per event and ref otherwise, where a dispatch waits instead of cancelling.
 concurrency:
   group: >-
     bevy-explorer-e2e-${{
-      github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'ci:e2e') && format('pr-{0}', github.event.pull_request.number)
+      github.event_name == 'pull_request' && (github.event.action == 'synchronize' || (github.event.action == 'labeled' && github.event.label.name == 'ci:e2e')) && format('pr-{0}', github.event.pull_request.number)
       || github.event_name == 'pull_request' && format('run-{0}', github.run_id)
-      || github.event_name == 'workflow_run' && format('{0}-{1}-{2}', github.event.workflow_run.event, github.event.workflow_run.head_repository.full_name, github.event.workflow_run.head_branch)
       || format('{0}-{1}', github.event_name, github.ref) }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 jobs:
   checks:
     name: Suite checks
@@ -165,7 +156,7 @@ jobs:
   # The scenes' CLI, built where the Rust toolchain, the MSVC linker and bash are: a hosted
   # Windows runner. The GPU image gets the executable, for the smart wearable fixture of the
   # InWorld group and the visual scenes of the Visual group. A pull request's run restores the
-  # cache and saves none: only a first attempt that built main's head writes it.
+  # cache and saves none: a first attempt of the nightly, or one that built main's head, writes it.
   scene-cli:
     name: dcl-scene-cli (Windows)
     needs: inputs
@@ -194,7 +185,7 @@ jobs:
         with:
           workspaces: services/catalyst -> target
           key: e2e-scene-cli
-          save-if: ${{ needs.inputs.outputs.pr == '' && needs.inputs.outputs.sha == github.sha && github.run_attempt == '1' }}
+          save-if: ${{ needs.inputs.outputs.pr == '' && github.run_attempt == '1' && (github.event_name == 'schedule' || needs.inputs.outputs.sha == github.sha) }}
       - name: Build dcl-scene-cli
         working-directory: services/catalyst
         run: cargo build --release --locked -p dcl-scene-cli

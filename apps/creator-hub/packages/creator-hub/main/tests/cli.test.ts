@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PREVIEW_CLIENT, type PreviewOptions } from '/shared/types/settings';
 import type { Child } from '../src/modules/bin';
@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   startMobileDebugServer: vi.fn(),
   dynamicImport: vi.fn(),
   runSdkCommand: vi.fn(),
+  getRealm: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -34,6 +35,7 @@ vi.mock('../src/modules/download-github-folder', () => ({ downloadGithubRepo: vi
 vi.mock('../src/modules/mobile-debug-server', () => ({
   startMobileDebugServer: mocks.startMobileDebugServer,
 }));
+vi.mock('../src/modules/bevy-realm', () => ({ getRealm: mocks.getRealm }));
 vi.mock('../src/modules/network', () => ({ getLanIp: vi.fn(() => '192.168.0.10') }));
 vi.mock('/shared/dynamic-import', () => ({ dynamicImport: mocks.dynamicImport }));
 
@@ -243,6 +245,115 @@ describe('cli preview start', () => {
         expect(spawnedArgs()).not.toContain('--');
         expect(spawnedArgs()).not.toContain('--lsd-raw-gltf');
       });
+    });
+  });
+
+  describe('when the Bevy editor realm is already running for the scene', () => {
+    // what the scene's sdk-commands start command declares, read from its dist
+    function setStartCommand(source: string) {
+      mocks.readFile.mockImplementation(async (file: string) => {
+        if (file.includes('commands/start/index.js')) return source;
+        throw new Error('ENOENT');
+      });
+    }
+
+    beforeEach(() => {
+      mocks.getRealm.mockReturnValue({ url: 'http://localhost:8004' });
+    });
+
+    afterEach(() => {
+      mocks.getRealm.mockReset();
+    });
+
+    describe('and the scene sdk-commands declares --no-server', () => {
+      beforeEach(() => {
+        setStartCommand("'--no-client': Boolean,\n'--no-server': Boolean,");
+      });
+
+      it('should pass --no-server so the preview reuses the realm Multiplayer Server', async () => {
+        const fake = createFakeChild();
+        mocks.run.mockReturnValue(fake.child);
+
+        const promise = start(path, BASE_OPTS);
+        fake.printDeeplink('realm=http://127.0.0.1:8000&position=0,0');
+        await promise;
+
+        expect(spawnedArgs()).toContain('--no-server');
+      });
+
+      it('should keep the explorer passthrough last', async () => {
+        const fake = createFakeChild();
+        mocks.run.mockReturnValue(fake.child);
+
+        const promise = start(path, { ...BASE_OPTS, loadRawGltfs: true });
+        fake.printDeeplink('realm=http://127.0.0.1:8000&lsd-raw-gltf=true');
+        await promise;
+
+        expect(spawnedArgs()).toContain('--no-server');
+        expect(spawnedArgs().slice(-2)).toEqual(['--', '--lsd-raw-gltf']);
+      });
+
+      it('should pass it to a Bevy web preview too', async () => {
+        const fake = createFakeChild();
+        mocks.run.mockReturnValue(fake.child);
+
+        await startBevyWeb(path, fake);
+
+        expect(spawnedArgs()).toEqual(['start', '--bevy-web', '--no-server']);
+      });
+
+      it('should pass it to a mobile-QR preview too', async () => {
+        const fake = createFakeChild();
+        mocks.run.mockReturnValue(fake.child);
+
+        const promise = start(path, { ...BASE_OPTS, mobile: true });
+        fake.printDeeplink('open?preview=http://192.168.0.10:8000&position=0,0');
+        await promise;
+
+        expect(spawnedArgs()).toEqual(['start', '--mobile', '--no-server']);
+      });
+    });
+
+    describe('and the scene sdk-commands only mentions --no-server outside its arg spec', () => {
+      it('should not pass the flag (arg would reject it)', async () => {
+        setStartCommand("'--no-client': Boolean,\n// TODO: add --no-server\n");
+        const fake = createFakeChild();
+        mocks.run.mockReturnValue(fake.child);
+
+        const promise = start(path, BASE_OPTS);
+        fake.printDeeplink('realm=http://127.0.0.1:8000&position=0,0');
+        await promise;
+
+        expect(spawnedArgs()).not.toContain('--no-server');
+      });
+    });
+
+    describe('and the scene sdk-commands does not declare --no-server', () => {
+      it('should not pass the flag (arg rejects unknown flags)', async () => {
+        setStartCommand("'--no-client': Boolean,");
+        const fake = createFakeChild();
+        mocks.run.mockReturnValue(fake.child);
+
+        const promise = start(path, BASE_OPTS);
+        fake.printDeeplink('realm=http://127.0.0.1:8000&position=0,0');
+        await promise;
+
+        expect(spawnedArgs()).not.toContain('--no-server');
+      });
+    });
+  });
+
+  describe('when no Bevy editor realm is running for the scene', () => {
+    it('should let the preview spawn its own Multiplayer Server', async () => {
+      mocks.readFile.mockResolvedValue("'--no-server': Boolean,");
+      const fake = createFakeChild();
+      mocks.run.mockReturnValue(fake.child);
+
+      const promise = start(path, BASE_OPTS);
+      fake.printDeeplink('realm=http://127.0.0.1:8000&position=0,0');
+      await promise;
+
+      expect(spawnedArgs()).not.toContain('--no-server');
     });
   });
 

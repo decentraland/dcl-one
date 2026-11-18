@@ -29,4 +29,11 @@ export type MetricsResponse<T = unknown> =
    * Failures come back as values rather than thrown errors: an unauthorized or
    * not-yet-deployed endpoint is an expected state the UI renders, not a crash.
    */
-  | { ok: false; status: number; error: string; body?: unknown };
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      body?: unknown;
+      /** The response's `Retry-After`, in seconds, when it sent one. */
+      retryAfterSeconds?: number;
+    };
