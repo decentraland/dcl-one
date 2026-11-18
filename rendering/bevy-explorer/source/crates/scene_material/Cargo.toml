@@ -8,10 +8,10 @@ edition = "2021"
 [features]
 # WebGL2 has no storage buffers: the scene-bounds cell table is left out of the materials, so a
 # bounded scene fades by its rectangle only. For a WebGL2 build that shows no scenes (the avatar
-# preview, rendering/avatar-preview); the Explorer builds for WebGPU. It turns on bevy's
-# `webgl2`, which leaves the cell table out of the shader (`WEBGL2` in scene_bounds.wgsl), so the
-# material and the shader drop it together.
-webgl2 = ["bevy/webgl2"]
+# preview, rendering/avatar-preview); the Explorer builds for WebGPU. The material's pipeline
+# pushes `NO_SCENE_CELLS`, which leaves the table out of scene_bounds.wgsl, so the material and the
+# shader drop it together on any backend.
+webgl2 = []
 
 [dependencies]
 bevy = { workspace = true }
