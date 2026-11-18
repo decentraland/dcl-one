@@ -433,6 +433,12 @@
   color: var(--ctl-disabled-ink);
 }
 
+.composerRecord {
+  display: inline-flex;
+  flex-shrink: 0;
+  margin-right: 8px;
+}
+
 .setupBox {
   margin: auto;
   max-width: 304px;

@@ -1330,14 +1330,16 @@ export function ChatView(props: ChatViewProps) {
                 {recorder !== undefined &&
                   onToggleRecording !== undefined &&
                   (recorder.status === 'idle' || recorder.status === 'starting') && (
-                    <RecordButton
-                      status={recorder.status}
-                      startedAt={recorder.startedAt}
-                      micLabel={recorder.micLabel}
-                      tools={recorder.tools}
-                      disabled={!available}
-                      onClick={onToggleRecording}
-                    />
+                    <span className={styles.composerRecord}>
+                      <RecordButton
+                        status={recorder.status}
+                        startedAt={recorder.startedAt}
+                        micLabel={recorder.micLabel}
+                        tools={recorder.tools}
+                        disabled={!available}
+                        onClick={onToggleRecording}
+                      />
+                    </span>
                   )}
               </>
             }
