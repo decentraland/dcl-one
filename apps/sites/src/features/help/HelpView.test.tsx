@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -44,7 +44,7 @@ function renderView(props: Partial<HelpViewProps> = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const tree = () => (
     <QueryClientProvider client={client}>
-      <HelpView services={SERVICES} statusPageUrl="https://status.example/" intercomAppId="" {...props} />
+      <HelpView services={SERVICES} statusPageUrl="https://status.example/" intercomAppId="" isOfficialHelpPage {...props} />
     </QueryClientProvider>
   );
   const view = render(tree());
@@ -235,41 +235,61 @@ describe("HelpView chat banner", () => {
     delete (window as Window & { Intercom?: unknown }).Intercom;
   });
 
-  it("hides the banner when the chat is switched off", () => {
-    renderView({ intercomAppId: "" });
+  function expectFallback() {
     expect(screen.queryByRole("button", { name: "CHAT NOW" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Email support" }).getAttribute("href")).toBe("mailto:support@decentraland.org");
+  }
+
+  it("offers an independent support link when chat is disabled", () => {
+    renderView({ intercomAppId: "" });
+    expectFallback();
+    expect(document.querySelector("script[data-intercom]")).toBeNull();
   });
 
-  it("queues the chat to open while the widget script is loading", async () => {
+  it("offers the live support site on a preview origin", () => {
+    renderView({ intercomAppId: "", isOfficialHelpPage: false });
+    expect(screen.getByRole("link", { name: "Open support on decentraland.org" }).getAttribute("href")).toBe(
+      "https://decentraland.org/help",
+    );
+  });
+
+  it("keeps the support link until the session is ready and then opens the messenger", async () => {
     renderView({ intercomAppId: "app-test" });
-    expect(document.querySelector('script[data-intercom="app-test"]')).not.toBeNull();
+    expectFallback();
+    const fn = vi.fn();
+    Object.assign(window, { Intercom: fn });
+    document.querySelector("script[data-intercom]")!.dispatchEvent(new Event("load"));
+    await waitFor(() => expect(fn).toHaveBeenCalledWith("boot", expect.objectContaining({ hide_default_launcher: true })));
+    expectFallback();
+    act(() => fn.mock.calls.find(([command]) => command === "ready")![1]());
+    expect(fn).toHaveBeenCalledWith("update", { hide_default_launcher: false });
     await userEvent.setup().click(screen.getByRole("button", { name: "CHAT NOW" }));
-    const queued = (window as Window & { Intercom?: { q?: unknown[][] } }).Intercom?.q ?? [];
-    expect(queued).toContainEqual(["show"]);
+    expect(fn).toHaveBeenCalledWith("show");
   });
 
-  it("hides the banner once the widget script fails to load", async () => {
+  it("keeps the support link if the widget script fails", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     renderView({ intercomAppId: "app-test" });
-    const script = document.querySelector('script[data-intercom="app-test"]');
-    script?.dispatchEvent(new Event("error"));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "CHAT NOW" })).toBeNull());
+    document.querySelector("script[data-intercom]")!.dispatchEvent(new Event("error"));
+    await waitFor(() => expect(document.querySelector("script[data-intercom]")).toBeNull());
+    expectFallback();
   });
 
-  it("tells the chat the signed-in wallet, and restarts it without one after signing out", async () => {
-    const WALLET = "0x" + "ab".repeat(20);
-    auth.address = WALLET;
+  it("ignores readiness from a previous wallet session", async () => {
+    auth.address = "0x" + "ab".repeat(20);
     const view = renderView({ intercomAppId: "app-test" });
-    const queue = (window as Window & { Intercom?: { q: unknown[][] } }).Intercom!;
-    document.querySelector('script[data-intercom="app-test"]')!.dispatchEvent(new Event("load"));
-    await waitFor(() =>
-      expect(queue.q).toEqual([["boot", { app_id: "app-test", alignment: "right", Wallet: WALLET }]]),
-    );
-
+    const fn = vi.fn();
+    Object.assign(window, { Intercom: fn });
+    document.querySelector("script[data-intercom]")!.dispatchEvent(new Event("load"));
+    await waitFor(() => expect(fn).toHaveBeenCalledWith("boot", expect.objectContaining({ Wallet: auth.address })));
+    const firstReady = fn.mock.calls.find(([command]) => command === "ready")![1];
     auth.address = null;
     view.rerenderView();
-    await waitFor(() =>
-      expect(queue.q.slice(1)).toEqual([["shutdown"], ["boot", { app_id: "app-test", alignment: "right" }]]),
-    );
+    await waitFor(() => expect(fn.mock.calls.filter(([command]) => command === "boot")).toHaveLength(2));
+    expect(fn).toHaveBeenCalledWith("shutdown");
+    expect(fn.mock.lastCall![1]).not.toHaveProperty("Wallet");
+    act(() => firstReady());
+    expect(fn).not.toHaveBeenCalledWith("update", { hide_default_launcher: false });
+    expectFallback();
   });
 });

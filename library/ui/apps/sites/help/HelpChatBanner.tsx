@@ -8,11 +8,9 @@ type HelpChatBannerProps = {
   title: string
   subtitle: string
   actionLabel: string
-  onAction: () => void
-}
+} & ({ onAction: () => void; href?: never } | { href: string; onAction?: never })
 
-/** The banner that stays at the bottom of the help center and opens the support chat. */
-function HelpChatBanner({ title, subtitle, actionLabel, onAction }: HelpChatBannerProps) {
+function HelpChatBanner({ title, subtitle, actionLabel, onAction, href }: HelpChatBannerProps) {
   const titleId = useId()
   return (
     <aside className={styles.root} aria-labelledby={titleId}>
@@ -24,7 +22,10 @@ function HelpChatBanner({ title, subtitle, actionLabel, onAction }: HelpChatBann
           {title}
         </h2>
         <p className={styles.subtitle}>{subtitle}</p>
-        <Button className={styles.action} onClick={onAction}>
+        <Button
+          className={styles.action}
+          {...(href !== undefined ? { href } : { onClick: onAction })}
+        >
           {actionLabel}
         </Button>
       </div>
