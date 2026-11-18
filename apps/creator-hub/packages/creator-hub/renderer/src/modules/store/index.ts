@@ -7,6 +7,7 @@ import { configureStore, createDraftSafeSelector } from '@reduxjs/toolkit';
 import { captureException } from '@sentry/electron/renderer';
 
 import { createAnalyticsMiddleware } from './analytics/middleware';
+import { deploymentLogMiddleware } from './deployment/deploymentLog';
 import { deploymentRecordMiddleware } from './workspace/deploymentRecord';
 import { logger } from './logger';
 import * as ai from './ai';
@@ -59,7 +60,8 @@ const store = configureStore({
     getDefaultMiddleware()
       .concat(logger)
       .concat(createAnalyticsMiddleware())
-      .concat(deploymentRecordMiddleware),
+      .concat(deploymentRecordMiddleware)
+      .concat(deploymentLogMiddleware),
 });
 
 const isDevelopment = true; // todo

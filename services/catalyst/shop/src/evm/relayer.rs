@@ -40,6 +40,14 @@ struct OzTransactionData {
     status_reason: Option<String>,
 }
 
+/// A 408 or a 499 can come from a proxy in front of the relayer, which gives one when it timed out
+/// or the caller went away, possibly after it forwarded the submission. The status does not say
+/// who answered, so, unlike the relayer's other 4xx, neither is taken as proof that no transaction
+/// was created: both are read conservatively, as in flight.
+fn a_hop_gave_up(status: u16) -> bool {
+    matches!(status, 408 | 499)
+}
+
 /// Tells a present field (`Some`, its value possibly `null`) from a missing one (`None`, by the
 /// field's `default`), which a plain `Option` cannot.
 fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<String>>, D::Error> {
@@ -95,8 +103,10 @@ impl Relayer {
     /// Submits the call and waits for its hash. Only an answer that proves the relayer created no
     /// transaction is a refusal: a 400 or 422 to the submission (`RelayReverted`), another 4xx
     /// (`RelayerFailed`), or a connection that never opened (`RelayerUnavailable`). Once the
-    /// relayer may hold the transaction (a submission cut after it was sent, a 5xx, a 2xx that
-    /// cannot be read), the outcome is unknown: `RelayerTimeout`.
+    /// relayer may hold the transaction (a submission cut after it was sent, a 5xx, a hop's 408 or
+    /// 499, a 2xx that cannot be read), the outcome is unknown: `RelayerTimeout`. Each of those
+    /// keeps the buyer's quota slot, which also counts against the shared daily relay budget until
+    /// it ages out, so a long relayer outage can use that budget up: watch the rate of 504s.
     pub async fn send_meta_transaction(&self, tx: &TransactionData) -> Result<String, ApiError> {
         let resp = self
             .http
@@ -130,11 +140,13 @@ impl Relayer {
                 "The relayer responded with a {} status code: {text}",
                 status.as_u16()
             );
-            return Err(if status.is_server_error() {
-                ApiError::RelayerTimeout(message)
-            } else {
-                ApiError::RelayerFailed(message)
-            });
+            return Err(
+                if status.is_server_error() || a_hop_gave_up(status.as_u16()) {
+                    ApiError::RelayerTimeout(message)
+                } else {
+                    ApiError::RelayerFailed(message)
+                },
+            );
         }
         let parsed: OzResponse = serde_json::from_slice(&body).map_err(|e| {
             ApiError::RelayerTimeout(format!("relayer accepted the request, decode failed: {e}"))
@@ -556,6 +568,10 @@ mod tests {
             (422u16, "simulation reverted", 'r'),
             (400, "bad request", 'r'),
             (401, "unauthorized", 'f'),
+            (404, "not found", 'f'),
+            (429, "too many requests", 'f'),
+            (408, "request timeout", 't'),
+            (499, "client closed request", 't'),
             (500, "internal", 't'),
             (200, "not json", 't'),
         ] {
