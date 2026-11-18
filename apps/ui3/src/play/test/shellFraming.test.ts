@@ -1,13 +1,17 @@
 // The shell refuses to start in another site's frame (shell/framing): the rule itself, on fake window chains, and
-// what the page shows instead of the app. The rule is faked for the page; jsdom has no service worker, so an
-// unframed shell would mount the app's iframe at once, which is what the page test checks is missing.
+// what the page shows instead of the app. For the page the rule is faked to say framed (called with no window);
+// jsdom has no service worker, so an unframed shell would mount the app's iframe at once, which is what the page
+// test checks is missing.
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const framing = vi.hoisted(() => ({ framed: true }))
 vi.mock('../shell/framing', async (importOriginal) => {
   const real = await importOriginal<typeof import('../shell/framing')>()
-  return { ...real, framedByAnotherOrigin: (win?: Parameters<typeof real.framedByAnotherOrigin>[0]) => (win ? real.framedByAnotherOrigin(win) : framing.framed) }
+  return { ...real, framedByAnotherOrigin: (win?: Parameters<typeof real.framedByAnotherOrigin>[0]) => (win ? real.framedByAnotherOrigin(win) : true) }
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 import { framedByAnotherOrigin, type FrameAbove, type ShellWindow } from '../shell/framing'
@@ -34,19 +38,32 @@ function unreadable(parent: FrameAbove): FrameAbove {
 const frameAt = (origin: string, parent: FrameAbove): FrameAbove => ({ parent, location: { origin } })
 /** The shell framed under `parent`, whose top is `top`; `ancestorOrigins` as the browser lists it, if it does. */
 function shellUnder(parent: FrameAbove, top: FrameAbove, ancestorOrigins?: string[]): ShellWindow {
-  return { self: {}, top, parent, location: { origin: ORIGIN, ...(ancestorOrigins ? { ancestorOrigins } : {}) } }
+  return { self: {}, top, parent, origin: ORIGIN, location: { origin: ORIGIN, ...(ancestorOrigins ? { ancestorOrigins } : {}) } }
 }
+/** The shell in a sandbox frame without allow-same-origin: its URL is still https, its own origin is opaque. */
+const opaque = (shell: ShellWindow): ShellWindow => ({ ...shell, origin: 'null' })
 
 describe('whether another origin frames the shell', () => {
   it('is not framed as the top page', () => {
     const self = {}
-    expect(framedByAnotherOrigin({ self, top: self, parent: null, location: { origin: ORIGIN } })).toBe(false)
+    expect(framedByAnotherOrigin({ self, top: self, parent: null, origin: ORIGIN, location: { origin: ORIGIN } })).toBe(false)
   })
 
   it('reads the list of every frame up the chain where the browser keeps one', () => {
     const top = topAt(ORIGIN)
     expect(framedByAnotherOrigin(shellUnder(top, top, [ORIGIN]))).toBe(false)
     expect(framedByAnotherOrigin(shellUnder(top, top, [EVIL, ORIGIN]))).toBe(true)
+  })
+
+  it('refuses a framed document of an opaque origin (a sandbox frame), though its URL and every frame above are its own origin', () => {
+    const top = topAt(ORIGIN)
+    // The same chains are allowed for a document of that origin: the scene editor's frame.
+    expect(framedByAnotherOrigin(shellUnder(top, top, [ORIGIN]))).toBe(false)
+    expect(framedByAnotherOrigin(shellUnder(frameAt(ORIGIN, top), top))).toBe(false)
+    expect(framedByAnotherOrigin(opaque(shellUnder(top, top, [ORIGIN])))).toBe(true)
+    expect(framedByAnotherOrigin(opaque(shellUnder(frameAt(ORIGIN, top), top)))).toBe(true)
+    const nullTop = topAt('null')
+    expect(framedByAnotherOrigin(opaque(shellUnder(nullTop, nullTop, ['null'])))).toBe(true)
   })
 
   describe('where the browser lists no frames, walking up to the top', () => {
@@ -87,7 +104,6 @@ describe('whether another origin frames the shell', () => {
 describe('the shell in another site’s frame', () => {
   it('starts no app, and offers to open Decentraland in a tab of its own', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
-    vi.stubGlobal('crossOriginIsolated', false)
     mountPlayShell()
     expect(document.querySelector('iframe')).toBeNull()
     expect(document.body.textContent).toContain("Decentraland can't run inside another site.")

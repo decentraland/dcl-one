@@ -4992,6 +4992,10 @@
       "path": "library/ui/apps/hud/test",
       "entries": [
         {
+          "name": "armedButton.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "arrowKeys.test.ts",
           "kind": "regular"
         },
@@ -8617,7 +8621,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/ArmedButton.tsx",
-      "sha256": "36e1bf00b47df21b2bd9d572f57af5519985f9ac6350c9e14e2c152887e371e1"
+      "sha256": "30b07387265952b3a41b3544f7aa113b804c227f8b2028416d4f383fba9c5089"
     },
     {
       "path": "library/ui/apps/hud/design/Avatar.module.css",
@@ -8897,7 +8901,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "bb7676d7f84cbe45d93707b39040f123311155b15370ec8dd6876cfb16ce20f7"
+      "sha256": "4fb4daad4575f013a6bfd83fba314acec4edb9c5b1c74ff109a271a816f8a460"
     },
     {
       "path": "library/ui/apps/hud/design/Skeleton.module.css",
@@ -10254,6 +10258,10 @@
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
       "sha256": "8590e76474511e9aebd9b32a200136d84800353d00eaac6637cd7b98c459bac9"
+    },
+    {
+      "path": "library/ui/apps/hud/test/armedButton.test.tsx",
+      "sha256": "aa2a9e52797a7cf5a33ba2b543ea1b84ea1dedf8fdbc3be178fca3089e6d4dc0"
     },
     {
       "path": "library/ui/apps/hud/test/arrowKeys.test.ts",
@@ -15782,6 +15790,21 @@
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/ArmedButton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/ArmedButton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/ArmedButton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
       "to": "library/ui/apps/hud/design/Avatar.tsx",
       "kind": "native:runtime"
     },
@@ -37438,6 +37461,21 @@
     {
       "from": "library/ui/apps/hud/lib/useWindowKeyDown.ts",
       "to": "library/explorer-core/lib/inputLock.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/armedButton.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/armedButton.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/armedButton.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -47163,6 +47201,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/lib/useWindowKeyDown.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/armedButton.test.tsx",
       "kind": "type"
     },
     {

@@ -7,12 +7,12 @@
 import { useEffect, useState } from 'react'
 import { Button } from './Button'
 
-/** How long a confirm waits before it answers: as long as the Shop's BUY ITEM. */
+/** How long a confirm waits before it answers. The Shop's BUY ITEM waits as long, in its own copy
+ *  (ShopPurchaseDialog's ArmedButton). */
 export const ARM_MS = 500
 
-type ArmedButtonProps = Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'> & {
-  variant?: React.ComponentProps<typeof Button>['variant']
-  size?: React.ComponentProps<typeof Button>['size']
+/** Every prop of Button's `<button>` form (variant, size, radius and the element's own), with a plain onClick. */
+type ArmedButtonProps = Omit<Extract<React.ComponentProps<typeof Button>, { href?: undefined }>, 'onClick'> & {
   onClick?: () => void
 }
 
