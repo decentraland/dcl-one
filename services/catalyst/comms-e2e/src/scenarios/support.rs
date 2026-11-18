@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 
-use crate::engine::{Ctx, expect_or, holds_for};
+use crate::engine::{Ctx, Transport, expect_or, holds_for};
 use crate::identity::Identity;
 use crate::pulse::{PulseBot, Subject, messages};
 
@@ -210,6 +210,29 @@ pub async fn walk(bot: &PulseBot, from: [f32; 3], to: [f32; 3], steps: u32) -> R
         tokio::time::sleep(PACE).await;
     }
     Ok(())
+}
+
+/// The UDP address of the Pulse server the bots of this run dial: the ENet address, or the
+/// host and port of the WebTransport URL. A fault link in front of Pulse relays to it.
+pub async fn pulse_udp_address(ctx: &Ctx) -> Result<std::net::SocketAddr> {
+    match ctx.transport() {
+        Transport::Enet => Ok(ctx.stack().pulse_enet),
+        Transport::WebTransport => {
+            let target =
+                ctx.stack().pulse_webtransport.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("the stack file has no Pulse over WebTransport")
+                })?;
+            let host = target
+                .url
+                .host_str()
+                .ok_or_else(|| anyhow::anyhow!("{} has no host", target.url))?;
+            let port = target.url.port().unwrap_or(443);
+            tokio::net::lookup_host((host, port))
+                .await?
+                .find(|address| address.is_ipv4())
+                .ok_or_else(|| anyhow::anyhow!("{host} has no IPv4 address"))
+        }
+    }
 }
 
 /// The disconnect code a failed dial names, if its message names one: a dial that ends with the

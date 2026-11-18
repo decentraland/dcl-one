@@ -17,10 +17,12 @@ use parking_lot::Mutex;
 
 use super::support::{
     PACE, SOON, enter_at, expect_gone, expect_roster, expect_sees, expect_sees_at, leave,
-    leave_all, listener_identity, meeting_place, metric_total, offset, refusal_code_in,
-    sorted_wallets, stay_connected, walk, while_alive,
+    leave_all, listener_identity, meeting_place, metric_total, offset, pulse_udp_address,
+    refusal_code_in, sorted_wallets, stay_connected, walk, while_alive,
 };
-use crate::engine::{Ctx, Needs, Scenario, ScenarioFuture, expect_or, holds_for, together};
+use crate::engine::{
+    Ctx, Needs, Scenario, ScenarioFuture, Transport, expect_or, holds_for, together,
+};
 use crate::fault::{Direction, Fault, FaultLink};
 use crate::identity::{Identity, now_ms};
 use crate::pulse::{
@@ -1810,6 +1812,31 @@ async fn walker_behind(
     Ok((walker, identity))
 }
 
+/// How often a quiet observer sends something on WebTransport during a long stall.
+const OBSERVER_KEEP_ALIVE: Duration = Duration::from_secs(10);
+
+/// What differs between the transports while the walker is stalled for longer than the transport
+/// timeout. The observer is quiet then: nobody moves, so Pulse sends it nothing. ENet pings keep a
+/// quiet peer connected for as long as it hears the server. A WebTransport session has no
+/// keep-alive on either side, and QUIC's idle timeout (30 s, stated in the server's QUIC
+/// configuration) ends a session that neither sends nor receives for that long, with no close
+/// code. So on WebTransport the observer repeats its position every [`OBSERVER_KEEP_ALIVE`]; on
+/// ENet this never returns and sends nothing. Returns only if the observer's connection has ended.
+async fn keep_quiet_observer_connected(
+    ctx: &Ctx,
+    observer: &PulseBot,
+    spot: [f32; 3],
+) -> Result<()> {
+    if ctx.transport() == Transport::Enet {
+        return std::future::pending().await;
+    }
+    loop {
+        tokio::time::sleep(OBSERVER_KEEP_ALIVE).await;
+        observer.expect_alive()?;
+        observer.move_to(spot)?;
+    }
+}
+
 async fn stall_and_resume(ctx: Ctx) -> Result<()> {
     let realm = ctx.realm("arena");
     let here = meeting_place(&ctx);
@@ -1825,7 +1852,7 @@ async fn stall_and_resume(ctx: Ctx) -> Result<()> {
         &ctx,
         "pulse-link",
         "127.0.0.1:0".parse()?,
-        ctx.stack().pulse_enet,
+        pulse_udp_address(&ctx).await?,
     )
     .await?;
 
@@ -1878,18 +1905,23 @@ async fn stall_and_resume(ctx: Ctx) -> Result<()> {
     let wallet = identity.address();
     let stalled_at = Instant::now();
     link.set(Direction::Both, Fault::Stall);
-    let code = expect_or(
-        &ctx,
-        "the walker's connection ends within the transport timeout",
-        LONG_STALL_DEADLINE,
-        || {
-            walker
-                .view()
-                .disconnect
-                .ok_or_else(|| "still connected".to_owned())
-        },
-    )
-    .await;
+    let code = tokio::select! {
+        code = expect_or(
+            &ctx,
+            "the walker's connection ends within the transport timeout",
+            LONG_STALL_DEADLINE,
+            || {
+                walker
+                    .view()
+                    .disconnect
+                    .ok_or_else(|| "still connected".to_owned())
+            },
+        ) => code,
+        kept = keep_quiet_observer_connected(&ctx, &observer, offset(here, 0.0, 2.0)) => {
+            kept?;
+            bail!("the observer's keep-alive ended")
+        }
+    };
     // the link is passing again whatever happened, so the connection can end its own way
     ctx.note(
         "transport_timeout_ms",
@@ -1903,14 +1935,19 @@ async fn stall_and_resume(ctx: Ctx) -> Result<()> {
         );
     }
     // the server drops the silent session as well
-    expect_gone(
-        &ctx,
-        &observer,
-        "the walker after the long stall",
-        &wallet,
-        LONG_STALL_DEADLINE,
-    )
-    .await?;
+    tokio::select! {
+        gone = expect_gone(
+            &ctx,
+            &observer,
+            "the walker after the long stall",
+            &wallet,
+            LONG_STALL_DEADLINE,
+        ) => gone?,
+        kept = keep_quiet_observer_connected(&ctx, &observer, offset(here, 0.0, 2.0)) => {
+            kept?;
+            bail!("the observer's keep-alive ended")
+        }
+    }
     link.restore();
 
     let again = PulseBot::enter(&ctx, "walker-again", &identity).await?;
