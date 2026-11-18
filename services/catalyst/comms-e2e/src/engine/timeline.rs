@@ -143,9 +143,7 @@ fn redact_authorization(text: &str) -> String {
                 .unwrap_or(value.len())
         };
         let length = if quoted {
-            value
-                .find(['"', '\'', '\r', '\n'])
-                .unwrap_or(value.len())
+            value.find(['"', '\'', '\r', '\n']).unwrap_or(value.len())
         } else {
             let first = token_end(value);
             let scheme = value[..first].to_ascii_lowercase();
