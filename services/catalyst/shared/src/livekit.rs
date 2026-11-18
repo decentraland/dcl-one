@@ -252,7 +252,7 @@ pub struct ParticipantInfo {
     /// `permission.canUpdateMetadata` (either proto-JSON spelling); `None`
     /// when the two spellings disagree or the value is not a bool.
     pub can_update_metadata: Option<bool>,
-    /// `joinedAt`, unix seconds; `None` when absent or malformed.
+    /// `joined_at` (or `joinedAt`), unix seconds; `None` when absent or malformed.
     pub joined_at: Option<i64>,
 }
 
@@ -476,8 +476,8 @@ pub struct OccupancyRoom {
 pub struct OccupancyParticipant {
     pub identity: String,
     pub sid: String,
-    /// When the participant joined, in milliseconds (`joinedAtMs`, else
-    /// `joinedAt` seconds); 0 when LiveKit sent neither.
+    /// When the participant joined, in milliseconds (`joined_at_ms`, else
+    /// `joined_at` seconds; or their camelCase spellings); 0 when LiveKit sent neither.
     pub joined_at_ms: i64,
 }
 
@@ -536,9 +536,12 @@ fn recovery_participants(
             if !identities.insert(identity.clone()) || !sids.insert(sid.clone()) {
                 return Err(RoomServiceError::InvalidResponse);
             }
-            let joined_at_ms = json_i64(value.get("joinedAtMs"))
+            let joined_at_ms = json_i64(proto_field(value, "joined_at_ms", "joinedAtMs"))
                 .filter(|ms| *ms > 0)
-                .or_else(|| json_i64(value.get("joinedAt")).map(|s| s.saturating_mul(1000)))
+                .or_else(|| {
+                    json_i64(proto_field(value, "joined_at", "joinedAt"))
+                        .map(|s| s.saturating_mul(1000))
+                })
                 .unwrap_or(0);
             Ok(OccupancyParticipant {
                 identity,
@@ -1377,7 +1380,10 @@ fn ingress_streaming_state(
     }
     let status = items
         .iter()
-        .find(|item| item.get("ingressId").and_then(|v| v.as_str()) == Some(ingress_id))
+        .find(|item| {
+            proto_field(item, "ingress_id", "ingressId").and_then(|v| v.as_str())
+                == Some(ingress_id)
+        })
         .and_then(|item| item.get("state"))
         .and_then(|state| state.get("status"));
     Ok(match status {
@@ -1395,16 +1401,25 @@ fn ingress_streaming_state(
     })
 }
 
+/// A field of a Twirp response. LiveKit's Twirp server answers with the proto
+/// field names (`stream_key`), the protojson default is lowerCamelCase
+/// (`streamKey`); either is read.
+fn proto_field<'a>(
+    v: &'a serde_json::Value,
+    snake: &str,
+    camel: &str,
+) -> Option<&'a serde_json::Value> {
+    v.get(snake).or_else(|| v.get(camel))
+}
+
 fn parse_ingress(v: &serde_json::Value) -> IngressInfo {
     IngressInfo {
-        ingress_id: v
-            .get("ingressId")
+        ingress_id: proto_field(v, "ingress_id", "ingressId")
             .and_then(|s| s.as_str())
             .unwrap_or_default()
             .to_string(),
         url: v.get("url").and_then(|s| s.as_str()).map(String::from),
-        stream_key: v
-            .get("streamKey")
+        stream_key: proto_field(v, "stream_key", "streamKey")
             .and_then(|s| s.as_str())
             .map(String::from),
     }
@@ -1437,7 +1452,7 @@ fn parse_participant(p: &serde_json::Value) -> ParticipantInfo {
                     (None, None) => Some(false),
                 },
             ),
-        joined_at: p.get("joinedAt").and_then(|t| match t {
+        joined_at: proto_field(p, "joined_at", "joinedAt").and_then(|t| match t {
             serde_json::Value::String(s) => s.parse().ok(),
             other => other.as_i64(),
         }),
@@ -2314,6 +2329,40 @@ mod tests {
 #[cfg(test)]
 mod streaming_state_tests {
     use super::*;
+
+    #[test]
+    fn twirp_answers_in_proto_field_names_are_read() {
+        // CreateIngress as livekit-server 1.13.11 answered it to the API's request.
+        let created = serde_json::json!({"ingress_id":"IN_JdFrFZ4zqHUW", "name":"t",
+            "stream_key":"Hya8EjynB7EW", "url":"rtmp://127.0.0.1:17891/x", "input_type":"RTMP_INPUT",
+            "bypass_transcoding":false, "enable_transcoding":true, "room_name":"room1",
+            "participant_identity":"obs", "reusable":true,
+            "state":{"status":"ENDPOINT_INACTIVE", "error":"", "tracks":[]}});
+        let info = parse_ingress(&created);
+        assert_eq!(info.ingress_id, "IN_JdFrFZ4zqHUW");
+        assert_eq!(info.url.as_deref(), Some("rtmp://127.0.0.1:17891/x"));
+        assert_eq!(info.stream_key.as_deref(), Some("Hya8EjynB7EW"));
+        let listed = serde_json::json!({"items":[
+            {"ingress_id":"IN_JdFrFZ4zqHUW","state":{"status":"ENDPOINT_PUBLISHING"}}]});
+        assert_eq!(
+            ingress_streaming_state(&listed, "IN_JdFrFZ4zqHUW").unwrap(),
+            Some(true)
+        );
+        let participant = parse_participant(&serde_json::json!({"sid":"PA_1","identity":"obs",
+            "joined_at":"1700000000","joined_at_ms":"1700000000123",
+            "permission":{"can_update_metadata":true}}));
+        assert_eq!(participant.joined_at, Some(1_700_000_000));
+        assert_eq!(participant.can_update_metadata, Some(true));
+        let occupancy = recovery_participants(&serde_json::json!({"participants":[
+            {"identity":"obs","sid":"PA_1","joined_at":"1700000000","joined_at_ms":"1700000000123"},
+            {"identity":"cam","sid":"PA_2","joined_at":1700000001}]}))
+        .unwrap();
+        assert_eq!(
+            occupancy.iter().map(|p| p.joined_at_ms).collect::<Vec<_>>(),
+            [1_700_000_000_123, 1_700_000_001_000]
+        );
+    }
+
     #[test]
     fn ingress_states_are_conservative_and_exact() {
         for (status, expected) in [
