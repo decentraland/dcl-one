@@ -300,6 +300,23 @@ impl Stack {
         Ok(())
     }
 
+    /// The names of the environment variables the stack file says hold secrets: the moderator
+    /// token, the LiveKit key and secret and the scene listener key. A child process that has no
+    /// use for them is started without them.
+    pub fn secret_variables(&self) -> Vec<&str> {
+        [
+            self.moderator_token_env.as_deref(),
+            self.scene_listener_key_env.as_deref(),
+            self.livekit.as_ref().map(|target| target.key_env.as_str()),
+            self.livekit
+                .as_ref()
+                .map(|target| target.secret_env.as_str()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+
     /// The value of a secret named by an environment variable.
     pub fn secret(variable: &str) -> Result<String> {
         std::env::var(variable)

@@ -16,7 +16,7 @@ use tokio::process::{Child, Command};
 
 use crate::engine::{Ctx, Timeline};
 use crate::fault::{Direction, Fault, FaultLink};
-use crate::stack::ExplorerTarget;
+use crate::stack::{ExplorerTarget, Stack};
 
 /// The fault links in front of everything the explorer dials.
 pub struct Fronts {
@@ -91,6 +91,42 @@ impl Fronts {
     pub fn restore_all(&self) {
         self.all().for_each(FaultLink::restore);
     }
+}
+
+/// The explorer's command line and environment. The console token travels in the environment,
+/// where other processes cannot read it; the stack's secrets (the moderator token, the LiveKit key
+/// and secret, the scene listener key) are removed from what the child inherits.
+fn explorer_command(
+    stack: &Stack,
+    target: &ExplorerTarget,
+    options: &ExplorerOptions,
+    port: u16,
+    token: &str,
+) -> Command {
+    let front = format!("http://{}", target.api_front);
+    let mut command = Command::new(&target.binary);
+    command
+        .arg("--realm")
+        .arg(&front)
+        .arg("--position")
+        .arg(format!("{},{}", options.position.0, options.position.1))
+        .arg("--catalyst")
+        .arg(&front)
+        .arg("--comms-gatekeeper")
+        .arg(format!("{front}/comms-gatekeeper"))
+        .arg("--pulse-server")
+        .arg(target.pulse_front.to_string())
+        .arg("--wallet-seed")
+        .arg(options.wallet_seed.to_string())
+        .arg("--automation-port")
+        .arg(port.to_string())
+        .args(&target.arguments)
+        .args(&options.extra);
+    for variable in stack.secret_variables() {
+        command.env_remove(variable);
+    }
+    command.env("DCL_AUTOMATION_TOKEN", token);
+    command
 }
 
 fn explorer_target(ctx: &Ctx) -> Result<&ExplorerTarget> {
@@ -177,28 +213,8 @@ impl Explorer {
                 Sha256::digest(format!("{}/{}/{}", ctx.run_id(), name, options.wallet_seed));
             20_000 + (u16::from_be_bytes([digest[0], digest[1]]) % 20_000)
         });
-        let front = format!("http://{}", target.api_front);
-
-        let mut command = Command::new(&target.binary);
+        let mut command = explorer_command(ctx.stack(), target, &options, port, &token);
         command
-            .arg("--realm")
-            .arg(&front)
-            .arg("--position")
-            .arg(format!("{},{}", options.position.0, options.position.1))
-            .arg("--catalyst")
-            .arg(&front)
-            .arg("--comms-gatekeeper")
-            .arg(format!("{front}/comms-gatekeeper"))
-            .arg("--pulse-server")
-            .arg(target.pulse_front.to_string())
-            .arg("--wallet-seed")
-            .arg(options.wallet_seed.to_string())
-            .arg("--automation-port")
-            .arg(port.to_string())
-            .args(&target.arguments)
-            .args(&options.extra)
-            // the token travels in the environment, where other processes cannot read it
-            .env("DCL_AUTOMATION_TOKEN", &token)
             .stdin(Stdio::null())
             .stdout(std::fs::File::create(&log)?)
             .stderr(std::fs::OpenOptions::new().append(true).open(&log)?)
@@ -459,4 +475,49 @@ fn console_token() -> String {
         .expect("the operating system gives entropy")
         .private_key_hex();
     key.trim_start_matches("0x")[..32].to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_explorer_is_started_without_the_stacks_secrets() {
+        let stack = Stack::parse(
+            "api = \"http://127.0.0.1:1\"
+pulse_enet = \"127.0.0.1:9\"
+moderator_token_env = \"E2E_MODERATOR\"
+scene_listener_key_env = \"E2E_SCENE\"
+[livekit]
+url = \"http://127.0.0.1:2\"
+key_env = \"E2E_KEY\"
+secret_env = \"E2E_SECRET\"
+[explorer]
+binary = \"explorer\"
+api_front = \"127.0.0.1:3\"
+pulse_front = \"127.0.0.1:4\"
+",
+        )
+        .unwrap();
+        let target = stack.explorer.as_ref().unwrap();
+        let command = explorer_command(&stack, target, &ExplorerOptions::default(), 1234, "tok");
+        let environment: std::collections::BTreeMap<String, Option<String>> = command
+            .as_std()
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        // `None` is an explicit removal from the inherited environment
+        for variable in ["E2E_MODERATOR", "E2E_SCENE", "E2E_KEY", "E2E_SECRET"] {
+            assert_eq!(environment.get(variable), Some(&None), "{variable}");
+        }
+        assert_eq!(
+            environment.get("DCL_AUTOMATION_TOKEN"),
+            Some(&Some("tok".to_owned()))
+        );
+    }
 }

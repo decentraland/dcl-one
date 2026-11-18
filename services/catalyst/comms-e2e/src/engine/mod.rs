@@ -386,6 +386,14 @@ pub async fn run_scenarios(
 
 /// One repeat: its error, a panic or the deadline all end it as a failure with a reason.
 async fn run_once(scenario: &Scenario, ctx: Ctx, deadline: Duration) -> Result<(), String> {
+    // the text of every failure passes here: errors built from child output or client errors can
+    // carry a connection string or a token
+    run_unredacted(scenario, ctx, deadline)
+        .await
+        .map_err(|text| timeline::redact_text(&text))
+}
+
+async fn run_unredacted(scenario: &Scenario, ctx: Ctx, deadline: Duration) -> Result<(), String> {
     let work = std::panic::AssertUnwindSafe((scenario.run)(ctx)).catch_unwind();
     match tokio::time::timeout(deadline, work).await {
         Ok(Ok(Ok(()))) => Ok(()),

@@ -273,6 +273,90 @@ async fn holds_for_fails_at_the_first_break() {
     );
 }
 
+const SECRET_JWT: &str = "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl";
+
+/// The text of a failure that names an address, a hash and three kinds of secret.
+fn leaky_text(through: &str) -> String {
+    format!(
+        "{through}: connect to wss://host.example/rtc?access_token=SECRETCONNECTION&room=r1 \
+         failed, Authorization: Bearer SECRETBEARER rejected for 0xabc123 \
+         (hash deadbeef), token {SECRET_JWT} expired"
+    )
+}
+
+fn assert_clean(text: &str, through: &str) {
+    for secret in [
+        "SECRETCONNECTION",
+        "SECRETBEARER",
+        SECRET_JWT,
+        "eyJhbGciOiJFUzI1NiJ9",
+    ] {
+        assert!(!text.contains(secret), "{through} leaked {secret}: {text}");
+    }
+    // the rest of the message is intact
+    for kept in [
+        "wss://host.example/rtc?access_token=<redacted>&room=r1",
+        "0xabc123",
+        "hash deadbeef",
+        "expired",
+    ] {
+        assert!(text.contains(kept), "{through} lost {kept}: {text}");
+    }
+}
+
+#[tokio::test]
+async fn secrets_in_an_error_do_not_reach_the_report() {
+    fn returns_the_error(_ctx: Ctx) -> ScenarioFuture {
+        Box::pin(async { Err(anyhow::anyhow!(leaky_text("the scenario error"))) })
+    }
+    fn panics_with_it(_ctx: Ctx) -> ScenarioFuture {
+        Box::pin(async { panic!("{}", leaky_text("the panic")) })
+    }
+    fn fails_an_expectation(ctx: Ctx) -> ScenarioFuture {
+        Box::pin(async move {
+            expect_or(&ctx, "it connects", Duration::from_millis(20), || {
+                Err::<(), _>(leaky_text("the reason"))
+            })
+            .await
+        })
+    }
+    fn breaks_a_hold(ctx: Ctx) -> ScenarioFuture {
+        Box::pin(async move {
+            holds_for(&ctx, "it stays", Duration::from_millis(200), || {
+                Err(leaky_text("the break"))
+            })
+            .await
+        })
+    }
+    let scenarios = [
+        scenario("error", returns_the_error),
+        scenario("panic", panics_with_it),
+        scenario("expectation", fails_an_expectation),
+        scenario("hold", breaks_a_hold),
+    ];
+    let selection: Vec<&Scenario> = scenarios.iter().collect();
+    let report = run_scenarios(stack(), &selection, &options()).await;
+
+    let rendered = report.render(50);
+    let file =
+        std::env::temp_dir().join(format!("comms-e2e-redaction-{}.json", std::process::id()));
+    report.write_json(&file).unwrap();
+    let json = std::fs::read_to_string(&file).unwrap();
+    let _ = std::fs::remove_file(&file);
+
+    for result in &report.results {
+        let Outcome::Failed { expectation, .. } = &result.outcome else {
+            panic!("{} should have failed", result.name);
+        };
+        assert_clean(expectation, &result.name);
+    }
+    for secret in ["SECRETCONNECTION", "SECRETBEARER", SECRET_JWT] {
+        assert!(!rendered.contains(secret), "render leaked {secret}");
+        assert!(!json.contains(secret), "the JSON report leaked {secret}");
+    }
+    assert!(rendered.contains("0xabc123") && json.contains("0xabc123"));
+}
+
 #[tokio::test]
 async fn notes_survive_a_pass() {
     fn notes(ctx: Ctx) -> ScenarioFuture {

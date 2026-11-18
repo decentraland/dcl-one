@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, bail};
 
 use super::Ctx;
+use super::timeline::redact_text;
 
 /// How often a condition is looked at.
 const TICK: Duration = Duration::from_millis(5);
@@ -90,6 +91,7 @@ pub async fn holds_for(
     let started = Instant::now();
     while started.elapsed() < window {
         if let Err(reason) = probe() {
+            let reason = redact_text(&reason);
             ctx.record("expect", "broken", serde_json::json!({ "what": what, "after_ms": started.elapsed().as_millis() as u64, "reason": reason }));
             bail!(
                 "expected for {} ms: {what}; broken after {} ms: {reason}",
@@ -109,10 +111,12 @@ pub async fn holds_for(
 
 fn not_met(ctx: &Ctx, what: &str, started: Instant, reason: &str) -> anyhow::Error {
     let waited = started.elapsed().as_millis() as u64;
+    // every failure text of a wait passes here (or through `holds_for`): no secret leaves it
+    let reason = redact_text(reason);
     let reason = reason
         .strip_prefix("fatal:")
         .map(str::trim)
-        .unwrap_or(reason);
+        .unwrap_or(&reason);
     ctx.record(
         "expect",
         "not met",

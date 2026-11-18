@@ -203,6 +203,29 @@ pub fn to_real_address(connection: &str, relay: &Relay) -> String {
     }
 }
 
+/// The client's command line and environment: the connection string travels in the environment,
+/// and none of the stack's secrets do.
+fn join_command(
+    stack: &Stack,
+    binary: PathBuf,
+    connection: &str,
+    publish_microphone: bool,
+) -> Command {
+    let mut command = Command::new(binary);
+    command
+        .arg("join")
+        .arg("--connection-string-env")
+        .arg(CONNECTION_VARIABLE);
+    if publish_microphone {
+        command.arg("--publish-microphone");
+    }
+    command.env(CONNECTION_VARIABLE, connection);
+    for variable in stack.secret_variables() {
+        command.env_remove(variable);
+    }
+    command
+}
+
 struct Shared {
     name: String,
     ctx: Ctx,
@@ -259,20 +282,7 @@ impl LiveKitJoin {
             },
             _ => connection.to_owned(),
         };
-        let mut command = Command::new(binary);
-        command
-            .arg("join")
-            .arg("--connection-string-env")
-            .arg(CONNECTION_VARIABLE);
-        if options.publish_microphone {
-            command.arg("--publish-microphone");
-        }
-        command.env(CONNECTION_VARIABLE, connection);
-        if let Some(target) = &stack.livekit {
-            command
-                .env_remove(&target.key_env)
-                .env_remove(&target.secret_env);
-        }
+        let command = join_command(stack, binary, &connection, options.publish_microphone);
         Self::start_command(ctx, name, command, CONNECT_DEADLINE).await
     }
 
@@ -722,6 +732,33 @@ mod tests {
             1,
             std::env::temp_dir().join("comms-e2e-unit"),
         )
+    }
+
+    #[test]
+    fn the_client_is_started_without_the_stacks_secrets() {
+        let stack = Stack::parse(
+            "api = \"http://127.0.0.1:1\"\npulse_enet = \"127.0.0.1:9\"\nmoderator_token_env = \"E2E_MODERATOR\"\nscene_listener_key_env = \"E2E_SCENE\"\n[livekit]\nurl = \"http://127.0.0.1:2\"\nkey_env = \"E2E_KEY\"\nsecret_env = \"E2E_SECRET\"\n",
+        )
+        .unwrap();
+        let command = join_command(&stack, PathBuf::from("client"), "wss://x/rtc", false);
+        let environment: BTreeMap<String, Option<String>> = command
+            .as_std()
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        // `None` is an explicit removal from the inherited environment
+        for variable in ["E2E_MODERATOR", "E2E_SCENE", "E2E_KEY", "E2E_SECRET"] {
+            assert_eq!(environment.get(variable), Some(&None), "{variable}");
+        }
+        assert_eq!(
+            environment.get(CONNECTION_VARIABLE),
+            Some(&Some("wss://x/rtc".to_owned()))
+        );
     }
 
     fn view_of(lines: &[&str]) -> LiveKitView {
