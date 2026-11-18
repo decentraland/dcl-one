@@ -362,8 +362,8 @@ class PlayImportTests(unittest.TestCase):
     def test_the_in_tree_crates_are_engine_inputs_in_git_and_in_the_nix_contract(self):
         bevy = 'rendering/bevy-explorer/patches/bevy/series/0001-scene-spawner.patch'
         self.write(bevy, 'fn spawn() {}\n')
-        crate = 'rendering/bevy-explorer/vendor/boimp/src/lib.rs'
-        self.write(crate, 'pub fn import() {}\n')
+        crate = 'rendering/bevy-explorer/vendor/bevy_dui/src/lib.rs'
+        self.write(crate, 'pub fn layout() {}\n')
         def git(*args):
             return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid',
                                             *args], cwd=self.root, text=True).strip()
@@ -386,13 +386,13 @@ class PlayImportTests(unittest.TestCase):
         self.assertEqual(key, contract.engine_inputs(filtered))
         self.write(bevy, 'fn spawn_sliced() {}\n')
         self.assertEqual(key, contract.engine_inputs(self.root))
-        self.write(crate, 'pub fn import_sliced() {}\n')
+        self.write(crate, 'pub fn layout_sliced() {}\n')
         self.assertNotEqual(key, contract.engine_inputs(self.root))
 
     def test_an_in_tree_crate_edit_invalidates_the_artifact(self):
-        # bevy_dui, boimp and rpc-rust are compiled from tracked bytes. No .git here: the walk Nix's
+        # bevy_dui and rpc-rust are compiled from tracked bytes. No .git here: the walk Nix's
         # filtered contract takes.
-        name = 'rendering/bevy-explorer/vendor/boimp/src/lib.rs'
+        name = 'rendering/bevy-explorer/vendor/bevy_dui/src/lib.rs'
         key = contract.engine_inputs(self.root)
         self.write(name, name + ' changed\n')
         self.assertNotEqual(key, contract.engine_inputs(self.root))

@@ -653,8 +653,9 @@ fn save_and_zip_callback<T>(
         if let Some(mut prev_archive) = prev_archive {
             let file_names = prev_archive
                 .file_names()
-                .map(ToOwned::to_owned)
-                .collect::<Vec<_>>();
+                .map(|name| name.map(|name| name.into_owned()))
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
             for file in file_names {
                 if file != target_file {
                     archive
