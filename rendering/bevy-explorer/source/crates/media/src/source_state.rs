@@ -371,7 +371,10 @@ fn element_observed(
             set_element_state(state, VideoState::VsError);
             MediaSourceCmd::None
         }
-        (ElementObservation::ReachedEnd, _) if live && reopens => {
+        // an end at an infinite duration is a live drop; a finite one ends normally
+        (ElementObservation::ReachedEnd, _)
+            if snapshot.duration_seconds == f64::INFINITY && reopens =>
+        {
             fail(state, MediaFailureKind::LiveStreamEnded, snapshot)
         }
         (
@@ -380,6 +383,8 @@ fn element_observed(
                 resume_position_seconds,
             },
         ) => {
+            // a live source starts at its live edge
+            let resume_position_seconds = resume_position_seconds.filter(|_| !live);
             state.phase = MediaSourcePhase::Open {
                 element_state: VideoState::VsReady,
                 last_position_seconds: resume_position_seconds.unwrap_or(snapshot.position_seconds),
@@ -849,7 +854,7 @@ mod tests {
         );
         let cmd = update(
             &mut live,
-            observed(ElementObservation::ReachedEnd, snapshot(3.0)),
+            observed(ElementObservation::ReachedEnd, live_snapshot()),
         );
         assert_eq!(cmd, schedule(2, 1));
         assert_eq!(
@@ -989,6 +994,43 @@ mod tests {
         assert_eq!(shown.video_state, VideoState::VsNone);
         assert_eq!(shown.retry_status.failures, 0);
         assert_eq!(shown.duration_seconds, f64::INFINITY);
+    }
+
+    #[test]
+    fn a_live_first_open_ignores_a_seek_and_starts_at_the_live_edge() {
+        let (mut state, _) = init(ID, MediaReopenPolicy::Reopen);
+        update(&mut state, MediaSourceMsg::ScenePlayRequested);
+        update(
+            &mut state,
+            MediaSourceMsg::SceneSeekRequested {
+                position_seconds: 0.0,
+            },
+        );
+        assert_eq!(
+            update(
+                &mut state,
+                observed(ElementObservation::BecamePlayable, live_snapshot())
+            ),
+            MediaSourceCmd::StartPlayback { media_id: ID }
+        );
+    }
+
+    #[test]
+    fn a_once_live_source_that_ends_with_a_finite_duration_ends_normally() {
+        let mut state = playing();
+        update(
+            &mut state,
+            observed(ElementObservation::PositionAdvanced, live_snapshot()),
+        );
+        assert_eq!(
+            update(
+                &mut state,
+                observed(ElementObservation::ReachedEnd, snapshot(60.0))
+            ),
+            MediaSourceCmd::ClearScreen { media_id: ID }
+        );
+        assert_eq!(video_state(&state), VideoState::VsNone);
+        assert_eq!(view(&state).retry_status.failures, 0);
     }
 
     #[test]

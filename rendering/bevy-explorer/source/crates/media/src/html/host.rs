@@ -182,6 +182,7 @@ fn execute(cmd: MediaSourceCmd) {
     match cmd {
         MediaSourceCmd::AttachSource { .. } => {
             debug!("media {media_id}: attaching the source");
+            // the browser plays HLS natively
             if let Some(url) = url {
                 media.set_src(&url);
             }
