@@ -57,6 +57,8 @@ pub struct Needs {
     pub livekit: bool,
     pub moderator: bool,
     pub explorer: bool,
+    /// The stack file names a command that restarts the gatekeeper's process.
+    pub restart: bool,
 }
 
 impl Needs {
@@ -80,6 +82,9 @@ impl Needs {
         }
         if self.explorer && stack.explorer.is_none() {
             missing.push("the headless explorer (`explorer`)");
+        }
+        if self.restart && stack.restart_command.is_none() {
+            missing.push("a restart command (`restart_command`)");
         }
         (!missing.is_empty()).then(|| format!("the stack file has no {}", missing.join(", no ")))
     }
