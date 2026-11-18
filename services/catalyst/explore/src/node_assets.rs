@@ -2,7 +2,7 @@
 
 use url::Url;
 
-use crate::api::posters::HOST_PREFIX;
+use crate::api::posters::{HOST_PREFIX, valid_file};
 
 /// Maps a recognised upstream asset to its path on the node's public domain.
 pub fn node_asset_url(url: &str, domain: &str) -> Option<String> {
@@ -35,7 +35,7 @@ pub fn node_asset_url(url: &str, domain: &str) -> Option<String> {
         host if host.strip_suffix(".decentraland.org") == Some(HOST_PREFIX)
             && ["/poster/", "/poster-vertical/"]
                 .into_iter()
-                .any(|directory| path.strip_prefix(directory).is_some_and(is_asset_segment)) =>
+                .any(|directory| path.strip_prefix(directory).is_some_and(valid_file)) =>
         {
             HOST_PREFIX
         }
@@ -98,7 +98,13 @@ mod tests {
 
     #[test]
     fn maps_each_known_upstream_to_its_node_path() {
+        let longest_poster = format!("{}.webp", "a".repeat(195));
+        let longest_upstream =
+            format!("https://events-assets-099ac00.decentraland.org/poster/{longest_poster}");
+        let longest_node =
+            format!("https://node.example/events-assets-099ac00/poster/{longest_poster}");
         for (upstream, node) in [
+            (longest_upstream.as_str(), longest_node.as_str()),
             (
                 "https://events-assets-099ac00.decentraland.org/poster/abc.webp",
                 "https://node.example/events-assets-099ac00/poster/abc.webp",
@@ -142,7 +148,14 @@ mod tests {
 
     #[test]
     fn leaves_everything_else_untouched() {
+        let long_poster = "a".repeat(196);
+        let long_url = format!(
+            "https://events-assets-099ac00.decentraland.org/poster-vertical/{long_poster}.webp"
+        );
         for untouched in [
+            "https://events-assets-099ac00.decentraland.org/poster/_hidden.webp",
+            "https://events-assets-099ac00.decentraland.org/poster-vertical/.hidden.webp",
+            long_url.as_str(),
             "http://peer.decentraland.org/content/contents/x",
             "https://peer.decentraland.org.evil.example/content/contents/x",
             "https://events-assets-099ac00.decentraland.org.evil.example/poster/a.webp",
