@@ -113,17 +113,20 @@ async fn relay(
         drop(socket);
 
         let generation = shared.generation.load(Ordering::SeqCst);
-        let stale = flows
+        let fate = flows
             .get(&client)
-            .is_some_and(|flow| flow.generation != generation);
-        if stale {
-            if shared.ending.load(Ordering::SeqCst) == ending::HALF_OPEN {
-                // this flow is silent for good
+            .and_then(|flow| shared.fate(flow.generation));
+        match fate {
+            Some(ending::HALF_OPEN) => {
+                // this flow is silent for good, whatever happened to the link since
                 shared.dropped.fetch_add(1, Ordering::Relaxed);
                 continue;
             }
             // cut: the next packet starts a new flow, from a new upstream port
-            flows.remove(&client);
+            Some(_) => {
+                flows.remove(&client);
+            }
+            None => {}
         }
         if let std::collections::hash_map::Entry::Vacant(slot) = flows.entry(client) {
             let Ok(socket) = UdpSocket::bind((client.ip(), 0)).await else {
@@ -178,7 +181,7 @@ async fn downlink(
             Ok(length) => length,
             Err(_) => continue,
         };
-        if shared.generation.load(Ordering::SeqCst) != generation {
+        if shared.fate(generation).is_some() {
             // half-open or cut: this flow answers nobody any more
             shared.dropped.fetch_add(1, Ordering::Relaxed);
             continue;
@@ -224,17 +227,23 @@ where
                 send(packet).await;
             }
         }
+        // A held packet lives no longer than the link: the task that holds it also holds the
+        // listen socket, which must be free when the link is dropped, whatever the delay.
         Fault::Delay { by } => {
+            let shared = shared.clone();
             tokio::spawn(async move {
-                tokio::time::sleep(by).await;
-                send(packet).await;
+                if shared.sleep_unless_closed(by).await {
+                    send(packet).await;
+                }
             });
         }
         Fault::Reorder { window } => {
             let wait = shared.gap(window);
+            let shared = shared.clone();
             tokio::spawn(async move {
-                tokio::time::sleep(wait).await;
-                send(packet).await;
+                if shared.sleep_unless_closed(wait).await {
+                    send(packet).await;
+                }
             });
         }
         Fault::Duplicate => {

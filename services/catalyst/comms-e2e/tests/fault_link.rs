@@ -142,6 +142,115 @@ async fn udp_half_open_silences_the_old_socket_and_cut_moves_the_flow_to_a_new_p
     assert_ne!(seen.recv().await.unwrap(), new_source);
 }
 
+/// A client socket of the link, and the proof that the link serves it.
+async fn udp_client(link: &FaultLink) -> UdpSocket {
+    let client = UdpSocket::bind(ANY).await.unwrap();
+    client.connect(link.address()).await.unwrap();
+    client.send(b"hi").await.unwrap();
+    assert_eq!(
+        receive(&client, SOON).await.as_deref(),
+        Some(&b"echo:hi"[..])
+    );
+    client
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn udp_half_open_then_cut_leaves_the_half_open_flow_silent() {
+    let ctx = ctx("udp-half-then-cut");
+    let (server, mut seen) = udp_echo().await;
+    let link = FaultLink::udp(&ctx, "link", ANY.parse().unwrap(), server)
+        .await
+        .unwrap();
+    let first = udp_client(&link).await;
+    seen.recv().await.unwrap();
+    link.half_open();
+    let between = udp_client(&link).await;
+    let between_source = seen.recv().await.unwrap();
+    link.cut();
+
+    // the half-open flow is not revived by the cut
+    for _ in 0..3 {
+        first.send(b"anyone?").await.unwrap();
+        assert_eq!(
+            receive(&first, QUIET).await,
+            None,
+            "a half-open flow is silent for good"
+        );
+    }
+    assert!(
+        seen.try_recv().is_err(),
+        "the server heard the half-open flow"
+    );
+    // the flow made between the two is cut: it continues from another upstream port
+    between.send(b"after").await.unwrap();
+    assert_eq!(
+        receive(&between, SOON).await.as_deref(),
+        Some(&b"echo:after"[..])
+    );
+    assert_ne!(seen.recv().await.unwrap(), between_source);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn udp_cut_then_half_open_leaves_the_cut_flow_to_start_again() {
+    let ctx = ctx("udp-cut-then-half");
+    let (server, mut seen) = udp_echo().await;
+    let link = FaultLink::udp(&ctx, "link", ANY.parse().unwrap(), server)
+        .await
+        .unwrap();
+    let cut = udp_client(&link).await;
+    let cut_source = seen.recv().await.unwrap();
+    link.cut();
+    let silenced = udp_client(&link).await;
+    seen.recv().await.unwrap();
+    link.half_open();
+
+    // the cut flow starts a new flow with its next packet; the half-open one is silent for good
+    cut.send(b"again").await.unwrap();
+    assert_eq!(
+        receive(&cut, SOON).await.as_deref(),
+        Some(&b"echo:again"[..])
+    );
+    assert_ne!(seen.recv().await.unwrap(), cut_source);
+    silenced.send(b"anyone?").await.unwrap();
+    assert_eq!(receive(&silenced, QUIET).await, None);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_delayed_packet_does_not_hold_the_port_after_the_link_is_dropped() {
+    let ctx = ctx("udp-delay-lifetime");
+    let (server, _seen) = udp_echo().await;
+    let link = FaultLink::udp(&ctx, "link", ANY.parse().unwrap(), server)
+        .await
+        .unwrap();
+    let client = udp_client(&link).await;
+    // the answer is held for far longer than this test runs
+    link.set(
+        Direction::Downlink,
+        Fault::Delay {
+            by: Duration::from_secs(60),
+        },
+    );
+    client.send(b"slow").await.unwrap();
+    assert_eq!(receive(&client, QUIET).await, None);
+    let address = link.address();
+    drop(link);
+    // the port is free again at once, not when the delay is over
+    let mut bound = None;
+    for _ in 0..50 {
+        match std::net::UdpSocket::bind(address) {
+            Ok(socket) => {
+                bound = Some(socket);
+                break;
+            }
+            Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+        }
+    }
+    assert!(
+        bound.is_some(),
+        "the delayed packet still holds the listen socket"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn udp_faults_drop_delay_and_duplicate() {
     let ctx = ctx("udp-faults");
@@ -300,21 +409,157 @@ async fn half_open_keeps_the_tcp_socket_open_and_silent() {
     assert_eq!(seen.recv().await, Some("accepted"));
     assert_eq!(seen.recv().await, Some("read"));
 
-    // a cut ends both the stale and the fresh connection on both sides
+    // a cut ends the fresh connection on both sides; the half-open one was ended by the half-open
+    // and stays silent and open
     link.cut();
     assert_eq!(
         read_some(&mut fresh, SOON).await.as_deref(),
         Some(&b""[..]),
         "the client sees the end"
     );
-    let mut ended = 0;
-    while ended < 2 {
+    expect_events(&mut seen, "ended", 1).await;
+    assert_eq!(
+        read_some(&mut stale, QUIET).await,
+        None,
+        "the half-open socket is still silent and not closed"
+    );
+    assert_no_event(&mut seen, "ended").await;
+    // the link going away releases it
+    drop(link);
+    expect_events(&mut seen, "ended", 1).await;
+}
+
+/// Waits until the server has reported `count` events called `kind`; others are skipped.
+async fn expect_events(
+    seen: &mut tokio::sync::mpsc::UnboundedReceiver<&'static str>,
+    kind: &str,
+    count: usize,
+) {
+    let mut found = 0;
+    while found < count {
         match tokio::time::timeout(SOON, seen.recv()).await {
-            Ok(Some("ended")) => ended += 1,
+            Ok(Some(event)) if event == kind => found += 1,
             Ok(Some(_)) => {}
-            other => panic!("the server did not see both connections end: {other:?}"),
+            other => panic!("the server reported {found} of {count} `{kind}`: {other:?}"),
         }
     }
+}
+
+/// Checks that no event called `kind` arrives for a while.
+async fn assert_no_event(
+    seen: &mut tokio::sync::mpsc::UnboundedReceiver<&'static str>,
+    kind: &str,
+) {
+    let deadline = tokio::time::Instant::now() + QUIET;
+    while let Ok(Some(event)) = tokio::time::timeout_at(deadline, seen.recv()).await {
+        assert_ne!(event, kind, "the server saw a connection end");
+    }
+}
+
+async fn tcp_link(
+    name: &str,
+) -> (
+    Ctx,
+    FaultLink,
+    tokio::sync::mpsc::UnboundedReceiver<&'static str>,
+) {
+    let ctx = ctx(name);
+    let (server, seen) = tcp_echo().await;
+    let link = FaultLink::tcp(&ctx, "link", ANY.parse().unwrap(), server)
+        .await
+        .unwrap();
+    (ctx, link, seen)
+}
+
+/// Connects and proves the connection is served.
+async fn served(link: &FaultLink) -> TcpStream {
+    let mut stream = TcpStream::connect(link.address()).await.unwrap();
+    stream.write_all(b"hi").await.unwrap();
+    assert_eq!(
+        read_some(&mut stream, SOON).await.as_deref(),
+        Some(&b"hi"[..])
+    );
+    stream
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tcp_half_open_then_cut_leaves_the_half_open_connection_silent() {
+    let (_ctx, link, mut seen) = tcp_link("tcp-half-then-cut").await;
+    let mut first = served(&link).await;
+    link.half_open();
+    // a connection made between the two is cut, the half-open one is not
+    let mut between = served(&link).await;
+    link.cut();
+    assert_eq!(
+        read_some(&mut between, SOON).await.as_deref(),
+        Some(&b""[..]),
+        "the connection made between the two is cut"
+    );
+    expect_events(&mut seen, "ended", 1).await;
+    assert_eq!(
+        read_some(&mut first, QUIET).await,
+        None,
+        "a half-open connection stays silent for good: no data, no close"
+    );
+    assert_no_event(&mut seen, "ended").await;
+    // a connection made after both passes
+    let mut after = served(&link).await;
+    after.write_all(b"more").await.unwrap();
+    assert!(read_some(&mut after, SOON).await.is_some());
+    drop(link);
+    expect_events(&mut seen, "ended", 2).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tcp_orphan_then_cut_closes_later_connections_and_keeps_the_orphans() {
+    let (_ctx, link, mut seen) = tcp_link("tcp-orphan-then-cut").await;
+    let mut orphaned = served(&link).await;
+    // back to back: the cut must not change what the orphan already was
+    link.orphan().unwrap();
+    link.cut();
+    assert_eq!(
+        read_some(&mut orphaned, SOON).await.as_deref(),
+        Some(&b""[..]),
+        "the client side of the orphan is closed"
+    );
+    assert_no_event(&mut seen, "ended").await;
+
+    let mut later = served(&link).await;
+    link.cut();
+    assert_eq!(
+        read_some(&mut later, SOON).await.as_deref(),
+        Some(&b""[..]),
+        "a later connection is closed by the cut"
+    );
+    expect_events(&mut seen, "ended", 1).await;
+    // the orphan's stack side is still open until the link goes
+    assert_no_event(&mut seen, "ended").await;
+    drop(link);
+    expect_events(&mut seen, "ended", 1).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tcp_cut_then_half_open_leaves_the_cut_connection_closed() {
+    let (_ctx, link, mut seen) = tcp_link("tcp-cut-then-half").await;
+    let mut cut = served(&link).await;
+    // back to back: the half-open must not change what the cut already was
+    link.cut();
+    link.half_open();
+    assert_eq!(
+        read_some(&mut cut, SOON).await.as_deref(),
+        Some(&b""[..]),
+        "the cut connection is closed"
+    );
+    expect_events(&mut seen, "ended", 1).await;
+
+    let mut silent = served(&link).await;
+    link.half_open();
+    assert_eq!(
+        read_some(&mut silent, QUIET).await,
+        None,
+        "a half-open connection is silent and not closed"
+    );
+    assert_no_event(&mut seen, "ended").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

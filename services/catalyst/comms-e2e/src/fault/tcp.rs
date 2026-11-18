@@ -40,10 +40,15 @@ pub(super) async fn start(
 }
 
 async fn accept(shared: Arc<Shared>, listener: TcpListener, upstream: SocketAddr) {
+    // `accept` can keep failing (no file handles left): back off instead of spinning
+    let mut backoff = std::time::Duration::from_millis(10);
     loop {
         let Ok((client, peer)) = listener.accept().await else {
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(std::time::Duration::from_secs(1));
             continue;
         };
+        backoff = std::time::Duration::from_millis(10);
         let shared = shared.clone();
         tokio::spawn(async move {
             let generation = shared.generation.load(Ordering::SeqCst);
@@ -102,8 +107,12 @@ enum Gate {
 }
 
 fn gate(shared: &Shared, direction: Direction, generation: u64) -> Gate {
-    if shared.generation.load(Ordering::SeqCst) != generation {
-        return match shared.ending.load(Ordering::SeqCst) {
+    // a dropped link ends everything, a half-open connection included
+    if shared.closed.load(Ordering::SeqCst) {
+        return Gate::Close;
+    }
+    if let Some(how) = shared.fate(generation) {
+        return match how {
             ending::CUT => Gate::Close,
             ending::ORPHAN => Gate::Orphan,
             _ => Gate::Wait,
@@ -183,8 +192,10 @@ async fn pump<R, W>(
         if let Some(orphaned) = verdict {
             break orphaned;
         }
-        if let Fault::Delay { by } = fault {
-            tokio::time::sleep(by).await;
+        if let Fault::Delay { by } = fault
+            && !shared.sleep_unless_closed(by).await
+        {
+            break false;
         }
         if to.write_all(&buffer[..length]).await.is_err() {
             break false;

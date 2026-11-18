@@ -9,7 +9,7 @@ mod udp;
 use std::any::Any;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Result, bail};
@@ -68,7 +68,9 @@ pub(crate) struct Faults {
     pub down: Fault,
 }
 
-/// What happens to the flows older than the current generation.
+/// How one generation of flows was ended. A flow belongs to the generation that was current when
+/// it began, and what happens to it is fixed by the step that ended that generation: a later step
+/// never changes it.
 pub(crate) mod ending {
     /// Silent for good, nothing closed.
     pub const HALF_OPEN: u8 = 0;
@@ -83,10 +85,14 @@ pub(crate) struct Shared {
     pub timeline: Timeline,
     pub faults: Mutex<Faults>,
     pub seeded: Mutex<Seeded>,
-    /// Bumped by `half_open`, `cut` and `orphan`: a flow older than this has ended in the way
-    /// `ending` says.
+    /// The generation new flows begin in: the number of endings so far.
     pub generation: AtomicU64,
-    pub ending: AtomicU8,
+    /// How each generation ended, indexed by generation: `half_open`, `cut` and `orphan` each push
+    /// one entry (and so start the next generation). A flow of generation `g` is ended once
+    /// `endings[g]` exists, and in the way it says.
+    pub endings: Mutex<Vec<u8>>,
+    /// The link has been dropped: everything still running lets go of what it holds.
+    pub closed: AtomicBool,
     /// UDP: the listen port is closed, so a packet to it is answered "port unreachable".
     pub port_closed: AtomicBool,
     /// Wakes whatever waits out a stall, and tells it to look at the generation.
@@ -107,6 +113,38 @@ impl Shared {
         match direction {
             Direction::Uplink => faults.up,
             _ => faults.down,
+        }
+    }
+
+    /// Ends the current generation of flows in the way `how` says and starts the next one.
+    pub fn end_generation(&self, how: u8) {
+        let mut endings = self.endings.lock();
+        endings.push(how);
+        self.generation
+            .store(endings.len() as u64, Ordering::SeqCst);
+    }
+
+    /// How the flows of `generation` were ended, or `None` while that generation is current.
+    pub fn fate(&self, generation: u64) -> Option<u8> {
+        self.endings.lock().get(generation as usize).copied()
+    }
+
+    /// Sleeps for `by`, or until the link is dropped. `false`: the link was dropped. Registers for
+    /// a wake-up before it looks at the state, so a drop that lands in between is not missed.
+    pub async fn sleep_unless_closed(&self, by: Duration) -> bool {
+        let sleep = tokio::time::sleep(by);
+        tokio::pin!(sleep);
+        loop {
+            let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if self.closed.load(Ordering::SeqCst) {
+                return false;
+            }
+            tokio::select! {
+                _ = &mut sleep => return true,
+                _ = &mut changed => {}
+            }
         }
     }
 
@@ -204,7 +242,8 @@ impl FaultLink {
             }),
             seeded: Mutex::new(Seeded::new(ctx.seed() ^ 0x6c69_6e6b)),
             generation: AtomicU64::new(0),
-            ending: AtomicU8::new(ending::HALF_OPEN),
+            endings: Mutex::new(Vec::new()),
+            closed: AtomicBool::new(false),
             port_closed: AtomicBool::new(false),
             changed: Notify::new(),
             parked: Mutex::new(Vec::new()),
@@ -251,20 +290,22 @@ impl FaultLink {
     }
 
     fn end_flows(&self, how: u8, label: &str) {
-        self.shared.ending.store(how, Ordering::SeqCst);
-        self.shared.generation.fetch_add(1, Ordering::SeqCst);
+        self.shared.end_generation(how);
         self.shared.record(label, ());
         self.shared.changed.notify_waiters();
     }
 
     /// The flows that exist now go silent for good, with nothing closed: neither side is told.
-    /// A new flow from the same client passes. This is a socket both ends still believe in.
+    /// A new flow from the same client passes. This is a socket both ends still believe in. A
+    /// later `cut` or `orphan` ends only the flows made after this call: these stay silent until
+    /// the link is dropped.
     pub fn half_open(&self) {
         self.end_flows(ending::HALF_OPEN, "half-open");
     }
 
     /// The flows that exist now are closed: on TCP both sides see the connection end, on UDP the
     /// next packet of a client starts a new flow from a new port, as after an address change.
+    /// Flows that were already half-opened or orphaned stay as they are.
     pub fn cut(&self) {
         self.end_flows(ending::CUT, "cut");
     }
@@ -311,8 +352,8 @@ impl Drop for FaultLink {
         for task in &self.tasks {
             task.abort();
         }
-        self.shared.ending.store(ending::CUT, Ordering::SeqCst);
-        self.shared.generation.fetch_add(1, Ordering::SeqCst);
+        self.shared.closed.store(true, Ordering::SeqCst);
+        self.shared.end_generation(ending::CUT);
         self.shared.parked.lock().clear();
         self.shared.changed.notify_waiters();
     }
