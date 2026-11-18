@@ -42,7 +42,7 @@ impl Seeded {
         Self(seed)
     }
 
-    pub fn next(&mut self) -> u64 {
+    pub fn draw(&mut self) -> u64 {
         // splitmix64
         self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
         let mut z = self.0;
@@ -53,7 +53,7 @@ impl Seeded {
 
     /// A value in `0..bound`; 0 when `bound` is 0.
     pub fn below(&mut self, bound: u64) -> u64 {
-        if bound == 0 { 0 } else { self.next() % bound }
+        if bound == 0 { 0 } else { self.draw() % bound }
     }
 
     /// A gap in `0..=window`, in whole microseconds.

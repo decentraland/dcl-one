@@ -420,7 +420,7 @@ async fn refusal_codes(ctx: Ctx) -> Result<()> {
                     messages::emote_start(
                         "wave",
                         Some(limits.max_emote_duration_ms.saturating_add(1)),
-                        Some(standing.clone()),
+                        Some(standing),
                         None,
                     ),
                     Channel::Reliable,
@@ -1293,7 +1293,7 @@ async fn churner(
         let last = Instant::now() + stay >= until;
         tokio::time::sleep(stay).await;
         bot.expect_alive()?;
-        if last && slot % 2 == 0 {
+        if last && slot.is_multiple_of(2) {
             return Ok(Some((bot, identity.address())));
         }
         leave(ctx, bot).await?;

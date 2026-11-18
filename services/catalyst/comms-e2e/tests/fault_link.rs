@@ -512,11 +512,10 @@ async fn a_closed_udp_port_is_unreachable_and_reopens_with_the_flow_intact() {
         let _ = client.send(b"back").await;
         if let Ok(Ok(length)) =
             tokio::time::timeout(Duration::from_millis(50), client.recv(&mut buffer)).await
+            && &buffer[..length] == b"echo:back"
         {
-            if &buffer[..length] == b"echo:back" {
-                echoed = true;
-                break;
-            }
+            echoed = true;
+            break;
         }
     }
     assert!(echoed, "nothing passed after the port reopened");

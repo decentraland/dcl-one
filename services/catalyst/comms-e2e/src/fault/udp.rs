@@ -125,7 +125,7 @@ async fn relay(
             // cut: the next packet starts a new flow, from a new upstream port
             flows.remove(&client);
         }
-        if !flows.contains_key(&client) {
+        if let std::collections::hash_map::Entry::Vacant(slot) = flows.entry(client) {
             let Ok(socket) = UdpSocket::bind((client.ip(), 0)).await else {
                 shared.record(
                     "flow failed",
@@ -146,14 +146,11 @@ async fn relay(
                 client,
                 generation,
             ));
-            flows.insert(
-                client,
-                Flow {
-                    upstream: socket,
-                    generation,
-                    pump: pump.abort_handle(),
-                },
-            );
+            slot.insert(Flow {
+                upstream: socket,
+                generation,
+                pump: pump.abort_handle(),
+            });
         }
         let flow = &flows[&client];
         let packet = buffer[..length].to_vec();

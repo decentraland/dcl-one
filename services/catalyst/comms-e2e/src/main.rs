@@ -231,7 +231,8 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
         }
         Command::Address { key_env } => {
             let key = Stack::secret(&key_env)?;
-            let identity = catalyst_comms_e2e::identity::Identity::from_wallet_key(&key, "address")?;
+            let identity =
+                catalyst_comms_e2e::identity::Identity::from_wallet_key(&key, "address")?;
             println!("{}", identity.address());
             Ok(ExitCode::SUCCESS)
         }

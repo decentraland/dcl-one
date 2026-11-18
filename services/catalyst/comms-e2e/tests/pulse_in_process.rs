@@ -114,7 +114,7 @@ async fn a_long_emote_is_refused_with_code_12(transport: Transport) {
     let state = messages::state_at(bot.grid(), HERE);
     // exactly the limit is fine
     bot.send(
-        messages::emote_start("wave", Some(60_000), state.clone(), None),
+        messages::emote_start("wave", Some(60_000), state, None),
         Channel::Reliable,
     );
     tokio::time::sleep(Duration::from_millis(300)).await;

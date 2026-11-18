@@ -121,15 +121,15 @@ impl LiveKitView {
                 }
             }
             "track_published" => {
-                if let (Some(identity), Some(sid)) = (text("identity"), text("sid")) {
-                    if !self.tracks.iter().any(|track| track.sid == sid) {
-                        self.tracks.push(Track {
-                            identity,
-                            sid,
-                            kind: text("kind").unwrap_or_default(),
-                            source: text("source").unwrap_or_default(),
-                        });
-                    }
+                if let (Some(identity), Some(sid)) = (text("identity"), text("sid"))
+                    && !self.tracks.iter().any(|track| track.sid == sid)
+                {
+                    self.tracks.push(Track {
+                        identity,
+                        sid,
+                        kind: text("kind").unwrap_or_default(),
+                        source: text("source").unwrap_or_default(),
+                    });
                 }
             }
             "track_unpublished" => {

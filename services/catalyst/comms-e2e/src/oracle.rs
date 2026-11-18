@@ -26,10 +26,10 @@ async fn get_text(url: &Url) -> Result<String> {
     if !status.is_success() {
         bail!("GET {url} answered {status}");
     }
-    Ok(response
+    response
         .text()
         .await
-        .with_context(|| format!("reading {url}"))?)
+        .with_context(|| format!("reading {url}"))
 }
 
 /// One line of a Prometheus text exposition.

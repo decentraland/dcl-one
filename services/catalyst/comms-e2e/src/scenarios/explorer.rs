@@ -20,6 +20,8 @@ pub fn all() -> Vec<&'static Scenario> {
         &PAST_THE_EAST_EDGE,
         &STALE_SOCKET,
         &PORT_UNREACHABLE,
+        &TWO_DEVICES,
+        &RESYNC,
     ]
 }
 
@@ -89,6 +91,31 @@ static PORT_UNREACHABLE: Scenario = Scenario {
     hostile: false,
     default_repeat: 1,
     run: |ctx| Box::pin(port_unreachable(ctx)),
+};
+
+static TWO_DEVICES: Scenario = Scenario {
+    name: "explorer-two-devices",
+    tags: &["explorer", "races"],
+    guards: &["dcl-one #1205", "dcl-one #201"],
+    summary: "A second explorer signs in with the wallet of the first: the second works, and the \
+              first is told it was replaced on Pulse and on the archipelago and stops for good, \
+              without dialling again.",
+    needs: NEEDS,
+    hostile: false,
+    default_repeat: 1,
+    run: |ctx| Box::pin(two_devices(ctx)),
+};
+
+static RESYNC: Scenario = Scenario {
+    name: "explorer-resync",
+    tags: &["explorer", "faults"],
+    guards: &["dcl-one #769", "dcl-one #780"],
+    summary: "Packets from Pulse reach the explorer out of order while a bot walks beside it: \
+              the explorer's picture of the bot catches up once the link is clean.",
+    needs: NEEDS,
+    hostile: false,
+    default_repeat: 1,
+    run: |ctx| Box::pin(resync(ctx)),
 };
 
 const SOON: Duration = Duration::from_secs(15);
@@ -321,7 +348,7 @@ async fn uplink_stall(ctx: Ctx) -> Result<()> {
     let started = Instant::now();
     let mut moves = 0u32;
     while started.elapsed() < stall {
-        let target = if moves % 2 == 0 { away } else { home };
+        let target = if moves.is_multiple_of(2) { away } else { home };
         let line = format!("/move_player_to {} {} {}", target[0], target[1], target[2]);
         subject.explorer.fire(&line).await?;
         moves += 1;
@@ -659,6 +686,215 @@ async fn port_unreachable(ctx: Ctx) -> Result<()> {
             "the explorer did not keep its session: the observer held subject {held} and now holds {now:?}, and saw the explorer leave {left} times and join {joined} times during the fault"
         );
     }
+    subject.explorer.stop().await;
+    Ok(())
+}
+
+/// The state of the explorer's realm room, from its connectivity report.
+async fn realm_room(explorer: &Explorer) -> Result<String, String> {
+    let connectivity = explorer.poll("/connectivity_state").await?;
+    let rooms = connectivity["rooms"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    rooms
+        .iter()
+        .find(|room| room["scope"] == "realm")
+        .and_then(|room| room["state"].as_str().map(str::to_owned))
+        .ok_or_else(|| format!("no realm room in {connectivity}"))
+}
+
+async fn two_devices(ctx: Ctx) -> Result<()> {
+    let first = start(&ctx, false).await?;
+    expect_async(
+        &ctx,
+        "the first device has its realm room connected",
+        Duration::from_secs(60),
+        CONSOLE_TICK,
+        || async {
+            let state = realm_room(&first.explorer).await?;
+            (state == "connected")
+                .then_some(())
+                .ok_or(format!("its realm room is {state}"))
+        },
+    )
+    .await?;
+
+    // the same wallet seed in another process: the same wallet on another machine
+    let second = Explorer::start(
+        &ctx,
+        "second device",
+        ExplorerOptions {
+            wallet_seed: wallet_seed(&ctx, 0),
+            ..ExplorerOptions::default()
+        },
+    )
+    .await?;
+    expect_pulse(
+        &ctx,
+        &second,
+        "the second device authenticates with Pulse",
+        Duration::from_secs(60),
+    )
+    .await?;
+
+    // The first device is told it was replaced and stays down. If it dialled again it would
+    // evict the second, and the two would trade the session back and forth.
+    expect_async(
+        &ctx,
+        "the first device reports Pulse as ended for good",
+        Duration::from_secs(30),
+        CONSOLE_TICK,
+        || async {
+            let state = pulse_state(&first.explorer).await?;
+            (state == "terminal disconnect")
+                .then_some(())
+                .ok_or(format!("it reports Pulse as {state}"))
+        },
+    )
+    .await?;
+    expect_async(
+        &ctx,
+        "the first device reports its realm room as an identity conflict",
+        Duration::from_secs(30),
+        CONSOLE_TICK,
+        || async {
+            let state = realm_room(&first.explorer).await?;
+            (state == "identity_conflict")
+                .then_some(())
+                .ok_or(format!("its realm room is {state}"))
+        },
+    )
+    .await?;
+    let window = Duration::from_secs(8);
+    let started = Instant::now();
+    while started.elapsed() < window {
+        let old = pulse_state(&first.explorer)
+            .await
+            .map_err(|error| anyhow!("{error}"))?;
+        let new = pulse_state(&second)
+            .await
+            .map_err(|error| anyhow!("{error}"))?;
+        if old != "terminal disconnect" || new != "authenticated" {
+            bail!(
+                "expected for {} s: the first device stays down and the second stays up; after {} ms the first reports Pulse as {old} and the second as {new}",
+                window.as_secs(),
+                started.elapsed().as_millis()
+            );
+        }
+        tokio::time::sleep(CONSOLE_TICK).await;
+    }
+    let room = realm_room(&second)
+        .await
+        .map_err(|error| anyhow!("{error}"))?;
+    if room != "connected" {
+        bail!("the second device's realm room is {room}, expected connected");
+    }
+    second.stop().await;
+    first.explorer.stop().await;
+    Ok(())
+}
+
+async fn resync(ctx: Ctx) -> Result<()> {
+    let subject = start(&ctx, false).await?;
+    let walker = observer(&ctx, &subject).await?;
+    let walker_wallet = ctx.identity(0).address();
+    let from = [subject.position[0] + 2.0, 0.0, subject.position[2] + 2.0];
+
+    // the explorer holds the walker before anything is disturbed
+    let select = format!("/movement_profile {walker_wallet}");
+    expect_async(
+        &ctx,
+        "the explorer holds the walker",
+        SOON,
+        CONSOLE_TICK,
+        || async {
+            let players = subject
+                .explorer
+                .command("/connected_players", Duration::from_secs(5))
+                .await
+                .map_err(|error| format!("{error:#}"))?;
+            players
+                .output
+                .to_lowercase()
+                .contains(&walker_wallet)
+                .then_some(())
+                .ok_or_else(|| format!("its connected players: {}", players.output))
+        },
+    )
+    .await?;
+    subject
+        .explorer
+        .command(&select, Duration::from_secs(5))
+        .await?;
+
+    // What Pulse sends the explorer now arrives up to 150 ms late, each packet by its own
+    // amount, so later packets overtake earlier ones while the walker moves.
+    subject.fronts.pulse.set(
+        Direction::Downlink,
+        Fault::Reorder {
+            window: Duration::from_millis(150),
+        },
+    );
+    let walk = Duration::from_secs(8);
+    let started = Instant::now();
+    let mut steps = 0u32;
+    let mut at = from;
+    while started.elapsed() < walk {
+        steps += 1;
+        // out and back along x, so the walker stays beside the explorer
+        let phase = (steps % 40) as f32;
+        at = [
+            from[0] + if phase < 20.0 { phase } else { 40.0 - phase } * 0.3,
+            0.0,
+            from[2],
+        ];
+        walker.move_to(at)?;
+        walker
+            .alive()
+            .map_err(|reason| anyhow!("the walker: {reason}"))?;
+        tokio::time::sleep(Duration::from_millis(80)).await;
+    }
+    subject.fronts.pulse.restore();
+
+    // With the link clean and the walker standing where it stopped, the explorer's picture of it
+    // must settle there.
+    let seen = expect_async(
+        &ctx,
+        "the explorer holds the walker where it stopped",
+        Duration::from_secs(8),
+        CONSOLE_TICK,
+        || async {
+            walker.alive()?;
+            // a standing client keeps sending its state
+            let _ = walker.move_to(at);
+            let report = subject.explorer.poll("/foreign_movement").await?;
+            let position =
+                vector(&report["position"]).ok_or_else(|| format!("no position in {report}"))?;
+            // the explorer reports positions in its own axes, where z points the other way
+            let near =
+                (position[0] - at[0]).abs() < 0.6 && (position[2].abs() - at[2].abs()).abs() < 0.6;
+            near.then_some(position).ok_or_else(|| {
+                format!("it holds the walker at {position:?}, the walker is at {at:?}")
+            })
+        },
+    )
+    .await?;
+    ctx.note("where the explorer holds the walker", seen);
+    ctx.note("steps walked under reordering", steps);
+    let state = subject
+        .explorer
+        .probe("/pulse_state")
+        .await
+        .map_err(|error| anyhow!("{error}"))?;
+    ctx.note("resync requests the explorer made", &state["resyncs"]);
+    expect_pulse(
+        &ctx,
+        &subject.explorer,
+        "Pulse is still authenticated",
+        SOON,
+    )
+    .await?;
     subject.explorer.stop().await;
     Ok(())
 }
