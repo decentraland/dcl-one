@@ -1,44 +1,47 @@
-import { ReactNode, useCallback, useLayoutEffect } from 'react'
-import { IntlProvider, useIntl } from 'react-intl'
-import { useLocale, type Locale } from '@/features/creators/store/locale'
+import { Fragment, type ReactNode } from 'react'
 import { flattenMessages } from '@/data/lib/creators/messages'
 import en from './en.json'
-import es from './es.json'
-import zh from './zh.json'
+import { formatParts, type FormatValue } from './format'
 
-const messages: Record<Locale, Record<string, string>> = {
-  en: flattenMessages(en),
-  es: flattenMessages(es),
-  zh: flattenMessages(zh)
-}
+const LOCALE = 'en'
+const messages: Record<string, string> = flattenMessages(en)
 
-const TranslationProvider = ({ children }: { children: ReactNode }) => {
-  const locale = useLocale(s => s.locale)
-  // Without zh-Hans, browsers may pick Japanese glyph variants for shared characters and screen readers an English voice.
-  useLayoutEffect(() => {
-    document.documentElement.lang = locale === 'zh' ? 'zh-Hans' : locale
-  }, [locale])
-  return (
-    <IntlProvider locale={locale} defaultLocale="en" messages={messages[locale]} fallbackOnEmptyString={false}>
-      {children}
-    </IntlProvider>
-  )
-}
+const TranslationProvider = ({ children }: { children: ReactNode }) => <>{children}</>
 
 type PlainValues = Record<string, string | number | ((chunks: string[]) => string)>
 type RichValues = Record<string, string | number | ((chunks: ReactNode[]) => ReactNode)>
 type Translate = (id: string, values?: PlainValues) => string
 type TranslateRich = (id: string, values: RichValues) => ReactNode
 
-const useTranslation = (): { t: Translate; rich: TranslateRich } => {
-  const intl = useIntl()
-  // Stable across renders so `t` can sit in hook dependency arrays without defeating them.
-  const t = useCallback((id: string, values?: PlainValues) => intl.formatMessage({ id }, values), [intl])
-  const rich = useCallback((id: string, values: RichValues) => intl.formatMessage({ id }, values), [intl])
-  return { t, rich }
+const t: Translate = (id, values) => {
+  const message = messages[id]
+  return message === undefined ? id : formatParts(message, values as Record<string, FormatValue>).join('')
 }
 
-/** The English copy of a message, for analytics values that must not change with the visitor's language. */
-const englishMessage = (id: string): string => messages.en[id] ?? id
+const rich: TranslateRich = (id, values) => {
+  const message = messages[id]
+  if (message === undefined) return id
+  const parts = formatParts(message, values as Record<string, FormatValue>) as ReactNode[]
+  return parts.map((part, index) => <Fragment key={index}>{part}</Fragment>)
+}
 
-export { TranslationProvider, englishMessage, useTranslation, type Translate, type TranslateRich }
+const translation = { t, rich }
+
+/** `t` and `rich` are the same functions on every render, so they can sit in hook dependency arrays. */
+const useTranslation = (): { t: Translate; rich: TranslateRich } => translation
+
+const intl = {
+  locale: LOCALE,
+  formatMessage: ({ id }: { id: string }, values?: PlainValues) => t(id, values),
+  formatNumber: (value: number | bigint, options?: Intl.NumberFormatOptions) =>
+    new Intl.NumberFormat(LOCALE, options).format(value),
+  formatDate: (value: number | string | Date, options?: Intl.DateTimeFormatOptions) =>
+    new Intl.DateTimeFormat(LOCALE, options).format(new Date(value))
+}
+
+const useIntl = () => intl
+
+/** The copy of a message, for analytics values. */
+const englishMessage = (id: string): string => messages[id] ?? id
+
+export { TranslationProvider, englishMessage, useIntl, useTranslation, type Translate, type TranslateRich }

@@ -1,4 +1,4 @@
-import { useIntl } from 'react-intl'
+import { useIntl } from '@/data/lib/creators/intl'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { discountPct, isDiscountCapped, liveDiscountStatus, type CollectionDiscount } from '@/data/lib/creators/coupons'
 import { Button } from '@/features/creators/components/Button'

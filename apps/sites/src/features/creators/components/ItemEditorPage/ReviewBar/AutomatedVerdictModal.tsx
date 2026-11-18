@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { useIntl } from 'react-intl'
+import { useIntl } from '@/data/lib/creators/intl'
 import {
   CheckCircleOutlineIcon as PassedIcon,
   ErrorOutlineIcon as WarningIcon,

@@ -5,11 +5,10 @@ import {
   WarningAmberOutlinedIcon as WarningIcon
 } from '@/features/creators/components/Icons'
 import DatePicker from 'react-datepicker'
-import { enUS, es, zhCN, type Locale as DateLocale } from 'date-fns/locale'
-import { useIntl } from 'react-intl'
+import { enUS } from 'date-fns/locale'
+import { useIntl } from '@/data/lib/creators/intl'
 import 'react-datepicker/dist/react-datepicker.css'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { type Locale } from '@/features/creators/store/locale'
 import { useFriends } from '@/features/creators/hooks/useSales'
 import { type Session } from '@/data/lib/creators/auth'
 import { type Item } from '@/data/lib/creators/items'
@@ -33,7 +32,6 @@ import { Switch } from '@/features/creators/components/Switch'
 import { cx } from '@/data/lib/creators/cx'
 import styles from './SellItemModal.module.css'
 
-const DATE_LOCALES: Record<Locale, DateLocale> = { en: enUS, es, zh: zhCN }
 
 export type SellFormValues = {
   selfBeneficiary: boolean
@@ -212,7 +210,7 @@ export function SellItemModal({
                   selected={expirationDate}
                   onChange={(date: Date | null) => update({ expirationDate: date ? formatDateValue(date) : '' })}
                   minDate={minDate}
-                  locale={DATE_LOCALES[intl.locale as Locale] ?? enUS}
+                  locale={enUS}
                   dateFormat={t('sell_item_modal.expiration.date_format')}
                   placeholderText={t('sell_item_modal.expiration.date_placeholder')}
                   disabled={busy}

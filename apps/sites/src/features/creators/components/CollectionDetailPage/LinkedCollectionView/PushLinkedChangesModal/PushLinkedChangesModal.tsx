@@ -1,6 +1,6 @@
 import { useId, useState } from 'react'
 import { SyncIcon } from '@/features/creators/components/Icons'
-import { useIntl } from 'react-intl'
+import { useIntl } from '@/data/lib/creators/intl'
 import { config } from '@/data/lib/creators/config'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { usePushLinkedChanges } from '@/features/creators/hooks/useLinkedPublish'

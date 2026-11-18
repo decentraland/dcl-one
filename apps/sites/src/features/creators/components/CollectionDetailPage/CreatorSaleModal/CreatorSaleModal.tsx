@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, InfoOutlinedIcon } from '@/features/creators/components/Icons'
-import { useIntl } from 'react-intl'
+import { useIntl } from '@/data/lib/creators/intl'
 import { useTranslation, type Translate } from '@/data/lib/creators/intl'
 import { isSocialLogin, type Session } from '@/data/lib/creators/auth'
 import { discountedManaWei } from '@/data/lib/creators/collectionDiscount'

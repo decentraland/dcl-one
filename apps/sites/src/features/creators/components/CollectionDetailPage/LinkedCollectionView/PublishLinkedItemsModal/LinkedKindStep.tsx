@@ -1,5 +1,5 @@
 import { ChevronLeftIcon, ChevronRightIcon } from '@/features/creators/components/Icons'
-import { useIntl } from 'react-intl'
+import { useIntl } from '@/data/lib/creators/intl'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { weiToUsdCents } from '@/data/lib/creators/publishFee'
 import { type ThirdPartyPrice } from '@/data/lib/creators/thirdPartyRegistry'

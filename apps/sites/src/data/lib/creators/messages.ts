@@ -1,6 +1,6 @@
 type NestedMessages = { [key: string]: string | NestedMessages }
 
-/** Flattens nested translation JSON into the dotted-id map react-intl expects. */
+/** Flattens nested message JSON into a map keyed by dotted id. */
 const flattenMessages = (nested: NestedMessages, prefix = ''): Record<string, string> => {
   const flat: Record<string, string> = {}
   for (const [key, value] of Object.entries(nested)) {

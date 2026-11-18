@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ChevronLeftIcon } from '@/features/creators/components/Icons'
-import { useIntl } from 'react-intl'
+import { useIntl } from '@/data/lib/creators/intl'
 import { config } from '@/data/lib/creators/config'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { useCreditsBalance, useManaBalance } from '@/features/creators/hooks/useBalances'

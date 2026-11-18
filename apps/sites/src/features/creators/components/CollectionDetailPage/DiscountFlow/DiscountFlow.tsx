@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import errorArt from '@/features/creators/assets/modal-error.png'
-import { useIntl } from 'react-intl'
+import { useIntl } from '@/data/lib/creators/intl'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { useBeforeUnloadGuard } from '@/features/creators/hooks/useBeforeUnloadGuard'
 import { lastCreatedDiscount, useCreateDiscount, useDiscountInFlight } from '@/features/creators/hooks/useCollectionDiscounts'

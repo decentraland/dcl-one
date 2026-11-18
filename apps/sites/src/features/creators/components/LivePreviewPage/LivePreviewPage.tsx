@@ -29,7 +29,7 @@ import { useLiveBridge } from '@/features/creators/hooks/useLiveBridge'
 import { useMediaQuery } from '@/features/creators/hooks/useMediaQuery'
 import { useModelValidation } from '@/features/creators/hooks/useModelValidation'
 import { type SpringBonesModel } from '@/features/creators/hooks/useSpringBones'
-import { useTranslation } from '@/data/lib/creators/intl'
+import { useIntl, useTranslation } from '@/data/lib/creators/intl'
 import { track } from '@/data/lib/creators/analytics'
 import { type AvatarAttributes } from '@/data/lib/creators/avatar'
 import { createPanelStorage } from '@/data/lib/creators/itemEditor'
@@ -48,7 +48,6 @@ import {
 import { formatTimeAgo } from '@/data/lib/creators/time'
 import { getWearableCategoryOptions } from '@/data/lib/creators/wearableCategories'
 import { selectAvatarAttributes, useAvatarPreview } from '@/features/creators/store/avatarPreview'
-import { useLocale } from '@/features/creators/store/locale'
 import { useWallet } from '@/features/creators/store/wallet'
 import { media } from '@/data/lib/creators/theme'
 import { AddToCollectionFlow } from './AddToCollectionFlow'
@@ -77,7 +76,7 @@ const CENTER_MIN_PCT = 25
  */
 function UpdatedLabel({ timestamp, checkedAt }: { timestamp: number; checkedAt: number | null }) {
   const { t } = useTranslation()
-  const locale = useLocale(state => state.locale)
+  const { locale } = useIntl()
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), TIME_AGO_TICK_MS)

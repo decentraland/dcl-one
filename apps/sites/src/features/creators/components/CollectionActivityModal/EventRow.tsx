@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useIntl } from 'react-intl'
+import { useIntl } from '@/data/lib/creators/intl'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { ItemFindingsList } from '@/features/creators/components/FindingsList'
 import { AutomatedReviewIcon } from '@/features/creators/components/AutomatedReviewIcon'

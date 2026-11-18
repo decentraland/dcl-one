@@ -2,9 +2,6 @@
 import '@/data/lib/creators/test/setup'
 import { describe, expect, it } from 'vitest'
 import { flattenMessages } from './messages'
-import en from '@/data/lib/creators/intl/en.json'
-import es from '@/data/lib/creators/intl/es.json'
-import zh from '@/data/lib/creators/intl/zh.json'
 
 describe('flattenMessages', () => {
   it('flattens nested objects into dotted ids', () => {
@@ -24,10 +21,4 @@ describe('flattenMessages', () => {
     expect(flattenMessages({})).toEqual({})
   })
 
-  it.each([
-    ['es', es],
-    ['zh', zh]
-  ])('keeps the %s key set in sync with en', (_, messages) => {
-    expect(Object.keys(flattenMessages(messages)).sort()).toEqual(Object.keys(flattenMessages(en)).sort())
-  })
 })

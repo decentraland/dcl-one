@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import DatePicker from 'react-datepicker'
-import { enUS, es, zhCN, type Locale as DateLocale } from 'date-fns/locale'
+import { enUS } from 'date-fns/locale'
 import 'react-datepicker/dist/react-datepicker.css'
 import { useMorphFrom } from '@/features/creators/hooks/useMorphFrom'
-import { useIntl } from 'react-intl'
+import { useIntl } from '@/data/lib/creators/intl'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { breakpoints } from '@/data/lib/creators/theme'
 import styles from './RangePicker.module.css'
 
 // The calendar's weekday and month names in the viewer's language.
-const DATE_LOCALES: Record<string, DateLocale> = { en: enUS, es, zh: zhCN }
 
 // One px past `sm`, so the two-month calendar and the phone's stacked presets never both apply.
 const WIDE = `(min-width: ${breakpoints.sm + 1}px)`
@@ -192,7 +191,7 @@ export function RangePicker({
           monthsShown={twoMonths ? 2 : 1}
           openToDate={openOn(end ?? start ?? new Date(max ?? Date.now()), twoMonths)}
           calendarStartDay={1}
-          locale={DATE_LOCALES[locale] ?? enUS}
+          locale={enUS}
         />
       </div>
       <div className={styles.foot}>

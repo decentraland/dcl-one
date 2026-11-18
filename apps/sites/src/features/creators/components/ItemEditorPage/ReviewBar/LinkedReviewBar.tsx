@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useIntl } from 'react-intl'
+import { useIntl } from '@/data/lib/creators/intl'
 import { ArrowBackIcon, EditIcon, PersonAddAltIcon as AssignIcon } from '@/features/creators/components/Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { AssignCuratorModal } from '@/features/creators/components/AssignCuratorModal'

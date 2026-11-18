@@ -1,4 +1,4 @@
-import { useIntl } from 'react-intl'
+import { useIntl } from '@/data/lib/creators/intl'
 import { Link, useLocation } from 'react-router'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { useWallet } from '@/features/creators/store/wallet'
