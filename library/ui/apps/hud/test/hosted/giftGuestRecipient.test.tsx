@@ -1,6 +1,6 @@
 // A guest recipient is offered Gift, as in unity-explorer: only the sender's session decides.
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { HostGifting } from '@explorer-core/hostContract'
 import { ProfileCard } from '../../features/profileCard/ProfileCard'
 import { Passport } from '../../features/profile/Passport'
@@ -9,7 +9,8 @@ import { receiveProfile, resetProfileStore, setProfileRequester } from '../../fe
 import { resetPopups } from '../../design'
 import { fakeSession } from '../harness'
 
-const host: HostGifting = { available: async () => true, pending: async () => [], open: vi.fn(async () => undefined), onSent: () => () => undefined }
+let canGift = true
+const host: HostGifting = { available: async () => canGift, pending: async () => [], open: vi.fn(async () => undefined), onSent: () => () => undefined }
 vi.mock('@hud-host', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   get gifting() {
@@ -18,6 +19,7 @@ vi.mock('@hud-host', async (importOriginal) => ({
 }))
 
 beforeEach(() => {
+  canGift = true
   setProfileRequester(vi.fn())
   receiveProfile(GUEST, { address: GUEST, name: 'Guest', hasClaimedName: false, isGuest: true })
 })
@@ -45,10 +47,26 @@ describe('Gift for a guest recipient', () => {
         <Passport userId={GUEST} onClose={vi.fn()} />
       </SessionProvider>
     )
-    // the answer from the host lands after the first render
-    await screen.findByRole('button', { name: /options|more/i })
-    await new Promise((r) => setTimeout(r, 0))
-    fireEvent.click(screen.getByRole('button', { name: /options|more/i }))
-    expect(await screen.findByRole('menuitem', { name: 'Gift' })).toBeTruthy()
+    // the host's answer lands after the first render: reopen the menu until it offers Gift
+    const options = await screen.findByRole('button', { name: /options|more/i })
+    await waitFor(() => {
+      if (screen.queryByRole('menuitem', { name: 'Gift' }) == null) fireEvent.click(options)
+      expect(screen.getByRole('menuitem', { name: 'Gift' })).toBeTruthy()
+    })
+  })
+
+  it('is not offered when this session cannot gift (a guest sender)', async () => {
+    canGift = false
+    render(
+      <SessionProvider value={fakeSession()}>
+        <ProfileCard userId={GUEST} x={0} y={0} onClose={vi.fn()} />
+      </SessionProvider>
+    )
+    await screen.findByRole('dialog')
+    // let the host's answer land before checking
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(screen.queryByRole('button', { name: 'Gift' })).toBeNull()
   })
 })

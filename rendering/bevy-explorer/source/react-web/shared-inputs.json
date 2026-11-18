@@ -10021,7 +10021,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/inviteLink.ts",
-      "sha256": "503e1f192002b9d25c6272fc94ba1fcdeb8c014b35fc428256ac3f51b37493df"
+      "sha256": "9c7ee94c1acb1af60bb54f50a5146c307f3407fdbf6baffd32e896aea4c3d2c5"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/panels/DiscoverPanel.tsx",
@@ -10493,7 +10493,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
-      "sha256": "fa935d99f0bdeb30c8730332acba3915ea2204de25ef6bc3445e86f599a105da"
+      "sha256": "a7e3bc93cb1c17b32fee40ffb5d9994f9c2680c83c0e77f4059a1e4c9b0c6dc5"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/giftPicker.test.tsx",

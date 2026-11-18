@@ -707,7 +707,7 @@ fn connect_scene_room(
     if common::structs::server_mode() || world.is_some() {
         meta["intent"] = serde_json::json!("dcl:explorer:comms-handshake");
         meta["signer"] = serde_json::json!("dcl:explorer");
-        meta["isGuest"] = serde_json::json!(wallet.is_guest());
+        meta["isGuest"] = serde_json::json!(wallet.is_any_guest());
         meta["realm"] = serde_json::json!({ "serverName": ev.realm_name });
         if let Some(secret) = world_secret.0.as_ref().filter(|_| world.is_some()) {
             meta["secret"] = serde_json::json!(secret);

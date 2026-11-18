@@ -38,7 +38,7 @@ fn start_signed_login(
         };
         let mut metadata = serde_json::json!({
             "intent": "dcl:explorer:comms-handshake", "signer": "dcl:explorer",
-            "isGuest": wallet.is_guest(), "origin": origin.origin().ascii_serialization(),
+            "isGuest": wallet.is_any_guest(), "origin": origin.origin().ascii_serialization(),
         });
         // A realm chooses its login endpoint. Do not let third-party realms correlate wallets
         // through the installation's persistent identifier.

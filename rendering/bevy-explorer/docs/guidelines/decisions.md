@@ -641,8 +641,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   nothing is shown, as there. The profile card offers the jump after View Profile, since its rows
   already follow a different order from unity-explorer's user menu.
 - **INVITE FRIENDS is for a signed-in player only.** unity-explorer's copy runs for any
-  identity it holds. Here a guest gets no button, since a guest's address is never kept and a referral
-  to it could not be credited. As there, it copies the deployment site's `/invite/<address>`
+  identity it holds. Here neither kind of guest gets the button: not the throwaway guest, and not a
+  guest account. As there, it copies the deployment site's `/invite/<address>`
   and says "Link copied!"; the panel stays open.
 - **A new referral tier opens the site's Referral Rewards tab.** unity-explorer opens
   `profile/accounts/<address>/referral`, which this site does not serve; its profile names the

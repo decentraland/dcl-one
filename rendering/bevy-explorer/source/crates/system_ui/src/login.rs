@@ -402,10 +402,12 @@ async fn login_profile(
 }
 
 /// Records in the profile whether the account is a guest's, whatever an earlier deploy said: a
-/// guest account has not connected web3. The profile carries it to every client, scenes and the
-/// HUD included, and the next deploy saves it.
-fn mark_account(profile: &mut UserProfile, guest_account: bool) {
+/// guest account has not connected web3. True when a guest account's saved copy said otherwise
+/// (one made before the flag was kept), so the login saves it again and other clients see a guest.
+fn mark_account(profile: &mut UserProfile, guest_account: bool) -> bool {
+    let resave = guest_account && profile.content.has_connected_web3 != Some(false);
     profile.content.has_connected_web3 = Some(!guest_account);
+    resave
 }
 
 fn new_profile(address: Address, ipfs: &IpfsIo) -> UserProfile {
@@ -911,9 +913,13 @@ fn process_login_bridge(
                     LoginProfile::Deployed(profile) => (profile, true),
                     LoginProfile::New(profile) => (profile, false),
                 };
-                mark_account(&mut profile, guest_account);
+                let resave = mark_account(&mut profile, guest_account);
                 current_profile.profile = Some(profile);
                 current_profile.is_deployed = deployed;
+                if deployed && resave {
+                    current_profile.bump_version();
+                    current_profile.is_deployed = false;
+                }
                 // held, the host shows its welcome page, which deploys the new profile
                 current_profile.deploy_held = !deployed && world_hold.is_some();
                 current_profile.revert_to = None;
@@ -930,6 +936,20 @@ fn process_login_bridge(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_guest_account_is_marked_and_an_old_copy_saved_again() {
+        let mut old = UserProfile::default();
+        old.content.has_connected_web3 = Some(true);
+        assert!(mark_account(&mut old, true));
+        assert_eq!(old.content.has_connected_web3, Some(false));
+        // already marked: nothing to save
+        assert!(!mark_account(&mut old, true));
+        // a signed-in account is marked as connected and never saved for it
+        let mut account = UserProfile::default();
+        assert!(!mark_account(&mut account, false));
+        assert_eq!(account.content.has_connected_web3, Some(true));
+    }
 
     #[test]
     fn guest_names_are_valid_unclaimed_names() {
