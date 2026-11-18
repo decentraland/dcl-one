@@ -1,6 +1,5 @@
 import React, { useCallback, useState, useEffect } from 'react';
 import { Container } from '../Container';
-import { Block } from '../Block';
 import { TextField } from '../ui/TextField';
 import { Button } from '../Button';
 import { LoadingSpinner } from '../Loading';
@@ -139,23 +138,29 @@ const CreateCustomAsset: React.FC = () => {
             <CustomAssetIcon />
           )}
           <div className="column">
-            <Block label="Item name">
-              <TextField
-                autoSelect
-                autoFocus
-                value={name}
-                onChange={handleNameChange}
-                onKeyDown={handleKeyDown}
-              />
-            </Block>
+            <TextField
+              size="large"
+              label="Item name"
+              autoSelect
+              autoFocus
+              value={name}
+              onChange={handleNameChange}
+              onKeyDown={handleKeyDown}
+            />
             <div className="button-container">
               <Button
+                size="big"
+                type="danger"
                 onClick={handleCreate}
-                className="create"
               >
                 Create
               </Button>
-              <Button onClick={handleCancel}>Cancel</Button>
+              <Button
+                size="big"
+                onClick={handleCancel}
+              >
+                Cancel
+              </Button>
             </div>
           </div>
         </div>

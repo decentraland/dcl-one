@@ -43,8 +43,6 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
-const assetsPage = (elements: unknown[]) =>
-  json({ ok: true, data: { elements, total: elements.length, page: 0, pages: 1, limit: 48 } });
 
 beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -76,42 +74,50 @@ describe("useProfile", () => {
 });
 
 describe("useProfileCreations", () => {
-  it("relabels every creation with the profile's name without changing the cached value", async () => {
-    fetchMock.mockResolvedValue(json({ ok: true, data: [] }));
+  it("reads one category a page at a time and loads the next page after the rows already shown", async () => {
+    const item = (n: number) => ({ id: `c-${n}`, itemId: `${n}`, name: `Hat ${n}`, thumbnail: "", contractAddress: "0xabc", rarity: "rare", network: "MATIC", price: "0", minListingPrice: null });
+    fetchMock.mockImplementation(async (input: string) => {
+      const skip = Number(new URL(input).searchParams.get("skip"));
+      return json({ data: Array.from({ length: skip === 0 ? 24 : 1 }, (_, n) => item(skip + n)), total: 25 });
+    });
 
-    const { result } = renderHook(() => useProfileCreations(ADDRESS, "Alice"), { wrapper });
+    const { result } = renderHook(() => useProfileCreations(ADDRESS, "emote"), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toEqual({ wearables: [], emotes: [] });
-    expect(client.getQueryData(profileKeys.creations(ADDRESS))).toEqual({ wearables: [], emotes: [] });
+    const first = new URL(fetchMock.mock.calls[0]![0] as string);
+    expect(first.pathname).toBe("/marketplace-api/v2/catalog");
+    expect(Object.fromEntries(first.searchParams)).toMatchObject({ creator: ADDRESS, category: "emote", first: "24", skip: "0", sortBy: "newest" });
+    expect(result.current.hasNextPage).toBe(true);
+
+    await result.current.fetchNextPage();
+
+    await waitFor(() => expect(result.current.data?.pages).toHaveLength(2));
+    expect(new URL(fetchMock.mock.calls[1]![0] as string).searchParams.get("skip")).toBe("24");
+    expect(result.current.hasNextPage).toBe(false);
+    expect(client.getQueryData(profileKeys.creations(ADDRESS, "emote"))).toBeDefined();
+    expect(client.getQueryData(profileKeys.creations(ADDRESS, "wearable"))).toBeUndefined();
+  });
+
+  it("requests nothing for a value that is not a wallet address", () => {
+    const { result } = renderHook(() => useProfileCreations("alice", "wearable"), { wrapper });
+
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
 describe("useProfileAssets", () => {
-  it("shows the names when the wearables fail, and reports the failure", async () => {
-    fetchMock.mockImplementation(async (input: string) => {
-      const path = new URL(input).pathname;
-      if (path.endsWith("/wearables")) return json({ error: "down" }, 500);
-      return assetsPage([{ tokenId: "1", name: "alice", contractAddress: "0x0" }]);
-    });
+  it("reads every category without a filter, and exposes a failure instead of an empty list", async () => {
+    fetchMock.mockResolvedValue(json({ error: "down" }, 503));
 
-    const { result } = renderHook(() => useProfileAssets(ADDRESS), { wrapper });
+    const { result } = renderHook(() => useProfileAssets(ADDRESS, null), { wrapper });
 
-    await waitFor(() => expect(result.current.isPending).toBe(false));
-    expect(result.current.isError).toBe(true);
-    expect(result.current.data.wearables).toEqual([]);
-    expect(result.current.data.names).toEqual([{ id: "1", stem: "alice" }]);
-  });
-
-  it("is empty and not pending for an address that cannot have assets", () => {
-    const { result } = renderHook(() => useProfileAssets(""), { wrapper });
-
-    expect(result.current).toEqual({
-      data: { wearables: [], names: [] },
-      isPending: false,
-      isError: false,
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.data).toBeUndefined();
+    const url = new URL(fetchMock.mock.calls[0]![0] as string);
+    expect(url.pathname).toBe("/marketplace-api/v1/nfts");
+    expect(url.searchParams.get("owner")).toBe(ADDRESS);
+    expect(url.searchParams.has("category")).toBe(false);
   });
 });
 
