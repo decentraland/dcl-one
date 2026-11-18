@@ -66,35 +66,14 @@
   outline-offset: 2px;
 }
 
-.step {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  width: 24px;
-  height: 24px;
-  margin-right: 6px;
-  border: 1.5px solid var(--palette-neutral-softWhite);
-  border-radius: 50%;
-  font-family: var(--font-family);
-  font-optical-sizing: none;
-  font-size: var(--type-h7-semi-size);
-  font-weight: var(--type-h7-semi-weight);
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-  color: var(--palette-neutral-softWhite);
-}
-
 .headerChip {
   display: inline-flex;
   margin-left: 6px;
 }
 
-/* A step that can't be set up yet: grey, with only its Unavailable chip and the wallet info at full strength. */
+/* A setup step that can't be done yet: grey, with only its Unavailable chip and the wallet info at full strength. */
 .card[data-locked] > :not(.cardTop),
 .card[data-locked] .cardTop > :not(.cardHeader),
-.card[data-locked] .step,
 .card[data-locked] .cardTitle {
   opacity: 0.4;
 }
