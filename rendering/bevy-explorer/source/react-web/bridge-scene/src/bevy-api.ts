@@ -27,6 +27,8 @@ import type {
   HoverEvent,
   HomeScene,
   LiveSceneInfo,
+  LobbyStage,
+  WorldAccessVerdict,
   PermanentPermissionItem,
   PermissionRequestEvent,
   PhotoModeState,
@@ -145,6 +147,11 @@ export type PermissionUsedRaw = {
 
 export type BevyApiInterface = {
   getHomeScene: () => Promise<HomeScene>
+  /** null takes the lobby stage down. */
+  setLobbyStage?: (stage: LobbyStage | null) => Promise<void>
+  quit?: () => void
+  /** Whether the local user may enter a world (`name.dcl.eth`), by the realm change's own check. */
+  getWorldAccess?: (world: string) => Promise<WorldAccessVerdict>
   /** Pin the home scene the engine boots into and the HUD's home actions go to. */
   setHomeScene: (home: { realm: string; parcel: { x: number; y: number } }) => Promise<void>
   /** What the welcome page must show for the signed-in account (all false when the host shows none). */

@@ -258,14 +258,18 @@ export function CommunitiesPage({
   communities,
   profile,
   voiceChat,
+  compact,
   onNavigate
 }: {
   communities: CommunitiesState
   profile: ProfileState
   /** The live streams; without them the communities' own snapshot says what is live. */
   voiceChat?: VoiceChatSession
+  /** Hosted in the lobby's section modal. */
+  compact?: { onTravel: () => void }
   onNavigate: (page: string) => void
 }): React.JSX.Element | null {
+  const active = communities.open || compact != null
   // The search field's text; the grid shows the search last run (communities.browse.search).
   const [query, setQuery] = useState('')
   const [openId, setOpenId] = useState<string | null>(null)
@@ -281,8 +285,8 @@ export function CommunitiesPage({
 
   // The community detail modal lives in the HUD-wide popup layer (openCommunityModal), not this page's
   // own JSX — CommunityModalContainer reads live data itself. Re-opens on a different selection; closes
-  // when the page closes (communities.open → false) or a selection clears, via the effect cleanup.
-  const wantOpen = communities.open ? openId : null
+  // when the page closes (`active` → false) or a selection clears, via the effect cleanup.
+  const wantOpen = active ? openId : null
   useEffect(() => {
     if (wantOpen == null) return
     // Only clear if `wantOpen` (captured here) is still the current selection: when switching directly
@@ -297,14 +301,14 @@ export function CommunitiesPage({
   }
   // Every opening shows every community, with the search cleared.
   useEffect(() => {
-    if (!communities.open) return
+    if (!active) return
     setQuery('')
     setTab('browse')
     loadBrowse('')
     // the sidebar's counter alone: the section is read when it opens
     loadInvitesCount()
     return cancelSearch
-  }, [communities.open, loadBrowse, loadInvitesCount])
+  }, [active, loadBrowse, loadInvitesCount])
 
   // The same text again does nothing; empty text lists
   // every community; a search always shows the grid, even from My Communities.
@@ -326,7 +330,7 @@ export function CommunitiesPage({
     loadBrowse('')
   }
 
-  if (!communities.open) return null
+  if (!active) return null
 
   const mine = communities.list.filter((c) => isMember(c.role))
   const showingInvites = tab === 'invites'
@@ -353,19 +357,8 @@ export function CommunitiesPage({
   const count = showingMine || streaming ? `(${gridList.length})` : browse.loading || browse.failed === true ? '' : `(${browse.total})`
 
   const p = profile.data
-  return (
-    <MainMenuShell
-      active="communities"
-      profileName={p?.name}
-      profilePicture={p?.picture}
-      profileAddress={p?.address}
-      profileClaimed={p?.hasClaimedName}
-      onNavigate={onNavigate}
-      onClose={communities.toggle}
-      transparentBody
-    >
-      <div className={styles.page}>
-      <MenuBackdrop />
+  const body = (
+    <>
       <div className={styles.head}>
         <h1 className={styles.title}>Communities</h1>
         <div className={styles.streaming}>
@@ -462,6 +455,23 @@ export function CommunitiesPage({
           )}
         </section>
       </div>
+    </>
+  )
+  if (compact != null) return <div className={`${styles.page} ${styles.compact}`}>{body}</div>
+  return (
+    <MainMenuShell
+      active="communities"
+      profileName={p?.name}
+      profilePicture={p?.picture}
+      profileAddress={p?.address}
+      profileClaimed={p?.hasClaimedName}
+      onNavigate={onNavigate}
+      onClose={communities.toggle}
+      transparentBody
+    >
+      <div className={styles.page}>
+        <MenuBackdrop />
+        {body}
       </div>
     </MainMenuShell>
   )

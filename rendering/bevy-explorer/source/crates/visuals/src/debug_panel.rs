@@ -11,7 +11,7 @@ use bevy::{
 use bevy_console::ConsoleCommand;
 use common::structs::{
     AppConfig, FogSetting, LandscapeDistance, PrimaryCamera, SceneLoadDistance, SessionGraphics,
-    TimeOfDay,
+    StageLight, TimeOfDay,
 };
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use serde_json::json;
@@ -447,7 +447,7 @@ fn lighting_state(
     fog: Query<&DistanceFog, With<PrimaryCamera>>,
     ambient: Res<SkyAmbient>,
     envmap: Res<SkyEnvmapSettings>,
-    sun: Query<&DirectionalLight>,
+    sun: Query<&DirectionalLight, Without<StageLight>>,
 ) {
     let Some(Ok(_)) = cmd.take() else { return };
     let srgb = |color: Color| color.to_srgba().to_vec3().to_array();
@@ -481,7 +481,7 @@ fn sun_shadows(
     config: Res<AppConfig>,
     bias: Res<ShadowBiasOverride>,
     map: Res<DirectionalLightShadowMap>,
-    sun: Query<(&DirectionalLight, &CascadeShadowConfig)>,
+    sun: Query<(&DirectionalLight, &CascadeShadowConfig), Without<StageLight>>,
 ) {
     if let Some(Ok(_)) = cmd.take() {
         let preset = SUN_SHADOW_BIAS;

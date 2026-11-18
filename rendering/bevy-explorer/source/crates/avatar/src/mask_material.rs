@@ -38,6 +38,10 @@ impl Material for MaskMaterial {
         // mask_material.wgsl imports reveal_discard
         if let Some(fragment) = descriptor.fragment.as_mut() {
             fragment.shader_defs.extend(reveal_shader_defs());
+            // the material has no cell table (`webgl2`), so scene_bounds.wgsl leaves it out too
+            if cfg!(feature = "webgl2") {
+                fragment.shader_defs.push("NO_SCENE_CELLS".into());
+            }
         }
         Ok(())
     }

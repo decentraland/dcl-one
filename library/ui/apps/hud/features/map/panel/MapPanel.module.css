@@ -80,6 +80,12 @@
   color: var(--map-ink);
   pointer-events: auto;
 }
+/* Clear of the section modal's close button, on its 68 px header line. The panel stays at the
+   frame's edge, or a collapsed panel would show. */
+.compact .searchBar {
+  top: 13px;
+  width: 388px;
+}
 .searchIcon,
 .searchCategory {
   position: absolute;

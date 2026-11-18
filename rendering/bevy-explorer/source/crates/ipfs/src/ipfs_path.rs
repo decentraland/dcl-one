@@ -71,8 +71,8 @@ impl IpfsAsset for bevy_kira_audio::AudioSource {
 /// The name an asset is cached under.
 #[derive(Debug, Clone)]
 pub enum CacheKey {
-    /// The content's own hash, taken from data a server gave us. The cache only takes bytes
-    /// that match it.
+    /// The content's own hash, taken from data a server gave us. A download whose bytes don't
+    /// match it fails, and the cache only takes bytes that match it.
     Content(String),
     /// A digest of the url, made here.
     Url(String),
