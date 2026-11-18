@@ -8,7 +8,9 @@ use crate::gatekeeper::CommsState;
 use crate::gatekeeper::admission::scene::{PlaceInfo, PlaceLookup};
 use crate::gatekeeper::errors::{ApiError, service_unavailable};
 use crate::rooms::{ResolveError, RoomRequest};
-use crate::world_identity::{Parcel, RealmId, SceneId, WorldName, is_world_realm_name};
+use crate::world_identity::{
+    Parcel, RealmId, SceneId, WorldName, is_world_realm_name, realm_url_world,
+};
 
 fn invalid() -> ApiError {
     ApiError::bad_request("Invalid signed scene context")
@@ -20,18 +22,6 @@ fn required<'a>(value: &'a Value, key: &str) -> Result<&'a str, ApiError> {
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
         .ok_or_else(invalid)
-}
-
-/// The world a signed realm URL ending in `/world/<name>.eth` names (the
-/// explorer signs `<host><about path>` for a world realm).
-fn hostname_path_world(hostname: &str) -> Option<WorldName> {
-    let (_, name) = hostname.trim_end_matches('/').rsplit_once("/world/")?;
-    if name.contains('/') || !is_world_realm_name(name) {
-        return None;
-    }
-    WorldName::parse(name)
-        .ok()
-        .filter(|world| world.display() == name)
 }
 
 fn resolution_error(error: ResolveError) -> ApiError {
@@ -102,7 +92,7 @@ impl<'a> Context<'a> {
                 (
                     url.host_str()
                         .is_some_and(|host| host.contains("worlds-content-server")),
-                    hostname_path_world(hostname),
+                    realm_url_world(hostname),
                 )
             }
             Some(_) => return Err(invalid()),
