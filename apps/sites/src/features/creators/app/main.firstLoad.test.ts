@@ -1,4 +1,5 @@
 // @vitest-environment node
+import '@/data/lib/creators/test/setup'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import ts from 'typescript'

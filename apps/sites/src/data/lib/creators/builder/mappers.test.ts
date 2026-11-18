@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { describe, it, expect } from 'vitest'
 import { CollectionSort, CollectionType, CurationStatus } from '@/data/lib/creators/collections'
 import { parseCurationFilters } from '@/data/lib/creators/curation'

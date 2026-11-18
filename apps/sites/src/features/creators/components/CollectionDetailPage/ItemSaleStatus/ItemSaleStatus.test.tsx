@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { describe, it, expect, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
 

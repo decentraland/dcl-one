@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BodyShape } from '@dcl/schemas'
 import { englishMessage } from '@/data/lib/creators/intl'

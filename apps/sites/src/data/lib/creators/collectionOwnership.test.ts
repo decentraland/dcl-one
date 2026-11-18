@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { toTransaction } from '@/data/lib/creators/test/chain'
 import { ContractName, getContract } from '@/data/lib/creators/chain/contracts'

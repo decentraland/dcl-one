@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { describe, expect, it, vi } from 'vitest'
 import { type ContractNetwork } from '@dcl/schemas'
 import { type Collection } from './collections'

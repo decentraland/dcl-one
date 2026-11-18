@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { BodyShape, PreviewEmote, WearableCategory } from '@dcl/schemas'
 import { type BaseWearable } from '@/data/lib/creators/avatar'

@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { HttpError } from '@/data/lib/creators/http'
 import { buildBlogPosts, fetchLatestBlogPosts, normalizeAssetUrl, postUrl } from './blog'

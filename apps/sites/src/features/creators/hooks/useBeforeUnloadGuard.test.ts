@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { describe, expect, it } from 'vitest'
 import { renderHook } from '@testing-library/react'
 import { useBeforeUnloadGuard } from './useBeforeUnloadGuard'

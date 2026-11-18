@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { afterEach, describe, expect, it } from 'vitest'
 import { collectCampaignParams, normalizeCampaignParamValue } from './campaignParams'
 

@@ -1,3 +1,4 @@
+import '@/data/lib/creators/test/setup'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // @vitest-environment-options {"url":"https://decentraland.org/"}
 import { createAnonymousIdResolver } from './segmentAnonymousId.helpers'

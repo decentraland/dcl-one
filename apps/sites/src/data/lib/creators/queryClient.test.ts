@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { HttpError } from '@/data/lib/creators/http'
 import { setErrorForwarder } from '@/data/lib/creators/monitoring'

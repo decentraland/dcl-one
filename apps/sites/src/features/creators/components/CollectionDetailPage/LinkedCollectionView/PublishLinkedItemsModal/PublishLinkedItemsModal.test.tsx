@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { type ReactNode } from 'react'
 import { act, render, screen, waitFor } from '@testing-library/react'

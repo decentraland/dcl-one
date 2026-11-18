@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { describe, expect, it, vi } from 'vitest'
 import { type Item } from './items'
 import { createItemSaveQueue } from './itemSaveQueue'

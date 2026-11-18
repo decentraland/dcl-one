@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { getPreferredLocale, useLocale } from './locale'
 

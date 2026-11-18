@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { sendOverviewTrack } from '@/data/lib/creators/overviewSegment'
 import { HttpError } from '@/data/lib/creators/http'

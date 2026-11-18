@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Env } from '@dcl/ui-env'
 import { createEnvConfig, resolveBasePath, resolveEnv } from './env'

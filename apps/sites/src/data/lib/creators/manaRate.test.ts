@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { describe, expect, it, vi } from 'vitest'
 import { ContractName, getContract } from '@/data/lib/creators/chain/contracts'
 import { fetchManaUsdRate, type ReadContract } from './manaRate'

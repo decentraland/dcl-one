@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { describe, expect, it, vi } from 'vitest'
 import { BodyShape } from '@dcl/schemas'
 import { act, render, screen } from '@testing-library/react'

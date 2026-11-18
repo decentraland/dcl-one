@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { Scene } from 'three'
 import { WearableCategory } from '@dcl/schemas'

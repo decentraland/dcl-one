@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { describe, expect, it } from 'vitest'
 import { BodyShapeType, ItemType, type Item } from '@/data/lib/creators/items'
 import {

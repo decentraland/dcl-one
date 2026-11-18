@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { FeatureFlag } from '@/data/lib/creators/featureFlags'
 import { setFeatureFlags } from '@/data/lib/creators/test/featureFlags'

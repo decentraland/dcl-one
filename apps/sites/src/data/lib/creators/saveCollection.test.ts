@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { describe, it, expect } from 'vitest'
 import { decodeAbiParameters, parseAbiParameters, slice, zeroAddress, type Hex } from 'viem'
 import { config } from '@/data/lib/creators/config'

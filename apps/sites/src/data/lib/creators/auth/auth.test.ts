@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { Authenticator, type AuthIdentity, type AuthLink } from '@dcl/crypto'

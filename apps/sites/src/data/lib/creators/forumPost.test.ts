@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BuilderServerError } from './builder'
 import { CollectionDisplayStatus, type Collection } from './collections'

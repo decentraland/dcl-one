@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { maxUint256 } from 'viem'
 import { fetchCollectionListings, fetchItemTradeId } from './listings'

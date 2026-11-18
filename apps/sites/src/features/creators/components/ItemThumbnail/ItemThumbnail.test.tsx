@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { ItemThumbnail } from './ItemThumbnail'

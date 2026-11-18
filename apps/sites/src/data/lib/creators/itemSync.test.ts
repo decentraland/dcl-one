@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { describe, expect, it } from 'vitest'
 import { type Entity, EntityType } from '@dcl/schemas'
 import { type Collection } from './collections'

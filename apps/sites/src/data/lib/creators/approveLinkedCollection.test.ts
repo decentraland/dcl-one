@@ -1,4 +1,5 @@
 // @vitest-environment node
+import '@/data/lib/creators/test/setup'
 import { describe, expect, it, vi } from 'vitest'
 import { generateTree, verifyProof } from '@dcl/content-hash-tree'
 import { MappingType } from '@dcl/schemas'

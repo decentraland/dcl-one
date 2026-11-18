@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { describe, expect, it } from 'vitest'
 import { flattenMessages } from './messages'
 import en from '@/data/lib/creators/intl/en.json'

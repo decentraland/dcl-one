@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Network } from '@dcl/schemas'
 import { type CouponCreation } from '@/data/lib/creators/coupons'

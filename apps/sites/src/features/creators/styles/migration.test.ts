@@ -1,4 +1,5 @@
 // @vitest-environment node
+import '@/data/lib/creators/test/setup'
 import { readdirSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 

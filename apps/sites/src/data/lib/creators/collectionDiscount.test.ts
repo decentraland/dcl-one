@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { describe, expect, it } from 'vitest'
 import { ContractName, getContract, getCouponManager, type MarketplaceName } from '@/data/lib/creators/chain/contracts'
 import { discountedCredits, discountedManaWei, runningDiscountPpm, takesDiscount } from './collectionDiscount'

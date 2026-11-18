@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { describe, expect, it } from 'vitest'
 import { ContractName, getCollectionContract, getContract } from '@/data/lib/creators/chain/contracts'
 import { decodeFunctionData, type Hex } from 'viem'

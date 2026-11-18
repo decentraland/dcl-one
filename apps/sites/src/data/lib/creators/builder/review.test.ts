@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import '@/data/lib/creators/test/setup'
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
 import { BuilderServerError } from './transport'
 import {
