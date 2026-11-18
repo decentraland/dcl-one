@@ -547,7 +547,9 @@ fn scene_miss(world: &str, parcel: &str) -> ApiError {
 }
 
 /// `(realm.serverName || realmName)?.toLowerCase()`: a `*.eth` realm is a
-/// world, anything else (padded, `artemis`, absent) Genesis City (`main`);
+/// world, as is a non-world name signed beside a realm URL
+/// (`realm.hostname`) ending in `/world/<name>.eth`; anything else (padded,
+/// `artemis`, absent) Genesis City (`main`);
 /// a non-string realm is upstream's `toLowerCase` TypeError, a 500. The
 /// parcel must match upstream's pattern exactly (no whitespace) and defaults
 /// to `0,0`. A world name or parcel that names no scene here (a malformed
@@ -555,7 +557,17 @@ fn scene_miss(world: &str, parcel: &str) -> ApiError {
 fn derive_scene_target(meta: &SceneAuthMetadata) -> Result<SceneTarget, ApiError> {
     let realm = match meta.realm() {
         None => None,
-        Some(JsValue::String(s)) => Some(s.to_lowercase()),
+        // A world published here signs its stripped realm name beside its
+        // realm URL (`comms::world_identity::signed_realm_name`).
+        Some(JsValue::String(s)) => Some(
+            match meta
+                .realm_url()
+                .and_then(crate::comms::world_identity::realm_url_world)
+            {
+                Some(world) if !s.to_lowercase().ends_with(".eth") => world.key().to_string(),
+                _ => s.to_lowercase(),
+            },
+        ),
         Some(_) => {
             return Err(ApiError::internal(
                 "scene context: the realm name is not a string",
@@ -1079,6 +1091,30 @@ mod scene_context_tests {
         assert_eq!(t.parcel_raw, "010,-25");
         let t = target(r#"{"parcel":"1,1"}"#).unwrap();
         assert_eq!(t.realm.storage_realm(), GENESIS_CITY_REALM);
+    }
+
+    /// A world published here signs its stripped `/about` realm name beside
+    /// the realm URL `<host>/world/<name>`; a URL without a world keeps Genesis.
+    #[test]
+    fn a_stripped_world_realm_name_reads_as_the_world_its_realm_url_names() {
+        let t = target(
+            r#"{"realm":{"serverName":"pimienta","hostname":"node.example/world/Pimienta.dcl.eth"},"parcel":"0,0"}"#,
+        )
+        .unwrap();
+        assert_eq!(t.realm.storage_realm(), "pimienta.dcl.eth");
+        let t =
+            target(r#"{"realm":{"serverName":"main","hostname":"node.example"},"parcel":"0,0"}"#)
+                .unwrap();
+        assert_eq!(t.realm.storage_realm(), GENESIS_CITY_REALM);
+        let t = target(
+            r#"{"realm":{"serverName":"other.dcl.eth","hostname":"node.example/world/pimienta.dcl.eth"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            t.realm.storage_realm(),
+            "other.dcl.eth",
+            "a signed world name wins"
+        );
     }
 
     #[test]

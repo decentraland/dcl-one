@@ -51,7 +51,10 @@ and shows no other avatars:
   --webtransport-developer-mode --ignore-certificate-errors-spki-list=<hash from status>
 ```
 
-`/about` answers 503 while Pulse is down.
+`/about` answers 503 while Pulse is down. Pulse exits when it loses its generation lease (a PostgreSQL
+restart, or a keepalive slower than the lease after sleep or under load), and the supervisor starts it
+again with a fresh generation, without limit. A stack started before this policy keeps the old one until
+`foundation-dev down` and `up`.
 
 ## Data profiles
 
@@ -205,8 +208,8 @@ input of the Rust job goes on that list and on the path list of
 Rust tests. The Rust tests run in three shards. Each shard sorts the test
 binaries by source file and kind, so the three take one list on any runner
 (`tooling/catalyst-test.sh`). Two more labels work the same way:
-`ci:desktop` builds the Creator Hub desktop app for macOS and Windows on a PR
-and attaches its test builds, and `ci:linux` does the same for Linux.
+`ci:desktop` builds the Creator Hub desktop app for macOS, Windows and Linux on
+a PR and attaches its test builds, and `ci:linux` builds Linux alone.
 `release:creator-hub` is read after the merge: the push to
 `main` publishes the Creator Hub installers as a pre-release only when its PR
 has the label. A draft PR does not run the Explorer test suite and the headless

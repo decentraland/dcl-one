@@ -1122,6 +1122,56 @@ class DevTest(unittest.TestCase):
                 dev.wait_ready(10)
         sleep.assert_not_called()
 
+    def test_pulse_comes_back_with_a_fresh_generation_after_losing_its_lease(self):
+        processes = dev.project(self.config)['processes']
+        policy = processes['pulse']['availability']
+        self.assertEqual(policy['restart'], 'on_failure')
+        # Unlimited: the supervisor never resets the count, and a lease can be lost many times over a stack's life.
+        self.assertEqual(policy['max_restarts'], 0)
+        self.assertGreaterEqual(policy['backoff_seconds'], 1)
+        # The other tasks keep failing the wait on their first non-zero exit.
+        self.assertEqual([name for name, process in processes.items() if 'availability' in process], ['pulse'])
+
+    def test_wait_tolerates_pulse_between_restarts_and_fails_when_they_run_out(self):
+        api_url = f"http://127.0.0.1:{self.config['port']}"
+        restarting = json.dumps([{'name': 'pulse', 'status': 'Restarting', 'exit_code': 1, 'is_running': False}])
+        running = json.dumps([{'name': 'pulse', 'status': 'Running', 'exit_code': 1, 'is_running': True}])
+        about = []
+
+        def response(url, timeout):
+            # /about can still answer from the last heartbeat while Pulse waits for its restart.
+            if url == api_url + '/about':
+                about.append(url)
+            return contextlib.nullcontext(type('Response', (), {'status': 200})())
+
+        listings = iter([subprocess.CompletedProcess([], 0, restarting), subprocess.CompletedProcess([], 0, running)])
+        with patch.object(dev, 'pc', side_effect=lambda *a, **k: next(listings)), \
+                patch.object(dev.urllib.request, 'urlopen', side_effect=response), \
+                patch.object(dev, 'backoff_delays', return_value=iter([0])), \
+                patch.object(dev.time, 'sleep'), \
+                patch.object(dev, 'wait_first_mirror_pass', return_value=0), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(dev.wait_ready(10), 0)
+        # Ready only on the listing after the restart.
+        self.assertEqual(len(about), 1)
+        self.assertIsNone(next(listings, None))
+        exhausted = subprocess.CompletedProcess([], 0, json.dumps([
+            {'name': 'pulse', 'status': 'Completed', 'exit_code': 1, 'is_running': False, 'restarts': 10}]))
+        with patch.object(dev, 'pc', return_value=exhausted), patch.object(dev.time, 'sleep') as sleep, \
+                contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError, 'pulse failed'):
+                dev.wait_ready(10)
+        sleep.assert_not_called()
+
+    def test_a_wait_that_times_out_on_a_restarting_process_names_it(self):
+        restarting = subprocess.CompletedProcess([], 0, json.dumps(
+            [{'name': 'pulse', 'status': 'Restarting', 'exit_code': 1, 'is_running': False}]))
+        with patch.object(dev, 'pc', return_value=restarting), \
+                patch.object(dev, 'backoff_delays', return_value=iter([0, 0])), \
+                patch.object(dev.time, 'sleep'), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError, 'while pulse kept restarting. Inspect foundation-dev logs pulse'):
+                dev.wait_ready(10)
+
     def test_wait_narrates_progress_with_the_building_task_output(self):
         listing = subprocess.CompletedProcess([], 0, json.dumps([
             {'name': 'api-build', 'status': 'Running', 'is_running': True, 'exit_code': 0},
@@ -1282,6 +1332,45 @@ class DevTest(unittest.TestCase):
             finally:
                 dev.down()
             self.assertFalse((state / 'pc.sock').exists())
+
+    @unittest.skipUnless(shutil.which('process-compose'), 'process-compose is supplied by nix develop')
+    def test_the_supervisor_lists_pulse_between_restarts_as_wait_expects(self):
+        policy = {**dev.project(self.config)['processes']['pulse']['availability'], 'max_restarts': 1}
+        project = self.state / 'test.json'
+        project.write_text(json.dumps({'version': '0.5', 'processes': {
+            'hold': {'command': 'sleep 60'},
+            'pulse': {'command': 'exit 1', 'availability': policy}}}))
+        seen = []
+
+        def pulse():
+            result = dev.pc('process', 'list', '--output', 'json', capture_output=True, text=True)
+            if result.returncode:
+                return None
+            state = next((p for p in json.loads(result.stdout) if p['name'] == 'pulse'), None)
+            if state:
+                seen.append((state['status'], state['is_running'], state['exit_code'], state['restarts']))
+            return state
+
+        def until(predicate, seconds):
+            deadline = time.monotonic() + seconds
+            for delay in dev.backoff_delays(deadline, first=.05, maximum=.2):
+                if (state := pulse()) and predicate(state):
+                    return state
+                time.sleep(delay)
+            self.fail(f'pulse listings: {seen}')
+
+        try:
+            dev.pc('up', '--config', str(project), '--disable-dotenv', '--detached', '--tui=false',
+                   check=True, capture_output=True, text=True)
+            backoff = until(lambda s: s['status'] == 'Restarting', 15)
+            self.assertEqual((backoff['is_running'], backoff['exit_code']), (False, 1))
+            final = until(lambda s: s['restarts'] == 1 and s['status'] != 'Restarting' and not s['is_running'], 15)
+            self.assertEqual(final['exit_code'], 1)
+            with patch.object(dev.time, 'sleep'), contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(RuntimeError, 'pulse failed'):
+                    dev.wait_ready(10)
+        finally:
+            dev.down()
 
     def install_service(self, system):
         with patch.object(dev, 'DARWIN', system == 'Darwin'), \

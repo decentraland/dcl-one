@@ -26,6 +26,14 @@ describe("when building the Live Now cards", () => {
     expect(cards[0]).toMatchObject({ creatorAddress: "0xAbC", userName: "Host", image: "/content/contents/evhash" });
   });
 
+  it("should supply a thumbnail without a hot-scene row", () => {
+    expect(plazaCard([]).image).toMatch(/\.webp$/);
+  });
+
+  it("should use the scene thumbnail when the feed supplies one", () => {
+    expect(plazaCard([{ ...scene("g", "Genesis Plaza", 2, [0, 0]), thumbnail: "https://node.test/content/contents/plaza" }]).image).toBe("/content/contents/plaza");
+  });
+
   it("should credit the Genesis Plaza card to the Foundation", () => {
     const card = plazaCard([scene("g", "Genesis Plaza", 2, [0, 0])]);
     expect([card.id, card.creatorName]).toEqual(["g", "Decentraland Foundation"]);

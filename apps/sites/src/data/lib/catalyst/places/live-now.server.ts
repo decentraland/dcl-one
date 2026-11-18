@@ -1,4 +1,5 @@
 import { z } from "zod";
+import plazaThumbnail from "@dcl/one-ui/apps/sites/assets/genesis-plaza.webp";
 
 import { profileFaceUrl } from "../../auth/profile-face-url";
 import { withDeadline } from "../../request-deadline";
@@ -99,7 +100,7 @@ export function plazaCard(hotScenes: HotScene[]): LiveNowCard {
     id: plaza?.id ?? "genesis-plaza",
     title: plaza?.name ?? "Genesis Plaza",
     users: plaza?.usersTotalCount ?? 0,
-    image: ownContent(plaza?.thumbnail),
+    image: ownContent(plaza?.thumbnail) || plazaThumbnail,
     coordinates: plaza ? coordsKey(...plaza.baseCoords) : "0,0",
     creatorName: FOUNDATION_CONTACT_NAME,
     isGenesisPlaza: true,

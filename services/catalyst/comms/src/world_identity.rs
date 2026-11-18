@@ -258,6 +258,33 @@ pub fn is_world_realm_name(realm_name: &str) -> bool {
         .is_some_and(|suffix| suffix.eq_ignore_ascii_case(".eth"))
 }
 
+/// The world a signed realm URL names: the explorer signs `realm.hostname`
+/// as `<host><about path>`, which for a world realm ends in `/world/<name>.eth`
+/// (`<host>` alone for Genesis City). Bare or absolute, a trailing `/` allowed.
+pub fn realm_url_world(hostname: &str) -> Option<WorldName> {
+    let (_, name) = hostname.trim_end_matches('/').rsplit_once("/world/")?;
+    if name.contains('/') || !is_world_realm_name(name) {
+        return None;
+    }
+    WorldName::parse(name)
+        .ok()
+        .filter(|world| world.display() == name)
+}
+
+/// The realm a scene's signed metadata stands in, from its signed realm name.
+/// A world published on this node advertises its `/about` realm name without
+/// `.dcl.eth` (`WORLDS_REALM_NAME_STRIP_ENS`) or as its owner's override, and
+/// the explorer signs that name; when such a non-world name is signed beside
+/// a realm URL (`realm.hostname`) naming a world, the request stands in that
+/// world. Any other name is returned as signed, so Genesis City and every
+/// `.eth` name keep their reading.
+pub fn signed_realm_name(signed: &str, hostname: Option<&str>) -> String {
+    match hostname.and_then(realm_url_world) {
+        Some(world) if !is_world_realm_name(signed) => world.display().to_string(),
+        _ => signed.to_string(),
+    }
+}
+
 /// Where a request stands: a world realm or a shared one. `as_str()` is the
 /// parsed display spelling (shared scene rooms preserve it);
 /// `storage_realm()` is the storage scope: the world key, or
