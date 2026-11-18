@@ -784,6 +784,7 @@ class InventoryTests(unittest.TestCase):
                 Path(logs, "binaries").write_text("".join(rows))
                 env = {**os.environ, "logs": logs, "LC_ALL": locale}
                 env.pop("CATALYST_TEST_SHARD", None)
+                env.pop("CATALYST_TEST_DOC_SHARD", None)
                 if value is not None:
                     env["CATALYST_TEST_SHARD"] = value
                 result = subprocess.run(["bash", "-euo", "pipefail", "-c", select], env=env,
