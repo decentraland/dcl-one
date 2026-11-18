@@ -45,6 +45,14 @@ describe("the in-world shell's BUY listing", () => {
     expect(await fetchBuyListing(COLLECTION, ITEM_ID, client, OFF)).toMatchObject({ tradeId: 'trade-legacy-7', itemId: ITEM_ID, contractAddress: COLLECTION })
   })
 
+  it("is a store mint, by acquisition and with no trade, when that is the card's row", async () => {
+    const STORE_MINT = { ...PRIMARY_WEARABLE, source: 'legacy' as const, acquisition: 'store' as const, tradeId: null, manaWei: '4020000000000000000', listingCount: 1 }
+    const { client } = shop(feed([STORE_MINT]))
+    const listing = await fetchBuyListing(COLLECTION, ITEM_ID, client, OFF)
+    expect(listing).toMatchObject({ acquisition: 'store', itemId: ITEM_ID, contractAddress: COLLECTION })
+    expect(listing?.tradeId ?? null).toBeNull()
+  })
+
   it('never takes a resale for the item, even when a primary read returns one', async () => {
     const { client } = shop(feed([RESALE_WEARABLE]))
     expect(await fetchBuyListing(COLLECTION, ITEM_ID, client, OFF)).toBeNull()

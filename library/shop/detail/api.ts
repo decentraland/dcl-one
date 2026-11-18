@@ -45,13 +45,6 @@ export async function fetchPrimaryListingForItem(contractAddress: string, itemId
   return items.find((l) => !isResale(l)) ?? null;
 }
 
-export async function fetchStoreMintState(contractAddress: string, itemId: string, opts: Opts): Promise<{ priceWei: string; available: number } | null> {
-  const { items } = await fetchUnified({ contractAddress, itemId, first: 1 }, opts);
-  const row = items[0];
-  if (!row || row.acquisition !== "store" || !row.manaWei) return null;
-  return { priceWei: row.manaWei, available: row.available ?? 0 };
-}
-
 export async function fetchItemResales(contractAddress: string, itemId: string, opts: Opts): Promise<UnifiedListing[]> {
   const { items } = await fetchUnified({ contractAddress, itemId, first: 100, sortBy: "cheapest" }, opts);
   return items.filter((i) => !!i.tokenId && !!i.tradeId).sort((a, b) => a.priceCredits - b.priceCredits);

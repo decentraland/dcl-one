@@ -107,7 +107,9 @@ export async function resolveLiveCoupon(
   }
 }
 
-const STORE_MINT_PAGE = 20;
+/** The node's largest page (`SHOP_MAX_PAGE_SIZE`): nearly every item's listings fit one read, which no listing sold
+ * or added between reads can shift. A longer list is paged, bounded by the first answer's total. */
+const STORE_MINT_PAGE = 1000;
 
 /** A mint's LIVE price and remaining supply, or null when it is no longer a store mint. A store mint is a `legacy` row
  * among its item's newest-first listings, after any MANA trade listed since, however many: the pages are read until it
