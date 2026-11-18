@@ -18,6 +18,9 @@ use web_transport_quinn::Session;
 /// Buffer size for a single reliable-stream read. Raw chunks are forwarded as-is.
 const STREAM_READ_BUF: usize = 16 * 1024;
 
+/// The longest [`Client::disconnect`] waits for the close frame to leave.
+const CLOSE_FLUSH: Duration = Duration::from_millis(200);
+
 /// Settings for [`Client::connect`].
 pub struct ClientConfig {
     /// Server URL, e.g. `"https://127.0.0.1:4433/"`.
@@ -156,13 +159,30 @@ impl Client {
             .is_ok()
     }
 
-    /// Close the session with an application error code.
+    /// Close the session with an application error code. Returns once the close frame has been
+    /// handed to the socket (or after [`CLOSE_FLUSH`]), so that dropping the client right after
+    /// cannot discard it: the server then hears the close instead of waiting for its idle timeout.
     pub fn disconnect(&self, reason: u32) {
+        let Some(runtime) = self.runtime.as_ref() else {
+            return;
+        };
+        // a session the peer has already closed sends nothing
+        let already_closed = self.session.close_reason().is_some();
         // `Session::close` must run inside the tokio runtime context.
-        if let Some(runtime) = self.runtime.as_ref() {
-            let _guard = runtime.enter();
-            self.session.close(reason, b"");
+        let _guard = runtime.enter();
+        self.session.close(reason, b"");
+        if already_closed {
+            return;
         }
+        let connection: &web_transport_quinn::quinn::Connection = &self.session;
+        runtime.block_on(async {
+            let deadline = tokio::time::Instant::now() + CLOSE_FLUSH;
+            while connection.stats().frame_tx.connection_close == 0
+                && tokio::time::Instant::now() < deadline
+            {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        });
     }
 
     /// Current smoothed RTT to the server in microseconds.
