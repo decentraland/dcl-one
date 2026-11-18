@@ -476,6 +476,13 @@ mod mic_key_tests {
 
     use super::*;
 
+    /// The time between two frames.
+    const FRAME_SECS: f64 = 1.0 / 60.0;
+    /// A press shorter than the call mic's hold threshold.
+    const TAP_SECS: f64 = CALL_MIC_HOLD_SECS / 2.0;
+    /// A press longer than the call mic's hold threshold.
+    const HOLD_SECS: f64 = CALL_MIC_HOLD_SECS * 2.0;
+
     fn app() -> App {
         let mut app = App::new();
         app.init_resource::<InputMap>()
@@ -544,11 +551,11 @@ mod mic_key_tests {
     #[test]
     fn nearby_press_opens_and_release_closes() {
         let mut app = app();
-        frame(&mut app, 0.1, true, false);
+        frame(&mut app, FRAME_SECS, true, false);
         assert!(nearby_open(&app));
-        frame(&mut app, 2.0, false, false);
+        frame(&mut app, HOLD_SECS, false, false);
         assert!(nearby_open(&app));
-        frame(&mut app, 0.1, false, true);
+        frame(&mut app, FRAME_SECS, false, true);
         assert!(!nearby_open(&app));
         assert!(call_mic_switches(&mut app).is_empty());
     }
@@ -556,9 +563,9 @@ mod mic_key_tests {
     #[test]
     fn nearby_tap_inside_one_frame_leaves_the_mic_closed() {
         let mut app = app();
-        frame(&mut app, 0.1, true, true);
+        frame(&mut app, FRAME_SECS, true, true);
         assert!(!nearby_open(&app));
-        frame(&mut app, 0.1, false, false);
+        frame(&mut app, FRAME_SECS, false, false);
         assert!(!nearby_open(&app));
     }
 
@@ -566,9 +573,9 @@ mod mic_key_tests {
     fn nearby_press_with_the_mic_open_keeps_it_open_until_release() {
         let mut app = app();
         app.world_mut().resource_mut::<MicState>().enabled = true;
-        frame(&mut app, 0.1, true, false);
+        frame(&mut app, FRAME_SECS, true, false);
         assert!(nearby_open(&app));
-        frame(&mut app, 0.1, false, true);
+        frame(&mut app, FRAME_SECS, false, true);
         assert!(!nearby_open(&app));
     }
 
@@ -578,8 +585,8 @@ mod mic_key_tests {
         app.world_mut()
             .resource_mut::<MicState>()
             .set_scene_disabled(true);
-        frame(&mut app, 0.1, true, false);
-        frame(&mut app, 0.1, false, true);
+        frame(&mut app, FRAME_SECS, true, false);
+        frame(&mut app, FRAME_SECS, false, true);
         let mic_state = app.world().resource::<MicState>();
         assert_eq!(mic_state.refusals, 1);
         assert!(!mic_state.enabled);
@@ -590,10 +597,10 @@ mod mic_key_tests {
     fn call_tap_from_closed_leaves_the_mic_open() {
         let mut app = app();
         set_call(&mut app, true, false);
-        frame(&mut app, 0.1, true, false);
+        frame(&mut app, FRAME_SECS, true, false);
         assert_eq!(call_mic_switches(&mut app), [true]);
         set_call(&mut app, true, true);
-        frame(&mut app, CALL_MIC_HOLD_SECS / 2.0, false, true);
+        frame(&mut app, TAP_SECS, false, true);
         assert!(call_mic_switches(&mut app).is_empty());
     }
 
@@ -601,7 +608,7 @@ mod mic_key_tests {
     fn call_tap_inside_one_frame_leaves_the_mic_open() {
         let mut app = app();
         set_call(&mut app, true, false);
-        frame(&mut app, 0.1, true, true);
+        frame(&mut app, FRAME_SECS, true, true);
         assert_eq!(call_mic_switches(&mut app), [true]);
     }
 
@@ -609,10 +616,10 @@ mod mic_key_tests {
     fn call_hold_from_closed_is_push_to_talk() {
         let mut app = app();
         set_call(&mut app, true, false);
-        frame(&mut app, 0.1, true, false);
+        frame(&mut app, FRAME_SECS, true, false);
         assert_eq!(call_mic_switches(&mut app), [true]);
         set_call(&mut app, true, true);
-        frame(&mut app, CALL_MIC_HOLD_SECS + 0.1, false, true);
+        frame(&mut app, HOLD_SECS, false, true);
         assert_eq!(call_mic_switches(&mut app), [false]);
     }
 
@@ -620,9 +627,9 @@ mod mic_key_tests {
     fn call_press_with_the_mic_open_closes_it_on_release() {
         let mut app = app();
         set_call(&mut app, true, true);
-        frame(&mut app, 0.1, true, false);
+        frame(&mut app, FRAME_SECS, true, false);
         assert!(call_mic_switches(&mut app).is_empty());
-        frame(&mut app, 0.1, false, true);
+        frame(&mut app, FRAME_SECS, false, true);
         assert_eq!(call_mic_switches(&mut app), [false]);
     }
 
@@ -630,10 +637,10 @@ mod mic_key_tests {
     fn call_ending_during_the_press_makes_the_release_do_nothing() {
         let mut app = app();
         set_call(&mut app, true, false);
-        frame(&mut app, 0.1, true, false);
+        frame(&mut app, FRAME_SECS, true, false);
         assert_eq!(call_mic_switches(&mut app), [true]);
         set_call(&mut app, false, false);
-        frame(&mut app, 2.0, false, true);
+        frame(&mut app, HOLD_SECS, false, true);
         assert!(call_mic_switches(&mut app).is_empty());
         assert!(!nearby_open(&app));
     }
@@ -641,10 +648,10 @@ mod mic_key_tests {
     #[test]
     fn call_starting_during_a_nearby_press_closes_the_nearby_mic_on_release() {
         let mut app = app();
-        frame(&mut app, 0.1, true, false);
+        frame(&mut app, FRAME_SECS, true, false);
         assert!(nearby_open(&app));
         set_call(&mut app, true, false);
-        frame(&mut app, 0.1, false, true);
+        frame(&mut app, FRAME_SECS, false, true);
         assert!(!nearby_open(&app));
         assert!(call_mic_switches(&mut app).is_empty());
     }
