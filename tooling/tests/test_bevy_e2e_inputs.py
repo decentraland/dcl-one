@@ -82,11 +82,6 @@ class ResolveTests(unittest.TestCase):
             return result
         return wait_
 
-    def workflow_run(self, run_id, sha, event, pulls=(), repo=REPO, conclusion='success', branch='main'):
-        return {'workflow_run': {'id': run_id, 'event': event, 'conclusion': conclusion, 'head_sha': sha,
-                                 'head_branch': branch, 'head_repository': {'full_name': repo},
-                                 'pull_requests': [{'number': number} for number in pulls]}}
-
     # --- pull requests, from their own event ---
 
     def test_a_labelled_pull_request_tests_the_web_app_its_ci_run_built(self):
@@ -192,29 +187,12 @@ class ResolveTests(unittest.TestCase):
             inputs.wait_for_ci(REPO, SHA_PR, 300, sleep=lambda _: None, clock=lambda: next(clock))
         self.assertEqual(caught.exception.args[0], 30)
 
-    # --- main, nightly, by hand ---
+    # --- nightly, by hand ---
 
-    def test_a_main_push_run_tests_its_own_and_skips_without_one(self):
-        result = inputs.resolve('workflow_run', self.workflow_run(20, SHA_MAIN, 'push'), REPO)
-        self.assertEqual((result['run'], result['pr'], result['web_run_id']), (True, '', '20'))
-        result = inputs.resolve('workflow_run', self.workflow_run(31, SHA_MAIN, 'push'), REPO)
-        self.assertEqual(result['run'], False)
-        self.assertIn('built no web app', result['reason'])
-
-    def test_a_pull_requests_ci_run_is_skipped_as_a_workflow_run(self):
-        result = inputs.resolve('workflow_run', self.workflow_run(30, SHA_PR, 'pull_request', pulls=(194,)), REPO)
-        self.assertEqual(result['run'], False)
-        self.assertIn('its own event', result['reason'])
-        self.assertEqual(self.api.calls, [])
-
-    def test_other_runs_are_skipped(self):
-        for event in (self.workflow_run(30, SHA_PR, 'push', repo='someone/fork'),
-                      self.workflow_run(30, SHA_MAIN, 'push', conclusion='failure'),
-                      self.workflow_run(30, SHA_PR, 'push', branch='feature'),
-                      self.workflow_run(30, SHA_PR, 'workflow_dispatch')):
-            with self.subTest(event=event['workflow_run']):
-                self.assertEqual(inputs.resolve('workflow_run', event, REPO)['run'], False)
-        self.assertEqual(inputs.resolve('issue_comment', {}, REPO)['run'], False)
+    def test_events_the_workflow_does_not_list_start_nothing(self):
+        for name in ('workflow_run', 'issue_comment'):
+            with self.subTest(event=name):
+                self.assertEqual(inputs.resolve(name, {}, REPO)['run'], False)
 
     def test_the_schedule_takes_mains_newest(self):
         result = inputs.resolve('schedule', {}, REPO)

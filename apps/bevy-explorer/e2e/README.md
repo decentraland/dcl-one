@@ -284,8 +284,8 @@ A reference counts as approved once a reviewer has checked it against the scene'
 - **Scenarios**, as unity-explorer runs explorer-automation: on a pull request of this repository
   when a maintainer applies the `ci:e2e` label (the label admits the commit it is applied to, and
   that alone: a push takes it off and runs nothing, and the maintainer puts it back to run the
-  new commit; a draft or a fork does not run), after each Bevy Explorer / CI run of a push to
-  main, nightly against main's newest web app, and by hand (a commit, a group, record). A pull
+  new commit; a draft or a fork does not run), nightly against main's newest web app, and by hand
+  (a commit, a group, record). A pull
   request's run comes from its own event, so it is one of the pull request's checks and an
   approval of the `e2e` deployment names its commit. `tooling/bevy-e2e-inputs.py` picks the web
   app: a pull request's job waits for the commit's Bevy Explorer / CI run and takes the web app it
@@ -375,7 +375,7 @@ change on the left updates what is on the right in the same change, then runs th
 | The smart-wearable fixture (`scenes/smart-wearable`: its title, name, log line or label), `/preview-wearables` or `buildScene` in `driver/realm.ts`, the `/smart_wearable*`, `/portables` or `/stop_portable` commands, or the HUD's `Portable experiences` button, popover or its `Stop`/`Restart` rows | `specs/smart-wearables.test.ts`, `test/realm.test.ts`, `scenes/README.md` | `pnpm test`; the scenario in CI |
 | A scene under `scenes/`, its parcels or spawn, `specs/visual/scenes.ts`, the 960x540 window or the tolerance | The references, re-recorded in CI (`record`) and committed in a PR; `scenes/README.md` | the visual scenarios in CI |
 | A path moved under `apps/bevy-explorer/e2e`, `tooling/bevy-e2e-*.py` or the workflow | The workflow's `paths` filters, `tooling/bevy-ci.py` and `tooling/tests/test_bevy_ci.py`, the LFS patterns in `.gitattributes`, the links in this README | the tooling tests |
-| The CI workflow's name, its job names, the `bevy-explorer-web-<sha>` artifact or the status comment's sections | `tooling/bevy-e2e-inputs.py`, `tooling/bevy-e2e-report.py` and their tests; the e2e workflow's `workflow_run` | the tooling tests |
+| The CI workflow's name, its job names, the `bevy-explorer-web-<sha>` artifact or the status comment's sections | `tooling/bevy-e2e-inputs.py`, `tooling/bevy-e2e-report.py` and their tests | the tooling tests |
 | A scenario the HUD can no longer run, or a Gap whose feature landed | A `todo` with the reason, or the todo back into a scenario; its header row and the scenario map | the scenarios in CI |
 
 ```sh
