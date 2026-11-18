@@ -648,7 +648,8 @@ async fn ordinary_large_reader_case(idle_only: bool) {
     let settings = Settings {
         // Queue capacity uses the raw number; the physical writer wraps to 1024.
         ws_max_backpressure_bytes: 4294968320.5,
-        ws_idle_timeout_secs: if idle_only { 8 } else { 300 },
+        // Idle expiry outlasts the healthy 8 MiB response (about 0.5 s).
+        ws_idle_timeout_secs: if idle_only { 3 } else { 300 },
         ordinary_transport: crate::shared::rpc::ws::OrdinaryQueueConfig {
             retry_delay_ms: 10.0,
             max_retry_attempts: 3.0,
