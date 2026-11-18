@@ -322,7 +322,6 @@ extern "C" {
 /// Whether the uses waiting are sent ahead of a trim: not ahead of a quota trim, which a write is
 /// waiting on and which the worker would queue behind them. A quota trim carries them instead,
 /// and they stay waiting for the next flush.
-#[cfg(any(target_arch = "wasm32", test))]
 fn sends_uses_before_trim(quota_error: bool) -> bool {
     !quota_error
 }
@@ -353,7 +352,6 @@ impl UsedKeys {
     }
 
     /// The keys waiting, which stay waiting.
-    #[cfg(any(target_arch = "wasm32", test))]
     fn waiting(&self) -> Vec<String> {
         self.0.iter().cloned().collect()
     }

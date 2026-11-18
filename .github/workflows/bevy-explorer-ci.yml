@@ -9,6 +9,7 @@
       - apps/bevy-explorer/**
       - tooling/dev-regressions*
       - tooling/bevy-ci.py
+      - tooling/bevy-dead-code-check.py
       - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
       - tooling/patched-sources.py
@@ -57,6 +58,7 @@
       - apps/bevy-explorer/**
       - tooling/dev-regressions*
       - tooling/bevy-ci.py
+      - tooling/bevy-dead-code-check.py
       - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
       - tooling/patched-sources.py

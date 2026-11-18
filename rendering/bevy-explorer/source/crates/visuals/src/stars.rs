@@ -127,17 +127,17 @@ mod settings {
         /// seconds, for the twinkle
         pub time: f32,
     }
+}
 
-    impl Default for StarsSettings {
-        fn default() -> Self {
-            Self {
-                sun_position: Vec3::Y,
-                night: 0.0,
-                brightness: 4.0,
-                size: 1.0,
-                density: 0.65,
-                time: 0.0,
-            }
+impl Default for StarsSettings {
+    fn default() -> Self {
+        Self {
+            sun_position: Vec3::Y,
+            night: 0.0,
+            brightness: 4.0,
+            size: 1.0,
+            density: 0.65,
+            time: 0.0,
         }
     }
 }
