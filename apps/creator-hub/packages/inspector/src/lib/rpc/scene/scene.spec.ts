@@ -211,6 +211,52 @@ describe('SceneServer RPC', () => {
       spy.mockRestore();
     });
   });
+
+  describe('when the host asks for a screenshot', () => {
+    let host: RPC<string, any, any>;
+    let events: string[];
+    let screenshotSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      events = [];
+      const i2 = new InMemoryTransport();
+      const p2 = new InMemoryTransport();
+      i2.connect(p2);
+      p2.connect(i2);
+      new SceneServer(i2, store, renderer, undefined, undefined, undefined, undefined, () => {
+        events.push('hide');
+        return () => events.push('restore');
+      });
+      host = new RPC('SceneRpcInbound', p2);
+      screenshotSpy = vi
+        .spyOn(ScreenshotTools, 'CreateScreenshotAsync')
+        .mockImplementation(async () => {
+          events.push('capture');
+          return 'data:image/png;base64,AAAA';
+        });
+    });
+
+    afterEach(() => screenshotSpy.mockRestore());
+
+    it('should hide the editor helpers only while the picture is taken', async () => {
+      const shot = await host.request('take_screenshot', { width: 10, height: 10 });
+
+      expect(shot).toBe('data:image/png;base64,AAAA');
+      expect(events).toEqual(['hide', 'capture', 'restore']);
+    });
+
+    describe('and the capture fails', () => {
+      beforeEach(() => {
+        screenshotSpy.mockRejectedValueOnce(new Error('capture failed'));
+      });
+
+      it('should show the editor helpers again', async () => {
+        await expect(host.request('take_screenshot', { width: 10, height: 10 })).rejects.toThrow();
+
+        expect(events).toEqual(['hide', 'restore']);
+      });
+    });
+  });
 });
 
 // The renderer-agnostic handlers must work WITHOUT a Babylon renderer — this is

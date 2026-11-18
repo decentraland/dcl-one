@@ -214,6 +214,11 @@ export const slice = createSlice({
           state.projects[projectIdx] = { ...state.projects[projectIdx], status: 'failed' };
         }
       })
+      // The publish modal opened from the deploy snackbar reads the project from this list.
+      .addCase(thunks.saveAndGetThumbnail.fulfilled, (state, { meta, payload: thumbnail }) => {
+        const project = state.projects.find($ => $.path === meta.arg.path);
+        if (project) project.thumbnail = thumbnail;
+      })
       .addCase(deployment.executeDeployment.fulfilled, (state, payload) => {
         const path = payload.meta.arg;
         const projectIdx = state.projects.findIndex($ => $.path === path);

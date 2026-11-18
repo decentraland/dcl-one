@@ -88,8 +88,10 @@ export const saveAndGetThumbnail = createAsyncThunk(
   'workspace/saveAndGetThumbnail',
   async (opts: Parameters<typeof workspace.saveThumbnail>[0], { dispatch }) => {
     await dispatch(saveThumbnail(opts)).unwrap();
-    const thumbnail = await workspace.getProjectThumbnailAsBase64(opts.path);
-    return thumbnail;
+    // The picture just captured, not the image scene.json names: a scene made from a template
+    // keeps naming the template's stock picture after a capture, and the publish screens show
+    // the scene as it is now.
+    return opts.thumbnail;
   },
 );
 export const createProjectAndInstall = createAsyncThunk(

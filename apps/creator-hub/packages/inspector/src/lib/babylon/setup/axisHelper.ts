@@ -1,5 +1,7 @@
 import * as BABYLON from '@babylonjs/core';
 
+import { areEditorHelpersHidden } from './editor-helpers';
+
 interface AxisHelperSetup {
   dispose: () => void;
 }
@@ -229,6 +231,7 @@ export function setupAxisHelper(
 
   // Render the axis scene after the main scene renders
   const renderObserver = scene.onAfterRenderObservable.add(() => {
+    if (areEditorHelpersHidden(scene)) return;
     const cameraAngles = getMainCamera();
     if (cameraAngles) {
       axisCamera.alpha = cameraAngles.alpha;
