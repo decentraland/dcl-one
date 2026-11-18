@@ -27,14 +27,19 @@ export interface NavigationStore {
   playerMoved: (position: Vec2) => boolean
 }
 
+/** Where a route to the place ends: its only parcel, or its base parcel; null when neither reads. */
+export function placeParcel(place: DiscoverPlace): Vec2 | null {
+  return place.positions.length === 1 ? parseParcel(place.positions[0]) : parseParcel(place.base_position)
+}
+
 export function destinationParcel(place: DiscoverPlace | null): Vec2 {
-  return (place == null ? null : place.positions.length === 1 ? parseParcel(place.positions[0]) : parseParcel(place.base_position)) ?? { x: 0, y: 0 }
+  return (place == null ? null : placeParcel(place)) ?? { x: 0, y: 0 }
 }
 
 export function isRouteTo(destination: Destination | null, place: DiscoverPlace): boolean {
   if (destination == null || isWorldPlace(place)) return false
-  const end = destinationParcel(place)
-  return destination.parcel.x === end.x && destination.parcel.y === end.y
+  const end = placeParcel(place)
+  return end != null && destination.parcel.x === end.x && destination.parcel.y === end.y
 }
 
 export function createNavigationStore(): NavigationStore {

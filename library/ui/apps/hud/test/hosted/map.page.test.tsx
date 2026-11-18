@@ -614,6 +614,35 @@ describe('map navigation', () => {
     await userEvent.click(await within(panel()).findByRole('button', { name: /Sugar Club/ }))
     expect(await within(panel()).findByRole('button', { name: 'exit navigation' })).toBeInTheDocument()
   })
+
+  // a parcel's centre, `metres` along both axes
+  const standAt = (metres: number, genesis: boolean): void => {
+    const session = fakeSession()
+    const minimap = { ...session.minimap, pose: { current: { ...session.minimap.pose.current, x: metres, z: metres } }, satelliteView: genesis ? session.minimap.satelliteView : null }
+    render(<MapPage map={{ ...session.map, open: false }} minimap={minimap} profile={fakeProfileState()} gallery={session.gallery} onNavigate={vi.fn()} />)
+  }
+
+  it('ends the route on arrival in Genesis City', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    act(() => navigation.start(PLAZA))
+    standAt(8, true)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+    })
+    expect(navigation.getSnapshot()).toBeNull()
+    vi.useRealTimers()
+  })
+
+  it('keeps the route in a World standing on the destination parcel numbers', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    act(() => navigation.start(place('far', 'Far', ['5,5'])))
+    standAt(88, false)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+    })
+    expect(navigation.getSnapshot()?.parcel).toEqual({ x: 5, y: 5 })
+    vi.useRealTimers()
+  })
 })
 
 describe('map view size', () => {

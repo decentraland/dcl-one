@@ -94,14 +94,15 @@ export function MapPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
-  // the route is followed whether or not the map is open
+  // the route is followed whether or not the map is open, and only in Genesis City: a World's
+  // parcels share the numbers but not the place
   useEffect(() => {
-    if (destination == null) return
+    if (destination == null || !genesis) return
     const timer = setInterval(() => {
       if (navigation.playerMoved(playerMarkerPosition(pose.current.x, pose.current.z))) showToast('You have arrived to your destination')
     }, ARRIVAL_CHECK_MS)
     return () => clearInterval(timer)
-  }, [destination, pose])
+  }, [destination, pose, genesis])
 
   // A refused pick leaves the page as it is; the startup lobby's pick closes the page itself, so a
   // toggle after it would reopen the map.

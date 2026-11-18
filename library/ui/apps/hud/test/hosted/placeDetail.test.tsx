@@ -149,6 +149,18 @@ describe('place detail', () => {
     expect(screen.queryByRole('button', { name: /navigation/i })).toBeNull()
   })
 
+  it('never makes home a place marked as a World with no name', () => {
+    const session = fakeSession()
+    show(session, { ...PLAZA, id: 'nameless', world: true, world_name: undefined })
+    fireEvent.click(screen.getByRole('button', { name: 'Set as Home' }))
+    expect(session.map.setHome).not.toHaveBeenCalled()
+  })
+
+  it('offers no navigation to a place whose parcel does not read', () => {
+    show(fakeSession(), { ...PLAZA, positions: ['0,0', '1,0'], base_position: '' })
+    expect(screen.queryByRole('button', { name: /navigation/i })).toBeNull()
+  })
+
   it('starts a route to the place and exits it', () => {
     show(fakeSession(), PLAZA)
     fireEvent.click(screen.getByRole('button', { name: /start navigation/i }))

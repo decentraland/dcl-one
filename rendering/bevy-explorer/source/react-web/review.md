@@ -488,9 +488,12 @@ Expectations:
   image (`assets/map/sea.webp`) placed in the world layer like a satellite tile.
 - **Home:** the map and the place detail read the session's home and set it with `setHomeScene`
   (`placeHomeTarget` in `features/map/home.ts` picks what each saves); Set as Home does not clear it.
+  Until the engine answers, the home is the web build's boot copy, its default realm read as
+  Genesis City, so the startup lobby agrees with the world.
+- **Arrival** ends a route only in Genesis City: a World's parcels share the numbers, not the place.
 - Tests: `library/explorer-core/test/{navmap,mapCore}.test.ts`, `library/ui/apps/hud/test/hosted/map.page.test.tsx`,
-  `hosted/home.session.test.tsx`, `mapEventInfo.test.tsx`; here, `src/test/bridgePlaces.test.ts` and
-  `bridgeEvents.test.ts`. Visual baseline: `panel-map`.
+  `hosted/home.session.test.tsx`, `hosted/placeDetail.test.tsx`, `mapEventInfo.test.tsx`; here,
+  `src/test/bridgePlaces.test.ts` and `bridgeEvents.test.ts`. Visual baseline: `panel-map`.
 
 ## Donate
 

@@ -3,7 +3,7 @@ import type { MapSearch } from '../features/map/mapApi'
 import type { DiscoverPlace } from '../features/places/placesApi'
 import type { EventData } from '../engine/protocol'
 import { homeOf, isHomePlace, NO_HOME, placeHomeTarget } from '../features/map/home'
-import { createNavigationStore, destinationParcel, isRouteTo } from '../features/map/navigation'
+import { createNavigationStore, destinationParcel, isRouteTo, placeParcel } from '../features/map/navigation'
 import { Navmap, pagination, type NavmapApi } from '../features/map/navmap'
 import { parcelCenter } from '../features/map/mapCoords'
 import { calendarLink, eventSchedule, eventShareLinks, jumpInLink, placeShareLinks, upcomingDates } from '../features/map/shareLinks'
@@ -586,6 +586,15 @@ describe('navigation', () => {
     expect(isRouteTo(store.getSnapshot(), CLUB)).toBe(true)
     expect(isRouteTo(store.getSnapshot(), PLAZA)).toBe(false)
     expect(isRouteTo({ parcel: { x: 0, y: 0 }, position: parcelCenter({ x: 0, y: 0 }), title: '' }, { ...WORLD, positions: ['0,0'], base_position: '0,0' })).toBe(false)
+  })
+
+  it('has no route end for a place whose parcel does not read', () => {
+    const unreadable = place('broken', 'Broken', ['1,1', '1,2'], { base_position: '' })
+    expect(placeParcel(unreadable)).toBeNull()
+    const store = createNavigationStore()
+    store.start(PLAZA)
+    expect(store.getSnapshot()?.parcel).toEqual({ x: 0, y: 0 })
+    expect(isRouteTo(store.getSnapshot(), unreadable)).toBe(false)
   })
 
   it('ends when stopped', () => {

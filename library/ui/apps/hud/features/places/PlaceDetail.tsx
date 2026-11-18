@@ -28,7 +28,7 @@ import visitsIcon from '../../assets/places/visits.png'
 import type { SignedPlace } from '@explorer-core/engine/protocol'
 import { homeOf, isPlacePanelHome, placeHomeTarget } from '@explorer-core/features/map/home'
 import { likeRateOf, setPlaceFavorite, setPlaceLike } from '@explorer-core/features/map/mapApi'
-import { isRouteTo, navigation } from '@explorer-core/features/map/navigation'
+import { isRouteTo, navigation, placeParcel } from '@explorer-core/features/map/navigation'
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import type { WorldAccessVerdict as WorldAccess } from '@explorer-core/engine/generated'
 import { placeOnline } from '@explorer-core/features/lobby/lobbyApi'
@@ -240,11 +240,13 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
   const setHome = (): void => {
     if (isHome) return
     const target = placeHomeTarget(place, null)
+    // `placeHomeTarget` reads a World with no name as a Genesis City parcel
     if (target == null || (world && target.realm == null)) return
     session.map.setHome(target.realm ?? DEFAULT_REALM, target.parcel)
   }
   const destination = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot)
   const navigating = isRouteTo(destination, place)
+  const routable = !world && placeParcel(place) != null
 
   const signingIn = session.login.busy
   const jumpIn = (): void => {
@@ -324,7 +326,7 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
           </Button>
         </div>
         <div className={styles.row}>
-          {!world &&
+          {routable &&
             (navigating ? (
               <Button size="bare" radius="md" variant="navigateExit" className={`${styles.wide} ${styles.navigation}`} onClick={navigation.stop}>
                 exit navigation
