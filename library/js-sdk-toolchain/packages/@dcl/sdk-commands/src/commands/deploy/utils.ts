@@ -141,7 +141,8 @@ export function buildDeleteScenesFromWorldPayload(worldName: string): string {
   const path = `/entities/${encodedName}`
   const timestamp = String(Date.now())
   const metadata = '{}'
-  return ['delete', path, timestamp, metadata].join(':').toLowerCase()
+  // crypto-middleware 6.x: method and path folded, metadata verbatim
+  return ['delete', path.toLowerCase(), timestamp, metadata].join(':')
 }
 
 export async function deleteWorldScenes(

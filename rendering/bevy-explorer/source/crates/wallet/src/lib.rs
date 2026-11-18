@@ -390,6 +390,12 @@ pub async fn sign_service_request(
     wallet: &Wallet,
     meta: String,
 ) -> Result<Vec<(String, String)>, anyhow::Error> {
+    // every verifier refuses empty metadata; `{}` is signed and sent alike
+    let meta = if meta.is_empty() {
+        "{}".to_owned()
+    } else {
+        meta
+    };
     // Gateway routing rejects ambiguous raw paths before URL normalization can erase them.
     let original = common::base_domain::gateway_signed_path(raw)?;
     let url = reqwest::Url::parse(raw)?;
@@ -424,6 +430,47 @@ async fn sign_path(
     headers.push(("x-identity-timestamp".to_owned(), format!("{unix_time}")));
     headers.push(("x-identity-metadata".to_owned(), meta));
     Ok(headers)
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod service_metadata_tests {
+    use super::*;
+
+    fn signed(meta: &str) -> (String, String) {
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest_with_seed([7; 32]);
+        let headers = async_std::task::block_on(sign_service_request(
+            "PUT",
+            "https://storage.example.test/Values/High-Score?Key=A",
+            &wallet,
+            meta.to_owned(),
+        ))
+        .unwrap();
+        let headers: std::collections::HashMap<_, _> = headers.into_iter().collect();
+        let link: ChainLink = serde_json::from_str(&headers["x-identity-auth-chain-1"]).unwrap();
+        let sent = headers["x-identity-metadata"].clone();
+        assert_eq!(
+            link.payload,
+            format!(
+                "put:/values/high-score:{}:{sent}",
+                headers["x-identity-timestamp"]
+            )
+        );
+        (link.payload, sent)
+    }
+
+    #[test]
+    fn mixed_case_metadata_is_signed_verbatim() {
+        let meta = r#"{"realmName":"Boedo.dcl.eth","sceneId":"Bafk"}"#;
+        let (payload, sent) = signed(meta);
+        assert_eq!(sent, meta);
+        assert!(payload.ends_with(meta));
+    }
+
+    #[test]
+    fn missing_metadata_is_signed_and_sent_as_an_empty_object() {
+        assert_eq!(signed("").1, "{}");
+    }
 }
 
 #[cfg(test)]

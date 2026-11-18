@@ -81,7 +81,9 @@ describe('editor host signing', () => {
     expect(JSON.parse(headers['x-identity-metadata'])).toEqual({ intent: 'dcl:editor:projects', signer: 'dcl:editor', origin: location.origin })
     // what a signed-fetch verifier rebuilds and checks (ADR-44)
     const chain = [0, 1, 2].map((i) => JSON.parse(headers[`x-identity-auth-chain-${i}`]))
-    const payload = `put:/projects/p1/manifest?x=1:${headers['x-identity-timestamp']}:${headers['x-identity-metadata']}`.toLowerCase()
+    const payload = `put:/projects/p1/manifest?x=1:${headers['x-identity-timestamp']}:${headers['x-identity-metadata']}`
+    // the project service verifies only the folded payload; its fixed metadata folds to itself
+    expect(payload).toBe(payload.toLowerCase())
     expect(await Authenticator.validateSignature(payload, chain, null)).toEqual({ ok: true, message: undefined })
     fetched.mockRestore()
   })
@@ -134,7 +136,7 @@ describe('editor host signing', () => {
       ['https://multiplayer-server.decentraland.org/rooms'],
       ['https://storage.decentraland.org/players', { metadata: { signer: 'dcl:editor' } }],
       ['https://storage.decentraland.org/players', { metadata: { intent: 'dcl:editor:projects' } }],
-      // the payload is signed lowercased, so a case change still signs as the editor
+      // a legacy verifier folds the metadata, so a case change would still sign as the editor
       ['https://storage.decentraland.org/players', { metadata: { signer: 'DCL:Editor' } }],
       ['https://storage.decentraland.org/players', { metadata: { Intent: 'dcl:editor:projects' } }]
     ]
@@ -171,7 +173,8 @@ describe('editor host signing', () => {
     expect(headers['x-identity-metadata']).toBe(JSON.stringify(metadata))
     // the path without the query, as a scene's signed fetch signs it
     const chain = [0, 1, 2].map((i) => JSON.parse(headers[`x-identity-auth-chain-${i}`]))
-    const payload = `delete:/players/0x1/values:${headers['x-identity-timestamp']}:${headers['x-identity-metadata']}`.toLowerCase()
+    // crypto-middleware 6.x: method and path folded, the mixed-case metadata verbatim
+    const payload = `delete:/players/0x1/values:${headers['x-identity-timestamp']}:${headers['x-identity-metadata']}`
     expect(await Authenticator.validateSignature(payload, chain, null)).toEqual({ ok: true, message: undefined })
 
     // the project service keeps its own metadata
