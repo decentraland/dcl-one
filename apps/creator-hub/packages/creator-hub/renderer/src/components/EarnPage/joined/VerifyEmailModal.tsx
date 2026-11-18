@@ -23,6 +23,9 @@ const EXPIRED: TranslationPath = 'earn.joined.payouts.verify.expired';
 
 const SEND_FAILED: TranslationPath = 'earn.errors.generic';
 
+/** The service sends no code until one of the creator's places is in the program. */
+const NO_ACTIVE_PLACE: TranslationPath = 'earn.joined.payouts.contact.unavailable';
+
 const ERRORS: Record<number, TranslationPath> = {
   400: 'earn.joined.payouts.verify.incorrect',
   410: EXPIRED,
@@ -74,17 +77,24 @@ export function VerifyEmailModal({
   const [code, setCode] = useState<readonly string[]>(EMPTY_CODE);
   const [error, setError] = useState<TranslationPath | null>(null);
   const [verifying, setVerifying] = useState(false);
-  const [sendFailed, setSendFailed] = useState(false);
+  const [sendError, setSendError] = useState<TranslationPath | null>(null);
   const resendHeld = useResendHeld(useResendAt());
   const sent = useRef(false);
   const complete = code.every(Boolean);
 
   const send = useCallback(async () => {
-    setSendFailed(false);
+    setSendError(null);
     const result = await dispatch(actions.sendEmailVerification());
-    if (actions.sendEmailVerification.rejected.match(result) && result.payload?.status !== 429) {
-      setSendFailed(true);
+    if (!actions.sendEmailVerification.rejected.match(result) || result.payload?.status === 429) {
+      return;
     }
+    if (result.payload?.body?.error === 'no_active_place') {
+      setSendError(NO_ACTIVE_PLACE);
+      // The tab read the places before this: lock the step behind the modal to match.
+      void dispatch(actions.fetchHasActivePlace());
+      return;
+    }
+    setSendError(SEND_FAILED);
   }, [dispatch]);
 
   const resend = () => {
@@ -100,7 +110,7 @@ export function VerifyEmailModal({
     void send();
   }, [send]);
 
-  const shownError = error ?? (sendFailed ? SEND_FAILED : null);
+  const shownError = error ?? sendError;
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();

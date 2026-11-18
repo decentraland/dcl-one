@@ -1845,14 +1845,17 @@
           "learn_more": "Learn More",
           "copy": "Copy wallet address",
           "edit": "Edit",
-          "add": "Add wallet"
+          "add": "Add wallet",
+          "unavailable": "Confirm your email to set up your payout wallet.",
+          "notify_failed": "We couldn't email you about this change, so your wallet wasn't saved. Please try again."
         },
         "contact": {
           "title": "Contact Information",
           "full_name": "Full Name",
           "email": "Email",
           "unverified": "Unverified",
-          "verify": "Verify email"
+          "verify": "Verify email",
+          "unavailable": "You need to have 1 active place to set up your wallet."
         },
         "table": {
           "label": "Payouts",
@@ -1904,7 +1907,9 @@
           "email_verified": "Email verified"
         },
         "cancel": "Cancel",
-        "error": "Something went wrong while loading your payouts."
+        "error": "Something went wrong while loading your payouts.",
+        "step": "Step {step}:",
+        "unavailable": "Unavailable"
       }
     },
     "errors": {

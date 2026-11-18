@@ -114,6 +114,19 @@ export const fetchPlaces = createAsyncThunk(
     settle(await api.getPlaces(cycle), rejectWithValue),
 );
 
+/**
+ * Whether one of the user's places is in the program, in the view `GET /places` gives with no cycle.
+ * The service asks the same before it sends an email code, so it gates the Payouts tab's steps.
+ */
+export const fetchHasActivePlace = createAsyncThunk(
+  'creatorFund/fetchHasActivePlace',
+  async (_: void, { rejectWithValue }) => {
+    const response = await api.getPlaces();
+    if (!response.ok) return rejectWithValue(response);
+    return response.data.places.some(place => place.status === 'in_program');
+  },
+);
+
 const locationOf = (place: CreatorFundPlace): MetricLocation => {
   const [x, y] = place.base_position.split(',').map(Number);
   return place.world && place.world_name ? { world: place.world_name, x, y } : { x, y };
@@ -200,6 +213,7 @@ type Resources = {
   cycles: Resource<CreatorFundCycles>;
   leaderboard: Resource<Leaderboard>;
   places: Resource<MyPlaces>;
+  hasActivePlace: Resource<boolean>;
   placeMetrics: Resource<PlaceMetrics>;
   news: Resource<CreatorFundNews>;
   banner: Resource<CreatorFundBanner>;
@@ -226,6 +240,7 @@ export const initialState: CreatorFundState = {
   cycles: resource(),
   leaderboard: resource(),
   places: resource(),
+  hasActivePlace: resource(),
   placeMetrics: resource(),
   news: resource(),
   banner: resource(),
@@ -298,6 +313,7 @@ const slice = createSlice({
     track(builder, 'cycles', fetchCycles);
     track(builder, 'leaderboard', fetchLeaderboard);
     track(builder, 'places', fetchPlaces);
+    track(builder, 'hasActivePlace', fetchHasActivePlace);
     track(builder, 'placeMetrics', fetchPlaceMetrics);
     track(builder, 'news', fetchNews);
     track(builder, 'banner', fetchBanner);
@@ -407,6 +423,7 @@ export const actions = {
   fetchCycles,
   fetchLeaderboard,
   fetchPlaces,
+  fetchHasActivePlace,
   fetchPlaceMetrics,
   fetchWorldSceneCount,
   fetchNews,
