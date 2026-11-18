@@ -837,7 +837,7 @@ fn update_client_window_focus_system(mut focus: ResMut<ClientWindowFocus>) {
     ));
 }
 
-/// `!document.hidden`, and the host has not deactivated the viewport.
+/// The value `engine_set_viewport_active` last stored.
 pub(crate) fn viewport_active() -> bool {
     VIEWPORT_ACTIVE.load(Ordering::Relaxed)
 }

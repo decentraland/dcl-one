@@ -1902,8 +1902,8 @@ pub enum AppError {
     NetworkFailure(anyhow::Error),
 }
 
-/// Whether the Explorer has focus: the one representation of the native primary window's focus
-/// and the browser page's focus.
+/// The client's focus: one representation for the native window's focus and the browser page's
+/// focus.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientWindowFocus {
     Focused,
@@ -1911,13 +1911,13 @@ pub enum ClientWindowFocus {
 }
 
 impl ClientWindowFocus {
-    /// The native primary window's focus.
+    /// From `window.focused`.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_window(window: &Window) -> Self {
         Self::from_has_focus(window.focused)
     }
 
-    /// The browser page's `document.hasFocus()`, not the canvas's DOM focus (`Window::focused`).
+    /// `page_has_focus` is `document.hasFocus()`, not `Window::focused`.
     #[cfg(target_arch = "wasm32")]
     pub fn from_page_focus(page_has_focus: bool) -> Self {
         Self::from_has_focus(page_has_focus)

@@ -87,13 +87,12 @@ pub struct SessionSignals {
     pub realm_connected: bool,
     /// The primary user's `OutOfWorld`; `None` without a primary user.
     pub out_of_world: Option<bool>,
-    /// The focus reason sampling pauses for: the viewport's activity on the web, then the
-    /// client window's focus; `None` while focused.
+    /// `ViewportInactive` while the web viewport is inactive, else `WindowUnfocused` while the
+    /// client window lacks focus; `None` otherwise.
     pub focus_paused: Option<SamplingPausedReason>,
 }
 
-/// Fills [`FrameInputs`] from every source. Runs after `TimeSystem` and after the client window
-/// focus is copied in.
+/// Fills [`FrameInputs`] from every source.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn collect_frame_inputs_system(
     mut inputs: ResMut<FrameInputs>,

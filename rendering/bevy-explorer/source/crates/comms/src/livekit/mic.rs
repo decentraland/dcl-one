@@ -482,7 +482,7 @@ const fn nearby_mic_on(mic_state: &MicState, call_mic: &CallMic) -> bool {
     mic_state.enabled && !mic_state.scene_blocked() && !call_mic.suppress_nearby
 }
 
-/// The mic captures for the nearby or the call route only while the client window has focus.
+/// True while focused and the nearby mic or the call mic is on.
 const fn can_capture_microphone(
     mic_state: &MicState,
     call_mic: &CallMic,
