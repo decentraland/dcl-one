@@ -1110,6 +1110,23 @@ mod tests {
     }
 
     #[test]
+    fn a_light_written_back_keeps_its_colour() {
+        use dcl_component::proto_components::Color3BevyToDcl;
+        // a glTF light is mirrored to the scene's component as sRGB; a scene writing that
+        // component back must light it with the same linear colour
+        let gltf = Color::linear_rgb(1.0, 0.5, 0.25);
+        let lamp = LightSource::from(PbLightSource {
+            color: Some(gltf.convert_srgb()),
+            ..Default::default()
+        });
+        let (a, b) = (gltf.to_linear(), lamp.color.unwrap().to_linear());
+        for (x, y) in [(a.red, b.red), (a.green, b.green), (a.blue, b.blue)] {
+            assert!((x - y).abs() < 1e-4, "{a:?} {b:?}");
+        }
+        assert_eq!(lamp.intensity_gain, 1.0);
+    }
+
+    #[test]
     fn root_light_replaces_only_what_it_sets() {
         let preset = SceneGlobalLight {
             dir_color: Color::WHITE,
