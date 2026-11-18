@@ -177,7 +177,6 @@ overrides:
   scheduler@^0.23.0: 0.23.0
   '@dcl/asset-packs': 2.17.2
   '@dcl/hashing': workspace:*
-  '@dcl/quests-client>@dcl/sdk': '-'
   protobufjs: 7.6.6
   semver@<7.5.2: ^7.5.4
   minimatch@<3.1.4: ^3.1.4
@@ -355,12 +354,6 @@ importers:
       '@dcl/protocol':
         specifier: link:../../../../protocol
         version: link:../../../../protocol
-      '@dcl/quests-client':
-        specifier: ^1.0.3
-        version: 1.0.3
-      '@dcl/quests-manager':
-        specifier: ^0.1.4
-        version: 0.1.4
       '@dcl/rpc':
         specifier: ^1.1.1
         version: 1.1.2
@@ -720,12 +713,6 @@ packages:
 
   '@dcl/protocol@1.0.0-40603192045.commit-e7bab56':
     resolution: {integrity: sha512-Hcl+pAx+b1lZ+vhmLVzSRAOUzClwddGdS4cL+cfe0+sLlCB5RVfHmoKZYddxqGlkvkm0EMHpNlivHvsN8VvAiw==}
-
-  '@dcl/quests-client@1.0.3':
-    resolution: {integrity: sha512-VwZbXuHsRbRcboUUlBrauuR7VQ7IQP31rWI7wNKIYfWroTH4Yw7Bby1au9JBPWPayM/zRDij4uSd9pMJtidsqw==}
-
-  '@dcl/quests-manager@0.1.4':
-    resolution: {integrity: sha512-IPB043+NbQB3om2FlmQGmaRxTokHaSM9o3a7sEL0yJgBb60mukCpMdNXxzdIcemixfV3EhIJQ2G8HgK30XKTkA==}
 
   '@dcl/quickjs-emscripten@0.21.0-3680274614.commit-1808aa1':
     resolution: {integrity: sha512-CPSYmKvUZJrdQg4A8E+0pBpSe2B8OCDbIAcuYJrY1jjLC5z7T6ZuUlRPAUCvEFPzSju0Fu3Du3qtYNVFbqq1aA==}
@@ -4446,14 +4433,6 @@ snapshots:
     dependencies:
       '@dcl/ts-proto': 1.154.0
       protobufjs: 7.6.6
-
-  '@dcl/quests-client@1.0.3':
-    dependencies:
-      '@dcl/protocol': 1.0.0-40603192045.commit-e7bab56
-      '@dcl/rpc': 1.1.2
-      mitt: 3.0.1
-
-  '@dcl/quests-manager@0.1.4': {}
 
   '@dcl/quickjs-emscripten@0.21.0-3680274614.commit-1808aa1': {}
 
