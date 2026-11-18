@@ -391,22 +391,32 @@ Both Social socket protocols read `WS_AUTH_TIMEOUT_IN_MS` and
 `WS_AUTH_SIGNATURE_EXPIRATION_IN_MS` separately using the source environment
 provider's numeric-prefix parser. The authentication timer follows Node's
 millisecond timer conversion: values outside 1..=2,147,483,647 schedule one
-millisecond, and valid fractions are truncated. Signature age checks retain the
-configured numeric value and the original signed timestamp text; timestamp
-conversion accepts the source's finite JavaScript Number forms. Idle timeout
-uses the pinned native binding's unsigned-short conversion, accepting zero or
-8..=960 seconds after conversion. The source-executed numeric fixtures exercise
-these conversions and native option admission; they do not measure native idle
-timer scheduling or kernel buffering.
+millisecond, and valid fractions are truncated. Idle timeout uses the pinned
+native binding's unsigned-short conversion, accepting zero or 8..=960 seconds
+after conversion. The source-executed numeric fixtures exercise these
+conversions and native option admission; they do not measure native idle timer
+scheduling or kernel buffering.
+
+Both handshakes verify through `dcl_auth::request::verify_request`, the
+node's one signed-request verifier ([ADR](../../../../docs/adr/2026-11-18-one-request-verifier.md)):
+current payload only, the scene signer refused (400), EIP-1654 links through
+the node's validator (503 when it cannot be asked). The signature window is
+`WS_AUTH_SIGNATURE_EXPIRATION_IN_MS` milliseconds, 300 s when unset, as the
+source service defaults. A zero, negative or NaN value accepts no past signature and an
+infinite one never expires; the future side stops at 60 s whatever the
+window. The timestamp is digits only, where the source reads it as a
+JavaScript Number, so the `timestamps` cases of `ws-numbers-source-cases.json`
+that accept other forms are refused here.
 
 Social signatures bind the source protocol paths: `/` for RPC, and `/v1/stream`
 for both JSON handshakes. Connecting through `/social-rpc` or
-`/social-rpc/v1/stream` keeps those signed paths; `x-original-path` does not
-expand them. Actual source verifier captures and real socket replays cover
-81 combinations. The Bevy Social client normalizes only its signed URI to `/`
-while keeping its configured connection URL. Clients signing a mounted alias
-must sign the source path; deployed web artifacts need the corresponding client
-build at cutover. Other shared handshake callers keep their chosen alias policy.
+`/social-rpc/v1/stream` keeps those signed paths; `x-original-path`, in the
+upgrade request or the frame, does not expand them. A signature over the
+mounted alias itself (`/social-rpc`, `/social-rpc/v1/stream`) is also accepted,
+checked only after the source path answered 401; the source refuses it.
+Actual source verifier captures and real socket replays cover 81
+combinations. The Bevy Social client, the Unity explorer and
+`social-rpc-client-js` sign `/`.
 
 When the shared bus is enabled, Social registers its event subscription before
 checking the existing NATS subscription readiness fence. Until the first ready

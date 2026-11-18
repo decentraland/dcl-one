@@ -16,7 +16,7 @@
 //! token and this catalyst's federation identity (the epoch author). From
 //! the gatekeeper it takes the route contract only: `ApiError` and its
 //! `forbidden`, `service_unavailable` and `unauthorized` constructors; the
-//! caller is the wallet signer the shared verifier accepts, never a scene
+//! caller is the wallet signer the social verifier accepts, never a scene
 //! signer.
 //! [`router`] keeps the body limit, NUL guard and CORS. `serve` merges
 //! it into the `/comms-gatekeeper` nest, so the routes answer exactly as
@@ -39,11 +39,12 @@ use sqlx::PgPool;
 
 use crate::Address;
 use crate::auth::eip1654::Eip1654Validator;
+use crate::auth::request::{RequestAuthError, RequestParts};
 use crate::comms::gatekeeper::errors::{ApiError, forbidden, service_unavailable, unauthorized};
 use crate::comms::limits::{RateLimitDecision, RateLimiter};
 use crate::mls;
 use crate::shared::now_utc;
-use crate::shared::signed_fetch::{PayloadPolicy, SignedFetchError, SignedPath, require_signer_at};
+use crate::shared::signed_fetch::SignedPath;
 
 /// The settings `serve` resolves from `Config`.
 #[derive(Clone, Default)]
@@ -100,10 +101,6 @@ impl MessagingState {
             settings,
             peer_id: tokio::sync::OnceCell::new(),
         }
-    }
-
-    pub fn eip1654(&self) -> Option<&dyn Eip1654Validator> {
-        self.eip1654.as_deref()
     }
 
     /// This catalyst's federation identity (the MLS epoch author).
@@ -303,42 +300,38 @@ fn b64_field(v: &Value, key: &str) -> Result<Vec<u8>, ApiError> {
     Ok(bytes)
 }
 
-/// The wallet that signed the request. A scene-signed request, or one whose
-/// `signer` key is re-spelled (under either payload shape), answers 400 as
-/// the gatekeeper's other wallet routes do; see [`auth_refusal`] for the rest.
+/// The wallet that signed the request, under the social verifier (current
+/// payload only; a scene-signed request is refused); see [`auth_refusal`].
 async fn auth(
     state: &MessagingState,
     headers: &HeaderMap,
     method: &str,
     path: &SignedPath,
 ) -> Result<String, ApiError> {
-    require_signer_at(
-        headers,
-        method,
-        path,
-        PayloadPolicy::V6ThenLegacy,
-        state.eip1654(),
+    let parts = RequestParts::from_headers(method, path.clone(), headers);
+    crate::request_auth::require(
+        &parts,
+        &crate::request_auth::options(state.eip1654.as_ref()),
     )
     .await
-    .map(|signer| Address::from_signer(&signer).into_string())
+    .map(|verified| Address::from_verified(&verified).into_string())
     .map_err(auth_refusal)
 }
 
-/// The answer to a refused signed fetch. A contract-wallet check that could
-/// not run (no validator, or its RPC failed) is 503 with a fixed message, its
-/// detail kept in the log; every other refusal, an unsigned request
-/// included, is the caller's 401 or 400 and is logged at debug only.
-fn auth_refusal(e: SignedFetchError) -> ApiError {
-    if e.is_metadata_refusal() {
-        tracing::debug!(error = %e, "signed-fetch rejected");
-        return ApiError::bad_request("Invalid metadata content");
-    }
-    match e {
-        SignedFetchError::EipNotImplemented | SignedFetchError::CatalystUnavailable(_) => {
+/// The answer to a refused signed request: the verifier's 400 or 401 with
+/// its message, logged at debug; a contract-wallet check that could not run is
+/// 503 with a fixed message, its detail kept in the log.
+fn auth_refusal(e: RequestAuthError) -> ApiError {
+    match e.status() {
+        400 => {
+            tracing::debug!(error = %e, "signed-fetch rejected");
+            ApiError::bad_request(e.to_string())
+        }
+        503 => {
             tracing::warn!(error = %e, "signed-fetch validation unavailable");
             service_unavailable("Signature validation unavailable")
         }
-        e => {
+        _ => {
             tracing::debug!(error = %e, "signed-fetch rejected");
             unauthorized(format!("invalid identity: {e}"))
         }
@@ -1500,7 +1493,8 @@ mod tests {
                 .oneshot(Request::get(path).body(Body::empty()).unwrap())
                 .await
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            // An unsigned request has no chain: the verifier's 400.
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         }
         let response = app
             .clone()
@@ -1512,7 +1506,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let off = app_with("fixture", pool, &dir, false).await;
         let (status, _) = call(
             &off,
@@ -1589,7 +1583,7 @@ mod tests {
                 let headers = signed_as(KEY, shape, "post", PATH, metadata, metadata).await;
                 let err = auth(&state, &headers, "post", &path).await.unwrap_err();
                 assert_eq!(err.code, 400, "{shape:?} {metadata}: {err}");
-                assert_eq!(err.message, "Invalid metadata content");
+                assert!(err.message.starts_with("Invalid metadata content"), "{err}");
             }
             for metadata in ["{}", r#"{"signer":"dcl:explorer"}"#] {
                 let headers = signed_as(KEY, shape, "post", PATH, metadata, metadata).await;
@@ -1607,18 +1601,20 @@ mod tests {
     /// invalid identity, and its detail never reaches the client.
     #[test]
     fn auth_refusal_reports_an_unrun_contract_wallet_check_as_503() {
-        for e in [
-            SignedFetchError::CatalystUnavailable("rpc detail".into()),
-            SignedFetchError::EipNotImplemented,
-        ] {
-            let err = auth_refusal(e);
-            assert_eq!(err.code, 503);
-            assert_eq!(err.message, "Signature validation unavailable");
-        }
-        let err = auth_refusal(SignedFetchError::InvalidSignature("detail".into()));
+        let err = auth_refusal(RequestAuthError::Unavailable);
+        assert_eq!(err.code, 503);
+        assert_eq!(err.message, "Signature validation unavailable");
+        let err = auth_refusal(RequestAuthError::Unauthorized(
+            "Invalid signature: x".into(),
+        ));
         assert_eq!(
             (err.code, err.message.as_str()),
-            (401, "invalid identity: Invalid signature")
+            (401, "invalid identity: Invalid signature: x")
+        );
+        let err = auth_refusal(RequestAuthError::Malformed("Invalid Auth Chain".into()));
+        assert_eq!(
+            (err.code, err.message.as_str()),
+            (400, "Invalid Auth Chain")
         );
     }
 

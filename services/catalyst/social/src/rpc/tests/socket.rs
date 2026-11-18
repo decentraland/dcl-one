@@ -620,13 +620,21 @@ fn source_numeric_auth_timer_buckets_remain_independent_from_signature_windows()
             "{}",
             case["raw"]
         );
-        assert_eq!(
-            settings.auth_signature_expiration_ms(),
-            number,
-            "{}",
-            case["raw"]
-        );
+        let window = settings.auth_signature_expiration();
+        if number.is_nan() || number <= 0.0 {
+            assert_eq!(window, Duration::ZERO, "{}", case["raw"]);
+        } else if window != Duration::MAX {
+            assert!(
+                (window.as_secs_f64() * 1000.0 - number).abs() <= 1e-6 * number.max(1.0),
+                "{}",
+                case["raw"]
+            );
+        }
     }
+    assert_eq!(
+        Settings::default().auth_signature_expiration(),
+        Duration::from_secs(300)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

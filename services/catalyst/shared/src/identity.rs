@@ -86,6 +86,11 @@ impl Address {
         Self(signer.as_str().to_ascii_lowercase())
     }
 
+    /// The SIGNER of a request `dcl_auth::request::verify_request` accepted.
+    pub fn from_verified(request: &crate::auth::request::VerifiedRequest) -> Self {
+        Self(request.signer.to_ascii_lowercase())
+    }
+
     /// The lowercase text: the SQL bind value and the wire's canonical form.
     pub fn as_str(&self) -> &str {
         &self.0
