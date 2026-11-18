@@ -4,12 +4,10 @@ import vendors from '../.electron-vendors.cache.json' with { type: 'json' };
 const PACKAGE_ROOT = import.meta.dirname;
 const PACKAGE_DIR = join(PACKAGE_ROOT, '..');
 
-// Second main-process bundle: the workers that run on the bundled real Node, not in Electron —
-// the optimizer (src/optimizer-worker.ts) and the session recorder's transcription
-// (src/transcribe-worker.ts) — so they get their own entries instead of chunks of index.js.
-// Their toolchains are external on purpose: downloaded on first use into userData
-// (modules/optimizer/tools.ts, modules/recording/tools.ts) and resolved from there at runtime,
-// never inlined here.
+// Second main-process bundle: the optimizer worker (src/optimizer-worker.ts). It runs on the
+// bundled real Node, not in Electron, so it gets its own entry instead of a chunk of index.js.
+// The toolchain is external on purpose — it is downloaded on first use into userData
+// (modules/optimizer/tools.ts) and resolved from there at runtime, never inlined here.
 
 /**
  * @type {import('vite').UserConfig}
@@ -32,14 +30,11 @@ const config = {
     assetsDir: '.',
     minify: process.env.MODE !== 'development',
     lib: {
-      entry: {
-        'optimizer-worker': 'src/optimizer-worker.ts',
-        'transcribe-worker': 'src/transcribe-worker.ts',
-      },
+      entry: 'src/optimizer-worker.ts',
       formats: ['es'],
     },
     rolldownOptions: {
-      external: ['sharp', 'meshoptimizer', /^@gltf-transform\//, '@fugood/whisper.node'],
+      external: ['sharp', 'meshoptimizer', /^@gltf-transform\//],
       output: {
         entryFileNames: '[name].js',
         // Keep one output file. The app copies this bundle alone into the tools folder.

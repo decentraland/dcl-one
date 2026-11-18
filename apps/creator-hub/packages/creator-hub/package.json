@@ -79,7 +79,7 @@
   },
   "scripts": {
     "build": "pnpm run build:main && pnpm run build:preload && pnpm run build:renderer",
-    "build:main": "cd ./main && node ../../../scripts/rolldown.js vite build && node ../../../scripts/rolldown.js vite build --config vite.worker.config.js",
+    "build:main": "cd ./main && node ../../../scripts/rolldown.js vite build && node ../../../scripts/rolldown.js vite build --config vite.worker.config.js && node ../../../scripts/rolldown.js vite build --config vite.transcribe-worker.config.js",
     "build:preload": "cd ./preload && node ../../../scripts/rolldown.js vite build",
     "build:renderer": "cd ./renderer && node ../../../scripts/rolldown.js vite build",
     "check:optimizer-tools": "node scripts/lock-optimizer-tools.js --check",
