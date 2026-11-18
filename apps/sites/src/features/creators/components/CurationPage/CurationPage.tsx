@@ -4,7 +4,7 @@ import { PersonOutlineIcon, SearchIcon } from '@/features/creators/components/Ic
 import { useTranslation } from '@/data/lib/creators/intl'
 import { Button } from '@/features/creators/components/Button'
 import { AssignCuratorModal } from '@/features/creators/components/AssignCuratorModal'
-import { NotFoundPage } from '@/features/creators/components/NotFoundPage'
+import NotFoundPage from '@/features/not-found/NotFoundPage'
 import { Pagination } from '@/features/creators/components/Pagination'
 import { MultiSelect } from '@/features/creators/components/MultiSelect'
 import { Select, type SelectOption } from '@/features/creators/components/Select'
