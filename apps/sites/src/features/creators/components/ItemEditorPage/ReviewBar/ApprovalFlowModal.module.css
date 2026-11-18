@@ -1,0 +1,198 @@
+/* Each step is as tall as its table: a one-row Enable step shouldn't keep the publish modal's fixed height. */
+.main {
+  min-height: 0;
+
+  &[data-single] {
+    margin-top: 0;
+  }
+}
+
+/* A lone step's title is the modal title, so its body starts right under it. */
+.step {
+  [data-single] > & {
+    padding-top: 0;
+  }
+}
+
+.table {
+  flex: none;
+}
+
+.header {
+  padding: 12px 24px 12px 12px;
+
+  &[data-table="rescue"] {
+    grid-template-columns: minmax(0, 2fr) minmax(90px, 1fr) minmax(110px, 1fr) minmax(130px, 1fr) minmax(120px, 1fr);
+  }
+  &[data-table="deploy"],
+  &[data-table="approve"] {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  @media (max-width: 768px) {
+    &[data-table="rescue"] {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    & > [data-optional] {
+      display: none;
+    }
+  }
+
+  &[data-table="deploy"] > span:last-of-type,
+  &[data-table="approve"] > span:last-of-type {
+    text-align: right;
+  }
+}
+
+.row {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 24px 12px 12px;
+  border-radius: var(--radius-btn);
+  background: var(--color-overlay);
+  font-size: 14px;
+  color: var(--color-soft-white);
+
+  &[data-table="rescue"] {
+    grid-template-columns: minmax(0, 2fr) minmax(90px, 1fr) minmax(110px, 1fr) minmax(130px, 1fr) minmax(120px, 1fr);
+  }
+  &[data-table="deploy"],
+  &[data-table="approve"] {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  @media (max-width: 768px) {
+    &[data-table="rescue"] {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    & > [data-optional] {
+      display: none;
+    }
+  }
+
+  & > *:not(:first-child) {
+    justify-self: center;
+    text-align: center;
+  }
+  &[data-table="deploy"] > *:last-child,
+  &[data-table="approve"] > *:last-child {
+    justify-self: end;
+  }
+}
+
+.nameCell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+
+  & > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.warning {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border: 1px solid var(--color-amber);
+  border-radius: var(--radius-btn);
+  background: var(--color-overlay-light);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-soft-white);
+
+  & > svg {
+    flex: none;
+    font-size: 18px;
+    margin-top: 1px;
+    color: var(--color-amber);
+  }
+
+  & p {
+    margin: 0;
+  }
+}
+
+.footer {
+  margin-top: 16px;
+
+  @media (max-width: 768px) {
+    & > button {
+      flex: 1;
+      min-width: 0;
+    }
+  }
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+}
+
+.detailHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+  color: var(--color-gray4);
+}
+
+.detailText {
+  max-height: 7.5em;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border-radius: var(--radius-btn);
+  background: var(--color-overlay-strong);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-soft-white);
+}
+
+.copyButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: -10px -10px -10px 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--color-soft-white);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--color-glass-faint);
+  }
+  &[data-copied] {
+    color: var(--color-success-border);
+    animation: copied-pop 0.3s ease;
+  }
+}
+
+.sizeSpinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+}
+
+@keyframes copied-pop {
+  50% {
+    transform: scale(1.25);
+  }
+}

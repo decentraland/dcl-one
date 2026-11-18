@@ -1,0 +1,163 @@
+.row {
+  display: grid;
+  grid-template-columns: var(--list-columns);
+  align-items: center;
+  gap: 16px;
+  position: relative;
+  padding: 12px 24px 12px 12px;
+  border-radius: var(--radius-card);
+  background: var(--color-overlay);
+  transition:
+    background 0.15s ease,
+    box-shadow 0.15s ease;
+
+  /* Inner 2px gradient border: gradient layer with the padding-box masked out. */
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 2px;
+    background: var(--gradient-cerise);
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+
+  &:hover,
+  &:focus-within {
+    background: var(--color-overlay-hover);
+    box-shadow: 0 0 8px var(--color-brand-violet);
+
+    &::after {
+      opacity: 1;
+    }
+  }
+
+  /* Without an actions column the row reshapes into the card layout. */
+  @media (max-width: 900px) {
+    display: flex;
+    flex-direction: column;
+    /* listColumns' align-items: center would center the stacked cells horizontally here. */
+    align-items: stretch;
+    justify-content: center;
+    gap: 8px;
+    height: 136px;
+    padding: 16px 12px 16px calc(136px + 16px);
+    overflow: hidden;
+
+    & [data-testid="collection-row-created"] {
+      display: none;
+    }
+  }
+}
+
+/* The row's single real link: its ::after stretches over the row so the whole
+   surface navigates while keeping the actions button outside the anchor. */
+.rowLink {
+  display: block;
+  min-width: 0;
+  text-decoration: none;
+  outline: none;
+
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+  }
+}
+
+.nameCell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+
+  @media (max-width: 900px) {
+    display: contents;
+  }
+}
+
+.thumb {
+  flex: none;
+  width: 74px;
+  height: 74px;
+  border-radius: 6px;
+  overflow: hidden;
+
+  @media (max-width: 900px) {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 136px;
+    height: 100%;
+    border-radius: 0;
+  }
+}
+
+.name {
+  margin: 0;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--color-soft-white);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cell {
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.57;
+  color: var(--color-soft-white);
+
+  @media not all and (max-width: 900px) {
+    text-align: center;
+  }
+}
+
+.dateCell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+
+  @media not all and (max-width: 900px) {
+    align-items: center;
+    text-align: center;
+  }
+
+  & strong {
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.57;
+    color: var(--color-soft-white);
+  }
+  & span {
+    font-size: 12px;
+    color: var(--color-gray4);
+  }
+
+  @media (max-width: 900px) {
+    & span {
+      display: none;
+    }
+  }
+}
+
+.actionsCell {
+  display: flex;
+  justify-content: flex-end;
+
+  /* Grid cards have no menu, so the row card hides its own too. */
+  @media (max-width: 900px) {
+    display: none;
+  }
+}

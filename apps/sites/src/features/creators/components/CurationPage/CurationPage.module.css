@@ -1,0 +1,107 @@
+.filterRow {
+  display: flex;
+  flex-flow: row wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+
+  /* No wrap once stacked: a wrapping column sizes its line to the widest child, so nothing would shrink. */
+  @media (max-width: 991px) {
+    flex-flow: column nowrap;
+    align-items: stretch;
+  }
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+
+  @media (max-width: 768px) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+}
+
+.campaignToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-white);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.selects {
+  display: flex;
+  gap: 12px;
+
+  & > * {
+    min-width: 160px;
+    max-width: 220px;
+  }
+
+  @media (max-width: 768px) {
+    flex-wrap: wrap;
+
+    & > * {
+      flex: 1 1 calc(50% - 6px);
+      min-width: 0;
+      max-width: none;
+    }
+  }
+}
+
+.list {
+  /* The header and every row (CurationRow) share these columns, so they stay aligned. */
+  --list-columns: minmax(180px, 2fr) minmax(110px, 1.2fr) minmax(100px, 1fr) minmax(80px, 0.8fr) minmax(110px, 1fr)
+    minmax(80px, 0.8fr) minmax(130px, 1fr);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+
+  @media not all and (max-width: 991px) {
+    overflow-x: auto;
+    /* Room for the rows' hover glow, which the scroll container would otherwise clip. */
+    padding: 8px;
+    margin: -8px;
+
+    & > * {
+      min-width: min-content;
+    }
+  }
+}
+
+.listHeader {
+  display: grid;
+  grid-template-columns: var(--list-columns);
+  align-items: center;
+  gap: 12px;
+  padding: 12px 24px 12px 12px;
+  border-radius: var(--radius-card);
+  background: var(--color-overlay-strong);
+  font-size: 14px;
+  line-height: 1.57;
+  color: var(--color-soft-white);
+  text-align: center;
+
+  & > span:first-of-type {
+    text-align: left;
+  }
+  & > span:last-of-type {
+    text-align: right;
+  }
+
+  @media (max-width: 991px) {
+    display: none;
+  }
+}
+
+.skeletonRow {
+  height: 98px;
+  border-radius: var(--radius-card);
+}

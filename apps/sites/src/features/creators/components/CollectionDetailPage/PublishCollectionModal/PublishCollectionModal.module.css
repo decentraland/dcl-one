@@ -1,0 +1,253 @@
+/* Layered: the approval flow reuses these and restyles them through `className`. */
+@layer foundations {
+  .main {
+    display: flex;
+    flex-direction: column;
+    margin-top: 16px;
+    min-height: min(700px, 70vh);
+  }
+
+  .step {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding-top: 32px;
+    gap: 16px;
+    overflow: auto;
+
+    & [data-testid="checkbox-label"] {
+      margin-top: auto;
+      padding-left: 12px;
+    }
+  }
+
+  .footer {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    margin-top: auto;
+    padding-top: 24px;
+    border-top: 1px solid var(--color-glass-hover);
+    background: var(--color-modal-surface);
+    position: sticky;
+    bottom: 0;
+    [data-testid="checkbox-label"] ~ & {
+      margin-top: 0;
+    }
+
+    & > button {
+      min-width: 250px;
+    }
+  }
+
+  .table {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  .tableHeader {
+    display: grid;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    border-radius: var(--radius-btn);
+    background: var(--color-overlay-strong);
+    font-size: 13px;
+    line-height: 1.2;
+    color: var(--color-soft-white);
+    margin-top: 16px;
+
+    & > span:not(:first-of-type) {
+      text-align: center;
+    }
+  }
+}
+
+/* Everything but the footer; while the wallet prompt is pending it goes inert and dims like the add-items upload. */
+.fields {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+
+  &[data-busy] {
+    pointer-events: none;
+    opacity: 0.7;
+  }
+}
+
+.heading {
+  margin: 0 0 16px;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.5;
+  color: var(--color-white);
+}
+
+.lead {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--color-white);
+}
+
+.text {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--color-gray4);
+}
+
+/* The "publication fee" term in the step intro: highlighted, with its info tooltip glued to it. */
+.feeTerm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-soft-white);
+
+  & svg {
+    font-size: 16px;
+  }
+}
+
+.inputWrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  margin: 16px 0 32px;
+}
+
+.emailField {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--color-gray4);
+}
+
+.emailInput {
+  height: 54px;
+  padding: 0 16px;
+  border: 1px solid var(--color-glass-line);
+  border-radius: 8px;
+  outline: 0;
+  background: rgba(255, 255, 255, 0.05);
+  font: inherit;
+  font-size: 18px;
+  color: var(--color-white);
+
+  &::placeholder {
+    color: var(--color-muted2);
+  }
+
+  &:focus {
+    border: 1.5px solid var(--color-white);
+    padding: 0 15.5px;
+  }
+
+  &[data-invalid] {
+    background: var(--color-err-overlay);
+    border-color: var(--color-err-light);
+  }
+}
+
+.errorText {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--color-err-light);
+}
+
+.tableBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 35vh;
+  padding-right: 4px;
+  overflow-y: auto;
+}
+
+.summaryTable {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.summaryRow {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: var(--radius-btn);
+  background: var(--color-overlay);
+  font-size: 14px;
+  color: var(--color-soft-white);
+
+  & > *:not(:first-child) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    text-align: center;
+  }
+}
+
+.summaryName {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+
+  & > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.summaryTotal {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.paymentMethods {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.thumb {
+  display: block;
+  flex: none;
+  width: 74px;
+  height: 74px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.mosaicFrame {
+  display: block;
+  flex: none;
+  width: 74px;
+  height: 74px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.inlineNote {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  margin: 20px 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--color-gray4);
+}

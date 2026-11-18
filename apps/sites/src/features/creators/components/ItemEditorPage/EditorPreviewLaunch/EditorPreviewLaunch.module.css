@@ -1,0 +1,11 @@
+/* Closes the preview's bottom bar on the right, away from the playback controls; the explorer is
+   desktop-only, so narrow screens would only be sent to the download page. */
+.launch {
+  height: 48px;
+  margin-left: auto;
+  border: 1px solid var(--editor-line);
+
+  @media (max-width: 900px) {
+    display: none;
+  }
+}

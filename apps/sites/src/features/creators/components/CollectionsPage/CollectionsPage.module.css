@@ -1,0 +1,150 @@
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+
+  @media (max-width: 900px) {
+    /* Mobile is a viewer: collections are searched and managed from desktop. */
+    display: none;
+  }
+}
+
+.filterRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chipDivider {
+  flex-shrink: 0;
+  width: 1px;
+  height: 24px;
+  background: var(--color-glass-line);
+}
+
+.chipDot {
+  position: absolute;
+  top: -2px;
+  right: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-pill);
+  background: var(--color-dcl-red);
+}
+
+.viewToggle {
+  display: flex;
+  flex-shrink: 0;
+  border-radius: var(--radius-btn);
+  overflow: hidden;
+
+  @media (max-width: 768px) {
+    display: none;
+  }
+}
+
+.viewButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  background: var(--color-glass);
+  color: var(--color-white);
+  transition: background 0.15s ease;
+
+  &:hover {
+    background: var(--color-glass-hover);
+  }
+  &[data-active] {
+    background: var(--color-white);
+    color: var(--color-text);
+  }
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+
+  @media (max-width: 768px) {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+}
+
+.list {
+  /* The header and every row (CollectionListRow) share these columns, so they stay aligned. */
+  --list-columns: minmax(220px, 2fr) minmax(90px, 1fr) minmax(110px, 1fr) minmax(140px, 1fr) minmax(110px, 1fr) 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+
+  @media not all and (max-width: 900px) {
+    overflow-x: auto;
+
+    & > * {
+      min-width: 950px;
+    }
+  }
+}
+
+.listHeader {
+  display: grid;
+  grid-template-columns: var(--list-columns);
+  align-items: center;
+  gap: 16px;
+  padding: 12px 24px 12px 12px;
+  border-radius: var(--radius-card);
+  background: var(--color-overlay-strong);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.57;
+  color: var(--color-soft-white);
+  text-align: center;
+
+  & > span:first-of-type {
+    text-align: left;
+  }
+
+  @media (max-width: 900px) {
+    display: none;
+  }
+}
+
+.listHeaderActions {
+  text-align: right;
+}
+
+.emptyArt {
+  width: 390px;
+  max-width: 80%;
+  height: auto;
+}
+
+.emptyActions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+
+  & [data-variant="secondary"] {
+    min-width: 240px;
+  }
+
+  @media (max-width: 900px) {
+    /* Mobile is a viewer: collections are created from desktop. */
+    display: none;
+  }
+}
+
+.skeletonCard {
+  height: 318px;
+  border-radius: var(--radius-card-lg);
+
+  @media (max-width: 768px) {
+    height: 136px;
+    border-radius: var(--radius-card);
+  }
+}

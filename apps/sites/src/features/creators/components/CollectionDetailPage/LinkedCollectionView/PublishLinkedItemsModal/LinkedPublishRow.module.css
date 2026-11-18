@@ -1,0 +1,112 @@
+/* Shared by the header and the rows so they stay aligned. */
+.columns {
+  grid-template-columns: minmax(0, 2fr) minmax(110px, 1fr) minmax(140px, 1.2fr);
+}
+
+.row {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: var(--radius-btn);
+  background: var(--color-overlay);
+  font-size: 13px;
+  color: var(--color-soft-white);
+
+  & > span {
+    display: flex;
+    justify-content: center;
+    min-width: 0;
+  }
+}
+
+.name {
+  && {
+    justify-content: flex-start;
+    align-items: center;
+    gap: 12px;
+    font-weight: 600;
+
+    & > span:last-of-type {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+}
+
+/* Long token lists end in an ellipsis; the full list is in the title. */
+.mapping {
+  && {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: center;
+  }
+}
+
+.forget {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.forgetText {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--color-gray4);
+}
+
+.kindCards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.kindCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px;
+  border: 2px solid var(--color-glass-line);
+  border-radius: var(--radius-card);
+  background: var(--color-overlay);
+  color: var(--color-soft-white);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--color-white);
+  }
+  &[data-selected] {
+    border-color: var(--color-white);
+    background: var(--color-overlay-strong);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--color-white);
+    outline-offset: 2px;
+  }
+}
+
+.kindTitle {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.kindText {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-gray4);
+}
+
+.kindPrice {
+  margin-top: auto;
+  font-size: 14px;
+  font-weight: 700;
+}

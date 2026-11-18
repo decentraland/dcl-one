@@ -1,0 +1,59 @@
+/* Figma "Status Tab": pill, 2px/8px padding, hairline border, tinted fill at low alpha. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  border: 0.8px solid;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  text-transform: uppercase;
+  gap: 4px;
+  white-space: nowrap;
+
+  &[data-status="published"] {
+    color: var(--color-green);
+    border-color: var(--color-green);
+    background: var(--color-green-tint);
+  }
+  &[data-status="under_review"],
+  &[data-status="ready_to_push"] {
+    color: var(--color-amber);
+    border-color: var(--color-amber);
+    background: var(--color-orange-tint);
+  }
+  &[data-status="draft"],
+  &[data-status="publishing"],
+  &[data-status="not_published"],
+  &[data-status="ready_to_publish"] {
+    color: var(--color-info-lighter);
+    border-color: var(--color-info-light);
+    background: var(--color-info-tint);
+  }
+  &[data-status="rejected"] {
+    color: var(--color-red-bright);
+    border-color: var(--color-red-bright);
+    background: var(--color-red-tint);
+  }
+  &[data-status="pending_mapping"],
+  &[data-status="pending_migration"] {
+    color: var(--color-warning-text);
+    border-color: var(--color-amber);
+    background: var(--color-warning-overlay);
+  }
+  &[data-status="disabled"] {
+    color: var(--color-gray4);
+    border-color: var(--color-muted2);
+    background: var(--color-muted-tint);
+  }
+  &[data-status="linked"] {
+    color: var(--color-rarity-legendary-light);
+    border-color: var(--color-rarity-legendary-light);
+    background: var(--color-violet-tint);
+
+    & svg {
+      font-size: 16px;
+    }
+  }
+}

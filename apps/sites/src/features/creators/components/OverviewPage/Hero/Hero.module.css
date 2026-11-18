@@ -1,0 +1,170 @@
+.hero {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  /* Fills most of the first viewport below the fixed navbar and the sticky sub-nav. */
+  height: calc(90vh - var(--nav-h) - var(--sub-nav-h));
+  overflow: hidden;
+}
+
+.background {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+
+  & img,
+  & video {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+  }
+  & video {
+    opacity: 0;
+    transition: opacity 0.6s ease-in;
+  }
+  & video[data-playing] {
+    opacity: 1;
+  }
+}
+
+.content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 739px;
+  padding: 0 32px;
+  text-align: center;
+
+  @media (max-width: 991px) {
+    max-width: 100%;
+  }
+}
+
+.title {
+  margin: 0 0 44px;
+  font-size: 64px;
+  font-weight: 700;
+  letter-spacing: -1.28px;
+  line-height: normal;
+  color: var(--color-white);
+
+  & span {
+    background: var(--gradient-dawn);
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  @media (max-width: 991px) {
+    margin-bottom: 32px;
+    font-size: 48px;
+    letter-spacing: -0.8px;
+  }
+}
+
+.subtitle {
+  margin: 0 0 68px;
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 32px;
+  letter-spacing: var(--font-tracking);
+  color: var(--color-white);
+
+  @media (max-width: 991px) {
+    margin-bottom: 64px;
+    font-size: 20px;
+    font-weight: 400;
+    line-height: 30px;
+  }
+}
+
+.scrollButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 40px 0 32px;
+  border: 0;
+  background: none;
+  color: var(--color-muted2);
+  cursor: pointer;
+
+  &:hover svg {
+    animation: overview-bounce 1s linear infinite;
+  }
+  &:focus-visible {
+    outline: 2px solid var(--color-soft-white);
+    outline-offset: -4px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    &:hover svg {
+      animation: none;
+    }
+  }
+}
+
+.osIcon {
+  display: inline-flex;
+
+  & svg {
+    width: 20px;
+    height: 20px;
+  }
+}
+
+.alsoAvailable {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 14px;
+  color: var(--color-off-white-muted);
+}
+
+.altDownload {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0 10px;
+  border-radius: 22px;
+  font-size: 14px;
+  color: var(--color-white);
+  text-decoration: none;
+
+  & svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  &:hover {
+    background: var(--color-glass-faint);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-soft-white);
+    outline-offset: -4px;
+  }
+}
+
+@keyframes overview-bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}

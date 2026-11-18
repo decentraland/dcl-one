@@ -1,0 +1,30 @@
+@layer foundations {
+  .summary {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+
+  .check {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 18px;
+    height: 18px;
+    border: 1px solid var(--color-glass-line);
+    border-radius: var(--radius-chip);
+
+    &[data-checked] {
+      border-color: var(--editor-accent);
+      background: var(--editor-accent);
+    }
+
+    & svg {
+      width: 14px;
+      height: 14px;
+      color: var(--color-white);
+    }
+  }
+}

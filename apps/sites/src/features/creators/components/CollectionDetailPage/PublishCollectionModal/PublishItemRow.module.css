@@ -1,0 +1,181 @@
+/* Shared by the header and the rows so they stay aligned. */
+.columns {
+  grid-template-columns: minmax(0, 2fr) minmax(90px, 1fr) minmax(110px, 1fr) minmax(130px, 1fr) 88px;
+
+  &[data-no-actions] {
+    grid-template-columns: minmax(0, 2fr) minmax(90px, 1fr) minmax(110px, 1fr) minmax(130px, 1fr);
+  }
+}
+
+.row {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 2px solid transparent;
+  border-radius: var(--radius-btn);
+  background: var(--color-overlay);
+  font-size: 13px;
+  color: var(--color-soft-white);
+
+  &[data-editing] {
+    border-color: var(--color-soft-white);
+    background: var(--color-overlay-strong);
+  }
+
+  & > *:not(:first-child) {
+    justify-self: center;
+    text-align: center;
+  }
+}
+
+.nameCell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.name {
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nameInput {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-soft-white);
+  border-radius: var(--radius-chip);
+  background: var(--color-glass-faint);
+  color: var(--color-soft-white);
+  font-size: 13px;
+  outline: none;
+
+  &[data-invalid] {
+    border-color: var(--color-err-light);
+  }
+  &:disabled {
+    opacity: 0.6;
+  }
+}
+
+.selectCell {
+  width: 130px;
+
+  & [data-testid="rarity-select"] {
+    height: 35px;
+    padding: 4px 4px 4px 8px;
+    gap: 4px;
+    font-size: 12px;
+    border-radius: 4px;
+    border-color: var(--color-soft-white);
+
+    /* The Select's own focus/open border; layered now, it would otherwise lose to the line above. */
+    &:focus-visible,
+    &[aria-expanded="true"] {
+      border-color: var(--color-white);
+    }
+
+    & span {
+      gap: 4px;
+      font-size: 12px;
+      padding: 0;
+      background: none;
+    }
+  }
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.iconButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--radius-btn-sm);
+  background: none;
+  color: var(--color-white);
+
+  & svg {
+    font-size: 20px;
+  }
+
+  &:hover {
+    background: var(--color-glass-faint);
+  }
+  &[data-variant="cancel"] {
+    background: var(--color-overlay);
+    border: 1px solid var(--color-muted1);
+
+    &:hover {
+      border-color: var(--color-muted2);
+    }
+  }
+  &[data-variant="save"] {
+    background: var(--color-dcl-red);
+
+    &:hover {
+      background: var(--color-dcl-red-hover);
+    }
+  }
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+}
+
+.rowError {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--color-err-light);
+  justify-self: start !important;
+  text-align: left !important;
+}
+
+.thumbButton {
+  position: relative;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+
+  &:disabled {
+    cursor: default;
+  }
+  &:focus-visible {
+    outline: 2px solid var(--color-white);
+    outline-offset: 2px;
+  }
+}
+
+.thumbBadge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--color-white);
+  color: var(--color-muted);
+
+  & svg {
+    font-size: 16px;
+  }
+}

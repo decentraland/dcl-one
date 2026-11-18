@@ -1,0 +1,38 @@
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  border: 0.8px solid;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  text-transform: uppercase;
+  white-space: nowrap;
+
+  &[data-state="approved"] {
+    color: var(--color-green);
+    border-color: var(--color-green);
+    background: var(--color-green-tint);
+  }
+  &[data-state="to_review"] {
+    color: var(--color-info-lighter);
+    border-color: var(--color-info-light);
+    background: var(--color-info-tint);
+  }
+  &[data-state="auto_reviewing"] {
+    color: var(--color-warning-text);
+    border-color: var(--color-amber);
+    background: var(--color-warning-overlay);
+  }
+  &[data-state="rejected"] {
+    color: var(--color-red-bright);
+    border-color: var(--color-red-bright);
+    background: var(--color-red-tint);
+  }
+  &[data-state="disabled"] {
+    color: var(--color-gray4);
+    border-color: var(--color-muted2);
+    background: var(--color-muted-tint);
+  }
+}

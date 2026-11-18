@@ -1,0 +1,36 @@
+@layer foundations {
+  .wrap {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .zoomButton {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--editor-line);
+    background: var(--editor-surface);
+    color: var(--color-white);
+    cursor: pointer;
+
+    &:first-of-type {
+      border-radius: var(--radius-btn-sm) var(--radius-btn-sm) 0 0;
+    }
+    &:last-of-type {
+      border-radius: 0 0 var(--radius-btn-sm) var(--radius-btn-sm);
+    }
+    &:hover:not(:disabled) {
+      background: var(--editor-surface-hover);
+    }
+    &:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+  }
+}

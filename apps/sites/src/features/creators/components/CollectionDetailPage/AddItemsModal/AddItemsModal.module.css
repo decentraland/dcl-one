@@ -1,0 +1,375 @@
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 290px;
+  height: 100%;
+  flex-shrink: 0;
+  padding: 16px;
+  border-right: 1px solid var(--color-gray4);
+  overflow: auto;
+
+  @media (max-width: 1200px) {
+    width: 220px;
+  }
+}
+
+.draftCard {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  border: 2px solid transparent;
+  border-radius: var(--radius-card);
+  background: var(--color-overlay);
+  color: var(--color-white);
+  text-align: left;
+  cursor: pointer;
+
+  /* 3px outer gradient ring: a masked pseudo-element, since the card fill is translucent and a
+     border-box gradient would bleed through it. */
+  &[data-selected] {
+    background: var(--color-overlay-strong);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
+
+    &::before {
+      content: "";
+      position: absolute;
+      inset: -3px;
+      padding: 3px;
+      border-radius: calc(var(--radius-card) + 3px);
+      background: var(--gradient-cerise);
+      -webkit-mask:
+        linear-gradient(#000 0 0) content-box,
+        linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor;
+      mask:
+        linear-gradient(#000 0 0) content-box,
+        linear-gradient(#000 0 0);
+      mask-composite: exclude;
+      pointer-events: none;
+    }
+  }
+  &[data-failed] {
+    border-color: var(--color-err-strong);
+  }
+}
+
+.draftThumbWrap {
+  position: relative;
+  width: 78px;
+  height: 78px;
+  flex-shrink: 0;
+  border-radius: var(--radius-btn-sm);
+  overflow: hidden;
+
+  @media (max-width: 1200px) {
+    width: 50px;
+    height: 50px;
+  }
+}
+
+.draftCheck {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-chip);
+  border: 2px solid var(--color-dcl-red);
+  background: var(--color-white);
+  color: var(--color-white);
+
+  &[data-checked] {
+    border-color: var(--color-success);
+    background: var(--color-success);
+  }
+
+  & svg {
+    font-size: 14px;
+  }
+}
+
+.draftInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.draftName {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.draftType {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-gray4);
+
+  & svg {
+    width: 13px;
+    height: 13px;
+  }
+}
+
+.draftError {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--color-err-strong);
+
+  & svg {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+.deleteButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  padding: 4px;
+  border-radius: var(--radius-pill);
+  color: var(--color-gray4);
+
+  &:hover {
+    background: var(--color-glass-faint);
+    color: var(--color-white);
+  }
+
+  & svg {
+    width: 20px;
+    height: 20px;
+  }
+}
+
+.videoPoster {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 132px;
+  min-height: 84px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-btn-sm);
+  background: var(--color-text);
+  overflow: hidden;
+  cursor: pointer;
+
+  & video {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    pointer-events: none;
+  }
+
+  &:hover [data-video-overlay],
+  &:focus-visible [data-video-overlay] {
+    opacity: 1;
+  }
+
+  @media (max-width: 768px) {
+    width: 96px;
+  }
+}
+
+.videoPosterOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-overlay-strong);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+
+  & svg {
+    width: 32px;
+    height: 32px;
+    color: var(--color-white);
+  }
+}
+
+.videoPlay {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--color-overlay-strong);
+  transition: background 0.2s ease;
+
+  & svg {
+    width: 24px;
+    height: 24px;
+    color: var(--color-white);
+  }
+}
+
+.videoInfo {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.videoName {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-soft-white);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.videoMeta {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-gray4);
+}
+
+.fieldRow {
+  display: flex;
+  gap: 12px;
+
+  & > * {
+    flex: 1;
+    min-width: 0;
+  }
+
+  @media (max-width: 768px) {
+    flex-wrap: wrap;
+
+    & > * {
+      flex-basis: 100%;
+    }
+  }
+}
+
+.fieldLabelRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+
+  & svg {
+    font-size: 12px;
+    color: var(--color-soft-white);
+  }
+}
+
+.textInputBox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 56px;
+  padding: 0 12px;
+  border: 1px solid var(--color-muted2);
+  border-radius: var(--radius-input);
+  background: transparent;
+
+  &:focus-within {
+    border-color: var(--color-white);
+  }
+  &[data-invalid] {
+    border-color: var(--color-err-strong);
+  }
+
+  & input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--color-soft-white);
+    font: inherit;
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 24px;
+    outline: 0;
+  }
+  & input::placeholder {
+    color: var(--color-muted2);
+    font-weight: 600;
+  }
+}
+
+.charCount {
+  flex: none;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--color-media);
+}
+
+.selectField {
+  position: relative;
+  display: grid;
+}
+
+.selectChevron {
+  position: absolute;
+  top: 50%;
+  /* 12px inside the select's 1px border. */
+  right: 13px;
+  transform: translateY(-50%);
+  color: var(--color-soft-white);
+  pointer-events: none;
+}
+
+.select {
+  height: 56px;
+  padding: 0 44px 0 12px;
+  border: 1px solid var(--color-muted2);
+  border-radius: var(--radius-input);
+  background: transparent;
+  color: var(--color-soft-white);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  outline: 0;
+  cursor: pointer;
+  appearance: none;
+
+  &:focus {
+    border-color: var(--color-white);
+  }
+
+  & option {
+    color: var(--color-text);
+    background: var(--color-white);
+  }
+}
+
+.itemsError {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 24px;
+}

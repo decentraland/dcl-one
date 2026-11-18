@@ -1,0 +1,166 @@
+.sidePanel {
+  height: 100%;
+}
+
+.statusPill {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, currentColor 15%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  text-transform: none;
+  color: var(--editor-label);
+
+  &::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  &[data-status="connected"] {
+    color: var(--color-success);
+  }
+
+  &[data-status="connecting"] {
+    color: var(--color-warning-text);
+  }
+
+  &[data-status="error"] {
+    color: var(--color-err-light);
+  }
+}
+
+.inputRow {
+  display: flex;
+  gap: 8px;
+
+  & > input {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+.connectButton {
+  &[data-size="sm"] {
+    flex: none;
+    height: 46px;
+  }
+}
+
+.addButton {
+  width: 100%;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  & > button {
+    flex: none;
+  }
+}
+
+.meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--editor-label);
+
+  & svg {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+.errorText {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--color-err-light);
+}
+
+.permissionCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 420px;
+  padding: 24px;
+  border-radius: var(--radius-card);
+  background: var(--editor-surface);
+  text-align: center;
+  color: var(--color-white);
+
+  & svg {
+    width: 40px;
+    height: 40px;
+    color: var(--color-warning-text);
+  }
+
+  &[data-state="denied"] svg {
+    color: var(--color-err-light);
+  }
+
+  & h2 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+  }
+
+  & p {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--editor-label);
+  }
+
+  & ol {
+    margin: 0;
+    padding-left: 20px;
+    font-size: 14px;
+    line-height: 1.6;
+    text-align: left;
+  }
+}
+
+.cardActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.modalBody {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin-top: 24px;
+}
+
+.modalText {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.4;
+  color: var(--color-gray4);
+}
+
+.modalField {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--color-soft-white);
+}

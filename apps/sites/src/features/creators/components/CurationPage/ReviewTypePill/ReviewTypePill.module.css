@@ -1,0 +1,23 @@
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  border: 0.8px solid;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  text-transform: uppercase;
+  white-space: nowrap;
+
+  &[data-type="new"] {
+    color: var(--color-rarity-legendary-light);
+    border-color: var(--color-magenta);
+    background: var(--color-violet-tint);
+  }
+  &[data-type="updates"] {
+    color: var(--color-soft-white);
+    border-color: var(--color-glass-line);
+    background: var(--color-glass-faint);
+  }
+}

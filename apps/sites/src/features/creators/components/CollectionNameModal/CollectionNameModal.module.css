@@ -1,0 +1,28 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 48px;
+  margin-top: 48px;
+}
+
+.intro {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: center;
+}
+
+.heading {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.33;
+  color: var(--color-white);
+}
+
+.subtitle {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.33;
+  color: var(--color-gray4);
+}

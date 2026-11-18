@@ -1,0 +1,53 @@
+.discounts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 0;
+  list-style: none;
+}
+
+.discountChip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 4px 4px 4px 16px;
+  border: 1px solid var(--color-glass-hover);
+  border-radius: var(--radius-btn);
+  background: var(--color-overlay-light);
+  font-size: 14px;
+  color: var(--color-soft-white);
+
+  /* The tight right edge is sized for the End button; without it the terms need the same room as the left. */
+  &:not(:has(> button)) {
+    padding-right: 16px;
+  }
+
+  & span {
+    color: var(--color-gray4);
+    font-size: 13px;
+  }
+
+  @media (max-width: 768px) {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+.discountTerms {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.textButton {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--color-soft-white);
+  text-decoration: underline;
+  cursor: pointer;
+}

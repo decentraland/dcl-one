@@ -1,0 +1,17 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 1px solid var(--editor-line);
+  border-radius: var(--radius-btn-sm);
+  background: var(--editor-surface);
+  color: var(--color-white);
+
+  &:hover,
+  &[data-active] {
+    background: var(--editor-surface-hover);
+  }
+}

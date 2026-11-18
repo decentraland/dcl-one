@@ -1,0 +1,17 @@
+@layer foundations {
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    padding: 2px 8px;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--color-glass-line);
+    background: var(--color-overlay);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 18px;
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: var(--color-soft-white);
+  }
+}

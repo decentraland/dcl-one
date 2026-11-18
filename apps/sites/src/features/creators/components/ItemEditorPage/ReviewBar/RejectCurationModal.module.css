@@ -1,0 +1,132 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin-top: 8px;
+}
+
+.heading {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.5;
+  color: var(--color-soft-white);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.label {
+  font-size: 14px;
+  line-height: 1.57;
+  color: var(--color-soft-white);
+}
+
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 8px;
+  border-radius: var(--radius-chip);
+  background: var(--color-overlay);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-soft-white);
+}
+
+.pillRemove {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 16px;
+  cursor: pointer;
+
+  /* A 44px touch target around the small glyph. */
+  &::after {
+    content: "";
+    position: absolute;
+    inset: -14px;
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+}
+
+.details {
+  /* 48px from the reasons, on top of the form's 24px gap. */
+  margin: 24px 0 0;
+  padding: 0 12px 12px;
+  min-width: 0;
+  border: 1px solid var(--color-muted2);
+  border-radius: var(--radius-input);
+
+  &:focus-within {
+    border-color: var(--color-white);
+  }
+}
+
+.detailsLegend {
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.15px;
+  text-transform: uppercase;
+  color: var(--color-muted2);
+}
+
+.textArea {
+  display: block;
+  width: 100%;
+  min-height: 180px;
+  padding: 8px 0 0;
+  border: 0;
+  background: none;
+  color: var(--color-white);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.5;
+  resize: vertical;
+
+  &::placeholder {
+    color: var(--color-muted2);
+  }
+  &:focus {
+    outline: 0;
+  }
+  &:disabled {
+    opacity: 0.6;
+  }
+}
+
+.charCount {
+  align-self: flex-end;
+  margin-top: -16px;
+  font-size: 12px;
+  color: var(--color-gray4);
+}
+
+.error {
+  margin: 0;
+  font-size: 14px;
+  color: var(--color-err-light);
+}

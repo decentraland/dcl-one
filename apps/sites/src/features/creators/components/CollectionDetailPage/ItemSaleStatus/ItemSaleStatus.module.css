@@ -1,0 +1,91 @@
+.putOnSale {
+  height: 40px;
+  min-width: 125px;
+  padding: 6px 16px;
+  gap: 6px;
+  line-height: 1;
+  letter-spacing: 0;
+
+  & > svg {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+  }
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid;
+  background: var(--color-text);
+  color: var(--color-soft-white);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+
+  &[data-status="on_sale"] {
+    border-color: var(--color-success-border);
+  }
+  &[data-status="sold_out"] {
+    border-color: var(--color-soft-white);
+    opacity: 0.7;
+  }
+
+  & > svg {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+  }
+}
+
+.pillLink {
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s ease;
+
+  &:hover {
+    background: #2a2a3a;
+  }
+}
+
+/* Fixed-size slot at the end of the link pill: the dot at rest, the external-link glyph on hover/focus. */
+.trailing {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+
+  & > svg {
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+
+  a:hover > &,
+  a:focus-visible > & {
+    & > span {
+      opacity: 0;
+    }
+    & > svg {
+      opacity: 1;
+    }
+  }
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-success-border);
+}

@@ -1,0 +1,35 @@
+.root {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pageButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--radius-btn-sm);
+  background: none;
+  color: var(--color-soft-white);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.46px;
+
+  &[aria-label] {
+    border: 0.5px solid var(--color-glass-line);
+  }
+  &:hover:not(:disabled):not([data-current]) {
+    background: var(--color-glass-faint);
+  }
+  &[data-current] {
+    background: var(--color-soft-white);
+    color: var(--color-text);
+  }
+  &:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+}

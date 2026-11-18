@@ -1,0 +1,27 @@
+/* Layered: consumers restyle the tag through `className`. */
+@layer foundations {
+  /* The Shop's discount tag, drawn the same: a pink chip with a gradient hairline, a flame and the cut in bold. */
+  .root {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 4px;
+    /* A gradient hairline: the fill clipped to the padding box, the gradient to the border box. */
+    background:
+      linear-gradient(var(--color-sale-tag), var(--color-sale-tag)) padding-box,
+      var(--gradient-flare) border-box;
+    border: 0.5px solid transparent;
+    color: var(--color-text);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 12px;
+    white-space: nowrap;
+  }
+
+  .pct {
+    font-weight: 700;
+    color: var(--color-sale-tag-ink);
+  }
+}

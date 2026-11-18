@@ -1,0 +1,167 @@
+.card {
+  position: relative;
+  height: 318px;
+  display: flex;
+  flex-direction: column;
+  text-decoration: none;
+  border-radius: var(--radius-card-lg);
+  overflow: hidden;
+  cursor: pointer;
+  filter: drop-shadow(0px 2px 2px rgba(0, 0, 0, 0.04));
+  transition: box-shadow 0.15s ease;
+
+  /* Inner 2px gradient border: gradient layer with the padding-box masked out. */
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 2px;
+    background: var(--gradient-cerise);
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+
+  &:hover,
+  &:active,
+  &:focus-visible {
+    box-shadow: 0 0 8px var(--color-brand-violet);
+    outline: none;
+
+    &::after {
+      opacity: 1;
+    }
+  }
+
+  @media not all and (max-width: 768px) {
+    &:hover,
+    &:focus-visible {
+      & [data-testid="collection-card-items"],
+      & [data-testid="collection-card-updated"] {
+        display: none;
+      }
+      & [data-testid="collection-card-manage"] {
+        display: flex;
+      }
+    }
+  }
+
+  @media (max-width: 768px) {
+    flex-direction: row;
+    height: 136px;
+    border-radius: var(--radius-card);
+    background: var(--color-overlay);
+  }
+}
+
+.media {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+
+  @media (max-width: 768px) {
+    flex: none;
+    width: 136px;
+    height: 100%;
+  }
+}
+
+.roleBadge {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+}
+
+.replyBadge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  /* The mosaic behind is arbitrary art: the tint alone would not keep the label readable. */
+  background: var(--color-overlay);
+}
+
+.body {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 12px 16px 16px;
+  background: var(--color-overlay);
+
+  @media (max-width: 768px) {
+    flex: 1;
+    min-width: 0;
+    justify-content: center;
+    background: none;
+    padding: 16px 12px 16px 16px;
+
+    /* The design stacks name / items / status / updated on mobile. */
+    & [data-testid="collection-card-items"] {
+      order: 1;
+    }
+    & [data-testid="collection-status"] {
+      order: 2;
+      align-self: flex-start;
+    }
+    & [data-testid="collection-card-updated"] {
+      order: 3;
+    }
+  }
+}
+
+.nameRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+
+  @media (max-width: 768px) {
+    display: contents;
+  }
+}
+
+.name {
+  margin: 0;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.6;
+  color: var(--color-white);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.manage {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  /* Same height as the two meta lines it replaces, so the footer doesn't jump. */
+  height: 52px;
+  border-radius: var(--radius-btn);
+  background: var(--color-text);
+  color: var(--color-white);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.46px;
+  text-transform: uppercase;
+}
+
+.meta {
+  font-size: 14px;
+  line-height: 1.57;
+  color: var(--color-gray4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  @media (max-width: 768px) {
+    font-size: 13px;
+  }
+}

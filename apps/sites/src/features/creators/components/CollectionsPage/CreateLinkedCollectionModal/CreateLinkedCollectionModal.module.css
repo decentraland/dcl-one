@@ -1,0 +1,11 @@
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.learnMore {
+  color: var(--color-white);
+  text-decoration: underline;
+  white-space: nowrap;
+}

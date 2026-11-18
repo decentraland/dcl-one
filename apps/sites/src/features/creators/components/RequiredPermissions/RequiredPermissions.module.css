@@ -1,0 +1,41 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-gray4);
+}
+
+.title {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--color-soft-white);
+  font-size: 14px;
+}
+
+.docsLink {
+  color: var(--color-gray4);
+  text-decoration: underline;
+
+  &:hover {
+    color: var(--color-white);
+  }
+}
+
+.list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chip {
+  padding: 4px 10px;
+  border-radius: var(--radius-btn-sm);
+  background: var(--color-glass-faint);
+  color: var(--color-soft-white);
+  text-transform: capitalize;
+}

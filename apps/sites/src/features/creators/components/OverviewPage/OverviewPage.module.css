@@ -1,0 +1,75 @@
+/* Primitives shared by the overview sections. Layered, so a section's own class on the same element (a title's
+   margin or padding) wins whatever order the lazy chunks' stylesheets load in. */
+@layer foundations {
+  .sectionTitle {
+    max-width: 80vw;
+    margin: 0 auto;
+    text-align: center;
+    font-size: 48px;
+    font-weight: 600;
+    line-height: 1.5;
+    letter-spacing: var(--font-tracking);
+    color: var(--color-soft-white);
+
+    & span {
+      background: var(--gradient-sunrise);
+      background-clip: text;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    @media (max-width: 991px) {
+      font-size: 32px;
+    }
+  }
+
+  .rail {
+    display: flex;
+    gap: 20px;
+    padding: 0 100px;
+    overflow-x: auto;
+    scrollbar-width: none;
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
+
+    @media (max-width: 991px) {
+      padding: 0 16px;
+    }
+  }
+
+  .viewAllLink {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: fit-content;
+    margin: 40px auto 0;
+    color: var(--color-soft-white);
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.5;
+    letter-spacing: var(--font-tracking);
+    /* Invisible enlarged hit area (~44px target) without changing the layout box. */
+    position: relative;
+
+    &::before {
+      content: "";
+      position: absolute;
+      inset: -9px 0;
+    }
+
+    &:hover {
+      text-decoration: underline;
+    }
+    &:focus-visible {
+      outline: 2px solid var(--color-soft-white);
+      outline-offset: 2px;
+    }
+  }
+
+  .centered {
+    display: flex;
+    justify-content: center;
+  }
+}

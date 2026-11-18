@@ -1,0 +1,147 @@
+.wrapper {
+  position: relative;
+  width: 100%;
+  padding-top: 24px;
+  overflow: hidden;
+
+  &:hover [data-direction] {
+    opacity: 1;
+  }
+}
+
+.track {
+  display: flex;
+  will-change: transform;
+  cursor: grab;
+  user-select: none;
+
+  &:active {
+    cursor: grabbing;
+  }
+}
+
+.slide {
+  flex-shrink: 0;
+  border-radius: var(--radius-card-lg);
+  overflow: hidden;
+  opacity: 0;
+  transform: scale(0.8);
+  transition:
+    opacity 0.4s ease,
+    box-shadow 0.4s ease,
+    transform 0.4s ease;
+
+  &[data-position="active"] {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 2px 8px 8px var(--color-glass-glow);
+  }
+  &[data-position="prev"] {
+    opacity: 0.7;
+    mask-image: linear-gradient(to right, transparent 0%, black 50%);
+    -webkit-mask-image: linear-gradient(to right, transparent 0%, black 50%);
+  }
+  &[data-position="next"] {
+    opacity: 0.7;
+    mask-image: linear-gradient(to right, black 50%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, black 50%, transparent 100%);
+  }
+
+  @media (max-width: 991px) {
+    opacity: 1;
+    transform: scale(1);
+
+    &[data-position="prev"],
+    &[data-position="next"] {
+      mask-image: none;
+      -webkit-mask-image: none;
+    }
+    &[data-position="active"] {
+      box-shadow: none;
+    }
+  }
+}
+
+.dots {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  padding-top: 24px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--color-glass-strong);
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+  position: relative;
+
+  &::before {
+    content: "";
+    position: absolute;
+    inset: -18px -4px;
+  }
+
+  &[data-active] {
+    background: var(--color-white);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--color-soft-white);
+    outline-offset: 2px;
+  }
+}
+
+.arrow {
+  position: absolute;
+  top: 45%;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 2px solid var(--color-glass-line);
+  background: var(--color-overlay);
+  color: var(--color-white);
+  font-size: 24px;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+
+  &:hover {
+    background: var(--color-overlay-strong);
+  }
+  &:focus-visible {
+    opacity: 1;
+    outline: 2px solid var(--color-soft-white);
+    outline-offset: 2px;
+  }
+  &[data-direction="prev"] {
+    left: 24px;
+  }
+  &[data-direction="next"] {
+    right: 24px;
+  }
+
+  @media (max-width: 991px) {
+    display: none;
+  }
+}
+
+/* Layered so the card's own root class, on the same element, keeps winning whatever the stylesheet order. */
+@layer foundations {
+  @media (max-width: 991px) {
+    .slide > * {
+      width: 100%;
+      min-width: 0;
+    }
+  }
+}

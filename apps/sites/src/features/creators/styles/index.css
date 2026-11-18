@@ -1,0 +1,212 @@
+@import "./tokens.css";
+/* Inter (SIL OFL 1.1, see assets/fonts/LICENSE-Inter.txt), served with the app so page views leak nothing to Google. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("../assets/fonts/inter-latin.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC,
+    U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("../assets/fonts/inter-latin-ext.woff2") format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+    U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* Arial reshaped to Inter's metrics, so text laid out before the web font arrives doesn't move when it swaps in. */
+@font-face {
+  font-family: "Inter Fallback";
+  src: local("Arial"), local("ArialMT");
+  size-adjust: 107.12%;
+  ascent-override: 90.44%;
+  descent-override: 22.52%;
+  line-gap-override: 0%;
+}
+:root {
+  /* Height of the ui2 navbar everything offsets against (body top padding, sub-nav sticky top,
+     viewport-filling min-heights). 991px is UI2'S OWN Navbar breakpoint, not one of ours. */
+  --nav-h: 92px;
+  /* Height of the sub-nav band (NavBar.module.css): 56px, 64px from ui2's md breakpoint. */
+  --sub-nav-h: 56px;
+  --sans: "Inter", "Inter Fallback", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+@media (max-width: 991px) {
+  :root {
+    --nav-h: 64px;
+  }
+}
+/* 1024px is breakpoints.laptop in src/styles/theme.ts, where the sub-nav (NavBar.module.css) grows to 64px.
+   CSS can't import that constant, so change both together. */
+@media (min-width: 1024px) {
+  :root {
+    --sub-nav-h: 64px;
+  }
+}
+html {
+  /* `clip` rather than `hidden`: hidden turns the root into a scroll container and breaks
+     `position: sticky` on the sub-nav. */
+  overflow-x: clip;
+}
+body {
+  margin: 0;
+  padding-top: var(--nav-h);
+  /* Figma "Radial BG" page field, same stops as shop's. */
+  background: radial-gradient(
+      61.64% 109.58% at 50% 54.49%,
+      #952dc6 0%,
+      #7c27a8 25%,
+      #642089 50%,
+      #4b1a6b 75%,
+      #32134c 100%
+    )
+    fixed;
+  color: #fcfcfc;
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+/* Sticky footer: fill the viewport (minus the fixed top navbar) as a flex column so short pages push
+   the footer to the bottom instead of leaving it floating mid-screen. */
+#root {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - var(--nav-h));
+}
+/* Under the foundations layer (order declared in index.html), so these element rules never beat a component's. */
+@layer reset {
+  * {
+    box-sizing: border-box;
+  }
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+  button {
+    font-family: inherit;
+    cursor: pointer;
+  }
+  h1,
+  h2 {
+    margin: 0;
+  }
+}
+
+.page {
+  /* 54px side gutter matches the ui2 Navbar's desktop padding so content lines up with the top nav. */
+  padding: 54px;
+  max-width: 1920px;
+  margin: 0 auto;
+  width: 100%;
+  flex: 1 0 auto;
+  /* Content fills the first viewport below the fixed navbar so the branded footer stays below the fold. */
+  min-height: calc(100vh - var(--nav-h) - var(--sub-nav-h));
+}
+@media (max-width: 768px) {
+  .page {
+    padding: 10px;
+  }
+}
+/* The overview is a full-bleed landing: its sections manage their own gutters. */
+.page[data-route="/"] {
+  padding: 0;
+  max-width: none;
+}
+/* The overview sits on near-black like sites' creator landing; only the navbar + sub-nav keep the
+   violet field, painted by a fixed strip of the same gradient (sized to the viewport so the bars
+   composite to the same colors as on every other page) behind the translucent bars. */
+body[data-route="/"] {
+  background: #161518;
+}
+body[data-route="/"]::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: calc(var(--nav-h) + var(--sub-nav-h));
+  background: radial-gradient(
+    61.64% 109.58% at 50% 54.49%,
+    #952dc6 0%,
+    #7c27a8 25%,
+    #642089 50%,
+    #4b1a6b 75%,
+    #32134c 100%
+  );
+  background-size: 100% 100vh;
+  z-index: -1;
+}
+
+/* Suspense fallback while a lazy route chunk downloads. */
+.page-loading {
+  display: grid;
+  place-items: center;
+  min-height: 60vh;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+/* Layered so a component's own border-radius/height on the same element wins whatever the stylesheet order. */
+@layer foundations {
+  /* Content-shaped loading placeholder over dark surfaces. */
+  .skeleton {
+    border-radius: 6px;
+    background: linear-gradient(
+      100deg,
+      rgba(255, 255, 255, 0.12) 30%,
+      rgba(255, 255, 255, 0.24) 50%,
+      rgba(255, 255, 255, 0.12) 70%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.4s infinite linear;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton {
+      animation: none;
+    }
+  }
+
+  .spinner {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.25);
+    border-top-color: #fcfcfc;
+    animation: spin 0.8s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner {
+      animation-duration: 2s;
+    }
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Fullscreen routes (the item editor): no navbar offset, no page gutter or width cap, no page scroll. */
+body[data-fullscreen] {
+  padding-top: 0;
+  overflow: hidden;
+}
+body[data-fullscreen] #root {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+}
+.page[data-fullscreen] {
+  padding: 0;
+  max-width: none;
+  flex: 1;
+  min-height: 0;
+}

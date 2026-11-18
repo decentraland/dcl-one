@@ -1,0 +1,23 @@
+@layer foundations {
+  /* Figma "Rarity Label": fill = rarity color @ 33%, border/text = the rarity's light gradient stop. */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: var(--radius-pill);
+    border: 0.5px solid var(--rarity-light, var(--color-gray4));
+    background: color-mix(in srgb, var(--rarity-color, var(--color-gray4)) 33%, transparent);
+    color: var(--rarity-light, var(--color-gray4));
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 18px;
+    text-transform: uppercase;
+    white-space: nowrap;
+
+    &[data-size="large"] {
+      padding: 4px 12px;
+      font-size: 15px;
+      line-height: 22px;
+    }
+  }
+}

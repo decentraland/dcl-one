@@ -1,0 +1,45 @@
+@layer foundations {
+  .track {
+    position: relative;
+    flex: none;
+    width: 44px;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--color-glass-hover);
+    cursor: pointer;
+    transition: background 0.15s ease;
+
+    &[data-checked] {
+      background: rgba(255, 45, 85, 0.5);
+    }
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+    &:focus-visible {
+      outline: 2px solid var(--color-glass-line);
+      outline-offset: 2px;
+    }
+  }
+
+  .knob {
+    position: absolute;
+    top: -2px;
+    left: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--color-white);
+    box-shadow: 0 2px 4px var(--color-overlay);
+    transition:
+      transform 0.15s ease,
+      background 0.15s ease;
+
+    [data-checked] > & {
+      transform: translateX(20px);
+      background: var(--color-dcl-red);
+    }
+  }
+}
