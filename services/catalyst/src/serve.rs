@@ -194,9 +194,9 @@ pub async fn serve(
         &content.settings.content_public_url,
     );
 
-    // ONE outbound client: the RPC validator uses it as is (`raw`), every
-    // mirror and upstream reader through the guard; peer sync has its own
-    // (`content::sync::sync_http_client`).
+    // ONE outbound client: every mirror and upstream reader goes through the
+    // guard; peer sync (`content::sync::sync_http_client`) and the RPC
+    // validator have their own.
     let http_client = http::Outbound::new(http::HttpClientCfg::serve(
         config.content.connections_max_idle,
     ))
@@ -256,8 +256,14 @@ pub async fn serve(
         .content
         .eth_rpc_url()?
         .map(|url| {
-            // Its own client: a redirect would hand the check to another node.
-            let client = crate::auth::rpc_client().context("EIP-1654 RPC client")?;
+            // The shared client's settings without redirects: one would hand the check
+            // to another node.
+            let client = http::HttpClientCfg {
+                max_redirects: None,
+                ..http::HttpClientCfg::serve(config.content.connections_max_idle)
+            }
+            .build()
+            .context("building the EIP-1654 RPC client")?;
             anyhow::Ok(crate::auth::cached_rpc_validator(url, client))
         })
         .transpose()?;

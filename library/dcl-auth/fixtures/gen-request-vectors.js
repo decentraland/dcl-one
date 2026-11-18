@@ -425,6 +425,43 @@ async function main() {
         prefix: [link('SIGNER', root.address), link('ECDSA_SCOPED_EPHEMERAL', message, sign(root, message))]
       }), route)
     }
+    // Messages the signer refuses to build, signed as they are.
+    const lines = (grants, address = eph.address.toLowerCase(), expiration = iso(NOW + 600_000)) =>
+      ['Decentraland Scoped Login', `Ephemeral: ${address}`, `Expiration: ${expiration}`, ...grants.map((l) => `Allow: ${l}`)].join('\n')
+    const signedScoped = (message, type = 'ECDSA_SCOPED_EPHEMERAL', prefix = [link('SIGNER', root.address)], from = root) =>
+      request('GET', '/v1/logs', { prefix: [...prefix, link(type, message, sign(from, message))] })
+    add('scoped: CRLF message', signedScoped(lines([`${S}:logs-read`]).replace(/\n/g, '\r\n')), route)
+    add('scoped: uppercase ephemeral address', signedScoped(lines([`${S}:logs-read`], '0x' + eph.address.slice(2).toUpperCase())), route)
+    add('scoped: repeated grant', signedScoped(lines([`${S}:logs-read`, `${S}:logs-read`])), route)
+    add('scoped: 33 grants', signedScoped(lines([`${S}:logs-read`, ...Array.from({ length: 32 }, (_, i) => `${S}:op-${i}`)])), route)
+    add('scoped: 32 grants', signedScoped(lines([`${S}:logs-read`, ...Array.from({ length: 31 }, (_, i) => `${S}:op-${i}`)])), route)
+    add('scoped: over 4096 bytes', signedScoped(lines([`${S}:logs-read`, ...Array.from({ length: 20 }, (_, i) => `${S}:op-${i} for scene:${'a'.repeat(200)}`)])), route)
+    add('scoped: grant with spaces', signedScoped(lines([`${S}:logs-read for a b`])), route)
+    add('scoped: grant uppercase', signedScoped(lines([`${S}:Logs-Read`])), route)
+    {
+      const first = scopedLink([g('logs-read')], NOW + 600_000, root, eph2)
+      add('scoped: two scoped links', request('GET', '/v1/logs', {
+        prefix: [link('SIGNER', root.address), first, scopedLink([g('logs-read')], NOW + 600_000, eph2, eph)]
+      }), route)
+      add('scoped: delegation after the scoped link', request('GET', '/v1/logs', {
+        prefix: [link('SIGNER', root.address), first, delegation(iso(NOW + 600_000), eph2, eph)]
+      }), route)
+    }
+    {
+      const scopedMessage = Authenticator.getScopedEphemeralMessage(eph.address, new Date(NOW + 600_000), [g('logs-read')])
+      const contractScoped = link('ECDSA_EIP_1654_SCOPED_EPHEMERAL', scopedMessage, sign(root, scopedMessage))
+      add('scoped: contract wallet', request('GET', '/v1/logs', { prefix: [link('SIGNER', CONTRACT), contractScoped] }), { ...route, provider: 'accept' })
+      add('scoped: contract wallet refused', request('GET', '/v1/logs', { prefix: [link('SIGNER', CONTRACT), contractScoped] }), { ...route, provider: 'reject' })
+      add('scoped: contract wallet, no service', request('GET', '/v1/logs', { prefix: [link('SIGNER', CONTRACT), contractScoped] }), { provider: 'accept' })
+      const contractDelegation = (() => {
+        const m = `Decentraland Login\nEphemeral address: ${eph2.address}\nExpiration: ${iso(NOW + 600_000)}`
+        return link('ECDSA_EIP_1654_EPHEMERAL', m, sign(root, m))
+      })()
+      const lateMessage = Authenticator.getScopedEphemeralMessage(eph.address, new Date(NOW + 600_000), [g('logs-read')])
+      add('scoped: contract scoped link not at index 1', request('GET', '/v1/logs', {
+        prefix: [link('SIGNER', CONTRACT), contractDelegation, link('ECDSA_EIP_1654_SCOPED_EPHEMERAL', lateMessage, sign(eph2, lateMessage))]
+      }), { ...route, provider: 'accept' })
+    }
   }
 
   // Optional.

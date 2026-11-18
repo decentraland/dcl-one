@@ -210,8 +210,8 @@ mod tests {
         assert!(!reject(&meta(r#"{"Signer":"dcl:explorer"}"#)));
         assert!(!reject(&meta(r#"{"signer":"dcl:explorer﻿"}"#)));
         assert!(!reject(&meta(r#"{"signer":1}"#)));
-        // `trim` strips U+0085, so a value ending in it is not canonical.
-        assert!(!reject(&meta("{\"signer\":\"dcl\u{85}\"}")));
+        // JS `trim` keeps U+0085, so a value ending in it is still canonical.
+        assert!(reject(&meta("{\"signer\":\"dcl\u{85}\"}")));
 
         let require = require_signer(&["decentraland-kernel-scene"]).unwrap();
         assert!(require(&meta(r#"{"signer":"decentraland-kernel-scene"}"#)));

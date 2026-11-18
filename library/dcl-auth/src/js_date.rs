@@ -108,10 +108,14 @@ pub(crate) fn is_js_whitespace(c: u32) -> bool {
 }
 
 /// `String.prototype.trim`.
-/// `String.prototype.trim`, which V8 also ends at U+0085 (NEL); the date
-/// grammar and RegExp `\s` do not treat it as whitespace.
+/// `String.prototype.trim`: JS whitespace, which leaves U+0085 (NEL).
 pub(crate) fn js_trim(value: &str) -> &str {
-    value.trim_matches(|c: char| is_js_whitespace(c as u32) || c == '\u{85}')
+    value.trim_matches(|c: char| is_js_whitespace(c as u32))
+}
+
+/// Whitespace that ends a word in the date grammar: not U+2028 or U+2029.
+fn ends_word(c: u32) -> bool {
+    is_js_whitespace(c) && c != 0x2028 && c != 0x2029
 }
 
 struct Reader<'a> {
@@ -171,7 +175,7 @@ impl Reader<'_> {
     fn read_word(&mut self) -> ([u32; 3], usize) {
         let mut prefix = [0u32; 3];
         let mut len = 0;
-        while self.is_alpha_or_above() && !is_js_whitespace(self.ch()) {
+        while self.is_alpha_or_above() && !ends_word(self.ch()) {
             if len < 3 {
                 prefix[len] = self.ch() | 0x20;
             }
@@ -361,7 +365,7 @@ fn scan(reader: &mut Reader) -> Token {
             return Token::Symbol(c);
         }
     }
-    if reader.is_alpha_or_above() && !is_js_whitespace(reader.ch()) {
+    if reader.is_alpha_or_above() && !ends_word(reader.ch()) {
         let (prefix, length) = reader.read_word();
         let (kind, value) = lookup_keyword(prefix, length);
         return Token::Keyword {
@@ -458,8 +462,8 @@ impl DayComposer {
                 year += 1900;
             }
         }
-        // V8 keeps a year that fits a 31-bit small integer.
-        if !between(year, -(1 << 30), (1 << 30) - 1) || !is_month(month) || !is_day(day) {
+        // Every i32 year is a small integer in Node's V8.
+        if !is_month(month) || !is_day(day) {
             return None;
         }
         Some((year, month - 1, day))
@@ -564,7 +568,7 @@ impl TimeZoneComposer {
         let total = (self.hour as u32)
             .wrapping_mul(3600)
             .wrapping_add((self.minute as u32).wrapping_mul(60));
-        if total > (1 << 30) - 1 {
+        if total > i32::MAX as u32 {
             return None;
         }
         let total = total as i32;
@@ -880,10 +884,11 @@ mod tests {
         assert!(corpus.cases.len() > 200);
     }
 
-    /// Node: `"\u0085x\u0085".trim()` is `"x"`, `"\u180ex".trim()` keeps U+180E.
+    /// Node: `"a\u0085".trim()` keeps NEL, `"\u180ex".trim()` keeps U+180E.
     #[test]
     fn trim_matches_node() {
-        assert_eq!(js_trim("\u{85}x\u{85}"), "x");
+        assert_eq!(js_trim("a\u{85}"), "a\u{85}");
+        assert_eq!(js_trim("\u{2028}x\u{2029}"), "x");
         assert_eq!(js_trim("\u{feff}\u{a0} x\u{3000}"), "x");
         assert_eq!(js_trim("\u{180e}x"), "\u{180e}x");
         assert_eq!(parse("\u{85}2020-02-13"), None);

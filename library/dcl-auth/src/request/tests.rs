@@ -186,7 +186,22 @@ async fn answers_as_crypto_middleware_6_5_0() {
         let expected = v.rust.as_ref().unwrap_or(&v.expected);
         let result = verify_request_at(&parts, &options(&v.options), fixture.now).await;
         let ok = match &result {
-            Ok(Some(_)) if v.rust.is_some() => expected.status == 200,
+            // A deviation row carries no TS verification: the signer and metadata are the request's.
+            Ok(Some(verified)) if v.rust.is_some() => {
+                let header = |name: &str| {
+                    v.headers
+                        .iter()
+                        .find(|(n, _)| n == name)
+                        .map(|(_, value)| value.as_str())
+                };
+                let signer: Value =
+                    serde_json::from_str(header("x-identity-auth-chain-0").unwrap()).unwrap();
+                let metadata: Value =
+                    serde_json::from_str(header("x-identity-metadata").unwrap_or("{}")).unwrap();
+                expected.status == 200
+                    && signer["payload"].as_str().unwrap().to_lowercase() == verified.signer
+                    && Value::Object(verified.metadata.clone()) == metadata
+            }
             Ok(Some(verified)) => {
                 expected.status == 200
                     && expected.auth.as_deref() == Some(verified.signer.as_str())
@@ -418,7 +433,8 @@ mod rpc {
     use axum::routing::post;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// A JSON-RPC node answering the `n`th call (from 1) with `answer`.
+    /// A JSON-RPC node answering the `n`th call (from 1) with `answer`; an
+    /// `httpStatus` field sets the response status.
     async fn node(answer: fn(&Value, usize) -> Value, calls: Arc<AtomicUsize>) -> String {
         let app = axum::Router::new().route(
             "/",
@@ -426,7 +442,16 @@ mod rpc {
                 let calls = calls.clone();
                 async move {
                     let n = calls.fetch_add(1, Ordering::SeqCst) + 1;
-                    Json(answer(&body, n))
+                    let mut answer = answer(&body, n);
+                    let status = answer
+                        .as_object_mut()
+                        .and_then(|o| o.remove("httpStatus"))
+                        .and_then(|s| s.as_u64())
+                        .unwrap_or(200);
+                    (
+                        axum::http::StatusCode::from_u16(status as u16).unwrap(),
+                        Json(answer),
+                    )
                 }
             }),
         );
@@ -446,6 +471,25 @@ mod rpc {
 
     fn failing_node(body: &Value, _: usize) -> Value {
         json!({ "jsonrpc": "2.0", "id": body["id"], "error": { "code": -32603, "message": "internal error" } })
+    }
+
+    fn magic(body: &Value) -> Value {
+        json!({ "jsonrpc": "2.0", "id": body["id"], "result": format!("0x1626ba7e{}", "0".repeat(56)) })
+    }
+
+    /// No answer for the raw hash, then acceptance of the EIP-191 one.
+    fn null_then_magic(body: &Value, n: usize) -> Value {
+        if n == 1 {
+            return json!({ "jsonrpc": "2.0", "id": body["id"], "result": null });
+        }
+        magic(body)
+    }
+
+    /// An HTTP 500 carrying an accepting envelope.
+    fn server_error_with_magic(body: &Value, _: usize) -> Value {
+        let mut answer = magic(body);
+        answer["httpStatus"] = json!(500);
+        answer
     }
 
     fn oversized_call(body: &Value, _: usize) -> Value {
@@ -514,6 +558,47 @@ mod rpc {
         let (result, calls) = verdict(failing_node, contract_parts()).await;
         let err = result.unwrap_err();
         assert_eq!(err, RequestAuthError::Unavailable);
+        assert_eq!(calls, 1);
+    }
+
+    /// A node that never answers: each call gives up after [`RPC_CALL_TIMEOUT`].
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_rpc_call_is_unavailable_after_its_own_timeout() {
+        let app = axum::Router::new().route(
+            "/",
+            post(|| async {
+                std::future::pending::<()>().await;
+                ""
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let rpc = Arc::new(RpcEip1654Validator::new(
+            url,
+            crate::rpc_validator::rpc_client().unwrap(),
+        ));
+        let options = VerifyOptions::builder().eip1654(rpc).build().unwrap();
+        let started = tokio::time::Instant::now();
+        let err = verify_request_at(&contract_parts(), &options, NOW)
+            .await
+            .unwrap_err();
+        assert_eq!(err, RequestAuthError::Unavailable);
+        assert_eq!(started.elapsed(), RPC_CALL_TIMEOUT);
+    }
+
+    /// A malformed answer ends the validation: a later acceptance is never read.
+    #[tokio::test]
+    async fn a_null_answer_is_unavailable_even_before_an_acceptance() {
+        let (result, calls) = verdict(null_then_magic, contract_parts()).await;
+        assert_eq!(result.unwrap_err(), RequestAuthError::Unavailable);
+        assert_eq!(calls, 1);
+    }
+
+    #[tokio::test]
+    async fn a_server_error_is_unavailable_whatever_its_body() {
+        let (result, calls) = verdict(server_error_with_magic, contract_parts()).await;
+        assert_eq!(result.unwrap_err(), RequestAuthError::Unavailable);
         assert_eq!(calls, 1);
     }
 

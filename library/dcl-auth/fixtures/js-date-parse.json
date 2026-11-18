@@ -1086,6 +1086,114 @@
    "expected": 1581618670000
   },
   {
+   "input": "2099 ",
+   "expected": null
+  },
+  {
+   "input": "2099-01-01 ",
+   "expected": null
+  },
+  {
+   "input": "Jan 1 2099 ",
+   "expected": null
+  },
+  {
+   "input": "Thu, 01 Jan 2099 00:00:00 GMT ",
+   "expected": null
+  },
+  {
+   "input": "2099 ",
+   "expected": null
+  },
+  {
+   "input": "Jan 1 2099",
+   "expected": 4070908800000
+  },
+  {
+   "input": "Jan 1 2099",
+   "expected": 4070908800000
+  },
+  {
+   "input": " 2099-01-01",
+   "expected": null
+  },
+  {
+   "input": "2099-01-01 T00:00",
+   "expected": null
+  },
+  {
+   "input": "Jan 1 2099\n",
+   "expected": 4070908800000
+  },
+  {
+   "input": "Jan 1 2099\r",
+   "expected": 4070908800000
+  },
+  {
+   "input": "\nJan 1 2099",
+   "expected": 4070908800000
+  },
+  {
+   "input": "1900-02-29",
+   "expected": -2203891200000
+  },
+  {
+   "input": "2000-02-29",
+   "expected": 951782400000
+  },
+  {
+   "input": "2100-02-29",
+   "expected": 4107542400000
+  },
+  {
+   "input": "2004-02-29",
+   "expected": 1078012800000
+  },
+  {
+   "input": "1900-02-29T00:00:00Z",
+   "expected": -2203891200000
+  },
+  {
+   "input": "Feb 29 1900",
+   "expected": -2203891200000
+  },
+  {
+   "input": "Feb 29 2000",
+   "expected": 951782400000
+  },
+  {
+   "input": "Feb 29 2100",
+   "expected": 4107542400000
+  },
+  {
+   "input": "1600-02-29",
+   "expected": -11670998400000
+  },
+  {
+   "input": "-000400-02-29",
+   "expected": -74784902400000
+  },
+  {
+   "input": "+010000-02-29",
+   "expected": 253407398400000
+  },
+  {
+   "input": "6030GMT-0300100::",
+   "expected": 129201624000000
+  },
+  {
+   "input": "2423GMT-0300999999999:Febr",
+   "expected": 15566228208000
+  },
+  {
+   "input": "zUTC+2UTC+00501234::",
+   "expected": -823456800000
+  },
+  {
+   "input": "Jan 1 2099 GMT+999999:",
+   "expected": null
+  },
+  {
    "input": "UTC Feb",
    "expected": null
   },

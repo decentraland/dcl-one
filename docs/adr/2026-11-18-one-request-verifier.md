@@ -51,8 +51,10 @@ available.
   Routes get service and operation names when they move onto the verifier.
 - **Contract wallets.** A validation makes at most 16 JSON-RPC calls of 5 s
   each within 15 s. A call over the budget is an invalid signature; a node
-  error, a timeout, a redirect or an `eth_call` answer longer than one ABI word
-  makes the validation unavailable. A revert is the contract's refusal: code 3
+  error, a timeout, a redirect, an HTTP error status or a malformed answer
+  (an `eth_call` result that is not one ABI word of hex) ends the validation
+  as unavailable; for every other caller an HTTP error status or a missing
+  result is a failed call, never an answer. A revert is the contract's refusal: code 3
   or -32015, or an execution-failure message. Every caller of the validator
   reads responses up to 1 MiB and gives it a client that follows no redirect,
   so a call never reaches another node.

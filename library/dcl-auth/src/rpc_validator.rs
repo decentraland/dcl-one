@@ -168,7 +168,6 @@ impl RpcEip1654Validator {
             .await?
         {
             Value::String(s) => Ok(s),
-            Value::Null => Err(failed("RPC returned null result with no error".into())),
             other => Err(failed(format!("Unexpected RPC result type: {other}"))),
         }
     }
@@ -215,6 +214,7 @@ impl RpcEip1654Validator {
             timeout = timeout.min(budget.per_call);
         }
         let result = self.send(method, params, timeout).await;
+        // A malformed answer is the node's fault, never a refusal to read past.
         let result = match result {
             Ok(Value::String(answer))
                 if budget.is_some()
@@ -222,6 +222,10 @@ impl RpcEip1654Validator {
                     && !is_signature_call_result(&answer) =>
             {
                 Err(failed("Invalid eth_call result".into()))
+            }
+            Ok(Value::Null) => Err(failed("RPC returned null result with no error".into())),
+            Ok(other) if method == "eth_call" && !other.is_string() => {
+                Err(failed(format!("Unexpected RPC result type: {other}")))
             }
             other => other,
         };
@@ -256,6 +260,9 @@ impl RpcEip1654Validator {
             return Err(failed("RPC redirect refused".into()));
         }
         let status = resp.status().as_u16();
+        if !resp.status().is_success() {
+            return Err(failed(format!("RPC returned HTTP {status}")));
+        }
         let bytes = read_body_capped(resp, MAX_RPC_RESPONSE_BYTES)
             .await
             .map_err(|e| failed(format!("Failed to read RPC response: {e}")))?;
@@ -1975,6 +1982,34 @@ mod revert_tests {
         assert!(!is_signature_call_result("0xabc"));
         assert!(!is_signature_call_result("abcd"));
         assert!(!is_signature_call_result("0xzz"));
+    }
+
+    /// Outside a request too, an HTTP error is a failed call whatever its body says.
+    #[tokio::test]
+    async fn a_server_error_is_never_an_answer() {
+        use axum::routing::post;
+        let app = axum::Router::new().route(
+            "/",
+            post(|| async {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    axum::Json(serde_json::json!({"jsonrpc":"2.0","id":1,"result":format!("0x1626ba7e{}", "0".repeat(56))})),
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let rpc = RpcEip1654Validator::new(url, rpc_client().unwrap());
+        let err = rpc
+            .validate_signature(
+                "0x1234567890123456789012345678901234567890",
+                &[0u8; 32],
+                &[0u8; 65],
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("HTTP 500"), "{err}");
     }
 
     /// A redirect is refused: the validator's client does not follow it, and an answer
