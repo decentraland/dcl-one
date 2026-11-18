@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { BiUndo, BiRedo, BiBadgeCheck, BiPlay, BiPause, BiStop } from 'react-icons/bi';
 import { AiOutlineInfoCircle as InfoIcon } from 'react-icons/ai';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import { withSdk } from '../../../hoc/withSdk';
 import { getSceneClient } from '../../../lib/rpc/scene';

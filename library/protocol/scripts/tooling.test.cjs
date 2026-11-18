@@ -45,7 +45,7 @@ test('compatibility checks the archived baseline and propagates a rejected schem
   assert.equal(refused.status, 42, refused.stderr)
 })
 
-test('npm test installs the Buf executable through make on a fresh dependency tree', (t) => {
+test('the test script installs the Buf executable through make on a fresh dependency tree', (t) => {
   const fx = repository(t)
   fs.copyFileSync(path.join(__dirname, '../package.json'), path.join(fx.protocol, 'package.json'))
   fs.copyFileSync(path.join(__dirname, '../Makefile'), path.join(fx.protocol, 'Makefile'))
@@ -54,7 +54,7 @@ test('npm test installs the Buf executable through make on a fresh dependency tr
   fs.mkdirSync(bin)
   fs.writeFileSync(path.join(bin, 'curl'), '#!/usr/bin/env bash\nset -eu\nwhile [[ $# -gt 0 ]]; do if [[ "$1" = -o ]]; then cp "$BUF_DOWNLOAD_FIXTURE" "$2"; exit; fi; shift; done\nexit 99\n', { mode: 0o755 })
   const env = { ...fx.env, BUF_BIN: '', BUF_DOWNLOAD_FIXTURE: fx.env.BUF_BIN, PATH: `${bin}${path.delimiter}${process.env.PATH}` }
-  const result = run('npm', ['test'], fx.protocol, env)
+  const result = run(process.execPath, ['--run', 'test'], fx.protocol, env)
   assert.equal(result.status, 0, result.stdout + result.stderr)
   assert.equal(fs.readFileSync(fx.env.BUF_MARKER, 'utf8'), 'checked')
 })

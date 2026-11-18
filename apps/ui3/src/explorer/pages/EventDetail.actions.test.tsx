@@ -11,11 +11,11 @@ describe("when a web event links to the RSVP flow", () => {
     vi.stubGlobal("Blob", class { constructor(parts: string[]) { downloads.push(parts.join("")); } });
     vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:calendar"), revokeObjectURL: vi.fn() });
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
-    render(<EventDetail event={{ id: "recurring", title: "Weekly fixture", start: "2099-06-01T18:00:00Z", finish: "2099-06-01T20:00:00Z" }} rsvpHref="/landings/rsvp-event?event=recurring" />);
+    render(<EventDetail event={{ id: "recurring", title: "Weekly fixture", start: "2099-06-01T18:00:00Z", finish: "2099-06-01T20:00:00Z" }} rsvpHref="/events/recurring/rsvp" />);
   });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
   it("should expose RSVP navigation without claiming to know wallet attendance", () => {
-    expect(screen.getByRole("link", { name: "Manage RSVP" })).toHaveAttribute("href", "/landings/rsvp-event?event=recurring");
+    expect(screen.getByRole("link", { name: "Manage RSVP" })).toHaveAttribute("href", "/events/recurring/rsvp");
     expect(screen.queryByRole("button", { name: /INTERESTED/ })).toBeNull();
     expect(screen.getByRole("link", { name: "Manage RSVP" })).not.toHaveAttribute("aria-pressed");
   });
@@ -42,13 +42,13 @@ describe("when RSVP navigation is supplied by the host router bridge", () => {
   let click: MouseEvent;
   beforeEach(() => {
     navigate = vi.fn<ChromeNavigate>();
-    render(<ChromeNavContext.Provider value={{ navigate }}><EventDetail rsvpHref="/landings/rsvp-event?event=fixture" /></ChromeNavContext.Provider>);
+    render(<ChromeNavContext.Provider value={{ navigate }}><EventDetail rsvpHref="/events/fixture/rsvp" /></ChromeNavContext.Provider>);
     click = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
   });
   afterEach(() => vi.restoreAllMocks());
   it("should retain an anchor and route an ordinary click without a document reload", () => {
     screen.getByRole("link", { name: "Manage RSVP" }).dispatchEvent(click);
-    expect(navigate).toHaveBeenCalledWith("/landings/rsvp-event?event=fixture");
+    expect(navigate).toHaveBeenCalledWith("/events/fixture/rsvp");
     expect(click.defaultPrevented).toBe(true);
   });
   describe("and the click uses a browser modifier", () => {

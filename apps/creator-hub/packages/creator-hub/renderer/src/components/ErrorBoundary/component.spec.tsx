@@ -1,12 +1,13 @@
 import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { captureException } from '@sentry/electron/renderer';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
+
+import { TestProviders } from '../../../tests/utils/TestProviders';
 
 import { RouteErrorBoundary } from '.';
 
@@ -31,7 +32,7 @@ function Home() {
 function renderApp(initialPath = '/broken') {
   render(
     <MemoryRouter initialEntries={[initialPath]}>
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <nav>
           <Link to="/home">Outside link</Link>
           <Link to="/broken">Broken link</Link>
@@ -48,7 +49,7 @@ function renderApp(initialPath = '/broken') {
             />
           </Routes>
         </RouteErrorBoundary>
-      </ThemeProvider>
+      </TestProviders>
     </MemoryRouter>,
   );
 }

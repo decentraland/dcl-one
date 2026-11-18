@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Provider } from 'react-redux';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AuthServerProvider } from '/@/lib/auth';
@@ -101,6 +101,37 @@ describe('AnalyticsDetailPage', () => {
       render(<AnalyticsDetailPage />, { wrapper });
 
       await waitFor(() => expect(screen.getByText('Scene not found')).toBeTruthy());
+    });
+  });
+
+  describe('when the export is not available yet', () => {
+    beforeEach(() => {
+      setAuth(false);
+    });
+
+    it('should keep the export button focusable and say why it does nothing on focus', async () => {
+      render(<AnalyticsDetailPage />, { wrapper });
+      const exportButton = screen.getByRole('button', { name: 'Export Analytics' });
+
+      expect(exportButton.getAttribute('aria-disabled')).toBe('true');
+      expect((exportButton as HTMLButtonElement).disabled).toBe(false);
+      exportButton.focus();
+
+      expect(document.activeElement).toBe(exportButton);
+      expect((await screen.findByRole('tooltip')).textContent).toBe(
+        'Exporting will be available once analytics data is live',
+      );
+    });
+
+    it('should say why on hover', async () => {
+      render(<AnalyticsDetailPage />, { wrapper });
+      const exportButton = screen.getByRole('button', { name: 'Export Analytics' });
+
+      fireEvent.mouseEnter(exportButton.parentElement!);
+
+      expect((await screen.findByRole('tooltip')).textContent).toBe(
+        'Exporting will be available once analytics data is live',
+      );
     });
   });
 });

@@ -1,4 +1,3 @@
-import "@dcl/one-ui/foundations/foundations.css";
 import { useEffect, useRef, type MouseEvent } from "react";
 import { redirect, useNavigate } from "react-router";
 import SitesChrome from "@ui/web/frames/SitesChrome";

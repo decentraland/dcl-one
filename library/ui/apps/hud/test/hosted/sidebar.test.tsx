@@ -166,8 +166,7 @@ describe('sidebar panels', () => {
       await renderSettled(<Sidebar session={session} />)
       await press('Me')
       expect(rowsOf('Me').includes('Sign Out')).toBe(shown)
-      // the desktop client cannot be quit from the page
-      expect(rowsOf('Me').includes('Exit')).toBe(!isNative)
+      expect(rowsOf('Me').includes('Exit')).toBe(true)
     })
 
     const ask = async (): Promise<{ session: EngineSession; row: HTMLElement; question: HTMLElement }> => {

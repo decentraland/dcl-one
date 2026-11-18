@@ -1,7 +1,6 @@
 import { z } from "zod";
 
-import { getJSON, postJSON } from "../client";
-import type { AuthIdentity } from "../../auth/types";
+import { getJSON } from "../client";
 import type { GetOptions } from "../client";
 import { apiOkOf, okDataTotalOf } from "../envelope";
 import { ScheduleRecordSchema } from "../generated-schemas/events";
@@ -51,137 +50,8 @@ export async function fetchSchedules(
   return { data, total: env.data.total ?? data.length };
 }
 
-const SCHEDULE_BOUNDS = {
-  nameMax: 50,
-  descriptionMax: 255,
-  imageMax: 255,
-  maxBackgroundColors: 3,
-} as const;
-
-export const THEME_OPTIONS: { value: string; label: string }[] = [
-  { value: "", label: "No theme (custom colors)" },
-  { value: "mvmf_2022", label: "Metaverse Festival 2022" },
-  { value: "mvfw_2023", label: "Metaverse Fashion Week 2023" },
-  { value: "pride_2023", label: "Pride Week 2023" },
-];
-
-export type ScheduleDraft = {
-  name: string;
-  description: string;
-  imageUrl: string;
-  theme: string;
-  background: string[];
-  activeSinceDate: string;
-  activeUntilDate: string;
-  active: boolean;
-};
-
-export function emptyDraft(): ScheduleDraft {
-  return {
-    name: "",
-    description: "",
-    imageUrl: "",
-    theme: "",
-    background: ["#7B61FF", "#16141A"],
-    activeSinceDate: "",
-    activeUntilDate: "",
-    active: true,
-  };
-}
-
-function isoToDateInput(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toISOString().slice(0, 10);
-}
-
-export function scheduleToDraft(s: Schedule): ScheduleDraft {
-  const base = emptyDraft();
-  return {
-    name: s.name,
-    description: s.description ?? "",
-    imageUrl: s.image ?? "",
-    theme: s.theme ?? "",
-    background: s.background?.length ? s.background : base.background,
-    activeSinceDate: isoToDateInput(s.active_since),
-    activeUntilDate: isoToDateInput(s.active_until),
-    active: s.active === true,
-  };
-}
-
-function dateToEpochMs(date: string): number {
-  if (!date) return 0;
-  const d = new Date(`${date}T00:00:00.000Z`);
-  return Number.isNaN(d.getTime()) ? 0 : d.getTime();
-}
-
-type DraftIssues = Partial<Record<keyof ScheduleDraft, string>>;
-
-export function validateStep(step: string, draft: ScheduleDraft): DraftIssues {
-  const issues: DraftIssues = {};
-  if (step === "basics") {
-    if (!draft.name.trim()) issues.name = "Schedule name is required";
-    else if (draft.name.length > SCHEDULE_BOUNDS.nameMax)
-      issues.name = `Name must be ${SCHEDULE_BOUNDS.nameMax} characters or fewer`;
-    if (draft.description.length > SCHEDULE_BOUNDS.descriptionMax)
-      issues.description = `Description must be ${SCHEDULE_BOUNDS.descriptionMax} characters or fewer`;
-    if (draft.imageUrl.length > SCHEDULE_BOUNDS.imageMax)
-      issues.imageUrl = `Image URL must be ${SCHEDULE_BOUNDS.imageMax} characters or fewer`;
-    if (draft.background.filter((c) => c.trim()).length === 0)
-      issues.background = "Pick at least one background color";
-  }
-  if (step === "dates") {
-    if (!draft.activeSinceDate) issues.activeSinceDate = "Pick a start date";
-    if (!draft.activeUntilDate) issues.activeUntilDate = "Pick an end date";
-    if (
-      draft.activeSinceDate &&
-      draft.activeUntilDate &&
-      dateToEpochMs(draft.activeUntilDate) < dateToEpochMs(draft.activeSinceDate)
-    )
-      issues.activeUntilDate = "End date must be on or after the start date";
-  }
-  return issues;
-}
-
-export function isStepValid(step: string, draft: ScheduleDraft): boolean {
-  return Object.keys(validateStep(step, draft)).length === 0;
-}
-
-const SubmitResultSchema = z.object({
-  id: z.string(),
-  active: z.boolean(),
-});
-export type SubmitResult = z.infer<typeof SubmitResultSchema>;
-
-export function buildScheduleSubmit(identitySource: () => AuthIdentity | null, original?: Schedule): SubmitFn {
-  return async ({ draft, scheduleId, signal }) => {
-    const identity = identitySource();
-    if (!identity) throw new Error("Sign in to manage schedules.");
-    if (!isStepValid("basics", draft) || !isStepValid("dates", draft)) throw new Error("Complete the schedule name and dates before saving.");
-    const body = {
-      name: draft.name.trim(), description: draft.description.trim() || null, image: draft.imageUrl.trim() || null,
-      theme: draft.theme || null, background: draft.background.filter((color) => color.trim()), active: draft.active,
-      active_since: original?.active_since && isoToDateInput(original.active_since) === draft.activeSinceDate
-        ? original.active_since : `${draft.activeSinceDate}T00:00:00.000Z`,
-      active_until: original?.active_until && isoToDateInput(original.active_until) === draft.activeUntilDate
-        ? original.active_until : `${draft.activeUntilDate}T23:59:59.000Z`,
-    };
-    const path = scheduleId ? `/events/api/schedules/${encodeURIComponent(scheduleId)}` : "/events/api/schedules";
-    const raw = await postJSON(path, body, { identity, method: scheduleId ? "PATCH" : "POST", signal });
-    return apiOkOf(SubmitResultSchema).parse(raw).data;
-  };
-}
-
 type AssignableTo<Sub, Sup> = Sub extends Sup ? true : false;
 
 type Assert<T extends true> = T;
 
 export type _DriftSchedule = Assert<AssignableTo<RsSchedule, Schedule>>;
-
-
-export type SubmitFn = (args: {
-  draft: ScheduleDraft;
-  scheduleId?: string;
-  signal?: AbortSignal;
-}) => Promise<SubmitResult>;

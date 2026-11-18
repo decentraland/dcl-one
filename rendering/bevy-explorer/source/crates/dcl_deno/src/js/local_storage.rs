@@ -1,5 +1,5 @@
 use bevy::log::debug;
-use dcl_js::player_identity;
+use dcl_js::storage_address;
 use deno_core::{error::AnyError, op2, OpDecl, OpState};
 
 // wrap localStorage to include player address in all operations
@@ -16,12 +16,10 @@ pub fn override_ops() -> Vec<OpDecl> {
     ]
 }
 
-fn address(state: &OpState) -> String {
-    let address = player_identity(state)
-        .map(|id| id.address)
-        .unwrap_or_default();
+fn address(state: &OpState) -> Result<String, AnyError> {
+    let address = storage_address(state)?;
     debug!("local storage address: {address:?}");
-    address
+    Ok(address)
 }
 
 fn strip_prefix(key: impl AsRef<str>) -> String {
@@ -33,7 +31,7 @@ fn iterate_keys(
     state: &mut OpState,
     persistent: bool,
 ) -> Result<impl Iterator<Item = String>, AnyError> {
-    let address = address(state);
+    let address = address(state)?;
     let iter = deno_webstorage::op_webstorage_iterate_keys__raw_fn(state, persistent)?;
     Ok(iter.into_iter().filter(move |k| k.starts_with(&address)))
 }
@@ -62,7 +60,7 @@ pub fn op_webstorage_set(
     #[string] value: &str,
     persistent: bool,
 ) -> Result<(), AnyError> {
-    let address = address(state);
+    let address = address(state)?;
     deno_webstorage::op_webstorage_set__raw_fn(
         state,
         &format!("{address}:{key}"),
@@ -78,7 +76,7 @@ pub fn op_webstorage_get(
     #[string] key_name: String,
     persistent: bool,
 ) -> Result<Option<String>, AnyError> {
-    let address = address(state);
+    let address = address(state)?;
     deno_webstorage::op_webstorage_get__raw_fn(state, format!("{address}:{key_name}"), persistent)
 }
 
@@ -88,7 +86,7 @@ pub fn op_webstorage_remove(
     #[string] key_name: &str,
     persistent: bool,
 ) -> Result<(), AnyError> {
-    let address = address(state);
+    let address = address(state)?;
     deno_webstorage::op_webstorage_remove__raw_fn(
         state,
         &format!("{address}:{key_name}"),

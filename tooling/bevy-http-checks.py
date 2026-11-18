@@ -34,6 +34,10 @@ REQUIRED = {
         "content_reads_are_keyed_by_hash_and_url_reads_by_url",
         "a_session_failure_answers_only_content_reads",
         "a_successful_download_clears_a_failure_of_its_url",
+        "a_download_that_does_not_match_its_hash_fails_and_is_not_cached",
+        "a_hash_mismatch_is_asked_for_again_after_the_retry_window",
+        "a_download_that_matches_its_hash_is_read_and_cached",
+        "a_name_the_hash_check_cannot_verify_is_read_and_not_cached",
     },
     "platform": {
         "grant_is_held_through_body_read_and_released_on_cancellation",

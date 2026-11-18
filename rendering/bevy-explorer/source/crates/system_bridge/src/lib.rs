@@ -140,6 +140,10 @@ pub enum SystemApi {
     LiveSceneInfo(RpcResultSender<Vec<LiveSceneInfo>>),
     GetHomeScene(RpcResultSender<HomeScene>),
     SetHomeScene(HomeScene),
+    /// None takes the lobby stage down.
+    SetLobbyStage(Option<LobbyStage>),
+    /// Whether the local user may enter the named world (`name.dcl.eth`).
+    GetWorldAccess(String, RpcResultSender<WorldAccessVerdict>),
     /// Credential-free resolved service endpoints.
     GetServiceUrls(RpcResultSender<Vec<(String, String)>>),
     GetWelcome(RpcResultSender<WelcomeState>),
@@ -157,6 +161,9 @@ pub enum SystemApi {
     GetProfileChangedStream(RpcStreamSender<ProfileChangedEvent>),
     GetSceneLoadingUiStream(RpcStreamSender<SceneLoadingUi>),
     GetAnalyticsEventStream(RpcStreamSender<AnalyticsEvent>),
+    /// The preview server's texture import status for the previewed scene, as the preview socket
+    /// delivers it (`comms::preview`); nothing outside preview mode.
+    GetTextureOptimizationStream(RpcStreamSender<TextureOptimizationStatus>),
     // Native-only transport for the super-user bridge scene's BroadcastChannel: the scene posts page
     // -bound Envelopes via BridgeToPage, and subscribes to page->scene Envelopes via GetBridgeStream.
     // (In web the browser provides BroadcastChannel directly; native has no cross-process equivalent.)

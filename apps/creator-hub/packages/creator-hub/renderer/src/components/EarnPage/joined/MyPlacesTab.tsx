@@ -18,22 +18,9 @@ import {
   metricValue,
   placeLocation,
   placeTitle,
+  totalPlaytimeSeconds30d,
 } from './format';
 import { MyPlacesEmpty } from './MyPlacesEmpty';
-import {
-  Entry,
-  List,
-  Name,
-  NameBlock,
-  Panel,
-  SceneData,
-  Stats,
-  StatsList,
-  Thumbnail,
-  Where,
-  WhereText,
-} from './MyPlacesTab.styled';
-import { FilterBar, FilterGroup, FilterNote, FilterSentence } from './parts.styled';
 import {
   CycleSelect,
   ListState,
@@ -43,6 +30,8 @@ import {
   type MetricReading,
 } from './parts';
 import { useWorldSceneCounts } from './useWorldSceneCounts';
+import parts from './parts.module.css';
+import styles from './MyPlacesTab.module.css';
 
 const SECONDS_PER_MINUTE = 60;
 const NO_CYCLE = 'current';
@@ -66,14 +55,19 @@ type PlaceMetricsReading =
   | { status: 'ready'; metrics: LocationMetrics | undefined };
 
 function PlaceStats({ reading, locale }: { reading: PlaceMetricsReading; locale: string }) {
-  const stat = (name: string, format: (value: number) => string): MetricReading => {
+  const readStat = (
+    read: (metrics: LocationMetrics | undefined) => number | null,
+    format: (value: number) => string,
+  ): MetricReading => {
     if (reading.status === 'loading') return reading;
-    const value = metricValue(reading.metrics, name);
+    const value = read(reading.metrics);
     return { status: 'ready', value: value === null ? null : format(value) };
   };
+  const stat = (name: string, format: (value: number) => string) =>
+    readStat(metrics => metricValue(metrics, name), format);
   return (
-    <Stats>
-      <StatsList>
+    <div className={styles.stats}>
+      <dl className={styles.statsList}>
         <MetricStat
           icon={<NewPlayersIcon />}
           label={t('earn.joined.my_places.metrics.new_players')}
@@ -99,14 +93,16 @@ function PlaceStats({ reading, locale }: { reading: PlaceMetricsReading; locale:
             name: t('earn.joined.my_places.metrics.playtime_info_label'),
             tooltip: t('earn.joined.my_places.metrics.playtime_info'),
           }}
-          reading={stat('avg_playtime_seconds_30d', value =>
-            t('earn.joined.my_places.metrics.minutes', {
-              value: formatCount(value / SECONDS_PER_MINUTE, locale),
-            }),
-          )}
+          reading={readStat(totalPlaytimeSeconds30d, seconds => {
+            const minutes = Math.round(seconds / SECONDS_PER_MINUTE);
+            return t('earn.joined.my_places.metrics.minutes', {
+              minutes,
+              value: formatCount(minutes, locale),
+            });
+          })}
         />
-      </StatsList>
-    </Stats>
+      </dl>
+    </div>
   );
 }
 
@@ -121,33 +117,41 @@ function PlaceEntry({
 }) {
   const nameId = useId();
   return (
-    <Entry aria-labelledby={nameId}>
-      <Thumbnail
+    <article
+      className={styles.entry}
+      aria-labelledby={nameId}
+    >
+      <img
+        className={styles.thumbnail}
         src={place.image ?? undefined}
         alt=""
         width={206}
         height={116}
         loading="lazy"
       />
-      <SceneData>
-        <NameBlock>
-          <Name
+      <div className={styles.sceneData}>
+        <div className={styles.nameBlock}>
+          <h2
+            className={styles.name}
             id={nameId}
             title={placeTitle(place)}
           >
             {placeTitle(place)}
-          </Name>
-          <Where>
+          </h2>
+          <span className={styles.where}>
             <MapPinIcon />
-            <WhereText title={placeLocation(place, scenesInWorld)}>
+            <span
+              className={styles.whereText}
+              title={placeLocation(place, scenesInWorld)}
+            >
               {placeLocation(place, scenesInWorld)}
-            </WhereText>
-          </Where>
-        </NameBlock>
+            </span>
+          </span>
+        </div>
         <StatusChip {...chipOf(place)} />
-      </SceneData>
+      </div>
       {children}
-    </Entry>
+    </article>
   );
 }
 
@@ -279,7 +283,7 @@ export function MyPlacesTab() {
     );
   } else {
     body = (
-      <List>
+      <div className={styles.list}>
         {inProgramFirst(shown.places).map(place => (
           <PlaceEntry
             key={place.id}
@@ -298,25 +302,31 @@ export function MyPlacesTab() {
             )}
           </PlaceEntry>
         ))}
-      </List>
+      </div>
     );
   }
 
   return (
-    <Panel>
+    <div className={styles.panel}>
       {(!firstSteps || hasClosedCycle) && (
-        <FilterBar
+        <div
+          className={parts.filterBar}
           role="toolbar"
           aria-labelledby={sentenceId}
         >
-          <FilterSentence id={sentenceId}>{t('earn.joined.my_places.sentence')}</FilterSentence>
-          <FilterGroup>
+          <p
+            className={parts.filterSentence}
+            id={sentenceId}
+          >
+            {t('earn.joined.my_places.sentence')}
+          </p>
+          <div className={parts.filterGroup}>
             {running && !!shown?.places.length && metrics && (
-              <FilterNote>
+              <span className={parts.filterNote}>
                 {t('earn.joined.my_places.last_update', {
                   time: formatTime(metrics.exported_at, locale),
                 })}
-              </FilterNote>
+              </span>
             )}
             {cycles.status === 'succeeded' && (
               <CycleSelect
@@ -332,10 +342,10 @@ export function MyPlacesTab() {
                 }}
               />
             )}
-          </FilterGroup>
-        </FilterBar>
+          </div>
+        </div>
       )}
       {body}
-    </Panel>
+    </div>
   );
 }

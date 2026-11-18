@@ -110,7 +110,7 @@ describe("when a place card renders", () => {
         <PlaceCardSlot card={card("a", { users: 3, usersLabel: "3 people in-world", live: true, featured: true })} labels={CARD_LABELS} />
       </ul>,
     );
-    expect(screen.getByText("3 people in-world")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "3 people in-world" })).toBeTruthy();
     expect(screen.getByText("Live")).toBeTruthy();
     expect(screen.getByText("Featured")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Jump in: Scene a" }).getAttribute("href")).toBe("/play?position=a");

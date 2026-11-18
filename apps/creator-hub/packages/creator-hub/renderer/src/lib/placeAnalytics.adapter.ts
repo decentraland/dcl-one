@@ -142,6 +142,17 @@ const toPercentage = (value: number | null): number | null => (value === null ? 
 const toMinutes = (value: number | null): number | null =>
   value === null ? null : value / SECONDS_PER_MINUTE;
 
+/**
+ * Minutes spent in the window, AFK included. The export carries no total, but
+ * `avg_playtime_seconds_*` averages over exactly the visits `unique_visits_*` counts, so their
+ * product is the sum.
+ */
+function totalPlaytime(bag: Bag, window: MetricsWindow): number | null {
+  const average = platformValue(bag, `avg_playtime_seconds_${window}`, 'all');
+  const visits = platformValue(bag, `unique_visits_${window}`, 'all');
+  return average === null || visits === null ? null : toMinutes(average * visits);
+}
+
 function platforms(bag: Bag, name: SplitMetric, transform = (value: number | null) => value) {
   return {
     all: transform(platformValue(bag, name, 'all')),
@@ -172,6 +183,7 @@ export function toOverview(
     day3Retention: toPercentage(platformValue(metrics, `d3_retention_rate_${window}`, 'all')),
     day7Retention: toPercentage(platformValue(metrics, `d7_retention_rate_${window}`, 'all')),
     medianPlaytime: toMinutes(platformValue(metrics, `playtime_seconds_p50_${window}`, 'all')),
+    totalPlaytime: totalPlaytime(metrics, window),
     afkTime: toMinutes(platformValue(metrics, `avg_afk_seconds_per_user_${window}`, 'all')),
     desktopUsers: platformValue(metrics, `unique_visitors_${window}`, 'desktop'),
     mobileUsers: platformValue(metrics, `unique_visitors_${window}`, 'mobile'),

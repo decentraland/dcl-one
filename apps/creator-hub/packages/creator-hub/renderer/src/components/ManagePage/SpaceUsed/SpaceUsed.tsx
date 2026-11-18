@@ -6,16 +6,8 @@ import { getCurrentLocale, t } from '/@/modules/store/translation/utils';
 
 import { WorldsYourStorageModal } from '../../Modals/WorldsYourStorageModal';
 import { InfoTip } from '../InfoTip';
-import {
-  DetailsButton,
-  Fill,
-  Label,
-  LabelRow,
-  Root,
-  Track,
-  Value,
-  ValueRow,
-} from './SpaceUsed.styled';
+
+import styles from './SpaceUsed.module.css';
 
 /** The WORLDS tab's storage bar: space used by the account's Worlds out of its allowance. */
 export function SpaceUsed() {
@@ -39,29 +31,36 @@ export function SpaceUsed() {
     });
 
   return (
-    <Root>
-      <LabelRow>
-        <Label id={labelId}>{t('manage.worlds_storage.used')}</Label>
+    <div className={styles.root}>
+      <div className={styles.labelRow}>
+        <span
+          id={labelId}
+          className={styles.label}
+        >
+          {t('manage.worlds_storage.used')}
+        </span>
         <InfoTip
           label={t('manage.worlds_storage.info_label')}
           size="small"
         >
           {t('manage.worlds_storage.description')}{' '}
-          <DetailsButton
+          <button
             type="button"
+            className={styles.detailsButton}
             onClick={() => setDetailsOpen(true)}
           >
             {t('manage.worlds_storage.link')}
-          </DetailsButton>
+          </button>
         </InfoTip>
-      </LabelRow>
-      <ValueRow>
-        <Value>
+      </div>
+      <div className={styles.valueRow}>
+        <span className={styles.value}>
           {usage(chunks => (
             <b>{chunks}</b>
           ))}
-        </Value>
-        <Track
+        </span>
+        <div
+          className={styles.track}
           role="progressbar"
           aria-labelledby={labelId}
           aria-valuemin={0}
@@ -69,15 +68,18 @@ export function SpaceUsed() {
           aria-valuenow={used}
           aria-valuetext={[usage(chunks => chunks.join(''))].flat().join('')}
         >
-          <Fill style={{ width: `${percent}%` }} />
-        </Track>
-      </ValueRow>
+          <span
+            className={styles.fill}
+            style={{ width: `${percent}%` }}
+          />
+        </div>
+      </div>
       <WorldsYourStorageModal
         open={detailsOpen}
         onClose={() => setDetailsOpen(false)}
         stats={storageStats}
         accountHoldings={accountHoldings}
       />
-    </Root>
+    </div>
   );
 }

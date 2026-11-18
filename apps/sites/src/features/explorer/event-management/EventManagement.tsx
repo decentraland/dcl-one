@@ -62,7 +62,6 @@ export function EventNavigation({ profile = null, canManageUsers = false }: { pr
       <Link className={styles.link} to="/events/new-event">Create a Hangout</Link>
       {canModerate(profile) && <Link className={styles.link} to="/events/admin/pending-events">Moderation</Link>}
       {canManageUsers && <Link className={styles.link} to="/events/admin/users">User permissions</Link>}
-      {has(profile, "edit_any_schedule") && <Link className={styles.link} to="/landings/event-schedule">Schedules</Link>}
     </nav>
   );
 }

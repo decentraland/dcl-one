@@ -7,3 +7,8 @@
   overflow: hidden;
   background: var(--map-bg);
 }
+/* In the lobby's section modal: the frame's own edges. */
+.compact {
+  height: 100%;
+  margin: 0;
+}

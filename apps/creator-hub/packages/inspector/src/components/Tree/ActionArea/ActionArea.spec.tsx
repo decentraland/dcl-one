@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { Entity } from '@dcl/ecs';
 
@@ -22,7 +22,7 @@ vi.mock('../../../lib/logic/analytics', () => ({
 const entity = 512 as Entity;
 
 describe('ActionArea', () => {
-  let onRowClick: ReturnType<typeof vi.fn>;
+  let onRowClick: Mock;
 
   beforeEach(() => {
     onRowClick = vi.fn();

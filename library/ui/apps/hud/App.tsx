@@ -16,12 +16,12 @@ import { NotificationToastHost } from './features/notifications/NotificationToas
 import { SkyboxMenu } from './features/skybox/SkyboxMenu'
 import { EmotesWheel } from './features/emotes/EmotesWheel'
 import { BackpackPage } from './features/backpack/BackpackPage'
+import { setGiftBackpackOpener } from './features/gifting/GiftReceivedPopup'
 import { CommunitiesPage } from './features/communities/CommunitiesPage'
 import { MapPage } from './features/map/MapPage'
 import { PlacesPage } from './features/places/PlacesPage'
 import { EventsPage } from './features/events/EventsPage'
 import { PlacesPicker } from './features/places/PlacesPicker'
-import { MenuPresentationContext } from './features/menu/MenuPresentation'
 import { LobbyHome } from './features/lobby/LobbyHome'
 import { VoiceChatPanel } from './features/voiceChat/VoiceChatPanel'
 import { SceneVoiceChatBanner } from './features/voiceChat/SceneVoiceChatBanner'
@@ -72,6 +72,8 @@ import { useTipEmote } from './features/donate/useDonate'
 const loadEditorHost = () => lazy(() => import('./features/editorHost/EditorHost'))
 let EditorHost = /* @__PURE__ */ loadEditorHost()
 
+const STARTUP_LOBBY_PAGES = ['backpack', 'settings', 'communities', 'map', 'places', 'events', 'gallery', 'profile']
+
 const params = new URLSearchParams(location.search)
 // MOCK (?mock=1): UI only, no engine, fake bridge (?previousLogin=1 → returning user).
 // ENGINE (default): real engine in a same-document canvas (EngineHost — no iframe) + super-user bridge scene.
@@ -119,8 +121,6 @@ const UNTRUSTED_PARAMS = untrustedLaunchParams({ native: MODE === 'native' })
 const EDITOR = EDITOR_BUILD && MODE === 'engine' && editorOffered(location.hostname, location.search)
 // the ENTRY url: the engine's url sync rewrites it
 const ENTRY_SEARCH = location.search
-// The menu pages the startup lobby mounts (its own buttons, and the tabs that lead between them).
-const LOBBY_PAGES = new Set(['backpack', 'settings', 'map', 'places', 'events', 'profile'])
 // Entry-url params nothing reads (lib/entryParams.ts) — told to the user once the HUD is up.
 const UNRECOGNISED_PARAMS = unrecognisedEntryParams(params, [
   ...(EDITOR_BUILD && EDITOR ? ['editor', 'editor-projects', 'editor-worlds', 'editor-tag', FEATURES_PARAM] : []),
@@ -366,6 +366,17 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   useEffect(() => {
     if (!session.backpack.open) setBackpackTab('wearables')
   }, [session.backpack.open])
+  // A gift-received popup's GO TO BACKPACK opens the Backpack on the gift's tab.
+  // Read through a ref: the session's backpack is a new object each render, and the opener is set once.
+  const backpackRef = useRef(session.backpack)
+  backpackRef.current = session.backpack
+  useEffect(() => {
+    setGiftBackpackOpener((tab) => {
+      setBackpackTab(tab)
+      if (!backpackRef.current.open) backpackRef.current.toggle()
+    })
+    return () => setGiftBackpackOpener(null)
+  }, [])
   // Open MY OWN passport (Sidebar profile icon + the menu's "View Profile") — same popup the profile
   // card opens for others.
   const viewMyProfile = (tab?: PassportTab): void => {
@@ -376,11 +387,10 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   // Top-nav navigation between the full-screen menu pages (Settings/Backpack/Map)
   // and the Communities panel. Each toggle is mutually exclusive.
   const goToMenuPage = (page: string): void => {
-    // the startup lobby is the page under its menus: LOBBY closes them, and the pages it does
-    // not mount (Communities, Shop, Gallery, Create) wait for the world
+    // over the startup lobby LOBBY closes the menus, and only the pages a destination is found in open
     if (session.phase === 'lobby') {
       if (page === 'lobby') return session.closeAllPanels()
-      if (!LOBBY_PAGES.has(page)) return
+      if (!STARTUP_LOBBY_PAGES.includes(page)) return
     }
     if (page === 'lobby') session.lobbyPage.toggle()
     else if (page === 'settings') session.settings.toggle()
@@ -396,6 +406,37 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
     // opens the full passport (same as for other users), not the small profile card.
     else if (page === 'profile') viewMyProfile()
   }
+
+  const discoveryPages = (
+    <>
+      <SurfaceBoundary name="Settings" open={session.settings.open} onCrash={session.closeAllPanels}>
+        <SettingsPanel settings={session.settings} bindings={session.bindings} profile={session.profile} lobbyStage={session.lobbyStage} onNavigate={goToMenuPage} />
+      </SurfaceBoundary>
+      <SurfaceBoundary name="Communities" open={session.communities.open} onCrash={session.closeAllPanels}>
+        <CommunitiesPage communities={session.communities} profile={session.profile} voiceChat={session.voiceChat} onNavigate={goToMenuPage} />
+      </SurfaceBoundary>
+      <SurfaceBoundary name="Map" open={session.map.open} onCrash={session.closeAllPanels}>
+        <MapPage map={session.map} minimap={session.minimap} profile={session.profile} gallery={session.gallery} onNavigate={goToMenuPage} />
+      </SurfaceBoundary>
+      <SurfaceBoundary name="Places" open={session.places.open} onCrash={session.closeAllPanels}>
+        <PlacesPage
+          account={discoveryAccount}
+          places={session.places}
+          profile={session.profile}
+          onNavigate={goToMenuPage}
+          onTeleport={(x, y) => session.map.teleportToPlace(x, y)}
+          onVisitWorld={(realm) => session.map.changeRealm(realm)}
+        />
+      </SurfaceBoundary>
+      <SurfaceBoundary name="Events" open={session.events.open} onCrash={session.closeAllPanels}>
+        <EventsPage events={session.events} profile={session.profile} friends={session.friends} onNavigate={goToMenuPage} />
+      </SurfaceBoundary>
+      <SurfaceBoundary name="Gallery" open={session.gallery.open} onCrash={session.closeAllPanels}>
+        <GalleryPage gallery={session.gallery} profile={session.profile} onNavigate={goToMenuPage} onTeleport={(x, y) => session.map.teleport(x, y)} onViewProfile={(u) => openPassport(u.address)} />
+      </SurfaceBoundary>
+    </>
+  )
+
 
   // A full-screen MainMenuShell page is open (covers the whole HUD).
   const pageOpen =
@@ -442,28 +483,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
           <SurfaceBoundary name="Backpack" open={session.backpack.open} onCrash={session.closeAllPanels}>
             <BackpackPage backpack={session.backpack} emotes={session.emotes} profile={session.profile} onNavigate={goToMenuPage} setEngineViewport={session.setEngineViewport} initialTab={backpackTab} modal />
           </SurfaceBoundary>
-          {/* the startup lobby presents the pages it opens as cards over itself */}
-          <MenuPresentationContext.Provider value="lobbyCard">
-          <SurfaceBoundary name="Settings" open={session.settings.open} onCrash={session.closeAllPanels}>
-            <SettingsPanel settings={session.settings} bindings={session.bindings} profile={session.profile} onNavigate={goToMenuPage} />
-          </SurfaceBoundary>
-          <SurfaceBoundary name="Map" open={session.map.open} onCrash={session.closeAllPanels}>
-            <MapPage map={session.map} minimap={session.minimap} profile={session.profile} gallery={session.gallery} onNavigate={goToMenuPage} />
-          </SurfaceBoundary>
-          <SurfaceBoundary name="Places" open={session.places.open} onCrash={session.closeAllPanels}>
-            <PlacesPage
-              account={discoveryAccount}
-              places={session.places}
-              profile={session.profile}
-              onNavigate={goToMenuPage}
-              onTeleport={(x, y) => session.map.teleportToPlace(x, y)}
-              onVisitWorld={(realm) => session.map.changeRealm(realm)}
-            />
-          </SurfaceBoundary>
-          <SurfaceBoundary name="Events" open={session.events.open} onCrash={session.closeAllPanels}>
-            <EventsPage events={session.events} profile={session.profile} friends={session.friends} onNavigate={goToMenuPage} />
-          </SurfaceBoundary>
-          </MenuPresentationContext.Provider>
+          {discoveryPages}
         </>
       )}
       {session.phase === 'entering' && editorMode === 'off' && !session.create.open && (
@@ -503,9 +523,6 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
           <SurfaceBoundary name="Friends" open={session.friends.open} onCrash={session.closeAllPanels}>
             <FriendsPanel friends={session.friends} onMessage={session.chat.openConversation} onJump={(address) => jumpToFriend(session.map, address)} />
           </SurfaceBoundary>
-          <SurfaceBoundary name="Settings" open={session.settings.open} onCrash={session.closeAllPanels}>
-            <SettingsPanel settings={session.settings} bindings={session.bindings} profile={session.profile} onNavigate={goToMenuPage} />
-          </SurfaceBoundary>
           <SurfaceBoundary name="Profile" open={session.profile.open} onCrash={session.closeAllPanels}>
             <ProfilePanel profile={session.profile} />
           </SurfaceBoundary>
@@ -527,30 +544,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
           <SurfaceBoundary name="Backpack" open={session.backpack.open} onCrash={session.closeAllPanels}>
             <BackpackPage backpack={session.backpack} emotes={session.emotes} profile={session.profile} onNavigate={goToMenuPage} setEngineViewport={session.setEngineViewport} initialTab={backpackTab} modal={session.lobbyPage.open} />
           </SurfaceBoundary>
-          <SurfaceBoundary name="Communities" open={session.communities.open} onCrash={session.closeAllPanels}>
-            <CommunitiesPage
-              communities={session.communities}
-              profile={session.profile}
-              voiceChat={session.voiceChat}
-              onNavigate={goToMenuPage}
-            />
-          </SurfaceBoundary>
-          <SurfaceBoundary name="Map" open={session.map.open} onCrash={session.closeAllPanels}>
-            <MapPage map={session.map} minimap={session.minimap} profile={session.profile} gallery={session.gallery} onNavigate={goToMenuPage} />
-          </SurfaceBoundary>
-          <SurfaceBoundary name="Places" open={session.places.open} onCrash={session.closeAllPanels}>
-            <PlacesPage
-              account={discoveryAccount}
-              places={session.places}
-              profile={session.profile}
-              onNavigate={goToMenuPage}
-              onTeleport={(x, y) => session.map.teleportToPlace(x, y)}
-              onVisitWorld={(realm) => session.map.changeRealm(realm)}
-            />
-          </SurfaceBoundary>
-          <SurfaceBoundary name="Events" open={session.events.open} onCrash={session.closeAllPanels}>
-            <EventsPage events={session.events} profile={session.profile} friends={session.friends} onNavigate={goToMenuPage} />
-          </SurfaceBoundary>
+          {discoveryPages}
           <SurfaceBoundary
             name="Shop"
             open={session.shop.open}
@@ -560,15 +554,6 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             }}
           >
             <host.ShopPage session={session} onNavigate={goToMenuPage} mock={MODE === 'mock'} />
-          </SurfaceBoundary>
-          <SurfaceBoundary name="Gallery" open={session.gallery.open} onCrash={session.closeAllPanels}>
-            <GalleryPage
-              gallery={session.gallery}
-              profile={session.profile}
-              onNavigate={goToMenuPage}
-              onTeleport={(x, y) => session.map.teleport(x, y)}
-              onViewProfile={(u) => openPassport(u.address)}
-            />
           </SurfaceBoundary>
         </EditorOffered.Provider>
       )}

@@ -29,6 +29,7 @@ import { KebabMenu } from './KebabMenu'
 import { HintsButton, KeyCap } from './HintsButton'
 import { useRef, useState } from 'react'
 import { ControlButton } from './ControlButton'
+import { showToast, ToastHost } from './Toast'
 import { Tooltip } from './Tooltip'
 import { Toggle } from './Toggle'
 import { Slider } from './Slider'
@@ -713,6 +714,14 @@ export function Showcase(): React.JSX.Element {
         </div>
       </Section>
 
+      <Section title="WearableCard pick (gift picker)">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, 136px)', gap: 10 }}>
+          <WearableCard pick rarity="epic" count={3} />
+          <WearableCard pick rarity="rare" selected />
+          <WearableCard pick rarity="common" coverNote="Equipped" />
+        </div>
+      </Section>
+
       <Section title="EquippedItemCard (passport)">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 108px)', gap: 12 }}>
           {(['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'unique', 'exotic', 'base'] as Rarity[]).map((r, i) => (
@@ -746,6 +755,33 @@ export function Showcase(): React.JSX.Element {
         <ShowcaseRowScroller />
       </Section>
 
+      <Section title="Toast (plain · error · keyed progress · action + dismiss)">
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Button variant="secondary" size="sm" onClick={() => showToast('User Mojito has been successfully blocked.')}>
+            Plain
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => showToast('Something went wrong.', { tone: 'error' })}>
+            Error
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              let done = 0
+              const tick = (): void => {
+                done += 1
+                showToast(`Optimizing textures… ${done} / 5`, { key: 'showcase-progress', duration: null, busy: true })
+                if (done < 5) setTimeout(tick, 500)
+                else showToast('Textures optimized · 4.2 MB → 1.1 MB — Reload to see them', { key: 'showcase-progress', duration: null, dismissible: true, action: { label: 'Reload', ariaLabel: 'Reload the scene', onClick: () => undefined } })
+              }
+              tick()
+            }}
+          >
+            Keyed progress → action
+          </Button>
+        </div>
+        <ToastHost />
+      </Section>
       <Section title="Chat components">
         <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           <div style={{ width: 300, display: 'flex', flexDirection: 'column', gap: 8, padding: 12, background: 'rgba(19,19,19,0.6)', borderRadius: 14 }}>

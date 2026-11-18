@@ -10,13 +10,15 @@ import styles from './MapPanel.module.css'
 interface MapPanelProps {
   minimap: MinimapState
   map: MapState
+  /** The player's address, the minimap's copied link's referrer. */
+  referrer?: string
   setEngineViewport: ComponentProps<typeof Minimap>['setEngineViewport']
 }
 
-export function MapPanel({ minimap, map, setEngineViewport }: MapPanelProps): React.JSX.Element {
+export function MapPanel({ minimap, map, referrer, setEngineViewport }: MapPanelProps): React.JSX.Element {
   return (
     <section className={styles.root} aria-label="Map">
-      <Minimap minimap={minimap} map={map} sceneTitle={minimap.sceneTitle} setEngineViewport={setEngineViewport} />
+      <Minimap minimap={minimap} map={map} sceneTitle={minimap.sceneTitle} referrer={referrer} setEngineViewport={setEngineViewport} />
     </section>
   )
 }

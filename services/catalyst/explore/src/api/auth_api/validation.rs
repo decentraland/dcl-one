@@ -77,6 +77,12 @@ pub(super) fn validate_request_message(
         ));
     }
 
+    // The method is stored as text, and in the challenge text: PostgreSQL
+    // refuses a NUL there. (params are stored serialized, a NUL escaped.)
+    if body.method.contains('\0') {
+        return Err("method must not contain NUL characters".into());
+    }
+
     if params.len() > MAX_PARAMS_ITEMS {
         return Err(format!(
             "params must have at most {} items",
@@ -418,6 +424,23 @@ mod tests {
         let at_max = vec![json!({ "data": "test" }); MAX_PARAMS_ITEMS];
         assert!(
             validate_request_message(&request("eth_call", at_max, Some(stub_auth_chain()))).is_ok()
+        );
+    }
+
+    /// A NUL in the method is a 400 here, not a 500 at the text insert; one in
+    /// params is stored escaped.
+    #[test]
+    fn create_request_refuses_a_nul_in_the_method() {
+        let err = validate_request_message(&request("eth_\0call", vec![], Some(stub_auth_chain())))
+            .unwrap_err();
+        assert_eq!(err, "method must not contain NUL characters");
+        assert!(
+            validate_request_message(&request(
+                "eth_call",
+                vec![json!("a\0b")],
+                Some(stub_auth_chain())
+            ))
+            .is_ok()
         );
     }
 

@@ -108,6 +108,10 @@ export class EngineDriver implements LoginDriver {
     this.ch.expectReady()
   }
 
+  bridgeReady(): boolean {
+    return this.ch.isReady()
+  }
+
   on(fn: (msg: SceneToPage) => void): () => void {
     this.listeners.add(fn)
     return () => this.listeners.delete(fn)

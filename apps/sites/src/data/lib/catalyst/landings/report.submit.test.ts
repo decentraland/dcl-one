@@ -8,7 +8,7 @@ vi.mock("../client", async (importOriginal) => {
 
 import { signedFetch } from "../../auth/signer";
 import { postJSON } from "../client";
-import { buildSubmitReport } from "./report";
+import { buildSubmitReport, ReportSubmitError } from "./report";
 import type { ReportDraft } from "./report";
 import type { AuthIdentity } from "../../auth/types";
 
@@ -50,7 +50,7 @@ function presignResponse() {
   return {
     reportId: REPORT_ID,
     files: [
-      { key: KEY, uploadPath: `/reports/players/${REPORT_ID}/evidence/${KEY}` },
+      { key: KEY, uploadPath: `/api/reports/players/${REPORT_ID}/evidence/${KEY}` },
     ],
   };
 }
@@ -70,7 +70,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("buildSubmitReport \u{2014} real comms player-report write", () => {
+describe("buildSubmitReport \u{2014} real report-user write", () => {
   it("presigns, uploads the bytes, then creates the report under the server's id, never a locally minted one", async () => {
     happyPath();
 
@@ -80,10 +80,8 @@ describe("buildSubmitReport \u{2014} real comms player-report write", () => {
     expect(out.reportId).not.toMatch(/^sim-report-/);
 
     const [presignPath, presignBody, presignOpts] = mPostJSON.mock.calls[0];
-    expect(presignPath).toBe("/comms/reports/players/presign");
-    expect((presignOpts as { signPath: string }).signPath).toBe(
-      "/reports/players/presign",
-    );
+    expect(presignPath).toBe("/report-user/api/reports/players/presign");
+    expect((presignOpts as { signPath?: string }).signPath).toBeUndefined();
     expect(presignBody).toEqual({
       files: [{ filename: "clip.png", contentType: "image/png", fileSize: 4 }],
     });
@@ -91,18 +89,16 @@ describe("buildSubmitReport \u{2014} real comms player-report write", () => {
     expect(mSignedFetch).toHaveBeenCalledTimes(1);
     const [, url, init] = mSignedFetch.mock.calls[0];
     expect(String(url)).toMatch(
-      new RegExp(`/comms/reports/players/${REPORT_ID}/evidence/${KEY}$`),
+      new RegExp(`/report-user/api/reports/players/${REPORT_ID}/evidence/${KEY}$`),
     );
-    const put = init as { method: string; signPath: string; body: Blob };
+    const put = init as { method: string; signPath?: string; body: Blob };
     expect(put.method).toBe("PUT");
-    expect(put.signPath).toBe(`/reports/players/${REPORT_ID}/evidence/${KEY}`);
+    expect(put.signPath).toBeUndefined();
     expect(put.body).toBeInstanceOf(Blob);
 
     const [createPath, createBody, createOpts] = mPostJSON.mock.calls[1];
-    expect(createPath).toBe("/comms/reports/players");
-    expect((createOpts as { signPath: string }).signPath).toBe(
-      "/reports/players",
-    );
+    expect(createPath).toBe("/report-user/api/reports/players");
+    expect((createOpts as { signPath?: string }).signPath).toBeUndefined();
     expect(createBody).toEqual({
       reportId: REPORT_ID,
       reportedAddress: "0xcccccccccccccccccccccccccccccccccccccccc",
@@ -112,6 +108,20 @@ describe("buildSubmitReport \u{2014} real comms player-report write", () => {
       confirmAccuracy: true,
       evidenceKeys: [KEY],
     });
+  });
+
+  it("drops the body of each upload answer it does not read, accepted or refused", async () => {
+    mPostJSON.mockResolvedValueOnce(presignResponse()).mockResolvedValueOnce(createdResponse());
+    const accepted = new Response("stored", { status: 200 });
+    mSignedFetch.mockResolvedValueOnce(accepted);
+    await buildSubmitReport(IDENTITY)({ draft: draft() });
+    expect(accepted.bodyUsed).toBe(true);
+
+    mPostJSON.mockResolvedValueOnce(presignResponse());
+    const refused = new Response("too large", { status: 413 });
+    mSignedFetch.mockResolvedValueOnce(refused);
+    await expect(buildSubmitReport(IDENTITY)({ draft: draft() })).rejects.toMatchObject({ step: "upload" });
+    expect(refused.bodyUsed).toBe(true);
   });
 
   it("never sends a client-chosen reporter \u{2014} the server binds it to the signer", async () => {
@@ -130,6 +140,7 @@ describe("buildSubmitReport \u{2014} real comms player-report write", () => {
     await expect(
       buildSubmitReport(null)({ draft: draft() }),
     ).rejects.toThrow(/connect your wallet/i);
+    await expect(buildSubmitReport(null)({ draft: draft() })).rejects.toMatchObject({ step: "not_connected" });
     await expect(
       buildSubmitReport(IDENTITY)({
         draft: draft({ evidence: [{ id: "e1", name: "clip.png", size: 4 }] }),
@@ -152,9 +163,10 @@ describe("buildSubmitReport \u{2014} real comms player-report write", () => {
     mPostJSON.mockResolvedValueOnce(presignResponse());
     mSignedFetch.mockResolvedValue(new Response(null, { status: 403 }));
 
-    await expect(
-      buildSubmitReport(IDENTITY)({ draft: draft() }),
-    ).rejects.toThrow(/403/);
+    const submit = buildSubmitReport(IDENTITY)({ draft: draft() });
+    await expect(submit).rejects.toBeInstanceOf(ReportSubmitError);
+    // The message names the file; the step is the code telemetry sends, and it names nothing.
+    await expect(submit).rejects.toMatchObject({ message: expect.stringMatching(/403/), step: "upload" });
     expect(mPostJSON).toHaveBeenCalledTimes(1);
   });
 });

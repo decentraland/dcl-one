@@ -223,6 +223,19 @@ export async function signedGetJSON<T>(
   }
 }
 
+/** An unsigned JSON `POST` for the node's public batch reads (`/lambdas/profiles`, `/content/entities/active`). */
+export async function postPublicJSON(path: string, body: unknown, opts: GetOptions = {}): Promise<unknown> {
+  const url = `${catalystBase(opts.base)}${path}`;
+  const res = await (opts.fetchImpl ?? fetch)(url, {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal: opts.signal,
+  });
+  if (!res.ok) throw await errorFromResponse(res, url);
+  return res.json();
+}
+
 export async function postJSON<T>(
   path: string,
   body: unknown,
