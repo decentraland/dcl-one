@@ -25,7 +25,7 @@ def path_dependencies(manifest, document, inherited):
     """The manifests of the `path` dependencies a package declares in any dependency table, with
     a `workspace = true` entry resolved through the root's `[workspace.dependencies]`."""
     for table in [document, *document.get("target", {}).values()]:
-        for kind in ("dependencies", "dev-dependencies", "build-dependencies"):
+        for kind in ("dependencies", "dev-dependencies", "dev_dependencies", "build-dependencies", "build_dependencies"):
             for name, dependency in table.get(kind, {}).items():
                 if not isinstance(dependency, dict):
                     continue
