@@ -2141,8 +2141,8 @@ impl IpfsIo {
 
             // `data:` and `blob:` urls (files of an entity registered inline, such as an unpublished
             // item a page supplies) are the page's own: the http client refuses their schemes, the
-            // browser serves them without a request slot
-            #[cfg(target_arch = "wasm32")]
+            // browser serves them without a request slot. The avatar preview only (`avatar-preview`)
+            #[cfg(all(target_arch = "wasm32", feature = "avatar-preview"))]
             if remote.starts_with("data:") || remote.starts_with("blob:") {
                 return match web_cache::fetch_local(&remote).await {
                     Ok(bytes) => {

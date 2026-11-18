@@ -414,6 +414,7 @@ mod io {
     }
 
     /// The bytes of a `data:` or `blob:` url, through the global scope's `fetch` (window or worker).
+    #[cfg(feature = "avatar-preview")]
     pub async fn fetch_local(url: &str) -> Result<Vec<u8>, String> {
         let global = js_sys::global();
         let promise = if let Some(window) = global.dyn_ref::<web_sys::Window>() {

@@ -22,19 +22,22 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["webgpu"]
 webgpu = ["bevy/webgpu"]
-webgl2 = ["bevy/webgl2", "avatar/webgl2", "scene_material/webgl2"]
+webgl2 = ["bevy/webgl2", "avatar/webgl2"]
 
 [dependencies]
 # Explorer crates, by path. They inherit their own dependency pins from the Explorer workspace.
-assets = { path = "../bevy-explorer/source/crates/assets", features = ["preview"] }
+assets = { path = "../bevy-explorer/source/crates/assets" }
 common = { path = "../bevy-explorer/source/crates/common" }
 platform = { path = "../bevy-explorer/source/crates/platform" }
 console = { path = "../bevy-explorer/source/crates/console" }
 ipfs = { path = "../bevy-explorer/source/crates/ipfs" }
 collectibles = { path = "../bevy-explorer/source/crates/collectibles" }
 scene_material = { path = "../bevy-explorer/source/crates/scene_material" }
-# the avatar renderer without the Explorer glue (players, scenes, comms)
-avatar = { path = "../bevy-explorer/source/crates/avatar", default-features = false }
+# the avatar renderer without the Explorer glue (players, scenes, comms); `avatar-preview` turns
+# on what only this build takes from the Explorer crates
+avatar = { path = "../bevy-explorer/source/crates/avatar", default-features = false, features = [
+  "avatar-preview",
+] }
 dcl_component = { path = "../bevy-explorer/source/crates/dcl_component" }
 
 bevy = { version = "0.16.1", default-features = false, features = [
