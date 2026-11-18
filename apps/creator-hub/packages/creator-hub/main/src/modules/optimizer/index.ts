@@ -125,7 +125,7 @@ async function runWorker(projectPath: string, options: OptimizeOptions): Promise
   child.process.stdout?.on('data', (chunk: Buffer) => live.push(chunk));
 
   let stdout: Buffer;
-  let stderr = Buffer.alloc(0);
+  let stderr: Buffer = Buffer.alloc(0);
   let exitError: Error | null = null;
   try {
     stdout = await child.wait();

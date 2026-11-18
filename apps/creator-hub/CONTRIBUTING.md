@@ -180,7 +180,7 @@ Our team will add appropriate labels:
 ### TypeScript/JavaScript
 
 - **Use TypeScript** for all new code
-- **Follow ESLint rules** configured in the project
+- **Follow the oxlint rules** configured in the project
 - **Use strict mode**: Avoid \`any\` types when possible
 - **Prefer functional programming**: Use \`const\`, arrow functions, immutability
 - **Use modern ES6+ features**: async/await, destructuring, spread operators

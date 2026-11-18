@@ -1,14 +1,10 @@
+import Dialog from '@ui/atoms/Dialog';
+import IconButton from '@ui/atoms/IconButton';
+
 import { t } from '/@/modules/store/translation/utils';
 
-import {
-  CloseButton,
-  GlowLayer,
-  StatusDialog,
-  StatusGlow,
-  WelcomePaper,
-  WelcomeRoot,
-} from './EarnModal.styled';
 import { CloseIcon } from './icons';
+import styles from './EarnModal.module.css';
 
 /**
  * The EARN modal shell over the Black 80 overlay; the overlay, Escape and the close button all
@@ -24,28 +20,30 @@ export function EarnDialog({
   children: React.ReactNode;
 }) {
   return (
-    <WelcomeRoot
+    <Dialog
+      bare
       open
-      onClose={onClose}
+      onClose={() => onClose()}
+      aria-labelledby={labelledBy}
+      className={styles.welcomePaper}
+      backdropClassName={styles.welcomeRoot}
     >
-      <WelcomePaper
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={labelledBy}
-      >
-        <StatusDialog>
-          <GlowLayer aria-hidden>
-            <StatusGlow />
-          </GlowLayer>
-          <CloseButton
-            aria-label={t('earn.close')}
-            onClick={onClose}
-          >
-            <CloseIcon />
-          </CloseButton>
-          {children}
-        </StatusDialog>
-      </WelcomePaper>
-    </WelcomeRoot>
+      <div className={styles.statusDialog}>
+        <div
+          className={styles.glowLayer}
+          aria-hidden
+        >
+          <div className={styles.statusGlow} />
+        </div>
+        <IconButton
+          className={styles.closeButton}
+          aria-label={t('earn.close')}
+          onClick={onClose}
+        >
+          <CloseIcon />
+        </IconButton>
+        {children}
+      </div>
+    </Dialog>
   );
 }

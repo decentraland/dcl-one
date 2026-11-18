@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
+import { act, waitFor } from '@testing-library/react'
 import { BridgeChannel } from '@explorer-core/engine/bridgeChannel'
 import type { Envelope, PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
-import { renderSession, enterAsGuest } from '../harness'
+import { VERIFY_TIMED_OUT } from '../../features/session/useEngineSession'
+import { FakeDriver, renderSession, enterAsGuest } from '../harness'
 
 // TRANSPORT: the page↔scene handshake. A BroadcastChannel drops anything posted before the other
 // end subscribes, so the page holds its messages until the scene answers `hello` (issue #1233).
@@ -241,5 +243,64 @@ describe('an unreachable bridge is surfaced, not silent', () => {
     } finally {
       history.replaceState(null, '', '/')
     }
+  })
+})
+
+// SESSION: Verifying's clock waits for the bridge scene, which gives the welcome answer, and still
+// gives up when that scene never answers.
+describe("Verifying's clock follows the bridge", () => {
+  afterEach(() => vi.useRealTimers())
+
+  /** A guest sign-in that sits in Verifying: no welcome answer comes. */
+  async function verifyingWith(bridgeReady: () => boolean) {
+    const driver = new FakeDriver()
+    driver.welcome = null
+    driver.bridgeReady = bridgeReady
+    const h = renderSession({ userId: null }, driver)
+    await waitFor(() => expect(h.session().login.status).toBe('sign-in-or-guest'))
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    act(() => h.session().login.exploreAsGuest())
+    await waitFor(() => expect(h.session().phase).toBe('welcome'))
+    return h
+  }
+
+  const advance = (ms: number) => act(async () => vi.advanceTimersByTime(ms))
+
+  const gaveUp = async (h: Awaited<ReturnType<typeof verifyingWith>>) => {
+    await waitFor(() => expect(h.session().phase).toBe('login'))
+    expect(h.session().login.error).toBe(VERIFY_TIMED_OUT)
+  }
+
+  it('starts when a late bridge answers, not at the sign-in', async () => {
+    const h = await verifyingWith(() => false)
+    await advance(20_000)
+    expect(h.session().phase).toBe('welcome')
+    h.driver.emit({ kind: 'bridgeReady' })
+    await advance(14_000)
+    expect(h.session().phase).toBe('welcome')
+    await advance(1_500)
+    await gaveUp(h)
+  })
+
+  it('starts when the bridge is reported unavailable', async () => {
+    const h = await verifyingWith(() => false)
+    await advance(20_000)
+    h.driver.emit({ kind: 'bridgeUnavailable' })
+    await advance(15_500)
+    await gaveUp(h)
+  })
+
+  it('starts at the sign-in when the bridge answered before the session subscribed', async () => {
+    const h = await verifyingWith(() => true)
+    await advance(15_500)
+    await gaveUp(h)
+  })
+
+  it('still gives up after 45 seconds when the bridge never answers', async () => {
+    const h = await verifyingWith(() => false)
+    await advance(44_000)
+    expect(h.session().phase).toBe('welcome')
+    await advance(1_500)
+    await gaveUp(h)
   })
 })

@@ -13,17 +13,13 @@ pub(super) fn should_validate_face_thumbnail(
     if (adr_timestamps::ADR_290_OPTIONAL..adr_timestamps::ADR_290_REJECTED).contains(&ts) {
         let has_content = !entity.content.is_empty();
         let has_files = files.len() > 1;
+        // Truthy like upstream `a?.avatar?.snapshots`: `snapshots: null` does not opt in.
         let has_snapshots = entity
             .metadata
             .as_ref()
             .and_then(|m| m.get("avatars"))
             .and_then(|a| a.as_array())
-            .map(|avatars| {
-                avatars
-                    .iter()
-                    .any(|a| a.get("avatar").and_then(|av| av.get("snapshots")).is_some())
-            })
-            .unwrap_or(false);
+            .is_some_and(|avatars| avatars.iter().any(avatar_has_snapshots));
         return has_content || has_files || has_snapshots;
     }
     false
@@ -113,6 +109,19 @@ pub(super) fn validate_profile_emote_urns(
     Ok(())
 }
 
+/// Whether `avatar.snapshots` is truthy as the reference reads it
+/// (`if (avatar.avatar?.snapshots)`): absent, `null`, `false`, `0` and `""`
+/// are not snapshots, so a profile that serializes `"snapshots": null` passes.
+pub(super) fn avatar_has_snapshots(avatar: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match avatar.get("avatar").and_then(|a| a.get("snapshots")) {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => false,
+        Some(Value::Number(n)) => n.as_f64().is_some_and(|f| f != 0.0 && !f.is_nan()),
+        Some(Value::String(s)) => !s.is_empty(),
+        Some(_) => true,
+    }
+}
+
 pub(super) fn profile_has_emotes(metadata: &serde_json::Value) -> bool {
     if let Some(avatars) = metadata.get("avatars").and_then(|v| v.as_array()) {
         for avatar in avatars {
@@ -196,7 +205,51 @@ fn has_uri_scheme(path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_relative_thumbnail_path;
+    use std::collections::HashMap;
+
+    use super::{
+        Entity, EntityType, adr_timestamps, avatar_has_snapshots, is_relative_thumbnail_path,
+        should_validate_face_thumbnail,
+    };
+
+    #[test]
+    fn optional_window_face_thumbnail_ignores_null_snapshots() {
+        use serde_json::json;
+        let profile = |snapshots| Entity {
+            id: "bafkreiprofile".into(),
+            entity_type: EntityType::Profile,
+            pointers: vec!["0x0000000000000000000000000000000000000001".into()],
+            timestamp: adr_timestamps::ADR_290_OPTIONAL + 1000,
+            content: vec![],
+            version: "v3".into(),
+            metadata: Some(json!({ "avatars": [{ "avatar": { "snapshots": snapshots } }] })),
+        };
+        let files = HashMap::new();
+        assert!(!should_validate_face_thumbnail(
+            &profile(json!(null)),
+            &files
+        ));
+        assert!(should_validate_face_thumbnail(
+            &profile(json!({ "face256": "Qm1" })),
+            &files
+        ));
+    }
+
+    #[test]
+    fn snapshots_count_only_when_truthy() {
+        use serde_json::json;
+        let with = |v| json!({ "avatar": { "snapshots": v } });
+        assert!(!avatar_has_snapshots(&json!({ "avatar": {} })));
+        assert!(!avatar_has_snapshots(&with(json!(null))));
+        assert!(!avatar_has_snapshots(&with(json!(false))));
+        assert!(!avatar_has_snapshots(&with(json!(0))));
+        assert!(!avatar_has_snapshots(&with(json!(""))));
+        assert!(avatar_has_snapshots(&with(json!({}))));
+        assert!(avatar_has_snapshots(&with(
+            json!({ "face256": "Qm1", "body": "Qm2" })
+        )));
+        assert!(avatar_has_snapshots(&with(json!([]))));
+    }
 
     #[test]
     fn relative_thumbnail_accepts_plain_relative_paths() {

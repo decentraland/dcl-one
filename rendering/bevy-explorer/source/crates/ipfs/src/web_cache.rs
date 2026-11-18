@@ -1,10 +1,9 @@
-//! The service worker's asset cache (deploy/web/service_worker.js), as the engine reaches it.
-//! The cache name and the keys here MUST match the worker's.
+//! The web asset cache is managed by the engine and trimmed by deploy/web/service_worker.js.
+//! The cache name here MUST match the worker's.
 //!
-//! The worker only answers from the cache; the engine fills it from what it downloads. An entry
-//! under the shared key answers for every content server, so it is only written once the bytes
-//! are checked against the hash (`content_hash`), and under that hash; a url's response goes
-//! under the url.
+//! The engine reads the cache and fills it from what it downloads. An entry under the shared key
+//! answers for every content server, so it is only written once the bytes are checked against
+//! the hash (`content_hash`), and under that hash; a url's response goes under the url.
 //!
 //! The cache is capped (`effective_cap`). The service worker trims it, least recently used
 //! entries first (oldest written when it has no record of use), when the engine asks through
@@ -18,8 +17,7 @@ use serde::Deserialize;
 // stand-in origin for shared entries: `.invalid` is reserved, so no server's own entries land here
 const SHARED_ORIGIN: &str = "https://shared.invalid";
 
-// The shared key, then the url's own. The shared key is the last path segment alone: the worker
-// looks a request up by it, whatever the rest of the url says.
+// The engine looks up the last path segment as the shared key, then the url's own key.
 fn keys(url: &str) -> Option<[String; 2]> {
     let url = url::Url::parse(url).ok()?;
     let name = url.path().rsplit('/').next().unwrap_or_default();
@@ -38,7 +36,7 @@ fn keys(url: &str) -> Option<[String; 2]> {
     ])
 }
 
-// Whether a request for `url` is one the worker would answer from the shared entry for `hash`.
+// Whether the engine would look up `url` under the shared key for `hash`.
 // A url is the server's to choose (its base url, then the hash), and the path of
 // `…/contents/<other hash>#/contents/<hash>` ends at the other hash: sharing that response would
 // file it under a hash nobody checked it against.
@@ -302,7 +300,7 @@ pub fn diagnostics(state: &WebCacheState) -> [(DiagnosticPath, Option<f64>); 12]
 }
 
 #[cfg(target_arch = "wasm32")]
-#[bevy::web_worker::page_functions]
+#[cfg_attr(feature = "web-worker", bevy::web_worker::page_functions)]
 #[wasm_bindgen::prelude::wasm_bindgen(js_namespace = self)]
 extern "C" {
     /// deploy/web/engine/content_cache.js: asks the service worker to trim the cache to
@@ -411,6 +409,30 @@ mod io {
             }
         }
         Err("no previous cache item".into())
+    }
+
+    /// The bytes of a `data:` or `blob:` url, through the global scope's `fetch` (window or worker).
+    pub async fn fetch_local(url: &str) -> Result<Vec<u8>, String> {
+        let global = js_sys::global();
+        let promise = if let Some(window) = global.dyn_ref::<web_sys::Window>() {
+            window.fetch_with_str(url)
+        } else if let Some(worker) = global.dyn_ref::<web_sys::WorkerGlobalScope>() {
+            worker.fetch_with_str(url)
+        } else {
+            return Err("no fetch in this scope".to_owned());
+        };
+        let response: web_sys::Response = JsFuture::from(promise)
+            .await
+            .map_err(|e| format!("{e:?}"))?
+            .dyn_into()
+            .map_err(|_| "fetch returned no response".to_owned())?;
+        if !response.ok() {
+            return Err(format!("status {}", response.status()));
+        }
+        let buffer = JsFuture::from(response.array_buffer().map_err(|e| format!("{e:?}"))?)
+            .await
+            .map_err(|e| format!("{e:?}"))?;
+        Ok(js_sys::Uint8Array::new(&buffer).to_vec())
     }
 
     /// The cached bytes for `url`, under either key; `None` when there are none (or no cache).
@@ -728,7 +750,7 @@ mod tests {
             "https://peer.example/contents/bafkreihash",
             "bafkreihash"
         ));
-        // the worker keys this request by `bafkreitarget`
+        // the engine keys this request by `bafkreitarget`
         let url = "https://evil.example/contents/bafkreitarget#/contents/bafkreihash";
         assert!(!names(url, "bafkreihash"));
         assert_eq!(

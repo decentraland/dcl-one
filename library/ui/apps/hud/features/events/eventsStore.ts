@@ -1,11 +1,11 @@
-// The events the Events page holds, by id, and which of them each of its lists shows. One copy of
-// an event serves the calendar, the day view, the banner and the detail, so a reminder set in one
-// shows in all.
+// The events the Events page and the lobby hold, by id, and which of them each of their lists
+// shows. One copy of an event serves the calendar, the day view, the banner, the lobby's cards and
+// the detail, so a reminder set in one shows in all.
 
 import type { EventData, EventPlace } from '@explorer-core/engine/protocol'
 import { addDays, eventStart, sameDay, startOfDay } from './eventFormat'
 
-export type EventsQuery = 'range' | 'live' | 'highlighted' | 'day'
+export type EventsQuery = 'range' | 'live' | 'highlighted' | 'day' | 'lobby'
 export type QueryStatus = 'idle' | 'loading' | 'loaded' | 'failed'
 
 export interface EventsQueryState {
@@ -27,7 +27,7 @@ const idle = (): EventsQueryState => ({ status: 'idle', ids: [] })
 
 export const emptyEventsStore = (): EventsStore => ({
   byId: {},
-  queries: { range: idle(), live: idle(), highlighted: idle(), day: idle() },
+  queries: { range: idle(), live: idle(), highlighted: idle(), day: idle(), lobby: idle() },
   places: {},
   remindedWhenRead: [],
   pending: []
@@ -42,11 +42,13 @@ export type EventsAction =
   | { type: 'attendingDone'; eventId: string; attending: boolean; failed: boolean }
   | { type: 'places'; places: EventPlace[] }
   | { type: 'reset' }
+  | { type: 'resetAll' }
 
 export function eventsReducer(store: EventsStore, action: EventsAction): EventsStore {
   switch (action.type) {
+    // the lobby keeps showing its last list while it reads again, and after a failed read
     case 'loading':
-      return { ...store, queries: { ...store.queries, [action.query]: { status: 'loading', ids: [] } } }
+      return { ...store, queries: { ...store.queries, [action.query]: { status: 'loading', ids: action.query === 'lobby' ? store.queries.lobby.ids : [] } } }
     case 'loaded': {
       const byId = { ...store.byId }
       for (const event of action.events) byId[event.id] = event
@@ -55,7 +57,7 @@ export function eventsReducer(store: EventsStore, action: EventsAction): EventsS
       return { ...store, byId, remindedWhenRead, queries: { ...store.queries, [action.query]: { status: 'loaded', ids: action.events.map((e) => e.id) } } }
     }
     case 'failed':
-      return { ...store, queries: { ...store.queries, [action.query]: { status: 'failed', ids: [] } } }
+      return { ...store, queries: { ...store.queries, [action.query]: { status: 'failed', ids: action.query === 'lobby' ? store.queries.lobby.ids : [] } } }
     case 'idle':
       return { ...store, queries: { ...store.queries, [action.query]: idle() } }
     case 'attendingSent':
@@ -73,7 +75,29 @@ export function eventsReducer(store: EventsStore, action: EventsAction): EventsS
       return { ...store, places }
     }
     case 'reset':
+      return keepLobby(store)
+    case 'resetAll':
       return emptyEventsStore()
+  }
+}
+
+/** What the Events page closing leaves: the lobby's list, its events and their places. */
+function keepLobby(store: EventsStore): EventsStore {
+  const lobby = store.queries.lobby
+  const empty = emptyEventsStore()
+  if (lobby.status === 'idle') return { ...empty, pending: store.pending }
+  const kept = new Set(lobby.ids)
+  const byId: Record<string, EventData> = {}
+  for (const id of lobby.ids) if (store.byId[id] != null) byId[id] = store.byId[id]
+  const places: Record<string, EventPlace> = {}
+  for (const id of placeIds(Object.values(byId))) if (store.places[id] != null) places[id] = store.places[id]
+  return {
+    byId,
+    queries: { ...empty.queries, lobby },
+    places,
+    remindedWhenRead: store.remindedWhenRead.filter((id) => kept.has(id)),
+    // a reminder in flight settles after the page closes
+    pending: store.pending
   }
 }
 
@@ -81,6 +105,7 @@ const events = (store: EventsStore, query: EventsQuery): EventData[] => store.qu
 
 export const highlightedEvents = (store: EventsStore): EventData[] => events(store, 'highlighted')
 export const dayEvents = (store: EventsStore): EventData[] => events(store, 'day')
+export const lobbyEvents = (store: EventsStore): EventData[] => events(store, 'lobby')
 
 /** The calendar's columns: the range's events under the local day each next starts on, from
  *  `startDay` for `days` days. When the calendar starts today, events live since an earlier day

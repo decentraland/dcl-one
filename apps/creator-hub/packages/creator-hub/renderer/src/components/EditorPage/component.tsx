@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import ArrowBackIosIcon from '@mui/icons-material/ArrowBackIos';
-import PlayCircleIcon from '@mui/icons-material/PlayCircle';
-import CodeIcon from '@mui/icons-material/Code';
-import SpeedOutlinedIcon from '@mui/icons-material/SpeedOutlined';
-import PublicIcon from '@mui/icons-material/Public';
-import RefreshIcon from '@mui/icons-material/Refresh';
-import { CircularProgress as Loader, Tooltip } from 'decentraland-ui2';
-import { IconButton } from '@mui/material';
+import {
+  ArrowBackIosIcon,
+  PlayCircleIcon,
+  CodeIcon,
+  SpeedOutlinedIcon,
+  PublicIcon,
+  RefreshIcon,
+} from '@ui/atoms/icons-material';
+import IconButton from '@ui/atoms/IconButton';
+import Spinner from '@ui/atoms/Spinner';
+import Tooltip from '@ui/atoms/Tooltip';
 
 import { isClientNotInstalledError } from '/shared/types/client';
 import { isProjectError } from '/shared/types/projects';
@@ -47,10 +50,10 @@ import { useSessionRecorder } from '/@/hooks/useSessionRecorder';
 import { actions as snackbarActions } from '/@/modules/store/snackbar';
 import { actions as optimizerActions } from '/@/modules/store/optimizer';
 import { createGenericNotification } from '/@/modules/store/snackbar/utils';
-import { Button } from '../Button';
+import Button from '@ui/atoms/Button';
 import { Header } from '../Header';
 import { Row } from '../Row';
-import { ButtonGroup } from '../Button';
+import { SplitButton } from '../SplitButton';
 import { ConnectionStatusIndicator } from '../ConnectionStatusIndicator';
 import { MobileQRCode } from '../Modals/MobileQRCode';
 import { AssistantIcon } from '../Icons';
@@ -58,7 +61,7 @@ import { AiChatPanel } from '../AiChatPanel';
 import { RecordButton, RecordingConsentModal } from '../SessionRecorder';
 import { DetachedPlaceholder } from '../AiChatPanel/DetachedPlaceholder';
 import { OptimizeModal } from '../OptimizeModal';
-import type { ButtonGroupHandle } from '../Button';
+import type { SplitButtonHandle } from '../SplitButton';
 import { DeployModal } from './DeployModal';
 import { PreviewOptions, PublishOptions } from './MenuOptions';
 import { getPublishButtonText, getPublishOptions } from './utils';
@@ -68,6 +71,17 @@ import type { ModalType, ModalState } from './DeployModal';
 import type { PreviewOptionsProps } from './MenuOptions';
 
 import './styles.css';
+
+function Loader({ size = 40, color = 'primary' }: { size?: number; color?: string }) {
+  return (
+    <Spinner
+      ring="wide"
+      role="progressbar"
+      size={size}
+      color={color}
+    />
+  );
+}
 
 // The AI panel is drag-resizable like the inspector's own panels; its width persists
 // across sessions (global, not per-scene). Bounds keep both the panel and the iframe usable.
@@ -127,7 +141,6 @@ export function EditorPage() {
     supportsMultiInstance,
     supportsMcp,
     supportsUiDesigner,
-    supportsAuthServer,
     isPreviewRunning,
     startBevyRealm,
     killBevyRealm,
@@ -186,10 +199,10 @@ export function EditorPage() {
   const [aiPanelWidth, setAiPanelWidth] = useState(readAiPanelWidth);
   const [aiResizing, setAiResizing] = useState(false);
   const [mobileQRData, setMobileQRData] = useState<{ url: string; qr: string } | null>(null);
-  // Lets handleShowMobileQR dismiss the Preview options menu itself — a Popper click stays
-  // "inside" as far as its own click-away close goes, so without this it stays open behind
-  // the QR modal and reappears once the modal closes.
-  const previewButtonGroupRef = useRef<ButtonGroupHandle>(null);
+  // Lets handleShowMobileQR dismiss the Preview options menu itself: a click in the popover is
+  // inside it, so without this it stays open behind the QR modal and reappears once the modal
+  // closes.
+  const previewSplitButtonRef = useRef<SplitButtonHandle>(null);
   // When the Bevy renderer is selected the engine loads from a headless
   // sdk-commands realm, and the inspector shares its data-layer WS. We start it
   // for the project and hold the URLs to thread into the iframe config below.
@@ -619,7 +632,7 @@ export function EditorPage() {
   const handleShowMobileQR = useCallback(async () => {
     if (!project) return;
 
-    previewButtonGroupRef.current?.close();
+    previewSplitButtonRef.current?.close();
 
     try {
       const data = await getMobileQR(settings.previewOptions);
@@ -696,7 +709,6 @@ export function EditorPage() {
     inspectorPort,
     useBevy,
     supportsUiDesigner,
-    supportsAuthServer,
     bevyRealm,
     project,
     userId,
@@ -748,7 +760,8 @@ export function EditorPage() {
           </div>
           <Row>
             <Button
-              color="secondary"
+              variant="text"
+              className="hub-button hub-button--secondary"
               startIcon={<ArrowBackIosIcon />}
               onClick={handleBack}
             >
@@ -756,7 +769,8 @@ export function EditorPage() {
             </Button>
             {outdatedDeps ? (
               <Button
-                color="primary"
+                variant="text"
+                className="hub-button hub-button--primary"
                 startIcon={<RefreshIcon />}
                 onClick={handleUpdateDependencies}
               >
@@ -764,7 +778,8 @@ export function EditorPage() {
               </Button>
             ) : (
               <Button
-                color="secondary"
+                variant="text"
+                className="hub-button hub-button--secondary"
                 startIcon={<CodeIcon />}
                 onClick={openCode}
               >
@@ -789,7 +804,14 @@ export function EditorPage() {
     );
   };
 
-  const previewIcon = loadingPreview ? <Loader size={20} /> : <PlayCircleIcon />;
+  const previewIcon = loadingPreview ? (
+    <Loader
+      size={20}
+      color="inherit"
+    />
+  ) : (
+    <PlayCircleIcon />
+  );
 
   return (
     <main
@@ -810,7 +832,12 @@ export function EditorPage() {
                 <ArrowBackIosIcon />
               </div>
               <div className="title">{project.title}</div>
-              <Tooltip title={t('editor.header.actions.refresh')}>
+              <Tooltip
+                label={t('editor.header.actions.refresh')}
+                side="bottom"
+                portal
+                className="refresh-tip"
+              >
                 <div
                   className="refresh"
                   onClick={handleRefresh}
@@ -833,7 +860,11 @@ export function EditorPage() {
                 />
               )}
               {aiChatEnabled && (
-                <Tooltip title={aiOpen ? t('editor.ai.close') : t('editor.ai.open')}>
+                <Tooltip
+                  label={aiOpen ? t('editor.ai.close') : t('editor.ai.open')}
+                  side="bottom"
+                  portal
+                >
                   <IconButton
                     className={`ai-toggle${aiOpen ? ' active' : ''}`}
                     aria-label={aiOpen ? t('editor.ai.close') : t('editor.ai.open')}
@@ -843,20 +874,28 @@ export function EditorPage() {
                   </IconButton>
                 </Tooltip>
               )}
-              <Tooltip title={t('editor.header.actions.optimize')}>
+              <Tooltip
+                label={t('editor.header.actions.optimize')}
+                side="bottom"
+                portal
+              >
                 <Button
-                  className="icon-only"
-                  color="secondary"
+                  variant="text"
+                  className="hub-button hub-button--secondary icon-only"
                   aria-label={t('editor.header.actions.optimize')}
                   onClick={() => dispatch(optimizerActions.open())}
                 >
                   <SpeedOutlinedIcon />
                 </Button>
               </Tooltip>
-              <Tooltip title={t('editor.header.actions.code')}>
+              <Tooltip
+                label={t('editor.header.actions.code')}
+                side="bottom"
+                portal
+              >
                 <Button
-                  className="icon-only"
-                  color="secondary"
+                  variant="text"
+                  className="hub-button hub-button--secondary icon-only"
                   aria-label={t('editor.header.actions.code')}
                   onClick={openCode}
                 >
@@ -864,11 +903,11 @@ export function EditorPage() {
                 </Button>
               </Tooltip>
               <div className="preview-control">
-                <ButtonGroup
-                  ref={previewButtonGroupRef}
-                  color="secondary"
+                <SplitButton
+                  ref={previewSplitButtonRef}
+                  look="secondary"
                   extraTooltip={t('editor.header.actions.preview_options.title')}
-                  popperOffset={10}
+                  popoverOffset={10}
                   disabled={
                     loadingPreview || isInstallingProject || isDetectingCustomCode || isOffline
                   }
@@ -886,11 +925,10 @@ export function EditorPage() {
                   }
                 >
                   {t('editor.header.actions.play')}
-                </ButtonGroup>
+                </SplitButton>
               </div>
               {publishOptions.length > 0 ? (
-                <ButtonGroup
-                  color="primary"
+                <SplitButton
                   extraTooltip={t('editor.header.actions.publish_options.title')}
                   disabled={
                     loadingPublish || isInstallingProject || isDetectingCustomCode || isOffline
@@ -903,20 +941,39 @@ export function EditorPage() {
                       handlePublishScene();
                     }
                   }}
-                  startIcon={isDeploying ? <Loader size={20} /> : <PublicIcon />}
+                  startIcon={
+                    isDeploying ? (
+                      <Loader
+                        size={20}
+                        color="inherit"
+                      />
+                    ) : (
+                      <PublicIcon />
+                    )
+                  }
                   extra={<PublishOptions options={publishOptions} />}
                 >
                   {publishButtonText}
-                </ButtonGroup>
+                </SplitButton>
               ) : (
                 <Button
-                  color="primary"
+                  variant="text"
+                  className="hub-button hub-button--primary"
                   disabled={
                     loadingPublish || isInstallingProject || isDetectingCustomCode || isOffline
                   }
                   data-testid="editor-page-publish-button"
                   onClick={handlePublishScene}
-                  startIcon={isDeploying ? <Loader size={20} /> : <PublicIcon />}
+                  startIcon={
+                    isDeploying ? (
+                      <Loader
+                        size={20}
+                        color="inherit"
+                      />
+                    ) : (
+                      <PublicIcon />
+                    )
+                  }
                 >
                   {publishButtonText}
                 </Button>
@@ -949,14 +1006,16 @@ export function EditorPage() {
                     </div>
                     <Row>
                       <Button
-                        color="secondary"
+                        variant="text"
+                        className="hub-button hub-button--secondary"
                         startIcon={<ArrowBackIosIcon />}
                         onClick={handleBack}
                       >
                         {t('editor.loading.failed.back')}
                       </Button>
                       <Button
-                        color="primary"
+                        variant="text"
+                        className="hub-button hub-button--primary"
                         startIcon={<RefreshIcon />}
                         onClick={handleRetryReload}
                       >

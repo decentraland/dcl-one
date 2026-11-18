@@ -41,7 +41,7 @@ export const toMeshRenderer = (value: MeshRendererInput): PBMeshRenderer => {
       return {
         mesh: {
           $case: MeshType.MT_PLANE,
-          plane: { uvs: [] || (value.uvs ?? '').split(',').map(Number) },
+          plane: { uvs: [] },
         },
       };
     case MeshType.MT_BOX:
@@ -49,7 +49,7 @@ export const toMeshRenderer = (value: MeshRendererInput): PBMeshRenderer => {
       return {
         mesh: {
           $case: MeshType.MT_BOX,
-          box: { uvs: [] || (value.uvs ?? '').split(',').map(Number) },
+          box: { uvs: [] },
         },
       };
   }

@@ -106,14 +106,19 @@ across workers:
 - `MAX_MORPH_WEIGHTS` raised from 64 to 256.
 - `specular_multiscatter` matches the Filament reference (upstream #23514); inverse tonemapping
   fix.
+- `sectional_color_grading` fades the shadows section into the midtones over the level margin.
+  Stock bevy gives that fade to the highlights, so the shadows section ends at a hard step, and a
+  shadows gain darkens the pixels just above it: a dark rim along every shadow edge.
 
 ## glTF and images
 
 - `GltfLoader::uri_resolver` (`GltfPlugin::with_uri_resolver`): the host resolves every URI a
   glTF references. This is how content paths are contained; see the security page.
 - `KHR_texture_basisu`, `EXT_texture_webp` and `MSFT_texture_dds` are supported: `gltf`'s
-  `allow_empty_texture` feature lets a file that requires them (and textures with no `source`)
-  through. A texture with no `source` samples its extension image, KTX2 first when it has
+  `allow_empty_texture` feature lets a file that requires basisu or dds (and textures with no
+  `source`) through, and the loader tolerates a required webp, the one validation error `gltf`
+  reports for it without its `EXT_texture_webp` feature (which would override the source order
+  below). A texture with no `source` samples its extension image, KTX2 first when it has
   several; one with a PNG/JPEG fallback keeps the fallback. A KTX2, by path or embedded,
   decodes through `bevy_image`'s KTX2 route below; WebP and DDS through bevy's own decoders.
 - KTX2 transcoder hook (`bevy_image::set_ktx2_transcoder`, `Ktx2Transcoder`): one process-wide
@@ -137,8 +142,14 @@ across workers:
   the tree with `python3 tooling/patched-sources.py materialise bevy`. Then, from `source`, seed
   its workspace with this lock file and run them there: `cp Cargo.lock ../bevy/Cargo.lock`, then
   `cargo test --manifest-path ../bevy/Cargo.toml -p
-  bevy_image -p bevy_gltf --lib --features bevy_gltf/dds,bevy_image/ktx2,bevy_image/zstd`.
+  bevy_image -p bevy_gltf --lib --features
+  bevy_gltf/dds,bevy_gltf/bevy_animation,bevy_image/ktx2,bevy_image/zstd`.
 - Accessors with no `bufferView` are accepted (zero-filled per spec; Blender morph targets).
+- `KHR_animation_pointer` channels (and any channel with no target node or an unknown target
+  path, which `gltf` never validates) are skipped with a warning naming the file, the animation
+  and the first pointer; the rest of the clip plays.
+  Upstream bevy panics on them. Animating the pointed-to property (a material's emissive, say)
+  is not supported.
 - Texture decode is skipped when `load_materials` is empty, with a 1x1 placeholder under the
   normal label: headless servers keep geometry without pixels.
 - `Rgba16Unorm` textures are converted to 8-bit, preserving sampler and sRGB (the web can't

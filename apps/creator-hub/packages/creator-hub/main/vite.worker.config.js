@@ -1,7 +1,7 @@
 import { join } from 'node:path';
-import { node } from '../.electron-vendors.cache.json';
+import vendors from '../.electron-vendors.cache.json' with { type: 'json' };
 
-const PACKAGE_ROOT = __dirname;
+const PACKAGE_ROOT = import.meta.dirname;
 const PACKAGE_DIR = join(PACKAGE_ROOT, '..');
 
 // Second main-process bundle: the workers that run on the bundled real Node, not in Electron —
@@ -27,7 +27,7 @@ const config = {
   build: {
     ssr: true,
     sourcemap: 'inline',
-    target: `node${node}`,
+    target: `node${vendors.node}`,
     outDir: 'dist',
     assetsDir: '.',
     minify: process.env.MODE !== 'development',
@@ -38,10 +38,12 @@ const config = {
       },
       formats: ['es'],
     },
-    rollupOptions: {
+    rolldownOptions: {
       external: ['sharp', 'meshoptimizer', /^@gltf-transform\//, '@fugood/whisper.node'],
       output: {
         entryFileNames: '[name].js',
+        // Keep one output file. The app copies this bundle alone into the tools folder.
+        codeSplitting: false,
       },
     },
     emptyOutDir: false,

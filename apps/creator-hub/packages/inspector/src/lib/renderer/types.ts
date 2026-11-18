@@ -47,7 +47,7 @@ export type Unsubscribe = () => void;
  * exclusivity is the integrity guarantee of the reverse channel.
  *
  * Unlike the other subscription APIs here (`onFrame`/`onChange`/…), `on` returns
- * `void` rather than an `Unsubscribe` — this mirrors the `mitt` `Emitter` it
+ * `void` rather than an `Unsubscribe` — this mirrors the `Emitter` it
  * directly proxies, so a renderer can expose its raw emitter as `events` with no
  * wrapper. Unsubscribe via `off` with the same handler reference.
  */

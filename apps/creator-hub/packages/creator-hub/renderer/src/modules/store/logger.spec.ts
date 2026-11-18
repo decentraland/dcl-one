@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { redactSecret } from './logger';
+import { logger, redactSecret } from './logger';
 import { store } from '.';
 
 describe('redactSecret', () => {
@@ -46,6 +46,56 @@ describe('the app store', () => {
       const logged = JSON.stringify(spies.flatMap(spy => spy.mock.calls));
       expect(logged).toContain('<redacted>');
       expect(logged).not.toContain('abcdefg12');
+    });
+  });
+});
+
+describe('logger', () => {
+  const api = (states: unknown[]) => ({ dispatch: vi.fn(), getState: () => states.shift() });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  describe('when an action goes through', () => {
+    it('should print the state before it, the action and the state after it in one group', () => {
+      const group = vi.spyOn(console, 'group').mockImplementation(() => {});
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const groupEnd = vi.spyOn(console, 'groupEnd').mockImplementation(() => {});
+      const action = { type: 'test/action' };
+      const next = vi.fn(() => 'result');
+
+      const result = logger(api([{ count: 1 }, { count: 2 }]))(next)(action);
+
+      expect(result).toBe('result');
+      expect(next).toHaveBeenCalledWith(action);
+      expect(group.mock.calls[0][0]).toMatch(
+        /^%c action %ctest\/action %c@ \d{2}:\d{2}:\d{2}\.\d{3}$/,
+      );
+      expect(log.mock.calls.map(call => [call[0], call[2]])).toEqual([
+        ['%c prev state', { count: 1 }],
+        ['%c action    ', action],
+        ['%c next state', { count: 2 }],
+      ]);
+      expect(groupEnd).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('when a reducer throws', () => {
+    it('should print the error and throw it again', () => {
+      vi.spyOn(console, 'group').mockImplementation(() => {});
+      vi.spyOn(console, 'groupEnd').mockImplementation(() => {});
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const error = new Error('reducer failed');
+      const next = vi.fn(() => {
+        throw error;
+      });
+
+      expect(() => logger(api([{}, {}]))(next)({ type: 'test/action' })).toThrow(error);
+      expect(log.mock.calls.map(call => [call[0], call[2]])).toContainEqual([
+        '%c error     ',
+        error,
+      ]);
     });
   });
 });

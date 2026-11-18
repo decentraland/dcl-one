@@ -1,5 +1,5 @@
-import mitt from 'mitt';
-import type { Emitter } from 'mitt';
+import { createEmitter } from '../../utils/emitter';
+import type { Emitter } from '../../utils/emitter';
 import type { DeepReadonlyObject, Entity } from '@dcl/ecs';
 import { Vector3 as DclVector3 } from '@dcl/ecs-math';
 import type { Vector3 } from '@dcl/ecs-math';
@@ -67,7 +67,7 @@ function spawnCoordValue(coord: DeepReadonlyObject<SceneSpawnPointCoord>): numbe
  * scene-side implementation (see the gizmo mapping in the feasibility study).
  */
 export class BevyRenderer implements IRenderer {
-  readonly events: Emitter<RendererEvents> = mitt<RendererEvents>();
+  readonly events: Emitter<RendererEvents> = createEmitter<RendererEvents>();
 
   readonly context: BevySceneContext;
   readonly camera: RendererCamera;

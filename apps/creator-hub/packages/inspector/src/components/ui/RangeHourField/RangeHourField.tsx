@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 import { MIDNIGHT_SECONDS } from '../../../components/EntityInspector/SceneInspector/utils';
 import type { Props } from './types';
 

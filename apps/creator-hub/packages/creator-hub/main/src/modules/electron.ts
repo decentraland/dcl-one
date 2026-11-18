@@ -73,7 +73,7 @@ export async function getAppVersion() {
 }
 
 export async function copyToClipboard(text: string) {
-  clipboard.writeText(text);
+  await clipboard.writeText(text);
 }
 
 // A dialog opened in one window by a press in another (the detached chat's Record button) is

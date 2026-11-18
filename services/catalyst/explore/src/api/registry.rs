@@ -36,10 +36,10 @@
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
+use crate::shared::routing::{erase, get, post};
 use axum::extract::{DefaultBodyLimit, OriginalUri, State};
 use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
 use axum::{Json, Router};
 use bytes::Bytes;
 use serde::de::{DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
@@ -91,7 +91,7 @@ pub fn routes(state: Shared) -> Router {
         .merge(crate::shared::health::status_checks_router_with(
             crate::shared::health::SERVER_PASS,
         ))
-        .fallback(not_found)
+        .fallback(erase(not_found))
         .layer(axum::middleware::from_fn(cors))
 }
 

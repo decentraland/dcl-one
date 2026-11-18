@@ -14,7 +14,7 @@ const RESERVED_WINDOWS_NAMES = /^(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(\..*)?$/i;
 
 // Characters that are illegal in file/folder names on at least one of the major OSes
 // (Windows: < > : " / \ | ? * and control chars; POSIX: / and the null byte).
-// eslint-disable-next-line no-control-regex
+// oxlint-disable-next-line no-control-regex
 const ILLEGAL_FILENAME_CHARS = /[<>:"/\\|?*\x00-\x1F]/;
 
 const MAX_FOLDER_NAME_LENGTH = 255;

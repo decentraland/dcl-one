@@ -1,8 +1,8 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 import { ai } from '#preload';
 
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { ChatView, type ChatViewProps } from './ChatView';
 
 vi.mock('/@/modules/store/translation/utils', async importOriginal => ({
@@ -43,9 +43,9 @@ function renderWith(provider: Partial<ChatViewProps['providers'][number]>) {
     onClose: vi.fn(),
   };
   render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <ChatView {...props} />
-    </ThemeProvider>,
+    </TestProviders>,
   );
 }
 

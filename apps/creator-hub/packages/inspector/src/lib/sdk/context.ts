@@ -1,4 +1,4 @@
-import type { Emitter } from 'mitt';
+import type { Emitter } from '../utils/emitter';
 import { MessageTransport } from '@dcl/mini-rpc';
 import type { ComponentDefinition, CrdtMessageType, Entity, IEngine } from '@dcl/ecs';
 
@@ -167,7 +167,6 @@ export async function createSdkContext(
     if (babylonInternals) {
       new SceneMetricsServer(transport, store);
     } else {
-      // eslint-disable-next-line no-console
       console.warn(
         '[renderer] Scene RPC camera control + metrics are only available with the Babylon ' +
           `renderer; skipped for "${built.id}". Screenshots (if the renderer provides one), ` +

@@ -1,12 +1,12 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 import type { AiMessage } from '/@/modules/store/ai/types';
 
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { ChatView, type ChatViewProps } from './ChatView';
 
 vi.mock('#preload', () => ({
@@ -26,7 +26,7 @@ const userMessage: AiMessage = {
 function renderChat(props: Partial<ChatViewProps>) {
   const noop = () => {};
   return render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <ChatView
         providers={[{ id: 'claude', label: 'Claude', available: true, managedSignIn: true }]}
         provider="claude"
@@ -35,7 +35,6 @@ function renderChat(props: Partial<ChatViewProps>) {
         detecting={false}
         selection={[]}
         assetMentions={[]}
-        recording={null}
         billingDismissed
         sessions={[]}
         currentSessionId="s1"
@@ -51,11 +50,10 @@ function renderChat(props: Partial<ChatViewProps>) {
         onDeleteSession={noop}
         onClearSelection={noop}
         onRemoveAssetMention={noop}
-        onRemoveRecording={noop}
         onClose={noop}
         {...props}
       />
-    </ThemeProvider>,
+    </TestProviders>,
   );
 }
 
@@ -178,125 +176,38 @@ describe('ChatView asset mentions', () => {
       expect(screen.getByText('Built-in animation: wave')).toBeTruthy();
     });
   });
-  describe('when a session recording is pending', () => {
-    const recording = {
-      durationMs: 42_000,
-      actionCount: 18,
-      dir: '/tmp/recordings/s1',
-      context: '[Session recording] …',
-    };
+});
 
-    it('should show it with its duration and action count', () => {
-      renderChat({ recording });
-      expect(screen.getByText('Session recording · 0:42 · 18 actions')).toBeTruthy();
-    });
-
-    it('should discard it from the remove button', () => {
-      const onRemoveRecording = vi.fn();
-      renderChat({ recording, onRemoveRecording });
-      fireEvent.click(screen.getByRole('button', { name: 'Discard recording' }));
-      expect(onRemoveRecording).toHaveBeenCalled();
-    });
-
-    it('should let the user send it without typing anything', () => {
-      const onSend = vi.fn();
-      renderChat({ recording, onSend });
-      fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-      expect(onSend).toHaveBeenCalledWith('', undefined);
-    });
+describe('ChatView chat history menu', () => {
+  beforeAll(() => {
+    setCurrentLocale('en', flatten(en));
   });
 
-  describe('when the panel offers the Record button', () => {
-    const idle = {
-      status: 'idle' as const,
-      startedAt: null,
-      micLabel: '',
-      tools: null,
-      actionCount: 0,
-    };
+  afterEach(() => {
+    cleanup();
+  });
 
-    it('should show it in the composer toolbar and pass presses on', () => {
-      const onToggleRecording = vi.fn();
-      renderChat({ recorder: idle, onToggleRecording });
-      fireEvent.click(screen.getByRole('button', { name: 'Record' }));
-      expect(onToggleRecording).toHaveBeenCalled();
-      expect(screen.queryByTestId('recording-card')).toBeNull();
-    });
-
-    it('should not start a recording while no assistant is available', () => {
+  describe('when a saved chat is deleted with the keyboard', () => {
+    it('should delete that chat from its menu item and keep the focus in the menu', () => {
+      const onDeleteSession = vi.fn();
+      const now = Date.now();
       renderChat({
-        providers: [{ id: 'claude', label: 'Claude', available: false, managedSignIn: true }],
-        recorder: idle,
-        onToggleRecording: vi.fn(),
+        sessions: [
+          { id: 's1', title: 'Door', updatedAt: now },
+          { id: 's2', title: 'Window', updatedAt: now },
+        ],
+        onDeleteSession,
       });
-      expect((screen.getByRole('button', { name: 'Record' }) as HTMLButtonElement).disabled).toBe(
-        true,
-      );
-    });
+      fireEvent.click(screen.getByRole('button', { name: 'New chat' }));
+      const door = screen.getByRole('menuitem', { name: /Door/ });
+      const window = screen.getByRole('menuitem', { name: /Window/ });
 
-    describe('and a recording is running', () => {
-      // Built at render time: the card's timer counts from now.
-      const recording = () => ({
-        ...idle,
-        status: 'recording' as const,
-        startedAt: Date.now() - 42_000,
-        actionCount: 7,
-      });
+      expect(door.getAttribute('aria-keyshortcuts')).toBe('Delete');
+      door.focus();
+      fireEvent.keyDown(door, { key: 'Delete' });
 
-      it('should show a card with the time, the limit and the actions captured', () => {
-        renderChat({ recorder: recording(), onToggleRecording: vi.fn() });
-        const card = screen.getByRole('group', { name: 'Recording' });
-        expect(within(card).getByRole('timer').textContent).toBe('0:42');
-        expect(within(card).getByText('/ 10:00')).toBeTruthy();
-        expect(within(card).getByText('7 actions captured')).toBeTruthy();
-        expect(screen.queryByRole('button', { name: 'Record' })).toBeNull();
-      });
-
-      it('should stop from the card', () => {
-        const onToggleRecording = vi.fn();
-        renderChat({ recorder: recording(), onToggleRecording });
-        fireEvent.click(screen.getByRole('button', { name: 'Stop recording' }));
-        expect(onToggleRecording).toHaveBeenCalled();
-      });
-
-      it('should discard only after the user confirms', () => {
-        const onCancelRecording = vi.fn();
-        renderChat({ recorder: recording(), onToggleRecording: vi.fn(), onCancelRecording });
-        fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
-        const dialog = screen.getByRole('dialog', { name: 'Discard this recording?' });
-        expect(onCancelRecording).not.toHaveBeenCalled();
-        fireEvent.click(within(dialog).getByRole('button', { name: 'Discard' }));
-        expect(onCancelRecording).toHaveBeenCalledTimes(1);
-      });
-
-      it('should keep recording when the user backs out of the confirmation', () => {
-        const onCancelRecording = vi.fn();
-        renderChat({ recorder: recording(), onToggleRecording: vi.fn(), onCancelRecording });
-        fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
-        fireEvent.click(screen.getByRole('button', { name: 'Keep recording' }));
-        expect(onCancelRecording).not.toHaveBeenCalled();
-        expect(screen.getByTestId('recording-card')).toBeTruthy();
-      });
-    });
-
-    describe('and the recording is being transcribed', () => {
-      it('should show the progress in place of the text field', () => {
-        renderChat({
-          recorder: { ...idle, status: 'stopping', startedAt: Date.now() - 42_000 },
-          onToggleRecording: vi.fn(),
-        });
-        const strip = screen.getByRole('status');
-        expect(within(strip).getByText('Transcribing…')).toBeTruthy();
-        expect(within(strip).getByText('0:42 recorded')).toBeTruthy();
-        expect(screen.queryByRole('textbox')).toBeNull();
-      });
-    });
-  });
-
-  describe('when the Record button is not wired (no recorder)', () => {
-    it('should not show it', () => {
-      renderChat({});
-      expect(screen.queryByTestId('editor-record-button')).toBeNull();
+      expect(onDeleteSession).toHaveBeenCalledExactlyOnceWith('s1');
+      expect(document.activeElement).toBe(window);
     });
   });
 });

@@ -32,13 +32,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::get;
 use anyhow::Context as _;
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{Path, State as AxState};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use serde_json::json;
 
 use crate::filecache::{FileCache, Served, Source, Supply};

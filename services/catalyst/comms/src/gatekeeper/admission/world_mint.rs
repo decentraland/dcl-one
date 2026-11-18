@@ -18,10 +18,10 @@
 //! denylist is checked through the shared DENY_LIST_URL reader, alongside
 //! the operator's block list, platform and scene bans.
 
+use crate::shared::routing::post;
 use axum::extract::{OriginalUri, Path, State};
 use axum::http::{HeaderMap, Uri, header::CONTENT_LENGTH};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
 use axum::{Json, Router};
 use chrono::NaiveDateTime;
 use serde::Serialize;
