@@ -144,7 +144,7 @@ fn redact_authorization(text: &str) -> String {
         };
         let length = if quoted {
             value
-                .find(|c: char| matches!(c, '"' | '\'' | '\r' | '\n'))
+                .find(['"', '\'', '\r', '\n'])
                 .unwrap_or(value.len())
         } else {
             let first = token_end(value);
