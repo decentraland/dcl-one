@@ -66,8 +66,8 @@ export const analyticsConfig: Record<string, AnalyticsHandler<any>> = {
       if (!projectId) throw new Error('No project ID found when trying to publish scene');
       return {
         project_id: projectId,
-        // A world publish names only the content server it deploys to.
-        target: action.meta.arg.target || action.meta.arg.targetContent || 'unknown',
+        // A world publish names no target, only the Worlds content server it deploys to.
+        target: action.meta.arg.target || (action.meta.arg.targetContent ? 'worlds' : 'unknown'),
         targetContent: action.meta.arg.targetContent || 'unknown',
       };
     },

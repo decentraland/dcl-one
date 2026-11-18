@@ -55,8 +55,9 @@ describe('when hiding the editor helpers for a screenshot', () => {
     expect(particleHelper.isEnabled(false)).toBe(false);
   });
 
-  it('should hide the out-of-bounds boxes', () => {
-    expect(outOfBoundsMesh.showBoundingBox).toBe(false);
+  it('should hide the out-of-bounds boxes without changing which meshes show one', () => {
+    expect(scene.getBoundingBoxRenderer().enabled).toBe(false);
+    expect(outOfBoundsMesh.showBoundingBox).toBe(true);
   });
 
   it('should keep the scene content visible', () => {
@@ -78,8 +79,34 @@ describe('when hiding the editor helpers for a screenshot', () => {
       expect(parcelGrid.isEnabled(false)).toBe(true);
       expect(groundGrid.isEnabled(false)).toBe(true);
       expect(particleHelper.isEnabled(false)).toBe(true);
+      expect(scene.getBoundingBoxRenderer().enabled).toBe(true);
       expect(outOfBoundsMesh.showBoundingBox).toBe(true);
       expect(areEditorHelpersHidden(scene)).toBe(false);
+    });
+  });
+
+  describe('and the selection changes before the screenshot is taken', () => {
+    beforeEach(() => {
+      outOfBoundsMesh.showBoundingBox = false;
+      sceneMesh.showBoundingBox = true;
+      restore();
+    });
+
+    it('should keep the boxes the selection change set', () => {
+      expect(outOfBoundsMesh.showBoundingBox).toBe(false);
+      expect(sceneMesh.showBoundingBox).toBe(true);
+    });
+  });
+
+  describe('and the editor turns a hidden helper back on before the screenshot is taken', () => {
+    beforeEach(() => {
+      parcelGrid.setEnabled(true);
+      parcelGrid.dispose();
+      restore();
+    });
+
+    it('should not touch a helper that was disposed meanwhile', () => {
+      expect(parcelGrid.isDisposed()).toBe(true);
     });
   });
 });

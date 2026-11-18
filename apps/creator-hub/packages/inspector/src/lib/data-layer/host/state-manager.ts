@@ -64,6 +64,10 @@ export interface StateManagerOptions {
   compositePath: string;
 }
 
+// How long an undo, redo or import waits for the scene's previous write before giving up.
+export const IDLE_WAIT_TIMEOUT_MS = 30_000;
+export const IDLE_WAIT_TIMEOUT_ERROR = 'Timed out waiting for the scene to finish saving';
+
 export class StateManager {
   private providers = new Map<string, StateProvider>();
   private pendingTransaction: Transaction | null = null;
@@ -240,9 +244,28 @@ export class StateManager {
     for (const resolve of waiters) resolve();
   }
 
+  /**
+   * Resolves once nothing is being written. Rejects after `IDLE_WAIT_TIMEOUT_MS` so an undo or
+   * import queued behind a write that never settles fails with an error instead of hanging, and
+   * the explicit transactions after it still get their turn.
+   */
   private async waitUntilIdle(): Promise<void> {
+    const deadline = Date.now() + IDLE_WAIT_TIMEOUT_MS;
     while (this.processing) {
-      await new Promise<void>(resolve => this.idleWaiters.push(resolve));
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error(IDLE_WAIT_TIMEOUT_ERROR);
+      let waiter: (() => void) | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          waiter = resolve;
+          this.idleWaiters.push(resolve);
+          timer = setTimeout(() => reject(new Error(IDLE_WAIT_TIMEOUT_ERROR)), remaining);
+        });
+      } finally {
+        clearTimeout(timer);
+        this.idleWaiters = this.idleWaiters.filter(w => w !== waiter);
+      }
     }
   }
 

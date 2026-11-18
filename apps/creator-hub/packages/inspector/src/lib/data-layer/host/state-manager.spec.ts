@@ -4,7 +4,7 @@ import { CrdtMessageType } from '@dcl/ecs';
 import type { FileSystemInterface } from '../types';
 import type { InspectorPreferences } from '../../logic/preferences/types';
 import type { StateProvider } from './state-manager';
-import { StateManager } from './state-manager';
+import { IDLE_WAIT_TIMEOUT_ERROR, IDLE_WAIT_TIMEOUT_MS, StateManager } from './state-manager';
 
 function deferred() {
   let resolve!: () => void;
@@ -101,5 +101,38 @@ describe('StateManager.executeTransaction', () => {
 
     await expect(failed).rejects.toThrow('boom');
     await expect(next).resolves.toBe('ok');
+  });
+
+  describe('when the scene write never finishes', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('fails the waiting undo after the timeout and still runs the next one', async () => {
+      vi.useFakeTimers();
+      const log: string[] = [];
+      const stateManager = createStateManager();
+      const { provider, finishWrite } = createSlowProvider(log);
+      stateManager.registerProvider(provider);
+      stateManager.createOnChangeHandler()(
+        512 as Entity,
+        CrdtMessageType.PUT_COMPONENT,
+        transform,
+        {},
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(log).toEqual(['write:start']);
+
+      const undo = stateManager.executeTransaction('undo', async () => 'undone');
+      const undoResult = expect(undo).rejects.toThrow(IDLE_WAIT_TIMEOUT_ERROR);
+      await vi.advanceTimersByTimeAsync(IDLE_WAIT_TIMEOUT_MS);
+      await undoResult;
+
+      finishWrite();
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(stateManager.executeTransaction('redo', async () => 'redone')).resolves.toBe(
+        'redone',
+      );
+    });
   });
 });
