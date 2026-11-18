@@ -6417,7 +6417,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "6526a6bec4aa392ccda6c2e20a38dfe02f4dc1db7f57041a1d126b810cafce52"
+      "sha256": "4f2cd77c03995159aa1c18a7237518afc5fc45230621a81766d9ce3310799f5a"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -8881,7 +8881,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "bb7676d7f84cbe45d93707b39040f123311155b15370ec8dd6876cfb16ce20f7"
+      "sha256": "b4836061e772fab41856c636318369000c7a29344e33281f87556acd0dbfa9b9"
     },
     {
       "path": "library/ui/apps/hud/design/Skeleton.module.css",
@@ -8973,11 +8973,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Tooltip.module.css",
-      "sha256": "f5ffc1d7f9e641a1c5b762a39740f23cba58c45b82686f5b6abc853a2a95e255"
+      "sha256": "cfde7a0f39330c7c7862e2597ced5b70e2a3a89058607a1cf36d01f7dcf34533"
     },
     {
       "path": "library/ui/apps/hud/design/Tooltip.tsx",
-      "sha256": "a3ea119426e53b01d0425669a75aef7abd21a6d1372c0ba635d5310abaa660a0"
+      "sha256": "677e0f6fa8ada5f8c93d4821c2f9b7298f02ed4643ef5cf1f441f91e04e26183"
     },
     {
       "path": "library/ui/apps/hud/design/VoiceBars.module.css",
@@ -10181,11 +10181,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.module.css",
-      "sha256": "5f8b7b38707969fd786835edc16c80d00d0ab6d01acf1fbce9d361fb721e474b"
+      "sha256": "ac317d5a12cfbd092e4b80dd2755945e3326c16022f79a4f6832e6ab1e9c2c3e"
     },
     {
       "path": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
-      "sha256": "6c0cf6e1b0b526a7c7caf46be5f3a3a32f5da19cd10833da9042a7eb77844477"
+      "sha256": "dee609b08c6bb0267561da36165e5f2fac843dbaab0aa27807d914c2820cef85"
     },
     {
       "path": "library/ui/apps/hud/features/voiceChat/callGate.ts",

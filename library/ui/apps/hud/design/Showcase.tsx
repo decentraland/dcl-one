@@ -362,6 +362,9 @@ export function Showcase(): React.JSX.Element {
           <Tooltip label={'A longer hint that wraps.\n\nParagraph breaks are kept, and it hangs from the left edge.'} side="bottom" multiline>
             <span style={{ padding: '8px 14px', borderRadius: 10, background: 'var(--fill-4)' }}>multiline</span>
           </Tooltip>
+          <Tooltip label="End stream for everyone" side="bottom" align="end">
+            <span style={{ padding: '8px 14px', borderRadius: 10, background: 'var(--fill-4)' }}>bottom, end</span>
+          </Tooltip>
         </div>
       </Section>
 
