@@ -167,6 +167,10 @@ nix develop --command bash tooling/dev-test.sh [rust|e2e]   # rust: PostgreSQL o
 CI runs the Rust suites in `nix develop .#ci`: the toolchain, the services the tests
 start and the build tools, without the web and media tools.
 
+The `tooling/tests` suite runs in its own job, Tooling tests, beside smoke. It needs
+only the dev shell: its PostgreSQL tests start their own clusters with the shell's
+binaries. It includes the workflow tests, so the CI gate requires it.
+
 The Rust job sets `FOUNDATION_DEV_DISPOSABLE_POSTGRES=1`. A cluster that
 `foundation-dev` initializes with it set runs without durability (`fsync`,
 `synchronous_commit` and `full_page_writes` off, `wal_level=minimal`), because
@@ -195,10 +199,10 @@ notice to add the `ci:macos` label: Cargo manifests and lockfiles, build
 scripts, toolchain files, `.cargo`, `library/vendor/rusty_enet`, Nix,
 `infra/dev`, the Makefile, the dev tooling and
 `.github/workflows/development.yml` (`tooling/dev-ci.py`). On `main`,
-the Rust tests and smoke run on macOS, and a new push does not cancel a running
-Development run: it waits, replacing any run already waiting, so each completed
-run tests every earlier commit and a macOS-only failure shows up
-there. A PR labelled `ci:macos` runs both on macOS (label, then push or reopen;
+the Rust tests, smoke and the tooling tests run on macOS, and a new push does
+not cancel a running Development run: it waits, replacing any run already
+waiting, so each completed run tests every earlier commit and a macOS-only
+failure shows up there. A PR labelled `ci:macos` runs them on macOS (label, then push or reopen;
 re-running a job does not pick up a new label). A PR runs the Rust tests only
 when it changes an input of the Rust job: a file on the `RUST_INPUTS` list in
 `tooling/dev-ci.py` (the backend crates and the scene CLI manifest, the library
@@ -286,11 +290,11 @@ policy (`library/ui/figma/test/workflows.test.ts`).
 | `RUNNER_LINUX_X86_UBUNTU_22_04_16CORE` | `ubuntu-22.04-16core` | 1 | bevy-explorer-ci |
 | `RUNNER_LINUX_X86_UBUNTU_24_04` | `ubuntu-24.04` | 5 | bevy-explorer-ci, bevy-explorer-scenes, creator-hub-e2e, uuav-native, uuav-verify |
 | `RUNNER_LINUX_X86_UBUNTU_24_04_16CORE` | `ubuntu-24.04-16core` | 3 | bevy-explorer-ci (3) |
-| `RUNNER_LINUX_X86` | `ubuntu-26.04` | 47 | apis-sites-compile (2), apis-sites-images (4), bevy-explorer-benchmark (2), bevy-explorer-ci (4), bevy-explorer-ci-status (3), bevy-explorer-e2e, bevy-explorer-headless, bevy-explorer-images (2), bevy-explorer-scenes, creator-hub-asset-packs (2), creator-hub-build, creator-hub-ci (2), creator-hub-inspector, creator-hub-lint, creator-hub-tests, creator-hub-typechecking, development (5), gateway-images, protocol, sdk (2), social-captures, social-voice-release, structure (2), ui-library (2), uuav-native (2), uuav-verify |
+| `RUNNER_LINUX_X86` | `ubuntu-26.04` | 48 | apis-sites-compile (2), apis-sites-images (4), bevy-explorer-benchmark (2), bevy-explorer-ci (4), bevy-explorer-ci-status (3), bevy-explorer-e2e, bevy-explorer-headless, bevy-explorer-images (2), bevy-explorer-scenes, creator-hub-asset-packs (2), creator-hub-build, creator-hub-ci (2), creator-hub-inspector, creator-hub-lint, creator-hub-tests, creator-hub-typechecking, development (6), gateway-images, protocol, sdk (2), social-captures, social-voice-release, structure (2), ui-library (2), uuav-native (2), uuav-verify |
 | `RUNNER_LINUX_ARM` | `ubuntu-26.04-arm` | 4 | apis-sites-compile, apis-sites-images, bevy-explorer-images, gateway-images |
 | `RUNNER_WINDOWS` | `windows-2025` | 3 | bevy-explorer-e2e, uuav-native, uuav-verify |
 | `RUNNER_WINDOWS_16CORE` | `windows-2025-16core` | 2 | bevy-explorer-ci, bevy-explorer-headless-build |
-| `RUNNER_MACOS` | `macos-15` | 4 | development (2), uuav-native, uuav-verify |
+| `RUNNER_MACOS` | `macos-15` | 5 | development (3), uuav-native, uuav-verify |
 | `RUNNER_MACOS_XLARGE` | `macos-15-xlarge` | 2 | bevy-explorer-ci, bevy-explorer-headless-build |
 
 A runner named by a variable with an Ubuntu version in its name must run that version: the
