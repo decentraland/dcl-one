@@ -186,6 +186,7 @@
         "details_shared": "会分享：你输入的内容、助手的回复、它使用的工具及其文件名和命令、代理和模型，以及每次回复所用的时间。",
         "details_not_shared": "不会分享：图片、文件内容、你的场景名称，以及你标记为不分享的对话。",
         "details_analysis": "用途：由为 Decentraland 工作的服务商提供的 AI 模型为每段对话生成摘要。服务商不保留任何副本，也不会用它训练模型。我们会保留在众多创作者中发现的共性模式，用于改进助手。",
+        "details_publish": "团队会讨论这些模式。据此做出的改动可能会发布在助手公开的指令、技能和文档中，以及这些改动的说明里。改动一旦发布，即使你删除了已分享的内容，也会保持公开。",
         "details_control": "你可以随时在设置中停止分享或删除所有已分享的内容。停止分享也会停止分析，删除也会删除摘要。已分享的对话及其摘要最多保留 180 天。",
         "accept": "分享以帮助改进",
         "decline": "不用了",
@@ -195,7 +196,9 @@
         "menu_exclude": "不分享此对话",
         "menu_include": "分享此对话",
         "menu_stop": "停止分享所有对话",
-        "chip_menu": "分享选项"
+        "chip_menu": "分享选项",
+        "rate_up": "回复不错",
+        "rate_down": "回复不好"
       }
     },
     "publish": {
@@ -706,7 +709,35 @@
           "viewer_more": "显示更多",
           "delete_confirm": "删除你分享的所有内容及其摘要，并停止分享？此操作无法撤销。",
           "delete_confirm_yes": "全部删除",
-          "delete_cancel": "取消"
+          "delete_cancel": "取消",
+          "digests_show": "显示根据你的对话生成的摘要",
+          "digests_hide": "隐藏摘要",
+          "digests_empty": "还没有摘要。对话结束几小时后会生成摘要。",
+          "digests_failed": "无法加载摘要。请检查网络后重试。",
+          "digests_more": "显示更多",
+          "digests_problems": "问题：{kinds}",
+          "digest_outcome": {
+            "achieved": "已完成",
+            "partial": "部分完成",
+            "not_achieved": "未完成",
+            "abandoned": "已放弃",
+            "unclear": "不明确"
+          },
+          "digest_friction": {
+            "misunderstood_request": "误解了请求",
+            "wrong_sdk_knowledge": "SDK 知识有误",
+            "tool_failed": "工具失败",
+            "tool_missing": "缺少工具",
+            "skill_missing": "缺少技能",
+            "skill_ignored": "未使用技能",
+            "asset_not_found": "找不到资源",
+            "scene_broke": "场景损坏",
+            "slow_or_stuck": "缓慢或卡住",
+            "creator_corrected_agent": "你纠正了助手",
+            "creator_stopped_reply": "你停止了回复",
+            "setup_or_sign_in": "设置或登录",
+            "other": "其他"
+          }
         }
       },
       "actions": {

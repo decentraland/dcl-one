@@ -1,4 +1,4 @@
-import type { AiSharingConsentByWallet } from './ai-sharing';
+import type { AiSharingConsentByWallet, AiSharingPendingByWallet } from './ai-sharing';
 export enum DEPENDENCY_UPDATE_STRATEGY {
   AUTO_UPDATE = 'auto_update',
   NOTIFY = 'notify',
@@ -80,6 +80,8 @@ export type AppSettings = {
   // Opt-in sharing of AI assistant conversations, per wallet. Deliberately NOT in
   // DEFAULT_CONFIG: a wallet with no entry was never asked, which is what shows the consent card.
   aiDataSharing?: AiSharingConsentByWallet;
+  // Erasures and ratings for the sharing service that haven't reached it yet, per wallet.
+  aiSharingPending?: AiSharingPendingByWallet;
 };
 
 export interface ReleaseNotes {

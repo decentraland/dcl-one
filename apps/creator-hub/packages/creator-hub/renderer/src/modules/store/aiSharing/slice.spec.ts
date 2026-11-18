@@ -24,6 +24,9 @@ vi.mock('../../../lib/aiSharingApi', () => ({
   listTurns: vi.fn(),
   eraseAll: vi.fn(),
   eraseTurn: vi.fn(),
+  eraseConversation: vi.fn(),
+  putRating: vi.fn(),
+  listDigests: vi.fn(),
 }));
 vi.mock('../../../lib/auth', () => ({ AuthServerProvider: { getAccount: vi.fn() } }));
 
@@ -57,7 +60,12 @@ function setup({
 }: {
   flag?: boolean;
   consent?: AiSharingConsent;
-  messages?: Array<{ role: 'user' | 'assistant'; done: boolean; error?: string }>;
+  messages?: Array<{
+    role: 'user' | 'assistant';
+    done: boolean;
+    error?: string;
+    recordId?: string;
+  }>;
 } = {}): TestStore {
   const store = createTestStore();
   store.dispatch({
@@ -842,5 +850,224 @@ describe('when a withdrawal does not get through', () => {
       delivered: false,
     });
     expect(api.getConsent).not.toHaveBeenCalled();
+  });
+});
+
+const pendingOf = (store: TestStore) =>
+  store.getState().workspace.settings.aiSharingPending?.[ADDRESS];
+
+describe('when a conversation is marked as not shared', () => {
+  const sharedReplies = [
+    { role: 'user' as const, done: true },
+    { role: 'assistant' as const, done: true, recordId: 'r1' },
+  ];
+
+  beforeEach(() => {
+    vi.mocked(api.getConsent).mockResolvedValue(ok(serverSays(true, granted.decidedAt)));
+  });
+
+  it('should erase what it already shared on the service', async () => {
+    vi.mocked(api.eraseConversation).mockResolvedValue(ok({ deleted: 1 }));
+    const store = setup({ consent: granted, messages: sharedReplies });
+
+    store.dispatch(aiActions.setConversationShared(false));
+
+    await vi.waitFor(() =>
+      expect(api.eraseConversation).toHaveBeenCalledWith(ADDRESS, 's1', expect.any(String)),
+    );
+    await vi.waitFor(() => expect(pendingOf(store)).toBeUndefined());
+    expect(aiSharing.setConversationShared).toHaveBeenCalledWith('s1', false);
+  });
+
+  it('should ask nothing of the service when the conversation shared nothing', async () => {
+    const store = setup({ consent: granted, messages: [{ role: 'assistant', done: true }] });
+
+    store.dispatch(aiActions.setConversationShared(false));
+    await settled();
+
+    expect(api.eraseConversation).not.toHaveBeenCalled();
+    expect(pendingOf(store)).toBeUndefined();
+  });
+
+  it('should keep the erasure when the service fails, and send it again, same date, later', async () => {
+    vi.mocked(api.eraseConversation)
+      .mockResolvedValueOnce(fail(503))
+      .mockResolvedValueOnce(ok({ deleted: 2 }));
+    const store = setup({ consent: granted });
+
+    await store.dispatch(actions.eraseConversation({ conversationId: 's1', recordIds: ['r1'] }));
+
+    const waiting = pendingOf(store)?.erasures;
+    expect(waiting).toEqual([{ conversationId: 's1', decidedAt: expect.any(String) }]);
+    expect(store.getState().aiSharing.nextUploadAt).toBeGreaterThan(Date.now());
+
+    store.dispatch(actions.uploadSucceeded());
+    await store.dispatch(actions.flush());
+
+    expect(api.eraseConversation).toHaveBeenLastCalledWith(ADDRESS, 's1', waiting![0].decidedAt);
+    expect(pendingOf(store)).toBeUndefined();
+  });
+
+  it('should keep trying after sharing was turned off, as withdrawals do', async () => {
+    vi.mocked(api.eraseConversation).mockResolvedValue(ok({ deleted: 1 }));
+    const store = setup({ consent: { ...granted, consent: 'denied' } });
+    store.dispatch({
+      type: 'config/updateSettings/fulfilled',
+      meta: {
+        arg: {
+          ...store.getState().workspace.settings,
+          aiSharingPending: { [ADDRESS]: { erasures: [{ conversationId: 's9', decidedAt: NOW }] } },
+        },
+      },
+    });
+
+    await store.dispatch(actions.flush());
+
+    expect(api.eraseConversation).toHaveBeenCalledWith(ADDRESS, 's9', NOW);
+    expect(pendingOf(store)).toBeUndefined();
+  });
+
+  it("should drop the conversation's ratings that were still waiting", async () => {
+    vi.mocked(api.eraseConversation).mockResolvedValue(fail(503));
+    vi.mocked(api.putRating).mockResolvedValue(fail(503));
+    const store = setup({ consent: granted });
+    await store.dispatch(actions.rateTurn({ recordId: 'r1', rating: 'up' }));
+    await store.dispatch(actions.rateTurn({ recordId: 'r2', rating: 'down' }));
+
+    await store.dispatch(actions.eraseConversation({ conversationId: 's1', recordIds: ['r1'] }));
+
+    expect(pendingOf(store)?.ratings).toEqual({ r2: 'down' });
+  });
+});
+
+describe('when rating a shared reply', () => {
+  beforeEach(() => {
+    vi.mocked(api.getConsent).mockResolvedValue(ok(serverSays(true, granted.decidedAt)));
+  });
+
+  it('should send it once the queued turns are uploaded', async () => {
+    const order: string[] = [];
+    vi.mocked(aiSharing.peek)
+      .mockResolvedValueOnce([record('r1')])
+      .mockResolvedValueOnce([]);
+    vi.mocked(api.uploadTurns).mockImplementation(async () => {
+      order.push('upload');
+      return ok({ accepted: 1, rejected: [] });
+    });
+    vi.mocked(api.putRating).mockImplementation(async (_w, recordId, rating) => {
+      order.push('rate');
+      return ok({ recordId, rating });
+    });
+    const store = setup({ consent: granted });
+
+    await store.dispatch(actions.rateTurn({ recordId: 'r1', rating: 'up' }));
+
+    expect(api.putRating).toHaveBeenCalledWith(ADDRESS, 'r1', 'up');
+    expect(order).toEqual(['upload', 'rate']);
+    expect(pendingOf(store)).toBeUndefined();
+  });
+
+  it('should keep it and retry when the service fails', async () => {
+    vi.mocked(api.putRating)
+      .mockResolvedValueOnce(fail(503))
+      .mockResolvedValueOnce(ok({ recordId: 'r1', rating: null }));
+    const store = setup({ consent: granted });
+
+    await store.dispatch(actions.rateTurn({ recordId: 'r1', rating: null }));
+    expect(pendingOf(store)?.ratings).toEqual({ r1: null });
+
+    store.dispatch(actions.uploadSucceeded());
+    await store.dispatch(actions.flush());
+
+    expect(api.putRating).toHaveBeenCalledTimes(2);
+    expect(pendingOf(store)).toBeUndefined();
+  });
+
+  it('should drop a rating for a record the service does not have', async () => {
+    vi.mocked(api.putRating).mockResolvedValue(fail(404));
+    const store = setup({ consent: granted });
+
+    await store.dispatch(actions.rateTurn({ recordId: 'gone', rating: 'down' }));
+
+    expect(pendingOf(store)).toBeUndefined();
+    expect(store.getState().aiSharing.failures).toBe(0);
+  });
+
+  it('should send nothing without consent', async () => {
+    const store = setup({ consent: { ...granted, consent: 'denied' } });
+
+    await store.dispatch(actions.rateTurn({ recordId: 'r1', rating: 'up' }));
+
+    expect(api.putRating).not.toHaveBeenCalled();
+    expect(pendingOf(store)).toBeUndefined();
+  });
+
+  it('should save the rating on the reply and skip replies that were not shared', async () => {
+    vi.mocked(api.putRating).mockResolvedValue(ok({ recordId: 'r1', rating: 'up' }));
+    const store = setup({
+      consent: granted,
+      messages: [
+        { role: 'assistant', done: true, recordId: 'r1' },
+        { role: 'assistant', done: true },
+      ],
+    });
+
+    store.dispatch(aiActions.rateTurn({ id: 'm0', rating: 'up' }));
+    store.dispatch(aiActions.rateTurn({ id: 'm1', rating: 'up' }));
+
+    expect(store.getState().ai.messages.map(m => m.rating)).toEqual(['up', undefined]);
+    await vi.waitFor(() => expect(api.putRating).toHaveBeenCalledWith(ADDRESS, 'r1', 'up'));
+    expect(api.putRating).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('when looking at the summaries of what was shared', () => {
+  const digest = (id: string) =>
+    ({
+      conversationId: id,
+      goal: 'a door that opens',
+      outcome: 'achieved',
+      frictions: [],
+      createdAt: NOW,
+    }) as api.AiSharingDigest;
+
+  it('should load pages and append the next one', async () => {
+    vi.mocked(api.listDigests)
+      .mockResolvedValueOnce(ok({ digests: [digest('a')], next: 'c1' }))
+      .mockResolvedValueOnce(ok({ digests: [digest('b')], next: null }));
+    const store = setup({ consent: granted });
+
+    await store.dispatch(actions.loadDigests({ reset: true }));
+    await store.dispatch(actions.loadDigests({ reset: false }));
+
+    expect(api.listDigests).toHaveBeenLastCalledWith(ADDRESS, 'c1');
+    expect(store.getState().aiSharing.digests).toMatchObject({
+      status: 'loaded',
+      next: null,
+      digests: [{ conversationId: 'a' }, { conversationId: 'b' }],
+    });
+  });
+
+  it('should say when they could not be loaded', async () => {
+    vi.mocked(api.listDigests).mockResolvedValue(fail(503));
+    const store = setup({ consent: granted });
+
+    await store.dispatch(actions.loadDigests({ reset: true }));
+
+    expect(store.getState().aiSharing.digests.status).toBe('failed');
+  });
+
+  it('should drop a page that arrives after everything was deleted', async () => {
+    let answer: (value: unknown) => void = () => {};
+    vi.mocked(api.listDigests).mockReturnValue(new Promise(r => (answer = r)) as never);
+    vi.mocked(api.eraseAll).mockResolvedValue(ok({ deleted: 1 }));
+    const store = setup({ consent: granted });
+
+    const loading = store.dispatch(actions.loadDigests({ reset: true }));
+    await store.dispatch(actions.deleteEverything());
+    answer(ok({ digests: [digest('gone')], next: null }));
+    await loading;
+
+    expect(store.getState().aiSharing.digests.digests).toEqual([]);
   });
 });

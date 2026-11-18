@@ -13,14 +13,12 @@ vi.mock('../src/modules/analytics', () => ({ getUserId: () => null }));
 import { AI_SHARING_LIMITS, type AiTurnRecord } from '/shared/types/ai-sharing';
 import { Outbox, OUTBOX_LIMITS } from '../src/modules/ai-sharing/outbox';
 import { setConversationShared, TurnRecorder } from '../src/modules/ai-sharing';
-import {
-  buildTurnRecord,
-  readTurnInfo,
-  sha256,
-  type TurnCapture,
-} from '../src/modules/ai-sharing/record';
+import { buildTurnRecord, readTurnInfo, type TurnCapture } from '../src/modules/ai-sharing/record';
+import { sha256 } from '../src/modules/ai-sharing/hashes';
 
 const ADDRESS = '0x1234567890abcdef1234567890abcdef12345678';
+const SKILLS_COMMIT = '0123456789abcdef0123456789abcdef01234567';
+const TOOLS_HASH = 'a'.repeat(64);
 
 const capture = (overrides: Partial<TurnCapture> = {}): TurnCapture => ({
   address: ADDRESS.toUpperCase().replace('0X', '0x'),
@@ -33,6 +31,8 @@ const capture = (overrides: Partial<TurnCapture> = {}): TurnCapture => ({
   provider: 'claude',
   requestedModel: 'default',
   systemPrompt: 'rules',
+  skillsCommit: SKILLS_COMMIT,
+  toolsHash: TOOLS_HASH,
   prompt: 'add a door, my key is sk-ant-api03-exampleexampleexample00',
   attachments: [{ name: '/Users/jane/Desktop/Shot.PNG', kind: 'image' }],
   projectId: 'p1',
@@ -132,11 +132,33 @@ describe('when building the record for a shared turn', () => {
     expect(JSON.stringify(record)).not.toContain('Shot');
   });
 
-  it('should hash the system prompt instead of including it', () => {
+  it('should name the assistant by its prompt hash, skills commit and tools hash', () => {
     const record = buildTurnRecord(capture(), end);
 
-    expect(record.systemPromptHash).toBe(sha256('rules'));
+    expect(record?.assistant).toEqual({
+      systemPromptHash: sha256('rules'),
+      skillsCommit: SKILLS_COMMIT,
+      toolsHash: TOOLS_HASH,
+    });
     expect(JSON.stringify(record)).not.toContain('"rules"');
+    expect(record).not.toHaveProperty('systemPromptHash');
+  });
+
+  it('should leave the skills commit out when no skills were linked', () => {
+    const record = buildTurnRecord(capture({ skillsCommit: null }), end);
+
+    expect(record?.assistant).not.toHaveProperty('skillsCommit');
+    expect(record?.assistant.toolsHash).toBe(TOOLS_HASH);
+  });
+
+  it('should keep the assistant block whole when the size cap shrinks the texts', () => {
+    const record = buildTurnRecord(capture({ responseParts: ['界'.repeat(200_000)] }), end);
+
+    expect(record?.assistant).toEqual({
+      systemPromptHash: sha256('rules'),
+      skillsCommit: SKILLS_COMMIT,
+      toolsHash: TOOLS_HASH,
+    });
   });
 
   it('should carry the model, usage, timing and a lowercase address', () => {
@@ -363,6 +385,8 @@ describe('when a turn ends', () => {
         provider: 'claude',
         requestedModel: 'default',
         systemPrompt: 'rules',
+        skillsCommit: null,
+        toolsHash: TOOLS_HASH,
         prompt: 'hello',
         attachments: [],
         projectId: null,
@@ -370,18 +394,20 @@ describe('when a turn ends', () => {
       '1.0.0',
     );
 
-  it('should queue the record while the turn is still shared', async () => {
+  it('should queue the record while the turn is still shared, and return its id', async () => {
     const queue = vi.fn();
-    await start().finish(end, {}, async () => true, queue);
+    const recordId = await start().finish(end, {}, async () => true, queue);
 
     expect(queue).toHaveBeenCalledTimes(1);
+    expect(recordId).toBe((queue.mock.calls[0][0] as AiTurnRecord).recordId);
   });
 
-  it('should queue nothing once sharing stopped during the turn', async () => {
+  it('should queue nothing once sharing stopped during the turn, and return no id', async () => {
     const queue = vi.fn();
-    await start().finish(end, {}, async () => false, queue);
+    const recordId = await start().finish(end, {}, async () => false, queue);
 
     expect(queue).not.toHaveBeenCalled();
+    expect(recordId).toBeNull();
   });
 
   it('should queue nothing when the conversation is excluded while consent is being checked', async () => {

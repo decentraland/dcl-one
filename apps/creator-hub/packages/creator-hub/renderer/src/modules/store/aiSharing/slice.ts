@@ -6,6 +6,7 @@ import {
   consentFor,
   hasSharingConsent,
   type AiSharingConsent,
+  type AiSharingPending,
   type AiSharingQueuedItem,
   type AiTurnRecord,
 } from '/shared/types/ai-sharing';
@@ -34,6 +35,14 @@ export interface SharedTurnsState {
   erasing: string[];
 }
 
+export interface DigestsState {
+  status: 'idle' | 'loading' | 'loaded' | 'failed';
+  // Bumped by every reset load and erasure; a page from an older one is stale.
+  generation: number;
+  digests: api.AiSharingDigest[];
+  next: string | null;
+}
+
 export interface AiSharingState {
   /** The consent card's "Not now", for this app run only. */
   notNow: boolean;
@@ -51,6 +60,8 @@ export interface AiSharingState {
   versionMismatch: boolean;
   /** What the signed-in wallet has shared, as the service holds it (Settings). */
   shared: SharedTurnsState;
+  /** The summaries made of the signed-in wallet's conversations (Settings). */
+  digests: DigestsState;
 }
 
 const initialState: AiSharingState = {
@@ -63,6 +74,7 @@ const initialState: AiSharingState = {
   nextUploadAt: 0,
   versionMismatch: false,
   shared: { status: 'idle', generation: 0, turns: [], next: null, erasing: [] },
+  digests: { status: 'idle', generation: 0, digests: [], next: null },
 };
 
 /** The signed-in wallet, lowercase, or null when signed out. */
@@ -128,20 +140,59 @@ export const refreshQueue = createAsyncThunk('aiSharing/refreshQueue', async () 
   return wallet === null ? [] : aiSharing.list(wallet);
 });
 
-async function saveConsent(
+// Settings are written whole and land in the store only once written, so two writes in flight
+// would each drop the other's change. Every write here waits for the one before it.
+let settingsWrite: Promise<unknown> = Promise.resolve();
+
+function writeSettings(
+  getState: () => AppState,
+  dispatch: AppDispatch,
+  change: (settings: AppState['workspace']['settings']) => AppState['workspace']['settings'],
+): Promise<void> {
+  const write = settingsWrite.then(async () => {
+    await dispatch(workspaceActions.updateSettings(change(getState().workspace.settings)));
+  });
+  settingsWrite = write.catch(() => {});
+  return write;
+}
+
+function saveConsent(
   getState: () => AppState,
   dispatch: AppDispatch,
   wallet: string,
   consent: AiSharingConsent,
 ): Promise<void> {
-  const settings = getState().workspace.settings;
-  await dispatch(
-    workspaceActions.updateSettings({
-      ...settings,
-      aiDataSharing: { ...settings.aiDataSharing, [wallet]: consent },
-    }),
-  );
+  return writeSettings(getState, dispatch, settings => ({
+    ...settings,
+    aiDataSharing: { ...settings.aiDataSharing, [wallet]: consent },
+  }));
 }
+
+/** What is waiting to reach the service for `wallet`. */
+export const selectPending = (state: AppState, wallet: string | null): AiSharingPending =>
+  (wallet !== null ? state.workspace.settings?.aiSharingPending?.[wallet] : undefined) ?? {};
+
+function updatePending(
+  getState: () => AppState,
+  dispatch: AppDispatch,
+  wallet: string,
+  change: (pending: AiSharingPending) => AiSharingPending,
+): Promise<void> {
+  return writeSettings(getState, dispatch, settings => {
+    const { [wallet]: current, ...others } = settings.aiSharingPending ?? {};
+    const next = change(current ?? {});
+    const empty =
+      (next.erasures ?? []).length === 0 && Object.keys(next.ratings ?? {}).length === 0;
+    return { ...settings, aiSharingPending: empty ? others : { ...others, [wallet]: next } };
+  });
+}
+
+const withoutRatings = (pending: AiSharingPending, recordIds?: string[]): AiSharingPending => {
+  if (recordIds === undefined) return { ...pending, ratings: {} };
+  const ratings = { ...pending.ratings };
+  for (const id of recordIds) delete ratings[id];
+  return { ...pending, ratings };
+};
 
 const toServerDecision = (consent: AiSharingConsent): api.AiSharingDecision => ({
   granted: consent.consent === 'granted',
@@ -222,7 +273,11 @@ export const decide = createAsyncThunk(
     };
     // Saved before anything else: main reads it when a running turn ends.
     await saveConsent(getState, dispatch, wallet, consent);
-    if (!granted) await aiSharing.purge(wallet);
+    if (!granted) {
+      await aiSharing.purge(wallet);
+      // The service takes ratings only while sharing is on.
+      await updatePending(getState, dispatch, wallet, p => withoutRatings(p));
+    }
     // If this fails, the decision stays undelivered and the uploader's sync sends it.
     const delivered = await deliver(getState, dispatch, wallet, consent);
     dispatch(actions.setSyncedWallet(delivered ? wallet : null));
@@ -248,6 +303,8 @@ export const deleteEverything = createAsyncThunk(
     };
     await saveConsent(getState, dispatch, wallet, withdrawal);
     await aiSharing.purge(wallet);
+    // Erasing everything covers every conversation erasure and rating still waiting.
+    await updatePending(getState, dispatch, wallet, () => ({}));
     await dispatch(refreshQueue());
     const response = await api.eraseAll(wallet, withdrawal.decidedAt);
     if (!response.ok) {
@@ -258,6 +315,7 @@ export const deleteEverything = createAsyncThunk(
     await saveConsent(getState, dispatch, wallet, { ...withdrawal, delivered: true });
     dispatch(actions.setSyncedWallet(wallet));
     dispatch(actions.clearSharedTurns());
+    dispatch(actions.clearDigests());
     return response.data.deleted;
   },
 );
@@ -287,6 +345,67 @@ export const eraseSharedTurn = createAsyncThunk(
     const response = await api.eraseTurn(wallet, recordId);
     if (!response.ok) return rejectWithValue(response.error);
     return recordId;
+  },
+);
+
+/** The next page of the summaries made of the signed-in wallet's conversations. */
+export const loadDigests = createAsyncThunk(
+  'aiSharing/loadDigests',
+  async ({ reset }: { reset: boolean }, { getState, rejectWithValue }) => {
+    const wallet = currentWallet();
+    if (wallet === null) return rejectWithValue('Signed out');
+    const generation = getState().aiSharing.digests.generation;
+    const cursor = reset ? null : getState().aiSharing.digests.next;
+    const response = await api.listDigests(wallet, cursor);
+    if (!response.ok) return rejectWithValue(response.error);
+    return { ...response.data, reset, generation };
+  },
+);
+
+/**
+ * The creator marked a conversation as not shared: what it already shared goes too. Main has
+ * dropped its queued turns; this asks the service to erase the ones it holds, and keeps asking
+ * (saved, so a quit doesn't lose it) until the service has. `recordIds` are the conversation's
+ * shared turns, whose waiting ratings are dropped.
+ */
+export const eraseConversation = createAsyncThunk(
+  'aiSharing/eraseConversation',
+  async (
+    { conversationId, recordIds }: { conversationId: string; recordIds: string[] },
+    { getState, dispatch },
+  ) => {
+    const wallet = currentWallet();
+    if (wallet === null || !api.isConfigured()) return;
+    if (selectSharingConsent(getState(), wallet) === undefined) return;
+    const decidedAt = new Date().toISOString();
+    await updatePending(getState, dispatch, wallet, p => ({
+      ...withoutRatings(p, recordIds),
+      erasures: [
+        ...(p.erasures ?? []).filter(e => e.conversationId !== conversationId),
+        { conversationId, decidedAt },
+      ],
+    }));
+    dispatch(actions.clearSharedTurns());
+    dispatch(actions.clearDigests());
+    await dispatch(flush());
+  },
+);
+
+/** A thumbs up or down (or neither) on one shared reply. Sent with the next upload. */
+export const rateTurn = createAsyncThunk(
+  'aiSharing/rateTurn',
+  async (
+    { recordId, rating }: { recordId: string; rating: api.AiSharingRating },
+    { getState, dispatch },
+  ) => {
+    const wallet = currentWallet();
+    if (wallet === null || !api.isConfigured()) return;
+    if (!hasSharingConsent(selectSharingConsent(getState(), wallet))) return;
+    await updatePending(getState, dispatch, wallet, p => ({
+      ...p,
+      ratings: { ...p.ratings, [recordId]: rating },
+    }));
+    await dispatch(flush());
   },
 );
 
@@ -384,6 +503,11 @@ async function flushQueue(getState: () => AppState, dispatch: AppDispatch): Prom
   const consent = selectSharingConsent(getState(), wallet);
   if (consent === undefined) return;
   if (Date.now() < getState().aiSharing.nextUploadAt) return;
+  // Like withdrawals, erasures go out whatever the consent and the flag say.
+  if (!(await deliverErasures(getState, dispatch, wallet))) {
+    backOff(dispatch);
+    return;
+  }
   // A "yes" goes out only while sharing is offered (the flag on, the consent text matching): a
   // grant made offline must not reach the service after the feature was turned off. A "no"
   // always goes out.
@@ -400,10 +524,15 @@ async function flushQueue(getState: () => AppState, dispatch: AppDispatch): Prom
   // Lowered when the service still finds a batch too large (a proxy in front of it with a
   // smaller cap, say), so the next try sends fewer records.
   let maxRecords: number = api.MAX_RECORDS_PER_UPLOAD;
+  // Ratings go after the uploads, so the records they rate are on the service.
+  let uploaded = false;
   // Checked before every batch: consent, the account or the flag can change mid-upload.
   while (mayUpload(getState(), wallet)) {
     const queued = await aiSharing.peek(wallet, api.MAX_RECORDS_PER_UPLOAD);
-    if (queued.length === 0) break;
+    if (queued.length === 0) {
+      uploaded = true;
+      break;
+    }
     const batch = nextBatch(queued, maxRecords);
     const response = await api.uploadTurns(wallet, batch);
 
@@ -446,7 +575,59 @@ async function flushQueue(getState: () => AppState, dispatch: AppDispatch): Prom
     backOff(dispatch, response);
     break;
   }
+  if (uploaded) await deliverRatings(getState, dispatch, wallet);
   await dispatch(refreshQueue());
+}
+
+/** Sends the wallet's waiting conversation erasures, oldest first. False when one failed. */
+async function deliverErasures(
+  getState: () => AppState,
+  dispatch: AppDispatch,
+  wallet: string,
+): Promise<boolean> {
+  for (const erasure of selectPending(getState(), wallet).erasures ?? []) {
+    if (currentWallet() !== wallet) return true;
+    const response = await api.eraseConversation(wallet, erasure.conversationId, erasure.decidedAt);
+    if (!response.ok) return false;
+    await updatePending(getState, dispatch, wallet, p => ({
+      ...p,
+      erasures: (p.erasures ?? []).filter(e => !sameErasure(e, erasure)),
+    }));
+  }
+  return true;
+}
+
+const sameErasure = (
+  a: { conversationId: string; decidedAt: string },
+  b: { conversationId: string; decidedAt: string },
+) => a.conversationId === b.conversationId && a.decidedAt === b.decidedAt;
+
+/**
+ * Sends the wallet's waiting ratings. A rating the service has no record for (404: rejected or
+ * erased) or finds malformed (400) can never land and is dropped; any other failure keeps the
+ * rest for the next try.
+ */
+async function deliverRatings(
+  getState: () => AppState,
+  dispatch: AppDispatch,
+  wallet: string,
+): Promise<void> {
+  const ratings = Object.entries(selectPending(getState(), wallet).ratings ?? {});
+  for (const [recordId, rating] of ratings) {
+    if (!mayUpload(getState(), wallet)) return;
+    const response = await api.putRating(wallet, recordId, rating);
+    if (!response.ok && response.status !== 404 && response.status !== 400) {
+      if (response.status === 403 && !checkVersionMismatch(dispatch, response)) {
+        dispatch(actions.setSyncedWallet(null));
+      }
+      backOff(dispatch, response);
+      return;
+    }
+    // Only if unchanged: a newer click meanwhile is still to be sent.
+    await updatePending(getState, dispatch, wallet, p =>
+      p.ratings?.[recordId] === rating ? withoutRatings(p, [recordId]) : p,
+    );
+  }
 }
 
 const slice = createSlice({
@@ -482,6 +663,9 @@ const slice = createSlice({
     clearSharedTurns: state => {
       state.shared = { ...initialState.shared, generation: state.shared.generation + 1 };
     },
+    clearDigests: state => {
+      state.digests = { ...initialState.digests, generation: state.digests.generation + 1 };
+    },
   },
   extraReducers: builder => {
     builder
@@ -492,6 +676,7 @@ const slice = createSlice({
         state.deleteStatus = 'deleting';
         state.deletedCount = null;
         state.shared.generation += 1;
+        state.digests.generation += 1;
       })
       .addCase(deleteEverything.fulfilled, (state, { payload }) => {
         state.deleteStatus = 'deleted';
@@ -515,6 +700,21 @@ const slice = createSlice({
       .addCase(loadSharedTurns.rejected, state => {
         state.shared.status = 'failed';
       })
+      .addCase(loadDigests.pending, (state, { meta }) => {
+        if (meta.arg.reset) state.digests.generation += 1;
+        state.digests.status = 'loading';
+      })
+      .addCase(loadDigests.fulfilled, (state, { payload }) => {
+        if (payload.generation !== state.digests.generation) return;
+        state.digests.digests = payload.reset
+          ? payload.digests
+          : [...state.digests.digests, ...payload.digests];
+        state.digests.next = payload.next;
+        state.digests.status = 'loaded';
+      })
+      .addCase(loadDigests.rejected, state => {
+        state.digests.status = 'failed';
+      })
       .addCase(eraseSharedTurn.pending, (state, { meta }) => {
         state.shared.erasing.push(meta.arg);
       })
@@ -535,6 +735,9 @@ export const actions = {
   deleteEverything,
   loadSharedTurns,
   eraseSharedTurn,
+  loadDigests,
+  eraseConversation,
+  rateTurn,
   flush,
 };
 export const reducer = slice.reducer;

@@ -21,9 +21,18 @@ import {
   isSharingFeatureOn,
   selectSharingConsent,
 } from '/@/modules/store/aiSharing';
-import { t } from '/@/modules/store/translation/utils';
+import type { TranslationPath } from '/@/modules/store/translation/types';
+import { getCurrentLocale, t } from '/@/modules/store/translation/utils';
 
 const PREVIEW_ROWS = 5;
+
+const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { dateStyle: 'medium' });
+
+// The service may add kinds and outcomes before this app knows them: show those as they come.
+const translated = (key: string, fallback: string) =>
+  getCurrentLocale().messages[key] !== undefined
+    ? t(key as TranslationPath)
+    : fallback.replace(/_/g, ' ');
 
 const when = (iso: string) =>
   new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
@@ -48,9 +57,12 @@ export function AiSharingSection() {
   const visible = useSelector(state => canManageSharing(state, address));
   const offered = useSelector(isSharingFeatureOn);
   const consent = useSelector(state => selectSharingConsent(state, address));
-  const { queued, deleteStatus, deletedCount, shared } = useSelector(state => state.aiSharing);
+  const { queued, deleteStatus, deletedCount, shared, digests } = useSelector(
+    state => state.aiSharing,
+  );
   const sharing = hasSharingConsent(consent);
   const [showShared, setShowShared] = useState(false);
+  const [showDigests, setShowDigests] = useState(false);
 
   useEffect(() => {
     if (visible) void dispatch(aiSharingActions.refreshQueue());
@@ -64,6 +76,12 @@ export function AiSharingSection() {
       void dispatch(aiSharingActions.loadSharedTurns({ reset: true }));
     }
   }, [showShared, address, dispatch]);
+
+  useEffect(() => {
+    if (showDigests && address !== null) {
+      void dispatch(aiSharingActions.loadDigests({ reset: true }));
+    }
+  }, [showDigests, address, dispatch]);
 
   if (!visible) return null;
   const queuedHere = queued.filter(item => item.address === address);
@@ -194,6 +212,103 @@ export function AiSharingSection() {
                       sx={{ alignSelf: 'flex-start', ...buttonSx }}
                     >
                       {t('modal.app_settings.fields.ai_sharing.viewer_more')}
+                    </Button>
+                  )}
+                </Box>
+              )}
+            </Box>
+
+            <Box>
+              <Button
+                color="secondary"
+                variant="text"
+                size="small"
+                aria-expanded={showDigests}
+                aria-controls="ai-sharing-digests"
+                onClick={() => setShowDigests(open => !open)}
+                sx={buttonSx}
+              >
+                {showDigests
+                  ? t('modal.app_settings.fields.ai_sharing.digests_hide')
+                  : t('modal.app_settings.fields.ai_sharing.digests_show')}
+              </Button>
+              {showDigests && (
+                <Box
+                  id="ai-sharing-digests"
+                  sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 1 }}
+                >
+                  {digests.status === 'failed' && (
+                    <Typography
+                      variant="caption"
+                      color="error"
+                      role="alert"
+                    >
+                      {t('modal.app_settings.fields.ai_sharing.digests_failed')}
+                    </Typography>
+                  )}
+                  {digests.status === 'loaded' && digests.digests.length === 0 && (
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                    >
+                      {t('modal.app_settings.fields.ai_sharing.digests_empty')}
+                    </Typography>
+                  )}
+                  {digests.digests.map(digest => {
+                    const kinds = [...new Set(digest.frictions.map(f => f.kind))];
+                    return (
+                      <Box
+                        key={digest.conversationId}
+                        sx={{ minWidth: 0 }}
+                      >
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          component="div"
+                        >
+                          {day(digest.createdAt)} ·{' '}
+                          {translated(
+                            `modal.app_settings.fields.ai_sharing.digest_outcome.${digest.outcome}`,
+                            digest.outcome,
+                          )}
+                        </Typography>
+                        <Typography
+                          variant="body2"
+                          component="div"
+                        >
+                          {digest.goal}
+                        </Typography>
+                        {kinds.length > 0 && (
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            component="div"
+                          >
+                            {t('modal.app_settings.fields.ai_sharing.digests_problems', {
+                              kinds: kinds
+                                .map(kind =>
+                                  translated(
+                                    `modal.app_settings.fields.ai_sharing.digest_friction.${kind}`,
+                                    kind,
+                                  ),
+                                )
+                                .join(', '),
+                            })}
+                          </Typography>
+                        )}
+                      </Box>
+                    );
+                  })}
+                  {digests.status === 'loading' && <CircularProgress size={16} />}
+                  {digests.next !== null && digests.status === 'loaded' && (
+                    <Button
+                      color="secondary"
+                      variant="text"
+                      size="small"
+                      onClick={() => void dispatch(aiSharingActions.loadDigests({ reset: false }))}
+                      sx={{ alignSelf: 'flex-start', ...buttonSx }}
+                    >
+                      {t('modal.app_settings.fields.ai_sharing.digests_more')}
                     </Button>
                   )}
                 </Box>

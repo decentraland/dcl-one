@@ -36,6 +36,7 @@ import { getAppDataPath, getUserDataPath } from './electron';
 import { getChildEnv, resolveNodeRuntime } from './node-runtime';
 import { getProjectId, track } from './analytics';
 import { readTurnInfo, sharingAddress, TurnRecorder, type TurnInfo } from './ai-sharing';
+import { assistantToolsHash, NO_TOOLS_HASH } from './ai-sharing/manifest';
 import type { AiTurnErrorKind } from '/shared/types/ai-sharing';
 import {
   clearPendingAsks,
@@ -1394,8 +1395,9 @@ export async function aiSend(
   // Link the Decentraland SDK7 skills into the project so the CLI finds them in its
   // cwd (both providers). Best-effort — a missing/failed cache just means no skills
   // this turn. The first turn after launch may wait briefly for the initial download.
+  let skillsCommit: string | null = null;
   try {
-    await ensureSkillsLinked(projectDir);
+    skillsCommit = (await ensureSkillsLinked(projectDir)) ?? null;
   } catch (e) {
     log.warn('[AI] could not link SDK skills:', e);
   }
@@ -1416,8 +1418,17 @@ export async function aiSend(
   const projectIdPromise = getProjectId(projectDir).catch((): string => '');
   // Only for a creator who opted in to sharing; null otherwise, and then nothing is recorded.
   const shareAddress = await sharingAddress(params).catch(() => null);
+  const toolsHash =
+    shareAddress === null
+      ? null
+      : await (mcp !== undefined ? assistantToolsHash() : Promise.resolve(NO_TOOLS_HASH)).catch(
+          (e: unknown) => {
+            log.warn('[AI sharing] could not list the assistant tools; not recording this turn', e);
+            return null;
+          },
+        );
   const recorder =
-    shareAddress !== null && params.share !== undefined
+    shareAddress !== null && params.share !== undefined && toolsHash !== null
       ? await TurnRecorder.start({
           address: shareAddress,
           conversationId: params.sessionId ?? '',
@@ -1427,6 +1438,8 @@ export async function aiSend(
           provider: params.provider,
           requestedModel: params.model ?? 'default',
           systemPrompt: DCL_SYSTEM_PROMPT,
+          skillsCommit,
+          toolsHash,
           prompt: params.text,
           attachments: (params.attachments ?? []).map(a => ({ name: a.name, kind: a.kind })),
           projectId: (await projectIdPromise) || null,
@@ -1538,18 +1551,30 @@ export async function aiSend(
     const mutations = getTurnMutations();
     if (ok) providersNeedingLogin.delete(params.provider);
     if (message !== undefined) emit({ kind: 'error', turnId, message });
-    emit({ kind: 'done', turnId, ok, mutations, ...(cancelled ? { cancelled } : {}) });
-    if (current === turn) current = null;
-    void recorder?.finish(
-      {
-        outcome: ok ? 'ok' : cancelled ? 'cancelled' : 'error',
-        errorKind: ok || cancelled ? null : (errorKind ?? 'exit_code'),
+    const done = (recordId: string | null = null) =>
+      emit({
+        kind: 'done',
+        turnId,
+        ok,
         mutations,
-        endedAt: Date.now(),
-      },
-      info,
-      async () => (await sharingAddress(params).catch(() => null)) === shareAddress,
-    );
+        ...(cancelled ? { cancelled } : {}),
+        ...(recordId !== null ? { recordId } : {}),
+      });
+    if (recorder === null) done();
+    if (current === turn) current = null;
+    // A shared turn's `done` waits for its record, so the chat can offer to rate it.
+    void recorder
+      ?.finish(
+        {
+          outcome: ok ? 'ok' : cancelled ? 'cancelled' : 'error',
+          errorKind: ok || cancelled ? null : (errorKind ?? 'exit_code'),
+          mutations,
+          endedAt: Date.now(),
+        },
+        info,
+        async () => (await sharingAddress(params).catch(() => null)) === shareAddress,
+      )
+      .then(done, () => done());
     void projectIdPromise.then(project_id =>
       track('AI Turn Completed', {
         project_id,

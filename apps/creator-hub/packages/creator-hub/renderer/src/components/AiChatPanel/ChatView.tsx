@@ -47,7 +47,12 @@ import type { AiMessage, AiPromptData, AiSessionMeta } from '/@/modules/store/ai
 import { WarningCircleIcon } from '../Icons';
 import { SignInCodeField } from '../SignInCodeField';
 import { toolChipLabel } from './labels';
-import { SharingConsentCard, SharingStatusChip, type SharingProps } from './SharingConsent';
+import {
+  SharingConsentCard,
+  SharingStatusChip,
+  TurnRating,
+  type SharingProps,
+} from './SharingConsent';
 import {
   AssistantBubble,
   AssistantImage,
@@ -356,6 +361,8 @@ export interface ChatViewProps extends SharingProps {
   onNewChat: () => void;
   onProviderChange: (provider: AiProvider) => void;
   onRevertTurn: (id: string, count: number) => void;
+  // Thumbs up or down on a shared reply (null clears it). Shown only on shared replies.
+  onRateTurn?: (id: string, rating: 'up' | 'down' | null) => void;
   // Answer an interactive `ask_user` prompt (unblocks the agent's waiting tool call).
   onAnswerPrompt: (id: string, answer: string) => void;
   onRecheck: () => void;
@@ -419,6 +426,7 @@ export function ChatView(props: ChatViewProps) {
     onNewChat,
     onProviderChange,
     onRevertTurn,
+    onRateTurn,
     onAnswerPrompt,
     onRecheck,
     onDismissBilling,
@@ -825,6 +833,14 @@ export function ChatView(props: ChatViewProps) {
                 {t('editor.ai.revert')}
               </Button>
             )}
+          {msg.done && (
+            <TurnRating
+              sharing={sharing}
+              recordId={msg.recordId}
+              rating={msg.rating}
+              onRate={onRateTurn !== undefined ? rating => onRateTurn(msg.id, rating) : undefined}
+            />
+          )}
         </AssistantBubble>
       ),
     );

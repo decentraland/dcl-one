@@ -8,7 +8,7 @@ import type { AiSharingView } from '/shared/types/ai';
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
-import { SharingConsentCard, SharingStatusChip } from './SharingConsent';
+import { SharingConsentCard, SharingStatusChip, TurnRating } from './SharingConsent';
 
 const copy = en.editor.ai.sharing;
 
@@ -69,7 +69,7 @@ describe('when the creator has not been asked yet', () => {
     expect(onShareDecision).not.toHaveBeenCalled();
   });
 
-  it('should list what is shared, what is not, and how it is analysed on request', () => {
+  it('should list what is shared, what is not, how it is analysed and what may be published on request', () => {
     renderBoth(view);
     expect(screen.queryByText(copy.details_not_shared)).toBeNull();
 
@@ -78,6 +78,7 @@ describe('when the creator has not been asked yet', () => {
     expect(screen.getByText(copy.details_shared)).toBeTruthy();
     expect(screen.getByText(copy.details_not_shared)).toBeTruthy();
     expect(screen.getByText(copy.details_analysis)).toBeTruthy();
+    expect(screen.getByText(copy.details_publish)).toBeTruthy();
   });
 
   it('should not show the sharing chip', () => {
@@ -134,6 +135,56 @@ describe('when sharing is on', () => {
 describe('when the feature is hidden', () => {
   it('should render nothing', () => {
     renderBoth({ status: 'hidden', conversationExcluded: false });
+
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+});
+
+describe('when rating a shared reply', () => {
+  const on: AiSharingView = { status: 'on', conversationExcluded: false };
+
+  function renderRating(props: Partial<Parameters<typeof TurnRating>[0]> = {}) {
+    const onRate = vi.fn();
+    render(
+      <ThemeProvider theme={dark}>
+        <TurnRating
+          sharing={on}
+          recordId="r1"
+          onRate={onRate}
+          {...props}
+        />
+      </ThemeProvider>,
+    );
+    return onRate;
+  }
+
+  it('should offer thumbs up and down', () => {
+    const onRate = renderRating();
+    fireEvent.click(screen.getByRole('button', { name: copy.rate_up }));
+
+    expect(onRate).toHaveBeenCalledWith('up');
+    expect(screen.getByRole('button', { name: copy.rate_down }).getAttribute('aria-pressed')).toBe(
+      'false',
+    );
+  });
+
+  it('should clear the rating when the chosen thumb is pressed again', () => {
+    const onRate = renderRating({ rating: 'down' });
+    const down = screen.getByRole('button', { name: copy.rate_down });
+
+    expect(down.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(down);
+    expect(onRate).toHaveBeenCalledWith(null);
+  });
+
+  it('should show nothing for a reply that was not shared', () => {
+    renderRating({ recordId: undefined });
+
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('should show nothing in a conversation marked as not shared', () => {
+    renderRating({ sharing: { status: 'on', conversationExcluded: true } });
 
     expect(screen.queryByRole('button')).toBeNull();
   });

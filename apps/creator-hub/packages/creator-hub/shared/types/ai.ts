@@ -195,8 +195,16 @@ export type AiEvent =
   | { kind: 'error'; turnId: string; message: string }
   // `mutations` is how many undo entries this turn applied to the scene graph — the panel
   // uses it to offer a one-click "Undo AI changes" (revert the turn).
-  // `cancelled` is set when the user stopped the turn.
-  | { kind: 'done'; turnId: string; ok: boolean; mutations?: number; cancelled?: boolean };
+  // `cancelled` is set when the user stopped the turn. `recordId` is set when the turn was
+  // queued for AI sharing: the id its rating is sent under.
+  | {
+      kind: 'done';
+      turnId: string;
+      ok: boolean;
+      mutations?: number;
+      cancelled?: boolean;
+      recordId?: string;
+    };
 
 // --- Detached AI window (#1504) -------------------------------------------------------
 //
@@ -236,6 +244,8 @@ export interface AiMirrorMessage {
   mutations?: number;
   cancelled?: boolean;
   reverted?: boolean;
+  recordId?: string;
+  rating?: 'up' | 'down';
   // Files the user attached to this prompt (chips under the user bubble). Name + kind only.
   attachments?: AiAttachmentMeta[];
 }
@@ -300,4 +310,5 @@ export type AiRemoteCommand =
   | { type: 'shareDecision'; granted: boolean }
   | { type: 'shareNotNow' }
   | { type: 'setConversationShared'; shared: boolean }
+  | { type: 'rateTurn'; id: string; rating: 'up' | 'down' | null }
   | { type: 'sync' };

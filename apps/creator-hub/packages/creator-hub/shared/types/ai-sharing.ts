@@ -37,6 +37,20 @@ export function hasSharingConsent(consent: AiSharingConsent | undefined): boolea
   return consent?.consent === 'granted' && consent.version === AI_SHARING_CONSENT_VERSION;
 }
 
+/**
+ * Requests to the sharing service that must not be lost to a failure or a quit, per wallet
+ * (lowercase address): retried, oldest first, until the service takes them.
+ */
+export interface AiSharingPending {
+  /** Conversations the creator marked as not shared, whose shared turns are to be erased. */
+  erasures?: { conversationId: string; decidedAt: string }[];
+  /** Ratings not yet delivered, by record id; null clears one. */
+  ratings?: Record<string, 'up' | 'down' | null>;
+}
+
+/** `AppSettings.aiSharingPending`. */
+export type AiSharingPendingByWallet = Record<string, AiSharingPending>;
+
 export const AI_SHARING_LIMITS = {
   promptChars: 16_000,
   responseChars: 32_000,
@@ -64,7 +78,7 @@ export interface AiTurnUsage {
   costUsd: number | null;
 }
 
-/** One assistant turn, as uploaded. The wire contract with the creators-data service. */
+/** One assistant turn, as uploaded: schema version 1 of Assistant Insights' record. */
 export interface AiTurnRecord {
   schemaVersion: 1;
   recordId: string;
@@ -84,7 +98,15 @@ export interface AiTurnRecord {
     actualModel: string | null;
     cliVersion: string | null;
   };
-  systemPromptHash: string;
+  /**
+   * Which assistant answered: with `app.version`, these name the system prompt, skills and tools
+   * exactly. Hex SHA-256s; `skillsCommit` is absent when no sdk-skills were linked into the scene.
+   */
+  assistant: {
+    systemPromptHash: string;
+    skillsCommit?: string;
+    toolsHash: string;
+  };
 
   prompt: RedactedText;
   context: {

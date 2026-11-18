@@ -7,6 +7,7 @@ import { useDispatch, useSelector } from '#store';
 import {
   actions as aiSharingActions,
   canManageSharing,
+  selectPending,
   selectSharingConsent,
 } from '/@/modules/store/aiSharing';
 import { useAuth } from './useAuth';
@@ -29,7 +30,9 @@ export function useAiSharingUploader() {
   // The timer runs while there is something to upload, and while a decision (a "no" included)
   // hasn't reached the service yet: a withdrawal that failed is retried, with the usual backoff,
   // instead of waiting for the next launch.
-  const keepRunning = consented || consent?.delivered !== true;
+  // A conversation erasure that failed is retried the same way.
+  const erasing = useSelector(state => (selectPending(state, address).erasures ?? []).length > 0);
+  const keepRunning = consented || consent?.delivered !== true || erasing;
 
   // Main records turns only for the wallet signed in here; tell it on every change.
   useEffect(() => {

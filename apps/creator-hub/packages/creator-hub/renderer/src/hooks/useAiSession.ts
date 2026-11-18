@@ -167,6 +167,9 @@ export function useAiSession(
         case 'setConversationShared':
           dispatch(aiActions.setConversationShared(command.shared));
           break;
+        case 'rateTurn':
+          dispatch(aiActions.rateTurn({ id: command.id, rating: command.rating }));
+          break;
         case 'sync':
           aiPreload.pushAiMirrorState({
             ...latest.current.aiState,

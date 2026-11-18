@@ -87,6 +87,10 @@ export function AiChatPanel({ onClose, onPopOut, onClearSelection, width }: Prop
     (shared: boolean) => dispatch(aiActions.setConversationShared(shared)),
     [dispatch],
   );
+  const onRateTurn = useCallback(
+    (id: string, rating: 'up' | 'down' | null) => dispatch(aiActions.rateTurn({ id, rating })),
+    [dispatch],
+  );
 
   return (
     <ChatView
@@ -121,6 +125,7 @@ export function AiChatPanel({ onClose, onPopOut, onClearSelection, width }: Prop
       onShareDecision={onShareDecision}
       onShareNotNow={onShareNotNow}
       onSetConversationShared={onSetConversationShared}
+      onRateTurn={onRateTurn}
     />
   );
 }

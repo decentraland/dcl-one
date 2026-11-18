@@ -96,6 +96,11 @@ export function AiChatWindow() {
     (shared: boolean) => aiPreload.sendAiRemoteCommand({ type: 'setConversationShared', shared }),
     [],
   );
+  const onRateTurn = useCallback(
+    (id: string, rating: 'up' | 'down' | null) =>
+      aiPreload.sendAiRemoteCommand({ type: 'rateTurn', id, rating }),
+    [],
+  );
 
   if (mirror === null) {
     return (
@@ -138,6 +143,7 @@ export function AiChatWindow() {
       onShareDecision={onShareDecision}
       onShareNotNow={onShareNotNow}
       onSetConversationShared={onSetConversationShared}
+      onRateTurn={onRateTurn}
     />
   );
 }

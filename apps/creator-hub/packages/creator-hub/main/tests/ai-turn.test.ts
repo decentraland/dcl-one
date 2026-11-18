@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   treeKill: vi.fn(),
   ensureSceneMcpServer: vi.fn(),
   setSceneMcpProject: vi.fn(),
+  ensureSkillsLinked: vi.fn(async (): Promise<string | null> => null),
+  listAssistantTools: vi.fn(async (): Promise<{ name: string }[]> => []),
 }));
 
 vi.mock('cross-spawn', () => ({ default: Object.assign(mocks.crossSpawn, { sync: vi.fn() }) }));
@@ -33,11 +35,15 @@ vi.mock('../src/modules/electron', () => ({
   getUserDataPath: () => mocks.userData || os.tmpdir(),
   getAppVersion: async () => '9.9.9-test',
 }));
-vi.mock('../src/modules/skills', () => ({ ensureSkillsLinked: vi.fn(async () => {}) }));
+vi.mock('../src/modules/skills', () => ({
+  ensureSkillsLinked: mocks.ensureSkillsLinked,
+  SKILL_DENYLIST: new Set(),
+}));
 vi.mock('../src/modules/scene-mcp', () => ({
   clearPendingAsks: vi.fn(),
   ensureSceneMcpServer: mocks.ensureSceneMcpServer,
   getTurnMutations: () => 0,
+  listAssistantTools: mocks.listAssistantTools,
   resetTurnMutations: vi.fn(),
   setSceneMcpProject: mocks.setSceneMcpProject,
   writeSceneMcpConfigFile: vi.fn(),
@@ -46,6 +52,8 @@ vi.mock('../src/modules/scene-mcp', () => ({
 import log from 'electron-log/main';
 import type { AiEvent, AiSendParams } from '/shared/types/ai';
 import { AI_SHARING_CONSENT_VERSION, type AiTurnRecord } from '/shared/types/ai-sharing';
+import { DCL_SYSTEM_PROMPT } from '../src/modules/ai-prompt';
+import { hashTools, sha256 } from '../src/modules/ai-sharing/hashes';
 import { track } from '../src/modules/analytics';
 import { setConversationShared, setSignedInWallet } from '../src/modules/ai-sharing';
 import { aiBusy, aiSend, aiStop } from '../src/modules/ai';
@@ -537,6 +545,55 @@ describe('when running AI turns', () => {
       await runTurn(shared);
 
       expect(queued()).toEqual([]);
+    });
+
+    it('should name the skills commit linked for the turn and the tools it had', async () => {
+      const commit = '0123456789abcdef0123456789abcdef01234567';
+      mocks.ensureSkillsLinked.mockResolvedValueOnce(commit);
+      mocks.ensureSceneMcpServer.mockResolvedValueOnce({
+        url: 'http://127.0.0.1:1/mcp',
+        token: 'x',
+      });
+      mocks.listAssistantTools.mockResolvedValue([{ name: 'scene_state' }]);
+      await runTurn(shared);
+
+      expect(queued()[0].assistant).toEqual({
+        systemPromptHash: sha256(DCL_SYSTEM_PROMPT),
+        skillsCommit: commit,
+        toolsHash: hashTools([{ name: 'scene_state' }]),
+      });
+    });
+
+    it('should hash an empty tool list for a turn that ran without the scene tools', async () => {
+      await runTurn(shared);
+
+      expect(queued()[0].assistant).toEqual({
+        systemPromptHash: sha256(DCL_SYSTEM_PROMPT),
+        toolsHash: hashTools([]),
+      });
+    });
+
+    it('should send the record id with the done event of a shared turn', async () => {
+      const events: AiEvent[] = [];
+      await aiSend(shared, projectDir, e => events.push(e));
+      writeLines(child, assistantText('Added it.'));
+      exitAndClose(child, 0);
+      await settle();
+
+      const done = events.filter(e => e.kind === 'done');
+      expect(done).toEqual([expect.objectContaining({ ok: true, recordId: queued()[0].recordId })]);
+    });
+
+    it('should send no record id when the turn was not shared', async () => {
+      const events: AiEvent[] = [];
+      await aiSend({ ...shared, share: undefined }, projectDir, e => events.push(e));
+      writeLines(child, assistantText('Added it.'));
+      exitAndClose(child, 0);
+      await settle();
+
+      const done = events.filter(e => e.kind === 'done');
+      expect(done).toHaveLength(1);
+      expect(done[0]).not.toHaveProperty('recordId');
     });
 
     it('should record a stopped turn as cancelled', async () => {

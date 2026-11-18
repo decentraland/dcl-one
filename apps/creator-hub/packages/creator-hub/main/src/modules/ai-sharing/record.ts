@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'crypto';
+import { randomUUID } from 'crypto';
 import path from 'path';
 
 import type { AiProvider, AiShareRequest } from '/shared/types/ai';
@@ -11,6 +11,8 @@ import {
   type AiTurnUsage,
 } from '/shared/types/ai-sharing';
 import { prepareForSharing, redactForSharing } from '/shared/redact';
+
+import { sha256 } from './hashes';
 
 /** What one CLI line says about the run itself, as opposed to the conversation. */
 export interface TurnInfo {
@@ -91,6 +93,9 @@ export interface TurnCapture {
   provider: AiProvider;
   requestedModel: string;
   systemPrompt: string;
+  // The sdk-skills commit linked into the scene for this turn; null when none was.
+  skillsCommit: string | null;
+  toolsHash: string;
   prompt: string;
   attachments: { name: string; kind: string }[];
   projectId: string | null;
@@ -104,10 +109,6 @@ export interface TurnEnd {
   errorKind: AiTurnErrorKind | null;
   mutations: number;
   endedAt: number;
-}
-
-export function sha256(value: string): string {
-  return createHash('sha256').update(value).digest('hex');
 }
 
 const byteLength = (record: AiTurnRecord): number =>
@@ -139,7 +140,11 @@ export function buildTurnRecord(capture: TurnCapture, end: TurnEnd): AiTurnRecor
       actualModel: capture.info.model ?? null,
       cliVersion: capture.info.cliVersion ?? null,
     },
-    systemPromptHash: sha256(capture.systemPrompt),
+    assistant: {
+      systemPromptHash: sha256(capture.systemPrompt),
+      ...(typeof capture.skillsCommit === 'string' ? { skillsCommit: capture.skillsCommit } : {}),
+      toolsHash: capture.toolsHash,
+    },
     prompt: redactForSharing(capture.prompt, AI_SHARING_LIMITS.promptChars),
     context: {
       selectedEntityCount: capture.share.selectedEntityCount,

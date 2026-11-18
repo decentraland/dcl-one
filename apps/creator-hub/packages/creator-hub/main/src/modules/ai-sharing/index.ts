@@ -104,33 +104,35 @@ export class TurnRecorder {
   }
 
   /**
-   * Builds and queues the record, once. `stillShared` runs first: consent, the account or the
-   * conversation's exclusion can change while a turn runs, and the answer at the end is the
-   * one that counts.
+   * Builds and queues the record, once, and returns its id (null when nothing was queued).
+   * `stillShared` runs first: consent, the account or the conversation's exclusion can change
+   * while a turn runs, and the answer at the end is the one that counts.
    */
   async finish(
     end: TurnEnd,
     info: TurnInfo,
     stillShared: () => Promise<boolean>,
     queue: (record: AiTurnRecord) => void = r => getOutbox().enqueue(r),
-  ): Promise<void> {
-    if (this.finished) return;
+  ): Promise<string | null> {
+    if (this.finished) return null;
     this.finished = true;
     const excluded = () => isConversationExcluded(this.capture.conversationId);
     try {
-      if (excluded() || !(await stillShared())) return;
+      if (excluded() || !(await stillShared())) return null;
       const record = buildTurnRecord({ ...this.capture, info }, end);
       if (record === null) {
         log.warn(`[AI sharing] turn ${this.capture.turnId} is too large to share; not queued`);
-        return;
+        return null;
       }
       // Again after the await: excluding the conversation meanwhile purged a queue this record
       // wasn't in yet.
-      if (excluded()) return;
+      if (excluded()) return null;
       queue(record);
+      return record.recordId;
     } catch (e) {
       // Never let sharing break a turn: the record is lost, the conversation isn't.
       log.warn('[AI sharing] could not queue the turn record', e);
+      return null;
     }
   }
 }

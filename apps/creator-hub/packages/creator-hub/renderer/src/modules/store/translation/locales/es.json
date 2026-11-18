@@ -186,6 +186,7 @@
         "details_shared": "Se comparte: lo que escribes, las respuestas del asistente, las herramientas que usó con sus nombres de archivo y comandos, el agente y el modelo, y cuánto tardó cada respuesta.",
         "details_not_shared": "No se comparte: imágenes, contenido de archivos, el nombre de tu escena ni las conversaciones que marques como no compartidas.",
         "details_analysis": "Cómo se usan: un modelo de IA de un proveedor que trabaja para Decentraland resume cada conversación. El proveedor no guarda ninguna copia ni entrena con ellas. Guardamos los patrones que vemos entre muchos creadores para mejorar el asistente.",
+        "details_publish": "El equipo comenta esos patrones. Los cambios que salgan de ellos pueden publicarse en las instrucciones, habilidades y documentación públicas del asistente, y en las descripciones de esos cambios. Una vez publicados, siguen siendo públicos aunque borres lo que compartiste.",
         "details_control": "Puedes dejar de compartir o borrar todo lo compartido en cualquier momento desde Configuración. Dejar de compartir también detiene el análisis, y borrar también borra los resúmenes. Las conversaciones compartidas y sus resúmenes se guardan hasta 180 días.",
         "accept": "Compartir para ayudar",
         "decline": "No, gracias",
@@ -195,7 +196,9 @@
         "menu_exclude": "No compartir esta conversación",
         "menu_include": "Compartir esta conversación",
         "menu_stop": "Dejar de compartir todas las conversaciones",
-        "chip_menu": "opciones para compartir"
+        "chip_menu": "opciones para compartir",
+        "rate_up": "Buena respuesta",
+        "rate_down": "Mala respuesta"
       }
     },
     "publish": {
@@ -706,7 +709,35 @@
           "viewer_more": "Ver más",
           "delete_confirm": "¿Borrar todo lo que compartiste, con sus resúmenes, y dejar de compartir? No se puede deshacer.",
           "delete_confirm_yes": "Borrar todo",
-          "delete_cancel": "Cancelar"
+          "delete_cancel": "Cancelar",
+          "digests_show": "Ver los resúmenes hechos de tus conversaciones",
+          "digests_hide": "Ocultar los resúmenes",
+          "digests_empty": "Todavía no hay resúmenes. Cada conversación se resume unas horas después de terminar.",
+          "digests_failed": "No se pudieron cargar los resúmenes. Revisa tu conexión e inténtalo de nuevo.",
+          "digests_more": "Ver más",
+          "digests_problems": "Problemas: {kinds}",
+          "digest_outcome": {
+            "achieved": "Logrado",
+            "partial": "Logrado en parte",
+            "not_achieved": "No logrado",
+            "abandoned": "Abandonado",
+            "unclear": "No está claro"
+          },
+          "digest_friction": {
+            "misunderstood_request": "pedido mal entendido",
+            "wrong_sdk_knowledge": "conocimiento del SDK incorrecto",
+            "tool_failed": "falló una herramienta",
+            "tool_missing": "falta una herramienta",
+            "skill_missing": "falta una habilidad",
+            "skill_ignored": "habilidad sin usar",
+            "asset_not_found": "recurso no encontrado",
+            "scene_broke": "la escena se rompió",
+            "slow_or_stuck": "lento o trabado",
+            "creator_corrected_agent": "corregiste al asistente",
+            "creator_stopped_reply": "detuviste una respuesta",
+            "setup_or_sign_in": "configuración o inicio de sesión",
+            "other": "otro"
+          }
         }
       },
       "actions": {

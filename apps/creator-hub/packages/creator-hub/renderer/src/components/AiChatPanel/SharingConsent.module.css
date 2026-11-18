@@ -56,3 +56,9 @@
   outline: 2px solid var(--brand);
   outline-offset: 2px;
 }
+
+.rating {
+  display: flex;
+  gap: 2px;
+  color: rgba(240, 240, 240, 0.7);
+}

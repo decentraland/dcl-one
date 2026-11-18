@@ -11,6 +11,8 @@ import type {
 import { assetMentionKey } from '/shared/types/ai';
 import type { AiRevertResult } from '/shared/types/ipc';
 import type { AppState } from '/@/modules/store';
+// Types only: the slice itself is loaded on use (see `shareThisTurn`).
+import type * as SharingSlice from '/@/modules/store/aiSharing/slice';
 
 import { createAsyncThunk } from '/@/modules/store/thunk';
 import {
@@ -22,7 +24,7 @@ import {
   writeSessionIndex,
   writeSessionMessages,
 } from './persistence';
-import type { AiMessage, AiPromptData, AiSessionMeta, AiState } from './types';
+import type { AiMessage, AiPromptData, AiRating, AiSessionMeta, AiState } from './types';
 
 const initialState: AiState = {
   providers: [],
@@ -318,8 +320,38 @@ export const setConversationShared = createAsyncThunk<void, boolean>(
     }
     // Main drops the conversation's queued turns and any turn still running in it.
     void aiSharing.setConversationShared(current, shared);
+    // What it already shared goes too.
+    const recordIds = aiState.messages.flatMap(m => (m.recordId !== undefined ? [m.recordId] : []));
+    if (!shared && recordIds.length > 0) {
+      void withSharingSlice(sharing =>
+        dispatch(sharing.actions.eraseConversation({ conversationId: current, recordIds })),
+      );
+    }
   },
 );
+
+// A thumbs up or down (or `null`, neither) on a shared reply. Saved with the conversation, and
+// sent to the sharing service; a reply that wasn't shared has nothing to rate.
+export const rateTurn = createAsyncThunk<void, { id: string; rating: AiRating | null }>(
+  'ai/rateTurn',
+  ({ id, rating }, { getState, dispatch }) => {
+    const msg = getState().ai.messages.find(m => m.id === id);
+    if (msg?.role !== 'assistant' || msg.recordId === undefined) return;
+    const recordId = msg.recordId;
+    dispatch(actions.setRating({ id, rating }));
+    void dispatch(persistConversation());
+    void withSharingSlice(sharing => dispatch(sharing.actions.rateTurn({ recordId, rating })));
+  },
+);
+
+// The sharing slice, loaded on use for the reason `shareThisTurn` gives.
+async function withSharingSlice(use: (sharing: typeof SharingSlice) => unknown): Promise<void> {
+  try {
+    await use(await import('/@/modules/store/aiSharing/slice'));
+  } catch {
+    // Sharing is best-effort; the conversation carries on.
+  }
+}
 
 // Dismiss the "runs on your own account" billing hint for the open scene (#1505), and
 // remember it per-project so it stays gone across restarts.
@@ -491,6 +523,7 @@ const slice = createSlice({
             msg.done = true;
             msg.mutations = payload.mutations;
             if (payload.cancelled === true) msg.cancelled = true;
+            if (payload.recordId !== undefined) msg.recordId = payload.recordId;
           }
           state.busy = false;
           break;
@@ -501,6 +534,12 @@ const slice = createSlice({
           return _exhaustive;
         }
       }
+    },
+    setRating: (state, { payload }: PayloadAction<{ id: string; rating: AiRating | null }>) => {
+      const msg = state.messages.find(m => m.id === payload.id);
+      if (msg === undefined) return;
+      if (payload.rating === null) delete msg.rating;
+      else msg.rating = payload.rating;
     },
     // Finalize on an intentional stop. Main also sends `done` (cancelled), which may arrive
     // before or after this; both paths leave the same state.
@@ -664,6 +703,7 @@ export const actions = {
   persistConversation,
   dismissBilling,
   setConversationShared,
+  rateTurn,
   switchSession,
   deleteSession,
 };

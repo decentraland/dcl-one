@@ -38,6 +38,20 @@ export type AiSharingStoredTurn = Pick<
 
 export type AiSharingTurnPage = { records: AiSharingStoredTurn[]; next: string | null };
 
+/** A thumbs up or down on one shared reply; null clears it. */
+export type AiSharingRating = 'up' | 'down' | null;
+
+/** What Assistant Insights made of one of the wallet's conversations. */
+export type AiSharingDigest = {
+  conversationId: string;
+  goal: string;
+  outcome: 'achieved' | 'partial' | 'not_achieved' | 'abandoned' | 'unclear';
+  frictions: { kind: string }[];
+  createdAt: string;
+};
+
+export type AiSharingDigestPage = { digests: AiSharingDigest[]; next: string | null };
+
 export type AiSharingUploadResult = {
   accepted: number;
   rejected: { recordId: string; reason: string }[];
@@ -117,6 +131,26 @@ export const listTurns = (wallet: string, cursor: string | null, limit = 10) => 
 /** Erases every shared turn of the wallet and records the withdrawal, dated `decidedAt`. */
 export const eraseAll = (wallet: string, decidedAt: string) =>
   send<{ deleted: number }>(wallet, 'POST', '/erase', { decidedAt });
+
+/**
+ * Erases what one conversation shared (the creator marked it as not shared); sharing stays as it
+ * is. `decidedAt` is when they did, kept across retries.
+ */
+export const eraseConversation = (wallet: string, conversationId: string, decidedAt: string) =>
+  send<{ deleted: number }>(wallet, 'POST', '/erase', { decidedAt, conversationId });
+
+export const putRating = (wallet: string, recordId: string, rating: AiSharingRating) =>
+  send<{ recordId: string; rating: AiSharingRating }>(wallet, 'PUT', '/ratings', {
+    recordId,
+    rating,
+  });
+
+/** The summaries made of the wallet's own conversations, newest first. */
+export const listDigests = (wallet: string, cursor: string | null, limit = 10) => {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (cursor !== null) query.set('cursor', cursor);
+  return send<AiSharingDigestPage>(wallet, 'GET', `/digests?${query}`);
+};
 
 /** Erases one shared turn; sharing stays as it is. */
 export const eraseTurn = (wallet: string, recordId: string) =>

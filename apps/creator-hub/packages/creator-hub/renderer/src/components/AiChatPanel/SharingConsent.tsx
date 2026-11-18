@@ -1,5 +1,9 @@
 import { useState } from 'react';
 import CloseIcon from '@mui/icons-material/Close';
+import ThumbDownIcon from '@mui/icons-material/ThumbDown';
+import ThumbDownOutlinedIcon from '@mui/icons-material/ThumbDownOutlined';
+import ThumbUpIcon from '@mui/icons-material/ThumbUp';
+import ThumbUpOutlinedIcon from '@mui/icons-material/ThumbUpOutlined';
 import { Button, IconButton, Menu, MenuItem, Tooltip } from 'decentraland-ui2';
 
 import type { AiSharingView } from '/shared/types/ai';
@@ -65,6 +69,7 @@ export function SharingConsentCard({ sharing, onShareDecision, onShareNotNow }: 
               <li>{t('editor.ai.sharing.details_shared')}</li>
               <li>{t('editor.ai.sharing.details_not_shared')}</li>
               <li>{t('editor.ai.sharing.details_analysis')}</li>
+              <li>{t('editor.ai.sharing.details_publish')}</li>
               <li>{t('editor.ai.sharing.details_control')}</li>
             </ul>
           )}
@@ -138,5 +143,67 @@ export function SharingStatusChip({
         </MenuItem>
       </Menu>
     </>
+  );
+}
+
+/**
+ * Thumbs up or down on one shared reply; pressing the chosen one again clears it. Shown only
+ * while the conversation is shared and the reply was shared with it.
+ */
+export function TurnRating({
+  sharing,
+  recordId,
+  rating,
+  onRate,
+}: {
+  sharing?: AiSharingView;
+  recordId?: string;
+  rating?: 'up' | 'down';
+  onRate?: (rating: 'up' | 'down' | null) => void;
+}) {
+  if (
+    sharing?.status !== 'on' ||
+    sharing.conversationExcluded ||
+    recordId === undefined ||
+    onRate === undefined
+  ) {
+    return null;
+  }
+  const choices = [
+    {
+      value: 'up',
+      label: t('editor.ai.sharing.rate_up'),
+      on: ThumbUpIcon,
+      off: ThumbUpOutlinedIcon,
+    },
+    {
+      value: 'down',
+      label: t('editor.ai.sharing.rate_down'),
+      on: ThumbDownIcon,
+      off: ThumbDownOutlinedIcon,
+    },
+  ] as const;
+  return (
+    <div className={styles.rating}>
+      {choices.map(({ value, label, on: OnIcon, off: OffIcon }) => {
+        const pressed = rating === value;
+        const Icon = pressed ? OnIcon : OffIcon;
+        return (
+          <Tooltip
+            key={value}
+            title={label}
+          >
+            <IconButton
+              size="small"
+              aria-label={label}
+              aria-pressed={pressed}
+              onClick={() => onRate(pressed ? null : value)}
+            >
+              <Icon sx={{ fontSize: 14 }} />
+            </IconButton>
+          </Tooltip>
+        );
+      })}
+    </div>
   );
 }
