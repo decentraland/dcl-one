@@ -50,6 +50,22 @@ in shell mode; HUD preferences go through `library/explorer-core/lib/prefs.ts` (
 (each host's shell, such as `react-web/src/shell/main.ts`, and the sign-in code it owns) may read it. The same reasoning applies to
 anything secret: it must not be in the app process at all.
 
+**Scenes reach no origin storage**, on native or web, system scenes included: no
+`sessionStorage`, IndexedDB, Cache Storage, OPFS or file system. A scene's `localStorage` is the
+engine's, kept apart for each scene, not the browser's. On web, before scene code runs,
+`sandbox_worker.js` removes the native `fetch`, `WebTransport` and `FontFace` from the whole
+prototype chain, and `scene_global.js` deletes the storage APIs, `XMLHttpRequest`, `EventSource`,
+`importScripts`, `Notification` and the granted-device APIs (`navigator.usb`, `hid`, `serial`).
+`createSceneFetch` builds every request it sends, direct or routed through the node, in one
+place: with `credentials: "omit"` and `cache: "no-store"`, and without the `X-IPFS` header the
+service worker's content cache answers. That path, its routing and its five-send limit use only
+functions captured at load, and its inits have a null prototype, so scene code that replaces
+built-ins or pollutes `Object.prototype` changes none of them. `WebSocket` and `WebSocketStream` stay outside it, and their
+handshake carries the target host's cookies. A dynamic `import()` does not go through it
+either, and a same-origin one carries the origin's cookies. On native the runtime registers no
+storage extension besides that `localStorage`. Any other state a scene must keep goes through
+an engine API that scopes it, not a browser store.
+
 **On native, never `Path::join` or `PathBuf::push` with a component from outside.** Content
 hashes, content-map keys, entity ids, scene file names, URLs, RPC arguments: anything that
 arrived from a content server or a scene. `join` replaces the base when the right side is
