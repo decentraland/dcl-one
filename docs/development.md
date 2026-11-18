@@ -180,9 +180,10 @@ that run the matching workflows' checks (images need Linux or
 The Rust tests run in three jobs that each compile the tests and run a third of
 the test executables; on PRs they run on Linux (`CATALYST_TEST_SHARD=i/n` for
 `tooling/catalyst-test.sh`). The provisioned Archipelago tests take a fixed
-time, so only the shard that `CATALYST_TEST_PROVISIONED_SHARD` names runs them;
-the other shards check that the tests are present. A run that sets neither
-variable runs them. The doc-tests run only in the shard that
+time, so only the shard that `CATALYST_TEST_PROVISIONED_SHARD` names runs them,
+beside its test executables, since they mostly wait on timers; the step fails
+when either fails. The other shards check that the tests are present. A run
+that sets neither variable runs them. The doc-tests run only in the shard that
 `CATALYST_TEST_DOC_SHARD` names, or in every shard without it. When the
 dependency cache restores anything, from its exact key or a partial match, the
 jobs compile through a compiler cache (`sccache` on the GitHub cache) that
@@ -206,8 +207,15 @@ the dev shell and the test tooling) or a path that a Rust source names. A new
 input of the Rust job goes on that list and on the path list of
 `development.yml` in the change that adds it; pushes to `main` always run the
 Rust tests. The Rust tests run in three shards. Each shard sorts the test
-binaries by source file and kind, so the three take one list on any runner
-(`tooling/catalyst-test.sh`). Two more labels work the same way:
+binaries by source file and kind and cuts that list by the times recorded in
+`tooling/catalyst-test-durations.tsv`, so the three take one list on any runner
+(`tooling/catalyst-test.sh`): longest first, each binary goes to the shard it
+lengthens least, with the `node_*` and `sockets_*` groups spread across the
+shards, and each shard starts its longest binaries first. A binary without a
+recorded time keeps its place in the byte-order cut (every third from the
+shard's own). Refresh the times from a recent `main` run (the `finished in` of
+each binary's summary line on Linux) when binaries are added or change much.
+Two more labels work the same way:
 `ci:desktop` builds the Creator Hub desktop app for macOS, Windows and Linux on
 a PR and attaches its test builds, and `ci:linux` builds Linux alone.
 `release:creator-hub` is read after the merge: the push to

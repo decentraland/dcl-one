@@ -41,8 +41,19 @@ for suite in "${suites[@]}"; do
       python3 tooling/dev-regressions.py
       cargo check --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --all-features --all-targets
       cargo test --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --lib
-      python3 tooling/dev-regressions.py --archipelago-external
-      make -C "$FOUNDATION_DEV_ROOT" catalyst-test ;;
+      # The provisioned tests wait on timers and use little CPU, so they run beside the broad run.
+      provisioned_log="$(mktemp)"
+      python3 tooling/dev-regressions.py --archipelago-external > "$provisioned_log" 2>&1 &
+      provisioned=$!
+      broad=0
+      make -C "$FOUNDATION_DEV_ROOT" catalyst-test || broad=$?
+      external=0
+      wait "$provisioned" || external=$?
+      cat "$provisioned_log"
+      rm -f "$provisioned_log"
+      [ "$external" -eq 0 ] || echo "dev-test: the provisioned Archipelago tests failed with status $external"
+      [ "$broad" -eq 0 ] || exit "$broad"
+      [ "$external" -eq 0 ] || exit "$external" ;;
     e2e) SITES_E2E_NODE_URL="$FOUNDATION_DEV_API_URL" SITES_E2E_PG_URL="$FOUNDATION_DEV_DATABASE_URL" \
          pnpm --dir "$FOUNDATION_DEV_ROOT/apps/sites" test:e2e ;;
     *) echo "unknown suite: $suite (rust|e2e)" >&2; exit 2 ;;
