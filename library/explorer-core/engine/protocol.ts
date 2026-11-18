@@ -13,6 +13,7 @@ import type {
   ConnectivitySnapshot,
   HomeScene,
   MapPinInfo,
+  PlatformBanNotice,
   PortableInfo,
   SatelliteView,
   SceneLoadingUi,
@@ -1132,6 +1133,16 @@ export interface WorldPasswordRequestMessage {
   world: string
   /** Why the previous answer was refused; absent on the first ask. */
   error?: string
+}
+
+/** A realm change's refusal for a known platform ban (the engine's `common::platform_ban::REALM_CHANGE_BANNED`). */
+export const PLATFORM_BANNED_REFUSAL = 'You are banned from Decentraland'
+
+/** The signed-in wallet's platform ban, whole on subscribe and on every change (scene → page).
+ *  `banned` is false while the check is unknown or failed. */
+export interface PlatformBanMessage {
+  kind: 'platformBan'
+  ban: PlatformBanNotice
 }
 
 /** The engine no longer needs the password prompt answered (its realm change is over). */
@@ -2563,6 +2574,7 @@ export type SceneToPage =
   | PermissionRulesMessage
   | WorldPasswordRequestMessage
   | WorldPasswordWithdrawnMessage
+  | PlatformBanMessage
   | EditorSceneResultMessage
   | PortablesMessage
   | MapPinsMessage

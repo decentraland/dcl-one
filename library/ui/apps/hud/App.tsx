@@ -46,6 +46,7 @@ import { StartupFlow } from './features/startup/StartupFlow'
 import { useBeforeWorld, useLoginMusic } from './features/startup/useLoginMusic'
 import { SceneLoadingOverlay } from './features/session/SceneLoadingOverlay'
 import { openTravelError } from './features/session/TravelError'
+import { usePlatformBanNotices } from './features/session/PlatformBanDialog'
 import { useEngineSession, type EngineSession } from './features/session/useEngineSession'
 import { useWindowKeyDown } from './lib/useWindowKeyDown'
 import { useHudInsetReport } from './lib/hudInset'
@@ -341,6 +342,9 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
     return openTravelError(travelError, session.dismissTravelError)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- dismissTravelError is stable
   }, [travelError])
+
+  // The platform ban: blocking before the world, dismissible after a refused travel.
+  usePlatformBanNotices({ phase: session.phase, ...session.platformBan, signOut: session.logout, openExternalUrl: session.openExternalUrl })
 
   // Deploying the Backpack's look failed: try it again, or go back to the last look that deployed.
   // A deliberate choice only: Escape reverts, a stray click outside does nothing.
