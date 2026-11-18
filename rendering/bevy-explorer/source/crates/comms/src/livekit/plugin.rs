@@ -284,21 +284,42 @@ fn respond_to_audio_settings_change(
 
 /// In a call, a mic key press held at least this long is push-to-talk; a shorter one leaves the
 /// mic open.
-const CALL_MIC_HOLD_SECS: f32 = 0.5;
+const CALL_MIC_HOLD_SECS: f64 = 0.5;
 
-/// A mic key press that opened the mic or found it open.
-struct MicKeyPress {
-    pressed_at: f32,
-    in_call: bool,
-    /// The mic was open at the press.
-    was_open: bool,
+/// A mic key press, from key-down to its release.
+enum MicKeyPress {
+    /// The scene blocks nearby voice: the press opened nothing and its release closes nothing.
+    Refused,
+    Nearby,
+    Call {
+        pressed_at: f64,
+        /// The call mic was open at the press.
+        was_open: bool,
+    },
 }
 
 impl MicKeyPress {
-    /// Nearby, every release closes the mic. In a call, a release closes it after a hold, or
-    /// when the mic was open at the press.
-    fn closes_on_release(&self, released_at: f32) -> bool {
-        !self.in_call || self.was_open || released_at - self.pressed_at >= CALL_MIC_HOLD_SECS
+    /// Nearby, the release closes the mic. In a call, it closes it after a hold, or when it was
+    /// open at the press; once the call has ended it does nothing.
+    fn release(
+        self,
+        released_at: f64,
+        mic_state: &mut MicState,
+        call_voice_inputs: Option<&mut VoiceInputs>,
+    ) {
+        match self {
+            MicKeyPress::Refused => (),
+            MicKeyPress::Nearby => mic_state.enabled = false,
+            MicKeyPress::Call {
+                pressed_at,
+                was_open,
+            } => {
+                let closes = was_open || released_at - pressed_at >= CALL_MIC_HOLD_SECS;
+                if let Some(voice_inputs) = call_voice_inputs.filter(|_| closes) {
+                    voice_inputs.0.push_back(VoiceInput::SetMic(false));
+                }
+            }
+        }
     }
 }
 
@@ -309,63 +330,56 @@ fn handle_input(
     time: Res<Time<Real>>,
     mut mic_state: ResMut<MicState>,
     mut press: Local<Option<MicKeyPress>>,
-    mut held: Local<bool>,
     call_mic: Option<Res<CallMic>>,
-    voice_inputs: Option<ResMut<VoiceInputs>>,
+    mut voice_inputs: Option<ResMut<VoiceInputs>>,
 ) {
-    let now = time.elapsed_secs();
-    let call = match (&call_mic, voice_inputs) {
-        (Some(call_mic), Some(voice_inputs)) if call_mic.in_call => {
-            Some((call_mic.enabled, voice_inputs))
-        }
+    let now = time.elapsed_secs_f64();
+    let call_mic_open = match (&call_mic, &voice_inputs) {
+        (Some(call_mic), Some(_)) if call_mic.in_call => Some(call_mic.enabled),
         _ => None,
     };
-    if *held {
-        if !input_manager.just_up(SystemAction::Microphone) {
-            return;
+    let in_call = call_mic_open.is_some();
+    let released = input_manager.just_up(SystemAction::Microphone);
+    let held = if released { press.take() } else { None };
+    let release_pending = released && held.is_none();
+    if let Some(held) = held {
+        held.release(
+            now,
+            &mut mic_state,
+            voice_inputs.as_deref_mut().filter(|_| in_call),
+        );
+    }
+    if !input_manager.just_down(SystemAction::Microphone, InputPriority::None) {
+        return;
+    }
+    let pressed = match call_mic_open {
+        Some(was_open) => {
+            if let Some(voice_inputs) = voice_inputs.as_deref_mut().filter(|_| !was_open) {
+                voice_inputs.0.push_back(VoiceInput::SetMic(true));
+            }
+            MicKeyPress::Call {
+                pressed_at: now,
+                was_open,
+            }
         }
-        *held = false;
-        let Some(press) = press.take() else {
-            return;
-        };
-        if !press.closes_on_release(now) {
-            return;
+        None if mic_state.scene_blocked() => {
+            mic_state.refuse();
+            MicKeyPress::Refused
         }
-        match call {
-            Some((_, mut voice_inputs)) if press.in_call => {
-                voice_inputs.0.push_back(VoiceInput::SetMic(false));
-            }
-            _ if !press.in_call => mic_state.enabled = false,
-            // the call ended during the press
-            _ => (),
+        None => {
+            mic_state.enabled = true;
+            MicKeyPress::Nearby
         }
-    } else if input_manager.just_down(SystemAction::Microphone, InputPriority::None) {
-        *held = true;
-        *press = match call {
-            Some((was_open, mut voice_inputs)) => {
-                if !was_open {
-                    voice_inputs.0.push_back(VoiceInput::SetMic(true));
-                }
-                Some(MicKeyPress {
-                    pressed_at: now,
-                    in_call: true,
-                    was_open,
-                })
-            }
-            None if mic_state.scene_blocked() => {
-                mic_state.refuse();
-                None
-            }
-            None => {
-                let was_open = mic_state.enabled;
-                mic_state.enabled = true;
-                Some(MicKeyPress {
-                    pressed_at: now,
-                    in_call: false,
-                    was_open,
-                })
-            }
-        };
+    };
+    // a tap inside one frame: its release came with the press
+    if release_pending {
+        pressed.release(
+            now,
+            &mut mic_state,
+            voice_inputs.as_deref_mut().filter(|_| in_call),
+        );
+    } else {
+        *press = Some(pressed);
     }
 }
 
@@ -455,37 +469,183 @@ fn respond_to_rpc_calls(
 
 #[cfg(test)]
 mod mic_key_tests {
+    use std::time::Duration;
+
+    use common::inputs::{Action, InputIdentifier, InputMap};
+    use input_manager::{CumulativeAxisData, InputPriorities};
+
     use super::*;
 
-    fn press(in_call: bool, was_open: bool) -> MicKeyPress {
-        MicKeyPress {
-            pressed_at: 10.0,
-            in_call,
-            was_open,
+    fn app() -> App {
+        let mut app = App::new();
+        app.init_resource::<InputMap>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<CumulativeAxisData>()
+            .init_resource::<InputPriorities>()
+            .init_resource::<Time<Real>>()
+            .init_resource::<MicState>()
+            .init_resource::<CallMic>()
+            .init_resource::<VoiceInputs>()
+            .add_systems(Update, handle_input);
+        app
+    }
+
+    fn mic_key(app: &App) -> KeyCode {
+        app.world().resource::<InputMap>().inputs[&Action::System(SystemAction::Microphone)]
+            .iter()
+            .find_map(|input| match input {
+                InputIdentifier::Key(key) => Some(*key),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    /// One frame, `secs` after the last: the mic key goes down, comes up, or both.
+    fn frame(app: &mut App, secs: f64, down: bool, up: bool) {
+        let key = mic_key(app);
+        app.world_mut()
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_secs_f64(secs));
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.clear();
+        if down {
+            keys.press(key);
         }
+        if up {
+            keys.release(key);
+        }
+        app.update();
+    }
+
+    fn set_call(app: &mut App, in_call: bool, enabled: bool) {
+        let mut call_mic = app.world_mut().resource_mut::<CallMic>();
+        call_mic.in_call = in_call;
+        call_mic.enabled = enabled;
+    }
+
+    /// The call mic switches the key queued since the last call.
+    fn call_mic_switches(app: &mut App) -> Vec<bool> {
+        app.world_mut()
+            .resource_mut::<VoiceInputs>()
+            .0
+            .drain(..)
+            .filter_map(|input| match input {
+                VoiceInput::SetMic(enabled) => Some(enabled),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn nearby_open(app: &App) -> bool {
+        app.world().resource::<MicState>().enabled
     }
 
     #[test]
-    fn nearby_release_always_closes() {
-        for was_open in [false, true] {
-            assert!(press(false, was_open).closes_on_release(10.1));
-            assert!(press(false, was_open).closes_on_release(12.0));
-        }
+    fn nearby_press_opens_and_release_closes() {
+        let mut app = app();
+        frame(&mut app, 0.1, true, false);
+        assert!(nearby_open(&app));
+        frame(&mut app, 2.0, false, false);
+        assert!(nearby_open(&app));
+        frame(&mut app, 0.1, false, true);
+        assert!(!nearby_open(&app));
+        assert!(call_mic_switches(&mut app).is_empty());
+    }
+
+    #[test]
+    fn nearby_tap_inside_one_frame_leaves_the_mic_closed() {
+        let mut app = app();
+        frame(&mut app, 0.1, true, true);
+        assert!(!nearby_open(&app));
+        frame(&mut app, 0.1, false, false);
+        assert!(!nearby_open(&app));
+    }
+
+    #[test]
+    fn nearby_press_with_the_mic_open_keeps_it_open_until_release() {
+        let mut app = app();
+        app.world_mut().resource_mut::<MicState>().enabled = true;
+        frame(&mut app, 0.1, true, false);
+        assert!(nearby_open(&app));
+        frame(&mut app, 0.1, false, true);
+        assert!(!nearby_open(&app));
+    }
+
+    #[test]
+    fn scene_blocked_press_refuses_once_and_its_release_does_nothing() {
+        let mut app = app();
+        app.world_mut()
+            .resource_mut::<MicState>()
+            .set_scene_disabled(true);
+        frame(&mut app, 0.1, true, false);
+        frame(&mut app, 0.1, false, true);
+        let mic_state = app.world().resource::<MicState>();
+        assert_eq!(mic_state.refusals, 1);
+        assert!(!mic_state.enabled);
+        assert!(call_mic_switches(&mut app).is_empty());
     }
 
     #[test]
     fn call_tap_from_closed_leaves_the_mic_open() {
-        assert!(!press(true, false).closes_on_release(10.0 + CALL_MIC_HOLD_SECS / 2.0));
+        let mut app = app();
+        set_call(&mut app, true, false);
+        frame(&mut app, 0.1, true, false);
+        assert_eq!(call_mic_switches(&mut app), [true]);
+        set_call(&mut app, true, true);
+        frame(&mut app, CALL_MIC_HOLD_SECS / 2.0, false, true);
+        assert!(call_mic_switches(&mut app).is_empty());
+    }
+
+    #[test]
+    fn call_tap_inside_one_frame_leaves_the_mic_open() {
+        let mut app = app();
+        set_call(&mut app, true, false);
+        frame(&mut app, 0.1, true, true);
+        assert_eq!(call_mic_switches(&mut app), [true]);
     }
 
     #[test]
     fn call_hold_from_closed_is_push_to_talk() {
-        assert!(press(true, false).closes_on_release(10.0 + CALL_MIC_HOLD_SECS));
+        let mut app = app();
+        set_call(&mut app, true, false);
+        frame(&mut app, 0.1, true, false);
+        assert_eq!(call_mic_switches(&mut app), [true]);
+        set_call(&mut app, true, true);
+        frame(&mut app, CALL_MIC_HOLD_SECS + 0.1, false, true);
+        assert_eq!(call_mic_switches(&mut app), [false]);
     }
 
     #[test]
-    fn call_press_while_open_closes_on_release() {
-        assert!(press(true, true).closes_on_release(10.1));
-        assert!(press(true, true).closes_on_release(12.0));
+    fn call_press_with_the_mic_open_closes_it_on_release() {
+        let mut app = app();
+        set_call(&mut app, true, true);
+        frame(&mut app, 0.1, true, false);
+        assert!(call_mic_switches(&mut app).is_empty());
+        frame(&mut app, 0.1, false, true);
+        assert_eq!(call_mic_switches(&mut app), [false]);
+    }
+
+    #[test]
+    fn call_ending_during_the_press_makes_the_release_do_nothing() {
+        let mut app = app();
+        set_call(&mut app, true, false);
+        frame(&mut app, 0.1, true, false);
+        assert_eq!(call_mic_switches(&mut app), [true]);
+        set_call(&mut app, false, false);
+        frame(&mut app, 2.0, false, true);
+        assert!(call_mic_switches(&mut app).is_empty());
+        assert!(!nearby_open(&app));
+    }
+
+    #[test]
+    fn call_starting_during_a_nearby_press_closes_the_nearby_mic_on_release() {
+        let mut app = app();
+        frame(&mut app, 0.1, true, false);
+        assert!(nearby_open(&app));
+        set_call(&mut app, true, false);
+        frame(&mut app, 0.1, false, true);
+        assert!(!nearby_open(&app));
+        assert!(call_mic_switches(&mut app).is_empty());
     }
 }
