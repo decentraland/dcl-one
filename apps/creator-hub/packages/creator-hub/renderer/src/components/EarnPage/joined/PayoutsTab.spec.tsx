@@ -87,6 +87,12 @@ const GET_A_WALLET_URL = 'https://docs.decentraland.org/blockchain-integration/g
 const walletInfo = async () =>
   (await walletCard()).findByRole('button', { name: 'About payout wallets' });
 const learnMore = () => screen.findByRole('link', { name: /Learn More/ });
+const PAYOUT_RULES_URL =
+  'https://docs.decentraland.org/creator/creator-fund/program-rules#payout-process';
+const openAddDialog = async () => {
+  fireEvent.click(await (await walletCard()).findByRole('button', { name: 'Add wallet' }));
+  return screen.findByRole('dialog', { name: 'Add payout wallet' });
+};
 const pause = (ms: number) => act(() => new Promise<void>(resolve => setTimeout(resolve, ms)));
 
 const WALLET_CARD = '[data-testid="payouts-wallet-card"]';
@@ -585,6 +591,78 @@ describe('PayoutsTab', () => {
 
       const tooltip = await screen.findByRole('tooltip');
       expect(within(tooltip).getByRole('link', { name: /Learn More/ })).toBeTruthy();
+    });
+  });
+
+  describe('when the info button beside the payout wallet dialog title gets focus', () => {
+    beforeEach(() => {
+      vi.mocked(api.getPayoutWallet).mockResolvedValue(fail(404));
+    });
+
+    it('should explain the payout wallet in the tooltip and name it as the description of the button', async () => {
+      await renderTab();
+      const dialog = await openAddDialog();
+      const info = within(dialog).getByRole('button', { name: 'About payout wallets' });
+
+      act(() => info.focus());
+
+      const tooltip = await screen.findByRole('tooltip');
+      expect(tooltip.textContent).toMatch(
+        /^Your payout wallet is where the Creator Fund sends your rewards, in USDC on Ethereum \(ERC-20\)/,
+      );
+      expect(info.getAttribute('aria-describedby')).toBe(tooltip.id);
+      expect(screen.getByRole('dialog', { name: 'Add payout wallet' })).toBe(dialog);
+    });
+
+    it('should move focus to Learn More on Tab and keep the tooltip and the dialog open', async () => {
+      await renderTab();
+      const dialog = await openAddDialog();
+      const info = within(dialog).getByRole('button', { name: 'About payout wallets' });
+      act(() => info.focus());
+      const link = await learnMore();
+
+      fireEvent.keyDown(info, { key: 'Tab' });
+
+      expect(document.activeElement).toBe(link);
+      expect(screen.getByRole('tooltip')).toBeTruthy();
+      expect(screen.getByRole('dialog', { name: 'Add payout wallet' })).toBe(dialog);
+    });
+
+    it('should close only the tooltip on Escape in Learn More, keeping the dialog open', async () => {
+      await renderTab();
+      const dialog = await openAddDialog();
+      const info = within(dialog).getByRole('button', { name: 'About payout wallets' });
+      act(() => info.focus());
+      const link = await learnMore();
+      fireEvent.keyDown(info, { key: 'Tab' });
+
+      fireEvent.keyDown(link, { key: 'Escape' });
+
+      await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+      expect(document.activeElement).toBe(info);
+      expect(screen.getByRole('dialog', { name: 'Add payout wallet' })).toBe(dialog);
+    });
+
+    it('should open the payout rules in the browser from Learn More, keeping the dialog open', async () => {
+      await renderTab();
+      const dialog = await openAddDialog();
+      act(() => within(dialog).getByRole('button', { name: 'About payout wallets' }).focus());
+
+      const followed = fireEvent.click(await learnMore());
+
+      expect(followed).toBe(false);
+      expect(misc.openExternal).toHaveBeenCalledTimes(1);
+      expect(misc.openExternal).toHaveBeenCalledWith(PAYOUT_RULES_URL);
+      expect(screen.getByRole('dialog', { name: 'Add payout wallet' })).toBe(dialog);
+    });
+
+    it('should offer the same button when the wallet is changed', async () => {
+      vi.mocked(api.getPayoutWallet).mockResolvedValue(ok(WALLET));
+      await renderTab();
+      fireEvent.click(await (await walletCard()).findByRole('button', { name: 'Edit' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Change payout wallet' });
+
+      expect(within(dialog).getByRole('button', { name: 'About payout wallets' })).toBeTruthy();
     });
   });
 

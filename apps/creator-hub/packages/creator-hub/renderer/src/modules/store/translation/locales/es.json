@@ -1842,6 +1842,7 @@
           "title": "Billetera de pagos",
           "info_label": "Acerca de las billeteras de pagos",
           "info": "Una billetera digital es donde guardas y gestionas tus activos digitales. Puedes usarla para enviar, recibir y seguir tus fondos de forma segura, incluidas tus recompensas en USDC del Creator Fund.",
+          "payout_info": "Tu billetera de pagos es donde el Creator Fund envía tus recompensas, en USDC en Ethereum (ERC-20), dentro de los 14 días posteriores al cierre de cada ciclo. Puede ser cualquier billetera o cuenta de exchange que controles.",
           "learn_more": "Más información",
           "copy": "Copiar la dirección de la billetera",
           "edit": "Editar",

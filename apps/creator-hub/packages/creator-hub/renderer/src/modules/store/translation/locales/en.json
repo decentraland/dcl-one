@@ -1842,6 +1842,7 @@
           "title": "Payout Wallet",
           "info_label": "About payout wallets",
           "info": "A digital wallet is where you store and manage your digital assets. You can use it to send, receive, and keep track of your funds securely, including your Creator Fund USDC rewards.",
+          "payout_info": "Your payout wallet is where the Creator Fund sends your rewards, in USDC on Ethereum (ERC-20), within 14 days after each cycle ends. It can be any wallet or exchange account you control.",
           "learn_more": "Learn More",
           "copy": "Copy wallet address",
           "edit": "Edit",
