@@ -76,7 +76,7 @@ pub(super) async fn resolve<'e>(
             Some("upstream")
         )
     ) {
-        return Ok(node_assets::upstream_poster_url(path));
+        return Ok(path.to_owned());
     }
     Err(ApiError::bad_request("Poster upload not found"))
 }

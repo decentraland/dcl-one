@@ -1,3 +1,4 @@
+import { createContext, useContext } from "react";
 import { catalystBase } from "./catalyst/client";
 
 export type ThumbnailWidth = 80 | 160 | 320 | 640 | 960;
@@ -30,14 +31,29 @@ function mediaBase(): string {
   return (import.meta.env.VITE_CATALYST_URL ?? "").replace(/\/$/, "") || embeddedSiteBase();
 }
 
-function mountedPoster(url: URL): { path: string; prefix: string } | undefined {
+export const ThumbnailPublicBase = createContext<string | undefined>(undefined);
+
+export function useThumbnailPublicBase(): string | undefined {
+  const base = useContext(ThumbnailPublicBase);
+  return base ?? (typeof window !== "undefined" && !import.meta.env.SSR ? window.location.origin : undefined);
+}
+
+function parseBase(value: string | undefined): URL | undefined {
+  if (!value) return undefined;
+  try {
+    return new URL(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function mountedPoster(url: URL, publicBase: string | undefined): { path: string; prefix: string } | undefined {
   // The SSR transport can use a different origin than the public page.
   const renderedBase = import.meta.env.SSR
     ? (typeof process === "undefined" ? undefined : process.env.PUBLIC_CATALYST_URL)
     : (typeof window === "undefined" ? undefined : (window as EmbeddedWindow).__CATALYST_BASE__);
-  const configured = mediaBase() || renderedBase;
-  if (!configured) return undefined;
-  const base = new URL(configured);
+  const base = parseBase(mediaBase()) ?? parseBase(renderedBase || publicBase);
+  if (!base) return undefined;
   if (url.origin !== base.origin) return undefined;
   const prefix = base.pathname.replace(/\/+$/, "");
   const mount = `${prefix}/${POSTER_MOUNT}`;
@@ -50,8 +66,9 @@ function resized(source: string, width: ThumbnailWidth, base: string): string {
   return `${base}/media/convert?width=${width}&url=${encodeURIComponent(source)}`;
 }
 
-export function publicThumbnail(source: string | null | undefined, width: ThumbnailWidth = 640): string | undefined {
+export function publicThumbnail(source: string | null | undefined, width: ThumbnailWidth = 640, publicBase?: string): string | undefined {
   if (!source) return undefined;
+  if (source.startsWith("/")) return source;
   try {
     const url = new URL(source);
     if (url.protocol !== "https:" || url.search || url.username || url.password || /\.(gif|svg)$/i.test(url.pathname)) return source;
@@ -60,7 +77,7 @@ export function publicThumbnail(source: string | null | undefined, width: Thumbn
       url.searchParams.set("width", String(width));
       return url.toString();
     }
-    const mounted = mountedPoster(url);
+    const mounted = mountedPoster(url, publicBase);
     if (mounted) {
       return UPLOADED_POSTER.test(mounted.path)
         ? source
@@ -71,12 +88,10 @@ export function publicThumbnail(source: string | null | undefined, width: Thumbn
     if (/^peer(?:-[a-z]+\d)?\.decentraland\.org$/.test(url.hostname) && /^\/lambdas\/collections\/contents\/[^/]+\/thumbnail$/.test(url.pathname)) {
       return `${mediaBase()}${url.pathname}?width=${width}`;
     }
-    const eventMirror = url.hostname === `${POSTER_MOUNT}.interconnected.online`
-      && /^\/poster(?:-vertical)?\/[^/]+$/.test(url.pathname);
-    const posterCopy = !known && !eventMirror && url.hostname.startsWith(`${POSTER_MOUNT}.`)
+    const posterCopy = !known && url.hostname.startsWith(`${POSTER_MOUNT}.`)
       && /^\/poster(?:-vertical)?\/[^/]+$/.test(url.pathname) && !UPLOADED_POSTER.test(url.pathname);
     if (posterCopy) source = `https://${POSTER_BUCKET}${url.pathname}`;
-    else if (!known && !eventMirror) return source;
+    else if (!known) return source;
     return resized(source, width, mediaBase());
   } catch { return source; }
 }
@@ -90,7 +105,7 @@ export function nodeMapImage(source: string | null | undefined): string | undefi
   } catch { return source; }
 }
 
-export function publicThumbnailSet(source: string | null | undefined, widths: readonly ThumbnailWidth[]): string | undefined {
-  if (!source || !widths.length || publicThumbnail(source, widths[0]) === source) return undefined;
-  return widths.map(width => `${publicThumbnail(source, width)} ${width}w`).join(", ");
+export function publicThumbnailSet(source: string | null | undefined, widths: readonly ThumbnailWidth[], publicBase?: string): string | undefined {
+  if (!source || !widths.length || publicThumbnail(source, widths[0], publicBase) === source) return undefined;
+  return widths.map(width => `${publicThumbnail(source, width, publicBase)} ${width}w`).join(", ");
 }

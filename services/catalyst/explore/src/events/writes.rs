@@ -1033,6 +1033,19 @@ async fn update_event(
             updated.insert(field.into(), json!(normalized));
         }
     }
+    // Metadata enrichment can refresh generated artwork independently of an edit.
+    let moderated_content_changed = EDIT_EVENT_ATTRIBUTES
+        .iter()
+        .filter(|field| !NON_MODERATED_EDITABLE_FIELDS.contains(field))
+        .any(|field| {
+            body.get(*field).is_some_and(|submitted| {
+                let next = match *field {
+                    "image" | "image_vertical" => updated.get(*field).unwrap_or(&Value::Null),
+                    _ => submitted,
+                };
+                moderated_field_changed(field, next, before.get(*field).unwrap_or(&Value::Null))
+            })
+        });
     // updateEvent.ts:302-323
     if let Some(Value::Array(schedules)) = updated.get("schedules") {
         let mut seen = std::collections::HashSet::new();
@@ -1184,18 +1197,6 @@ async fn update_event(
     // updateEvent.ts:452-477: re-queue changed content unless the actor may approve.
     let actor_can_approve =
         admin || moderator || permissions.approve_any || (is_owner && permissions.approve_own);
-    let moderated_content_changed = EDIT_EVENT_ATTRIBUTES
-        .iter()
-        .filter(|field| !NON_MODERATED_EDITABLE_FIELDS.contains(field))
-        .any(|field| {
-            body.get(*field).is_some_and(|submitted| {
-                let next = match *field {
-                    "image" | "image_vertical" => raw.get(*field).unwrap_or(&Value::Null),
-                    _ => submitted,
-                };
-                moderated_field_changed(field, next, before.get(*field).unwrap_or(&Value::Null))
-            })
-        });
     if flag(&before, "approved") && moderated_content_changed && !actor_can_approve {
         raw.insert("approved".into(), json!(false));
         raw.insert("approved_by".into(), Value::Null);
@@ -2449,6 +2450,15 @@ mod tests {
             let (status, reply) =
                 call(&app, "POST", "/api/events", Some("signed"), Some(body)).await;
             assert_eq!(status, expected, "{image}: {reply}");
+            if status == StatusCode::CREATED {
+                let copied: String =
+                    sqlx::query_scalar("SELECT raw->>'image' FROM explore.event WHERE id=$1")
+                        .bind(reply["data"]["id"].as_str().unwrap())
+                        .fetch_one(&pool)
+                        .await
+                        .unwrap();
+                assert_eq!(copied, "/poster/other.png");
+            }
         }
 
         let no_domain = router(Arc::new(ExploreState::new(
@@ -3160,6 +3170,74 @@ mod tests {
             "https://decentraland.org/jump/events?position=43%2C44"
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn generated_poster_refresh_keeps_approval_on_a_time_only_edit() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        ensure_profile(&pool).await;
+        sqlx::query(
+            "INSERT INTO explore.place (id,base_position,title,raw)
+             VALUES ('generated-poster-place','142,-139','Known scene',$1)",
+        )
+        .bind(json!({"positions":["142,-139"]}))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let app = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            Settings {
+                user_writes_enabled: true,
+                operator_writes_enabled: true,
+                events_admin_token: Some("admin-test".into()),
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        let mut draft = new_event();
+        draft["x"] = json!(142);
+        draft["y"] = json!(-139);
+        let (status, created) =
+            call(&app, "POST", "/api/events", Some("signed"), Some(draft)).await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        let original = "https://api.decentraland.org/v1/parcels/142/-139/map.png";
+        assert_eq!(created["data"]["image"], original);
+        let path = format!("/api/events/{}", created["data"]["id"].as_str().unwrap());
+        let (status, approved) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("admin-test"),
+            Some(json!({"approved":true})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{approved}");
+        assert_eq!(approved["data"]["approved"], true);
+        sqlx::query(
+            "UPDATE explore.place
+             SET raw = raw || $1
+             WHERE id = 'generated-poster-place'",
+        )
+        .bind(json!({"estate_id":"123","estate_name":"Known Estate"}))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (status, edited) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("signed"),
+            Some(json!({"image":original,"start_at":"2099-06-01T18:30:00Z"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{edited}");
+        assert_eq!(
+            edited["data"]["image"],
+            "https://api.decentraland.org/v1/estates/123/map.png"
+        );
+        assert_eq!(edited["data"]["approved"], true, "{edited}");
     }
 
     #[tokio::test]

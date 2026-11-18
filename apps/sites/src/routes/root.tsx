@@ -28,6 +28,7 @@ import SyncEngineBridge from "@/features/components/creator-hub/SyncEngineBridge
 import NotFoundPage from "@/features/not-found/NotFoundPage";
 import StatusPage from "@ui/components/StatusPage";
 import { EMBED_BOOT_SCRIPT } from "@ui/web/frames/embed";
+import { ThumbnailPublicBase } from "@ui/data/thumbnail";
 import type { ShouldRevalidateFunctionArgs } from "react-router";
 import { pageSid, sessionMiddleware } from "@/core/lib/telemetry/session";
 import { readWallet } from "@/data/lib/auth/wallet-cookie";
@@ -52,10 +53,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const commitHash = (typeof process !== "undefined" && process.env.COMMIT_HASH) || "";
   const pulseServer = (typeof process !== "undefined" && process.env.PUBLIC_PULSE_SERVER) || "";
   const catalystBase = browserCatalystBase();
+  const requestUrl = new URL(request.url);
   const shopApiMode = serverShopApiMode();
   const wallet = readWallet(request);
   // Only the Creator Hub reads the committee seat: other pages do not ask the node for the curation committee.
-  const committee = wallet && isCreatorPath(new URL(request.url).pathname)
+  const committee = wallet && isCreatorPath(requestUrl.pathname)
     ? await isCommitteeMember(wallet, request.signal).catch(() => false)
     : false;
   return {
@@ -68,6 +70,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     commitHash,
     pulseServer,
     catalystBase,
+    thumbnailBase: catalystBase || requestUrl.origin,
     shopApiMode,
     wallet,
     /** The curation committee seat; read only for a Creator Hub path, false on every other path. */
@@ -117,7 +120,7 @@ export function meta(_args: Route.MetaArgs) {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData("root") as
-    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; commitHash?: string; pulseServer?: string; catalystBase?: string; shopApiMode?: string }
+    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; commitHash?: string; pulseServer?: string; catalystBase?: string; thumbnailBase?: string; shopApiMode?: string }
     | undefined;
   const publicEnv = JSON.stringify({
     thirdwebClientId: data?.thirdwebClientId ?? "",
@@ -162,7 +165,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Links />
       </head>
       <body>
-        {children}
+        <ThumbnailPublicBase.Provider value={data?.thumbnailBase ?? ""}>
+          {children}
+        </ThumbnailPublicBase.Provider>
         <ScrollRestoration />
         <Scripts />
       </body>

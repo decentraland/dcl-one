@@ -43,10 +43,6 @@ pub(crate) enum PosterInput<'a> {
     Mounted(&'a str),
 }
 
-pub(crate) fn upstream_poster_url(path: &str) -> String {
-    format!("https://{POSTER_BUCKET}{path}")
-}
-
 fn mounted_path(path: &str) -> Option<&str> {
     path.strip_prefix('/')?.strip_prefix(HOST_PREFIX)
 }
@@ -238,7 +234,7 @@ mod tests {
                 ];
                 for name in names {
                     let path = format!("/{kind}/{name}");
-                    let upstream = super::upstream_poster_url(&path);
+                    let upstream = format!("https://{}{}", super::POSTER_BUCKET, path);
                     let mounted = super::mounted_poster_url(&path, domain.as_deref());
                     let project = |image: &str| {
                         event_image_url(image, domain.as_deref(), &settings.events_asset_base_url)
