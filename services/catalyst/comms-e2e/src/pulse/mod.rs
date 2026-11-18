@@ -5,6 +5,7 @@
 pub mod enet;
 pub mod messages;
 pub mod view;
+pub mod webtransport;
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -18,9 +19,9 @@ use prost::Message as _;
 
 use crate::engine::{Ctx, Timeline, expect_or};
 use crate::identity::{Identity, now_ms};
-use crate::stack::Grid;
-pub use view::{PulseView, Subject};
+use crate::stack::{Grid, WebTransportTarget};
 use view::Session;
+pub use view::{PulseView, Subject};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Channel {
@@ -107,6 +108,8 @@ impl Shared {
     }
 }
 
+const DEFAULT_DEADLINE: Duration = Duration::from_secs(10);
+
 #[derive(Debug, Clone, Default)]
 pub struct ConnectOptions {
     /// The local address to dial from. The servers count their per-address limits by it.
@@ -134,9 +137,13 @@ pub struct HandshakeOptions {
 pub enum HandshakeOutcome {
     Accepted,
     /// The server answered with `success: false`.
-    Refused { error: Option<String> },
+    Refused {
+        error: Option<String>,
+    },
     /// The server ended the connection instead of answering.
-    Disconnected { code: u32 },
+    Disconnected {
+        code: u32,
+    },
 }
 
 pub struct PulseBot {
@@ -155,34 +162,113 @@ impl PulseBot {
         target: SocketAddr,
         options: ConnectOptions,
     ) -> Result<PulseBot> {
-        let grid = ctx.stack().grid;
+        let (shared, receiver, commands) = PulseBot::prepare(ctx, name, &options);
+        shared.record("dialing", target.to_string());
+        let (local, thread) = enet::spawn(target, options.bind, shared.clone(), receiver)?;
+        let bot = PulseBot::assemble(ctx, shared, commands, local, thread);
+        bot.connected(
+            ctx,
+            &format!("{name} connects to Pulse at {target}"),
+            &options,
+        )
+        .await?;
+        Ok(bot)
+    }
+
+    /// Dials Pulse over WebTransport and waits for the session to open. The URL's host and port
+    /// are replaced by `options.via` when a fault link is in front; the certificate hash stays.
+    /// The client cannot choose its local address, so `options.bind` is an error here.
+    pub async fn connect_webtransport(
+        ctx: &Ctx,
+        name: &str,
+        target: &WebTransportTarget,
+        options: ConnectOptions,
+    ) -> Result<PulseBot> {
+        if let Some(bind) = options.bind {
+            bail!("{name}: the WebTransport client cannot bind a chosen local address ({bind})");
+        }
+        let mut url = target.url.clone();
+        if let Some(via) = options.via {
+            url.set_ip_host(via.ip())
+                .map_err(|()| anyhow!("{name}: {via} cannot be the host of {url}"))?;
+            url.set_port(Some(via.port()))
+                .map_err(|()| anyhow!("{name}: {via} cannot be the port of {url}"))?;
+        }
+        let certificate_hash = target
+            .certificate_hash
+            .as_deref()
+            .map(hex::decode)
+            .transpose()
+            .map_err(|error| anyhow!("{name}: the certificate hash is not hex: {error}"))?;
+        let (shared, receiver, commands) = PulseBot::prepare(ctx, name, &options);
+        shared.record("dialing", url.to_string());
+        let deadline = options.deadline.unwrap_or(DEFAULT_DEADLINE);
+        let thread = webtransport::spawn(
+            webtransport::Dial {
+                url: url.to_string(),
+                certificate_hash,
+                deadline,
+            },
+            shared.clone(),
+            receiver,
+        )?;
+        // No local address to report: the unspecified one, as for a socket not yet bound.
+        let local = SocketAddr::from(([0, 0, 0, 0], 0));
+        let bot = PulseBot::assemble(ctx, shared, commands, local, thread);
+        bot.connected(ctx, &format!("{name} connects to Pulse at {url}"), &options)
+            .await?;
+        Ok(bot)
+    }
+
+    fn prepare(
+        ctx: &Ctx,
+        name: &str,
+        options: &ConnectOptions,
+    ) -> (
+        Arc<Shared>,
+        std::sync::mpsc::Receiver<Command>,
+        Sender<Command>,
+    ) {
         let shared = Arc::new(Shared {
             name: name.to_owned(),
-            session: Mutex::new(Session::new(grid, !options.no_auto_resync)),
+            session: Mutex::new(Session::new(ctx.stack().grid, !options.no_auto_resync)),
             timeline: ctx.timeline().clone(),
             record_frames: options.record_frames,
         });
         let (commands, receiver) = std::sync::mpsc::channel();
-        shared.record("dialing", target.to_string());
-        let (local, thread) = enet::spawn(target, options.bind, shared.clone(), receiver)?;
-        let bot = PulseBot {
+        (shared, receiver, commands)
+    }
+
+    fn assemble(
+        ctx: &Ctx,
+        shared: Arc<Shared>,
+        commands: Sender<Command>,
+        local: SocketAddr,
+        thread: std::thread::JoinHandle<()>,
+    ) -> PulseBot {
+        PulseBot {
             shared,
             commands,
-            grid,
+            grid: ctx.stack().grid,
             local,
             thread: Some(thread),
-        };
-        let deadline = options.deadline.unwrap_or(Duration::from_secs(10));
-        expect_or(ctx, &format!("{name} connects to Pulse at {target}"), deadline, || {
-            let view = bot.view();
+        }
+    }
+
+    async fn connected(&self, ctx: &Ctx, what: &str, options: &ConnectOptions) -> Result<()> {
+        let deadline = options.deadline.unwrap_or(DEFAULT_DEADLINE);
+        expect_or(ctx, what, deadline, || {
+            let view = self.view();
             match (view.connected, view.disconnect) {
                 (true, _) => Ok(()),
-                (false, Some(code)) => Err(format!("fatal: the connection ended with {}", messages::reason(code))),
+                (false, Some(code)) => Err(format!(
+                    "fatal: the connection ended with {}",
+                    messages::reason(code)
+                )),
                 (false, None) => Err("still connecting".to_owned()),
             }
         })
-        .await?;
-        Ok(bot)
+        .await
     }
 
     /// Dials Pulse on the transport of the run, at the address the stack file names or at
@@ -195,7 +281,10 @@ impl PulseBot {
                 PulseBot::connect(ctx, name, target, options).await
             }
             crate::engine::Transport::WebTransport => {
-                bail!("the Pulse bot does not speak WebTransport yet")
+                let target = ctx.stack().pulse_webtransport.as_ref().ok_or_else(|| {
+                    anyhow!("{name}: the stack file names no Pulse WebTransport endpoint")
+                })?;
+                PulseBot::connect_webtransport(ctx, name, target, options).await
             }
         }
     }
@@ -210,7 +299,10 @@ impl PulseBot {
     /// Handshakes and fails unless the server accepts.
     pub async fn accepted(&self, ctx: &Ctx, identity: &Identity) -> Result<()> {
         let name = self.name();
-        match self.handshake(ctx, identity, HandshakeOptions::default()).await? {
+        match self
+            .handshake(ctx, identity, HandshakeOptions::default())
+            .await?
+        {
             HandshakeOutcome::Accepted => Ok(()),
             HandshakeOutcome::Refused { error } => {
                 bail!("{name}: the server refused the handshake: {error:?}")
@@ -228,7 +320,8 @@ impl PulseBot {
         &self.shared.name
     }
 
-    /// The local address the bot dials from.
+    /// The local address the bot dials from. Over WebTransport the client picks its own socket
+    /// and this is the unspecified address, `0.0.0.0:0`.
     pub fn local_address(&self) -> SocketAddr {
         self.local
     }
@@ -322,13 +415,19 @@ impl PulseBot {
         identity: &Identity,
     ) -> Result<PulseBot> {
         let bot = PulseBot::connect(ctx, name, target, ConnectOptions::default()).await?;
-        match bot.handshake(ctx, identity, HandshakeOptions::default()).await? {
+        match bot
+            .handshake(ctx, identity, HandshakeOptions::default())
+            .await?
+        {
             HandshakeOutcome::Accepted => Ok(bot),
             HandshakeOutcome::Refused { error } => {
                 bail!("{name}: the server refused the handshake: {error:?}")
             }
             HandshakeOutcome::Disconnected { code } => {
-                bail!("{name}: the server ended the connection at the handshake with {}", messages::reason(code))
+                bail!(
+                    "{name}: the server ended the connection at the handshake with {}",
+                    messages::reason(code)
+                )
             }
         }
     }
@@ -346,7 +445,10 @@ impl PulseBot {
     pub fn teleport(&self, realm: &str, world: [f32; 3]) -> Result<()> {
         let message = messages::teleport(&self.grid, realm, world)
             .ok_or_else(|| anyhow!("{world:?} is outside the parcel grid"))?;
-        self.shared.record("teleport sent", serde_json::json!({ "realm": realm, "world": world }));
+        self.shared.record(
+            "teleport sent",
+            serde_json::json!({ "realm": realm, "world": world }),
+        );
         self.send(message, Channel::Reliable);
         Ok(())
     }
@@ -365,14 +467,18 @@ impl PulseBot {
 
     /// Fails at once, naming the code, if the server has ended the connection.
     pub fn expect_alive(&self) -> Result<()> {
-        self.alive().map_err(|reason| anyhow!("{}: {}", self.name(), reason.trim_start_matches("fatal: ")))
+        self.alive()
+            .map_err(|reason| anyhow!("{}: {}", self.name(), reason.trim_start_matches("fatal: ")))
     }
 
     /// [`Self::expect_alive`] for a probe: a dead connection is a fatal reason, so the wait that
     /// asked ends at once instead of at its deadline.
     pub fn alive(&self) -> Result<(), String> {
         match self.view().disconnect {
-            Some(code) => Err(format!("fatal: the server ended the connection with {}", messages::reason(code))),
+            Some(code) => Err(format!(
+                "fatal: the server ended the connection with {}",
+                messages::reason(code)
+            )),
             None => Ok(()),
         }
     }
@@ -380,9 +486,16 @@ impl PulseBot {
     /// Waits for the connection to end and returns the code.
     pub async fn expect_disconnect(&self, ctx: &Ctx, deadline: Duration) -> Result<u32> {
         let name = self.name().to_owned();
-        expect_or(ctx, &format!("{name} is disconnected by the server"), deadline, || {
-            self.view().disconnect.ok_or_else(|| "still connected".to_owned())
-        })
+        expect_or(
+            ctx,
+            &format!("{name} is disconnected by the server"),
+            deadline,
+            || {
+                self.view()
+                    .disconnect
+                    .ok_or_else(|| "still connected".to_owned())
+            },
+        )
         .await
     }
 
@@ -407,7 +520,8 @@ impl PulseBot {
 
     /// Asks the server to end the connection with `code` and returns without waiting.
     pub fn disconnect(&self, code: u32) {
-        self.shared.record("disconnect sent", messages::reason(code));
+        self.shared
+            .record("disconnect sent", messages::reason(code));
         let _ = self.commands.send(Command::Disconnect { code });
     }
 

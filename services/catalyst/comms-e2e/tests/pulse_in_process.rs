@@ -5,25 +5,26 @@ mod support;
 use std::time::Duration;
 
 use catalyst_comms::pulse::hardening::DisconnectReason;
-use catalyst_comms_e2e::engine::expect_or;
+use catalyst_comms_e2e::engine::{Transport, expect_or};
+use catalyst_comms_e2e::fault::{Direction, Fault, FaultLink};
 use catalyst_comms_e2e::pulse::{
     Channel, ConnectOptions, HandshakeOptions, HandshakeOutcome, PulseBot, messages,
 };
+use catalyst_comms_e2e::scenarios::webtransport::{MAX_RESYNCS, bursts_for};
 
 const HERE: [f32; 3] = [8.0, 0.0, 8.0];
 const NEARBY: [f32; 3] = [10.0, 0.0, 9.0];
 const SOON: Duration = Duration::from_secs(5);
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn two_bots_see_each_other() {
-    let pulse = support::in_process_pulse().await;
-    let ctx = support::ctx(pulse, "see-each-other");
+async fn two_bots_see_each_other(transport: Transport) {
+    let pulse = support::in_process_pulse_both().await;
+    let ctx = pulse.ctx_on(transport, "see-each-other");
     let realm = ctx.realm("plaza");
     let (alice_id, bob_id) = (ctx.identity(0), ctx.identity(1));
 
-    let alice = PulseBot::join(&ctx, "alice", pulse, &alice_id).await.unwrap();
+    let alice = PulseBot::enter(&ctx, "alice", &alice_id).await.unwrap();
     alice.teleport(&realm, HERE).unwrap();
-    let bob = PulseBot::join(&ctx, "bob", pulse, &bob_id).await.unwrap();
+    let bob = PulseBot::enter(&ctx, "bob", &bob_id).await.unwrap();
     bob.teleport(&realm, NEARBY).unwrap();
 
     expect_or(&ctx, "alice sees bob", SOON, || {
@@ -86,11 +87,10 @@ async fn two_bots_see_each_other() {
     bob.expect_alive().unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn an_out_of_grid_input_is_refused_with_code_11() {
-    let pulse = support::in_process_pulse().await;
-    let ctx = support::ctx(pulse, "out-of-grid");
-    let bot = PulseBot::join(&ctx, "walker", pulse, &ctx.identity(0))
+async fn an_out_of_grid_input_is_refused_with_code_11(transport: Transport) {
+    let pulse = support::in_process_pulse_both().await;
+    let ctx = pulse.ctx_on(transport, "out-of-grid");
+    let bot = PulseBot::enter(&ctx, "walker", &ctx.identity(0))
         .await
         .unwrap();
     bot.teleport(&ctx.realm("plaza"), HERE).unwrap();
@@ -104,11 +104,10 @@ async fn an_out_of_grid_input_is_refused_with_code_11() {
     assert_eq!(bot.view().disconnect, Some(11));
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_long_emote_is_refused_with_code_12() {
-    let pulse = support::in_process_pulse().await;
-    let ctx = support::ctx(pulse, "long-emote");
-    let bot = PulseBot::join(&ctx, "dancer", pulse, &ctx.identity(0))
+async fn a_long_emote_is_refused_with_code_12(transport: Transport) {
+    let pulse = support::in_process_pulse_both().await;
+    let ctx = pulse.ctx_on(transport, "long-emote");
+    let bot = PulseBot::enter(&ctx, "dancer", &ctx.identity(0))
         .await
         .unwrap();
     bot.teleport(&ctx.realm("plaza"), HERE).unwrap();
@@ -130,14 +129,16 @@ async fn a_long_emote_is_refused_with_code_12() {
         .unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn an_unexpected_disconnect_fails_fast() {
-    let pulse = support::in_process_pulse().await;
-    let ctx = support::ctx(pulse, "fails-fast");
-    let bot = PulseBot::join(&ctx, "walker", pulse, &ctx.identity(0))
+async fn an_unexpected_disconnect_fails_fast(transport: Transport) {
+    let pulse = support::in_process_pulse_both().await;
+    let ctx = pulse.ctx_on(transport, "fails-fast");
+    let bot = PulseBot::enter(&ctx, "walker", &ctx.identity(0))
         .await
         .unwrap();
-    bot.send(messages::input_without_state(), Channel::UnreliableSequenced);
+    bot.send(
+        messages::input_without_state(),
+        Channel::UnreliableSequenced,
+    );
     bot.expect_disconnect(&ctx, SOON).await.unwrap();
 
     let error = bot.expect_alive().unwrap_err().to_string();
@@ -168,16 +169,13 @@ async fn an_unexpected_disconnect_fails_fast() {
     assert!(error.contains("InvalidInputField"), "{error}");
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn the_second_session_of_a_wallet_evicts_the_first() {
-    let pulse = support::in_process_pulse().await;
-    let ctx = support::ctx(pulse, "evicts");
+async fn the_second_session_of_a_wallet_evicts_the_first(transport: Transport) {
+    let pulse = support::in_process_pulse_both().await;
+    let ctx = pulse.ctx_on(transport, "evicts");
     let identity = ctx.identity(0);
-    let first = PulseBot::join(&ctx, "first", pulse, &identity)
-        .await
-        .unwrap();
+    let first = PulseBot::enter(&ctx, "first", &identity).await.unwrap();
     first.teleport(&ctx.realm("plaza"), HERE).unwrap();
-    let second = PulseBot::join(&ctx, "second", pulse, &identity.second_device())
+    let second = PulseBot::enter(&ctx, "second", &identity.second_device())
         .await
         .unwrap();
     first
@@ -187,17 +185,16 @@ async fn the_second_session_of_a_wallet_evicts_the_first() {
     second.expect_alive().unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_replayed_handshake_is_refused() {
-    let pulse = support::in_process_pulse().await;
-    let ctx = support::ctx(pulse, "replay");
+async fn a_replayed_handshake_is_refused(transport: Transport) {
+    let pulse = support::in_process_pulse_both().await;
+    let ctx = pulse.ctx_on(transport, "replay");
     let identity = ctx.identity(0);
     let timestamp = catalyst_comms_e2e::identity::now_ms();
     let options = HandshakeOptions {
         timestamp_ms: Some(timestamp),
         ..Default::default()
     };
-    let first = PulseBot::connect(&ctx, "first", pulse, ConnectOptions::default())
+    let first = PulseBot::dial(&ctx, "first", ConnectOptions::default())
         .await
         .unwrap();
     assert_eq!(
@@ -210,7 +207,7 @@ async fn a_replayed_handshake_is_refused() {
     first.close();
 
     // the same wallet and timestamp, signed again by the same device: a replay
-    let replay = PulseBot::connect(&ctx, "replay", pulse, ConnectOptions::default())
+    let replay = PulseBot::dial(&ctx, "replay", ConnectOptions::default())
         .await
         .unwrap();
     let outcome = replay
@@ -224,26 +221,168 @@ async fn a_replayed_handshake_is_refused() {
     );
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn nothing_listening_is_a_failed_connect_not_a_hang() {
+async fn nothing_listening_is_a_failed_connect_not_a_hang(transport: Transport) {
     // a port nothing serves
     let dead = {
         let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         socket.local_addr().unwrap()
     };
-    let ctx = support::ctx(dead, "dead");
+    let mut stack = support::Stack::pulse_only(dead);
+    stack.pulse_webtransport = Some(support::WebTransportTarget {
+        url: format!("https://127.0.0.1:{}/", dead.port())
+            .parse()
+            .unwrap(),
+        certificate_hash: Some("00".repeat(32)),
+    });
+    let ctx = support::ctx_on_stack(std::sync::Arc::new(stack), transport, "dead");
     let options = ConnectOptions {
         deadline: Some(Duration::from_millis(1500)),
         ..Default::default()
     };
     let started = std::time::Instant::now();
-    let error = PulseBot::connect(&ctx, "lonely", dead, options)
+    let error = PulseBot::dial(&ctx, "lonely", options)
         .await
         .err()
         .expect("no server, no connection");
     assert!(started.elapsed() < Duration::from_secs(10));
+    // ENet keeps trying until the deadline. QUIC has no answer to wait for either: the dial
+    // ends at the deadline with the client's own error, named in the message.
     assert!(
         error.to_string().contains("lonely connects to Pulse"),
         "{error}"
     );
+}
+
+/// Each case runs once per transport: `<case>::enet` and `<case>::webtransport`.
+macro_rules! on_both_transports {
+    ($($case:ident),* $(,)?) => {$(
+        mod $case {
+            use super::*;
+
+            #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+            async fn enet() {
+                super::$case(Transport::Enet).await
+            }
+
+            #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+            async fn webtransport() {
+                super::$case(Transport::WebTransport).await
+            }
+        }
+    )*};
+}
+
+on_both_transports!(
+    two_bots_see_each_other,
+    an_out_of_grid_input_is_refused_with_code_11,
+    a_long_emote_is_refused_with_code_12,
+    an_unexpected_disconnect_fails_fast,
+    the_second_session_of_a_wallet_evicts_the_first,
+    a_replayed_handshake_is_refused,
+    nothing_listening_is_a_failed_connect_not_a_hang,
+);
+
+/// QUIC through an opaque UDP relay: the walker dials WebTransport through the fault link, the
+/// link stalls both ways for two seconds, and the session lives on.
+async fn a_bot_through_a_stalled_link_survives_a_short_stall(transport: Transport) {
+    let pulse = support::in_process_pulse_both().await;
+    let ctx = pulse.ctx_on(transport, "bot-through-link");
+    let realm = ctx.realm("plaza");
+    let front = match transport {
+        Transport::Enet => pulse.enet,
+        Transport::WebTransport => {
+            let url = &pulse.webtransport.url;
+            std::net::SocketAddr::new("127.0.0.1".parse().unwrap(), url.port().unwrap())
+        }
+    };
+    let link = FaultLink::udp(&ctx, "link", "127.0.0.1:0".parse().unwrap(), front)
+        .await
+        .unwrap();
+
+    let walker_id = ctx.identity(0);
+    let walker = PulseBot::dial(
+        &ctx,
+        "walker",
+        ConnectOptions {
+            via: Some(link.address()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    walker.accepted(&ctx, &walker_id).await.unwrap();
+    walker.teleport(&realm, HERE).unwrap();
+    let observer = PulseBot::enter(&ctx, "observer", &ctx.identity(1))
+        .await
+        .unwrap();
+    observer.teleport(&realm, NEARBY).unwrap();
+    expect_or(&ctx, "the observer sees the walker", SOON, || {
+        observer
+            .view()
+            .of(&walker_id.address())
+            .map(|_| ())
+            .ok_or_else(String::new)
+    })
+    .await
+    .unwrap();
+
+    link.set(Direction::Both, Fault::Stall);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    link.restore();
+
+    walker.expect_alive().unwrap();
+    for step in 1..=20 {
+        walker
+            .move_to([HERE[0] + step as f32 * 0.25, 0.0, HERE[2]])
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(60)).await;
+    }
+    expect_or(
+        &ctx,
+        "the observer sees the walker 5 m further after the stall",
+        SOON,
+        || {
+            walker.alive()?;
+            let world = observer
+                .view()
+                .of(&walker_id.address())
+                .map(|subject| subject.world)
+                .ok_or("the walker is gone from the observer")?;
+            ((world[0] - 13.0).abs() < 0.2)
+                .then_some(())
+                .ok_or_else(|| format!("the walker is at {world:?}"))
+        },
+    )
+    .await
+    .unwrap();
+    assert!(link.counters().dropped > 0, "the stall dropped nothing");
+}
+
+on_both_transports!(a_bot_through_a_stalled_link_survives_a_short_stall);
+
+/// Five walkers and a WebTransport observer, shortened: the resyncs stay under the limit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn webtransport_bursts_for_a_short_while() {
+    let pulse = support::in_process_pulse_both().await;
+    let ctx = pulse.ctx_on(Transport::WebTransport, "bursts-short");
+    let resyncs = bursts_for(&ctx, Duration::from_secs(10), MAX_RESYNCS)
+        .await
+        .unwrap();
+    eprintln!("resyncs in 10 s: {resyncs}");
+}
+
+/// The scenario at its full length, walkers on ENet and the observer on WebTransport.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "runs 100 s"]
+async fn webtransport_bursts_at_full_length() {
+    let pulse = support::in_process_pulse_both().await;
+    let ctx = pulse.ctx_on(Transport::Enet, "bursts-full");
+    let resyncs = bursts_for(
+        &ctx,
+        catalyst_comms_e2e::scenarios::webtransport::BURSTS_DURATION,
+        MAX_RESYNCS,
+    )
+    .await
+    .unwrap();
+    eprintln!("resyncs in the full run: {resyncs}");
 }

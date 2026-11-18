@@ -1,6 +1,4 @@
 // from: catalyrst/crates/catalyrst-pulse/tests/webtransport_wire.rs
-#[path = "support/wt_client.rs"]
-mod wt_client;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use prost::Message as _;
@@ -17,7 +15,7 @@ use catalyst::comms::pulse::transport::webtransport::framing::{datagram_frame, s
 use catalyst::comms::pulse::transport::webtransport::{WtConfig, WtHost};
 use catalyst::comms::pulse::transport::{Host, HostConfig, Transports};
 
-use wt_client::{Client, ClientConfig, ClientEvent};
+use catalyst::comms::pulse::transport::webtransport::client::{Client, ClientConfig, ClientEvent};
 
 const ROOT_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const EPH_KEY: &str = "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
