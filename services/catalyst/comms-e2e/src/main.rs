@@ -6,7 +6,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use catalyst_comms_e2e::engine::{RunOptions, Transport, run_scenarios};
+use catalyst_comms_e2e::engine::{Ctx, RunOptions, Transport, run_scenarios};
+use catalyst_comms_e2e::explorer::{Explorer, ExplorerOptions, Fronts};
 use catalyst_comms_e2e::scenarios;
 use catalyst_comms_e2e::stack::Stack;
 use clap::{Parser, Subcommand};
@@ -74,6 +75,28 @@ enum Command {
     Doctor {
         #[arg(long, value_name = "file")]
         stack_file: PathBuf,
+    },
+    /// Start the headless explorer behind the fault link and run console commands in it
+    Console {
+        #[arg(long, value_name = "file")]
+        stack_file: PathBuf,
+        /// The seed of the guest wallet
+        #[arg(long, default_value_t = 1)]
+        wallet_seed: u64,
+        /// The parcel to start at, as x,y
+        #[arg(long, default_value = "0,0", allow_hyphen_values = true)]
+        position: String,
+        /// Seconds to wait after the console opens before the first command
+        #[arg(long, default_value_t = 0)]
+        settle: u64,
+        /// Seconds to keep the explorer running after the last command
+        #[arg(long, default_value_t = 0)]
+        hold: u64,
+        /// Lines of the explorer log to print at the end
+        #[arg(long, default_value_t = 0)]
+        log_tail: usize,
+        /// Console commands, each as one argument, for example "/world_state"
+        commands: Vec<String>,
     },
 }
 
@@ -148,6 +171,52 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
             } else {
                 ExitCode::SUCCESS
             })
+        }
+        Command::Console {
+            stack_file,
+            wallet_seed,
+            position,
+            settle,
+            hold,
+            log_tail,
+            commands,
+        } => {
+            let stack = Arc::new(Stack::load(&stack_file)?);
+            let (x, y) = position
+                .split_once(',')
+                .and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?)))
+                .ok_or_else(|| anyhow::anyhow!("--position takes x,y"))?;
+            let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+            runtime.block_on(async move {
+                let work_dir = RunOptions::default().work_dir.join("console");
+                let ctx = Ctx::new(stack, "console", "console", 0, 1, work_dir);
+                let _fronts = Fronts::start(&ctx).await?;
+                let explorer = Explorer::start(
+                    &ctx,
+                    "explorer",
+                    ExplorerOptions {
+                        wallet_seed,
+                        position: (x, y),
+                        ..ExplorerOptions::default()
+                    },
+                )
+                .await?;
+                println!("explorer log: {}", explorer.log_path().display());
+                tokio::time::sleep(Duration::from_secs(settle)).await;
+                for line in &commands {
+                    match explorer.command(line, Duration::from_secs(15)).await {
+                        Ok(answer) => println!("{line}\n  ok={} {}", answer.ok, answer.output),
+                        Err(error) => println!("{line}\n  no answer: {error:#}"),
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(hold)).await;
+                if log_tail > 0 {
+                    println!("--- log tail\n{}", explorer.log_tail(log_tail));
+                }
+                explorer.stop().await;
+                anyhow::Ok(())
+            })?;
+            Ok(ExitCode::SUCCESS)
         }
         Command::Doctor { stack_file } => {
             let stack = Stack::load(&stack_file)?;
