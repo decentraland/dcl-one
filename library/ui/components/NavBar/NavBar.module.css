@@ -5,6 +5,9 @@
   .frame {
     width: 100%;
     min-width: 0;
+    /* The bar reads the same in every section, whatever smoothing the page under it uses. */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   .root[data-menu-open] > .start,
