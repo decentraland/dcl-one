@@ -44,7 +44,7 @@ function renderView(props: Partial<HelpViewProps> = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const tree = () => (
     <QueryClientProvider client={client}>
-      <HelpView services={SERVICES} statusPageUrl="https://status.example/" intercomAppId="" isOfficialHelpPage {...props} />
+      <HelpView services={SERVICES} statusPageUrl="https://status.example/" intercomAppId="" {...props} />
     </QueryClientProvider>
   );
   const view = render(tree());
@@ -235,44 +235,43 @@ describe("HelpView chat banner", () => {
     delete (window as Window & { Intercom?: unknown }).Intercom;
   });
 
-  function expectFallback() {
-    expect(screen.queryByRole("button", { name: "CHAT NOW" })).toBeNull();
-    expect(screen.getByRole("link", { name: "Email support" }).getAttribute("href")).toBe("mailto:support@decentraland.org");
+  const chatButton = () => screen.getByRole("button", { name: "CHAT NOW" });
+  const contactLink = () => screen.queryByRole("link", { name: "support@decentraland.org" });
+  async function checkInlineContact() {
+    expect(contactLink()).toBeNull();
+    await userEvent.setup().click(chatButton());
+    expect(contactLink()?.getAttribute("href")).toBe("mailto:support@decentraland.org");
+    expect(chatButton()).toBeTruthy();
   }
 
-  it("offers an independent support link when chat is disabled", () => {
+  it("keeps the original banner and reveals a contact on click when chat is disabled", async () => {
     renderView({ intercomAppId: "" });
-    expectFallback();
+    expect(screen.getByText("Our support team is here to answer your questions!")).toBeTruthy();
+    await checkInlineContact();
     expect(document.querySelector("script[data-intercom]")).toBeNull();
   });
 
-  it("offers the live support site on a preview origin", () => {
-    renderView({ intercomAppId: "", isOfficialHelpPage: false });
-    expect(screen.getByRole("link", { name: "Open support on decentraland.org" }).getAttribute("href")).toBe(
-      "https://decentraland.org/help",
-    );
-  });
-
-  it("keeps the support link until the session is ready and then opens the messenger", async () => {
+  it("opens the messenger on a later click when the session becomes ready", async () => {
     renderView({ intercomAppId: "app-test" });
-    expectFallback();
+    expect(contactLink()).toBeNull();
     const fn = vi.fn();
     Object.assign(window, { Intercom: fn });
     document.querySelector("script[data-intercom]")!.dispatchEvent(new Event("load"));
     await waitFor(() => expect(fn).toHaveBeenCalledWith("boot", expect.objectContaining({ hide_default_launcher: true })));
-    expectFallback();
+    await checkInlineContact();
     act(() => fn.mock.calls.find(([command]) => command === "ready")![1]());
     expect(fn).toHaveBeenCalledWith("update", { hide_default_launcher: false });
     await userEvent.setup().click(screen.getByRole("button", { name: "CHAT NOW" }));
     expect(fn).toHaveBeenCalledWith("show");
+    expect(contactLink()).toBeNull();
   });
 
-  it("keeps the support link if the widget script fails", async () => {
+  it("offers inline contact on click if the widget script fails", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     renderView({ intercomAppId: "app-test" });
     document.querySelector("script[data-intercom]")!.dispatchEvent(new Event("error"));
     await waitFor(() => expect(document.querySelector("script[data-intercom]")).toBeNull());
-    expectFallback();
+    await checkInlineContact();
   });
 
   it("ignores readiness from a previous wallet session", async () => {
@@ -290,6 +289,6 @@ describe("HelpView chat banner", () => {
     expect(fn.mock.lastCall![1]).not.toHaveProperty("Wallet");
     act(() => firstReady());
     expect(fn).not.toHaveBeenCalledWith("update", { hide_default_launcher: false });
-    expectFallback();
+    await checkInlineContact();
   });
 });

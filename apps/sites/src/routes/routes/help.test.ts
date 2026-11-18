@@ -13,23 +13,12 @@ describe("/help loader", () => {
       data: Record<string, unknown>;
     };
     expect(result.data).toMatchObject({
-      isOfficialHelpPage: false,
       services: DEFAULT_STATUS_SERVICES,
       statusPageUrl: DEFAULT_STATUS_PAGE_URL,
       intercomAppId: DEFAULT_INTERCOM_APP_ID,
       variant: "config_driven",
     });
     expect(typeof result.data.sid).toBe("string");
-  });
-});
-
-describe("/help fallback destination", () => {
-  it.each(["decentraland.org", "www.decentraland.org"])("avoids linking %s back to its own Help page", async (host) => {
-    const result = await loader({
-      request: new Request(`https://${host}/help`),
-      context: new RouterContextProvider(),
-    } as never);
-    expect(result.data.isOfficialHelpPage).toBe(true);
   });
 });
 

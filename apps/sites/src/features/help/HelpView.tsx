@@ -39,7 +39,6 @@ export type HelpViewProps = {
   readonly statusPageUrl: string;
   /** Empty: no chat widget. */
   readonly intercomAppId: string;
-  readonly isOfficialHelpPage: boolean;
   /** A Creator Fund control was used: a question opened, or the contact address clicked. */
   readonly onCreatorFundClick?: (button: string) => void;
   readonly initialTab?: HelpTabId;
@@ -77,7 +76,6 @@ export function HelpView({
   services,
   statusPageUrl,
   intercomAppId,
-  isOfficialHelpPage,
   onCreatorFundClick,
   initialTab = "faq",
 }: HelpViewProps) {
@@ -85,7 +83,7 @@ export function HelpView({
   const report = useServiceStatus(services);
   // The signed-in account as the page knows it now, so signing in or out here reaches the chat.
   const { address } = useAuth();
-  const fallback = isOfficialHelpPage ? HELP_COPY.chat.email : HELP_COPY.chat.officialHelp;
+  const [showContact, setShowContact] = useState(false);
   const chatAvailable = useIntercom(intercomAppId, INTERCOM_SETTINGS, address);
 
   return (
@@ -112,9 +110,16 @@ export function HelpView({
       banner={
         <HelpChatBanner
           title={HELP_COPY.chat.title}
-          subtitle={chatAvailable ? HELP_COPY.chat.subtitle : fallback.subtitle}
-          actionLabel={chatAvailable ? HELP_COPY.chat.button : fallback.label}
-          {...(chatAvailable ? { onAction: showIntercom } : { href: fallback.href })}
+          subtitle={
+            showContact ? (
+              <>
+                {HELP_COPY.chat.contactPrompt}{" "}
+                <a href={`mailto:${HELP_COPY.chat.supportEmail}`}>{HELP_COPY.chat.supportEmail}</a>.
+              </>
+            ) : HELP_COPY.chat.subtitle
+          }
+          actionLabel={HELP_COPY.chat.button}
+          onAction={() => setShowContact(!(chatAvailable && showIntercom()))}
         />
       }
     >

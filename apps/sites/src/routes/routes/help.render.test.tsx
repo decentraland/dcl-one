@@ -41,7 +41,6 @@ describe("/help route", () => {
             services: [{ name: "Node", url: "https://node.example/about" }],
             statusPageUrl: "https://status.example/",
             intercomAppId: "app-test",
-            isOfficialHelpPage: true,
             sid: "sid-example",
             variant: "config_driven",
           },
@@ -57,7 +56,7 @@ describe("/help route", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Help Center" })).toBeTruthy();
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["FAQ", "CREATOR FUND", "SUPPORT UPDATES"]);
     expect(screen.getByRole("heading", { name: "Frequently Asked Questions" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Email support" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "CHAT NOW" })).toBeTruthy();
     expect(await screen.findByRole("button", { name: "System Status" })).toBeTruthy();
     expect(telemetry.track.mock.calls).toEqual([
       ["lp_help_viewed", {}, { sid: "sid-example", story: "landings/help", variant: "config_driven" }],

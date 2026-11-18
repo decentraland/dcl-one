@@ -32,16 +32,8 @@ export const HELP_COPY = {
     title: "Need Help?",
     subtitle: "Our support team is here to answer your questions!",
     button: "CHAT NOW",
-    officialHelp: {
-      subtitle: "Visit the Decentraland Help Center to chat with the support team.",
-      label: "Open support on decentraland.org",
-      href: "https://decentraland.org/help",
-    },
-    email: {
-      subtitle: "You can reach our support team at support@decentraland.org.",
-      label: "Email support",
-      href: "mailto:support@decentraland.org",
-    },
+    contactPrompt: "You can also reach support at",
+    supportEmail: "support@decentraland.org",
   },
 } as const;
 

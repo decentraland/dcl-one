@@ -1,4 +1,4 @@
-import { useId } from 'react'
+import { useId, type ReactNode } from 'react'
 import helpGirl from '../assets/help/help_girl.webp'
 import { AnimatedBackground } from '../shared/AnimatedBackground/AnimatedBackground'
 import { Button } from '../shared/Button/Button'
@@ -6,11 +6,13 @@ import styles from './HelpChatBanner.module.css'
 
 type HelpChatBannerProps = {
   title: string
-  subtitle: string
+  subtitle: ReactNode
   actionLabel: string
-} & ({ onAction: () => void; href?: never } | { href: string; onAction?: never })
+  onAction: () => void
+}
 
-function HelpChatBanner({ title, subtitle, actionLabel, onAction, href }: HelpChatBannerProps) {
+/** The banner that stays at the bottom of the help center and opens the support chat. */
+function HelpChatBanner({ title, subtitle, actionLabel, onAction }: HelpChatBannerProps) {
   const titleId = useId()
   return (
     <aside className={styles.root} aria-labelledby={titleId}>
@@ -21,11 +23,10 @@ function HelpChatBanner({ title, subtitle, actionLabel, onAction, href }: HelpCh
         <h2 id={titleId} className={styles.title}>
           {title}
         </h2>
-        <p className={styles.subtitle}>{subtitle}</p>
-        <Button
-          className={styles.action}
-          {...(href !== undefined ? { href } : { onClick: onAction })}
-        >
+        <p className={styles.subtitle} aria-live="polite">
+          {subtitle}
+        </p>
+        <Button className={styles.action} onClick={onAction}>
           {actionLabel}
         </Button>
       </div>

@@ -22,9 +22,7 @@ export function meta() {
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const { sid, assignment, wrap } = await pageLoader(request, context, FALLBACK);
-  const hostname = new URL(request.url).hostname;
-  const isOfficialHelpPage = hostname === "decentraland.org" || hostname === "www.decentraland.org";
-  return wrap({ ...helpConfig(), isOfficialHelpPage, sid, variant: assignment.variant });
+  return wrap({ ...helpConfig(), sid, variant: assignment.variant });
 }
 
 export default function Help({ loaderData }: Route.ComponentProps) {
@@ -45,7 +43,6 @@ export default function Help({ loaderData }: Route.ComponentProps) {
         services={services}
         statusPageUrl={statusPageUrl}
         intercomAppId={intercomAppId}
-        isOfficialHelpPage={loaderData.isOfficialHelpPage}
         onCreatorFundClick={(button) => track("lp_help_creator_fund_clicked", { button }, context)}
       />
     </SitesChrome>
