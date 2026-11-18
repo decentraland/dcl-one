@@ -4,7 +4,8 @@
 Cargo decides whether a path dependency is fresh by file times, and a fresh checkout gives
 every file the current time, so path dependencies in a CI cache would be rebuilt by every job
 of every run, changed or not. Crates from git or crates.io are judged by version instead: Bevy
-and the forked crates are git dependencies; the one path copy is the Bevy tree of the Bevy crate tests.
+and the forked crates are git dependencies; the one path copy is the Bevy tree that the Bevy crate
+tests build and that `common`'s tests read.
 
   record <target-dir>   after the build: each build input's git blob id and mtime, and each
                         directory's mtime with the id of the input names it holds, into every
