@@ -202,40 +202,39 @@ scripts, toolchain files, `.cargo`, `library/vendor/rusty_enet`, Nix,
 the Rust tests, smoke and the tooling tests run on macOS, and a new push does
 not cancel a running Development run: it waits, replacing any run already
 waiting, so each completed run tests every earlier commit and a macOS-only
-failure shows up there. A PR labelled `ci:macos` runs them on macOS (label, then push or reopen;
-re-running a job does not pick up a new label). A PR runs the Rust tests only
-when it changes an input of the Rust job: a file on the `RUST_INPUTS` list in
-`tooling/dev-ci.py` (the backend crates and the scene CLI manifest, the library
-crates they compile, the schema, the protocol, the API contract, the toolchain,
-the dev shell and the test tooling) or a path that a Rust source names. A new
-input of the Rust job goes on that list and on the path list of
-`development.yml` in the change that adds it; pushes to `main` always run the
-Rust tests. The Rust tests run in three shards. Each shard sorts the test
-binaries by source file and kind and cuts that list by the times recorded in
-`tooling/catalyst-test-durations.tsv`, so the three take one list on any runner
-(`tooling/catalyst-test.sh`): longest first, each binary goes to the shard it
-lengthens least, with the `node_*` and `sockets_*` groups spread across the
-shards, and each shard starts its longest binaries first. A binary without a
-recorded time keeps its place in the byte-order cut (every third from the
-shard's own). Refresh the times from a recent `main` run (the `finished in` of
-each binary's summary line on Linux) when binaries are added or change much.
-Two more labels work the same way:
-`ci:desktop` builds the Creator Hub desktop app for macOS, Windows and Linux on
-a PR and attaches its test builds, and `ci:linux` builds Linux alone.
-`release:creator-hub` is read after the merge: the push to
-`main` publishes the Creator Hub installers as a pre-release only when its PR
-has the label. A draft PR does not run the Explorer test suite and the headless
-smoke test; they start when the PR is marked ready for review, or on the next
-push with the `ci:engine` label (`tooling/bevy-ci.py`). A draft still builds
-the web engine, because the smoke job and the images need it. The run that
-starts when a draft is marked ready waits for a run of the same PR that is
-still in progress, because the smoke job reads that run's web build. Until the
-new run ends, the PR shows the two held jobs of the earlier run as skipped, and
-the CI status comment says that a newer run of the commit has not ended: merge
-after it ends. The smoke job
-restores the newest `main` build of the API and gives each unchanged file the
-time it had in that build (`tooling/cargo-mtimes.py`), so Cargo compiles only
-the crates that a changed file reaches.
+failure shows up there. A PR labelled `ci:macos` runs them on macOS (label,
+then push or reopen; re-running a job does not pick up a new label). A PR runs
+the Rust tests only when it changes an input of the Rust job: a file on the
+`RUST_INPUTS` list in `tooling/dev-ci.py` (the backend crates and the scene CLI
+manifest, the library crates they compile, the schema, the protocol, the API
+contract, the toolchain, the dev shell and the test tooling) or a path that a
+Rust source names. A new input of the Rust job goes on that list and on the
+path list of `development.yml` in the change that adds it; pushes to `main`
+always run the Rust tests. The Rust tests run in three shards. Each shard sorts
+the test binaries by source file and kind and cuts that list by the times
+recorded in `tooling/catalyst-test-durations.tsv`, so the three take one list
+on any runner (`tooling/catalyst-test.sh`): longest first, each binary goes to
+the shard it lengthens least, with the `node_*` and `sockets_*` groups spread
+across the shards, and each shard starts its longest binaries first. A binary
+without a recorded time keeps its place in the byte-order cut (every third from
+the shard's own). Refresh the times from a recent `main` run (the `finished in`
+of each binary's summary line on Linux) when binaries are added or change much.
+Two more labels work the same way: `ci:desktop` builds the Creator Hub desktop
+app for macOS, Windows and Linux on a PR and attaches its test builds, and
+`ci:linux` builds Linux alone. `release:creator-hub` is read after the merge:
+the push to `main` publishes the Creator Hub installers as a pre-release only
+when its PR has the label. A draft PR does not run the Explorer test suite and
+the headless smoke test; they start when the PR is marked ready for review, or
+on the next push with the `ci:engine` label (`tooling/bevy-ci.py`). A draft
+still builds the web engine, because the smoke job and the images need it. The
+run that starts when a draft is marked ready waits for a run of the same PR
+that is still in progress, because the smoke job reads that run's web build.
+Until the new run ends, the PR shows the two held jobs of the earlier run as
+skipped, and the CI status comment says that a newer run of the commit has not
+ended: merge after it ends. The smoke job restores the newest `main` build of
+the API and gives each unchanged file the time it had in that build
+(`tooling/cargo-mtimes.py`), so Cargo compiles only the crates that a changed
+file reaches.
 
 Linux jobs run on `ubuntu-26.04` unless they compile the explorer or uuav natively or
 test what they compiled. Those run on `ubuntu-24.04`, the image the uuav binaries lock
