@@ -74,7 +74,8 @@ Two events answer the funnel's in-world questions (`in_world.rs`):
 
 ## Performance Metrics
 
-Each completed performance snapshot produces one event covering 15 seconds of sampled play.
+With Segment configured, the client queues one event per completed snapshot. Each snapshot
+covers about 15 seconds of sampled play.
 CPU frame times measure elapsed time between frames. GPU frame times measure render graph
 execution for frames with a timestamp reading. The two sample counts can differ.
 
@@ -90,7 +91,7 @@ The CPU and GPU distributions report minimum, maximum, mean and percentiles 1, 5
 50, 75, 80, 90, 95 and 99 in milliseconds (for example, `min_frame_time`, `p95_frame_time`,
 `gpu_min_frame_time` and `gpu_p95_frame_time`). The event omits all `gpu_` properties when
 the snapshot has no GPU readings. A measured sample with no hiccups reports zero counts and
-durations for hiccups. All these properties are JSON numbers.
+durations for hiccups. Finite measurements serialize as JSON numbers. Non-finite timings serialize as `null`.
 
 `samples` counts CPU frames, `total_time` is their total duration in milliseconds, and
 `median_frame_time` equals `p50_frame_time`. `hiccups_in_thousand_frames` is the CPU

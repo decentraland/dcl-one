@@ -151,11 +151,17 @@ pub struct SegmentEventPerformanceMetrics {
     pub hiccups_in_thousand_frames: u32,
     // Total time length of hiccups measured in seconds.
     pub hiccups_time: f32,
+    // CPU frames whose duration strictly exceeds the threshold.
     pub hiccup_count: u32,
+    // CPU frames measured in this snapshot, including frames below the threshold.
     pub hiccup_sample_count: u32,
+    // CPU frame duration threshold in milliseconds.
     pub hiccup_threshold_ms: f32,
+    // Sum of the full durations of CPU hiccups in milliseconds.
     pub hiccup_time_ms: f32,
+    // Sum of the milliseconds CPU hiccups spent above the threshold.
     pub hiccup_excess_time_ms: f32,
+    // GPU timing metrics are present only when the renderer supplied readings.
     #[serde(flatten)]
     pub gpu: Option<SegmentGpuFrameTimes>,
     // Minimum delta (difference) between frames in milliseconds
