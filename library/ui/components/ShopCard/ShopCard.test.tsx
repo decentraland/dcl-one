@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { ShopCard, ShopCardPrice, ShopCardSkeleton, type ShopCardLinkProps } from './ShopCard'
 
@@ -98,6 +98,35 @@ describe('ShopCard', () => {
       const { container } = setup({ creator: { name: 'Alice' } })
       expect(container.querySelectorAll('img')).toHaveLength(1)
     })
+
+    it('shows the blank face when the creator picture fails', () => {
+      const { container } = setup({ creator: { name: 'Alice', picture: 'https://example.org/alice.png' } })
+      const face = screen.getByText('Alice').previousElementSibling as HTMLImageElement
+      fireEvent.error(face)
+      expect(container.querySelectorAll('img')).toHaveLength(1)
+      expect(screen.getByText('Alice').previousElementSibling?.tagName).toBe('SPAN')
+    })
+  })
+
+  describe('when an image URL is not safe to load', () => {
+    it.each(['http://example.org/armor.png', 'javascript:alert(1)', '//example.org/armor.png', 'https://u:p@example.org/a.png'])(
+      'drops the thumbnail %s for the placeholder',
+      (image) => {
+        const { container } = setup({ image, placeholder: <svg data-testid="name-glyph" /> })
+        expect(container.querySelector('img')).toBeNull()
+        expect(screen.getByTestId('name-glyph')).toBeInTheDocument()
+      }
+    )
+
+    it('keeps a root-relative thumbnail', () => {
+      const { container } = setup({ image: '/images/armor.png' })
+      expect(container.querySelector('img')).toHaveAttribute('src', '/images/armor.png')
+    })
+
+    it('draws the blank face for an unsafe creator picture', () => {
+      const { container } = setup({ creator: { name: 'Alice', picture: 'http://example.org/alice.png' } })
+      expect(container.querySelectorAll('img')).toHaveLength(1)
+    })
   })
 
   describe('when it has an href', () => {
@@ -108,6 +137,27 @@ describe('ShopCard', () => {
         '/shop/item/0xabc/1'
       )
       expect(screen.queryByRole('button')).toBeNull()
+    })
+
+    it('makes the name the link, inside the heading, with one link in the tab order', () => {
+      const { container } = setup({ href: '/shop/item/0xabc/1', headingLevel: 3 })
+      const heading = screen.getByRole('heading', { level: 3, name: 'Golden Armor' })
+      expect(within(heading).getByRole('link', { name: 'Golden Armor' })).toBeInTheDocument()
+      expect(screen.getAllByRole('link')).toHaveLength(1)
+      // The full-card pointer target: the same link, out of the tab order and the accessibility tree.
+      const anchors = container.querySelectorAll('a')
+      expect(anchors).toHaveLength(2)
+      const target = [...anchors].find((a) => a.getAttribute('aria-hidden') === 'true')
+      expect(target).toHaveAttribute('tabindex', '-1')
+      expect(target).toHaveAttribute('href', '/shop/item/0xabc/1')
+      expect(target).toBeEmptyDOMElement()
+    })
+
+    it('puts the heading before the link it holds, so a heading jump lands on the card link', () => {
+      setup({ href: '/shop/item/0xabc/1', headingLevel: 3, actions: <button type="button">Buy</button> })
+      const link = screen.getByRole('link', { name: 'Golden Armor' })
+      const buy = screen.getByRole('button', { name: 'Buy' })
+      expect(link.compareDocumentPosition(buy) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     })
 
     it('renders the link through the router link it is given', () => {
@@ -127,6 +177,16 @@ describe('ShopCard', () => {
       const hit = screen.getByRole('button', { name: 'Golden Armor' })
       expect(hit).toHaveAttribute('aria-pressed', 'true')
       fireEvent.click(hit)
+      expect(onSelect).toHaveBeenCalledOnce()
+    })
+
+    it('toggles from anywhere on the card through its pointer target, which is hidden', () => {
+      const onSelect = vi.fn()
+      const { container } = setup({ onSelect })
+      expect(screen.getAllByRole('button')).toHaveLength(1)
+      const target = container.querySelector('button[aria-hidden="true"]') as HTMLButtonElement
+      expect(target).toHaveAttribute('tabindex', '-1')
+      fireEvent.click(target)
       expect(onSelect).toHaveBeenCalledOnce()
     })
 
@@ -234,7 +294,9 @@ describe('ShopCard motion', () => {
 
   it('lifts the card and brings its ring out from behind its edge', () => {
     expect(blockOf(css, '.catalogue')).toContain('transition: transform 200ms ease-in-out')
-    expect(blockOf(css, '.catalogue:hover,\n  .catalogue:focus-within')).toContain('transform: translateY(-4px)')
+    expect(blockOf(css, '.catalogue:hover,\n  .catalogue:has(:focus-visible)')).toContain('transform: translateY(-4px)')
+    // A mouse click's focus (e.g. Cmd-click to a new tab) leaves the card down, as it leaves the ring off.
+    expect(css).not.toContain(':focus-within')
     expect(blockOf(css, '.catalogue::after')).toMatch(/inset: 0;[\s\S]*inset 300ms ease-in-out/)
     expect(
       blockOf(css, '.catalogue:hover::after,\n  .catalogue:has(:focus-visible)::after,\n  .catalogue.selected::after')
@@ -246,10 +308,31 @@ describe('ShopCard motion', () => {
     expect(blockOf(reduced, '.card::after,\n    .catalogue,\n    .catalogue .actions,\n    .catalogue .creator,\n    .catalogue .meta')).toContain(
       'transition: none'
     )
-    expect(blockOf(reduced, '.catalogue:hover,\n    .catalogue:focus-within,\n    .catalogue .actions')).toContain(
+    expect(blockOf(reduced, '.catalogue:hover,\n    .catalogue:has(:focus-visible),\n    .catalogue .actions')).toContain(
       'transform: none'
     )
     expect(reduced).toContain('animation: none')
+  })
+
+  it('neither lifts nor rings a tapped card on a touch screen unless it is focused or selected', () => {
+    const touch = mediaOf('hover: none')
+    expect(blockOf(touch, '.catalogue:hover:not(:has(:focus-visible))')).toContain('transform: none')
+    const ring = blockOf(touch, '.catalogue:hover:not(.selected, :has(:focus-visible))::after')
+    expect(ring).toContain('opacity: 0')
+    expect(ring).toContain('inset: 0')
+  })
+
+  it('outlines keyboard focus in forced colours, which drop the ring', () => {
+    expect(blockOf(mediaOf('forced-colors: active'), '.control:focus-visible')).toContain('outline: 2px solid CanvasText')
+  })
+
+  it('raises the name and the badges above the full-card target, so their tooltips show', () => {
+    const z = (block: string) => Number(/z-index: (\d+)/.exec(block)?.[1])
+    const hit = z(blockOf(css, '.hit'))
+    expect(z(blockOf(css, '.name'))).toBeGreaterThan(hit)
+    expect(z(blockOf(css, '.badges'))).toBeGreaterThan(hit)
+    expect(blockOf(css, '.name')).toContain('pointer-events: none')
+    expect(blockOf(css, '.control')).toContain('pointer-events: auto')
   })
 
   it('keeps the actions shown and unmoved on a touch screen', () => {
