@@ -40,9 +40,9 @@ use common::{
     rpc::RpcCallEvent,
     sets::RealmLifecycle,
     structs::{
-        AppConfig, ClientWindowFocus, CurrentRealm, CursorLocks, GraphicsSettings, PermissionUsed, PreviewMode,
-        PrimaryCamera, PrimaryPlayerRes, SceneGlobalLight, SceneLoadDistance, ServerConfiguration,
-        TimeOfDay, ToolTips,
+        AppConfig, ClientWindowFocus, CurrentRealm, CursorLocks, GraphicsSettings, PermissionUsed,
+        PreviewMode, PrimaryCamera, PrimaryPlayerRes, SceneGlobalLight, SceneLoadDistance,
+        ServerConfiguration, TimeOfDay, ToolTips,
     },
 };
 use comms::CommsPlugin;
