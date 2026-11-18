@@ -1349,7 +1349,7 @@ pub(crate) mod tests {
         );
     }
 
-    /// The window-only `land_data` fold needs backfill never to write Updates below the fold marker.
+    /// `land_data` is folded only past the marker, so backfill must never write Updates below it.
     #[test]
     fn backfill_topics_leave_out_land_updates() {
         for net in [ChainNet::Ethereum, ChainNet::Matic] {

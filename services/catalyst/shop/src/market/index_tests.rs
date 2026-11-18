@@ -1446,7 +1446,7 @@ async fn a_land_data_fold_past_since_equals_a_rebuild() {
     db.drop().await;
 }
 
-/// `LAND_DATA_SQL` with sequential scans off is one bounded index scan (the fold's own `SET LOCAL` is not covered).
+/// Pins `LAND_DATA_SQL`'s shape with seq scans off: one bounded index scan, not which index nor the fold's `SET LOCAL`.
 #[tokio::test]
 async fn the_land_data_read_is_one_bounded_index_scan() {
     let Some(db) = ScratchDb::create().await else {
@@ -1473,6 +1473,10 @@ async fn the_land_data_read_is_one_bounded_index_scan() {
             && !plan.contains("Seq Scan"),
         "{plan}"
     );
+    sqlx::query("RESET enable_seqscan")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
     drop(conn);
     db.drop().await;
 }
