@@ -256,14 +256,17 @@ pub struct Manifest {
 
 #[derive(Deserialize)]
 struct ManifestJson {
+    /// abgen's, and only shown: read as any JSON, so its shape never decides whether the
+    /// manifest is accepted.
     #[serde(default)]
-    lanes: BTreeMap<String, String>,
+    lanes: serde_json::Value,
     files: HashMap<String, Vec<String>>,
 }
 
 /// A manifest: `lanes` and `files`, original content CID → variant paths. Its `v` and any other
 /// field are abgen's own (they tell it when to rebuild) and are not read: whatever a manifest
-/// lists is loaded, whichever generation built it. It is fetched at the
+/// lists is loaded, whichever generation built it. Of `lanes`, the entries that are strings
+/// are kept for the debug panel. It is fetched at the
 /// entity's own url, so it names no entity. Paths that are not `bevy/{prefix}/{name}` with plain
 /// segments (a path becomes part of a url) or whose prefix letter names no class are dropped,
 /// and so is an original left with none.
@@ -281,10 +284,14 @@ pub fn parse_manifest(bytes: &[u8]) -> Result<Manifest, String> {
         })
         .filter(|(_, variants)| !variants.is_empty())
         .collect();
-    Ok(Manifest {
-        lanes: json.lanes,
-        files,
-    })
+    let lanes = json
+        .lanes
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(class, prefix)| Some((class.clone(), prefix.as_str()?.to_owned())))
+        .collect();
+    Ok(Manifest { lanes, files })
 }
 
 /// `bevy/{prefix}/{name}`: the prefix ASCII alphanumeric and not `manifest`, the name ASCII
