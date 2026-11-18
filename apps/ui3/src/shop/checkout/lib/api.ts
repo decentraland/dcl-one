@@ -107,13 +107,23 @@ export async function resolveLiveCoupon(
   }
 }
 
-/** A mint's LIVE price and remaining supply, or null when it is no longer a store mint. A store mint is a `legacy`
- * row, and an item's legacy primaries are few: its creator's MANA trade can come first, so the mint is found among them. */
+const STORE_MINT_PAGE = 20;
+/** A bound on the pages read, so a feed that never ends a page cannot hold a checkout: 1000 rows of one item. */
+const STORE_MINT_MAX_PAGES = 50;
+
+/** A mint's LIVE price and remaining supply, or null when it is no longer a store mint. A store mint is a `legacy` row
+ * among its item's newest-first listings, after any MANA trade listed since, however many: the pages are read until
+ * it shows up or they run out. A failed read rejects, as before. */
 export async function fetchStoreMintState(contractAddress: string, itemId: string, client: ShopClient): Promise<{ priceWei: string; available: number } | null> {
-  const body = await client.catalog.unified<{ data?: UnifiedListing[] }>({ contractAddress, itemId, source: "legacy", first: 20 });
-  const row = body?.data?.find((r) => r.acquisition === "store");
-  if (!row || row.acquisition !== "store" || !row.manaWei) return null;
-  return { priceWei: row.manaWei, available: typeof row.available === "number" ? row.available : 0 };
+  for (let page = 0; page < STORE_MINT_MAX_PAGES; page++) {
+    const skip = page * STORE_MINT_PAGE;
+    const body = await client.catalog.unified<{ data?: UnifiedListing[]; total?: number }>({ contractAddress, itemId, source: "legacy", first: STORE_MINT_PAGE, skip });
+    const rows = body?.data ?? [];
+    const row = rows.find((r) => r.acquisition === "store");
+    if (row) return row.manaWei ? { priceWei: row.manaWei, available: typeof row.available === "number" ? row.available : 0 } : null;
+    if (rows.length < STORE_MINT_PAGE || (typeof body?.total === "number" && skip + rows.length >= body.total)) return null;
+  }
+  return null;
 }
 
 /** What a receipt or an activity line shows for a bought asset. */

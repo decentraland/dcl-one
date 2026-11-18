@@ -37,6 +37,21 @@ describe("a store mint's live state", () => {
     expect(await fetchStoreMintState(COLLECTION, STORE_EMOTE.itemId!, client)).toEqual({ priceWei: STORE_EMOTE.manaWei, available: STORE_EMOTE.available });
   });
 
+  it("is found past the first page, after more MANA trades than a page holds", async () => {
+    const rows = [...Array.from({ length: 20 }, (_, i) => ({ ...LEGACY_TRADE, tradeId: `trade-legacy-${i}` })), STORE_EMOTE];
+    const transport = catalogTransport("ok", {
+      "/v3/catalog/unified": (url: URL) => {
+        const skip = Number(url.searchParams.get("skip") ?? 0);
+        const first = Number(url.searchParams.get("first") ?? rows.length);
+        return { data: rows.slice(skip, skip + first), total: rows.length };
+      },
+    });
+    const client = createShopClient({ base: "http://shop.test", mode: "canonical", transport, signer: null });
+    expect(await fetchStoreMintState(COLLECTION, STORE_EMOTE.itemId!, client)).toEqual({ priceWei: STORE_EMOTE.manaWei, available: STORE_EMOTE.available });
+    const skips = transport.calls.map((c) => new URL(c.url, "http://shop.test").searchParams.get("skip"));
+    expect(skips).toEqual(["0", "20"]);
+  });
+
   it("is null when the item has no store mint any more", async () => {
     const client = catalogClient("ok", { "/v3/catalog/unified": { data: [LEGACY_TRADE], total: 1 } });
     expect(await fetchStoreMintState(COLLECTION, STORE_EMOTE.itemId!, client)).toBeNull();
