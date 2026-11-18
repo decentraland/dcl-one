@@ -1,5 +1,5 @@
 import { cleanup, render, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { ModelViewer } from './ModelViewer';
 
@@ -25,7 +25,7 @@ vi.mock('./modelScene', () => ({
 vi.mock('./EmoteViewer', () => ({ EmoteViewer: () => null }));
 
 describe('ModelViewer', () => {
-  let onFailed: ReturnType<typeof vi.fn>;
+  let onFailed: Mock;
 
   beforeEach(() => {
     vi.spyOn(console, 'error').mockImplementation(() => {});

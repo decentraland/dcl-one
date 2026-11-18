@@ -16,7 +16,7 @@ type SchemaRegistry = Record<string, readonly Record<string, ISchema>[]>;
 
 type MergeAll<T extends readonly any[]> = T extends readonly [infer First, ...infer Rest]
   ? First & MergeAll<Rest>
-  : {}; // eslint-disable-line @typescript-eslint/ban-types
+  : {}; // oxlint-disable-line typescript/ban-types
 
 type MergedSchema<T extends readonly any[]> =
   MergeAll<T> extends Record<string, any> ? MapResult<MergeAll<T>> : never;

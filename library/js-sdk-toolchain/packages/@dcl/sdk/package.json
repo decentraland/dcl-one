@@ -20,7 +20,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "npm run build && tsc -p tsconfig.json --watch"
+    "start": "tsc -p tsconfig.json && tsc -p tsconfig.json --watch"
   },
   "tsdoc": {
     "tsdocFlavor": "AEDoc"

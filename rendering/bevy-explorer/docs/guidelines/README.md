@@ -17,5 +17,6 @@ in these pages are relative to `source/`, the engine workspace.
 - [Oddities](oddities.md): things that look wrong and aren't; read before "fixing" something surprising.
 - [Interaction](interaction.md): the pointer's distances, the scene raycast tiers and budget, and the `/hover_entity` and `/click_entity` commands with their replies and diagnoses.
 - [Running and testing](running.md): entry points, debugging, testing gotchas, the test suites.
+- [Profiling](profiling.md): what the client measures about itself: the performance sampler and its snapshots, the frame-time breakdown and bottleneck, the in-app scope profiler, the issue signal, Tracy.
 - [Benchmark](benchmark.md): the bare-metal benchmark of pull requests in Chrome on the laptop fleet: the files `--autopilot` writes, the browser stream, the `benchmark` runner and its report, the workflow and the laptops; read before changing the run, its CSV, log format, browser stream, report or workflows.
 - [Glossary](glossary.md): the project's vocabulary.

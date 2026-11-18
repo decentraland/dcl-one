@@ -60,4 +60,4 @@ A Figma→code task fails quietly, not loudly. Confirm:
 - every control still has an accessible name — not just that the old label is gone;
 - nothing the code renders is missing from Figma without the user's answer: every option, list entry, state and string is drawn (a node id) or was asked about;
 - every data state the spec lists (first load, back to the tab, empty, error, partial) renders as specced, including coming back to a tab that already loaded;
-- the `.tsx` eslint baseline didn't grow.
+- the `.tsx` lint baseline didn't grow.

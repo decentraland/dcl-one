@@ -84,7 +84,7 @@ function createThumbnailRenderer(canvas: HTMLCanvasElement): ThumbnailRenderer {
     if (isStale()) return undefined;
     const container = await loadModelContainer(
       scene,
-      new Blob([data]),
+      new Blob([data as BlobPart]),
       extensionOf(path),
       createLocalResolver(path),
     );

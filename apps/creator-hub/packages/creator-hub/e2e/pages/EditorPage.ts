@@ -15,7 +15,7 @@ export class EditorPage {
       timeout: SCENE_READY_TIMEOUT,
     });
     await expect(this.page.locator('[data-testid="editor-page-iframe"]')).toBeVisible();
-    await expect(this.page.locator('.MuiBackdrop-root:visible')).toHaveCount(0, {
+    await expect(this.page.locator('[data-testid="install-backdrop"]:visible')).toHaveCount(0, {
       timeout: SCENE_READY_TIMEOUT,
     });
   }

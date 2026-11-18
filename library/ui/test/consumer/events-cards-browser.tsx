@@ -1,7 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import { LiveNow } from '../../apps/sites/events/LiveNow'
 import { Upcoming } from '../../apps/sites/events/Upcoming'
-import { DayCard } from '../../apps/sites/events/cards'
+import { DayCard, UpcomingCard } from '../../apps/sites/events/cards'
 import '../../foundations/foundations.css'
 const base = {
   id: 'event',
@@ -35,6 +35,18 @@ createRoot(document.getElementById('root')!).render(
     />
     <section data-day>
       <DayCard {...base} live={false} />
+    </section>
+    <section data-live-small>
+      <UpcomingCard
+        {...base}
+        id="live-small"
+        title="Live party"
+        remind={undefined}
+        live
+        users={16}
+        usersLabel="16 online"
+        jumpIn={{ href: '/play' }}
+      />
     </section>
   </main>
 )

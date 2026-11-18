@@ -1,6 +1,12 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import type { PolymorphicLinkProps } from '../link.helpers'
-import { linkHref, secureRel, isPlainLinkClick, hasUnsafeURLCharacters } from '../link.helpers'
+import {
+  assertNavigationEntries,
+  linkHref,
+  secureRel,
+  isPlainLinkClick,
+  hasUnsafeURLCharacters
+} from '../link.helpers'
 
 describe('when resolving shared native link destinations', () => {
   it.each([undefined, null, false, true, 0, 1, {}, [], { trim: 'invalid' }])(
@@ -105,4 +111,51 @@ describe('when native navigation shares the link policy module', () => {
     expect(linkHref('/places')).toBe('/places')
     expect(secureRel('_blank', undefined)).toBe('noopener noreferrer')
   })
+})
+
+describe('when navigation entries are validated before rendering', () => {
+  const messages = { id: 'bad id', entry: 'bad entry' }
+  const anyHref = () => true
+  it('should accept unique, labelled entries the destination check accepts', () => {
+    expect(() =>
+      assertNavigationEntries(
+        [
+          { id: 'a', label: 'A', href: '/a' },
+          { id: 'b', label: 'B' }
+        ],
+        (href) => href === undefined || linkHref(href) !== undefined,
+        messages
+      )
+    ).not.toThrow()
+  })
+  it.each([null, undefined, 0, 'a', {}, { id: ' ' }, { id: 1 }])(
+    'should report entry %j as an identity error instead of a TypeError',
+    (entry) => {
+      expect(() => assertNavigationEntries([entry], anyHref, messages)).toThrow('bad id')
+    }
+  )
+  it('should report a repeated identity', () => {
+    expect(() =>
+      assertNavigationEntries(
+        [
+          { id: 'a', label: 'A' },
+          { id: 'a', label: 'B' }
+        ],
+        anyHref,
+        messages
+      )
+    ).toThrow('bad id')
+  })
+  it.each([{ label: '' }, { label: ' ' }, { label: 3 }, { label: 'A', href: 'javascript:x' }])(
+    'should report %j as an entry error',
+    (entry) => {
+      expect(() =>
+        assertNavigationEntries(
+          [{ id: 'a', ...entry }],
+          (href) => href === undefined || linkHref(href) !== undefined,
+          messages
+        )
+      ).toThrow('bad entry')
+    }
+  )
 })

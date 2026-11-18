@@ -65,9 +65,9 @@ mod tests;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::{get, post};
 use alloy_primitives::{Address, U256};
 use axum::Router;
-use axum::routing::{get, post};
 use chrono::NaiveDateTime;
 use sqlx::PgPool;
 

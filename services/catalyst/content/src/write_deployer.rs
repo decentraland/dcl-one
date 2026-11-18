@@ -1325,7 +1325,7 @@ fn persist_statement(local_provenance: bool) -> String {
             LIMIT 1
         ),
         overwrote AS (
-            SELECT dep1.id, dep1.entity_pointers
+            SELECT dep1.id, dep1.entity_id, dep1.entity_pointers
             FROM content.deployments AS dep1
             LEFT JOIN content.deployments AS dep2 ON dep1.deleter_deployment = dep2.id
             WHERE dep1.entity_type = $3
@@ -1367,6 +1367,7 @@ fn persist_statement(local_provenance: bool) -> String {
             DELETE FROM content.active_pointers
             WHERE EXISTS (SELECT 1 FROM ins)
               AND pointer IN (SELECT unnest(entity_pointers) FROM overwrote)
+              AND entity_id IN (SELECT entity_id FROM overwrote)
               AND NOT (pointer = ANY($7))
             RETURNING pointer
         ),

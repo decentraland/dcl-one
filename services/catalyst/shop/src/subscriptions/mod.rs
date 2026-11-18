@@ -35,13 +35,13 @@ mod tests;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::{erase, get};
 use axum::Json;
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{OriginalUri, Query, State as Extract};
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use serde::Deserialize;
 use serde_json::json;
 use sqlx::PgPool;
@@ -164,7 +164,7 @@ pub fn shop_router(state: SharedState) -> Router {
     let api = Router::new()
         .route(
             "/v1/notify-requests",
-            get(read).post(create).delete(unsubscribe),
+            get(read).post(erase(create)).delete(erase(unsubscribe)),
         )
         .with_state(state);
     DataWrites::guard(api, enabled)

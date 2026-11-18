@@ -1,14 +1,12 @@
 // usePlaces — owns the Places browser state (section / search / category / sort) and drives the
-// fetches, the way decentraland.org/places does: the grid, the Live Now feed and the Featured set
-// are three reads of the places API's /destinations feed. A `cancelled` flag drops stale responses
+// fetches, the way decentraland.org/places does: the grid is a read of the places API's
+// /destinations feed. A `cancelled` flag drops stale responses
 // (we don't abort: placesApi shares cached promises across consumers).
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getLogin } from '@explorer-core/features/auth/sso'
 import {
   BROWSE_ARGS,
-  FEATURED_ARGS,
-  LIVE_FEED_ARGS,
   fetchDestinations,
   fetchPlaces,
   fetchWorlds,
@@ -22,10 +20,6 @@ export type PlacesSort = 'most_active' | 'like_score_best' | 'created_at' | 'nam
 
 export interface UsePlaces {
   places: DiscoverPlace[]
-  /** The busiest destinations (places and worlds) with live presence, for Live Now. */
-  liveFeed: DiscoverPlace[]
-  /** The places API's curated set, for the Featured rail. */
-  featured: DiscoverPlace[]
   loading: boolean
   loadingMore: boolean
   hasMore: boolean
@@ -42,12 +36,8 @@ export interface UsePlaces {
   setSection: (s: PlacesSection) => void
 }
 
-const dataOrEmpty = (pr: Promise<PlacesResponse>): Promise<DiscoverPlace[]> => pr.then((r) => r.data).catch(() => [])
-
 export function usePlaces(account?: string | null): UsePlaces {
   const [places, setPlaces] = useState<DiscoverPlace[]>([])
-  const [liveFeed, setLiveFeed] = useState<DiscoverPlace[]>([])
-  const [featured, setFeatured] = useState<DiscoverPlace[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [search, updateSearch] = useState('')
@@ -73,15 +63,6 @@ export function usePlaces(account?: string | null): UsePlaces {
   useEffect(() => {
     setPage((previous) => previous.key === key ? previous : { key, offset: 0 })
   }, [key])
-
-  useEffect(() => {
-    let cancelled = false
-    void dataOrEmpty(fetchDestinations(LIVE_FEED_ARGS)).then((d) => !cancelled && setLiveFeed(d))
-    void dataOrEmpty(fetchDestinations(FEATURED_ARGS)).then((d) => !cancelled && setFeatured(d))
-    return () => {
-      cancelled = true
-    }
-  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -157,5 +138,5 @@ export function usePlaces(account?: string | null): UsePlaces {
   const loadMore = (): void => {
     if (!loading && hasMore) setPage({ key, offset: offset + BROWSE_ARGS.limit })
   }
-  return { places: current ? places : [], liveFeed, featured, loading: !current || (loading && !loadingMore), loadingMore, hasMore: current && hasMore, loadMore, retry: () => setAttempt((previous) => previous + 1), error, search, setSearch, category, setCategory, sort, setSort, section, setSection }
+  return { places: current ? places : [], loading: !current || (loading && !loadingMore), loadingMore, hasMore: current && hasMore, loadMore, retry: () => setAttempt((previous) => previous + 1), error, search, setSearch, category, setCategory, sort, setSort, section, setSection }
 }

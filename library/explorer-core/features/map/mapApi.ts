@@ -252,10 +252,11 @@ export async function fetchPlacePhotos(placeId: string, offset: number): Promise
   return { images, total }
 }
 
-let fixedPublicReads: { pois: Vec2[]; peers: Peer[] } | null = null
+/** `worlds`: the World each wallet (lowercase) is connected to; a wallet not in it is in none. */
+let fixedPublicReads: { pois: Vec2[]; peers: Peer[]; worlds?: Record<string, string> } | null = null
 
 /** Answer the unsigned reads from fixed data instead of the network (the HUD's mock mode). */
-export function fixMapPublicReads(data: { pois: Vec2[]; peers: Peer[] } | null): void {
+export function fixMapPublicReads(data: { pois: Vec2[]; peers: Peer[]; worlds?: Record<string, string> } | null): void {
   fixedPublicReads = data
 }
 
@@ -285,9 +286,28 @@ export interface Peer {
   z: number
 }
 
-export async function fetchPeers(signal?: AbortSignal): Promise<Peer[]> {
-  if (fixedPublicReads != null) return fixedPublicReads.peers
-  const res = await fetch(`${serviceUrl('archipelagoStats')}/comms/peers`, { signal })
+// 100 wallets keep the peers URL near 5 KB, under common proxy limits
+const PEERS_PER_READ = 100
+
+/** The connected players, or with `ids` only those wallets' entries, read 100 wallets at a time.
+ *  The stats service matches `id` exactly, and its addresses are lowercase, so ids are sent
+ *  lowercased. */
+export async function fetchPeers(signal?: AbortSignal, ids?: string | readonly string[]): Promise<Peer[]> {
+  const wanted = ids == null ? null : (typeof ids === 'string' ? [ids] : ids).map((id) => id.toLowerCase())
+  if (fixedPublicReads != null) {
+    if (wanted == null) return fixedPublicReads.peers
+    const set = new Set(wanted)
+    return fixedPublicReads.peers.filter((p) => set.has(p.address.toLowerCase()))
+  }
+  if (wanted == null) return fetchPeerBatch('', signal)
+  if (wanted.length === 0) return []
+  const batches: string[][] = []
+  for (let i = 0; i < wanted.length; i += PEERS_PER_READ) batches.push(wanted.slice(i, i + PEERS_PER_READ))
+  return (await Promise.all(batches.map((batch) => fetchPeerBatch(`?${batch.map((id) => `id=${encodeURIComponent(id)}`).join('&')}`, signal)))).flat()
+}
+
+async function fetchPeerBatch(query: string, signal?: AbortSignal): Promise<Peer[]> {
+  const res = await fetch(`${serviceUrl('archipelagoStats')}/comms/peers${query}`, { signal })
   if (!res.ok) {
     await res.body?.cancel()
     throw new Error(`The connected players list returned ${res.status}`)
@@ -302,4 +322,18 @@ export async function fetchPeers(signal?: AbortSignal): Promise<Peer[]> {
     if (Number.isFinite(x) && Number.isFinite(z)) out.push({ address, x, z })
   }
   return out
+}
+
+/** The World a wallet is connected to (the worlds server's `/wallet/{wallet}/connected-world`),
+ *  or null when it is in none. */
+export async function fetchConnectedWorld(address: string, signal?: AbortSignal): Promise<string | null> {
+  if (fixedPublicReads != null) return fixedPublicReads.worlds?.[address.toLowerCase()] ?? null
+  const res = await fetch(`${serviceUrl('worldsServer')}/wallet/${encodeURIComponent(address)}/connected-world`, { signal })
+  if (!res.ok) {
+    await res.body?.cancel()
+    if (res.status === 404) return null
+    throw new Error(`The connected world read returned ${res.status}`)
+  }
+  const { world } = (await res.json()) as { world?: unknown }
+  return typeof world === 'string' && world !== '' ? world : null
 }

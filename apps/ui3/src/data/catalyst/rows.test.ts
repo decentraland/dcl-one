@@ -33,7 +33,6 @@ import {
   normalizePlace,
   normalizePlaceCategory,
   toCategoryView,
-  toPlaceDetail,
   toPlaceView,
 } from "./places";
 import { normalizeProfileEnvelope } from "./profile";
@@ -61,8 +60,7 @@ const CASES: GuardCase[] = [
     guard: isRenderablePlace,
     minimal: { id: "", base_position: "", positions: [], categories: [] },
     map: (row) => {
-      const view = toPlaceView(normalizePlace(row as never));
-      return toPlaceDetail(view);
+      return toPlaceView(normalizePlace(row as never));
     },
     edges: [
       { id: "", base_position: "", positions: [], categories: [] },

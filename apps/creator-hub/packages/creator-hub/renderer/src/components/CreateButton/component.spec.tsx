@@ -1,11 +1,11 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { CreateButton } from '.';
 
 vi.mock('/@/hooks/useWorkspace', () => ({
@@ -33,9 +33,9 @@ function stubNarrow(matches: boolean) {
 
 const renderButton = () =>
   render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <CreateButton />
-    </ThemeProvider>,
+    </TestProviders>,
   );
 
 const labelHalf = () => screen.getByRole('button', { name: 'Create' });
@@ -66,6 +66,22 @@ describe('CreateButton', () => {
       const menuHalf = screen.getByRole('button', { name: 'Create options' });
       expect(menuHalf.getAttribute('data-testid')).toBe('create-button-toggle');
       expect(menuHalf.getAttribute('aria-haspopup')).toBe('menu');
+    });
+  });
+
+  describe('when the menu half is clicked twice', () => {
+    it('should open the menu, then close it', () => {
+      stubNarrow(false);
+      renderButton();
+      const menuHalf = screen.getByRole('button', { name: 'Create options' });
+
+      fireEvent.click(menuHalf);
+      expect(screen.getByRole('menu')).toBeTruthy();
+      expect(menuHalf.getAttribute('aria-expanded')).toBe('true');
+
+      fireEvent.click(menuHalf);
+      expect(screen.queryByRole('menu')).toBeNull();
+      expect(menuHalf.getAttribute('aria-expanded')).toBeNull();
     });
   });
 

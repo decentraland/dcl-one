@@ -7,6 +7,7 @@
 
 import { encodeIdentity, getLogin, rootAddress, type AuthIdentity, type StoredLogin } from '../features/auth/sso'
 import { trackGuestWalletCreation } from '../features/auth/guestWalletEvent'
+import type { GuestLogin } from '../features/auth/guest'
 import { attachEngine, launchAnalytics } from '../lib/analytics'
 import { inShell, shellRequest } from '../lib/shell'
 import { newAccountFlags, type LoginDriver, type NewAccountPick } from './driver'
@@ -52,7 +53,7 @@ export class EngineDriver implements LoginDriver {
   // embed) there is nowhere to keep it, so the guest is a throwaway one.
   async loginPersistentGuest(pick?: NewAccountPick): Promise<void> {
     if (!inShell) return this.loginGuest()
-    const login = await trackGuestWalletCreation(() => shellRequest<StoredLogin>('createGuest', undefined, CREATE_GUEST_TIMEOUT_MS))
+    const login = await trackGuestWalletCreation(() => shellRequest<GuestLogin>('createGuest', undefined, CREATE_GUEST_TIMEOUT_MS))
     await this.loginWithIdentity(login.identity, false, true, pick)
   }
 
@@ -77,8 +78,8 @@ export class EngineDriver implements LoginDriver {
     // SSO login is a redirect/console-command; there is no in-engine flow to cancel.
   }
 
-  async logout(): Promise<void> {
-    await this.rpc.command('/logout')
+  async logout(forget?: boolean): Promise<void> {
+    await this.rpc.command(forget === true ? '/logout --forget' : '/logout')
   }
 
   // The engine fetches the profile from the catalyst it boots with, the one the auth site deploys a
@@ -105,6 +106,10 @@ export class EngineDriver implements LoginDriver {
 
   expectBridge(): void {
     this.ch.expectReady()
+  }
+
+  bridgeReady(): boolean {
+    return this.ch.isReady()
   }
 
   on(fn: (msg: SceneToPage) => void): () => void {

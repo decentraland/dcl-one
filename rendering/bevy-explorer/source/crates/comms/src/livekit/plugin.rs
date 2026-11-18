@@ -313,7 +313,7 @@ fn handle_input(
                 .push_back(VoiceInput::SetMic(!call_mic.enabled));
         }
         // the push-to-talk release toggles too; count the press only
-        _ if mic_state.scene_blocked => {
+        _ if mic_state.scene_blocked() => {
             if *pressed {
                 mic_state.refuse();
             }

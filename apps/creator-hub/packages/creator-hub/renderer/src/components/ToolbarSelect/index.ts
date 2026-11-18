@@ -1,0 +1,1 @@
+export { ToolbarSelect } from './component';

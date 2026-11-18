@@ -137,6 +137,252 @@ fn the_voice_badge_follows_speech_mutes_and_the_microphone() {
     assert_eq!(voice_badge(call, false, false, true), Voice::Speaking);
 }
 
+fn shape(id: &str, name: Option<&str>) -> PbAvatarShape {
+    PbAvatarShape {
+        id: id.to_owned(),
+        name: name.map(str::to_owned),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_scene_avatar_shows_its_name_and_the_end_of_its_id() {
+    let named = NametagContent::from_shape(&shape("guide-0001", Some("Guide"))).unwrap();
+    assert_eq!(named.name, "Guide");
+    assert_eq!(named.suffix, "#0001");
+    assert!(!named.verified && !named.official);
+
+    // no name given, or a blank one, asks for no tag
+    for unnamed in [None, Some(""), Some("  ")] {
+        assert!(NametagContent::from_shape(&shape("guide-0001", unnamed)).is_none());
+    }
+
+    // a control character in the id stays off the tag
+    let broken = NametagContent::from_shape(&shape("guide-0\n01", Some("Guide"))).unwrap();
+    assert_eq!(broken.suffix, "#0 01");
+
+    // an id too short to end a name shows zeros, and one of four characters shows itself
+    for (id, suffix) in [
+        ("", "#0000"),
+        ("abc", "#0000"),
+        ("abcd", "#abcd"),
+        ("né-ñandú", "#andú"),
+    ] {
+        let content = NametagContent::from_shape(&shape(id, Some("Guide"))).unwrap();
+        assert_eq!(content.suffix, suffix, "{id}");
+    }
+
+    // the suffix is the id's own, and the name is bounded as a player's is
+    let tagged = NametagContent::from_shape(&shape("guide-0001", Some("Guide#ffff"))).unwrap();
+    assert_eq!(
+        (tagged.name.as_str(), tagged.suffix.as_str()),
+        ("Guide", "#0001")
+    );
+    // what follows a `#` is dropped with the space before it, and a name that starts with
+    // one still has a tag
+    for (given, name) in [("Room #3", "Room"), ("#1 Fan", "NPC"), (" #", "NPC")] {
+        let cut = NametagContent::from_shape(&shape("guide-0001", Some(given))).unwrap();
+        assert_eq!(cut.name, name, "{given:?}");
+    }
+    let long = NametagContent::from_shape(&shape("guide-0001", Some(&"a".repeat(500)))).unwrap();
+    assert_eq!(long.name.chars().count(), MAX_NAME_CHARS + 1);
+}
+
+fn scene_avatar_app() -> App {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .init_resource::<MicState>()
+        .init_resource::<NearbyMutes>()
+        .add_systems(
+            Update,
+            (resolve_scene_avatar_content, resolve_voice).chain(),
+        );
+    app
+}
+
+fn selection(shape: &PbAvatarShape) -> AvatarSelection {
+    AvatarSelection {
+        scene: None,
+        shape: AvatarShape(shape.clone()),
+        automatic_delete: true,
+        disable_dither: false,
+    }
+}
+
+fn spawn_scene_avatar(app: &mut App, root: Entity, shape: &PbAvatarShape) -> Entity {
+    app.world_mut()
+        .spawn((
+            SceneEntity {
+                root,
+                scene_id: dcl_types::SceneId::DUMMY,
+                id: dcl_component::SceneEntityId::ROOT,
+            },
+            AvatarShape(shape.clone()),
+            selection(shape),
+        ))
+        .id()
+}
+
+fn name_of(app: &App, avatar: Entity) -> Option<String> {
+    app.world()
+        .get::<NametagContent>(avatar)
+        .map(|content| content.name.clone())
+}
+
+#[test]
+fn a_scene_avatar_is_named_once_built_and_follows_its_shape() {
+    let mut app = scene_avatar_app();
+    let scene = app.world_mut().spawn_empty().id();
+    let guide = spawn_scene_avatar(&mut app, scene, &shape("guide-0001", Some("Guide")));
+
+    // not built yet: the tag would sit at its feet
+    app.update();
+    assert_eq!(name_of(&app, guide), None);
+
+    app.world_mut()
+        .entity_mut(guide)
+        .insert(NametagHeadOffset(0.4));
+    app.update();
+    app.update();
+    assert_eq!(name_of(&app, guide).as_deref(), Some("Guide"));
+    assert_eq!(
+        app.world().get::<NametagVoice>(guide).unwrap().0,
+        Voice::Off
+    );
+
+    // renamed and talking
+    let mut talking = shape("guide-0001", Some("Host"));
+    talking.talking = Some(true);
+    app.world_mut()
+        .entity_mut(guide)
+        .insert(AvatarShape(talking));
+    app.update();
+    app.update();
+    assert_eq!(name_of(&app, guide).as_deref(), Some("Host"));
+    assert_eq!(
+        app.world().get::<NametagVoice>(guide).unwrap().0,
+        Voice::Speaking
+    );
+    // as a call's speaker: a scene that turns nearby voice off leaves the bars up
+    assert_eq!(
+        app.world().get::<Speaking>(guide),
+        Some(&Speaking { in_call: true })
+    );
+    app.world_mut()
+        .resource_mut::<MicState>()
+        .set_scene_disabled(true);
+    app.update();
+    assert_eq!(
+        app.world().get::<NametagVoice>(guide).unwrap().0,
+        Voice::Speaking
+    );
+    app.world_mut()
+        .resource_mut::<MicState>()
+        .set_scene_disabled(false);
+
+    // an empty name takes the tag away, and a name brings it back
+    for (name, shown) in [("", None), ("Guide", Some("Guide"))] {
+        app.world_mut()
+            .entity_mut(guide)
+            .insert(AvatarShape(shape("guide-0001", Some(name))));
+        app.update();
+        assert_eq!(name_of(&app, guide).as_deref(), shown, "{name:?}");
+        // the shape no longer says talking
+        assert!(app.world().get::<Speaking>(guide).is_none());
+    }
+
+    // an avatar with no tag is remembered as such: its shape is read again only once changed
+    app.world_mut()
+        .entity_mut(guide)
+        .insert(AvatarShape(shape("guide-0001", Some(""))));
+    app.update();
+    app.update();
+    let unnamed = SceneAvatarNametag { named: false };
+    assert_eq!(app.world().get::<SceneAvatarNametag>(guide), Some(&unnamed));
+    let read = app
+        .world()
+        .entity(guide)
+        .get_change_ticks::<SceneAvatarNametag>()
+        .unwrap();
+    app.update();
+    let kept = app
+        .world()
+        .entity(guide)
+        .get_change_ticks::<SceneAvatarNametag>()
+        .unwrap();
+    assert_eq!(read.changed.get(), kept.changed.get());
+    assert_eq!(name_of(&app, guide), None);
+
+    // the scene drops the avatar
+    app.world_mut().entity_mut(guide).remove::<AvatarShape>();
+    app.update();
+    assert_eq!(name_of(&app, guide), None);
+    assert!(app.world().get::<SceneAvatarNametag>(guide).is_none());
+}
+
+#[test]
+fn a_scene_avatar_made_again_waits_for_its_new_body() {
+    let mut app = scene_avatar_app();
+    app.add_observer(crate::add_attach_points_to_avatar_shape)
+        .add_observer(crate::remove_attach_points_from_avatar_shape);
+    let scene = app.world_mut().spawn_empty().id();
+    let guide_shape = shape("guide-0001", Some("Guide"));
+    let guide = spawn_scene_avatar(&mut app, scene, &guide_shape);
+    app.world_mut()
+        .entity_mut(guide)
+        .insert(NametagHeadOffset(0.4));
+    app.update();
+    assert_eq!(name_of(&app, guide).as_deref(), Some("Guide"));
+
+    // the scene removes the shape and gives it back: the body the offset was measured on is
+    // gone, and the tag would sit at the feet of the next until it is built
+    app.world_mut().entity_mut(guide).remove::<AvatarShape>();
+    app.world_mut()
+        .entity_mut(guide)
+        .insert(AvatarShape(guide_shape));
+    app.update();
+    assert!(app.world().get::<NametagHeadOffset>(guide).is_none());
+    assert_eq!(name_of(&app, guide), None);
+
+    app.world_mut()
+        .entity_mut(guide)
+        .insert(NametagHeadOffset(0.4));
+    app.update();
+    assert_eq!(name_of(&app, guide).as_deref(), Some("Guide"));
+}
+
+#[test]
+fn previews_and_restyled_players_get_no_scene_avatar_tag() {
+    let mut app = scene_avatar_app();
+    let npc_shape = shape("guide-0001", None);
+
+    // an avatar the HUD previews, made by a system scene
+    let system_scene = app.world_mut().spawn(SuperUserScene).id();
+    let preview = spawn_scene_avatar(&mut app, system_scene, &npc_shape);
+    // a scene entity that restyles a player: it is never drawn, so it has no selection
+    let scene = app.world_mut().spawn_empty().id();
+    let restyle = spawn_scene_avatar(&mut app, scene, &npc_shape);
+    app.world_mut()
+        .entity_mut(restyle)
+        .remove::<AvatarSelection>();
+    // a player keeps the name of their profile
+    let player = spawn_scene_avatar(&mut app, scene, &npc_shape);
+    app.world_mut()
+        .entity_mut(player)
+        .insert(PrimaryUser::default());
+
+    for avatar in [preview, restyle, player] {
+        app.world_mut()
+            .entity_mut(avatar)
+            .insert(NametagHeadOffset(0.4));
+    }
+    app.update();
+    app.update();
+    for avatar in [preview, restyle, player] {
+        assert_eq!(name_of(&app, avatar), None);
+    }
+}
+
 /// A world with the camera at the origin looking down -z, and the systems that give each
 /// player their tag and decide which names show.
 fn tag_app() -> App {
@@ -288,10 +534,10 @@ fn a_hidden_name_keeps_its_tag_and_its_message() {
     app.update();
     assert!(!shown(&app, ada));
     app.world_mut().entity_mut(ada).remove::<HiddenNametag>();
-    app.world_mut().entity_mut(ada).insert(NametagBlocked);
+    app.world_mut().entity_mut(ada).insert(BlockedOrBanned);
     app.update();
     assert!(!shown(&app, ada));
-    app.world_mut().entity_mut(ada).remove::<NametagBlocked>();
+    app.world_mut().entity_mut(ada).remove::<BlockedOrBanned>();
     app.world_mut().entity_mut(ada).insert(BeyondMaxAvatars);
     app.update();
     assert!(!shown(&app, ada));
@@ -309,6 +555,60 @@ fn a_hidden_name_keeps_its_tag_and_its_message() {
 
     assert_eq!(tag_of(&app, ada), Some(tag));
     assert!(app.world().entity(ada).contains::<ChatBubble>());
+}
+
+#[test]
+fn an_avatar_its_scene_hides_shows_no_name() {
+    let mut app = tag_app();
+    let guide = spawn_player(&mut app, "Guide", 10.0);
+    app.world_mut()
+        .entity_mut(guide)
+        .insert(InheritedVisibility::VISIBLE);
+    app.update();
+    assert!(shown(&app, guide));
+
+    // hidden by its own visibility or a parent's
+    app.world_mut()
+        .entity_mut(guide)
+        .insert(InheritedVisibility::HIDDEN);
+    app.update();
+    assert!(!shown(&app, guide));
+    app.world_mut()
+        .entity_mut(guide)
+        .insert(InheritedVisibility::VISIBLE);
+    app.update();
+    assert!(shown(&app, guide));
+}
+
+#[test]
+fn an_avatar_scaled_to_nothing_shows_no_name() {
+    let mut app = tag_app();
+    let guide = spawn_player(&mut app, "Guide", 10.0);
+    app.update();
+    assert!(shown(&app, guide));
+
+    let at = |scale: Vec3| {
+        GlobalTransform::from(bevy::math::Affine3A::from_scale_rotation_translation(
+            scale,
+            Quat::IDENTITY,
+            Vec3::new(0.0, 0.0, -10.0),
+        ))
+    };
+    // nothing at all, the sliver a scale of nothing becomes, flattened along one axis, and
+    // not a number
+    for scale in [
+        Vec3::ZERO,
+        Vec3::splat(f32::EPSILON),
+        Vec3::new(1.0, 1.0, 0.0),
+        Vec3::splat(f32::NAN),
+    ] {
+        *app.world_mut().get_mut::<GlobalTransform>(guide).unwrap() = at(scale);
+        app.update();
+        assert!(!shown(&app, guide), "{scale}");
+        *app.world_mut().get_mut::<GlobalTransform>(guide).unwrap() = at(Vec3::splat(0.5));
+        app.update();
+        assert!(shown(&app, guide), "{scale}");
+    }
 }
 
 #[test]
@@ -376,6 +676,13 @@ fn a_tag_stands_on_its_anchor_within_bounds_for_its_largest() {
     assert_eq!(aabb.center, Vec3A::ZERO);
     let largest = Vec3A::splat(200.0 * tag_scale(MAX_DISTANCE, FOV));
     assert!(aabb.half_extents.distance(largest) < 1e-4);
+
+    // a scene's scale of its avatar shrinks the bounds with it: they are sized against it
+    *app.world_mut().get_mut::<GlobalTransform>(ada).unwrap() =
+        GlobalTransform::from_scale(Vec3::new(1.0, 0.5, 2.0));
+    app.world_mut().run_system_once(place_tags).unwrap();
+    let aabb = *app.world().get::<Aabb>(tag).unwrap();
+    assert!(aabb.half_extents.distance(largest * 2.0) < 1e-4);
 
     // the anchor moves with the animation, and the tag with it
     app.world_mut()

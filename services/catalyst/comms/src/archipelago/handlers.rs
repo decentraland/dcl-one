@@ -19,6 +19,7 @@ struct HealthResp {
     feed_assignment_oversized: u64,
     socket_write_timeout: u64,
     socket_assignments_written: u64,
+    feed_assignment_full: u64,
 }
 
 pub fn diagnostics(s: &AppState) -> String {
@@ -40,6 +41,7 @@ pub fn diagnostics(s: &AppState) -> String {
         feed_assignment_oversized: s.feed.assignment_oversized_count(),
         socket_write_timeout: s.feed.socket_write_timeout_count(),
         socket_assignments_written: s.feed.socket_assignments_written_count(),
+        feed_assignment_full: s.feed.assignment_full_count(),
     })
 }
 
@@ -124,10 +126,12 @@ fn connector_configured(
     } else {
         axum::Router::new()
     };
-    sockets.fallback(move |method, uri, headers| {
-        let http = http.clone();
-        async move { http.respond(method, uri, headers).await }
-    })
+    sockets.fallback(crate::shared::routing::erase(
+        move |method, uri, headers| {
+            let http = http.clone();
+            async move { http.respond(method, uri, headers).await }
+        },
+    ))
 }
 
 pub(super) struct ConnectorHttp {

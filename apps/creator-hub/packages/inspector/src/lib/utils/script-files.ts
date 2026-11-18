@@ -12,6 +12,17 @@ export function resolveScriptFile(scriptPath: string, value: string): string | u
 }
 
 /**
+ * Whether a file parameter (`@format image` and the like) names a file that isn't in the scene.
+ * The picker stores those paths from the scene root, not from the script's folder.
+ *
+ * @param files - the scene's file paths, lowercased.
+ */
+export function isMissingSceneFile(value: string, files: ReadonlySet<string>): boolean {
+  if (!value || value.includes(':') || normalizePath(value) !== value) return false;
+  return !files.has(value.toLowerCase());
+}
+
+/**
  * Whether a Script's string parameter names an asset file that isn't in the scene.
  *
  * @param files - the scene's file paths, lowercased.

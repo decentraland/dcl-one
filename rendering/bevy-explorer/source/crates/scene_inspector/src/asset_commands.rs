@@ -263,10 +263,9 @@ fn init_asset_cmd(
                     let target = scene_target_json(&io, &scene_hash).await;
                     for (path, hash) in &asset.contents {
                         let rel = format!("{base_dir}/{path}");
-                        // Fetch the bytes so we can both seed the native live-render cache AND
-                        // write the file into the
-                        // scene folder right now — the immediate push, so the asset renders without
-                        // waiting for a save (and the dev server can serve it on the live merge).
+                        // Fetch the bytes to seed the native live-render cache and write the file to
+                        // the scene folder immediately. The asset renders before a save, and the dev
+                        // server can serve it on the live merge.
                         let url = format!("{CONTENTS_BASE}{hash}");
                         let fetched = match client
                             .get(&url)
