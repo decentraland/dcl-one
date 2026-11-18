@@ -47,7 +47,7 @@ const flow = initialFlow()
 
 beforeEach(() => Object.assign(flow, initialFlow()))
 
-vi.mock('@/features/creators/hooks/useLinkedReview', () => ({ useLinkedApprovalFlow: () => flow }))
+vi.mock('../../../hooks/useLinkedReview', () => ({ useLinkedApprovalFlow: () => flow }))
 vi.mock('@/data/lib/creators/builder', async importOriginal => ({
   ...(await importOriginal<typeof import('@/data/lib/creators/builder')>()),
   fetchContentSize: vi.fn(async (hash: string) => (hash === 'Qma' ? 2.5 * 1024 * 1024 : 512 * 1024))

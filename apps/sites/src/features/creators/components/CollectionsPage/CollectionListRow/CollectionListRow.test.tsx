@@ -20,7 +20,7 @@ vi.mock('@/data/lib/creators/clipboard', () => ({ copyToClipboard: vi.fn().mockR
 
 import { copyToClipboard } from '@/data/lib/creators/clipboard'
 
-vi.mock('@/features/creators/store/wallet', () => ({
+vi.mock('../../../store/wallet', () => ({
   useWallet: (selector: (state: { session: { address: string } }) => unknown) =>
     selector({ session: { address: '0xabc' } })
 }))

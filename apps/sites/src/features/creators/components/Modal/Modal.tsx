@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { CloseIcon } from '@/features/creators/components/Icons'
+import { CloseIcon } from '../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { track } from '@/data/lib/creators/analytics'
 import styles from './Modal.module.css'

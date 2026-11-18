@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
-import { CategoryIcon } from '@/features/creators/components/ItemIcons'
-import { Select } from '@/features/creators/components/Select'
+import { CategoryIcon } from '../ItemIcons'
+import { Select } from '../Select'
 import { useTranslation } from '@/data/lib/creators/intl'
 
 type Props = {

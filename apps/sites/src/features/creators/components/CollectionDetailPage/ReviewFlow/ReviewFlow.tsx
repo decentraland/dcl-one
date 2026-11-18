@@ -3,12 +3,12 @@ import {
   ChatBubbleOutlineIcon as CommentIcon,
   ErrorOutlineIcon as ErrorIcon,
   InfoOutlinedIcon as InfoIcon
-} from '@/features/creators/components/Icons'
+} from '../../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { Button } from '@/features/creators/components/Button'
-import { CollectionActivityModal } from '@/features/creators/components/CollectionActivityModal'
-import { Tooltip } from '@/features/creators/components/Tooltip'
-import { useAppealCuration, useRequestValidation } from '@/features/creators/hooks/useCollectionEvents'
+import { Button } from '../../Button'
+import { CollectionActivityModal } from '../../CollectionActivityModal'
+import { Tooltip } from '../../Tooltip'
+import { useAppealCuration, useRequestValidation } from '../../../hooks/useCollectionEvents'
 import { track } from '@/data/lib/creators/analytics'
 import {
   ValidationLimitError,

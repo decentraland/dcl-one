@@ -2,7 +2,7 @@
 // a linked collection belongs to a third party (one per collection, created on first save), is tied to one
 // external NFT contract, and its items are unlocked by tokens of that contract (see lib/mappings).
 import { ContractNetwork } from '@dcl/schemas'
-import { config } from '@/data/lib/creators/config'
+import { config } from './config'
 import { type Collection } from './collections'
 
 export const THIRD_PARTY_URN_TYPE = 'collections-thirdparty'

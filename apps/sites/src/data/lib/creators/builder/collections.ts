@@ -1,5 +1,5 @@
-import { type Collection, type CollectionsList, type FetchCollectionsParams } from '@/data/lib/creators/collections'
-import { type Item } from '@/data/lib/creators/items'
+import { type Collection, type CollectionsList, type FetchCollectionsParams } from '../collections'
+import { type Item } from '../items'
 import {
   fromRemoteCollection,
   fromRemoteItem,

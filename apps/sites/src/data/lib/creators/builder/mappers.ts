@@ -1,17 +1,17 @@
 // Conversions between builder-server's wire shapes and the app's domain types, ported from the legacy builder
 // (lib/api/builder.ts) so both apps read and write the same API identically.
-import { CollectionType, toSafeLink, type Collection, type FetchCollectionsParams } from '@/data/lib/creators/collections'
+import { CollectionType, toSafeLink, type Collection, type FetchCollectionsParams } from '../collections'
 import {
   CURATION_PAGE_SIZE,
   CurationStatusFilter,
   CurationTypeFilter,
   type CollectionCuration,
   type CurationFilters
-} from '@/data/lib/creators/curation'
-import { isRejectReasonCode, type CollectionEvent, type RejectReasonCode } from '@/data/lib/creators/events'
-import type { Item } from '@/data/lib/creators/items'
-import type { ItemCuration, LinkedItemsQuery } from '@/data/lib/creators/linkedItemStatus'
-import type { ThirdParty } from '@/data/lib/creators/thirdParty'
+} from '../curation'
+import { isRejectReasonCode, type CollectionEvent, type RejectReasonCode } from '../events'
+import type { Item } from '../items'
+import type { ItemCuration, LinkedItemsQuery } from '../linkedItemStatus'
+import type { ThirdParty } from '../thirdParty'
 import type { CollectionItemPreview } from './collections'
 import { getContentsStorageUrl } from './contents'
 import type { LinkedApprovalData } from './linked'

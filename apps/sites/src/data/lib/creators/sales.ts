@@ -3,14 +3,14 @@
 // order, priced in credits (USD-pegged MANA) or plain MANA. Ported from the legacy builder's
 // SellCollectionModal + PutForSaleOffchainModal.
 import { Network, TradeAssetType, TradeType, type Trade, type TradeCreation } from '@dcl/schemas'
-import { ContractName, getCollectionContract, getContract } from '@/data/lib/creators/chain/contracts'
+import { ContractName, getCollectionContract, getContract } from './chain/contracts'
 import { isAddress, maxUint256, parseEther, toHex, zeroAddress } from 'viem'
-import { type ContractCall, type ContractData } from '@/data/lib/creators/auth'
-import { type Collection } from '@/data/lib/creators/collections'
-import { getItemSales, type Item } from '@/data/lib/creators/items'
-import { type ItemListing } from '@/data/lib/creators/listings'
-import { getManaContract } from '@/data/lib/creators/mana'
-import { USD_CENTS_PER_CREDIT } from '@/data/lib/creators/publishFee'
+import { type ContractCall, type ContractData } from './auth'
+import { type Collection } from './collections'
+import { getItemSales, type Item } from './items'
+import { type ItemListing } from './listings'
+import { getManaContract } from './mana'
+import { USD_CENTS_PER_CREDIT } from './publishFee'
 import {
   TradeConflictError,
   TradeNotFoundError,
@@ -19,8 +19,8 @@ import {
   toOnChainTrade,
   type SignatureIndexes,
   type UnsignedTrade
-} from '@/data/lib/creators/trades'
-import { isWalletRejection, isWalletStateError } from '@/data/lib/creators/walletErrors'
+} from './trades'
+import { isWalletRejection, isWalletStateError } from './walletErrors'
 
 // 1 credit = $0.10 = 1e17 USD wei (the shop's fixed peg; marketplace-server rounds up to whole credits).
 const USD_WEI_PER_CREDIT = 10n ** 17n

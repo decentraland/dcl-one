@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BodyShapeType, ItemType } from './items'
 import { EmotePlayMode, buildItem, type ItemDraftPayload } from './itemFactory'

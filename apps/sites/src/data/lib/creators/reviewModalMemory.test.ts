@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // The memory also lives for the page's lifetime, so every spec loads a fresh module (a fresh visit).

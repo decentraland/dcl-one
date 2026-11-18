@@ -5,9 +5,9 @@ import {
   WearablePreview,
   createWearablePreviewController,
   type WearablePreviewController
-} from '@/features/creators/components/WearablePreview'
+} from '../WearablePreview'
 import { config } from '@/data/lib/creators/config'
-import { usePreviewRenderer } from '@/features/creators/hooks/usePreviewRenderer'
+import { usePreviewRenderer } from '../../hooks/usePreviewRenderer'
 import { type AvatarAttributes } from '@/data/lib/creators/avatar'
 import {
   PREVIEW_WHEEL_START,
@@ -18,7 +18,7 @@ import {
   type AvatarPreviewSource
 } from '@/data/lib/creators/preview'
 import { createPreviewBridge, type PreviewBridge } from '@/data/lib/creators/previewBridge'
-import { useAvatarPreview } from '@/features/creators/store/avatarPreview'
+import { useAvatarPreview } from '../../store/avatarPreview'
 import styles from './AvatarPreview.module.css'
 
 export type { AvatarPreviewSource }

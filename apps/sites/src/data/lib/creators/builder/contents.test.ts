@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import '../test/setup'
 import { describe, it, expect, vi } from 'vitest'
-import { type Item } from '@/data/lib/creators/items'
+import { type Item } from '../items'
 import { fetchContentSize, fetchItemContents, getContentsStorageUrl } from './contents'
 
 describe('getContentsStorageUrl', () => {

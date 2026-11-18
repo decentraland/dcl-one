@@ -1,4 +1,4 @@
-import { Modal } from '@/features/creators/components/Modal'
+import { Modal } from '../Modal'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { type ValidationIssue } from '@/data/lib/creators/validation'
 import { ItemValidationCard, type ValidationSubject } from './ItemValidationCard'

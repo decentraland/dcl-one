@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { describe, expect, it } from 'vitest'
 import { BodyShape } from '@dcl/schemas'
-import { ValidationSeverity } from '@/data/lib/creators/validation'
+import { ValidationSeverity } from './validation'
 import {
   countValidationAttempts,
   getAutomatedIssuesByItem,

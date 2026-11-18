@@ -4,7 +4,7 @@ import {
   FormatListNumberedIcon as MultipleIcon,
   LinearScaleIcon as RangeIcon,
   TagIcon as SingleIcon
-} from '@/features/creators/components/Icons'
+} from '../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
 import {
   MappingType,
@@ -14,8 +14,8 @@ import {
   type Mapping,
   type MappingDraft
 } from '@/data/lib/creators/mappings'
-import { Select, type SelectOption } from '@/features/creators/components/Select'
-import { InfoTooltip } from '@/features/creators/components/Tooltip'
+import { Select, type SelectOption } from '../Select'
+import { InfoTooltip } from '../Tooltip'
 import styles from './MappingEditor.module.css'
 
 type Props = {

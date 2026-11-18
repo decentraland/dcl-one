@@ -2,7 +2,7 @@ import { createStore } from '@/data/lib/creators/store'
 import { track } from '@/data/lib/creators/analytics'
 import { currentSession, subscribeSession, type Session } from '@/data/lib/creators/auth'
 import { setCurrentAddressReader } from '@/data/lib/creators/currentAddress'
-import { openSignIn } from '@/features/components/auth/signin-store'
+import { openSignIn } from '../../components/auth/signin-store'
 
 type WalletState = {
   session: Session | null

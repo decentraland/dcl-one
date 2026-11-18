@@ -1,12 +1,12 @@
 import { useId, useState } from 'react'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { isValidUrnSuffix } from '@/data/lib/creators/thirdParty'
-import { Button } from '@/features/creators/components/Button'
-import { Modal } from '@/features/creators/components/Modal'
-import nameInput from '@/features/creators/components/CollectionNameInput/CollectionNameInput.module.css'
+import { Button } from '../../../Button'
+import { Modal } from '../../../Modal'
+import nameInput from '../../../CollectionNameInput/CollectionNameInput.module.css'
 import styles from './EditUrnModal.module.css'
-import nameModal from '@/features/creators/components/CollectionNameModal/CollectionNameModal.module.css'
-import shared from '@/features/creators/styles/shared.module.css'
+import nameModal from '../../../CollectionNameModal/CollectionNameModal.module.css'
+import shared from '../../../../styles/shared.module.css'
 
 type Props = {
   /** Which URN is edited; only the copy changes. */

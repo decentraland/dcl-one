@@ -15,7 +15,7 @@ vi.mock('@/data/lib/creators/credits', async importOriginal => ({
 }))
 vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn() }))
 // lottie-web draws on a canvas, which jsdom lacks.
-vi.mock('@/features/creators/components/Confetti/LottieBurst', () => ({ default: () => null }))
+vi.mock('../../Confetti/LottieBurst', () => ({ default: () => null }))
 
 const fetchMock = vi.fn()
 vi.stubGlobal('fetch', fetchMock)

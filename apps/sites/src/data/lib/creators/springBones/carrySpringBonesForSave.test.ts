@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import '../test/setup'
 import { describe, expect, it } from 'vitest'
 import { type SpringBoneParams } from '@dcl/schemas'
 import { ItemType, type Item } from '../items'

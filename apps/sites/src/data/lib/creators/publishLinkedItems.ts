@@ -10,22 +10,22 @@ import {
   type TransactionSettlement,
   type TypedDataDomain,
   type TypedDataTypes
-} from '@/data/lib/creators/auth'
-import { BuilderServerError, isRefusedRequest, type PublishLinkedItemsResult, type SlotsCheque } from '@/data/lib/creators/builder'
-import { CurationStatus, type Collection } from '@/data/lib/creators/collections'
-import { type Item } from '@/data/lib/creators/items'
-import { canPushLinkedItem, type ItemCuration } from '@/data/lib/creators/linkedItemStatus'
-import { buildManaApproveCall } from '@/data/lib/creators/mana'
-import { type PushLinkedResult } from '@/data/lib/creators/pushLinkedChanges'
-import { type ThirdParty } from '@/data/lib/creators/thirdParty'
+} from './auth'
+import { BuilderServerError, isRefusedRequest, type PublishLinkedItemsResult, type SlotsCheque } from './builder'
+import { CurationStatus, type Collection } from './collections'
+import { type Item } from './items'
+import { canPushLinkedItem, type ItemCuration } from './linkedItemStatus'
+import { buildManaApproveCall } from './mana'
+import { type PushLinkedResult } from './pushLinkedChanges'
+import { type ThirdParty } from './thirdParty'
 import {
   buildAddThirdPartyCall,
   buildBuyItemSlotsCall,
   getThirdPartyRegistry,
   type RegisteredThirdParty,
   type ThirdPartyPrice
-} from '@/data/lib/creators/thirdPartyRegistry'
-import { isWalletRejection, isWalletStateError } from '@/data/lib/creators/walletErrors'
+} from './thirdPartyRegistry'
+import { isWalletRejection, isWalletStateError } from './walletErrors'
 
 export type LinkedPublishStep =
   'check' | 'tos' | 'kind' | 'allowance' | 'register' | 'buy_slots' | 'wait_tx' | 'delete_virtual' | 'publish' | 'push'

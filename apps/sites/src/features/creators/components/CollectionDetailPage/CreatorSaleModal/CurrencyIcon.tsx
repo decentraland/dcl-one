@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react'
-import creditsGlyph from '@/features/creators/assets/icons/credits.svg'
-import manaGlyph from '@/features/creators/assets/icons/mana-matic.svg'
+import creditsGlyph from '../../../assets/icons/credits.svg'
+import manaGlyph from '../../../assets/icons/mana-matic.svg'
 import { cx } from '@/data/lib/creators/cx'
 import styles from './SaleIcon.module.css'
 

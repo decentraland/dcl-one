@@ -1,4 +1,4 @@
-import { Modal } from '@/features/creators/components/Modal'
+import { Modal } from '../Modal'
 import styles from './ProgressModal.module.css'
 
 type Props = {

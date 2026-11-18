@@ -7,7 +7,7 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { TranslationProvider } from '@/data/lib/creators/intl'
 import { type CollectionDiscount, type CouponCreation } from '@/data/lib/creators/coupons'
-import { collection, makeSession } from '@/features/creators/components/CollectionDetailPage/SellItemFlow/testUtils'
+import { collection, makeSession } from '../components/CollectionDetailPage/SellItemFlow/testUtils'
 
 vi.mock('@/data/lib/creators/auth', async () => {
   const actual = await vi.importActual<typeof import('@/data/lib/creators/auth')>('@/data/lib/creators/auth')
@@ -24,13 +24,13 @@ vi.mock('@/data/lib/creators/coupons', async () => {
   }
 })
 vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn() }))
-vi.mock('@/features/creators/components/CollectionMosaic', () => ({ CollectionMosaic: () => null }))
+vi.mock('../components/CollectionMosaic', () => ({ CollectionMosaic: () => null }))
 
 import { readTransactionOutcome } from '@/data/lib/creators/auth'
 import { createDiscount, endDiscount, fetchCreatorDiscounts, storeSignedDiscount } from '@/data/lib/creators/coupons'
 import { savePendingEnd, saveUnconfirmedCreate, type PendingEnd } from '@/data/lib/creators/discountAttempts'
-import { DiscountFlow } from '@/features/creators/components/CollectionDetailPage/DiscountFlow/DiscountFlow'
-import { EndDiscountFlow } from '@/features/creators/components/CollectionDetailPage/DiscountFlow/EndDiscountFlow'
+import { DiscountFlow } from '../components/CollectionDetailPage/DiscountFlow/DiscountFlow'
+import { EndDiscountFlow } from '../components/CollectionDetailPage/DiscountFlow/EndDiscountFlow'
 import {
   pollEvery,
   reconcilePendingEnds,

@@ -1,12 +1,12 @@
 import { useEffect, type ReactNode } from 'react'
-import { Button } from '@/features/creators/components/Button'
-import { Confetti } from '@/features/creators/components/Confetti'
-import { WarningIcon } from '@/features/creators/components/Icons'
-import { Modal } from '@/features/creators/components/Modal'
+import { Button } from '../Button'
+import { Confetti } from '../Confetti'
+import { WarningIcon } from '../Icons'
+import { Modal } from '../Modal'
 import { cx } from '@/data/lib/creators/cx'
 import { useNotifications } from '@/data/lib/creators/notifications'
 import styles from './ConfirmModal.module.css'
-import shared from '@/features/creators/styles/shared.module.css'
+import shared from '../../styles/shared.module.css'
 
 type Action = {
   label: string

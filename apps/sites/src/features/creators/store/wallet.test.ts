@@ -8,7 +8,7 @@ import { currentAddress } from '@/data/lib/creators/currentAddress'
 import { useWallet } from './wallet'
 
 const signin = vi.hoisted(() => ({ openSignIn: vi.fn() }))
-vi.mock('@/features/components/auth/signin-store', () => signin)
+vi.mock('../../components/auth/signin-store', () => signin)
 
 async function signIn(): Promise<string> {
   const identity = await createIdentityFromPrivateKey(generatePrivateKey())

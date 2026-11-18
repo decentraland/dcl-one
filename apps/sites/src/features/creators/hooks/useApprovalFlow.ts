@@ -1,10 +1,10 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { type Entity } from '@dcl/schemas'
-import { allCollectionItemsKey } from '@/features/creators/hooks/useCollection'
-import { collectionCurationKey } from '@/features/creators/hooks/useCuration'
+import { allCollectionItemsKey } from './useCollection'
+import { collectionCurationKey } from './useCuration'
 import { catalystImageDeps as imageDeps } from '@/data/lib/creators/catalystEntity'
-import { itemEntitiesKey } from '@/features/creators/hooks/useItemSync'
+import { itemEntitiesKey } from './useItemSync'
 import { errorCode, track } from '@/data/lib/creators/analytics'
 import {
   APPROVAL_INDEX_TIMEOUT_MS,

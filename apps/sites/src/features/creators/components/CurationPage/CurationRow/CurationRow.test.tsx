@@ -10,14 +10,14 @@ import { type CollectionCuration } from '@/data/lib/creators/curation'
 import { CurationRow } from './CurationRow'
 
 vi.mock('@/data/lib/creators/navigation', () => ({ openExternal: vi.fn() }))
-vi.mock('@/features/creators/components/CollectionMosaic', () => ({ CollectionMosaic: () => null }))
-vi.mock('@/features/creators/hooks/useProfile', () => ({ useProfile: () => ({ data: undefined }) }))
+vi.mock('../../CollectionMosaic', () => ({ CollectionMosaic: () => null }))
+vi.mock('../../../hooks/useProfile', () => ({ useProfile: () => ({ data: undefined }) }))
 const latest = vi.hoisted(() => ({
   event: null as { type: string; actor?: string } | null,
   timeline: true,
   fetched: [] as boolean[]
 }))
-vi.mock('@/features/creators/hooks/useCollectionEvents', () => ({
+vi.mock('../../../hooks/useCollectionEvents', () => ({
   useRecentCollectionEvents: (_address: string, _id: string, enabled: boolean) => {
     latest.fetched.push(enabled)
     return { data: latest.timeline ? (latest.event ? [latest.event] : []) : null, flagEnabled: latest.timeline }

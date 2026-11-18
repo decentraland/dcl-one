@@ -1,6 +1,6 @@
 import { useTranslation } from '@/data/lib/creators/intl'
 import { ItemRowStatus } from '@/data/lib/creators/itemSync'
-import { InfoTooltip } from '@/features/creators/components/Tooltip'
+import { InfoTooltip } from '../../Tooltip'
 import styles from './ItemSyncPill.module.css'
 
 type Props = {

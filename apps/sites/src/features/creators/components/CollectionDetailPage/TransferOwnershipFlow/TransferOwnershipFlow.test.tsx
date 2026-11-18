@@ -17,8 +17,8 @@ const transfer = {
   isPending: false,
   data: undefined as { owner: string } | undefined
 }
-vi.mock('@/features/creators/hooks/useTransferCollectionOwnership', () => ({ useTransferCollectionOwnership: () => transfer }))
-vi.mock('@/features/creators/hooks/useSales', () => ({
+vi.mock('../../../hooks/useTransferCollectionOwnership', () => ({ useTransferCollectionOwnership: () => transfer }))
+vi.mock('../../../hooks/useSales', () => ({
   useFriends: () => ({
     data: [{ address: FRIEND, name: 'Ana', hasClaimedName: true, avatarUrl: '' }],
     isLoading: false

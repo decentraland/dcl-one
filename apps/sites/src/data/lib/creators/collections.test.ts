@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { describe, it, expect } from 'vitest'
 import {
   findCollectionByContract,
@@ -25,8 +25,8 @@ import {
   withoutCollection,
   type Collection
 } from './collections'
-import { fromRemoteCollection, toCollectionsQueryString } from '@/data/lib/creators/builder/mappers'
-import type { RemoteCollection } from '@/data/lib/creators/builder/wire'
+import { fromRemoteCollection, toCollectionsQueryString } from './builder/mappers'
+import type { RemoteCollection } from './builder/wire'
 
 const remote: RemoteCollection = {
   id: 'a1b2',

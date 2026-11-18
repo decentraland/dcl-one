@@ -1,13 +1,13 @@
 import { useIntl } from '@/data/lib/creators/intl'
 import { Link, useLocation } from 'react-router'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { useWallet } from '@/features/creators/store/wallet'
+import { useWallet } from '../../../store/wallet'
 import { formatTimeAgo } from '@/data/lib/creators/time'
 import { type Collection } from '@/data/lib/creators/collections'
-import { CollectionMosaic } from '@/features/creators/components/CollectionMosaic'
-import { CollectionRolePill } from '@/features/creators/components/CollectionRolePill'
-import { CollectionStatusPill } from '@/features/creators/components/CollectionStatusPill'
-import { ReviewReplyBadge } from '@/features/creators/components/ReviewReplyBadge'
+import { CollectionMosaic } from '../../CollectionMosaic'
+import { CollectionRolePill } from '../../CollectionRolePill'
+import { CollectionStatusPill } from '../../CollectionStatusPill'
+import { ReviewReplyBadge } from '../../ReviewReplyBadge'
 import styles from './CollectionCard.module.css'
 
 type Props = {

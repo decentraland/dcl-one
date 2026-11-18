@@ -2,7 +2,7 @@
 // items are on sale and their wei price (on-chain store price, or the trade amount); the shop catalog
 // says which of those are credits listings, whose trade amount is USD wei rather than MANA wei.
 import { maxUint256 } from 'viem'
-import { config } from '@/data/lib/creators/config'
+import { config } from './config'
 
 /**
  * `tradeId` identifies the off-chain order behind the listing and `tradeContract` the marketplace it was signed for

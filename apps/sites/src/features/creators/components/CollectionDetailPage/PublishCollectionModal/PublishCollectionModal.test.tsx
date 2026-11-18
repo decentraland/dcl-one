@@ -13,15 +13,15 @@ import { ValidationSeverity, type ValidationIssue } from '@/data/lib/creators/va
 import { PublishCollectionModal } from './PublishCollectionModal'
 
 const rerun = vi.fn()
-vi.mock('@/features/creators/hooks/useCollection', () => ({
+vi.mock('../../../hooks/useCollection', () => ({
   useAllCollectionItems: () => ({ data: [], isLoading: false }),
   useSaveCollection: () => ({ mutate: vi.fn(), isPending: false, error: null })
 }))
 const profile = vi.hoisted(() => ({ data: undefined as { email?: string } | undefined, isLoading: false }))
-vi.mock('@/features/creators/hooks/useProfile', () => ({ useProfile: () => profile }))
-vi.mock('@/features/creators/hooks/useCollectionValidation', () => ({ useRerunItemValidation: () => rerun }))
+vi.mock('../../../hooks/useProfile', () => ({ useProfile: () => profile }))
+vi.mock('../../../hooks/useCollectionValidation', () => ({ useRerunItemValidation: () => rerun }))
 vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn() }))
-vi.mock('@/features/creators/hooks/useItemSize', () => ({
+vi.mock('../../../hooks/useItemSize', () => ({
   useCatalystItemSizes: () => ({ sizes: new Map(), unknown: new Set(), isMeasuring: false })
 }))
 vi.mock('./ConfirmNameStep', () => ({

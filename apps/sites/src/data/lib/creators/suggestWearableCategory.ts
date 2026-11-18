@@ -1,4 +1,4 @@
-import type { BufferGeometry, Object3D, ThreeModules } from '@/data/lib/creators/three'
+import type { BufferGeometry, Object3D, ThreeModules } from './three'
 import { WearableCategory } from '@dcl/schemas'
 
 

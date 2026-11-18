@@ -36,7 +36,7 @@ vi.mock('@/data/lib/creators/navigation', () => ({
   isWebUrl: (url?: string) => /^https?:\/\//.test(url ?? '')
 }))
 vi.mock('@/data/lib/creators/analytics', () => ({ track: state.track }))
-vi.mock('@/features/creators/hooks/useCuration', () => ({
+vi.mock('../../../hooks/useCuration', () => ({
   useCollectionCuration: () => ({
     data: state.curation,
     isLoading: state.curationLoading,
@@ -46,7 +46,7 @@ vi.mock('@/features/creators/hooks/useCuration', () => ({
   useRejectCuration: () => ({ mutate: state.reject, isPending: false, isError: false, reset: vi.fn() }),
   useDisableCollection: () => ({ mutate: state.disable, isPending: false, isError: false, reset: vi.fn() })
 }))
-vi.mock('@/features/creators/hooks/useCollectionEvents', () => ({
+vi.mock('../../../hooks/useCollectionEvents', () => ({
   useCollectionEvents: () => ({
     events: state.events,
     isAvailable: state.events !== null,
@@ -54,12 +54,12 @@ vi.mock('@/features/creators/hooks/useCollectionEvents', () => ({
     isPending: state.eventsStatus === 'pending'
   })
 }))
-vi.mock('@/features/creators/hooks/useFeatureFlag', () => ({
+vi.mock('../../../hooks/useFeatureFlag', () => ({
   useFeatureFlag: () => ({ enabled: state.autoCuration, isLoading: state.flagLoading })
 }))
-vi.mock('@/features/creators/hooks/useItemSync', () => ({ useItemSyncs: () => state.syncs }))
+vi.mock('../../../hooks/useItemSync', () => ({ useItemSyncs: () => state.syncs }))
 // Checks exactly the items it is handed, like the real hook, with canned results.
-vi.mock('@/features/creators/hooks/useCollectionValidation', () => ({
+vi.mock('../../../hooks/useCollectionValidation', () => ({
   useCollectionValidation: (items: Item[], enabled: boolean) => ({
     results: new Map(
       (enabled ? items : []).map(item => [item.id, { status: 'pass', issues: state.issues.get(item.id) ?? [] }])
@@ -67,14 +67,14 @@ vi.mock('@/features/creators/hooks/useCollectionValidation', () => ({
     isValidating: enabled && state.isValidating
   })
 }))
-vi.mock('@/features/creators/hooks/useProfile', () => ({ useProfile: () => ({ data: undefined }) }))
-vi.mock('@/features/creators/components/CollectionActivityModal', () => ({
+vi.mock('../../../hooks/useProfile', () => ({ useProfile: () => ({ data: undefined }) }))
+vi.mock('../../CollectionActivityModal', () => ({
   CollectionActivityModal: () => <div data-testid="activity-modal-stub" />
 }))
 vi.mock('./ApprovalFlowModal', () => ({
   ApprovalFlowModal: ({ mode }: { mode: string }) => <div data-testid="approval-flow" data-mode={mode} />
 }))
-vi.mock('@/features/creators/components/AssignCuratorModal', () => ({
+vi.mock('../../AssignCuratorModal', () => ({
   AssignCuratorModal: ({ mode, onAssigned }: { mode: string; onAssigned?: () => void }) => (
     <div data-testid="assign-modal" data-mode={mode}>
       {onAssigned && <button type="button" data-testid="assign-continue" onClick={onAssigned} />}

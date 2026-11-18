@@ -9,11 +9,11 @@ import {
   type TradeChecks,
   type TradeCreation
 } from '@dcl/schemas'
-import { ContractName, getContract, getMarketplaceName } from '@/data/lib/creators/chain/contracts'
+import { ContractName, getContract, getMarketplaceName } from './chain/contracts'
 import { numberToHex, zeroAddress } from 'viem'
-import { toBytes32 } from '@/data/lib/creators/bytes32'
-import { config } from '@/data/lib/creators/config'
-import { readContract, signedFetch, type ContractData, type TypedDataDomain, type TypedDataTypes } from '@/data/lib/creators/auth'
+import { toBytes32 } from './bytes32'
+import { config } from './config'
+import { readContract, signedFetch, type ContractData, type TypedDataDomain, type TypedDataTypes } from './auth'
 
 export type UnsignedTrade = Omit<TradeCreation, 'signature'>
 

@@ -1,5 +1,5 @@
-import enableSalesArt from '@/features/creators/assets/enable-sales.png'
-import { ConfirmModal } from '@/features/creators/components/ConfirmModal'
+import enableSalesArt from '../../../assets/enable-sales.png'
+import { ConfirmModal } from '../../ConfirmModal'
 import { useTranslation } from '@/data/lib/creators/intl'
 
 /** Why sales must be enabled: a collection's first sale, or one already selling on an older marketplace. */

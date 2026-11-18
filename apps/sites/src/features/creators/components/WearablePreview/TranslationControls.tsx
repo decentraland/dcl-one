@@ -1,4 +1,4 @@
-import { SwapVertIcon } from '@/features/creators/components/Icons'
+import { SwapVertIcon } from '../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { cx } from '@/data/lib/creators/cx'
 import { usePreviewController } from './usePreviewController'

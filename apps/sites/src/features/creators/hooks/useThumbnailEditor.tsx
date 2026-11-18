@@ -4,8 +4,8 @@ import {
   getThumbnailErrorMessage,
   thumbnailPatchFromFile,
   type ThumbnailPatch
-} from '@/features/creators/components/ThumbnailModal'
-import { useItemContents } from '@/features/creators/hooks/usePublishCollection'
+} from '../components/ThumbnailModal'
+import { useItemContents } from './usePublishCollection'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { pickFile } from '@/data/lib/creators/filePicker'
 import { ItemType, type Item } from '@/data/lib/creators/items'

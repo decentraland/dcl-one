@@ -14,7 +14,7 @@ import { CollectionActionsMenu } from './CollectionActionsMenu'
 vi.mock('@/data/lib/creators/builder', () => ({ deleteCollection: vi.fn() }))
 vi.mock('@/data/lib/creators/clipboard', () => ({ copyToClipboard: vi.fn().mockResolvedValue(true) }))
 vi.mock('@/data/lib/creators/navigation', () => ({ openExternal: vi.fn() }))
-vi.mock('@/features/creators/hooks/useFeatureFlag', () => ({ useFeatureFlag: () => ({ enabled: true, isLoading: false }) }))
+vi.mock('../../hooks/useFeatureFlag', () => ({ useFeatureFlag: () => ({ enabled: true, isLoading: false }) }))
 
 import { deleteCollection } from '@/data/lib/creators/builder'
 import { copyToClipboard } from '@/data/lib/creators/clipboard'

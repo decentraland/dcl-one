@@ -1,8 +1,8 @@
-import { getCollectionContract } from '@/data/lib/creators/chain/contracts'
-import { type ContractCall } from '@/data/lib/creators/auth'
-import { hasBeenApproved, type Collection } from '@/data/lib/creators/collections'
-import { getItemSales, type Item } from '@/data/lib/creators/items'
-import { SellItemError, isValidAddress } from '@/data/lib/creators/sales'
+import { getCollectionContract } from './chain/contracts'
+import { type ContractCall } from './auth'
+import { hasBeenApproved, type Collection } from './collections'
+import { getItemSales, type Item } from './items'
+import { SellItemError, isValidAddress } from './sales'
 
 // Bor caps a transaction at 2^25 gas (EIP-7825 as of the Madhugiri fork, live on Polygon and Amoy).
 // issueTokens costs ~157k gas per copy to never-held recipients (estimated on Amoy, 2026-10): 100 copies

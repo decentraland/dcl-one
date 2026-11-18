@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { type BodyShape } from '@dcl/schemas'
-import { Button } from '@/features/creators/components/Button'
-import { CollectionStatusPill } from '@/features/creators/components/CollectionStatusPill'
+import { Button } from '../../Button'
+import { CollectionStatusPill } from '../../CollectionStatusPill'
 import {
   EmoteIcon,
   WearableIcon,
@@ -18,10 +18,10 @@ import {
   MaleIcon,
   VisibilityIcon as DressedIcon,
   VisibilityOffIcon as UndressedIcon
-} from '@/features/creators/components/Icons'
-import { ItemThumbnail } from '@/features/creators/components/ItemThumbnail'
-import { Tooltip } from '@/features/creators/components/Tooltip'
-import { useScrollFades } from '@/features/creators/hooks/useScrollFades'
+} from '../../Icons'
+import { ItemThumbnail } from '../../ItemThumbnail'
+import { Tooltip } from '../../Tooltip'
+import { useScrollFades } from '../../../hooks/useScrollFades'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { track } from '@/data/lib/creators/analytics'
 import { getContentsStorageUrl } from '@/data/lib/creators/builder'

@@ -1,5 +1,5 @@
-import { Env } from '@/data/lib/creators/config'
-import { config } from '@/data/lib/creators/config'
+import { Env } from './config'
+import { config } from './config'
 import { track } from './analytics'
 import { openExternal, openProtocolLink } from './navigation'
 

@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from 'react'
-import { ItemThumbnail } from '@/features/creators/components/ItemThumbnail'
+import { ItemThumbnail } from '../ItemThumbnail'
 import {
   ClockIcon,
   FilmReelIcon,
@@ -11,10 +11,10 @@ import {
   SentimentSatisfiedAltIcon as SmileIcon,
   TextureIcon,
   ThirtyFpsSelectIcon as FpsIcon
-} from '@/features/creators/components/Icons'
-import { RequiredPermissions } from '@/features/creators/components/RequiredPermissions'
-import { Tooltip } from '@/features/creators/components/Tooltip'
-import { useThumbnailValidation } from '@/features/creators/hooks/useThumbnailValidation'
+} from '../Icons'
+import { RequiredPermissions } from '../RequiredPermissions'
+import { Tooltip } from '../Tooltip'
+import { useThumbnailValidation } from '../../hooks/useThumbnailValidation'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { THUMBNAIL_PATH, hasFacialExpressions } from '@/data/lib/creators/itemFiles'
 import { ItemType } from '@/data/lib/creators/items'

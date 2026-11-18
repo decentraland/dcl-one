@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router'
-import { useCommittee } from '@/features/creators/hooks/useCommittee'
-import { useWallet } from '@/features/creators/store/wallet'
+import { useCommittee } from '../../hooks/useCommittee'
+import { useWallet } from '../../store/wallet'
 import { useTranslation } from '@/data/lib/creators/intl'
 import styles from './SubNav.module.css'
 

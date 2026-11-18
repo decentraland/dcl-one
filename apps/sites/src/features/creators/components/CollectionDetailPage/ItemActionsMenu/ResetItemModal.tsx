@@ -1,4 +1,4 @@
-import { ConfirmModal } from '@/features/creators/components/ConfirmModal'
+import { ConfirmModal } from '../../ConfirmModal'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { type Item } from '@/data/lib/creators/items'
 

@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
-import { useWallet } from '@/features/creators/store/wallet'
-import { useCollectionPreview } from '@/features/creators/hooks/useCollections'
-import { ThumbnailMosaic } from '@/features/creators/components/ThumbnailMosaic'
+import { useWallet } from '../../store/wallet'
+import { useCollectionPreview } from '../../hooks/useCollections'
+import { ThumbnailMosaic } from '../ThumbnailMosaic'
 
 type Props = {
   collectionId: string

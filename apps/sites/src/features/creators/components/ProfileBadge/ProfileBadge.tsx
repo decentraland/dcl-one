@@ -1,4 +1,4 @@
-import { useProfile } from '@/features/creators/hooks/useProfile'
+import { useProfile } from '../../hooks/useProfile'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { shortenAddress } from '@/data/lib/creators/address'
 import styles from './ProfileBadge.module.css'

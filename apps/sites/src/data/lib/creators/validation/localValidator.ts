@@ -1,7 +1,7 @@
 // The in-browser backend: the shared Decentraland rule book (@dcl-regenesislabs/wearable-validator),
 // restricted to the model and emote groups plus the thumbnail rule, the parts the editor can act on.
 import { BodyShape } from '@dcl/schemas'
-import { englishMessage } from '@/data/lib/creators/intl'
+import { englishMessage } from '../intl'
 import { fetchContent } from '../builder'
 import { captureError } from '../monitoring'
 import { THUMBNAIL_PATH } from '../itemFiles'

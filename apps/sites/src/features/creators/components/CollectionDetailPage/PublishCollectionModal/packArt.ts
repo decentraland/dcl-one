@@ -1,6 +1,6 @@
-import packChest from '@/features/creators/assets/credits/pack-chest.webp'
-import packCoins from '@/features/creators/assets/credits/pack-coins.webp'
-import packStacks from '@/features/creators/assets/credits/pack-stacks.webp'
+import packChest from '../../../assets/credits/pack-chest.webp'
+import packCoins from '../../../assets/credits/pack-coins.webp'
+import packStacks from '../../../assets/credits/pack-stacks.webp'
 import { type CreditPack } from '@/data/lib/creators/creditPacks'
 
 // The bundled renders escalate with the pack size; the catalogue's own url wins when it publishes one.

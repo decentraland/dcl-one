@@ -10,7 +10,7 @@ import {
   type ForumPostSource
 } from '@/data/lib/creators/forumPost'
 import { type Item } from '@/data/lib/creators/items'
-import { profileQuery } from '@/features/creators/hooks/useProfile'
+import { profileQuery } from './useProfile'
 
 /** Opens the collection's topic, writing its link into the cached collection. */
 export function postToForum(

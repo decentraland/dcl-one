@@ -1,11 +1,11 @@
-import { ForumOutlinedIcon as ForumIcon, OpenInNewIcon } from '@/features/creators/components/Icons'
-import { Button } from '@/features/creators/components/Button'
-import { Modal } from '@/features/creators/components/Modal'
+import { ForumOutlinedIcon as ForumIcon, OpenInNewIcon } from '../../Icons'
+import { Button } from '../../Button'
+import { Modal } from '../../Modal'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { type Collection } from '@/data/lib/creators/collections'
 import { openForumPost } from '@/data/lib/creators/forumPost'
 import styles from './ForumVerdictModal.module.css'
-import shared from '@/features/creators/styles/shared.module.css'
+import shared from '../../../styles/shared.module.css'
 
 type Props = {
   collection: Collection & { forumLink: string }

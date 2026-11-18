@@ -19,7 +19,7 @@ const create = {
   isSuccess: false
 }
 const end = { mutate: vi.fn<(variables: Variables, callbacks: Callbacks) => void>(), isPending: false }
-vi.mock('@/features/creators/hooks/useCollectionDiscounts', () => ({
+vi.mock('../../../hooks/useCollectionDiscounts', () => ({
   useCreateDiscount: () => create,
   useEndDiscount: () => end,
   useDiscountInFlight: () => ({ creating: create.isPending, ending: end.isPending }),
@@ -27,7 +27,7 @@ vi.mock('@/features/creators/hooks/useCollectionDiscounts', () => ({
   lastCreatedDiscount: () => undefined
 }))
 vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn() }))
-vi.mock('@/features/creators/components/CollectionMosaic', () => ({ CollectionMosaic: () => null }))
+vi.mock('../../CollectionMosaic', () => ({ CollectionMosaic: () => null }))
 
 const DAY = 24 * 60 * 60 * 1000
 

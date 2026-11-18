@@ -5,7 +5,7 @@ import { act, render, screen } from '@testing-library/react'
 import { BodyShape, PreviewEmote, PreviewEmoteEventType, PreviewMessageType, PreviewRenderer } from '@dcl/schemas'
 import mitt from 'mitt'
 import { type AvatarAttributes } from '@/data/lib/creators/avatar'
-import { useAvatarPreview } from '@/features/creators/store/avatarPreview'
+import { useAvatarPreview } from '../../store/avatarPreview'
 
 type PreviewProps = Record<string, unknown> & { id: string; onLoad?: () => void }
 const previewProps: PreviewProps[] = []
@@ -16,7 +16,7 @@ const controller = {
   physics: { setSpringBonesParams: vi.fn() }
 }
 
-vi.mock('@/features/creators/components/WearablePreview', () => ({
+vi.mock('../WearablePreview', () => ({
   WearablePreview(props: PreviewProps) {
     previewProps.push(props)
     return <iframe id={props.id} src="https://wearable-preview.decentraland.zone/?x=1" title="preview" />
@@ -25,7 +25,7 @@ vi.mock('@/features/creators/components/WearablePreview', () => ({
 }))
 
 let renderer: PreviewRenderer | undefined = PreviewRenderer.UNITY
-vi.mock('@/features/creators/hooks/usePreviewRenderer', () => ({ usePreviewRenderer: () => renderer }))
+vi.mock('../../hooks/usePreviewRenderer', () => ({ usePreviewRenderer: () => renderer }))
 
 const { AvatarPreview } = await import('./AvatarPreview')
 

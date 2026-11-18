@@ -6,7 +6,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { TranslationProvider } from '@/data/lib/creators/intl'
 import { track } from '@/data/lib/creators/analytics'
-import { useAvatarPreview } from '@/features/creators/store/avatarPreview'
+import { useAvatarPreview } from '../../../store/avatarPreview'
 import { SceneBoundariesToggle } from './SceneBoundariesToggle'
 
 vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn() }))

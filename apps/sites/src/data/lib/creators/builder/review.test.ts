@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import '../test/setup'
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
 import { BuilderServerError } from './transport'
 import {
@@ -14,12 +14,12 @@ import {
   requestCollectionValidation
 } from './review'
 
-vi.mock('@/data/lib/creators/auth', () => ({
+vi.mock('../auth', () => ({
   signedFetch: vi.fn()
 }))
 
-import { signedFetch } from '@/data/lib/creators/auth'
-import { ADDRESS, jsonResponse, okResponse } from '@/data/lib/creators/test/builderServer'
+import { signedFetch } from '../auth'
+import { ADDRESS, jsonResponse, okResponse } from '../test/builderServer'
 
 const signedFetchMock = signedFetch as Mock
 

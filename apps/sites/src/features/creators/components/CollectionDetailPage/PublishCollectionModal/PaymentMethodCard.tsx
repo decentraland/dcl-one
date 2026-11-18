@@ -1,12 +1,12 @@
-import { CheckIcon } from '@/features/creators/components/Icons'
+import { CheckIcon } from '../../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { Button } from '@/features/creators/components/Button'
-import { CurrencyAmount } from '@/features/creators/components/CurrencyAmount'
+import { Button } from '../../Button'
+import { CurrencyAmount } from '../../CurrencyAmount'
 import { openExternal } from '@/data/lib/creators/navigation'
 import { type PaymentMethod } from '@/data/lib/creators/publishCollection'
-import creditsMark from '@/features/creators/assets/payment/credits-logo.webp'
-import manaMark from '@/features/creators/assets/payment/mana-logo.webp'
-import { CheckboxBox } from '@/features/creators/components/Checkbox'
+import creditsMark from '../../../assets/payment/credits-logo.webp'
+import manaMark from '../../../assets/payment/mana-logo.webp'
+import { CheckboxBox } from '../../Checkbox'
 import styles from './PaymentMethodCard.module.css'
 
 const MARKS: Record<PaymentMethod, string> = { credits: creditsMark, mana: manaMark }

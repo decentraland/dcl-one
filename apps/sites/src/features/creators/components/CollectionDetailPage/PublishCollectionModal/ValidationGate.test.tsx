@@ -6,16 +6,16 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { TranslationProvider } from '@/data/lib/creators/intl'
 import { track } from '@/data/lib/creators/analytics'
-import { type ItemSizes } from '@/features/creators/hooks/useItemSize'
+import { type ItemSizes } from '../../../hooks/useItemSize'
 import { ItemType, type Item } from '@/data/lib/creators/items'
 import { ValidationSeverity, type ValidationIssue } from '@/data/lib/creators/validation'
 import { ValidationGate } from './ValidationGate'
 
 const rerun = vi.fn()
-vi.mock('@/features/creators/hooks/useCollectionValidation', () => ({ useRerunItemValidation: () => rerun }))
+vi.mock('../../../hooks/useCollectionValidation', () => ({ useRerunItemValidation: () => rerun }))
 vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn() }))
 const itemSizes: ItemSizes = { sizes: new Map(), unknown: new Set(), isMeasuring: false, remeasure: vi.fn() }
-vi.mock('@/features/creators/hooks/useItemSize', () => ({ useCatalystItemSizes: () => itemSizes }))
+vi.mock('../../../hooks/useItemSize', () => ({ useCatalystItemSizes: () => itemSizes }))
 
 function makeItem(id: string): Item {
   return {

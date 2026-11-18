@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { describe, expect, it } from 'vitest'
 import { applyPreviewResult, isThumbnailGenerating, type PreviewDraft, type PreviewResult } from './draftPreview'
 import { ItemType } from './items'

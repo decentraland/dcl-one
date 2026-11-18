@@ -2,8 +2,8 @@
 // the legacy create modal ran, fixed to probe the ERC-721 interface id (legacy probed ERC-165's own id).
 import { type ContractNetwork } from '@dcl/schemas'
 import { parseAbi } from 'viem'
-import { readContract } from '@/data/lib/creators/auth'
-import { BuilderServerError } from '@/data/lib/creators/builder'
+import { readContract } from './auth'
+import { BuilderServerError } from './builder'
 import { LINKED_CONTRACT_CHAIN_IDS, LINKED_CONTRACT_IN_USE_ERROR } from './thirdParty'
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/

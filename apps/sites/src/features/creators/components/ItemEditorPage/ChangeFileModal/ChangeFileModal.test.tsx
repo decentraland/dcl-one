@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { BodyShape } from '@dcl/schemas'
-import { Providers } from '@/features/creators/components/CollectionDetailPage/SellItemFlow/testUtils'
+import { Providers } from '../../CollectionDetailPage/SellItemFlow/testUtils'
 import { BodyShapeType, ItemType, type Item } from '@/data/lib/creators/items'
 import { type ItemFileChange } from '@/data/lib/creators/itemDraft'
 import { ChangeFileModal } from './ChangeFileModal'
@@ -26,7 +26,7 @@ vi.mock('@/data/lib/creators/builder', async importOriginal => ({
   fetchContentSize: async (hash: string) => stored.sizes[hash] ?? 1_000,
   fetchContent: async () => new Blob(['stored'])
 }))
-vi.mock('@/features/creators/hooks/useThumbnailValidation', () => ({ useThumbnailValidation: () => ({ data: undefined }) }))
+vi.mock('../../../hooks/useThumbnailValidation', () => ({ useThumbnailValidation: () => ({ data: undefined }) }))
 // The preview iframe is what fills metrics and the auto thumbnail; here it answers at once (or when the
 // test releases it) and records which draft it was handed.
 const processed = vi.hoisted(() => ({
@@ -42,8 +42,8 @@ vi.mock('@/data/lib/creators/draftPreview', async importOriginal => ({
       contents: { ...contents, 'thumbnail.png': new Blob(['pad']) }
     })
 }))
-vi.mock('@/features/creators/components/ItemDraftModal', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/features/creators/components/ItemDraftModal')>()),
+vi.mock('../../ItemDraftModal', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../ItemDraftModal')>()),
   DraftProcessor: ({
     draft,
     onResult

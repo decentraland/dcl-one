@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useIntl } from '@/data/lib/creators/intl'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { ItemFindingsList } from '@/features/creators/components/FindingsList'
-import { AutomatedReviewIcon } from '@/features/creators/components/AutomatedReviewIcon'
-import { ProfileBadge } from '@/features/creators/components/ProfileBadge'
+import { ItemFindingsList } from '../FindingsList'
+import { AutomatedReviewIcon } from '../AutomatedReviewIcon'
+import { ProfileBadge } from '../ProfileBadge'
 import {
   COLLECTION_EVENT_TYPES,
   countFailedItems,
@@ -17,7 +17,7 @@ import {
 import { shortenAddress } from '@/data/lib/creators/address'
 import { type Item } from '@/data/lib/creators/items'
 import { formatTimeAgo } from '@/data/lib/creators/time'
-import { useProfile } from '@/features/creators/hooks/useProfile'
+import { useProfile } from '../../hooks/useProfile'
 import styles from './CollectionActivityModal.module.css'
 
 type Props = {

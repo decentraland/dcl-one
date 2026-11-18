@@ -1,16 +1,16 @@
 // A collection as the discount modal reads it, ported from the Shop's lib/saleableCollections: every item it has,
 // split into what a new discount re-prices, what stays at a price it can't change, and what isn't for sale.
-import { getContentsStorageUrl } from '@/data/lib/creators/builder'
+import { getContentsStorageUrl } from './builder'
 import {
   discountedCredits,
   discountedManaWei,
   takesDiscount,
   type DiscountReachOptions
-} from '@/data/lib/creators/collectionDiscount'
-import { type Collection } from '@/data/lib/creators/collections'
-import { getItemSales, type Item } from '@/data/lib/creators/items'
-import { creditsForUsdWei } from '@/data/lib/creators/publishFee'
-import { type ItemListing } from '@/data/lib/creators/listings'
+} from './collectionDiscount'
+import { type Collection } from './collections'
+import { getItemSales, type Item } from './items'
+import { creditsForUsdWei } from './publishFee'
+import { type ItemListing } from './listings'
 
 export type SaleItem = {
   key: string

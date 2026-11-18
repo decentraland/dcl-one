@@ -1,5 +1,5 @@
 // Collection domain model, ported from the legacy builder (src/modules/collection).
-import type { CurationRequestStatus } from '@/data/lib/creators/curation'
+import type { CurationRequestStatus } from './curation'
 
 export type Collection = {
   id: string

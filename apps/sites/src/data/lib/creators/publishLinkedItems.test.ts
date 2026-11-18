@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { describe, expect, it, vi } from 'vitest'
 import { type ContractNetwork } from '@dcl/schemas'
 import {
@@ -8,7 +8,7 @@ import {
   recoverTypedDataSigner,
   signTypedDataWithTestKey,
   typedDataDigest
-} from '@/data/lib/creators/test/chain'
+} from './test/chain'
 import { BuilderServerError, type SlotsCheque } from './builder'
 import { CurationStatus, type Collection } from './collections'
 import { ItemType, type Item } from './items'

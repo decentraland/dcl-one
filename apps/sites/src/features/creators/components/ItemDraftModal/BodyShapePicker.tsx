@@ -1,6 +1,6 @@
 import { type KeyboardEvent, type ReactNode } from 'react'
-import { FemaleIcon, MaleIcon, TransgenderIcon as BothIcon } from '@/features/creators/components/Icons'
-import { Tooltip } from '@/features/creators/components/Tooltip'
+import { FemaleIcon, MaleIcon, TransgenderIcon as BothIcon } from '../Icons'
+import { Tooltip } from '../Tooltip'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { BodyShapeType } from '@/data/lib/creators/items'
 import styles from './ItemDraftModal.module.css'

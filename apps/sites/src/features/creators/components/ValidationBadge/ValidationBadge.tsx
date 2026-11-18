@@ -3,8 +3,8 @@ import {
   CheckCircleOutlineIcon as PassIcon,
   ErrorOutlineIcon as WarningIcon,
   ReportProblemOutlinedIcon as ErrorIcon
-} from '@/features/creators/components/Icons'
-import { Tooltip } from '@/features/creators/components/Tooltip'
+} from '../Icons'
+import { Tooltip } from '../Tooltip'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { type ValidationIssue, type ValidationStatus } from '@/data/lib/creators/validation'
 import { type ValidationSubject } from './ItemValidationCard'

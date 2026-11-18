@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
-import { useSpringBones } from '@/features/creators/hooks/useSpringBones'
+import { useSpringBones } from '../../hooks/useSpringBones'
 import { createItemDraft, isItemDraftDirty, itemDraftReducer, type ItemDraft } from '@/data/lib/creators/itemDraft'
 import { type Item } from '@/data/lib/creators/items'
 import { sameSpringBoneParams, type SpringBoneParamsByHash } from '@/data/lib/creators/springBones'

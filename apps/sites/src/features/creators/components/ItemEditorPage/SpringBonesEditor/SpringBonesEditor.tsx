@@ -1,7 +1,7 @@
 import { useMemo, useState, type CSSProperties } from 'react'
 import { BodyShape, type SpringBoneParams } from '@dcl/schemas'
-import { ActionsMenu, ActionsMenuDivider, ActionsMenuItem } from '@/features/creators/components/ActionsMenu'
-import { Select } from '@/features/creators/components/Select'
+import { ActionsMenu, ActionsMenuDivider, ActionsMenuItem } from '../../ActionsMenu'
+import { Select } from '../../Select'
 import { useTranslation } from '@/data/lib/creators/intl'
 import {
   buildBoneTree,

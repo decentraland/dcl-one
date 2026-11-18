@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { describe, it, expect } from 'vitest'
 import { CollectionDisplayStatus } from './collections'
 import {
@@ -22,8 +22,8 @@ import {
   ItemType,
   type Item
 } from './items'
-import { fromRemoteItem } from '@/data/lib/creators/builder/mappers'
-import type { RemoteItem } from '@/data/lib/creators/builder/wire'
+import { fromRemoteItem } from './builder/mappers'
+import type { RemoteItem } from './builder/wire'
 
 const MALE = 'urn:decentraland:off-chain:base-avatars:BaseMale'
 const FEMALE = 'urn:decentraland:off-chain:base-avatars:BaseFemale'

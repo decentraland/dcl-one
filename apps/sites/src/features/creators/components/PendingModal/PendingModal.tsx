@@ -1,5 +1,5 @@
-import { Modal } from '@/features/creators/components/Modal'
-import { StepIndicator } from '@/features/creators/components/StepIndicator'
+import { Modal } from '../Modal'
+import { StepIndicator } from '../StepIndicator'
 import { useTranslation } from '@/data/lib/creators/intl'
 import styles from './PendingModal.module.css'
 

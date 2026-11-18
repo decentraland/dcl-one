@@ -5,7 +5,7 @@ import { type ReactNode } from 'react'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { type CollectionDiscount } from '@/data/lib/creators/coupons'
-import { Providers, collection, makeSession } from '@/features/creators/components/CollectionDetailPage/SellItemFlow/testUtils'
+import { Providers, collection, makeSession } from '../components/CollectionDetailPage/SellItemFlow/testUtils'
 
 vi.mock('@/data/lib/creators/auth', async () => {
   const actual = await vi.importActual<typeof import('@/data/lib/creators/auth')>('@/data/lib/creators/auth')

@@ -1,4 +1,4 @@
-import { ChevronLeftIcon, ChevronRightIcon } from '@/features/creators/components/Icons'
+import { ChevronLeftIcon, ChevronRightIcon } from '../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { pageWindow } from '@/data/lib/creators/pagination'
 import styles from './Pagination.module.css'

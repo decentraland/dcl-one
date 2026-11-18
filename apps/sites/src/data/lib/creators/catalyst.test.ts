@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fetchCatalystContent, fetchEntitiesByPointers } from './catalyst'
 

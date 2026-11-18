@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { Select } from '@/features/creators/components/Select'
+import { Select } from '../Select'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { RARITIES, RARITY_MAX_SUPPLY, type RarityName } from '@/data/lib/creators/rarities'
 

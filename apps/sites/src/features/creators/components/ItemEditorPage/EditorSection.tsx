@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
-import { ExpandMoreIcon as ChevronIcon } from '@/features/creators/components/Icons'
-import { Tooltip } from '@/features/creators/components/Tooltip'
+import { ExpandMoreIcon as ChevronIcon } from '../Icons'
+import { Tooltip } from '../Tooltip'
 import styles from './ItemEditorPage.module.css'
 
 type Props = {

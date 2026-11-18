@@ -12,11 +12,11 @@ const ME = '0xme'
 const OTHER = '0xother'
 const mutate = vi.fn()
 vi.mock('@/data/lib/creators/builder', () => ({ fetchCommittee: async () => [OTHER, ME] }))
-vi.mock('@/features/creators/hooks/useCuration', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/features/creators/hooks/useCuration')>()),
+vi.mock('../../hooks/useCuration', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../hooks/useCuration')>()),
   useAssignCurator: () => ({ mutate, isPending: false, isError: false })
 }))
-vi.mock('@/features/creators/hooks/useProfile', () => ({ useProfiles: (list: string[]) => list.map(() => undefined) }))
+vi.mock('../../hooks/useProfile', () => ({ useProfiles: (list: string[]) => list.map(() => undefined) }))
 
 const collection = { id: 'c1', name: 'Hats' } as Collection
 const curation: CollectionCuration = {

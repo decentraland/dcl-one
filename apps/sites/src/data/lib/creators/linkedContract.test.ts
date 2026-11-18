@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { describe, it, expect, vi } from 'vitest'
 import { type ContractNetwork } from '@dcl/schemas'
 import {
@@ -10,7 +10,7 @@ import {
   isContractAddress
 } from './linkedContract'
 
-vi.mock('@/data/lib/creators/auth', () => ({ readContract: vi.fn() }))
+vi.mock('./auth', () => ({ readContract: vi.fn() }))
 
 const ADDRESS = '0x1d9fb685c257e74f869ba302e260c0b68f5ebb37'
 

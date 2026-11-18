@@ -16,11 +16,11 @@ type Callbacks = { onSuccess?: (result: unknown) => void; onError?: (error: unkn
 type Variables = { kind: RoleKind; current: string[]; next: string[]; onSigned?: () => void }
 
 const save = { mutate: vi.fn<(variables: Variables, callbacks: Callbacks) => void>(), isPending: false }
-vi.mock('@/features/creators/hooks/useCollectionRoles', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/features/creators/hooks/useCollectionRoles')>()),
+vi.mock('../../../hooks/useCollectionRoles', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../../hooks/useCollectionRoles')>()),
   useSetCollectionRoles: () => save
 }))
-vi.mock('@/features/creators/hooks/useSales', () => ({
+vi.mock('../../../hooks/useSales', () => ({
   useFriends: () => ({
     data: [{ address: FRIEND, name: 'Ana', hasClaimedName: true, avatarUrl: '' }],
     isLoading: false

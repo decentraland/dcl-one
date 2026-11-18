@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BuilderServerError } from './builder'
 import { CollectionDisplayStatus, type Collection } from './collections'
@@ -17,11 +17,11 @@ import {
 import { type Item } from './items'
 
 const analytics = vi.hoisted(() => ({ track: vi.fn() }))
-vi.mock('@/data/lib/creators/analytics', () => ({ track: analytics.track, errorCode: () => 'unknown' }))
+vi.mock('./analytics', () => ({ track: analytics.track, errorCode: () => 'unknown' }))
 const monitoring = vi.hoisted(() => ({ captureError: vi.fn() }))
-vi.mock('@/data/lib/creators/monitoring', () => monitoring)
+vi.mock('./monitoring', () => monitoring)
 const navigation = vi.hoisted(() => ({ openExternal: vi.fn() }))
-vi.mock('@/data/lib/creators/navigation', () => navigation)
+vi.mock('./navigation', () => navigation)
 
 const OWNER = '0x00000000000000000000000000000000000000aa'
 const LINK = 'https://forum.decentraland.org/t/hats/77'

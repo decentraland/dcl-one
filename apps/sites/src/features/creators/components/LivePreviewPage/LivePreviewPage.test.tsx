@@ -10,10 +10,10 @@ import { TranslationProvider } from '@/data/lib/creators/intl'
 import { type Session } from '@/data/lib/creators/auth'
 import { type Collection } from '@/data/lib/creators/collections'
 import { type ValidationContext, type ValidationSource } from '@/data/lib/creators/validation'
-import { useWallet } from '@/features/creators/store/wallet'
+import { useWallet } from '../../store/wallet'
 
 // ui2 lazy-loads MUI and talks to a real iframe; the page's own behaviour is what's under test.
-vi.mock('@/features/creators/components/WearablePreview', () => ({
+vi.mock('../WearablePreview', () => ({
   WearablePreview: ({ id }: { id: string }) => (
     <iframe id={id} src="https://wearable-preview.decentraland.zone/?x=1" title="preview" />
   ),
@@ -47,7 +47,7 @@ vi.mock('@/data/lib/creators/validation', async () => {
 })
 
 const addItemsProps: Array<Record<string, unknown>> = []
-vi.mock('@/features/creators/components/CollectionDetailPage/AddItemsModal', () => ({
+vi.mock('../CollectionDetailPage/AddItemsModal', () => ({
   AddItemsModal: (props: Record<string, unknown>) => {
     addItemsProps.push(props)
     return <div data-testid="add-items-modal" />
@@ -67,7 +67,7 @@ const draft: Collection = {
   createdAt: 1,
   updatedAt: 1
 }
-vi.mock('@/features/creators/hooks/useCollections', () => ({ useDraftCollections: () => ({ data: [draft], isLoading: false }) }))
+vi.mock('../../hooks/useCollections', () => ({ useDraftCollections: () => ({ data: [draft], isLoading: false }) }))
 
 const { LivePreviewPage } = await import('./LivePreviewPage')
 

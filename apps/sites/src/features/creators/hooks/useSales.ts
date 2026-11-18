@@ -10,7 +10,7 @@ import {
 } from '@/data/lib/creators/auth'
 import { errorCode, track } from '@/data/lib/creators/analytics'
 import { type Collection } from '@/data/lib/creators/collections'
-import { allCollectionItemsKey } from '@/features/creators/hooks/useCollection'
+import { allCollectionItemsKey } from './useCollection'
 import { fetchFriends } from '@/data/lib/creators/friends'
 import { type Item } from '@/data/lib/creators/items'
 import { fetchItemTradeId, type ItemListing } from '@/data/lib/creators/listings'

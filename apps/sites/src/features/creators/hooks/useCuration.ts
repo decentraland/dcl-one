@@ -21,9 +21,9 @@ import { orderCurators, type CollectionCuration, type CurationFilters } from '@/
 import { shortenAddress } from '@/data/lib/creators/address'
 import { type RejectReasonCode } from '@/data/lib/creators/events'
 import { captureError } from '@/data/lib/creators/monitoring'
-import { postAssignee } from '@/features/creators/hooks/useForumPost'
-import { useCommittee } from '@/features/creators/hooks/useCommittee'
-import { useProfiles } from '@/features/creators/hooks/useProfile'
+import { postAssignee } from './useForumPost'
+import { useCommittee } from './useCommittee'
+import { useProfiles } from './useProfile'
 import { getMaticChainId } from '@/data/lib/creators/publishCollection'
 import { isExpectedWalletError } from '@/data/lib/creators/walletErrors'
 

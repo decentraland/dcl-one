@@ -3,7 +3,7 @@
 // calldata (builder-server derives the CREATE2 salt + contract address from it and rejects a save
 // without it), and the symbol/items encodings that feed it.
 import { encodeFunctionData, zeroAddress } from 'viem'
-import { config } from '@/data/lib/creators/config'
+import { config } from './config'
 import { type Collection } from './collections'
 import { getItemMetadata, type Item } from './items'
 

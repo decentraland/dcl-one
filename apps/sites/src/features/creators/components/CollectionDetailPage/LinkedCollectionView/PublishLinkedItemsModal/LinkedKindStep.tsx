@@ -1,10 +1,10 @@
-import { ChevronLeftIcon, ChevronRightIcon } from '@/features/creators/components/Icons'
+import { ChevronLeftIcon, ChevronRightIcon } from '../../../Icons'
 import { useIntl } from '@/data/lib/creators/intl'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { weiToUsdCents } from '@/data/lib/creators/publishFee'
 import { type ThirdPartyPrice } from '@/data/lib/creators/thirdPartyRegistry'
-import { Button } from '@/features/creators/components/Button'
-import publishModal from '@/features/creators/components/CollectionDetailPage/PublishCollectionModal/PublishCollectionModal.module.css'
+import { Button } from '../../../Button'
+import publishModal from '../../PublishCollectionModal/PublishCollectionModal.module.css'
 import publishRow from './LinkedPublishRow.module.css'
 
 type Props = {

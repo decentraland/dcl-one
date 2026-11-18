@@ -9,14 +9,14 @@ import {
   validateLinkedCollectionName,
   type LinkedContract
 } from '@/data/lib/creators/thirdParty'
-import { Button } from '@/features/creators/components/Button'
-import { CollectionNameInput } from '@/features/creators/components/CollectionNameInput'
-import { EMPTY_LINKED_CONTRACT, LinkedContractFields } from '@/features/creators/components/LinkedContractFields'
-import { Modal } from '@/features/creators/components/Modal'
-import nameInput from '@/features/creators/components/CollectionNameInput/CollectionNameInput.module.css'
+import { Button } from '../../Button'
+import { CollectionNameInput } from '../../CollectionNameInput'
+import { EMPTY_LINKED_CONTRACT, LinkedContractFields } from '../../LinkedContractFields'
+import { Modal } from '../../Modal'
+import nameInput from '../../CollectionNameInput/CollectionNameInput.module.css'
 import styles from './CreateLinkedCollectionModal.module.css'
-import nameModal from '@/features/creators/components/CollectionNameModal/CollectionNameModal.module.css'
-import shared from '@/features/creators/styles/shared.module.css'
+import nameModal from '../../CollectionNameModal/CollectionNameModal.module.css'
+import shared from '../../../styles/shared.module.css'
 
 type Props = {
   isPending: boolean

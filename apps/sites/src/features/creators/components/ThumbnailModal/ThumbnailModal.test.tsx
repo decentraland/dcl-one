@@ -11,12 +11,12 @@ import { ItemType } from '@/data/lib/creators/items'
 import { ThumbnailModal } from './ThumbnailModal'
 
 let renderer: PreviewRenderer | undefined
-vi.mock('@/features/creators/hooks/usePreviewRenderer', () => ({ usePreviewRenderer: () => renderer }))
+vi.mock('../../hooks/usePreviewRenderer', () => ({ usePreviewRenderer: () => renderer }))
 
 type PreviewProps = { id: string; unity?: boolean; onLoad?: () => void }
 let previewProps: PreviewProps | null = null
 const getScreenshot = vi.fn()
-vi.mock('@/features/creators/components/WearablePreview', () => ({
+vi.mock('../WearablePreview', () => ({
   WearablePreview(props: PreviewProps) {
     previewProps = props
     return <iframe id={props.id} title="preview" />
@@ -25,7 +25,7 @@ vi.mock('@/features/creators/components/WearablePreview', () => ({
   EmoteControls: () => null,
   TranslationControls: () => null
 }))
-vi.mock('@/features/creators/components/ZoomControls', () => ({ ZoomControls: () => null }))
+vi.mock('../ZoomControls', () => ({ ZoomControls: () => null }))
 
 // jsdom has no canvas: resizing hands back a fixed PNG data URL.
 const PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgo='

@@ -1,8 +1,8 @@
 // The MANA/USD rate the off-chain marketplace settles USD-pegged trades with, read from the same
 // Chainlink aggregator the contract uses, so the USD hint next to a MANA price matches what a sale converts at.
 import { parseAbi } from 'viem'
-import { readContract, type ContractData } from '@/data/lib/creators/auth'
-import { getOffchainMarketplaceContract } from '@/data/lib/creators/trades'
+import { readContract, type ContractData } from './auth'
+import { getOffchainMarketplaceContract } from './trades'
 
 // Aggregator heartbeat (~24h) plus a buffer: an older round is treated as stale rather than shown.
 const MAX_STALENESS_SECONDS = 90_000

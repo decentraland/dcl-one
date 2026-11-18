@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ContractName, getContract, getCouponManager } from '@/data/lib/creators/chain/contracts'
+import { ContractName, getContract, getCouponManager } from './chain/contracts'
 
-vi.mock('@/data/lib/creators/auth', async () => {
-  const actual = await vi.importActual<typeof import('@/data/lib/creators/auth')>('@/data/lib/creators/auth')
+vi.mock('./auth', async () => {
+  const actual = await vi.importActual<typeof import('./auth')>('./auth')
   return { ...actual, readContract: vi.fn(), signedFetch: vi.fn() }
 })
 
-import { signedFetch } from '@/data/lib/creators/auth'
+import { signedFetch } from './auth'
 import {
   decodeCall,
   recoverTypedDataSigner,
@@ -16,7 +16,7 @@ import {
   testAccount,
   toTransaction,
   typedDataDigest
-} from '@/data/lib/creators/test/chain'
+} from './test/chain'
 import {
   COUPON_TYPES,
   DiscountError,

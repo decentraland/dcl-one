@@ -7,7 +7,7 @@ import { type Collection } from '@/data/lib/creators/collections'
 import { ReviewReplyBadge } from './ReviewReplyBadge'
 
 const recent = vi.hoisted(() => ({ events: [] as { type: string; actor: string }[], asked: [] as boolean[] }))
-vi.mock('@/features/creators/hooks/useCollectionEvents', () => ({
+vi.mock('../../hooks/useCollectionEvents', () => ({
   useRecentCollectionEvents: (_address: string, _id: string, enabled: boolean) => {
     recent.asked.push(enabled)
     return { data: enabled ? recent.events : undefined }

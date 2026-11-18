@@ -1,4 +1,4 @@
-import { type Item } from '@/data/lib/creators/items'
+import { type Item } from '../items'
 import { BuilderServerError, baseUrl } from './transport'
 
 export const getContentsStorageUrl = (hash = '') => `${baseUrl()}/storage/contents/${hash}`

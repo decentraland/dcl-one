@@ -1,9 +1,9 @@
-import { getCollectionContract } from '@/data/lib/creators/chain/contracts'
-import { type ContractCall } from '@/data/lib/creators/auth'
-import { type Collection } from '@/data/lib/creators/collections'
-import { isRefusedRequest } from '@/data/lib/creators/builder'
-import { getSystemMinters, isCollectionOwner } from '@/data/lib/creators/collectionRoles'
-import { SellItemError } from '@/data/lib/creators/sales'
+import { getCollectionContract } from './chain/contracts'
+import { type ContractCall } from './auth'
+import { type Collection } from './collections'
+import { isRefusedRequest } from './builder'
+import { getSystemMinters, isCollectionOwner } from './collectionRoles'
+import { SellItemError } from './sales'
 
 export type NewOwnerError = 'self' | 'zero' | 'system' | 'contract'
 

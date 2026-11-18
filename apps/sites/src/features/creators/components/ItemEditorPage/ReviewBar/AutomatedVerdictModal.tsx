@@ -5,10 +5,10 @@ import {
   ErrorOutlineIcon as WarningIcon,
   HelpOutlineIcon as UncheckedIcon,
   ReportProblemOutlinedIcon as IssuesIcon
-} from '@/features/creators/components/Icons'
+} from '../../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { Modal } from '@/features/creators/components/Modal'
-import { ItemValidationCard } from '@/features/creators/components/ValidationBadge'
+import { Modal } from '../../Modal'
+import { ItemValidationCard } from '../../ValidationBadge'
 import { getContentsStorageUrl } from '@/data/lib/creators/builder'
 import {
   countFailedItems,

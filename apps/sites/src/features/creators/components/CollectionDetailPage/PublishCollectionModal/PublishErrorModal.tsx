@@ -1,5 +1,5 @@
-import errorArt from '@/features/creators/assets/modal-error.png'
-import { ConfirmModal } from '@/features/creators/components/ConfirmModal'
+import errorArt from '../../../assets/modal-error.png'
+import { ConfirmModal } from '../../ConfirmModal'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { type PublishFailureReason } from '@/data/lib/creators/publishCollection'
 

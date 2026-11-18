@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { describe, expect, it } from 'vitest'
-import { toTransaction } from '@/data/lib/creators/test/chain'
+import { toTransaction } from './test/chain'
 import { type Collection } from './collections'
 import { ItemType, type Item } from './items'
 import {

@@ -1,7 +1,7 @@
-import { ContractName, getCollectionContract, getContract } from '@/data/lib/creators/chain/contracts'
-import { type ContractCall } from '@/data/lib/creators/auth'
-import { type Collection } from '@/data/lib/creators/collections'
-import { SellItemError } from '@/data/lib/creators/sales'
+import { ContractName, getCollectionContract, getContract } from './chain/contracts'
+import { type ContractCall } from './auth'
+import { type Collection } from './collections'
+import { SellItemError } from './sales'
 
 /** The two on-chain roles an owner hands out: senders are the contract's minters, collaborators its managers. */
 export type RoleKind = 'senders' | 'collaborators'

@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { describe, expect, it, vi } from 'vitest'
-import { ContractName, getContract } from '@/data/lib/creators/chain/contracts'
+import { ContractName, getContract } from './chain/contracts'
 import { decodeAbiParameters, maxUint256, parseAbiParameters, toFunctionSelector } from 'viem'
-import { decodeCall, toTransaction } from '@/data/lib/creators/test/chain'
+import { decodeCall, toTransaction } from './test/chain'
 import { BuilderServerError } from './builder'
 import { type Collection } from './collections'
 import { CreditsServerError } from './credits'

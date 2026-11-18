@@ -1,5 +1,5 @@
 import { Fragment, type ReactNode } from 'react'
-import { flattenMessages } from '@/data/lib/creators/messages'
+import { flattenMessages } from '../messages'
 import en from './en.json'
 import { formatParts, type FormatValue } from './format'
 

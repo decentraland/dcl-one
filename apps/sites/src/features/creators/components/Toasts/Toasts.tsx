@@ -5,7 +5,7 @@ import {
   ErrorRoundedIcon as ErrorIcon,
   InfoRoundedIcon as InfoIcon,
   WarningRoundedIcon as WarnIcon
-} from '@/features/creators/components/Icons'
+} from '../Icons'
 import { useNotifications, type Toast, type ToastType } from '@/data/lib/creators/notifications'
 import { useTranslation } from '@/data/lib/creators/intl'
 import styles from './Toasts.module.css'

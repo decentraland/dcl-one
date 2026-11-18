@@ -20,14 +20,14 @@ const hat = (id: string) => ({ id, name: `Hat ${id}`, currentContentHash: `hash-
 const pending = ['1', '2', '3'].map(hat)
 let served = pending
 
-vi.mock('@/features/creators/hooks/useCuration', () => ({
+vi.mock('../../../hooks/useCuration', () => ({
   useCollectionCuration: () => ({ data: null, isLoading: false })
 }))
-vi.mock('@/features/creators/hooks/useLinkedCollection', () => ({
+vi.mock('../../../hooks/useLinkedCollection', () => ({
   useItemCurations: () => ({ data: new Map(), isLoading: false })
 }))
-vi.mock('@/features/creators/hooks/useLinkedReview', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/features/creators/hooks/useLinkedReview')>()),
+vi.mock('../../../hooks/useLinkedReview', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../../hooks/useLinkedReview')>()),
   usePendingLinkedItems: () => ({ data: served, isLoading: false }),
   useRejectLinkedItems: () => ({ mutate: rejectMutate, isPending: false, isError: false, reset: vi.fn() })
 }))

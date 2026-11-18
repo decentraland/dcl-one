@@ -1,10 +1,10 @@
 // The creators code's session, on Sites' sign-in: the signed identity Sites keeps, and the wallet that signs
 // for it (a browser wallet, or the in-app signer of an email or social account).
-import { getIdentity, subscribe } from '@/data/lib/auth/session'
-import { isIdentityExpired } from '@/data/lib/auth/expiry'
-import { browserProvider, currentWalletKind, managedShopProvider } from '@/data/lib/auth/shop-wallet'
-import type { AuthIdentity, AuthLink } from '@/data/lib/auth/types'
-import { WalletError, type Eip1193Provider } from '@/data/lib/auth/wallet'
+import { getIdentity, subscribe } from '../../auth/session'
+import { isIdentityExpired } from '../../auth/expiry'
+import { browserProvider, currentWalletKind, managedShopProvider } from '../../auth/shop-wallet'
+import type { AuthIdentity, AuthLink } from '../../auth/types'
+import { WalletError, type Eip1193Provider } from '../../auth/wallet'
 import { signAuthChain } from '@ui/data/auth/signerCore'
 import { resyncServerClock, serverClockOffset, serverNow } from './serverClock'
 

@@ -1,7 +1,7 @@
 // Three.js model analysis for uploaded items: emote detection, emote metrics and the GLB
 // validation suite. Ported from the legacy builder's lib/getModelData; rendering (metrics +
 // thumbnails) is NOT done here — that comes from the WearablePreview iframe controller.
-import { loadGltfLoader, loadThree, type GLTF } from '@/data/lib/creators/three'
+import { loadGltfLoader, loadThree, type GLTF } from './three'
 import { ArmatureId, WearableCategory } from '@dcl/schemas'
 import { ItemType } from './items'
 import { ItemFileError, MAX_EMOTE_DURATION, isImageFile } from './itemFiles'

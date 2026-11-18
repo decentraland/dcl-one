@@ -17,7 +17,7 @@ vi.mock('@/data/lib/creators/builder', () => ({
   ])
 }))
 
-vi.mock('@/features/creators/store/wallet', () => ({
+vi.mock('../../../store/wallet', () => ({
   useWallet: (selector: (state: { session: { address: string } }) => unknown) =>
     selector({ session: { address: '0xabc' } })
 }))

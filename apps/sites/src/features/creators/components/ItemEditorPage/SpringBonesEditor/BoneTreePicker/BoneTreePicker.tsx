@@ -4,8 +4,8 @@ import {
   ArrowDropDownIcon as ChevronIcon,
   ChevronRightIcon as CaretIcon,
   CloseIcon as ClearIcon
-} from '@/features/creators/components/Icons'
-import { useListbox } from '@/features/creators/components/Select/useListbox'
+} from '../../../Icons'
+import { useListbox } from '../../../Select/useListbox'
 import { type BoneNode, type BoneTreeNode } from '@/data/lib/creators/springBones'
 import styles from './BoneTreePicker.module.css'
 

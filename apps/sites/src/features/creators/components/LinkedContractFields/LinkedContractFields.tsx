@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef } from 'react'
-import { InfoOutlinedIcon } from '@/features/creators/components/Icons'
+import { InfoOutlinedIcon } from '../Icons'
 import { type ContractNetwork } from '@dcl/schemas'
 import { config } from '@/data/lib/creators/config'
 import { useTranslation } from '@/data/lib/creators/intl'
@@ -10,10 +10,10 @@ import {
   type LinkedContractCheck
 } from '@/data/lib/creators/linkedContract'
 import { getLinkedContractNetworks } from '@/data/lib/creators/thirdParty'
-import { Select } from '@/features/creators/components/Select'
-import nameInput from '@/features/creators/components/CollectionNameInput/CollectionNameInput.module.css'
+import { Select } from '../Select'
+import nameInput from '../CollectionNameInput/CollectionNameInput.module.css'
 import { cx } from '@/data/lib/creators/cx'
-import shared from '@/features/creators/styles/shared.module.css'
+import shared from '../../styles/shared.module.css'
 import styles from './LinkedContractFields.module.css'
 
 const CONTRACT_CHECK_DEBOUNCE_MS = 1000

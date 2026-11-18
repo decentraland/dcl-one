@@ -31,7 +31,7 @@ const sell = { mutate: vi.fn<(variables: SellVariables, callbacks: Callbacks) =>
 type EnableVariables = { onSigned?: () => void }
 const enable = { mutate: vi.fn<(variables: EnableVariables, callbacks: Callbacks) => void>(), isPending: false }
 let salesEnabled = true
-vi.mock('@/features/creators/hooks/useSales', () => ({
+vi.mock('../../../hooks/useSales', () => ({
   useSalesEnabled: () => salesEnabled,
   useEnableSales: () => enable,
   useUpdatePrice: () => update,

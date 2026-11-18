@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
-import { MultiSelect } from '@/features/creators/components/MultiSelect'
-import { InfoTooltip } from '@/features/creators/components/Tooltip'
+import { MultiSelect } from '../../MultiSelect'
+import { InfoTooltip } from '../../Tooltip'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { getHideableBodyPartCategories, getHideableWearableCategories } from '@/data/lib/creators/wearableCategories'
 import styles from './HidesEditor.module.css'

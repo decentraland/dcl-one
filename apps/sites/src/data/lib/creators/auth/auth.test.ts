@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import '../test/setup'
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
 import { generatePrivateKey } from 'viem/accounts'
-import { createIdentityFromPrivateKey } from '@/data/lib/auth/identity'
-import { clearIdentity, setIdentity } from '@/data/lib/auth/session'
-import { forgetSignIn, recordSignIn } from '@/data/lib/auth/signin-kind'
-import type { AuthLink } from '@/data/lib/auth/types'
+import { createIdentityFromPrivateKey } from '../../auth/identity'
+import { clearIdentity, setIdentity } from '../../auth/session'
+import { forgetSignIn, recordSignIn } from '../../auth/signin-kind'
+import type { AuthLink } from '../../auth/types'
 import {
   createAuthHeaders,
   currentSession,

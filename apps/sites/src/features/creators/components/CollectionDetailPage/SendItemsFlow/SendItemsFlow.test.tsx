@@ -9,7 +9,7 @@ import { type Transfer } from '@/data/lib/creators/mint'
 import { useNotifications } from '@/data/lib/creators/notifications'
 import { WrongAccountError } from '@/data/lib/creators/walletErrors'
 import { track } from '@/data/lib/creators/analytics'
-import { Toasts } from '@/features/creators/components/Toasts'
+import { Toasts } from '../../Toasts'
 import { SendItemsFlow } from './SendItemsFlow'
 import { ADDRESS, FRIEND, Providers, collection, item, makeSession } from '../SellItemFlow/testUtils'
 
@@ -17,7 +17,7 @@ type Callbacks = { onSuccess?: (result: unknown) => void; onError?: (error: unkn
 type Variables = { transfers: Transfer[]; onSigned?: () => void }
 
 const send = { mutate: vi.fn<(variables: Variables, callbacks: Callbacks) => void>(), isPending: false }
-vi.mock('@/features/creators/hooks/useSales', () => ({
+vi.mock('../../../hooks/useSales', () => ({
   useSendItems: () => send,
   useFriends: () => ({ data: [], isLoading: false })
 }))

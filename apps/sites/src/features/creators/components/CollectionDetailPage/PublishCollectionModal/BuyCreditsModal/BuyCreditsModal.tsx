@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
-import { AddIcon, ChevronRightIcon, RemoveIcon, StarIcon } from '@/features/creators/components/Icons'
+import { AddIcon, ChevronRightIcon, RemoveIcon, StarIcon } from '../../../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { useCreditPacks } from '@/features/creators/hooks/useCreditPacks'
+import { useCreditPacks } from '../../../../hooks/useCreditPacks'
 import {
   MAX_PACK_QUANTITY,
   formatUsd,
@@ -11,9 +11,9 @@ import {
   type PackTotals
 } from '@/data/lib/creators/creditPacks'
 import { formatCredits } from '@/data/lib/creators/publishFee'
-import { Button } from '@/features/creators/components/Button'
-import { CurrencyAmount } from '@/features/creators/components/CurrencyAmount'
-import { Modal } from '@/features/creators/components/Modal'
+import { Button } from '../../../Button'
+import { CurrencyAmount } from '../../../CurrencyAmount'
+import { Modal } from '../../../Modal'
 import { artForPack } from '../packArt'
 import { cx } from '@/data/lib/creators/cx'
 import styles from './BuyCreditsModal.module.css'

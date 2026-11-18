@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CategorySelect } from '@/features/creators/components/CategorySelect'
+import { CategorySelect } from '../../CategorySelect'
 import {
   ExpandMoreIcon,
   LoopIcon,
@@ -8,11 +8,11 @@ import {
   InfoOutlinedIcon as InfoIcon,
   PlayArrowIcon as PlayIcon,
   VideocamOutlinedIcon as VideoIcon
-} from '@/features/creators/components/Icons'
-import { RaritySelect } from '@/features/creators/components/RaritySelect'
-import { InfoTooltip, Tooltip } from '@/features/creators/components/Tooltip'
-import { VideoDropzone } from '@/features/creators/components/VideoModal'
-import { useObjectURL } from '@/features/creators/hooks/useObjectURL'
+} from '../../Icons'
+import { RaritySelect } from '../../RaritySelect'
+import { InfoTooltip, Tooltip } from '../../Tooltip'
+import { VideoDropzone } from '../../VideoModal'
+import { useObjectURL } from '../../../hooks/useObjectURL'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { EmotePlayMode, ITEM_NAME_MAX_LENGTH, isValidItemName } from '@/data/lib/creators/itemFactory'
 import { formatItemSize, isOverSizeLimit, type ItemSize } from '@/data/lib/creators/itemSize'
@@ -20,10 +20,10 @@ import { toMB } from '@/data/lib/creators/itemFiles'
 import { BodyShapeType, ItemType, VIDEO_PATH, type Item } from '@/data/lib/creators/items'
 import { type Mapping } from '@/data/lib/creators/mappings'
 import { decodeLinkedUrn, type LinkedContract } from '@/data/lib/creators/thirdParty'
-import { MappingEditor } from '@/features/creators/components/MappingEditor'
+import { MappingEditor } from '../../MappingEditor'
 import { getCategoryOptions, getVariantTargets, type ItemDraft } from './AddItemsModal.state'
-import { BodyShapePicker, DraftPreviewPane } from '@/features/creators/components/ItemDraftModal'
-import draftModal from '@/features/creators/components/ItemDraftModal/ItemDraftModal.module.css'
+import { BodyShapePicker, DraftPreviewPane } from '../../ItemDraftModal'
+import draftModal from '../../ItemDraftModal/ItemDraftModal.module.css'
 import styles from './AddItemsModal.module.css'
 
 type Props = {

@@ -18,7 +18,7 @@ const mocks = vi.hoisted(() => ({
   track: vi.fn(),
   appealError: null as Error | null
 }))
-vi.mock('@/features/creators/hooks/useCollectionEvents', () => ({
+vi.mock('../../../hooks/useCollectionEvents', () => ({
   useRequestValidation: () => ({ mutate: mocks.validate, isPending: false }),
   useAppealCuration: () => ({
     mutate: mocks.appeal,
@@ -28,7 +28,7 @@ vi.mock('@/features/creators/hooks/useCollectionEvents', () => ({
     error: mocks.appealError
   })
 }))
-vi.mock('@/features/creators/components/CollectionActivityModal', () => ({
+vi.mock('../../CollectionActivityModal', () => ({
   CollectionActivityModal: ({ commentAs }: { commentAs?: string }) => (
     <div data-testid="activity-modal-stub" data-comment-as={commentAs} />
   )

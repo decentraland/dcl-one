@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { describe, it, expect } from 'vitest'
 import { ItemType, type Item } from './items'
 import { ItemTypeFilter, countItemsByType, filterItemsByType, paginateItems, parseItemTypeFilter } from './itemFilters'

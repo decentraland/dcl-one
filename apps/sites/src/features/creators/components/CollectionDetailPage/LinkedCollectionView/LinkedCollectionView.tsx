@@ -26,10 +26,10 @@ import { type Mappings } from '@/data/lib/creators/mappings'
 import { getMaticChainId } from '@/data/lib/creators/publishCollection'
 import { RelinkCancelledError, loadRelinkFrom, relinkCollection, type RelinkStep } from '@/data/lib/creators/relinkCollection'
 import { isWalletRejection, isWalletStateError } from '@/data/lib/creators/walletErrors'
-import errorArt from '@/features/creators/assets/modal-error.png'
-import { ConfirmModal } from '@/features/creators/components/ConfirmModal'
-import { PendingModal } from '@/features/creators/components/PendingModal'
-import { SuccessModal } from '@/features/creators/components/SuccessModal'
+import errorArt from '../../../assets/modal-error.png'
+import { ConfirmModal } from '../../ConfirmModal'
+import { PendingModal } from '../../PendingModal'
+import { SuccessModal } from '../../SuccessModal'
 import { fetchRegisteredContracts } from '@/data/lib/creators/thirdPartyRegistry'
 import { useNotifications } from '@/data/lib/creators/notifications'
 import { pageRangeLabel } from '@/data/lib/creators/pagination'
@@ -43,8 +43,8 @@ import {
   type ThirdParty
 } from '@/data/lib/creators/thirdParty'
 import { useQueryClient } from '@tanstack/react-query'
-import { useSaveCollection } from '@/features/creators/hooks/useCollection'
-import { invalidateCollectionItems } from '@/features/creators/hooks/usePublishCollection'
+import { useSaveCollection } from '../../../hooks/useCollection'
+import { invalidateCollectionItems } from '../../../hooks/usePublishCollection'
 import {
   LINKED_ITEMS_PAGE_SIZE,
   thirdPartyKey,
@@ -52,16 +52,16 @@ import {
   useHasLinkedWork,
   useItemCurations,
   useLinkedCollectionItems
-} from '@/features/creators/hooks/useLinkedCollection'
-import { useMediaQuery } from '@/features/creators/hooks/useMediaQuery'
-import { useBeforeUnloadGuard } from '@/features/creators/hooks/useBeforeUnloadGuard'
-import { useSaveItem } from '@/features/creators/hooks/useSaveItem'
+} from '../../../hooks/useLinkedCollection'
+import { useMediaQuery } from '../../../hooks/useMediaQuery'
+import { useBeforeUnloadGuard } from '../../../hooks/useBeforeUnloadGuard'
+import { useSaveItem } from '../../../hooks/useSaveItem'
 import { createItemSaveQueue } from '@/data/lib/creators/itemSaveQueue'
 import { media } from '@/data/lib/creators/theme'
-import { Button } from '@/features/creators/components/Button'
-import { CollectionActionsMenu } from '@/features/creators/components/CollectionActionsMenu'
-import { CollectionNameModal } from '@/features/creators/components/CollectionNameModal'
-import { CollectionStatusPill } from '@/features/creators/components/CollectionStatusPill'
+import { Button } from '../../Button'
+import { CollectionActionsMenu } from '../../CollectionActionsMenu'
+import { CollectionNameModal } from '../../CollectionNameModal'
+import { CollectionStatusPill } from '../../CollectionStatusPill'
 import { EditContractModal } from './EditContractModal'
 import { EditUrnModal } from './EditUrnModal'
 import {
@@ -71,14 +71,14 @@ import {
   ContentCopyIcon,
   EditIcon,
   ReportProblemOutlinedIcon as WarningIcon
-} from '@/features/creators/components/Icons'
-import { Pagination } from '@/features/creators/components/Pagination'
-import { Tooltip } from '@/features/creators/components/Tooltip'
-import addItemsArt from '@/features/creators/assets/add-items.png'
+} from '../../Icons'
+import { Pagination } from '../../Pagination'
+import { Tooltip } from '../../Tooltip'
+import addItemsArt from '../../../assets/add-items.png'
 import { AddItemsModal } from '../AddItemsModal'
 import detail from '../CollectionDetailPage.module.css'
 import styles from './LinkedCollectionView.module.css'
-import shared from '@/features/creators/styles/shared.module.css'
+import shared from '../../../styles/shared.module.css'
 import { LinkedItemActionsMenu } from './LinkedItemActionsMenu'
 import { LinkedItemRow, nextMappingStates } from './LinkedItemRow'
 import { PublishLinkedItemsModal } from './PublishLinkedItemsModal'

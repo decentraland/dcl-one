@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { PreviewProjection, PreviewRenderer } from '@dcl/schemas'
-import { Button } from '@/features/creators/components/Button'
-import { Modal } from '@/features/creators/components/Modal'
+import { Button } from '../Button'
+import { Modal } from '../Modal'
 import {
   EmoteControls,
   WearablePreview,
   TranslationControls,
   createWearablePreviewController,
   type WearablePreviewController
-} from '@/features/creators/components/WearablePreview'
-import { ZoomControls } from '@/features/creators/components/ZoomControls'
-import { usePreviewRenderer } from '@/features/creators/hooks/usePreviewRenderer'
+} from '../WearablePreview'
+import { ZoomControls } from '../ZoomControls'
+import { usePreviewRenderer } from '../../hooks/usePreviewRenderer'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { BuilderServerError, COLLECTION_LOCKED_STATUS } from '@/data/lib/creators/builder'
 import { MAX_THUMBNAIL_FILE_SIZE, THUMBNAIL_PATH, toMB } from '@/data/lib/creators/itemFiles'

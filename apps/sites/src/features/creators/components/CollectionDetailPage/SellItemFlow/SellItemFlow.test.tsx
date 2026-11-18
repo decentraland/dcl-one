@@ -28,7 +28,7 @@ const enable = { mutate: vi.fn<(variables: Variables, callbacks: Callbacks) => v
 const sell = { mutate: vi.fn<(variables: Variables, callbacks: Callbacks) => void>(), isPending: false }
 let salesEnabled = false
 
-vi.mock('@/features/creators/hooks/useSales', () => ({
+vi.mock('../../../hooks/useSales', () => ({
   useSalesEnabled: () => salesEnabled,
   useEnableSales: () => enable,
   useSellItem: () => sell,

@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { describe, expect, it, vi } from 'vitest'
 import { Network, TradeAssetType, TradeType, type Trade } from '@dcl/schemas'
-import { ContractName, getContract } from '@/data/lib/creators/chain/contracts'
+import { ContractName, getContract } from './chain/contracts'
 import { zeroAddress } from 'viem'
-import { TEST_SIGNER, signTypedDataWithTestKey, toTransaction } from '@/data/lib/creators/test/chain'
+import { TEST_SIGNER, signTypedDataWithTestKey, toTransaction } from './test/chain'
 import { TradeConflictError, TradeNotFoundError, tradeSigner } from './trades'
 import { type Collection } from './collections'
 import { ItemType, type Item } from './items'

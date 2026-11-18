@@ -1,12 +1,12 @@
 // The collection's Discourse topic on the Decentraland forum: the creator ↔ curation committee channel, ported
 // from the legacy builder (modules/forum). builder-server writes the topic itself; replies are posted in English.
-import { config } from '@/data/lib/creators/config'
-import { errorCode, track } from '@/data/lib/creators/analytics'
-import { BuilderServerError } from '@/data/lib/creators/builder'
-import { CollectionDisplayStatus, canManageCollectionItems, toSafeLink, type Collection } from '@/data/lib/creators/collections'
-import { type Item } from '@/data/lib/creators/items'
-import { captureError } from '@/data/lib/creators/monitoring'
-import { openExternal } from '@/data/lib/creators/navigation'
+import { config } from './config'
+import { errorCode, track } from './analytics'
+import { BuilderServerError } from './builder'
+import { CollectionDisplayStatus, canManageCollectionItems, toSafeLink, type Collection } from './collections'
+import { type Item } from './items'
+import { captureError } from './monitoring'
+import { openExternal } from './navigation'
 
 export type ForumPostSource = 'publish' | 'recovery'
 export type ForumPostSurface = 'detail' | 'detail_menu' | 'curation_list' | 'review_verdict'

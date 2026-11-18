@@ -1,5 +1,5 @@
-import { type BlockchainRarity } from '@/data/lib/creators/rarities'
-import { VIDEO_PATH, tracksVideoOnSave, type Item } from '@/data/lib/creators/items'
+import { type BlockchainRarity } from '../rarities'
+import { VIDEO_PATH, tracksVideoOnSave, type Item } from '../items'
 import { fromRemoteItem, toRemoteItem } from './mappers'
 import { request } from './transport'
 import type { RemoteItem } from './wire'

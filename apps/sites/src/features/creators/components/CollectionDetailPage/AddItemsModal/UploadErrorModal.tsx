@@ -1,5 +1,5 @@
-import uploadErrorArt from '@/features/creators/assets/modal-error.png'
-import { ConfirmModal } from '@/features/creators/components/ConfirmModal'
+import uploadErrorArt from '../../../assets/modal-error.png'
+import { ConfirmModal } from '../../ConfirmModal'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { type UploadFailureReason } from '@/data/lib/creators/uploadItems'
 

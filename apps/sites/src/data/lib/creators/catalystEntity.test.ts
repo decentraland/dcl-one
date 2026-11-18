@@ -1,5 +1,5 @@
 // @vitest-environment node
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { describe, expect, it } from 'vitest'
 import { hashV1, keccak256Hash } from '@dcl/hashing'
 import { MappingType } from '@dcl/schemas'

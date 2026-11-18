@@ -7,8 +7,8 @@ import {
   getCollectionContract,
   getContract,
   type ContractCall
-} from '@/data/lib/creators/chain/contracts'
-import { type Collection } from '@/data/lib/creators/collections'
+} from './chain/contracts'
+import { type Collection } from './collections'
 
 // Same chunk size as the legacy rescue, which keeps each transaction under the block gas limit.
 export const RESCUE_CHUNK_SIZE = 50

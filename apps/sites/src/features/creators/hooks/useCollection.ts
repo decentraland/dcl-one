@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { errorCode, track } from '@/data/lib/creators/analytics'
 import { fetchAllCollectionItems, fetchCollection, saveCollection, deleteCollection } from '@/data/lib/creators/builder'
 import { buildCollectionInitializeData } from '@/data/lib/creators/saveCollection'
-import { useCollectionCuration } from '@/features/creators/hooks/useCuration'
+import { useCollectionCuration } from './useCuration'
 import {
   getCollectionDisplayStatus,
   isLinkedCollection,

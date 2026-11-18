@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { manifest } from '@dcl-regenesislabs/wearable-validator'
 import { buildItem, withReplacedRepresentation, type ItemDraftPayload } from './itemFactory'

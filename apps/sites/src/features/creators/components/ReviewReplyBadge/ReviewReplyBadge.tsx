@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { useRecentCollectionEvents } from '@/features/creators/hooks/useCollectionEvents'
+import { useRecentCollectionEvents } from '../../hooks/useCollectionEvents'
 import {
   CollectionDisplayStatus,
   canManageCollectionItems,

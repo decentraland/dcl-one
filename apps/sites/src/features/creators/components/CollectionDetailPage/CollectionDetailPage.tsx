@@ -2,14 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } fro
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useIntl } from '@/data/lib/creators/intl'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { useWallet } from '@/features/creators/store/wallet'
+import { useWallet } from '../../store/wallet'
 import {
   ITEMS_PAGE_SIZE,
   useAllCollectionItems,
   useCollection,
   useCollectionStatus,
   useSaveCollection
-} from '@/features/creators/hooks/useCollection'
+} from '../../hooks/useCollection'
 import { BuilderServerError, ValidationLimitError, isCollectionBusy, isValidationRunning } from '@/data/lib/creators/builder'
 import { isSocialLogin } from '@/data/lib/creators/auth'
 import { FeatureFlag } from '@/data/lib/creators/featureFlags'
@@ -32,7 +32,7 @@ import { clearTopUpResume, parseTopUpReturn, readTopUpResume, stripTopUpReturn }
 import { isCollectionOwner, type RoleKind } from '@/data/lib/creators/collectionRoles'
 import { runningDiscountPpm } from '@/data/lib/creators/collectionDiscount'
 import { toSaleableCollection } from '@/data/lib/creators/saleableCollection'
-import { useManaUsdRate } from '@/features/creators/hooks/useSales'
+import { useManaUsdRate } from '../../hooks/useSales'
 import { type CollectionDiscount } from '@/data/lib/creators/coupons'
 import { getMaticChainId } from '@/data/lib/creators/publishCollection'
 import { canSendCollectionItems } from '@/data/lib/creators/mint'
@@ -46,23 +46,23 @@ import {
   parseItemTypeFilter
 } from '@/data/lib/creators/itemFilters'
 import { MAX_PUBLISH_ITEMS, getPublishBlocker } from '@/data/lib/creators/publishCollection'
-import { useSaveItem } from '@/features/creators/hooks/useSaveItem'
-import { useForumPostRecovery } from '@/features/creators/hooks/useForumPost'
-import { useLockedCollectionDeployed, useSyncPublishedItems } from '@/features/creators/hooks/usePublishCollection'
-import { usePublishInFlight } from '@/features/creators/store/publishSync'
-import { useThumbnailEditor } from '@/features/creators/hooks/useThumbnailEditor'
-import { useCollectionListings } from '@/features/creators/hooks/useCollectionListings'
-import { useBeforeUnloadGuard } from '@/features/creators/hooks/useBeforeUnloadGuard'
+import { useSaveItem } from '../../hooks/useSaveItem'
+import { useForumPostRecovery } from '../../hooks/useForumPost'
+import { useLockedCollectionDeployed, useSyncPublishedItems } from '../../hooks/usePublishCollection'
+import { usePublishInFlight } from '../../store/publishSync'
+import { useThumbnailEditor } from '../../hooks/useThumbnailEditor'
+import { useCollectionListings } from '../../hooks/useCollectionListings'
+import { useBeforeUnloadGuard } from '../../hooks/useBeforeUnloadGuard'
 import {
   DISCOUNT_OPENED_EVENT,
   useAnyDiscountInFlight,
   useCollectionDiscounts,
   useDiscountFlags
-} from '@/features/creators/hooks/useCollectionDiscounts'
-import { useFeatureFlag } from '@/features/creators/hooks/useFeatureFlag'
-import { useMediaQuery } from '@/features/creators/hooks/useMediaQuery'
-import { useItemSyncs } from '@/features/creators/hooks/useItemSync'
-import { useCollectionValidation, useRerunItemValidation, type ItemValidation } from '@/features/creators/hooks/useCollectionValidation'
+} from '../../hooks/useCollectionDiscounts'
+import { useFeatureFlag } from '../../hooks/useFeatureFlag'
+import { useMediaQuery } from '../../hooks/useMediaQuery'
+import { useItemSyncs } from '../../hooks/useItemSync'
+import { useCollectionValidation, useRerunItemValidation, type ItemValidation } from '../../hooks/useCollectionValidation'
 import {
   ItemSyncStatus,
   getItemRowStatus,
@@ -71,9 +71,9 @@ import {
   showsItemStatusColumn
 } from '@/data/lib/creators/itemSync'
 import { ReviewStage, canPushChanges, getReviewStage, hasReviewConversation, isRejectedStage } from '@/data/lib/creators/curation'
-import { useCommittee } from '@/features/creators/hooks/useCommittee'
-import { useCollectionCuration, usePushCuration } from '@/features/creators/hooks/useCuration'
-import { useCollectionEvents } from '@/features/creators/hooks/useCollectionEvents'
+import { useCommittee } from '../../hooks/useCommittee'
+import { useCollectionCuration, usePushCuration } from '../../hooks/useCuration'
+import { useCollectionEvents } from '../../hooks/useCollectionEvents'
 import {
   NOTE_MAX_LENGTH,
   VALIDATION_ATTEMPTS_PER_DAY,
@@ -87,10 +87,10 @@ import { ITEM_EXTENSIONS, THUMBNAIL_PATH } from '@/data/lib/creators/itemFiles'
 import { type ItemListing } from '@/data/lib/creators/listings'
 import { useNotifications } from '@/data/lib/creators/notifications'
 import { media } from '@/data/lib/creators/theme'
-import { Button } from '@/features/creators/components/Button'
-import { ConfirmModal } from '@/features/creators/components/ConfirmModal'
-import { NoteField } from '@/features/creators/components/NoteField'
-import { Tooltip } from '@/features/creators/components/Tooltip'
+import { Button } from '../Button'
+import { ConfirmModal } from '../ConfirmModal'
+import { NoteField } from '../NoteField'
+import { Tooltip } from '../Tooltip'
 import {
   EmoteIcon,
   OpenEditorIcon,
@@ -102,15 +102,15 @@ import {
   LocalOfferOutlinedIcon as DiscountIcon,
   PersonOutlineIcon,
   SyncIcon
-} from '@/features/creators/components/Icons'
-import { CollectionNameModal } from '@/features/creators/components/CollectionNameModal'
-import { CollectionRolePill } from '@/features/creators/components/CollectionRolePill'
-import { CollectionStatusPill } from '@/features/creators/components/CollectionStatusPill'
-import { Pagination } from '@/features/creators/components/Pagination'
-import { ValidationResultsModal, toValidationSubject } from '@/features/creators/components/ValidationBadge'
-import addItemsArt from '@/features/creators/assets/add-items.png'
-import { CollectionActionsMenu } from '@/features/creators/components/CollectionActionsMenu'
-import { useThirdParty } from '@/features/creators/hooks/useLinkedCollection'
+} from '../Icons'
+import { CollectionNameModal } from '../CollectionNameModal'
+import { CollectionRolePill } from '../CollectionRolePill'
+import { CollectionStatusPill } from '../CollectionStatusPill'
+import { Pagination } from '../Pagination'
+import { ValidationResultsModal, toValidationSubject } from '../ValidationBadge'
+import addItemsArt from '../../assets/add-items.png'
+import { CollectionActionsMenu } from '../CollectionActionsMenu'
+import { useThirdParty } from '../../hooks/useLinkedCollection'
 import { getThirdPartyId, isThirdPartyManager } from '@/data/lib/creators/thirdParty'
 import { AddItemsModal } from './AddItemsModal'
 import { LinkedCollectionView } from './LinkedCollectionView'
@@ -127,7 +127,7 @@ import { CollectionDiscounts, DiscountFlow, EndDiscountFlow } from './DiscountFl
 import { cx } from '@/data/lib/creators/cx'
 import styles from './CollectionDetailPage.module.css'
 import row from './ItemListRow/ItemListRow.module.css'
-import shared from '@/features/creators/styles/shared.module.css'
+import shared from '../../styles/shared.module.css'
 
 const NOT_FOUND_STATUSES = [401, 403, 404]
 const NO_ITEMS: Item[] = []

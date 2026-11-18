@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { AddIcon, CloseIcon, RemoveIcon } from '@/features/creators/components/Icons'
+import { AddIcon, CloseIcon, RemoveIcon } from '../../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { track } from '@/data/lib/creators/analytics'
 import { getContentsStorageUrl } from '@/data/lib/creators/builder'
@@ -14,8 +14,8 @@ import {
   type Transfer
 } from '@/data/lib/creators/mint'
 import { useNotifications } from '@/data/lib/creators/notifications'
-import { Checkbox } from '@/features/creators/components/Checkbox'
-import { ItemThumbnail } from '@/features/creators/components/ItemThumbnail'
+import { Checkbox } from '../../Checkbox'
+import { ItemThumbnail } from '../../ItemThumbnail'
 import { BeneficiaryInput } from '../SellItemFlow/BeneficiaryInput'
 import styles from './SendItemsModal.module.css'
 

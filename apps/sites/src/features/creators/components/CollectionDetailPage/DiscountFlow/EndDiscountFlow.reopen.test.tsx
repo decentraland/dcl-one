@@ -15,10 +15,10 @@ vi.mock('@/data/lib/creators/coupons', async () => {
   return { ...actual, endDiscount: vi.fn(), createDiscount: vi.fn() }
 })
 vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn() }))
-vi.mock('@/features/creators/components/CollectionMosaic', () => ({ CollectionMosaic: () => null }))
+vi.mock('../../CollectionMosaic', () => ({ CollectionMosaic: () => null }))
 
 import { DiscountError, createDiscount, endDiscount } from '@/data/lib/creators/coupons'
-import { resetDiscountSession } from '@/features/creators/hooks/useCollectionDiscounts'
+import { resetDiscountSession } from '../../../hooks/useCollectionDiscounts'
 import { DiscountFlow } from './DiscountFlow'
 import { EndDiscountFlow } from './EndDiscountFlow'
 

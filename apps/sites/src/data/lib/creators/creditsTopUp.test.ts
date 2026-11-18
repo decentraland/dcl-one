@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { clearTopUpResume, parseTopUpReturn, readTopUpResume, saveTopUpResume, stripTopUpReturn } from './creditsTopUp'
 

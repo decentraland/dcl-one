@@ -17,7 +17,7 @@ const publishMutate = vi.fn()
 const slotsRefetch = vi.fn()
 let slotsData = { available: 5, registered: true }
 
-vi.mock('@/features/creators/hooks/useLinkedPublish', () => ({
+vi.mock('../../../../hooks/useLinkedPublish', () => ({
   usePublishLinkedItems: () => ({ mutate: publishMutate, isPending: false }),
   useSignSlotsCheque: () => ({
     isPending: false,
@@ -32,12 +32,12 @@ vi.mock('@/features/creators/hooks/useLinkedPublish', () => ({
   }),
   useLinkedSlots: () => ({ data: slotsData, isError: false, refetch: slotsRefetch })
 }))
-vi.mock('@/features/creators/hooks/useLinkedCollection', () => ({ useItemCurations: () => ({ data: new Map() }) }))
-vi.mock('@/features/creators/hooks/useCollection', () => ({
+vi.mock('../../../../hooks/useLinkedCollection', () => ({ useItemCurations: () => ({ data: new Map() }) }))
+vi.mock('../../../../hooks/useCollection', () => ({
   useSaveCollection: () => ({ mutate: vi.fn(), isPending: false, error: null, reset: vi.fn() })
 }))
-vi.mock('@/features/creators/hooks/useProfile', () => ({ useProfile: () => ({ data: { email: 'jane.doe@example.com' } }) }))
-vi.mock('@/features/creators/hooks/useBalances', () => ({ useManaBalance: () => ({ data: 10n ** 24n, isSuccess: true }) }))
+vi.mock('../../../../hooks/useProfile', () => ({ useProfile: () => ({ data: { email: 'jane.doe@example.com' } }) }))
+vi.mock('../../../../hooks/useBalances', () => ({ useManaBalance: () => ({ data: 10n ** 24n, isSuccess: true }) }))
 
 const ETHER = 10n ** 18n
 const price: ThirdPartyPrice = {

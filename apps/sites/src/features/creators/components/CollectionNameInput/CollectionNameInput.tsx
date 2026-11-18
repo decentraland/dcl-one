@@ -1,5 +1,5 @@
 import { useId } from 'react'
-import { InfoOutlinedIcon } from '@/features/creators/components/Icons'
+import { InfoOutlinedIcon } from '../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { COLLECTION_NAME_MAX_LENGTH } from '@/data/lib/creators/collections'
 import styles from './CollectionNameInput.module.css'

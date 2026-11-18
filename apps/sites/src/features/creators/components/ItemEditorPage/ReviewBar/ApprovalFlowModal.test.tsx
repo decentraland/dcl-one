@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { TranslationProvider } from '@/data/lib/creators/intl'
-import { type ApprovalPlan, type ApprovalView } from '@/features/creators/hooks/useApprovalFlow'
+import { type ApprovalPlan, type ApprovalView } from '../../../hooks/useApprovalFlow'
 import { type Session } from '@/data/lib/creators/auth'
 import { type Collection } from '@/data/lib/creators/collections'
 import { type CollectionCuration } from '@/data/lib/creators/curation'
@@ -22,7 +22,7 @@ const state = vi.hoisted(() => ({
   cancelSigning: vi.fn(),
   reloadItems: vi.fn()
 }))
-vi.mock('@/features/creators/hooks/useApprovalFlow', () => ({
+vi.mock('../../../hooks/useApprovalFlow', () => ({
   useApprovalFlow: () => ({
     view,
     plan,
@@ -46,7 +46,7 @@ vi.mock('@/data/lib/creators/builder', async importOriginal => ({
   })
 }))
 vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn() }))
-vi.mock('@/features/creators/components/CollectionMosaic', () => ({ CollectionMosaic: () => null }))
+vi.mock('../../CollectionMosaic', () => ({ CollectionMosaic: () => null }))
 vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn() }))
 const clipboard = vi.hoisted(() => ({ copyToClipboard: vi.fn() }))
 vi.mock('@/data/lib/creators/clipboard', () => clipboard)

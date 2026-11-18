@@ -12,8 +12,8 @@ import {
   requestCollectionValidation
 } from '@/data/lib/creators/builder'
 import { type Collection } from '@/data/lib/creators/collections'
-import { collectionCurationKey, collectionEventsKey, refreshReview } from '@/features/creators/hooks/useCuration'
-import { useFeatureFlag } from '@/features/creators/hooks/useFeatureFlag'
+import { collectionCurationKey, collectionEventsKey, refreshReview } from './useCuration'
+import { useFeatureFlag } from './useFeatureFlag'
 import { getValidationAttemptsLeft, isValidationInProgress, type CollectionEvent, type ReviewParty } from '@/data/lib/creators/events'
 import { FeatureFlag } from '@/data/lib/creators/featureFlags'
 import { captureError } from '@/data/lib/creators/monitoring'

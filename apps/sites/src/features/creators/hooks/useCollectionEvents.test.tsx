@@ -16,7 +16,7 @@ vi.mock('@/data/lib/creators/builder', async importOriginal => ({ ...(await impo
 vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn(), errorCode: () => 'unknown' }))
 vi.mock('@/data/lib/creators/monitoring', () => ({ captureError: vi.fn() }))
 const flag = vi.hoisted(() => ({ enabled: true }))
-vi.mock('@/features/creators/hooks/useFeatureFlag', () => ({ useFeatureFlag: () => ({ enabled: flag.enabled, isLoading: false }) }))
+vi.mock('./useFeatureFlag', () => ({ useFeatureFlag: () => ({ enabled: flag.enabled, isLoading: false }) }))
 
 const { BuilderServerError } = await import('@/data/lib/creators/builder')
 const { captureError } = await import('@/data/lib/creators/monitoring')

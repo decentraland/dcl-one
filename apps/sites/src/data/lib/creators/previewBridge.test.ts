@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PreviewMessageType } from '@dcl/schemas'
 import { createPreviewBridge, type PreviewBridge } from './previewBridge'

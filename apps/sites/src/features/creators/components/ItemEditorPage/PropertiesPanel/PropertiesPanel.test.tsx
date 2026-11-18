@@ -6,7 +6,7 @@ import { setFeatureFlags } from '@/data/lib/creators/test/featureFlags'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { BodyShape } from '@dcl/schemas'
-import { Providers } from '@/features/creators/components/CollectionDetailPage/SellItemFlow/testUtils'
+import { Providers } from '../../CollectionDetailPage/SellItemFlow/testUtils'
 import { ItemType, type Item } from '@/data/lib/creators/items'
 import { useItemForm } from '../useItemForm'
 import { type ItemFileChange } from '@/data/lib/creators/itemDraft'
@@ -34,7 +34,7 @@ vi.mock('@/data/lib/creators/builder', async () => ({
 }))
 
 const campaign = vi.hoisted(() => ({ current: null as { name: string; mainTag: string } | null }))
-vi.mock('@/features/creators/hooks/useCampaign', () => ({ useCampaign: () => campaign.current }))
+vi.mock('../../../hooks/useCampaign', () => ({ useCampaign: () => campaign.current }))
 
 vi.mock('@/data/lib/creators/featureFlags', async () => {
   const actual = await vi.importActual<typeof import('@/data/lib/creators/featureFlags')>('@/data/lib/creators/featureFlags')

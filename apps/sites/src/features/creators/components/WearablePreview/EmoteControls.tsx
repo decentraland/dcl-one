@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { PreviewEmoteEventType } from '@dcl/schemas/dist/dapps/preview/preview-emote-event-type'
-import { PauseIcon, PlayArrowIcon, VolumeOffIcon, VolumeUpIcon } from '@/features/creators/components/Icons'
+import { PauseIcon, PlayArrowIcon, VolumeOffIcon, VolumeUpIcon } from '../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { cx } from '@/data/lib/creators/cx'
 import { usePreviewController } from './usePreviewController'

@@ -1,7 +1,7 @@
 // Category-specific automatic thumbnails, ported from the legacy builder's lib/thumbnailOptions:
 // some categories are rendered offscreen in a fixed pose instead of screenshotting the preview.
 import { WearableCategory } from '@dcl/schemas'
-import poseNicerIdle from '@/data/lib/creators/assets/poses/pose_nicer_idle.glb?url'
+import poseNicerIdle from './assets/poses/pose_nicer_idle.glb?url'
 
 export const THUMBNAIL_POSE_BY_CATEGORY: Partial<Record<WearableCategory, string>> = {
   [WearableCategory.UPPER_BODY]: poseNicerIdle,

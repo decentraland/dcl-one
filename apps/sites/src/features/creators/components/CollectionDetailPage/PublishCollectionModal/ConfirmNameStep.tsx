@@ -1,12 +1,12 @@
 import { useId, useState } from 'react'
-import { ChevronRightIcon } from '@/features/creators/components/Icons'
+import { ChevronRightIcon } from '../../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { NAME_ALREADY_IN_USE_ERROR, validateCollectionName } from '@/data/lib/creators/collections'
 import { validateLinkedCollectionName } from '@/data/lib/creators/thirdParty'
 import { EMAIL_MAX_LENGTH, isValidEmail } from '@/data/lib/creators/email'
-import { Button } from '@/features/creators/components/Button'
-import { CollectionNameInput } from '@/features/creators/components/CollectionNameInput'
-import { Checkbox } from '@/features/creators/components/Checkbox'
+import { Button } from '../../Button'
+import { CollectionNameInput } from '../../CollectionNameInput'
+import { Checkbox } from '../../Checkbox'
 import styles from './PublishCollectionModal.module.css'
 
 type Props = {

@@ -9,7 +9,7 @@ import { BodyShapeType, ItemType, type Item } from '@/data/lib/creators/items'
 import { createDraft, type ItemDraft } from './AddItemsModal.state'
 import { DraftForm } from './DraftForm'
 
-vi.mock('@/features/creators/hooks/useThumbnailValidation', () => ({ useThumbnailValidation: () => ({ data: undefined }) }))
+vi.mock('../../../hooks/useThumbnailValidation', () => ({ useThumbnailValidation: () => ({ data: undefined }) }))
 
 const wrapper = ({ children }: { children: ReactNode }) => <TranslationProvider>{children}</TranslationProvider>
 

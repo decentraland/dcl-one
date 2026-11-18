@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import '../test/setup'
 import { describe, expect, it, vi } from 'vitest'
 import { parseAbi } from 'viem'
-import { ContractName, getCouponManager } from '@/data/lib/creators/chain/contracts'
+import { ContractName, getCouponManager } from '../chain/contracts'
 
 // The production networks set no tip floor: the wallet's own fee estimate goes through untouched.
-vi.mock('@/data/lib/creators/config', async () => {
-  const actual = await vi.importActual<typeof import('@/data/lib/creators/config')>('@/data/lib/creators/config')
+vi.mock('../config', async () => {
+  const actual = await vi.importActual<typeof import('../config')>('../config')
   return {
     ...actual,
     config: { get: (key: string) => (key === 'MATIC_MIN_TIP_GWEI' ? '' : actual.config.get(key)) }

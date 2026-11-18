@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import '../test/setup'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TransactionNotFoundError, TransactionReceiptNotFoundError, hashTypedData, numberToHex, parseAbi } from 'viem'
-import { ContractName, getCollectionContract, getContract, getCouponManager } from '@/data/lib/creators/chain/contracts'
-import { buildChequeTypedData } from '@/data/lib/creators/publishLinkedItems'
-import { WrongAccountError, WrongChainError, isWalletRejection } from '@/data/lib/creators/walletErrors'
+import { ContractName, getCollectionContract, getContract, getCouponManager } from '../chain/contracts'
+import { buildChequeTypedData } from '../publishLinkedItems'
+import { WrongAccountError, WrongChainError, isWalletRejection } from '../walletErrors'
 import { type Session } from './auth'
 import {
   readContract,
@@ -19,8 +19,8 @@ import {
   type TypedDataTypes
 } from '.'
 import { waitForReceipt, watchTransaction } from './transactions'
-import { OFFCHAIN_MARKETPLACE_TYPES, getTradeDomain } from '@/data/lib/creators/trades'
-import { typedDataDigest } from '@/data/lib/creators/test/chain'
+import { OFFCHAIN_MARKETPLACE_TYPES, getTradeDomain } from '../trades'
+import { typedDataDigest } from '../test/chain'
 
 vi.mock('decentraland-connect', () => ({ getRpcUrls: () => ({ 80002: 'https://rpc.example.com' }) }))
 

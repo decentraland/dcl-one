@@ -1,6 +1,6 @@
 // The creators flows report their steps through `track`. The events are not sent yet: they join the Sites
 // telemetry catalogue, with their final names, in a later change.
-import { isWalletRejection, isWalletStateError } from '@/data/lib/creators/walletErrors'
+import { isWalletRejection, isWalletStateError } from './walletErrors'
 
 type Props = Record<string, unknown>
 

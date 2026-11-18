@@ -1,7 +1,7 @@
-import { CurationStatus, type Collection, type PaginatedResource } from '@/data/lib/creators/collections'
-import { type Item } from '@/data/lib/creators/items'
-import { type ItemCuration, type LinkedItemsQuery } from '@/data/lib/creators/linkedItemStatus'
-import { type ThirdParty } from '@/data/lib/creators/thirdParty'
+import { CurationStatus, type Collection, type PaginatedResource } from '../collections'
+import { type Item } from '../items'
+import { type ItemCuration, type LinkedItemsQuery } from '../linkedItemStatus'
+import { type ThirdParty } from '../thirdParty'
 import {
   fromRemoteCollection,
   fromRemoteItem,

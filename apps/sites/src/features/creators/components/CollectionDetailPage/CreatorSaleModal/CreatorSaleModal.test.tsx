@@ -14,7 +14,7 @@ const track = vi.fn()
 vi.mock('@/data/lib/creators/analytics', () => ({ track: (...args: unknown[]) => track(...args), errorCode: () => 'unknown' }))
 const openExternal = vi.fn()
 vi.mock('@/data/lib/creators/navigation', () => ({ openExternal: (url: string) => openExternal(url) }))
-vi.mock('@/features/creators/components/CollectionMosaic', () => ({ CollectionMosaic: () => null }))
+vi.mock('../../CollectionMosaic', () => ({ CollectionMosaic: () => null }))
 
 import { CreatorSaleModal } from './CreatorSaleModal'
 

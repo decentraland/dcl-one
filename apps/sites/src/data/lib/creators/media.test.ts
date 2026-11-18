@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { describe, expect, it } from 'vitest'
 import UPNG from 'upng-js'
 import { ImageType, compressPngBlob, dataURLToBlob, getImageType, readPngDimensions } from './media'

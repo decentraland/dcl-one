@@ -1,5 +1,5 @@
 import { useTranslation } from '@/data/lib/creators/intl'
-import shared from '@/features/creators/styles/shared.module.css'
+import shared from '../../styles/shared.module.css'
 
 /** Shown in place of every route while the `maintenance` flag is on. */
 const MaintenancePage = () => {

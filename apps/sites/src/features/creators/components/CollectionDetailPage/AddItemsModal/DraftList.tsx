@@ -5,13 +5,13 @@ import {
   WearableIcon,
   CheckIcon,
   ErrorRoundedIcon as ErrorIcon
-} from '@/features/creators/components/Icons'
+} from '../../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { isThumbnailGenerating } from '@/data/lib/creators/draftPreview'
 import { ItemType } from '@/data/lib/creators/items'
 import { type ItemDraft } from './AddItemsModal.state'
 import styles from './AddItemsModal.module.css'
-import { ItemThumbnail } from '@/features/creators/components/ItemThumbnail'
+import { ItemThumbnail } from '../../ItemThumbnail'
 
 type Props = {
   drafts: ItemDraft[]

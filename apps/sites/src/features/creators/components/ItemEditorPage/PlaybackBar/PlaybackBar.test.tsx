@@ -8,11 +8,11 @@ import { PreviewEmote, PreviewEmoteEventType, type IPreviewController } from '@d
 import { TranslationProvider } from '@/data/lib/creators/intl'
 import { track } from '@/data/lib/creators/analytics'
 import { ItemType, type Item } from '@/data/lib/creators/items'
-import { useAvatarPreview } from '@/features/creators/store/avatarPreview'
+import { useAvatarPreview } from '../../../store/avatarPreview'
 import { PlaybackBar } from './PlaybackBar'
 
 // ui2's scrubber lazy-loads MUI and talks to an iframe; the bar's own controls are what's under test.
-vi.mock('@/features/creators/components/WearablePreview', () => ({
+vi.mock('../../WearablePreview', () => ({
   EmoteControls: () => <div data-testid="ui2-emote-controls" />
 }))
 

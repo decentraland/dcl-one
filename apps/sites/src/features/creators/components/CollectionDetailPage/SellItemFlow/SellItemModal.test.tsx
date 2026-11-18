@@ -18,7 +18,7 @@ vi.mock('@/data/lib/creators/featureFlags', async () => {
 beforeEach(() => setFeatureFlags(FeatureFlag.CREDITS_PRIMARY_LISTINGS))
 
 const rate = { data: undefined as bigint | undefined }
-vi.mock('@/features/creators/hooks/useSales', () => ({
+vi.mock('../../../hooks/useSales', () => ({
   useFriends: vi.fn(() => ({ data: [], isLoading: false })),
   useManaUsdRate: vi.fn(() => rate)
 }))

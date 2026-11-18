@@ -1,5 +1,5 @@
 // @vitest-environment node
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { describe, expect, it, vi } from 'vitest'
 import { type Entity } from '@dcl/schemas'
 import { type Collection } from './collections'

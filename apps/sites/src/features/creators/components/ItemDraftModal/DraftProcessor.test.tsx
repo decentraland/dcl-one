@@ -14,7 +14,7 @@ const controller = {
   emote: { getLength: vi.fn(async () => 0), goTo: vi.fn() }
 }
 
-vi.mock('@/features/creators/components/WearablePreview', () => ({
+vi.mock('../WearablePreview', () => ({
   WearablePreview(props: PreviewProps) {
     previewProps.push(props)
     return <iframe id={props.id} title="preview" />
@@ -22,7 +22,7 @@ vi.mock('@/features/creators/components/WearablePreview', () => ({
   createWearablePreviewController: vi.fn(() => controller)
 }))
 
-vi.mock('@/features/creators/hooks/usePreviewRenderer', () => ({ usePreviewRenderer: () => PreviewRenderer.UNITY }))
+vi.mock('../../hooks/usePreviewRenderer', () => ({ usePreviewRenderer: () => PreviewRenderer.UNITY }))
 
 const { captureError } = vi.hoisted(() => ({ captureError: vi.fn() }))
 vi.mock('@/data/lib/creators/monitoring', () => ({ captureError }))

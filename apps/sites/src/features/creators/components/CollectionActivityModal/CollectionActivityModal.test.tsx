@@ -19,7 +19,7 @@ const state = vi.hoisted(() => ({
   post: vi.fn(),
   postError: false
 }))
-vi.mock('@/features/creators/hooks/useCollectionEvents', () => ({
+vi.mock('../../hooks/useCollectionEvents', () => ({
   useCollectionEvents: () => ({
     events: state.events,
     isLoading: state.isLoading,
@@ -34,8 +34,8 @@ vi.mock('@/features/creators/hooks/useCollectionEvents', () => ({
   }),
   usePostComment: () => ({ mutate: state.post, isPending: false, isError: state.postError })
 }))
-vi.mock('@/features/creators/hooks/useCommittee', () => ({ useCommittee: () => ({ isCurator: state.isCurator }) }))
-vi.mock('@/features/creators/hooks/useProfile', () => ({ useProfile: () => ({ data: { name: 'Curator Jane' } }) }))
+vi.mock('../../hooks/useCommittee', () => ({ useCommittee: () => ({ isCurator: state.isCurator }) }))
+vi.mock('../../hooks/useProfile', () => ({ useProfile: () => ({ data: { name: 'Curator Jane' } }) }))
 vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn() }))
 
 const collection = { id: 'c1', name: 'Hats', isPublished: true } as Collection

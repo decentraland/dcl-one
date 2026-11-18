@@ -7,11 +7,11 @@ import { ItemType, getItemBodyShapeType, getItemSales, isSmartWearable, type Ite
 import { EmotePlayMode } from '@/data/lib/creators/itemFactory'
 import { type ItemListing } from '@/data/lib/creators/listings'
 import { type ItemRowStatus } from '@/data/lib/creators/itemSync'
-import { type ItemValidation } from '@/features/creators/hooks/useCollectionValidation'
+import { type ItemValidation } from '../../../hooks/useCollectionValidation'
 import { discountedCreditsPpm, discountedManaWeiPpm } from '@/data/lib/creators/collectionDiscount'
 import { formatCredits, formatMana } from '@/data/lib/creators/publishFee'
 import { shopItemUrl } from '@/data/lib/creators/shop'
-import { CurrencyAmount } from '@/features/creators/components/CurrencyAmount'
+import { CurrencyAmount } from '../../CurrencyAmount'
 import {
   SmartIcon,
   CheckIcon,
@@ -19,17 +19,17 @@ import {
   EditIcon,
   ErrorOutlineIcon as WarningIcon,
   ReportProblemOutlinedIcon as ErrorIcon
-} from '@/features/creators/components/Icons'
-import { Tooltip } from '@/features/creators/components/Tooltip'
-import { BodyShapeIcon, CategoryIcon, PlayModeIcon } from '@/features/creators/components/ItemIcons'
-import { ItemThumbnail } from '@/features/creators/components/ItemThumbnail'
-import { RarityPill } from '@/features/creators/components/RarityPill'
+} from '../../Icons'
+import { Tooltip } from '../../Tooltip'
+import { BodyShapeIcon, CategoryIcon, PlayModeIcon } from '../../ItemIcons'
+import { ItemThumbnail } from '../../ItemThumbnail'
+import { RarityPill } from '../../RarityPill'
 import { ItemSaleStatus } from '../ItemSaleStatus'
 import { ItemSyncPill } from '../ItemSyncPill'
 import { SaleTag } from '../SaleTag'
 import { cx } from '@/data/lib/creators/cx'
 import styles from './ItemListRow.module.css'
-import shared from '@/features/creators/styles/shared.module.css'
+import shared from '../../../styles/shared.module.css'
 
 const EMPTY = '—'
 

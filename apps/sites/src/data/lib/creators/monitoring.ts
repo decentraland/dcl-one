@@ -5,7 +5,7 @@
 //
 // Convention: pass a `flow` in the context (e.g. { flow: 'publish-collection' }) so failures group by
 // user action. Never put secrets in the context; the report is redacted defensively anyway.
-import { errorChain } from '@/data/lib/creators/walletErrors'
+import { errorChain } from './walletErrors'
 
 export type ErrorContext = Record<string, unknown>
 

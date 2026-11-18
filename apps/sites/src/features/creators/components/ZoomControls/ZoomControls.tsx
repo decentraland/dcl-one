@@ -1,8 +1,8 @@
-import { AddIcon as ZoomInIcon, RemoveIcon as ZoomOutIcon } from '@/features/creators/components/Icons'
+import { AddIcon as ZoomInIcon, RemoveIcon as ZoomOutIcon } from '../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { cx } from '@/data/lib/creators/cx'
 import styles from './ZoomControls.module.css'
-import { type WearablePreviewController } from '@/features/creators/components/WearablePreview'
+import { type WearablePreviewController } from '../WearablePreview'
 
 /**
  * Inertial camera-radius nudge per click. Babylon's inertia (0.9) carries it ~10× further, so this moves

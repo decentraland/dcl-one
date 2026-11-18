@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchEntitiesByPointers } from '@/data/lib/creators/catalyst'
-import { useCollectionCuration } from '@/features/creators/hooks/useCuration'
+import { useCollectionCuration } from './useCuration'
 import { type Collection } from '@/data/lib/creators/collections'
 import { ItemSyncStatus, getItemSyncStatus, mapEntitiesByItemId, type ItemSync } from '@/data/lib/creators/itemSync'
 import { type Item } from '@/data/lib/creators/items'

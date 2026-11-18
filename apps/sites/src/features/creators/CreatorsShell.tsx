@@ -1,24 +1,24 @@
 import { lazy, Suspense, useEffect, useSyncExternalStore, type ReactNode } from 'react'
 import SitesChrome from '@ui/web/frames/SitesChrome'
-import { ErrorBoundary } from '@/features/creators/components/ErrorBoundary'
-import { MaintenancePage } from '@/features/creators/components/MaintenancePage'
-import { SubNav } from '@/features/creators/components/SubNav'
-import { Toasts } from '@/features/creators/components/Toasts'
-import { useFeatureFlag } from '@/features/creators/hooks/useFeatureFlag'
-import { useWallet } from '@/features/creators/store/wallet'
+import { ErrorBoundary } from './components/ErrorBoundary'
+import { MaintenancePage } from './components/MaintenancePage'
+import { SubNav } from './components/SubNav'
+import { Toasts } from './components/Toasts'
+import { useFeatureFlag } from './hooks/useFeatureFlag'
+import { useWallet } from './store/wallet'
 import { FeatureFlag } from '@/data/lib/creators/featureFlags'
-import NotFoundPage from '@/features/not-found/NotFoundPage'
-import '@/features/creators/styles/index.css'
+import NotFoundPage from '../not-found/NotFoundPage'
+import './styles/index.css'
 import styles from './CreatorsShell.module.css'
 
 const PAGES = {
-  collections: lazy(() => import('@/features/creators/components/CollectionsPage').then(m => ({ default: m.CollectionsPage }))),
+  collections: lazy(() => import('./components/CollectionsPage').then(m => ({ default: m.CollectionsPage }))),
   collection: lazy(() =>
-    import('@/features/creators/components/CollectionDetailPage').then(m => ({ default: m.CollectionDetailPage }))
+    import('./components/CollectionDetailPage').then(m => ({ default: m.CollectionDetailPage }))
   ),
-  editor: lazy(() => import('@/features/creators/components/ItemEditorPage').then(m => ({ default: m.ItemEditorPage }))),
-  curation: lazy(() => import('@/features/creators/components/CurationPage').then(m => ({ default: m.CurationPage }))),
-  livePreview: lazy(() => import('@/features/creators/components/LivePreviewPage').then(m => ({ default: m.LivePreviewPage })))
+  editor: lazy(() => import('./components/ItemEditorPage').then(m => ({ default: m.ItemEditorPage }))),
+  curation: lazy(() => import('./components/CurationPage').then(m => ({ default: m.CurationPage }))),
+  livePreview: lazy(() => import('./components/LivePreviewPage').then(m => ({ default: m.LivePreviewPage })))
 }
 
 export type CreatorsPage = keyof typeof PAGES

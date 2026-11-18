@@ -1,6 +1,6 @@
 // The single notifications module (see CONVENTIONS.md): components enqueue toasts here and the
 // global <Toasts /> renders them — never ad-hoc toast systems.
-import { createStore } from '@/data/lib/creators/store'
+import { createStore } from './store'
 
 export const TOAST_DURATION_MS = 5000
 

@@ -18,7 +18,7 @@ const state = vi.hoisted(() => ({
   isPending: false,
   error: null as Error | null
 }))
-vi.mock('@/features/creators/hooks/useCuration', () => ({
+vi.mock('../../../hooks/useCuration', () => ({
   useDisableCollection: () => ({
     mutate: state.mutate,
     reset: vi.fn(),

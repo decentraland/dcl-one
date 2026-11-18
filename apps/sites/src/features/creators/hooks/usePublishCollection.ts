@@ -39,9 +39,9 @@ import {
 import { type PublicationFee } from '@/data/lib/creators/publishFee'
 import { buildCollectionInitializeData } from '@/data/lib/creators/saveCollection'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { postToForum } from '@/features/creators/hooks/useForumPost'
-import { storeCuration } from '@/features/creators/hooks/useCuration'
-import { isPublishSyncing, usePublishSyncStore } from '@/features/creators/store/publishSync'
+import { postToForum } from './useForumPost'
+import { storeCuration } from './useCuration'
+import { isPublishSyncing, usePublishSyncStore } from '../store/publishSync'
 
 export function useRarities(address: string | undefined) {
   return useQuery({

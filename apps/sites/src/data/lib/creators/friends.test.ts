@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { generatePrivateKey } from 'viem/accounts'
-import { createIdentityFromPrivateKey } from '@/data/lib/auth/identity'
-import { clearIdentity, setIdentity } from '@/data/lib/auth/session'
+import { createIdentityFromPrivateKey } from '../auth/identity'
+import { clearIdentity, setIdentity } from '../auth/session'
 
 const client = { connect: vi.fn(), disconnect: vi.fn(), getFriends: vi.fn() }
 vi.mock('@dcl/social-rpc-client', () => ({ createSocialClientV2: vi.fn(() => client) }))

@@ -7,15 +7,15 @@ import {
   LinkIcon,
   PersonOutlineIcon,
   SearchIcon
-} from '@/features/creators/components/Icons'
+} from '../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { clearTopUpResume, parseTopUpReturn, readTopUpResume, stripTopUpReturn } from '@/data/lib/creators/creditsTopUp'
 import { openExternal } from '@/data/lib/creators/navigation'
 import { pageRangeLabel } from '@/data/lib/creators/pagination'
-import { useWallet } from '@/features/creators/store/wallet'
-import { COLLECTIONS_PAGE_SIZE, useCollections, useCollectionsSummary } from '@/features/creators/hooks/useCollections'
-import { useSaveCollection } from '@/features/creators/hooks/useCollection'
-import { CONTRACT_PARAM, useCollectionByContractLink } from '@/features/creators/hooks/useCollectionByContractLink'
+import { useWallet } from '../../store/wallet'
+import { COLLECTIONS_PAGE_SIZE, useCollections, useCollectionsSummary } from '../../hooks/useCollections'
+import { useSaveCollection } from '../../hooks/useCollection'
+import { CONTRACT_PARAM, useCollectionByContractLink } from '../../hooks/useCollectionByContractLink'
 import { track } from '@/data/lib/creators/analytics'
 import {
   CollectionSort,
@@ -34,15 +34,15 @@ import {
   type LinkedContract
 } from '@/data/lib/creators/thirdParty'
 import { config } from '@/data/lib/creators/config'
-import { CollectionNameModal } from '@/features/creators/components/CollectionNameModal'
+import { CollectionNameModal } from '../CollectionNameModal'
 import { CreateLinkedCollectionModal } from './CreateLinkedCollectionModal'
-import { Pagination } from '@/features/creators/components/Pagination'
-import emptyCollectionsArt from '@/features/creators/assets/empty-collections.png'
-import { Button } from '@/features/creators/components/Button'
+import { Pagination } from '../Pagination'
+import emptyCollectionsArt from '../../assets/empty-collections.png'
+import { Button } from '../Button'
 import { CollectionCard } from './CollectionCard'
 import { CollectionListRow } from './CollectionListRow'
 import { cx } from '@/data/lib/creators/cx'
-import shared from '@/features/creators/styles/shared.module.css'
+import shared from '../../styles/shared.module.css'
 import styles from './CollectionsPage.module.css'
 
 const STATUS_FILTERS = [

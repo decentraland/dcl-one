@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import '@/data/lib/creators/test/setup'
+import './test/setup'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { TOAST_DURATION_MS, useNotifications } from './notifications'
 

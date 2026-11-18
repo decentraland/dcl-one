@@ -39,7 +39,7 @@ import {
 import { FeatureFlag } from '@/data/lib/creators/featureFlags'
 import { getMaticChainId } from '@/data/lib/creators/publishCollection'
 import { readSignatureIndexes } from '@/data/lib/creators/trades'
-import { useFeatureFlag } from '@/features/creators/hooks/useFeatureFlag'
+import { useFeatureFlag } from './useFeatureFlag'
 import { captureError } from '@/data/lib/creators/monitoring'
 
 export const DISCOUNT_OPENED_EVENT = 'Open create collection discount'
