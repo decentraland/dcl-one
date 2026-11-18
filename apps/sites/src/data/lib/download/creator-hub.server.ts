@@ -206,3 +206,21 @@ export function resolveDownload(
     secondary,
   };
 }
+
+export type HeroDownloads = {
+  /** The installer for the visitor's system. */
+  primary: DownloadOption;
+  /** Every other installer of the release, for a visitor who wants another build. */
+  others: DownloadOption[];
+};
+
+/**
+ * The installers a page offers in place: the one for the system the User-Agent names, then the rest. Null when
+ * that system has no installer, or when the release could not be read and only the releases page is known.
+ */
+export function heroDownloads(release: DownloadRelease, userAgent: string | null | undefined): HeroDownloads | null {
+  const { installable, primary } = resolveDownload(release, userAgent);
+  if (!installable || !primary.fileName) return null;
+  const others = Object.values(release.options).filter((option) => option !== primary && option.fileName);
+  return { primary, others };
+}

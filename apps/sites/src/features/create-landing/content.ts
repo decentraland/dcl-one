@@ -279,6 +279,8 @@ const faqItems: FaqData[] = [
 
 const copy = {
   downloadCreatorHub: "Download Creator Hub",
+  downloadFor: (build: string) => `Download for ${build}`,
+  alsoAvailableOn: "Also available on",
   heroMobileCta: "Explore the Creator Docs",
   heroScrollLabel: "Scroll to the next section",
   discordUrl: "https://dcl.gg/discord",
