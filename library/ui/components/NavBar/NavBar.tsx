@@ -81,6 +81,10 @@ export type NavBarLabels = {
   notifications: string
   unreadNotifications: (count: number) => string
   account: (name: string) => string
+  userId: string
+  copyUserId: string
+  userIdCopied: string
+  copyUserIdError: string
   openMenu: string
   closeMenu: string
   menu: string
@@ -135,6 +139,10 @@ const defaultLabels: NavBarLabels = {
   navigation: 'Main',
   home: 'Decentraland home',
   signIn: 'Sign in',
+  userId: 'User ID',
+  copyUserId: 'Copy user ID',
+  userIdCopied: 'User ID copied',
+  copyUserIdError: 'Could not copy user ID',
   notifications: 'Notifications',
   unreadNotifications: (count) => `Notifications, ${count} unread`,
   account: (name) => `Account: ${name}`,
@@ -437,9 +445,9 @@ function AccountMenu({
   const copyAddress = async () => {
     try {
       await navigator.clipboard.writeText(account.address)
-      setCopyStatus('User ID copied')
+      setCopyStatus(labels.userIdCopied)
     } catch {
-      setCopyStatus('Could not copy user ID')
+      setCopyStatus(labels.copyUserIdError)
     }
   }
   return (
@@ -475,11 +483,11 @@ function AccountMenu({
             <p className={styles.accountName}>{displayName}</p>
             {sites ? (
               <div className={styles.accountIdentity}>
-                <span>User ID</span>
+                <span>{labels.userId}</span>
                 <span title={account.address}>{shortAddress(account.address)}</span>
                 <button
                   type="button"
-                  aria-label="Copy user ID"
+                  aria-label={labels.copyUserId}
                   className={styles.iconButton}
                   onClick={() => void copyAddress()}
                 >

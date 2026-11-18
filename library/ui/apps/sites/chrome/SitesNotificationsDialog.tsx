@@ -25,6 +25,7 @@ export default function SitesNotificationsDialog({
   Link: ComponentType<NavBarLinkProps>
 }) {
   const ref = useRef<HTMLDialogElement>(null)
+  const openerRef = useRef<HTMLElement | null>(null)
   const titleId = useId()
   const closeRef = useRef(onClose)
   useEffect(() => {
@@ -34,6 +35,7 @@ export default function SitesNotificationsDialog({
   useEffect(() => {
     const dialog = ref.current
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    openerRef.current = opener
     if (isPopover) {
       const control = dialog?.parentElement
       const onPointerDown = (event: PointerEvent) => {
@@ -96,7 +98,7 @@ export default function SitesNotificationsDialog({
         <h2 id={titleId}>Notifications</h2>
         <Button
           onClick={() => {
-            if (isPopover) ref.current?.parentElement?.querySelector('button')?.focus()
+            if (isPopover && openerRef.current?.isConnected) openerRef.current.focus()
             onClose()
           }}
         >

@@ -1,4 +1,10 @@
-import { type CSSProperties, useEffect, useMemo, useState } from "react";
+import {
+  type CSSProperties,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useLocation } from "react-router";
 import {
   decentralandNavSections,
@@ -25,6 +31,8 @@ import {
 import SitesNotificationsDialog from "@dcl/one-ui/apps/sites/chrome/SitesNotificationsDialog";
 import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
 import wordmark from "@dcl/one-ui/apps/sites/assets/dcl_name.svg?url";
+import { SitesLocaleContext } from "@ui/web/frames/sites-locale";
+import { homeCopy } from "@/features/home/locale";
 import { useChromeNotifications } from "./useChromeNotifications";
 import styles from "./SitesTopBar.module.css";
 
@@ -101,6 +109,7 @@ export default function SitesTopBar({
   const layout = useSiteLayout();
   const { pathname } = useLocation();
   const landing = pathname === "/";
+  const locale = useContext(SitesLocaleContext)?.locale ?? "en";
   const isIn = signedIn ?? auth.signedIn;
   const address = account ?? auth.account;
   const signIn = onSignIn ?? auth.onSignIn;
@@ -268,13 +277,14 @@ export default function SitesTopBar({
           accountControl={accountControl}
           accountActions={actions}
           accountMenuAppearance={landing ? "sites" : "default"}
+          labels={landing ? homeCopy[locale].account : undefined}
           mobileSecondaryNavigation={
             sections ? ({ closeDrawer }) => sections(closeDrawer) : undefined
           }
           notifications={
             identity
               ? {
-                  count: unreadCount(rows),
+                  count: landing ? unreadCount(rows) : undefined,
                   ...(landing ? { expanded: notificationsOpen } : {}),
                   panel: landing ? panel : null,
                   onSelect: () => {

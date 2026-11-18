@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef } from "react";
 
 import SitesChrome from "@ui/web/frames/SitesChrome";
-import { sitesLanguage } from "@ui/web/frames/sites-locale";
+import { SitesLocaleContext, sitesLanguage } from "@ui/web/frames/sites-locale";
 import { homeCopy } from "@/features/home/locale";
 import { successCopy } from "@/features/download/success-copy";
 import { parseCookies } from "@/core/lib/telemetry/session";
@@ -71,7 +71,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 export default function Home({ loaderData }: Route.ComponentProps) {
   const { sid, platform, installers, downloads, cards, faces } = loaderData;
 
-  const [locale, setLocale] = useState(loaderData.locale);
+  const locale = useContext(SitesLocaleContext)?.locale ?? loaderData.locale;
   const copy = homeCopy[locale];
   const viewed = useRef(false);
   useEffect(() => {
@@ -90,18 +90,17 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     previous: copy.slides.previous,
     next: copy.slides.next,
     goTo: (n: number) => `${copy.slides.goTo} ${n}`,
-    position: (n: number, total: number) => `${n} / ${total}`,
+    position: (n: number, total: number) =>
+      copy.slides.position
+        .replace("{current}", String(n))
+        .replace("{total}", String(total)),
   };
   return (
     <SitesChrome
       active="play"
       overlayNav
       headerSurface="overlay"
-      language={{
-        locale,
-        onSelect: setLocale,
-        footer: successCopy[locale].footer,
-      }}
+      footerCopy={successCopy[locale].footer}
     >
       <main>
         <Hero

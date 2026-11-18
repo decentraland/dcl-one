@@ -12,7 +12,7 @@ import "./siteschrome.css";
 import SiteLayout from "./SiteLayout";
 import SiteSectionNavigation from "./SiteSectionNavigation";
 import { ProfileNavigationContext } from "./ProfileNavigation";
-import { SITES_LANGUAGES, sitesLanguage, type SitesLocale } from "./sites-locale";
+import { SITES_LANGUAGES, SitesLocaleContext, sitesLanguage, type SitesLocale } from "./sites-locale";
 
 export type SitesNavId =
   | "play"
@@ -170,7 +170,7 @@ type SitesChromeProps = {
   overlayNav?: boolean;
   headerSurface?: "solid" | "overlay";
   hideNav?: boolean;
-  language?: { locale: SitesLocale; onSelect: (locale: SitesLocale) => void; footer: FooterCopy };
+  footerCopy?: FooterCopy;
   secondaryNavigation?: { title: string; active?: string; items: readonly { id: string; label: string; href: string }[] };
 };
 
@@ -189,7 +189,7 @@ export default function SitesChrome({
   overlayNav = false,
   headerSurface = "solid",
   hideNav = false,
-  language,
+  footerCopy,
   secondaryNavigation,
 }: SitesChromeProps) {
   const pageId = useId();
@@ -227,22 +227,20 @@ export default function SitesChrome({
   };
 
   const [storedLocale, setStoredLocale] = useState<SitesLocale>("en");
-  const lang = sitesLanguage(language?.locale ?? storedLocale);
-  const copy = language?.footer;
+  const preference = useContext(SitesLocaleContext);
+  const lang = sitesLanguage(preference?.locale ?? storedLocale);
+  const copy = footerCopy;
   const columns = footerColumns(copy);
   const [langOpen, setLangOpen] = useState(false);
   const langRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    if (preference) return;
     try {
       setStoredLocale(sitesLanguage(window.localStorage.getItem(LANG_STORAGE_KEY)).code);
     } catch {
     }
-  }, []);
-
-  useEffect(() => {
-    document.documentElement.lang = lang.code;
-  }, [lang.code]);
+  }, [preference]);
 
   useEffect(() => {
     if (!langOpen) return;
@@ -261,8 +259,8 @@ export default function SitesChrome({
   }, [langOpen]);
 
   const pickLang = (locale: SitesLocale) => {
-    setStoredLocale(locale);
-    language?.onSelect(locale);
+    if (preference) preference.onSelect(locale);
+    else setStoredLocale(locale);
     setLangOpen(false);
     try {
       window.localStorage.setItem(LANG_STORAGE_KEY, locale);
@@ -370,7 +368,7 @@ export default function SitesChrome({
                 aria-expanded={langOpen}
                 onClick={() => setLangOpen((o) => !o)}
               >
-                <span className="st__flag" aria-hidden="true">{lang.flag}</span>
+                <img className="st__flag" src={lang.flag} alt="" width="16" height="16" />
                 {lang.label}
                 <FootChevron />
               </button>
@@ -385,7 +383,7 @@ export default function SitesChrome({
                       className={"st__langopt" + (l.code === lang.code ? " is-active" : "")}
                       onClick={() => pickLang(l.code)}
                     >
-                      <span className="st__flag" aria-hidden="true">{l.flag}</span>
+                      <img className="st__flag" src={l.flag} alt="" width="16" height="16" />
                       {l.label}
                     </button>
                   ))}
