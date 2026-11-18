@@ -96,7 +96,7 @@ const CollectionsPage = () => {
 
   // The box updates on every keystroke; the URL (and with it the query) lags behind.
   const [searchInput, setSearchInput] = useState(search)
-  const searchTimer = useRef<ReturnType<typeof setTimeout>>()
+  const searchTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => setSearchInput(search), [search])
   useEffect(() => () => clearTimeout(searchTimer.current), [])
 

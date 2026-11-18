@@ -66,7 +66,7 @@ export function ManageRolesModal({
         className={send.body}
         data-busy={busy || undefined}
         aria-busy={busy || undefined}
-        {...(busy ? { inert: '' } : {})}
+        inert={busy}
       >
         <p className={styles.description} data-testid="manage-roles-description">
           {t(`manage_roles_modal.${kind}.description`)}

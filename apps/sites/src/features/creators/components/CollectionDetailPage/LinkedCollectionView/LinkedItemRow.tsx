@@ -75,7 +75,7 @@ export function LinkedItemRow({
   const [isSaving, setSaving] = useState(false)
   // The mapping the last save failed to store, offered again with a retry until a save of it (or a newer edit) lands.
   const [failedSave, setFailedSave] = useState<Mappings | null>(null)
-  const timer = useRef<ReturnType<typeof setTimeout>>()
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
   // The edit waiting for the pause, so leaving the row (page, filter, editor) saves it instead of dropping it.
   const pending = useRef<Mappings | null>(null)
   // What the editor holds (null while invalid) and what the server last confirmed, which the item lags after a save.

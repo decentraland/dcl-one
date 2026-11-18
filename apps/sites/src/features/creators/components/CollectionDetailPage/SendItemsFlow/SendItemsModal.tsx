@@ -87,7 +87,7 @@ export function SendItemsModal({
         key={step}
         data-busy={busy || undefined}
         aria-busy={busy || undefined}
-        {...(busy ? { inert: '' } : {})}
+        inert={busy}
       >
         {step === 'select' ? (
           <>

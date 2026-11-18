@@ -84,7 +84,7 @@ export function TransferOwnershipModal({
         key={step}
         data-busy={busy || undefined}
         aria-busy={busy || undefined}
-        {...(busy ? { inert: '' } : {})}
+        inert={busy}
       >
         {step === 'details' ? (
           <>

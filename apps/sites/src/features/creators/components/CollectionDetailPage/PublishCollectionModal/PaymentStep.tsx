@@ -212,7 +212,7 @@ export function PaymentStep({
         className={publishModal.fields}
         data-busy={isSubmitting || undefined}
         aria-busy={isSubmitting || undefined}
-        {...(isSubmitting ? { inert: '' } : {})}
+        inert={isSubmitting}
       >
         <div>
           <h3 className={publishModal.heading}>{t('publish_collection_modal.payment_step.title')}</h3>

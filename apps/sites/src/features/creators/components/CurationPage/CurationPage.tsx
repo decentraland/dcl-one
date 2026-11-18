@@ -68,7 +68,7 @@ const CurationPage = () => {
   const [assigning, setAssigning] = useState<Assigning | null>(null)
 
   const [searchInput, setSearchInput] = useState(filters.search)
-  const searchTimer = useRef<ReturnType<typeof setTimeout>>()
+  const searchTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   // The URL holds the trimmed query; writing it back verbatim would eat the space the user is typing.
   useEffect(
     () => setSearchInput(current => (current.trim() === filters.search ? current : filters.search)),

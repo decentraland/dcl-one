@@ -8,7 +8,7 @@ type Props = {
   disabled?: boolean
   onChange: (tags: string[]) => void
   /** The text field, for callers that add a tag from elsewhere and want focus to land here afterwards. */
-  inputRef?: RefObject<HTMLInputElement>
+  inputRef?: RefObject<HTMLInputElement | null>
   testId?: string
 }
 

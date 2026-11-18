@@ -7,7 +7,7 @@ export type ScrollAxis = 'x' | 'y'
  * edge, along the given axis. Written straight to the DOM (no React state): it runs on every scroll and
  * resize, and the styling it drives never changes the element's size, so nothing can loop.
  */
-export function useScrollFades(ref: RefObject<HTMLElement>, axis: ScrollAxis = 'x'): void {
+export function useScrollFades(ref: RefObject<HTMLElement | null>, axis: ScrollAxis = 'x'): void {
   useEffect(() => {
     const element = ref.current
     if (!element) return

@@ -36,7 +36,7 @@ type Props = {
 export function LinkedContractFields({ value, onChange }: Props) {
   const { t } = useTranslation()
   const { network, address, check } = value
-  const checkTimer = useRef<ReturnType<typeof setTimeout>>()
+  const checkTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const checkRun = useRef(0)
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange

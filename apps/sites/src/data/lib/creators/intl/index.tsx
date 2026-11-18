@@ -9,7 +9,7 @@ const messages: Record<string, string> = flattenMessages(en)
 const TranslationProvider = ({ children }: { children: ReactNode }) => <>{children}</>
 
 type PlainValues = Record<string, string | number | ((chunks: string[]) => string)>
-type RichValues = Record<string, string | number | ((chunks: ReactNode[]) => ReactNode)>
+type RichValues = Record<string, ReactNode | ((chunks: ReactNode[]) => ReactNode)>
 type Translate = (id: string, values?: PlainValues) => string
 type TranslateRich = (id: string, values: RichValues) => ReactNode
 
@@ -32,7 +32,7 @@ const useTranslation = (): { t: Translate; rich: TranslateRich } => translation
 
 const intl = {
   locale: LOCALE,
-  formatMessage: ({ id }: { id: string }, values?: PlainValues) => t(id, values),
+  formatMessage: ({ id }: { id: string }, values?: RichValues): ReactNode => (values ? rich(id, values) : t(id)),
   formatNumber: (value: number | bigint, options?: Intl.NumberFormatOptions) =>
     new Intl.NumberFormat(LOCALE, options).format(value),
   formatDate: (value: number | string | Date, options?: Intl.DateTimeFormatOptions) =>

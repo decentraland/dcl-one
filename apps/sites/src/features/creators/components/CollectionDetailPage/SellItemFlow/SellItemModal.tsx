@@ -143,7 +143,7 @@ export function SellItemModal({
           className={styles.fields}
           data-busy={busy || undefined}
           aria-busy={busy || undefined}
-          {...(busy ? { inert: '' } : {})}
+          inert={busy}
         >
           <SellItemCard item={item} />
           {hasPendingChanges && (

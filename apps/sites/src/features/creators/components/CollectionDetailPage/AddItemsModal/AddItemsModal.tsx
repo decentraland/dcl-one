@@ -473,13 +473,12 @@ export function AddItemsModal({ collection, address, files, prefill, onClose, up
         closeDisabled={isUploading}
         testId="add-items-modal"
       >
-        {/* `inert` isn't in React 18's typings, so it goes through the spread. */}
         <div
           className={draftModal.layout}
           data-flush={!isSingle || undefined}
           data-uploading={isUploading || undefined}
           aria-busy={isUploading || undefined}
-          {...(isUploading ? { inert: '' } : {})}
+          inert={isUploading}
         >
           {/* A single upload gets the sidebar-less layout from the design. */}
           {!isSingle && (
