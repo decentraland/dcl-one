@@ -546,15 +546,15 @@
    size and style whether idle or busy (#1618, #1620). */
 .sendButton.sendButton {
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   background-color: var(--brand);
-  color: var(--text-on-primary);
+  color: var(--palette-neutral-softWhite);
 }
 
 .sendButton.sendButton:hover:not(:disabled) {
-  background-color: var(--dcl-hover);
+  background-color: var(--primary-hover);
 }
 
 .sendButton.sendButton:disabled {

@@ -21,3 +21,5 @@ foundations/*
 foundations/typography/inter.css
 # The Explorer HUD UI keeps the formatting of the HUD it moved from (react-web).
 apps/hud
+# The in-world Shop UI keeps the formatting of the /play HUD it moved from (apps/ui3).
+apps/shop

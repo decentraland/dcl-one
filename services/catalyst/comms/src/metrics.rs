@@ -121,7 +121,9 @@ pub fn install_prometheus_exporter(bind: SocketAddr) -> anyhow::Result<Prometheu
     let handle = recorder.handle();
     metrics::set_global_recorder(recorder)
         .map_err(|e| anyhow::anyhow!("failed to install prometheus recorder: {e}"))?;
-    runtime.spawn(exporter);
+    crate::shared::task::spawn_on(&runtime, async move {
+        let _ = exporter.await;
+    });
     Ok(handle)
 }
 

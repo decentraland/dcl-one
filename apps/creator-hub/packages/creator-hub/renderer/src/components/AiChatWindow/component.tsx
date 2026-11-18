@@ -106,6 +106,23 @@ export function AiChatWindow() {
     () => aiPreload.sendAiRemoteCommand({ type: 'cancelRecording' }),
     [],
   );
+  const onShareDecision = useCallback(
+    (granted: boolean) => aiPreload.sendAiRemoteCommand({ type: 'shareDecision', granted }),
+    [],
+  );
+  const onShareNotNow = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'shareNotNow' }),
+    [],
+  );
+  const onSetConversationShared = useCallback(
+    (shared: boolean) => aiPreload.sendAiRemoteCommand({ type: 'setConversationShared', shared }),
+    [],
+  );
+  const onRateTurn = useCallback(
+    (id: string, rating: 'up' | 'down' | null) =>
+      aiPreload.sendAiRemoteCommand({ type: 'rateTurn', id, rating }),
+    [],
+  );
 
   if (mirror === null) {
     return (
@@ -155,6 +172,11 @@ export function AiChatWindow() {
       onRemoveAssetMention={onRemoveAssetMention}
       onRemoveRecording={onRemoveRecording}
       onClose={onClose}
+      sharing={mirror.sharing}
+      onShareDecision={onShareDecision}
+      onShareNotNow={onShareNotNow}
+      onSetConversationShared={onSetConversationShared}
+      onRateTurn={onRateTurn}
     />
   );
 }

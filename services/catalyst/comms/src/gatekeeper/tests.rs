@@ -34,6 +34,9 @@ use super::{CommsState, Settings, SharedState};
 #[path = "canonical_rooms_tests.rs"]
 mod canonical_rooms;
 
+#[path = "capture_replay_tests.rs"]
+mod capture_replay;
+
 #[path = "cast_tests.rs"]
 mod cast;
 

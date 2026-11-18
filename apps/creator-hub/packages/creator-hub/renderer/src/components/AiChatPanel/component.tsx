@@ -1,10 +1,13 @@
 import { useCallback } from 'react';
+import { shallowEqual } from 'react-redux';
 
 import type { AiAssetMention, AiAttachment, AiProvider } from '/shared/types/ai';
 
 import { useDispatch, useSelector } from '#store';
 import { actions as aiActions } from '/@/modules/store/ai';
 import { recordingAttachmentLabel } from '/@/modules/store/ai/labels';
+import { actions as aiSharingActions, selectSharingView } from '/@/modules/store/aiSharing';
+import { useAuth } from '/@/hooks/useAuth';
 
 import { ChatView } from './ChatView';
 
@@ -94,6 +97,24 @@ export function AiChatPanel({
     [dispatch],
   );
   const onDraftConsumed = useCallback(() => dispatch(aiActions.consumeDraftPrompt()), [dispatch]);
+  const { wallet } = useAuth();
+  const sharing = useSelector(
+    state => selectSharingView(state, wallet?.toLowerCase() ?? null),
+    shallowEqual,
+  );
+  const onShareDecision = useCallback(
+    (granted: boolean) => dispatch(aiSharingActions.decide(granted)),
+    [dispatch],
+  );
+  const onShareNotNow = useCallback(() => dispatch(aiSharingActions.notNow()), [dispatch]);
+  const onSetConversationShared = useCallback(
+    (shared: boolean) => dispatch(aiActions.setConversationShared(shared)),
+    [dispatch],
+  );
+  const onRateTurn = useCallback(
+    (id: string, rating: 'up' | 'down' | null) => dispatch(aiActions.rateTurn({ id, rating })),
+    [dispatch],
+  );
   const onRemoveRecording = useCallback(
     () => void dispatch(aiActions.discardRecording()),
     [dispatch],
@@ -134,6 +155,11 @@ export function AiChatPanel({
       onRemoveRecording={onRemoveRecording}
       onPopOut={onPopOut}
       onClose={onClose}
+      sharing={sharing}
+      onShareDecision={onShareDecision}
+      onShareNotNow={onShareNotNow}
+      onSetConversationShared={onSetConversationShared}
+      onRateTurn={onRateTurn}
     />
   );
 }

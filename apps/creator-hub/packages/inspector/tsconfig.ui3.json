@@ -24,6 +24,7 @@
   },
   "include": [
     "src/css-modules.d.ts",
+    "../../../ui3/src/atoms/Button.tsx",
     "../../../ui3/src/atoms/Spinner.tsx",
     "../../../ui3/src/atoms/Tooltip.tsx",
     "../../../ui3/src/atoms/DclLogomark.tsx",

@@ -4,8 +4,6 @@ import "./primitives.css";
 
 type StatusKind = "online" | "away" | "offline";
 
-export const rarityColor = (r: string): string => `var(--rar-${r})`;
-
 export function hueFromSeed(seed = ""): number {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360;

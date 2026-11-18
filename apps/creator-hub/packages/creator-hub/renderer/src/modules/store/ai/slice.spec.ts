@@ -809,3 +809,25 @@ describe('when several recordings go out with one message', () => {
     expect(preloadAi.send.mock.calls[0][1].context).toBe('[Session recording 1]');
   });
 });
+
+describe('when a stopped turn reports done after the next one started', () => {
+  const apply = (payload: unknown) => ({ type: 'ai/applyEvent', payload });
+
+  it('should leave the running turn busy', () => {
+    let s = reducer(undefined, apply({ kind: 'started', turnId: 't1' }));
+    s = reducer(s, { type: 'ai/stopped' });
+    s = reducer(s, apply({ kind: 'started', turnId: 't2' }));
+    s = reducer(s, apply({ kind: 'done', turnId: 't1', ok: false, cancelled: true }));
+
+    expect(s.busy).toBe(true);
+    expect(s.messages.find(m => m.id === 't2')?.done).toBe(false);
+  });
+
+  it('should end the turn its own done reports', () => {
+    let s = reducer(undefined, apply({ kind: 'started', turnId: 't1' }));
+    s = reducer(s, apply({ kind: 'done', turnId: 't1', ok: true, recordId: 'r1' }));
+
+    expect(s.busy).toBe(false);
+    expect(s.messages[0]).toMatchObject({ done: true, recordId: 'r1' });
+  });
+});

@@ -19,7 +19,12 @@ input[type="number"] {
   appearance: none;
 }
 
-/* The shared ui3 spinner turns with this animation; ui3 defines it in its own base stylesheet. */
+input::selection,
+textarea::selection {
+  color: var(--ui-designer-text);
+  background: var(--palette-system-blueDark2);
+}
+
 @keyframes u-spin {
   to {
     transform: rotate(360deg);

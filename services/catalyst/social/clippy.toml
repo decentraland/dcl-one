@@ -9,4 +9,8 @@ disallowed-methods = [
   { path = "axum::routing::patch", reason = "use crate::shared::routing::patch" },
   { path = "axum::routing::delete", reason = "use crate::shared::routing::delete" },
   { path = "axum::routing::any", reason = "use crate::shared::routing::any" },
+  # Spawns box their future so tokio's task harness compiles once in shared.
+  { path = "tokio::spawn", reason = "use crate::shared::task::spawn or spawn_with" },
+  { path = "tokio::task::spawn", reason = "use crate::shared::task::spawn or spawn_with" },
+  { path = "tokio::runtime::Handle::spawn", reason = "use crate::shared::task::spawn_on" },
 ]

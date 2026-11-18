@@ -972,6 +972,8 @@ pub struct GraphicsSettings {
     pub avatar_outline: bool,
     /// show a hologram ghost where an avatar is still loading
     pub avatar_ghosts: bool,
+    /// swing the extra bones of wearables (hair, tails, capes) on the nearest avatars
+    pub spring_bones: bool,
     /// bytes of throttled asset uploads to the gpu per frame; 0 = unlimited
     pub gpu_bytes_per_frame: usize,
     /// share of the window's device pixels the world renders at, upscaled to the window with FSR
@@ -1006,6 +1008,7 @@ impl Default for GraphicsSettings {
             cel_shading: true,
             avatar_outline: true,
             avatar_ghosts: true,
+            spring_bones: false,
             gpu_bytes_per_frame: 10_000_000,
             render_scale: 1.0,
         }
@@ -2012,7 +2015,7 @@ pub struct Clips {
     pub named: HashMap<String, (AnimationNodeIndex, f32)>,
 }
 
-/// A remote player's avatar; comms spawns it beside `ForeignPlayer`. Avatar systems that
+/// A remote player's avatar; comms' `ForeignPlayer` requires it. Avatar systems that
 /// treat remote and local emotes differently read this instead of the comms type.
 #[derive(Component, Default, Debug, Clone, Copy)]
 pub struct ForeignAvatar;

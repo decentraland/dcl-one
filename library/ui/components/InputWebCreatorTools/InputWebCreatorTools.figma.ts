@@ -10,11 +10,11 @@ const mode = instance.getEnum('state', {
   editing: '',
   highlighted: '',
   completed: '',
-  error: ' error={error}'
+  error: ' error={error}',
+  disabled: ' disabled'
 })
-const disabled = instance.getBoolean('disabled', { true: ' disabled', false: '' })
 export default {
-  example: figma.tsx`<InputWebCreatorTools label={label} value={value} onChange={onChange}${mode}${disabled} />`,
+  example: figma.tsx`<InputWebCreatorTools label={label} value={value} onChange={onChange}${mode} />`,
   imports: ["import { InputWebCreatorTools } from '@dcl/one-ui'"],
   id: 'InputWebCreatorTools',
   metadata: { nestable: true }
