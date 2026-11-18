@@ -69,6 +69,7 @@ members = [
     "fed",
     "jobs",
     "land-authz",
+    "message-router",
     "price",
     "shared",
     "shop",
@@ -175,6 +176,11 @@ openmls_rust_crypto = "0.6.0"
 openmls_traits = "0.6.0"
 tls_codec = "0.5.0"
 ts-rs = "12"
+# The message router's LiveKit participant: the Explorer's patched client-sdk-rust, the same
+# commit of this repository that rendering/bevy-explorer/source/Cargo.toml names
+# (rendering/bevy-explorer/patches/client-sdk-rust/source.toml `rev`; a test of the router
+# checks both name it). Its DataReceived event carries the sender's identity.
+livekit = { git = "https://github.com/decentraland/dcl-one", rev = "b2f8bc84000333ea843578959c9d11caccaa9474", features = ["rustls-tls-webpki-roots"] }
 
 # Dev-only, shared by the member crates' tests.
 tokio-tungstenite = "0.30.0"
