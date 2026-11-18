@@ -1398,7 +1398,7 @@ async fn a_land_data_fold_past_since_equals_a_rebuild() {
         update(100, 0, land, "1", "A-old"),
         update(150, 0, estate, "1", "E-old"),
         update(120, 0, land, "7", "G-old"),
-        update(150, 0, land, "9", "Edge"),
+        update(150, 1, land, "9", "Edge"),
     ])
     .await;
     nft_index::fold(&db.pool, ChainNet::Ethereum, None)
@@ -1426,7 +1426,7 @@ async fn a_land_data_fold_past_since_equals_a_rebuild() {
             (estate.into(), "1".into(), Some("E-new".into()), 151, 0),
             (land.into(), "1".into(), Some("A-last".into()), 200, 3),
             (land.into(), "7".into(), Some("G-old".into()), 120, 0),
-            (land.into(), "9".into(), Some("Edge".into()), 150, 0),
+            (land.into(), "9".into(), Some("Edge".into()), 150, 1),
             (land.into(), far.into(), Some("Far".into()), 202, 0),
         ]
     );
@@ -1446,9 +1446,9 @@ async fn a_land_data_fold_past_since_equals_a_rebuild() {
     db.drop().await;
 }
 
-/// The land_data read scans `nft_event` once, bounded by the window on the primary key.
+/// With sequential scans off, as the fold reads a window, it scans `nft_event` once, bounded by an index.
 #[tokio::test]
-async fn the_land_data_read_scans_the_window_on_the_primary_key() {
+async fn the_land_data_read_is_one_bounded_index_scan() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
@@ -1467,9 +1467,10 @@ async fn the_land_data_read_scans_the_window_on_the_primary_key() {
     .unwrap();
     let plan = lines.join("\n");
     assert!(
-        plan.contains("nft_event_pkey")
-            && plan.contains("block_number > ")
-            && plan.matches("on nft_event ").count() == 1,
+        plan.lines()
+            .any(|l| l.contains("Index Cond") && l.contains("block_number > "))
+            && plan.matches("on nft_event ").count() == 1
+            && !plan.contains("Seq Scan"),
         "{plan}"
     );
     drop(conn);

@@ -604,10 +604,22 @@ FROM w ORDER BY w.contract_address, w.token_id, w.block_number DESC, w.log_index
 /// The latest Update per touched LAND/estate token, parsed in Rust (the CSV
 /// has quoting SQL would re-implement badly) and upserted.
 async fn fold_land_data(conn: &mut PgConnection, since: i64) -> anyhow::Result<u64> {
+    // The `NESTED_LOOP_TOUCHED_MAX` misestimate makes a custom plan scan the whole table.
+    let window = since >= 0;
+    if window {
+        sqlx::query("SET LOCAL enable_seqscan = off")
+            .execute(&mut *conn)
+            .await?;
+    }
     let rows = sqlx::query(LAND_DATA_SQL)
         .bind(since)
         .fetch_all(&mut *conn)
         .await?;
+    if window {
+        sqlx::query("SET LOCAL enable_seqscan = on")
+            .execute(&mut *conn)
+            .await?;
+    }
     type Columns = (
         Vec<String>,
         Vec<String>,
