@@ -1344,7 +1344,7 @@ async fn a_presentation_goes_live_on_a_real_livekit() {
         "presenterkey",
         "presentersecret-presentersecret-presentersecret",
     );
-    let _server = tokio::process::Command::new(server_bin)
+    let mut server = tokio::process::Command::new(server_bin)
         .arg("--config-body")
         .arg(format!(
             "port: {port}\nbind_addresses: [127.0.0.1]\nrtc:\n  tcp_port: {tcp}\n  udp_port: {udp}\n  use_external_ip: false\n  node_ip: 127.0.0.1\nkeys:\n  {key}: {secret}\nlogging:\n  level: warn\n"
@@ -1364,7 +1364,7 @@ async fn a_presentation_goes_live_on_a_real_livekit() {
     let url = format!("ws://127.0.0.1:{port}");
     let presenter = Presenter::new(
         Arc::new(super::bot::ProcessLauncher {
-            binary: bot_bin.clone().into(),
+            binary: bot_bin.into(),
         }),
         LiveKitTarget {
             client_url: url.clone(),
@@ -1394,18 +1394,14 @@ async fn a_presentation_goes_live_on_a_real_livekit() {
     presenter.stop(&info.id).await;
     assert_eq!(presenter.active_sessions(), 0);
 
-    // A bot whose process dies ends its session.
+    // LiveKit goes away: the bot reports it and exits, and the session ends.
     let info = presenter
         .create(test_pdf(1), &token, "Again.pdf")
         .await
         .unwrap();
     assert_eq!(presenter.active_sessions(), 1);
-    let killed = std::process::Command::new("pkill")
-        .args(["-f", &format!("^{}$", regex::escape(&bot_bin))])
-        .status()
-        .unwrap();
-    assert!(killed.success());
-    for _ in 0..50 {
+    server.kill().await.unwrap();
+    for _ in 0..600 {
         if presenter.active_sessions() == 0 {
             break;
         }
