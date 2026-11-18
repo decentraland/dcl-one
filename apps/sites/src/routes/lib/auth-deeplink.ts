@@ -18,7 +18,7 @@ const DEEP_LINK_TARGETS: Record<string, DeepLinkTarget> = {
 
 export function getDeepLinkTarget(params: URLSearchParams): DeepLinkTarget {
   const id = (params.get(TARGET_CONFIG_PARAM) ?? "").toLowerCase();
-  return DEEP_LINK_TARGETS[id] ?? EXPLORER_TARGET;
+  return Object.hasOwn(DEEP_LINK_TARGETS, id) ? DEEP_LINK_TARGETS[id] : EXPLORER_TARGET;
 }
 
 const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

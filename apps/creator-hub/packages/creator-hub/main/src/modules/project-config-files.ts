@@ -72,8 +72,9 @@ export const EDITOR_FILES_DCLIGNORE = ['cursor.config', 'cursorignore'];
 const EDITOR_FILES_COMMENT = '# Editor and agent files, never part of the deployed scene';
 
 // Make sure the scene's `.dclignore` keeps `EDITOR_FILES_DCLIGNORE` out of the deploy. Appends
-// only the entries no line already names (an `!entry` line is the creator's choice and is kept),
-// and never rewrites what the creator wrote. A scene without a `.dclignore` gets one that starts
+// only the entries no line already names, and never rewrites what the creator wrote. An `!entry`
+// line is left as written, but it can't bring these files back on an SDK whose defaults list
+// them: the deploy adds its defaults after the scene's lines, and the last match wins. A scene without a `.dclignore` gets one that starts
 // with the deploy's default rules, so the file reads as the whole list.
 export function ensureEditorFilesNotDeployed(dir: string): void {
   const dclignore = path.join(dir, '.dclignore');
@@ -101,7 +102,8 @@ export function ensureEditorFilesNotDeployed(dir: string): void {
 // (what the templates' `latest` installs) pulls protobufjs 6.11 and 7.2 through `@dcl/hashing`
 // and `@dcl/protocol`, which `npm audit` reports as critical. 7.6.6 is the release the SDK's
 // own workspace pins; it hashes deployed files identically and the scene still builds. The
-// range selector leaves a fixed protobufjs (a later SDK, or protobufjs 8) alone.
+// selector stops at 7.6.3, the first release without the advisory, so a protobufjs the SDK
+// already resolves to a fixed version (7.6.3 or later, or 8) is left alone.
 export const SCENE_DEPENDENCY_OVERRIDES: Record<string, string> = {
   'protobufjs@<7.6.3': '^7.6.6',
 };

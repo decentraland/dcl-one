@@ -1041,6 +1041,7 @@ function ContinueInApp({ appName, deepLinkUrl }: { appName: string; deepLinkUrl:
     if (isLaunchingRef.current) return;
     isLaunchingRef.current = true;
     setHasAttempted(true);
+    setLaunchUnconfirmed(false);
     try {
       const wasLaunched = await launchDeepLink(deepLinkUrl);
       setHasLaunched(wasLaunched);

@@ -9,19 +9,23 @@ export const deploymentLogMiddleware: Middleware = () => next => action => {
   const result = next(action);
   if (deploy.fulfilled.match(action)) {
     const { info } = action.payload;
-    void misc.logDeployment({
-      outcome: 'published',
-      title: info.title,
-      rootCID: info.rootCID,
-      target: info.isWorld ? 'world' : 'land',
-      baseParcel: info.baseParcel,
-    });
+    misc
+      .logDeployment({
+        outcome: 'published',
+        title: info.title,
+        rootCID: info.rootCID,
+        target: info.isWorld ? 'world' : 'land',
+        baseParcel: info.baseParcel,
+      })
+      .catch(() => undefined);
   } else if (deploy.rejected.match(action)) {
     const error = (action.payload ?? action.error) as { name?: string; message?: string };
-    void misc.logDeployment({
-      outcome: 'failed',
-      error: [error?.name, error?.message].filter(Boolean).join(': ') || 'unknown error',
-    });
+    misc
+      .logDeployment({
+        outcome: 'failed',
+        error: [error?.name, error?.message].filter(Boolean).join(': ') || 'unknown error',
+      })
+      .catch(() => undefined);
   }
   return result;
 };

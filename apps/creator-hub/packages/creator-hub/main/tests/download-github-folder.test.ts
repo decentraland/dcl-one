@@ -64,4 +64,54 @@ describe('downloadGithubRepo', () => {
       expect(await fs.readdir(destination)).toEqual(['scene.json']);
     });
   });
+
+  describe('when GitHub answers with a server error and then the zip', () => {
+    let cancel: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      cancel = vi.fn().mockResolvedValue(undefined);
+      mocks.extract.mockImplementation(async (_zip: string, options: any) => {
+        const root = path.join(options.dir, 'owner-repo-abc');
+        await fs.mkdir(root);
+        await fs.writeFile(path.join(root, 'scene.json'), '{}');
+      });
+      mocks.fetch
+        .mockResolvedValueOnce({ ok: false, status: 502, body: { cancel } })
+        .mockResolvedValueOnce({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) });
+    });
+
+    it('should release the failed response and use the retry', async () => {
+      await downloadGithubRepo('https://github.com/owner/repo', destination);
+
+      expect(cancel).toHaveBeenCalled();
+      expect(mocks.fetch).toHaveBeenCalledTimes(2);
+      expect(await fs.readdir(destination)).toEqual(['scene.json']);
+    });
+  });
+
+  describe('when every attempt fails', () => {
+    beforeEach(() => {
+      mocks.fetch.mockRejectedValue(new Error('Request timeout'));
+    });
+
+    it('should give up after the retry', async () => {
+      await expect(
+        downloadGithubRepo('https://github.com/owner/repo', destination),
+      ).rejects.toThrow();
+      expect(mocks.fetch).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('when GitHub says the repository does not exist', () => {
+    beforeEach(() => {
+      mocks.fetch.mockResolvedValue({ ok: false, status: 404, body: null });
+    });
+
+    it('should not retry', async () => {
+      await expect(
+        downloadGithubRepo('https://github.com/owner/repo', destination),
+      ).rejects.toThrow('404');
+      expect(mocks.fetch).toHaveBeenCalledTimes(1);
+    });
+  });
 });

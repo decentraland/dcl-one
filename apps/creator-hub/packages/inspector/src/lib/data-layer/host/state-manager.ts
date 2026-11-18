@@ -290,6 +290,9 @@ export class StateManager {
    */
   executeTransaction<T>(source: Transaction['source'], operations: () => Promise<T>): Promise<T> {
     const run = async (): Promise<T> => {
+      // An edit made in the same tick (still waiting for its setTimeout(0) commit) goes first, so
+      // an edit followed at once by Ctrl+Z undoes that edit.
+      if (this.pendingTransaction) await this.commitPendingTransaction();
       await this.waitUntilIdle();
       this.processing = true;
       this.captureSuspended = true;

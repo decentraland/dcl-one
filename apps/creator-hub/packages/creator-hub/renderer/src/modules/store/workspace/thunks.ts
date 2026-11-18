@@ -1,4 +1,5 @@
 import type { Scene } from '@dcl/schemas';
+import { getProjectWorldName } from '/@/lib/project-world';
 import { captureException } from '@sentry/electron/renderer';
 
 import { shouldUpdateDependencies } from './utils';
@@ -248,7 +249,7 @@ export const recordDeployment = createAsyncThunk(
   'workspace/recordDeployment',
   async ({ path, info }: { path: string; info: Info }, { dispatch, getState }) => {
     const project = getState().workspace.projects.find($ => $.path === path);
-    const worldName = info.isWorld ? project?.worldConfiguration?.name : undefined;
+    const worldName = info.isWorld && project ? getProjectWorldName(project) : undefined;
     if (!project || (info.isWorld && !worldName)) return null;
     const record: ProjectDeployment = {
       publishedAt: Date.now(),

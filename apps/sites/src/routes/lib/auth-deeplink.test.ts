@@ -91,7 +91,7 @@ describe("getDeepLinkTarget", () => {
   });
 
   it("hands any other sign-in back to the Explorer", () => {
-    for (const query of ["", "targetConfigId=unknown"]) {
+    for (const query of ["", "targetConfigId=unknown", "targetConfigId=__proto__"]) {
       expect(getDeepLinkTarget(new URLSearchParams(query)), query).toEqual({
         appName: "Decentraland",
         deepLink: "decentraland://",

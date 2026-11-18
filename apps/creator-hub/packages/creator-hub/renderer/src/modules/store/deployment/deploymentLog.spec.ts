@@ -1,5 +1,5 @@
 import { configureStore } from '@reduxjs/toolkit';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { misc } from '#preload';
 import type { AuthIdentity } from '/@/lib/identity';
@@ -18,6 +18,10 @@ const createStore = () =>
 const arg = { identity: {} as AuthIdentity, deployment: { path: '/scenes/a' } as Deployment };
 
 describe('deploymentLogMiddleware', () => {
+  beforeEach(() => {
+    vi.mocked(misc.logDeployment).mockResolvedValue(undefined);
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
   });
