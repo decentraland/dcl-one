@@ -2,6 +2,7 @@ import { useId, useState } from 'react';
 import Button from '@ui/atoms/Button';
 import IconButton from '@ui/atoms/IconButton';
 import Popover from '@ui/atoms/Popover';
+import Toggle from '@ui/atoms/Toggle';
 import Tooltip from '@ui/atoms/Tooltip';
 import {
   ChevronRightIcon,
@@ -189,7 +190,7 @@ export function SharingStatusChip({
   );
 }
 
-/** One row of the sharing menu: its label and Figma's 34 x 20 switch, the whole row clickable. */
+/** One row of the sharing menu: its label and the small switch; a click on the label flips it. */
 function MenuSwitch({
   label,
   checked,
@@ -199,21 +200,17 @@ function MenuSwitch({
   checked: boolean;
   onChange: (checked: boolean) => void;
 }) {
+  const labelId = useId();
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      className={styles.menuSwitch}
-      onClick={() => onChange(!checked)}
-    >
-      <span>{label}</span>
-      <span
-        className={styles.switch}
-        data-checked={checked}
-        aria-hidden
+    <label className={styles.menuSwitch}>
+      <span id={labelId}>{label}</span>
+      <Toggle
+        size="small"
+        checked={checked}
+        ariaLabelledBy={labelId}
+        onChange={onChange}
       />
-    </button>
+    </label>
   );
 }
 

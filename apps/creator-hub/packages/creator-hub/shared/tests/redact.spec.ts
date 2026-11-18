@@ -89,6 +89,33 @@ describe('when text holds a secret', () => {
     ],
     ['a base64 secret with slashes', 'secret wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY', 'secret'],
     ['an escaped Windows home folder', '"C:\\\\Users\\\\jane\\\\scenes"', 'home_path'],
+    [
+      'a 32-digit hex project key in a URL',
+      'https://mainnet.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161',
+      'api_key',
+    ],
+    ['a hex key in code', "const infuraApiKey = '84842078b09946638c03157f83405213'", 'api_key'],
+    ['a 48-digit hex secret', `secret ${'a1b2c3'.repeat(8)}`, 'api_key'],
+    [
+      'a Postgres connection string',
+      'DATABASE_URL=postgres://admin:example-pass@db.internal:5432/app',
+      'credential',
+    ],
+    [
+      'a Redis connection string',
+      'redis://default:example-pass@cache.example.com:6379',
+      'credential',
+    ],
+    [
+      'a MongoDB SRV connection string',
+      'mongodb+srv://jane:example-pass@cluster0.example.net/db',
+      'credential',
+    ],
+    ['a Windows home folder with a space', 'open C:\\Users\\Jane Doe\\scenes', 'home_path'],
+    ['a forward-slash Windows home folder', 'open c:/users/jane/scenes', 'home_path'],
+    ['a WSL home folder', '\\\\wsl$\\Ubuntu\\home\\jane\\scene', 'home_path'],
+    ['a Linux home folder', 'cd /home/jane/scenes', 'home_path'],
+    ['a seed phrase with one typo', SEED.replace('absorb', 'absorv'), 'seed_phrase'],
   ];
 
   it.each(cases)('should redact %s', (_name, input, kind) => {
@@ -127,6 +154,24 @@ describe('when text holds a secret', () => {
     expect(redactText('/Users/jane/scenes/mine').text).toBe('/Users/<user>/scenes/mine');
   });
 
+  it('should take a name with a space whole, and keep the rest of the path', () => {
+    expect(redactText('C:\\Users\\Jane Doe\\scenes\\mine').text).toBe(
+      'C:\\Users\\<user>\\scenes\\mine',
+    );
+  });
+
+  it('should keep the scheme and host of a connection string', () => {
+    expect(redactText('postgres://admin:example-pass@db.internal:5432/app').text).toBe(
+      'postgres://<credential>@db.internal:5432/app',
+    );
+  });
+
+  it('should take a mistyped seed phrase whole', () => {
+    expect(redactText(`words: ${SEED.replace('absorb', 'absorv')} done`).text).toBe(
+      'words: <seed_phrase> done',
+    );
+  });
+
   it('should keep the parameter name of a redacted query value', () => {
     expect(redactText('https://x.example.com/?token=abc123def&page=2').text).toBe(
       'https://x.example.com/?token=<credential>&page=2',
@@ -163,6 +208,17 @@ describe('when text holds nothing secret', () => {
     '"src": "{assetPath}/DocksModuleStairs_01/DocksModuleStairs_01.glb"',
     'https://cdn.example.com/ccea595a-b910-4de6-b160-092819db021d/playlist.m3u8',
     'eleven bip words: abandon ability able about above absent absorb abstract absurd abuse access',
+    // Eleven list words and a word that is no typo of any: not a phrase.
+    'abandon ability able about above absent absorb abstract absurd abuse access xylophonic',
+    // Two typos in twelve words: too far from a phrase to be one.
+    SEED.replace('absorb', 'absorv').replace('access', 'acess'),
+    'md5 is 5 characters, and a short hex like a1b2c3d4 stays',
+    'a 31-digit hex 0123456789abcdef0123456789abcde stays',
+    'only letters: abcdefabcdefabcdefabcdefabcdefab stays',
+    'postgres://localhost:5432/app has no password',
+    // A tag list bridged by a near miss (`tags` for `tag`), with words repeated: no phrase.
+    '"category": "media", "tags": ["video", "screen", "video screen", "video player", "video player screen", "cube"]',
+    'see /users/jane on the site',
   ];
 
   it.each(keep)('should leave "%s" unchanged', input => {

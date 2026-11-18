@@ -33,15 +33,24 @@ const RULES: Rule[] = [
   // shape and is redacted too; losing one hash is cheaper than leaking one key.
   { kind: 'private_key', pattern: /\b(?:0x)?[0-9a-fA-F]{64}\b/g },
   { kind: 'private_key', pattern: /"ciphertext"\s*:\s*"[0-9a-fA-F]{32,}"/g },
+  // 32 to 63 hex digits with a letter and a digit: API keys and project secrets (Infura, Alchemy,
+  // many webhooks). Exactly 40 lowercase digits is a git commit, kept like the 40-digit wallet.
+  {
+    kind: 'api_key',
+    pattern: /\b(?=[0-9a-fA-F]*[a-fA-F])(?=[0-9a-fA-F]*\d)[0-9a-fA-F]{32,63}\b/g,
+    replace: m => (/^[0-9a-f]{40}$/.test(m) ? null : '<api_key>'),
+  },
   {
     kind: 'api_key',
     pattern:
       /\b(?:sk-ant-[\w-]{16,}|sk-(?:proj-)?[\w-]{20,}|AIza[\w-]{30,}|gh[opsu]_\w{20,}|github_pat_\w{20,}|xox[abpr]-[\w-]{10,}|(?:sk|rk)_live_\w{16,}|AKIA[0-9A-Z]{16})/g,
   },
   { kind: 'jwt', pattern: /\beyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}/g },
+  // `user:pass@` in any URL: https, and connection strings (`postgres://`, `redis://`,
+  // `mongodb+srv://`, `amqp://` …).
   {
     kind: 'credential',
-    pattern: /(https?:\/\/)[^\s:/@]+:[^\s@/]+@/g,
+    pattern: /\b([a-z][a-z0-9+.-]{0,20}:\/\/)[^\s:/@]+:[^\s@/]+@/gi,
     replace: (_m, [scheme]) => `${scheme}<credential>@`,
   },
   {
@@ -102,10 +111,13 @@ const RULES: Rule[] = [
   },
   {
     kind: 'home_path',
-    // Windows separators may arrive escaped (`C:\\Users\\jane` inside JSON), and Windows paths
-    // ignore case (`c:\users\jane`). The POSIX branches stay case-sensitive, so URL paths that
-    // happen to contain `/users/` are left alone.
-    pattern: /(\/Users\/|\/home\/|[A-Za-z]:\\{1,2}[Uu][Ss][Ee][Rr][Ss]\\{1,2})([^/\\\s'"`]+)/g,
+    // Windows paths take either separator and may arrive escaped (`C:\\Users\\jane` inside
+    // JSON), and ignore case (`c:/users/jane`); WSL shares reach `\\wsl$\Ubuntu\home\jane`. The
+    // POSIX branches stay case-sensitive, so URL paths that happen to contain `/users/` are left
+    // alone. A name may hold spaces (`Jane Doe`) when a separator follows it; bounded, so a long
+    // run of words can't backtrack.
+    pattern:
+      /(\/Users\/|\/home\/|\\{1,2}home\\{1,2}|[A-Za-z]:(?:\\{1,2}|\/)[Uu][Ss][Ee][Rr][Ss](?:\\{1,2}|\/))((?:[^/\\\s'"`]{1,64} ){1,3}[^/\\\s'"`]{1,64}(?=[\\/])|[^/\\\s'"`]+)/g,
     replace: (_m, [root]) => `${root}<user>`,
   },
 ];
@@ -117,37 +129,92 @@ const MIN_SEED_WORDS = 12;
 // and separators (` | `, `-`) all join a run.
 const SEED_GAP = /^[^A-Za-z]{1,8}$/;
 
-/** Replaces any run of 12+ BIP-39 words, the shape of a wallet recovery phrase, however listed. */
+// Words of each length, so a near miss is compared only with words one letter longer, shorter
+// or the same length.
+const SEED_WORDS_BY_LENGTH = new Map<number, string[]>();
+for (const word of BIP39_ENGLISH) {
+  const list = SEED_WORDS_BY_LENGTH.get(word.length) ?? [];
+  list.push(word);
+  SEED_WORDS_BY_LENGTH.set(word.length, list);
+}
+
+/** Whether `a` and `b` differ by one letter changed, added or removed. */
+function oneEditApart(a: string, b: string): boolean {
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  let j = 0;
+  let edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      i++;
+      j++;
+      continue;
+    }
+    if (++edits > 1) return false;
+    if (a.length > b.length) i++;
+    else if (a.length < b.length) j++;
+    else {
+      i++;
+      j++;
+    }
+  }
+  return edits + (a.length - i) + (b.length - j) <= 1;
+}
+
+/** A word one letter away from a BIP-39 word: a phrase written down with a typo. */
+function isMistypedSeedWord(word: string): boolean {
+  if (word.length < 3 || word.length > 9) return false;
+  for (const length of [word.length - 1, word.length, word.length + 1]) {
+    if (SEED_WORDS_BY_LENGTH.get(length)?.some(seed => oneEditApart(word, seed))) return true;
+  }
+  return false;
+}
+
+/**
+ * Replaces any run of 12+ BIP-39 words, the shape of a wallet recovery phrase, however listed.
+ * One word inside the run may be a typo of a list word, so a mistyped phrase doesn't leak 11.
+ */
 function redactSeedPhrases(text: string, counts: Record<string, number>): string {
   // JSON-escaped line breaks (`\nabandon`) would glue their letter to the next word. Blanked to
   // the same length, so every offset found in `scan` is the same in `text`.
   const scan = text.replace(/\\[ntr]/g, '  ');
   const words = Array.from(scan.matchAll(/[A-Za-z]+/g), m => ({
-    word: m[0],
+    word: m[0].toLowerCase(),
     start: m.index,
     end: m.index + m[0].length,
   }));
   const spans: { start: number; end: number }[] = [];
   let runStart = -1;
+  let typoAt = -1;
   const closeRun = (last: number) => {
-    if (runStart >= 0 && last - runStart + 1 >= MIN_SEED_WORDS) {
+    // A typo only bridges list words: one at the end of the run isn't part of it.
+    if (typoAt === last) last--;
+    const length = last - runStart + 1;
+    // A bridged run must also have no word twice: a phrase rarely repeats one, and lists of
+    // tags or keywords (`video, screen, video player…`) often do.
+    const bridged = typoAt > runStart && typoAt < last;
+    const distinct =
+      !bridged || new Set(words.slice(runStart, last + 1).map(w => w.word)).size === length;
+    if (runStart >= 0 && length >= MIN_SEED_WORDS && distinct) {
       spans.push({ start: words[runStart].start, end: words[last].end });
     }
     runStart = -1;
+    typoAt = -1;
   };
   for (let i = 0; i < words.length; i++) {
-    const isSeed = BIP39_ENGLISH.has(words[i].word.toLowerCase());
     const joined =
       runStart >= 0 && i > 0 && SEED_GAP.test(scan.slice(words[i - 1].end, words[i].start));
-    if (!isSeed) {
-      closeRun(i - 1);
+    if (runStart >= 0 && !joined) closeRun(i - 1);
+    if (BIP39_ENGLISH.has(words[i].word)) {
+      if (runStart < 0) runStart = i;
       continue;
     }
-    if (runStart < 0) runStart = i;
-    else if (!joined) {
-      closeRun(i - 1);
-      runStart = i;
+    // A typo between list words stays in the run, once per run.
+    if (runStart >= 0 && typoAt < 0 && isMistypedSeedWord(words[i].word)) {
+      typoAt = i;
+      continue;
     }
+    closeRun(i - 1);
   }
   closeRun(words.length - 1);
   if (spans.length === 0) return text;

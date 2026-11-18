@@ -91,6 +91,8 @@ function setup({
 }
 
 const settled = () => new Promise(resolve => setTimeout(resolve, 0));
+const backoffOf = (store: TestStore, wallet = ADDRESS) =>
+  store.getState().aiSharing.backoff[wallet] ?? { failures: 0, nextUploadAt: 0 };
 
 beforeEach(() => {
   vi.mocked(AuthServerProvider.getAccount).mockReturnValue(ADDRESS);
@@ -392,7 +394,7 @@ describe('when settling consent with the server before uploading', () => {
     await store.dispatch(actions.flush());
 
     expect(api.uploadTurns).not.toHaveBeenCalled();
-    expect(store.getState().aiSharing.nextUploadAt).toBeGreaterThan(Date.now());
+    expect(backoffOf(store).nextUploadAt).toBeGreaterThan(Date.now());
   });
 });
 
@@ -462,7 +464,7 @@ describe('when uploading', () => {
     await store.dispatch(actions.flush());
 
     expect(aiSharing.ack).not.toHaveBeenCalled();
-    expect(store.getState().aiSharing.nextUploadAt).toBeGreaterThan(Date.now());
+    expect(backoffOf(store).nextUploadAt).toBeGreaterThan(Date.now());
 
     await store.dispatch(actions.flush());
     expect(api.uploadTurns).toHaveBeenCalledTimes(1);
@@ -493,7 +495,7 @@ describe('when uploading', () => {
     await store.dispatch(actions.flush());
 
     expect(aiSharing.ack).not.toHaveBeenCalled();
-    expect(store.getState().aiSharing.nextUploadAt).toBeGreaterThan(Date.now());
+    expect(backoffOf(store).nextUploadAt).toBeGreaterThan(Date.now());
   });
 
   it('should split a batch the service finds too large', async () => {
@@ -697,9 +699,7 @@ describe('when the service asks to wait', () => {
 
     await store.dispatch(actions.flush());
 
-    expect(store.getState().aiSharing.nextUploadAt).toBeGreaterThanOrEqual(
-      Date.now() + 3599 * 1000,
-    );
+    expect(backoffOf(store).nextUploadAt).toBeGreaterThanOrEqual(Date.now() + 3599 * 1000);
   });
 
   it('should wait no longer than the longest backoff, whatever Retry-After says', async () => {
@@ -710,7 +710,7 @@ describe('when the service asks to wait', () => {
 
     await store.dispatch(actions.flush());
 
-    expect(store.getState().aiSharing.nextUploadAt).toBeLessThanOrEqual(Date.now() + 3_600_000);
+    expect(backoffOf(store).nextUploadAt).toBeLessThanOrEqual(Date.now() + 3_600_000);
   });
 
   it('should honour Retry-After on a failed conversation erasure', async () => {
@@ -719,9 +719,7 @@ describe('when the service asks to wait', () => {
 
     await store.dispatch(actions.eraseConversation({ conversationId: 's1', recordIds: [] }));
 
-    expect(store.getState().aiSharing.nextUploadAt).toBeGreaterThanOrEqual(
-      Date.now() + 1799 * 1000,
-    );
+    expect(backoffOf(store).nextUploadAt).toBeGreaterThanOrEqual(Date.now() + 1799 * 1000);
   });
 });
 
@@ -819,7 +817,7 @@ describe('when the service rate-limits an upload', () => {
     await store.dispatch(actions.flush());
 
     expect(aiSharing.ack).not.toHaveBeenCalled();
-    expect(store.getState().aiSharing.nextUploadAt).toBeGreaterThanOrEqual(Date.now() + 599_000);
+    expect(backoffOf(store).nextUploadAt).toBeGreaterThanOrEqual(Date.now() + 599_000);
   });
 });
 
@@ -933,9 +931,9 @@ describe('when a conversation is marked as not shared', () => {
 
     const waiting = pendingOf(store)?.erasures;
     expect(waiting).toEqual([{ conversationId: 's1', decidedAt: expect.any(String) }]);
-    expect(store.getState().aiSharing.nextUploadAt).toBeGreaterThan(Date.now());
+    expect(backoffOf(store).nextUploadAt).toBeGreaterThan(Date.now());
 
-    store.dispatch(actions.uploadSucceeded());
+    store.dispatch(actions.uploadSucceeded({ wallet: ADDRESS }));
     await store.dispatch(actions.flush());
 
     expect(api.eraseConversation).toHaveBeenLastCalledWith(ADDRESS, 's1', waiting![0].decidedAt);
@@ -1009,7 +1007,7 @@ describe('when rating a shared reply', () => {
     await store.dispatch(actions.rateTurn({ recordId: 'r1', rating: null }));
     expect(pendingOf(store)?.ratings).toEqual({ r1: null });
 
-    store.dispatch(actions.uploadSucceeded());
+    store.dispatch(actions.uploadSucceeded({ wallet: ADDRESS }));
     await store.dispatch(actions.flush());
 
     expect(api.putRating).toHaveBeenCalledTimes(2);
@@ -1023,7 +1021,7 @@ describe('when rating a shared reply', () => {
     await store.dispatch(actions.rateTurn({ recordId: 'gone', rating: 'down' }));
 
     expect(pendingOf(store)).toBeUndefined();
-    expect(store.getState().aiSharing.failures).toBe(0);
+    expect(backoffOf(store).failures).toBe(0);
   });
 
   it('should send nothing without consent', async () => {
@@ -1171,8 +1169,8 @@ describe('when the service keeps records for a wallet mismatch', () => {
 
     await store.dispatch(actions.flush());
 
-    expect(store.getState().aiSharing.failures).toBe(1);
-    expect(store.getState().aiSharing.nextUploadAt).toBeGreaterThan(Date.now());
+    expect(backoffOf(store).failures).toBe(1);
+    expect(backoffOf(store).nextUploadAt).toBeGreaterThan(Date.now());
   });
 
   it('should take an empty reply to an upload as everything accepted', async () => {
@@ -1186,5 +1184,88 @@ describe('when the service keeps records for a wallet mismatch', () => {
     await store.dispatch(actions.flush());
 
     expect(aiSharing.ack).toHaveBeenCalledWith(['a']);
+  });
+});
+
+describe('when uploads for one wallet are backing off', () => {
+  it('should not hold back another wallet that signs in', async () => {
+    const OTHER = '0x000000000000000000000000000000000000beef';
+    vi.mocked(api.getConsent).mockResolvedValue(ok(serverSays(true, granted.decidedAt)));
+    vi.mocked(aiSharing.peek).mockResolvedValue([record('a')]);
+    vi.mocked(api.uploadTurns).mockResolvedValue(fail(503));
+    const store = setup({ consent: granted });
+    await store.dispatch(actions.flush());
+    expect(backoffOf(store).failures).toBe(1);
+
+    vi.mocked(AuthServerProvider.getAccount).mockReturnValue(OTHER);
+    store.dispatch({
+      type: 'config/updateAiSharingSettings/fulfilled',
+      meta: { arg: { aiDataSharing: { [ADDRESS]: granted, [OTHER]: granted } } },
+    });
+    vi.mocked(api.uploadTurns).mockClear();
+    await store.dispatch(actions.flush());
+
+    expect(api.uploadTurns).toHaveBeenCalledWith(OTHER, expect.anything());
+    expect(backoffOf(store, OTHER).failures).toBe(1);
+    expect(backoffOf(store).failures).toBe(1);
+  });
+
+  it("should not skip a wallet's flush because another wallet's is running", async () => {
+    const OTHER = '0x000000000000000000000000000000000000beef';
+    let finishFirst: (value: unknown) => void = () => {};
+    vi.mocked(api.getConsent)
+      .mockReturnValueOnce(new Promise(r => (finishFirst = r)) as never)
+      .mockResolvedValue(ok(serverSays(true, granted.decidedAt)));
+    const store = setup({ consent: granted });
+    store.dispatch({
+      type: 'config/updateAiSharingSettings/fulfilled',
+      meta: { arg: { aiDataSharing: { [ADDRESS]: granted, [OTHER]: granted } } },
+    });
+
+    const first = store.dispatch(actions.flush());
+    await settled();
+    vi.mocked(AuthServerProvider.getAccount).mockReturnValue(OTHER);
+    await store.dispatch(actions.flush());
+
+    expect(api.getConsent).toHaveBeenCalledWith(OTHER);
+    finishFirst(ok(serverSays(true, granted.decidedAt)));
+    await first;
+  });
+});
+
+describe('when deciding whether to read the queue again after an upload', () => {
+  beforeEach(() => {
+    vi.mocked(api.getConsent).mockResolvedValue(ok(serverSays(true, granted.decidedAt)));
+    vi.mocked(aiSharing.peek)
+      .mockResolvedValueOnce([record('a')])
+      .mockResolvedValueOnce([]);
+    vi.mocked(api.uploadTurns).mockResolvedValue(ok({ accepted: 1, rejected: [] }));
+  });
+
+  it('should not read it while no view shows it', async () => {
+    const store = setup({ consent: granted });
+
+    await store.dispatch(actions.flush());
+
+    expect(aiSharing.list).not.toHaveBeenCalled();
+  });
+
+  it('should read it while Settings shows it', async () => {
+    const store = setup({ consent: granted });
+    store.dispatch(actions.showQueue());
+
+    await store.dispatch(actions.flush());
+
+    expect(aiSharing.list).toHaveBeenCalledWith(ADDRESS);
+  });
+
+  it('should stop reading it once the view closes', async () => {
+    const store = setup({ consent: granted });
+    store.dispatch(actions.showQueue());
+    store.dispatch(actions.hideQueue());
+
+    await store.dispatch(actions.flush());
+
+    expect(aiSharing.list).not.toHaveBeenCalled();
   });
 });

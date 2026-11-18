@@ -8,6 +8,7 @@ const STUBBED =
 
 // The main process's aliases, with the Electron-bound modules swapped for a stub: the script
 // runs in plain Node.
+/** @type {import('vite').UserConfig} */
 export default {
   root: ROOT,
   // Nothing here runs in a browser: no dependency scan or pre-bundling of the renderer's packages.
@@ -24,6 +25,7 @@ export default {
     {
       name: 'assistant-manifest-stubs',
       enforce: 'pre',
+      /** @param {string} source */
       resolveId: source => (STUBBED.test(source) ? STUB : null),
     },
   ],

@@ -99,7 +99,6 @@
 }
 
 .detailsToggle:focus-visible,
-.menuSwitch:focus-visible,
 .chip:focus-visible {
   outline: 2px solid var(--brand);
   outline-offset: 2px;
@@ -144,11 +143,6 @@
 }
 
 .menuSwitch {
-  width: 100%;
-  border: none;
-  background: none;
-  font: inherit;
-  text-align: left;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -172,35 +166,4 @@
   margin: 10px 0;
   border: none;
   border-top: 1px solid var(--white-10);
-}
-
-/* Figma's Switch (34 x 20): a Ruby track with a white knob, grey when off. */
-.switch {
-  position: relative;
-  flex: none;
-  width: 34px;
-  height: 20px;
-  border-radius: 10px;
-  background: var(--palette-whiteTransparent-soft);
-  transition: background 0.15s ease;
-}
-
-.switch::after {
-  content: "";
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--white);
-  transition: transform 0.15s ease;
-}
-
-.switch[data-checked="true"] {
-  background: var(--brand);
-}
-
-.switch[data-checked="true"]::after {
-  transform: translateX(14px);
 }

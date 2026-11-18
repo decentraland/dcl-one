@@ -60,8 +60,12 @@ export function AiSharingSection() {
   const digestsListId = useId();
 
   useEffect(() => {
-    if (visible) void dispatch(aiSharingActions.refreshQueue());
+    if (!visible) return;
+    // Uploads read the queue again only while a view shows it.
+    dispatch(aiSharingActions.showQueue());
+    void dispatch(aiSharingActions.refreshQueue());
     return () => {
+      dispatch(aiSharingActions.hideQueue());
       dispatch(aiSharingActions.resetDelete());
     };
   }, [visible, dispatch]);
