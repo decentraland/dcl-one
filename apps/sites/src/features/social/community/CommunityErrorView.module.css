@@ -1,0 +1,35 @@
+/* The community's not-found and unavailable screen, on the page's brand gradient. */
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dcl-space-16);
+  box-sizing: border-box;
+  min-height: 60vh;
+  padding: var(--dcl-space-32);
+  background: radial-gradient(
+    103.89% 95.21% at 95.21% 9.85%,
+    var(--dcl-brand-purple) 0%,
+    var(--dcl-brand-purple-dark) 37.11%,
+    var(--dcl-neutrals-black) 100%
+  );
+  color: var(--dcl-text-primary);
+  text-align: center;
+}
+
+.icon {
+  color: var(--dcl-neutrals-white);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--dcl-font-size-heading-5);
+  font-weight: 600;
+}
+
+.body {
+  margin: 0;
+  color: var(--dcl-text-secondary);
+  font-size: var(--dcl-font-size-body-md);
+}

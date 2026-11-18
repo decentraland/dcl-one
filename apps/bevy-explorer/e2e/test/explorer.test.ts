@@ -159,6 +159,21 @@ describe('Explorer', () => {
     assert.equal(state.call?.peer, '0xabc')
   })
 
+  test('nametags reads the tags, and nametagBubble asks for a bubble', async () => {
+    const tag = { player: 'local', sceneAvatar: false, name: 'Ada', suffix: '#12ab', verified: false, official: false, voice: 'off', distance: 4, opacity: 1, scale: 0.0035, position: [0, 2, 0], headOffset: 0.3, bubble: null }
+    const fake = new FakeConsole({
+      nametag_state: JSON.stringify({ visible: true, shown: 1, sceneAvatars: 0, hidden: 0, atlas: [512, 0], bubbles: 'All', tags: [tag] }),
+      nametag_bubble: JSON.stringify({ bubbles: 1 })
+    })
+    const explorer = new Explorer(fake)
+    const state = await explorer.nametags()
+    assert.equal(state.shown, 1)
+    assert.equal(state.tags[0]?.suffix, '#12ab')
+    assert.equal(state.tags[0]?.sceneAvatar, false)
+    assert.equal(await explorer.nametagBubble('local', 'nearby', 'hello there'), 1)
+    assert.equal(fake.lines.at(-1), '/nametag_bubble local nearby hello there')
+  })
+
   test('nearbyMute sends the switch then the address, and nearbyMutes reads the list', async () => {
     const fake = new FakeConsole({
       nearby_mute: 'Muted',
@@ -455,6 +470,38 @@ describe('Explorer', () => {
     const started = Date.now()
     await explorer.profileDeployWindow()
     assert.ok(Date.now() - started >= 250, 'the window starts at the deployment it was told of')
+  })
+
+  test('profileDeployWindow holds a deployment past a burst until the oldest leaves its span', async () => {
+    let version = 1
+    const fake = new FakeConsole({ get_user_data: () => `tester (0x${'a'.repeat(40)}): v${version}, web3=true` })
+    const explorer = new Explorer(fake, { profileDeployWindowMs: 0, profileDeployBurst: { count: 2, spanMs: 400 } })
+    await explorer.userData()
+    version = 2
+    await explorer.userData()
+    let started = Date.now()
+    await explorer.profileDeployWindow()
+    assert.ok(Date.now() - started < 150, 'one deployment in the span leaves room for another')
+    version = 3
+    await explorer.userData()
+    started = Date.now()
+    await explorer.profileDeployWindow()
+    assert.ok(Date.now() - started >= 350, 'a full burst waits for its oldest deployment to leave the span')
+    started = Date.now()
+    await explorer.profileDeployWindow()
+    assert.ok(Date.now() - started < 150, 'and then there is room again')
+  })
+
+  test('profileDeployWindow counts every version a read skipped as a deployment', async () => {
+    let version = 3
+    const fake = new FakeConsole({ get_user_data: () => `tester (0x${'a'.repeat(40)}): v${version}, web3=true` })
+    const explorer = new Explorer(fake, { profileDeployWindowMs: 0, profileDeployBurst: { count: 2, spanMs: 400 } })
+    await explorer.userData()
+    version = 5
+    await explorer.userData()
+    const started = Date.now()
+    await explorer.profileDeployWindow()
+    assert.ok(Date.now() - started >= 350, 'two deployments between reads fill a burst of two')
   })
 
   test('a long reply is cut in the record, not in the result', async () => {

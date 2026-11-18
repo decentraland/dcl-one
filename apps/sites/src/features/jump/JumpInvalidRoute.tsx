@@ -6,12 +6,12 @@ import { jumpTravelHref } from "@/data/lib/catalyst/jump/jump";
 
 export function JumpInvalidRoute({ kind }: { kind: "place" | "event" }) {
   return (
-    <SitesChrome active="play">
-      <JumpPage>
+    <SitesChrome active="play" overlayNav>
+      <JumpPage invalid>
         <JumpInvalid
           kind={kind}
           jumpInHref={jumpTravelHref({ coordinates: [0, 0], realm: undefined })}
-          eventsHref="/whats-on"
+          eventsHref="/events"
           homeHref="/"
         />
       </JumpPage>

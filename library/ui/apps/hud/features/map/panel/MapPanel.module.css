@@ -72,12 +72,19 @@
   position: absolute;
   top: 10px;
   left: 10px;
-  width: 450px;
+  /* 10px short of the panel's edge; a presenting card keeps its close button clear (--menu-title-end) */
+  width: calc(460px - var(--menu-title-end, 10px));
   height: 42px;
   border-radius: var(--r-md);
   background: var(--text);
   color: var(--map-ink);
   pointer-events: auto;
+}
+/* Clear of the section modal's close button, on its 68 px header line. The panel stays at the
+   frame's edge, or a collapsed panel would show. */
+.compact .searchBar {
+  top: 13px;
+  width: 388px;
 }
 .searchIcon,
 .searchCategory {

@@ -259,6 +259,9 @@ pub struct ClusterTracker {
 }
 
 impl ClusterTracker {
+    pub fn publisher(&self) -> Arc<dyn ClusterFeedPublisher> {
+        self.publisher.clone()
+    }
     pub fn new(
         options: ClusterOptions,
         max_peers: usize,

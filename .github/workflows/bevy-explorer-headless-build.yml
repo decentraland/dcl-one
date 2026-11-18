@@ -36,10 +36,15 @@ jobs:
         with:
           node-version: 24
       - name: Reserve disk space on the hosted Linux runner
+        # The delete takes one to two minutes and frees 25 GB. A hosted runner starts with more than
+        # 80 GB free, so the delete runs only when less than 40 GB is free.
         if: runner.os == 'Linux' && runner.environment == 'github-hosted'
         working-directory: .
         run: |-
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          avail=$(df --output=avail -BG / | tail -n 1 | tr -dc 0-9)
+          if [ "${avail:-0}" -lt 40 ]; then
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          fi
           df -h /
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -58,22 +63,21 @@ jobs:
           targets: ${{ matrix.target }}
       - name: Prepare the pinned native toolchain for caching
         run: python ../../../apps/bevy-explorer/prepare-native-cache.py
-      - name: Rebuild the patched sources
-        uses: ./.github/actions/bevy-explorer-sources
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: bevy-explorer-headless-${{ matrix.platform }}
           workspaces: rendering/bevy-explorer/source -> target
           save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
-      - name: Restore the rebuilt Bevy tree's cached file times
+      - name: Restore the path dependencies' cached file times
         run: python "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Build the local headless app
         run: python ../../../apps/bevy-explorer/build-headless.py --target ${{ matrix.target }}
-      - name: Record the rebuilt Bevy tree's file times for the cache
+      - name: Record the path dependencies' file times for the cache
         run: python "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Stamp snapshot version
-        uses: decentraland/oddish-action@a4e98664bf53d4aae1f6d20d1a43ff2c79b555b3 # v1.0.1
+        uses: decentraland/oddish-action@9c6485d7f0cef927f7485cf01726b98c5ff773f5 # v1.1.0
         with:
+          package-manager: corepack pnpm@12.21.0
           cwd: ./rendering/bevy-explorer/source/deploy/headless/launcher
           deterministic-snapshot: true
           only-update-versions: true
@@ -129,7 +133,7 @@ jobs:
         shell: bash
         run: |
           cd deploy/headless/dist/bevy-headless-server-${{ matrix.npm_platform }}
-          npm pack --pack-destination "$GITHUB_WORKSPACE/rendering/bevy-explorer/source/deploy/headless/dist"
+          corepack pnpm@12.21.0 pack --pack-destination "$GITHUB_WORKSPACE/rendering/bevy-explorer/source/deploy/headless/dist"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bevy-headless-${{ matrix.npm_platform }}-${{ github.sha }}

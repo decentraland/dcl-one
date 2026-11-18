@@ -13,7 +13,8 @@
 //! Signed fetch goes through the shared verifier under the camera-reel
 //! profiles (`shared::signed_fetch::VerificationProfile::camera_reel_read` and
 //! `camera_reel_write`: upstream's dcl-crypto-middleware-rs rules, a signature
-//! at most 60 s old and never too new, mandatory raw metadata, the 6.x payload
+//! at most 60 s old and at most 60 s ahead (upstream accepts any future
+//! timestamp), mandatory raw metadata, the 6.x payload
 //! followed by the unguarded legacy one) with the process's EIP-1654
 //! validator; every chain link must carry a signature string, as the source's
 //! parser requires. A write whose metadata names the scene signer
@@ -53,10 +54,10 @@
 //! builder's `/contents/{hash}` (from `camera_reel.withheld_blobs`, written
 //! in the review's and the delete's transaction and mirrored into the shared
 //! in-memory `content::Denylist`, refilled at boot by
-//! [`State::load_withheld`]). A hash is
-//! newly withheld only when no non-rejected row and no content file or builder
-//! upload names it, so an owner's delete cannot hide a deployed file of the
-//! same bytes. A later successful upload can release deletion withholding;
+//! [`State::load_withheld`]). A rejection withholds the row's hashes whatever
+//! else names them. A delete withholds a hash only when no non-rejected row and
+//! no content file or builder upload names it, so an owner's delete cannot hide
+//! a deployed file of the same bytes. A later successful upload can release deletion withholding;
 //! it does not release rejected hashes or operator and remote denials. A private, non-rejected photo is served to whoever holds its
 //! filename URL or hash. Deletion removes the gallery row and applies withholding
 //! without unlinking immutable shared blobs. `GET /api/files/{name}` serves only

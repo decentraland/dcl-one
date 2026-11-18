@@ -40,13 +40,13 @@
 
 use std::time::Duration;
 
+use crate::shared::routing::{erase, get};
 use alloy_primitives::U256;
 use anyhow::Context as _;
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use base64::Engine as _;
 use bytes::Bytes;
 use chrono::NaiveDateTime;
@@ -823,7 +823,7 @@ pub fn routes() -> Router<Shared> {
             get(get_nft),
         )
         .route("/health", get(health))
-        .fallback(unknown_route)
+        .fallback(erase(unknown_route))
 }
 
 #[cfg(test)]

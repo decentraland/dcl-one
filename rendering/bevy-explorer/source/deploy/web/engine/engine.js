@@ -1,7 +1,7 @@
 // Engine logic - ES module
 // Handles WASM/WebGPU initialization and game execution
 
-import init, { engine_init, engine_start, engine_spawn_worker, engine_console_command, engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take, gpu_cache_hash, report_pointer_lock, media_host_main, audio_host_main, livekit_host_main, engine_prepare_render, engine_set_viewport_active } from "./pkg/webgpu_build.js";
+import init, { engine_init, engine_start, engine_spawn_worker, engine_console_command, engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take, gpu_cache_hash, report_pointer_lock, media_host_main, audio_host_main, livekit_host_main, engine_prepare_render, engine_set_viewport_active, engine_set_page_focus, engine_set_hud_main_thread_cost } from "./pkg/webgpu_build.js";
 import { createSandboxHost } from "./sandbox_host.js";
 import { installContentCachePageFunctions, requestPersistentStorage } from "./content_cache.js";
 
@@ -281,126 +281,6 @@ export async function initEngine() {
     (e) => console.warn("[Main JS] persistent storage request failed", e),
   );
 
-  // Attaches `src` to `video`, through hls.js for an HLS stream the browser cannot play itself.
-  // hls.js recovers a fatal error, or the element's own error, in place (`startLoad`,
-  // `recoverMediaError`) at most once every 10 s; any other is passed to `onFatal` with its type.
-  // Returns the source's `destroy()`, `live` and `hls` (attached through hls.js).
-  window.setVideoSource = (video, src, onFatal) => {
-    let hls = null;
-    let hlsLive = false;
-    let destroyed = false;
-    let onElementError = null;
-    const source = {
-      destroy() {
-        destroyed = true;
-        if (onElementError) {
-          video.removeEventListener("error", onElementError);
-          onElementError = null;
-        }
-        if (hls) {
-          hls.destroy();
-          hls = null;
-        } else {
-          video.removeAttribute("src");
-          video.load();
-        }
-      },
-      get live() {
-        return hlsLive || video.duration === Infinity;
-      },
-      get hls() {
-        return hls !== null;
-      },
-    };
-
-    function attachHls() {
-      hls = new Hls();
-      // at most one in-place recovery per interval; any other error goes to `onFatal`
-      const RECOVERY_INTERVAL_MS = 10000;
-      let lastRecovery = -Infinity;
-      const mayRecover = () => {
-        const now = performance.now();
-        if (now - lastRecovery < RECOVERY_INTERVAL_MS) return false;
-        lastRecovery = now;
-        return true;
-      };
-      // before the manifest parses there is nothing to recover in place
-      let manifestParsed = false;
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        manifestParsed = true;
-      });
-      hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
-        hlsLive = data.details.live;
-      });
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (!data.fatal || destroyed) return;
-        if (!manifestParsed || !mayRecover()) {
-          onFatal(data.type);
-        } else if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          hls.startLoad();
-        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-          hls.recoverMediaError();
-        } else {
-          onFatal(data.type);
-        }
-      });
-      // the element's own error is handled like an hls.js media error
-      onElementError = () => {
-        if (destroyed) return;
-        if (manifestParsed && mayRecover()) {
-          hls.recoverMediaError();
-        } else {
-          onFatal(Hls.ErrorTypes.MEDIA_ERROR);
-        }
-      };
-      video.addEventListener("error", onElementError);
-      hls.loadSource(src);
-      hls.attachMedia(video);
-    }
-
-    async function isHlsStream(url) {
-      try {
-        const response = await fetch(url, {
-          method: "HEAD",
-          mode: "cors",
-        });
-
-        if (!response.ok) {
-          return false;
-        }
-
-        const contentType = response.headers.get("Content-Type");
-
-        if (contentType) {
-          return (
-            contentType.includes("application/vnd.apple.mpegurl") ||
-            contentType.includes("application/x-mpegURL")
-          );
-        }
-
-        return false;
-      } catch (error) {
-        return false;
-      }
-    }
-
-    if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = src;
-    } else if (Hls.isSupported()) {
-      // check if we need hls
-      setTimeout(async () => {
-        const isHls = await isHlsStream(src);
-        if (destroyed) return;
-        if (isHls) {
-          attachHls();
-        } else {
-          video.src = src;
-        }
-      }, 0);
-    }
-    return source;
-  };
-
   // The scene sandbox workers (sandbox_host.js), behind the page functions the engine calls.
   const sandboxes = createSandboxHost({
     compiledModule,
@@ -587,6 +467,32 @@ export function start(options = {}) {
   };
   document.addEventListener("visibilitychange", updateViewport);
   updateViewport();
+
+  // report `document.hasFocus()` to the engine on every change
+  const updatePageFocus = () => engine_set_page_focus(document.hasFocus());
+  window.addEventListener("focus", updatePageFocus);
+  window.addEventListener("blur", updatePageFocus);
+  document.addEventListener("visibilitychange", updatePageFocus);
+  updatePageFocus();
+
+  // the HUD's main-thread cost window, every second: the window ends only once the engine
+  // stored it, so one refused while the engine holds its lock stays and grows until the next
+  // tick; what accumulated while the tab was hidden is discarded when it shows again
+  setInterval(() => {
+    const cost = window.__bevyPeekHudMainThreadCost?.();
+    if (!cost) return;
+    const commits = cost.reactCommits;
+    const frames = cost.longAnimationFrames;
+    const stored = engine_set_hud_main_thread_cost(
+      cost.coveredSeconds,
+      commits !== null, commits?.commitCount ?? 0, commits?.commitTimeSumMs ?? 0,
+      frames !== null, frames?.frameCount ?? 0, frames?.hudScriptTimeSumMs ?? 0, frames?.styleAndLayoutTimeSumMs ?? 0,
+    );
+    if (stored) window.__bevyTakeHudMainThreadCost();
+  }, 1000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) window.__bevyDiscardHudMainThreadCost?.();
+  });
 
   // The engine worker cannot see the document's pointer-lock state (Escape, a refused request):
   // report it through the shared wasm memory (src/web.rs report_pointer_lock).

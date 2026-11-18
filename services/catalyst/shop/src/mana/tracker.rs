@@ -302,9 +302,10 @@ pub async fn index_confirms(
                     .unwrap_or(Address::ZERO),
             );
             if land {
-                let Some(mut land) =
-                    crate::market::nft_reads::land_snapshot(pool, crate::land_authz::LAND_MAINNET)
-                        .await
+                let Some(net) = chain.land_network() else {
+                    return Ok(Some(false));
+                };
+                let Some(mut land) = crate::market::nft_reads::land_snapshot(pool, net).await
                 else {
                     return Ok(Some(false));
                 };

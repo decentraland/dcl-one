@@ -2,7 +2,8 @@ import '@testing-library/jest-dom/vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createRef } from 'react'
+import { createRef, type ComponentProps } from 'react'
+import { renderToString } from 'react-dom/server'
 import { Button } from './Button'
 
 afterEach(cleanup)
@@ -393,5 +394,35 @@ describe('when the public button state changes', () => {
     )
     expect(button.current).toBe(screen.getByRole('button', { name: 'Save' }))
     expect(link.current).toBe(screen.getByRole('link', { name: 'Next' }))
+  })
+})
+
+describe('when an untyped caller passes dangerouslySetInnerHTML', () => {
+  const injected = '<b data-injected="yes">Wrong content</b>'
+  const untypedProps = (href: string | undefined) =>
+    Object.freeze({
+      children: 'Save',
+      ...(href ? { href } : {}),
+      dangerouslySetInnerHTML: Object.freeze({ __html: injected })
+    }) as unknown as ComponentProps<typeof Button>
+
+  it.each([undefined, '/save'])('should render its own label during SSR (href=%s)', (href) => {
+    const html = renderToString(<Button {...untypedProps(href)} />)
+    expect(html).toContain('Save')
+    expect(html).not.toContain('Wrong content')
+    expect(html).not.toContain('data-injected')
+  })
+
+  it.each([undefined, '/save'])('should render the named native control (href=%s)', (href) => {
+    const { container } = render(<Button {...untypedProps(href)} />)
+    expect(screen.getByRole(href ? 'link' : 'button', { name: 'Save' })).toBeInTheDocument()
+    expect(screen.queryByText('Wrong content')).not.toBeInTheDocument()
+    expect(container.querySelector('[data-injected]')).toBeNull()
+  })
+
+  it.each([undefined, '/save'])("should leave the caller's props unchanged (href=%s)", (href) => {
+    const props = untypedProps(href) as { dangerouslySetInnerHTML: { __html: string } }
+    render(<Button {...(props as unknown as ComponentProps<typeof Button>)} />)
+    expect(props.dangerouslySetInnerHTML).toEqual({ __html: injected })
   })
 })

@@ -114,10 +114,12 @@ artifact_link() {
 job_time() { if [[ "$1" =~ ^[0-9]+$ ]]; then fmt_secs "$1"; else printf '—'; fi; }
 job_cell() { if [ -n "$2" ]; then printf '[%s](%s)' "$1" "$2"; else printf '%s' "$1"; fi; }
 
+# The registry's manifest for a tag or version, asked fresh, once, within 15 seconds.
 npm_preview_field() {
   local value
-  if value=$(npm view "@dcl-regenesislabs/bevy-explorer-web@$1" "$2" --prefer-online \
-      --registry=https://registry.npmjs.org --fetch-retries=0 --fetch-timeout=15000 2>/dev/null); then
+  if value=$(curl -fsS --max-time 15 -H 'cache-control: no-cache' \
+      "https://registry.npmjs.org/@dcl-regenesislabs/bevy-explorer-web/$1" 2>/dev/null \
+      | jq -er --arg field "$2" 'getpath($field | split("."))'); then
     printf '%s' "$value" | tr -d '\r'
   fi
 }

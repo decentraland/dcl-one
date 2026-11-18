@@ -8,36 +8,40 @@ use crate::archipelago::registry::PeersRegistry;
 use crate::deny_list::DenyList;
 use std::sync::Arc;
 
-pub struct AppStateInner {
-    pub settings: Settings,
-    pub sockets: Arc<tokio::sync::Semaphore>,
-    /// Sockets that have not completed the handshake; released at the welcome.
-    pub pending_handshakes: Arc<PendingHandshakes>,
-    /// Pending handshakes per client source, so a few sources cannot hold the whole pending share.
-    pub pending_handshakes_per_ip: Arc<IpSlots>,
-    pub sockets_per_ip: Arc<IpSlots>,
-    pub handlers: Arc<tokio::sync::Semaphore>,
-    pub restart: tokio_util::sync::CancellationToken,
-    pub enforcement: Arc<Enforcement>,
-    pub statistics: Arc<crate::stats::Reader>,
-    pub(crate) _statistics_subscription: crate::gatekeeper::bus::NatsSubscription,
-    pub connector_metrics: Arc<crate::stats::runtime::Metrics>,
-    pub observations: super::observations::Observations,
-    pub started_at: std::time::Instant,
-    pub started: std::sync::atomic::AtomicBool,
-    pub registry: Arc<PeersRegistry>,
-    pub feed: Arc<FeedCache>,
-    pub outbox: Outbox,
-    /// The gatekeeper this connector runs beside: its NATS link (`bus`) carries the feed, and its
-    /// LiveKit removes a kicked wallet's participant.
-    pub gatekeeper: crate::gatekeeper::SharedState,
-    pub challenges: Arc<ChallengeStore>,
+crate::shared::send_sync_once! {
+    pub struct AppStateInner {
+        #[cfg(feature = "test-support")]
+        pub ws_ping_gate: super::ws::assignment_test_support::PingGate,
+        pub settings: Settings,
+        pub sockets: Arc<tokio::sync::Semaphore>,
+        /// Sockets that have not completed the handshake; released at the welcome.
+        pub pending_handshakes: Arc<PendingHandshakes>,
+        /// Pending handshakes per client source, so a few sources cannot hold the whole pending share.
+        pub pending_handshakes_per_ip: Arc<IpSlots>,
+        pub sockets_per_ip: Arc<IpSlots>,
+        pub handlers: Arc<tokio::sync::Semaphore>,
+        pub restart: tokio_util::sync::CancellationToken,
+        pub enforcement: Arc<Enforcement>,
+        pub statistics: Arc<crate::stats::Reader>,
+        pub(crate) _statistics_subscription: crate::gatekeeper::bus::NatsSubscription,
+        pub connector_metrics: Arc<crate::stats::runtime::Metrics>,
+        pub observations: super::observations::Observations,
+        pub started_at: std::time::Instant,
+        pub started: std::sync::atomic::AtomicBool,
+        pub registry: Arc<PeersRegistry>,
+        pub feed: Arc<FeedCache>,
+        pub outbox: Outbox,
+        /// The gatekeeper this connector runs beside: its NATS link (`bus`) carries the feed, and its
+        /// LiveKit removes a kicked wallet's participant.
+        pub gatekeeper: crate::gatekeeper::SharedState,
+        pub challenges: Arc<ChallengeStore>,
 
-    pub control_v4: Arc<AssignmentAuthority>,
-    pub replica_id: String,
+        pub control_v4: Arc<AssignmentAuthority>,
+        pub replica_id: String,
 
-    pub ban_checker: Arc<BanChecker>,
-    pub deny_list: Arc<DenyList>,
+        pub ban_checker: Arc<BanChecker>,
+        pub deny_list: Arc<DenyList>,
+    }
 }
 
 pub type AppState = Arc<AppStateInner>;

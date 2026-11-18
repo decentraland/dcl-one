@@ -1,10 +1,13 @@
 """CI inventory fixtures and a dependency-free Cargo build-context regression."""
 import importlib.util
+import json
+import re
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from unittest import mock
 
@@ -79,6 +82,104 @@ class AuthStressTests(unittest.TestCase):
 
 
 class InventoryTests(unittest.TestCase):
+    def test_assignment_fifo_bodies_cannot_disappear_or_be_ignored(self):
+        cases = {
+            ("sockets_2", "test"): [
+                "archipelago_feed_stats::assignment_pressure_preserves_fifo_and_rejects_oversize",
+            ],
+            ("catalyst_comms", "lib"): [
+                "archipelago::registry::tests::full_assignment_retries_even_after_older_accepted_frames_flush",
+                "archipelago::ws::io::bounds_tests::blocked_direct_output_keeps_original_stamp_while_servicing_full_mailbox",
+                "archipelago::registry::mailbox::tests::capacity_follows_accepted_assignments_through_validation_until_drop",
+                "archipelago::registry::mailbox::tests::occupancy_deadline_survives_handoff_and_resets_only_after_release",
+                "archipelago::ws::io::bounds_tests::full_queue_preserves_accepted_frames_and_rejects_later_assignments",
+            ],
+            ("sockets_1", "test"): [
+                "archipelago_ws_island_dedup::production_ping_at_full_mailbox_delivers_pong_and_every_accepted_assignment",
+                "archipelago_ws_island_dedup::production_full_mailbox_ping_preserves_kick_restart_and_retirement",
+                "archipelago_ws_island_dedup::assignment_fifo_crosses_mailbox_validation_and_physical_writer_in_order",
+                "archipelago_ws_island_dedup::assignment_capacity_stays_charged_through_validation_and_physical_flush",
+                "archipelago_ws_island_dedup::full_assignment_budget_keeps_terminal_kick_and_releases_cancelled_work",
+                "archipelago_ws_island_dedup::an_assignment_backlog_preserves_every_accepted_room_in_order",
+                "archipelago_ws_island_dedup::source_contract_dedup_compares_received_assignment_bytes",
+                "archipelago_ws_island_dedup::a_suppressed_repeat_does_not_extend_the_original_acceptance_window",
+            ],
+        }
+        for target, names in cases.items():
+            required = guard.MANDATORY_ARCHIPELAGO[target]
+            normal = "".join(f"{name}: test\n" for name in required)
+            guard.verify(required, normal, "", str(target))
+            for name in names:
+                self.assertIn(name, required)
+                for changed, ignored in [(normal.replace(f"{name}: test\n", ""), ""),
+                                         (normal, f"{name}: test\n")]:
+                    with self.subTest(target=target, name=name), self.assertRaises(ValueError):
+                        guard.verify(required, changed, ignored, str(target))
+
+    def test_maintenance_review_regressions_resolve_exact_source_and_inventory(self):
+        cases = {
+            "comms/src/gatekeeper/admission/cluster/fence.rs": ("gatekeeper::admission::cluster::fence::tests::", [
+                "selected_replay_rotates_beyond_queue_capacity_without_a_global_tick_and_retains_old_sources",
+                "healthy_owned_replay_waits_for_renewal_but_a_new_desire_is_due_immediately",
+            ]),
+            "comms/src/gatekeeper/admission/cluster/subscriber/tests.rs": ("gatekeeper::admission::cluster::subscriber::tests::", [
+                "shutdown_settles_all_selected_targets_independently_of_due_maintenance_filter",
+            ]),
+            "comms/src/gatekeeper/admission/cluster/subscriber/wallet_queue/tests.rs": ("gatekeeper::admission::cluster::subscriber::wallet_queue::tests::", [
+                "maintenance_has_lifetime_credit_item_and_running_bounds_with_event_headroom",
+                "maintenance_credit_remains_charged_until_uncertain_mutation_settles",
+                "maintenance_capacity_notifications_refill_more_than_the_global_queue_without_a_timer",
+                "an_urgent_retry_keeps_its_cold_credit_and_cannot_overtake_earlier_wallet_work",
+            ]),
+        }
+        required = guard.MANDATORY_ARCHIPELAGO[("catalyst_comms", "lib")]
+        for path, (prefix, names) in cases.items():
+            source = (ROOT / "services/catalyst" / path).read_text()
+            for name in names:
+                self.assertEqual(len(re.findall(r"\bfn\s+" + name + r"\s*\(", source)), 1)
+                self.assertEqual(required.count(prefix + name), 1)
+
+    def test_selected_retirement_catalog_resolves_source_and_started_runtime_cases(self):
+        cases = [
+            ("tests/pulse_cluster_lookup.rs", "pulse_cluster_lookup::", [
+                "real_selection_retirement_exchange_requires_complete_absence_and_exact_source",
+            ]),
+            ("comms/src/protocol/bus/cluster.rs", "protocol::bus::cluster::tests::", [
+                "selection_retirement_codec_is_exact_bounded_and_negative_only",
+            ]),
+            ("comms/src/pulse/cluster/assignments.rs", "pulse::cluster::assignments::current_tests::", [
+                "retirement_requires_complete_absence_and_survives_record_and_control_gc",
+                "retirement_withholds_blocked_pending_and_successor_current_evidence",
+            ]),
+            ("tests/comms_v4_assignment_fence/recovery.rs", "comms_v4_assignment_fence::recovery::", [
+                "started_selected_periodic_retirement_reclaims_capacity_across_native_and_legacy_churn",
+                "started_selected_retirement_rejects_a_delayed_negative_after_native_reconnect_or_successor",
+                "started_selected_retirement_retains_uncertain_attempt_credit_until_exact_sql_settlement",
+                "started_selected_retirement_waits_for_a_lease_and_preserves_a_real_foreign_successor",
+            ]),
+        ]
+        for path, prefix, names in cases:
+            target = ("sockets_2", "test") if path == "tests/pulse_cluster_lookup.rs" else (("node_2", "test") if path.startswith("tests/") else ("catalyst_comms", "lib"))
+            required = guard.MANDATORY_ARCHIPELAGO[target]
+            source = (ROOT / "services/catalyst" / path).read_text(encoding="utf-8")
+            bodies = re.findall(r"#\[(?:tokio::)?test(?:\([^\]]*\))?\]\s*(?:async\s+)?fn\s+(\w+)", source)
+            for name in names:
+                with self.subTest(target=target, name=name):
+                    self.assertIn(prefix + name, required)
+                    self.assertEqual(bodies.count(name), 1)
+
+    def test_configured_socket_catalog_and_guards_resolve_current_source_names(self):
+        target, group = "archipelago_control_extensions_websocket", "sockets_2"
+        catalog = json.loads((ROOT / "tooling/dev-regressions.json").read_text(encoding="utf-8"))
+        selected = set(catalog["catalyst"][group]) | set(guard.MANDATORY_ARCHIPELAGO[(group, "test")])
+        required = {name.removeprefix(target + "::") for name in selected if name.startswith(target + "::")}
+        source = (ROOT / "services/catalyst/tests" / (target + ".rs")).read_text(encoding="utf-8")
+        bodies = re.findall(r"#\[(?:tokio::)?test(?:\([^\]]*\))?\]\s*(?:async\s+)?fn\s+(\w+)", source)
+        for name in sorted(required):
+            with self.subTest(name=name):
+                self.assertEqual(bodies.count(name), 1, "mandatory selectors must track the actual current socket test body")
+        self.assertIn("configured_replica_signaling_cannot_steal_a_fresh_foreign_room", required)
+
     def test_bot_review_bodies_are_bound_to_their_existing_targets(self):
         bodies = {
             ("catalyst_comms", "lib"): [
@@ -109,8 +210,8 @@ class InventoryTests(unittest.TestCase):
             ("catalyst_content", "lib"): [
                 "write_path_tests::a_profile_with_nul_metadata_preserves_the_write_error_and_active_profile",
             ],
-            ("pulse_nats_live", "test"): [
-                "cancelled_terminal_disconnect_is_not_replayed_after_real_broker_reconnect",
+            ("sockets_2", "test"): [
+                "pulse_nats_live::cancelled_terminal_disconnect_is_not_replayed_after_real_broker_reconnect",
             ],
         }
         for target, names in bodies.items():
@@ -154,8 +255,7 @@ class InventoryTests(unittest.TestCase):
                         guard.verify(required, changed, ignored, str(target))
 
     def test_selected_reader_bodies_cannot_disappear_from_the_ordinary_inventory(self):
-        for target in [("catalyst_comms", "lib"), ("pulse_cluster_lookup", "test"),
-                       ("comms_v4_assignment_fence", "test")]:
+        for target in [("catalyst_comms", "lib"), ("sockets_2", "test"), ("node_2", "test")]:
             required = guard.MANDATORY_ARCHIPELAGO[target]
             normal = "".join(f"{name}: test\n" for name in required)
             guard.verify(required, normal, "", str(target))
@@ -269,10 +369,10 @@ class InventoryTests(unittest.TestCase):
         import json
         artifacts = [
             {"reason": "compiler-artifact", "executable": "unit", "profile": {"test": True}, "target": {"name": "catalyst_comms", "kind": ["lib"]}},
-            {"reason": "compiler-artifact", "executable": "socket", "profile": {"test": True}, "target": {"name": "archipelago_socket_bounds", "kind": ["test"]}},
+            {"reason": "compiler-artifact", "executable": "socket", "profile": {"test": True}, "target": {"name": "sockets_3", "kind": ["test"]}},
             {"reason": "compiler-artifact", "executable": "config", "profile": {"test": True}, "target": {"name": "catalyst_config", "kind": ["lib"]}},
             {"reason": "compiler-artifact", "executable": "auth", "profile": {"test": True}, "target": {"name": "dcl_auth", "kind": ["lib"]}},
-            {"reason": "compiler-artifact", "executable": "owner", "profile": {"test": True}, "target": {"name": "archipelago_control_extensions_websocket", "kind": ["test"]}},
+            {"reason": "compiler-artifact", "executable": "owner", "profile": {"test": True}, "target": {"name": "sockets_2", "kind": ["test"]}},
             {"reason": "compiler-artifact", "executable": "content", "profile": {"test": True}, "target": {"name": "catalyst_content", "kind": ["lib"]}},
             {"reason": "compiler-artifact", "executable": "root", "profile": {"test": True}, "target": {"name": "catalyst", "kind": ["lib"]}},
             {"reason": "compiler-artifact", "executable": "root-bin", "profile": {"test": True}, "target": {"name": "catalyst", "kind": ["bin"]}},
@@ -340,7 +440,7 @@ class InventoryTests(unittest.TestCase):
         import json
         artifacts = [{"reason": "compiler-artifact", "executable": executable, "profile": {"test": True},
                       "target": {"name": name, "kind": [kind]}}
-                     for executable, name, kind in [("unit", "catalyst_comms", "lib"), ("socket", "archipelago_socket_bounds", "test")]]
+                     for executable, name, kind in [("unit", "catalyst_comms", "lib"), ("socket", "sockets_3", "test")]]
         output = "\n".join(map(json.dumps, artifacts))
         names = [entry[2] for entry in guard.EXTERNAL]
 
@@ -587,7 +687,7 @@ class InventoryTests(unittest.TestCase):
                 )
                 executable.chmod(0o755)
             result = subprocess.run(
-                [shutil.which("bash"), "-c", 'logs="$1"; receipts="$1"; shift; run() {\n' + body
+                [shutil.which("bash"), "-c", 'logs="$1"; receipts="$1"; group_threads=1; socket_threads=1; shift; run() {\n' + body
                  + '\n}; printf "%s\\n" "$@" | run 1', "_", directory.as_posix(),
                  *(executable.as_posix() for executable in executables)],
                 capture_output=True, text=True, check=True,
@@ -605,6 +705,100 @@ class InventoryTests(unittest.TestCase):
                 self.assertTrue(log.splitlines()[1].startswith("STATS_ENGINE_RECEIPT "))
                 self.assertIn("private success detail", log)
 
+    FAILING_FIXTURE = ("printf '%s\\n' 'test a::passes ... ok' 'test a::breaks ... FAILED' "
+                       "'test result: FAILED. 1 passed; 1 failed'\nexit 101\n")
+    KILLED_FIXTURE = "printf '%s\\n' 'test b::slow has been running for over 60 seconds'\nkill -9 $$\n"
+    PASSING_FIXTURE = "printf '%s\\n' 'test c::passes ... ok' 'test result: ok. 1 passed; 0 failed'\n"
+
+    def run_binaries(self, directory, fixtures, github_actions):
+        # Runs the script's own report and run functions over the fixture binaries.
+        script = (ROOT / "tooling/catalyst-test.sh").read_text()
+        body = script.split("run() {\n", 1)[1].split("\n}\n", 1)[0]
+        report = script.split("report() {\n", 1)[1].split("\n}\n", 1)[0]
+        for name, text in fixtures.items():
+            (directory / name).write_text("#!/bin/sh\n" + text)
+            (directory / name).chmod(0o755)
+        env = {key: value for key, value in os.environ.items() if key != "GITHUB_ACTIONS"}
+        if github_actions:
+            env["GITHUB_ACTIONS"] = "true"
+        return subprocess.run(
+            [shutil.which("bash"), "-c", 'set -euo pipefail; logs="$1"; receipts="$1"; failures="$1/failures"; group_threads=1; socket_threads=1; shift; '
+             ': > "$failures"; phase="running the test binaries"; report() {\n' + report + '\n}; trap report EXIT; '
+             'run() {\n' + body + '\n}; printf "%s\\n" "$@" | run 3', "_", directory.as_posix(),
+             *(str(directory / name) for name in fixtures)],
+            capture_output=True, text=True, env=env,
+        )
+
+    def test_every_failing_binary_is_named_with_its_status_or_signal_and_failed_tests(self):
+        with tempfile.TemporaryDirectory(prefix="failing-binaries-") as temporary:
+            directory = Path(temporary)
+            fixtures = {"failing-fixture": self.FAILING_FIXTURE, "killed-fixture": self.KILLED_FIXTURE,
+                        "passing-fixture": self.PASSING_FIXTURE}
+            result = self.run_binaries(directory, fixtures, github_actions=True)
+            # GNU xargs exits 123 when a command fails, BSD xargs 1.
+            self.assertIn(result.returncode, (1, 123), result.stdout + result.stderr)
+            failing = "catalyst-test: failing-fixture exited with status 101; failed tests: a::breaks"
+            killed = "catalyst-test: killed-fixture was killed by signal 9; failed tests: none reported, see the end of its log above"
+            self.assertEqual(sorted((directory / "failures").read_text().splitlines()), [failing, killed])
+            self.assertIn("test b::slow has been running for over 60 seconds", result.stdout)
+            self.assertIn("passing-fixture: ok. 1 passed; 0 failed", result.stdout)
+            self.assertIn(f"catalyst-test: failed with status {result.returncode} while running the test binaries", result.stdout)
+            # The summary follows the dumped logs on their stream, then the annotations.
+            summary = result.stdout.split(f"catalyst-test: failed with status {result.returncode}", 1)[1].splitlines()[1:]
+            self.assertEqual(sorted(summary[:2]), [failing, killed])
+            self.assertEqual(sorted(summary[2:]), ["::error title=Rust test binary failed::" + line for line in (failing, killed)])
+
+    def test_failing_binaries_outside_github_actions_print_no_annotations(self):
+        with tempfile.TemporaryDirectory(prefix="failing-binaries-") as temporary:
+            directory = Path(temporary)
+            fixtures = {"failing-fixture": self.FAILING_FIXTURE, "passing-fixture": self.PASSING_FIXTURE}
+            result = self.run_binaries(directory, fixtures, github_actions=False)
+            self.assertIn(result.returncode, (1, 123), result.stdout + result.stderr)
+            failing = "catalyst-test: failing-fixture exited with status 101; failed tests: a::breaks"
+            summary = result.stdout.split(f"catalyst-test: failed with status {result.returncode}", 1)[1].splitlines()[1:]
+            self.assertEqual(summary, [failing])
+            self.assertNotIn("::error", result.stdout + result.stderr)
+
+    def test_passing_binaries_report_no_failure(self):
+        with tempfile.TemporaryDirectory(prefix="passing-binaries-") as temporary:
+            directory = Path(temporary)
+            fixtures = {"passing-fixture": self.PASSING_FIXTURE, "other-passing-fixture": self.PASSING_FIXTURE}
+            result = self.run_binaries(directory, fixtures, github_actions=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((directory / "failures").read_text(), "")
+            self.assertIn("passing-fixture: ok. 1 passed; 0 failed", result.stdout)
+            self.assertIn("other-passing-fixture: ok. 1 passed; 0 failed", result.stdout)
+            self.assertNotIn("catalyst-test: failed", result.stdout + result.stderr)
+            self.assertNotIn("::error", result.stdout + result.stderr)
+
+    def test_the_doc_tests_run_in_exactly_the_named_shard(self):
+        script = (ROOT / "tooling/catalyst-test.sh").read_text()
+        select = script[script.index('shard="${CATALYST_TEST_SHARD:-1/1}"'):script.index('cores=')]
+        decide = script[script.index('if [ "$doc" -eq "$index" ]; then'):]
+        decide = decide[:decide.index("fi\n") + 3].replace('cargo test --locked "$@" --doc', "echo doc")
+
+        def run(shard, doc):
+            with tempfile.TemporaryDirectory() as logs:
+                Path(logs, "binaries").write_text("tests/a.rs\ttest\t/target/a\n")
+                env = {**os.environ, "logs": logs, "CATALYST_TEST_SHARD": shard}
+                env.pop("CATALYST_TEST_DOC_SHARD", None)
+                if doc is not None:
+                    env["CATALYST_TEST_DOC_SHARD"] = doc
+                result = subprocess.run(["bash", "-euo", "pipefail", "-c", select + decide], env=env,
+                                        capture_output=True, text=True)
+                return result.returncode, result.stdout.split(), result.stderr
+
+        for doc, runs in [(None, [1, 2, 3]), ("", [1, 2, 3]), ("2", [2]), ("3", [3])]:
+            with self.subTest(doc=doc):
+                ran = [index for index in (1, 2, 3) if run(f"{index}/3", doc)[:2] == (0, ["doc"])]
+                self.assertEqual(ran, runs)
+                self.assertTrue(all(run(f"{index}/3", doc)[0] == 0 for index in (1, 2, 3)))
+        for doc in ("0", "4", "x"):
+            with self.subTest(doc=doc):
+                code, out, error = run("2/3", doc)
+                self.assertEqual((code, out), (1, []))
+                self.assertIn("CATALYST_TEST_DOC_SHARD must name one shard from 1 to 3", error)
+
     def test_the_shards_of_the_actual_test_script_run_every_binary_once(self):
         script = (ROOT / "tooling/catalyst-test.sh").read_text()
         select = script[script.index('shard="${CATALYST_TEST_SHARD:-1/1}"'):script.index('cores=')]
@@ -618,6 +812,7 @@ class InventoryTests(unittest.TestCase):
                 Path(logs, "binaries").write_text("".join(rows))
                 env = {**os.environ, "logs": logs, "LC_ALL": locale}
                 env.pop("CATALYST_TEST_SHARD", None)
+                env.pop("CATALYST_TEST_DOC_SHARD", None)
                 if value is not None:
                     env["CATALYST_TEST_SHARD"] = value
                 result = subprocess.run(["bash", "-euo", "pipefail", "-c", select], env=env,
@@ -666,7 +861,6 @@ class InventoryTests(unittest.TestCase):
                     script.replace("set -euo pipefail", "set -uo pipefail"),
                     script.replace('"$@" --no-run', '"$@" --test unrelated --no-run'),
                     script.replace('"$1" > "$log"', '"$1" --skip required > "$log"'),
-                    script.replace('run "$jobs" < "$logs/shard"', 'run "$jobs" < <(head -n 1 "$logs/shard")'),
                     script.replace("'NR % n == i % n'", "'NR == 1'"),
                     script.replace('${CATALYST_TEST_SHARD:-1/1}', '${CATALYST_TEST_SHARD:-1/2}'),
                     script.replace('[[ "$shard" =~ ^[1-9][0-9]*/[1-9][0-9]*$ ]] && ', ''),
@@ -678,6 +872,11 @@ class InventoryTests(unittest.TestCase):
                     script.replace('[ -z "$same" ] || ', ''),
                     script.replace('same=$(cut -f1,2 "$logs/binaries" | LC_ALL=C sort | LC_ALL=C uniq -d)\n', 'same=\n'),
                     script.replace('cargo test --locked "$@" --doc\n', ''),
+                    script.replace('${CATALYST_TEST_DOC_SHARD:-$index}', '${CATALYST_TEST_DOC_SHARD:-0}'),
+                    script.replace(' && [ "$doc" -le "$total" ]', ''),
+                    script.replace('if [ "$doc" -eq "$index" ]; then', 'if [ "$doc" -ne "$index" ]; then'),
+                    script.replace('echo "$line" >> "$2/failures"; exit 1', 'echo "$line" >> "$2/failures"'),
+                    script.replace('  cat "$log"\n', ''),
                     script.replace("cores=", "exit 0\ncores=")]:
             with self.subTest(bad=bad[-100:]), self.assertRaisesRegex(ValueError, "catalyst-test.sh"):
                 guard.validate_test_script(bad)
@@ -743,6 +942,39 @@ class InventoryTests(unittest.TestCase):
                 guard.verify_targets({"removed": ["required"]}, targets)
         with self.assertRaisesRegex(ValueError, "missing required target"):
             guard.verify_targets({"renamed": ["required"]}, {"old": "unused"})
+
+
+class IntegrationTargetTests(unittest.TestCase):
+    """The node's integration tests link as a few grouped binaries (autotests = false)."""
+
+    def setUp(self):
+        self.node = ROOT / "services/catalyst"
+        self.manifest = tomllib.loads((self.node / "Cargo.toml").read_text())
+        self.targets = {target["name"]: target["path"] for target in self.manifest["test"]}
+
+    def test_every_file_under_tests_runs_in_exactly_one_target(self):
+        self.assertIs(self.manifest["package"]["autotests"], False)
+        tests = self.node / "tests"
+        roots = {(self.node / path).resolve() for path in self.targets.values()}
+        modules = []
+        for root in roots:
+            for path, name in re.findall(r'^#\[path = "([^"/]+)\.rs"\]\nmod (\w+);$', root.read_text(), re.M):
+                self.assertEqual(path, name, f"{root.name}: a module is named after its file")
+                modules.append(path)
+        self.assertEqual(len(modules), len(set(modules)), "a file runs in one target only")
+        files = {path.stem for path in tests.glob("*.rs") if path.resolve() not in roots}
+        self.assertEqual(set(modules), files, "every tests/*.rs file is a module of one grouped target")
+        mains = {f"tests/{path.parent.name}/main.rs" for path in tests.glob("*/main.rs")}
+        self.assertLessEqual(mains, set(self.targets.values()), "every tests/<dir>/main.rs is a [[test]] target")
+
+    def test_each_shard_of_three_takes_one_group_of_each_kind(self):
+        # catalyst-test.sh cuts the byte-sorted list round robin. No other crate's test path starts with
+        # "tests/", so these targets are adjacent there and any three adjacent ones reach three shards.
+        paths = sorted(self.targets.values())
+        self.assertTrue(all(path.startswith("tests/") for path in paths))
+        for kind in ("node_", "sockets_"):
+            places = [index % 3 for index, path in enumerate(paths) if path.startswith("tests/" + kind)]
+            self.assertEqual(sorted(places), [0, 1, 2], f"{kind}* groups must fall in three shards")
 
 
 class DevScriptTests(unittest.TestCase):

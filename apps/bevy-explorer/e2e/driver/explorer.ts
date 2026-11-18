@@ -161,9 +161,12 @@ export interface AvatarReport {
   kind: 'player' | 'otherPlayer' | 'sceneAvatar' | 'preview' | 'other'
   address: string | null
   selected: { bodyShape: string | null; wearables: string[]; emotes: string[]; forceRender: string[]; fromScene: boolean }
-  rendered: { processed: boolean; failed: boolean; bodyShape: string; wearables: RenderedWearable[]; hidden: string[] } | null
+  rendered: { processed: boolean; bodyShape: string; wearables: RenderedWearable[]; hidden: string[] } | null
   emote: EmoteState | null
   upperBodyEmote: EmoteState | null
+  /** The files the avatar could not be built from; `noBody` when neither its body nor the default
+   *  body could be. Absent from builds before it was reported. */
+  loadFailures?: { bodies: string[]; wearables: string[]; noBody: boolean }
 }
 
 export interface ChatMessage {
@@ -177,6 +180,41 @@ export interface ChatMessage {
 export interface ChatHistory {
   total: number
   messages: ChatMessage[]
+}
+
+/** A nametag on show (`/nametag_state` `tags`). `bubble` never carries the message. */
+export interface NametagTag {
+  /** An address, `local`, or null for an avatar with no wallet. */
+  player: string | null
+  /** The tag is over an avatar a scene made (`AvatarShape`): its suffix is the end of the avatar's id. */
+  sceneAvatar: boolean
+  name: string
+  suffix: string
+  verified: boolean
+  official: boolean
+  voice: 'off' | 'idle' | 'speaking' | 'hushed'
+  /** Metres from the camera; null until the tag is first placed. */
+  distance: number | null
+  opacity: number
+  /** Metres per tag unit. */
+  scale: number
+  position: [number, number, number]
+  /** Metres over the head bone for an avatar at a scale of one; null until the avatar is built. */
+  headOffset: number | null
+  bubble: { kind: 'nearby' | 'community' | 'dm'; mention: boolean; length: number } | null
+}
+
+export interface NametagState {
+  visible: boolean
+  shown: number
+  /** Of those shown, the tags over a scene's avatars. */
+  sceneAvatars: number
+  /** Tags whose names don't show: out of range, blocked, or hidden by the scene or a setting. */
+  hidden: number
+  /** The glyph atlas' distance-field and colour page sizes, in pixels. */
+  atlas: [number, number]
+  bubbles: 'All' | 'NearbyOnly' | 'None'
+  tags: NametagTag[]
 }
 
 /** A participant of the voice call or community stream the player is in (`/voice_state` `call`). */
@@ -447,6 +485,8 @@ export interface ExplorerOptions {
   allowSyntheticInput?: boolean
   /** The catalyst's window between two deployments of one profile (`PROFILE_DEPLOY_WINDOW_MS`). */
   profileDeployWindowMs?: number
+  /** How many deployments of one profile go through in a span (`PROFILE_DEPLOY_BURST`). */
+  profileDeployBurst?: { count: number; spanMs: number }
 }
 
 /** The catalyst takes one deployment of a profile per window: the reference catalyst's rate limit,
@@ -454,6 +494,11 @@ export interface ExplorerOptions {
  *  limited`, and the HUD shows "failed to deploy"), with a margin for the deployment going out
  *  after the engine reports the new version. */
 export const PROFILE_DEPLOY_WINDOW_MS = 4_000
+
+/** And no more than five deployments of a profile in a minute: zone's peers answer a sixth with
+ *  `429 Too many requests` and no `Retry-After` (seen on runs that deployed at 0, 5, 14, 27, 32
+ *  and 38 s), which the engine does not retry and the HUD shows as "Couldn't save your look". */
+export const PROFILE_DEPLOY_BURST = { count: 5, spanMs: 61_000 }
 
 /** How long the engine may take to hand the keyboard to a HUD text field, or to take it back once
  *  the field lets it go: the HUD relays its focus through the bridge scene, which takes a few
@@ -485,9 +530,14 @@ function scrubbed(line: string, error: unknown): unknown {
 export class Explorer {
   readonly console: Console
   readonly hud: Hud
+  /** When this client's driver was made: before its sign-in, so before anything the sign-in did. */
+  readonly openedAt = Date.now()
   readonly #listeners = new Set<CommandListener>()
   readonly #allowSynthetic: boolean
   readonly #deployWindowMs: number
+  readonly #deployBurst: { count: number; spanMs: number }
+  /** When each recent deployment of the own profile was seen, oldest first. */
+  readonly #deploymentsSeenAt: number[] = []
   /** The own profile's version as last read, and when it was last seen to change. */
   #ownVersion: number | undefined
   #ownVersionChangedAt = 0
@@ -498,6 +548,7 @@ export class Explorer {
     this.console = console
     this.#allowSynthetic = options.allowSyntheticInput ?? false
     this.#deployWindowMs = options.profileDeployWindowMs ?? PROFILE_DEPLOY_WINDOW_MS
+    this.#deployBurst = options.profileDeployBurst ?? PROFILE_DEPLOY_BURST
     this.hud = new Hud(this, this.#allowSynthetic)
   }
 
@@ -687,7 +738,10 @@ export class Explorer {
     if (!match) throw new Error(`unparseable get_user_data: ${reply}`)
     const data = { name: match[1]!, address: match[2]!, version: Number(match[3]), web3: match[4] === 'true' }
     if (address === undefined) {
-      if (this.#ownVersion !== undefined && data.version !== this.#ownVersion) this.#ownVersionChangedAt = Date.now()
+      // Each edit is one version above the last (`bump_version`), so a read that skipped some counts
+      // them all; a version a failed deploy used and the next edit skips counts too, which only
+      // waits longer.
+      if (this.#ownVersion !== undefined && data.version !== this.#ownVersion) this.#deploymentSeen(Math.max(1, data.version - this.#ownVersion))
       this.#ownVersion = data.version
     }
     return data
@@ -696,16 +750,29 @@ export class Explorer {
   /** Count a deployment of the own profile from now that no version change showed: the sign-in,
    *  whose first login deploys a new profile before any version was read. */
   profileDeployed(): void {
+    this.#deploymentSeen()
+  }
+
+  #deploymentSeen(count = 1): void {
     this.#ownVersionChangedAt = Date.now()
+    for (let i = 0; i < count; i++) this.#deploymentsSeenAt.push(this.#ownVersionChangedAt)
   }
 
   /** Before a step that deploys the own profile (closing the Backpack on a changed look, saving
    *  the passport): wait out the catalyst's window since the profile was last seen to change, a
-   *  deployment of its own. A change since the last read counts from now. */
+   *  deployment of its own, and, with a burst's worth of deployments in its span, until the oldest
+   *  of them leaves it. A change since the last read counts from now. */
   async profileDeployWindow(): Promise<void> {
     await this.userData()
     const left = this.#ownVersionChangedAt + this.#deployWindowMs - Date.now()
     if (left > 0) await sleep(left)
+    const { count, spanMs } = this.#deployBurst
+    const recent = this.#deploymentsSeenAt
+    while (recent.length > 0 && recent[0]! <= Date.now() - spanMs) recent.shift()
+    if (recent.length >= count) {
+      const wait = recent[recent.length - count]! + spanMs - Date.now()
+      if (wait > 0) await sleep(wait)
+    }
   }
 
   /** The profile version, which bumps on every avatar change (an equip is observable here). */
@@ -774,6 +841,17 @@ export class Explorer {
 
   voiceState(): Promise<VoiceState> {
     return this.json<VoiceState>('/voice_state')
+  }
+
+  nametags(): Promise<NametagState> {
+    return this.json<NametagState>('/nametag_state')
+  }
+
+  /** Shows `message` in a chat bubble over the named nametags, on this client only; how many
+   *  bubbles were asked for. */
+  async nametagBubble(target: 'local' | 'all' | string, kind: 'nearby' | 'community' | 'dm', message: string): Promise<number> {
+    const reply = await this.json<{ bubbles: number }>(`/nametag_bubble ${target} ${kind} ${message}`)
+    return reply.bubbles
   }
 
   connectivity(): Promise<ConnectivityState> {

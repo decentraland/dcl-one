@@ -47,6 +47,8 @@ export function consoleLine(message: { at: number; target: string; kind: string;
 }
 
 interface WebDriverModule {
+  /** What `console` rejects with when the command's document is replaced or closed first. */
+  readonly APP_GONE: string
   launch(options: { url: string; chrome?: string; headless?: boolean; args?: string[]; windowSize?: [number, number] }): Promise<WebDriver>
   findChrome(env?: NodeJS.ProcessEnv): string | undefined
 }
@@ -64,6 +66,15 @@ export async function findChrome(): Promise<string | undefined> {
     return (await webDriverModule()).findChrome()
   } catch {
     return undefined
+  }
+}
+
+/** A command whose document was replaced or closed before it answered, as by a click that loads
+ *  the page again; the next command runs in the new document. */
+export class DocumentGoneError extends ConsoleError {
+  constructor(line: string, output: string) {
+    super(line, output)
+    this.name = 'DocumentGoneError'
   }
 }
 
@@ -111,7 +122,9 @@ export class WebConsole implements Console {
     try {
       return await this.#driver.console(normalized, { timeout: this.#commandTimeoutMs })
     } catch (error) {
-      throw new ConsoleError(normalized, error instanceof Error ? error.message : String(error))
+      const message = error instanceof Error ? error.message : String(error)
+      if (message === (await webDriverModule()).APP_GONE) throw new DocumentGoneError(normalized, message)
+      throw new ConsoleError(normalized, message)
     }
   }
 

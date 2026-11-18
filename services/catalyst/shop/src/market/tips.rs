@@ -28,6 +28,7 @@ use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
+use crate::shared::routing::post;
 use alloy_primitives::U256;
 use axum::Json;
 use axum::Router;
@@ -35,7 +36,6 @@ use axum::body::Bytes;
 use axum::extract::{ConnectInfo, Extension, OriginalUri, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
 use chrono::NaiveDateTime;
 use parking_lot::Mutex;
 use serde_json::{Value, json};
@@ -46,8 +46,8 @@ use super::SharedState;
 use super::chain_walk::{self, ChainNet, INDEXER_MANA};
 use crate::jobs::{Jobs, PeriodicCfg};
 use crate::shared::identity::Address;
+use crate::shared::notifications::{NewNotification, insert_notifications};
 use crate::shared::signed_fetch::{self, PayloadPolicy, SignedPath};
-use crate::social::notifications::store::{NewNotification, insert_notifications};
 
 pub const KIND: &str = "tip_received";
 const SUBTYPE: &str = "tip-received";

@@ -12,8 +12,10 @@ The scenes were authored for one host scene that swapped bundles. Here every sce
 spans three parcels, so none can see another), with the host's `skyboxConfig.fixedTime` of 43200
 (noon). Positions in a scene's source are scene-relative, so nothing else changed but each scene's
 `tsconfig.json`, which extends the vendored SDK's `@dcl/sdk/types/tsconfig.ecs7.json` as
-`dcl-scene-cli init` writes it (the host's shared base file did not come along). The visual spec
-(`../specs/visual`) teleports to each scene's base parcel.
+`dcl-scene-cli init` writes it (the host's shared base file did not come along), and
+`gltf-materials`' grid and camera, centred on its two parcels (x 16 instead of 8): the 18 m grid
+crossed the scene's west edge, where the engine dissolves geometry with a noise that moves with
+time. The visual spec (`../specs/visual`) teleports to each scene's base parcel.
 
 `smart-wearable` is the last member and no visual scene: a smart-wearable project
 (`wearable.json`, a `hat` whose `model.glb` is `swap_material`'s cube, and `scene.json` with
@@ -37,11 +39,13 @@ DCL_SCENE_CLI=/path/to/dcl-scene-cli pnpm run build-scenes core   # one
 Two scenes outside explorer-automation, in the workspace but not in `SCENES`, so without a
 reference:
 
-- `pointer-targets`, parcels `0,20` to `9,20`, spawn at `(8, 0, 8)` facing +X: the targets of
+- `pointer-targets`, parcels `0,20` to `9,20`, spawn at `(8, 0, 8)`: the targets of
   `specs/visual/pointer.test.ts`, which hovers and clicks them through `/hover_entity` and
   `/click_entity`. A near box with a Down and an Up (`Near`), a wall and the box it hides
   (`Behind`), a box 50 m out reachable by camera distance (`Far`, `maxCameraDistance: 60`) and
-  the avocado glTF (`Model`, its pointer events on the container). It logs `pointer-targets ready` once the entities exist, then
+  the avocado glTF (`Model`, its pointer events on the container). The layout holds whether the
+  player faces the spawn's `cameraTarget` (+X) or keeps facing +Z after the teleport, as the
+  explorer does. It logs `pointer-targets ready` once the entities exist, then
   `pointer down entity=<id> tick=<tick>` and `pointer up entity=<id> tick=<tick>` once per new
   input command on a target.
 - `raycast-storm`, parcel `0,22`: 200 invisible entities in a 10 by 20 grid, each with a

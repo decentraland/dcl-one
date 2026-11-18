@@ -37,7 +37,9 @@ import type { CommunityPosts } from '../session/useEngineSession'
 import { Announcements } from './Announcements'
 import { inCommunityStream, startCallWith, streamAct, streamLive, streamPending } from '../voiceChat/callGate'
 import styles from './CommunityModal.module.css'
+import { getHudScale } from '@explorer-core/lib/hudScale'
 import { siteUrl } from '@hud-host'
+import { Mark } from '../../design/Glyphs'
 
 type Tab = 'announcements' | 'members' | 'places' | 'photos'
 const TABS: TabItem<Tab>[] = [
@@ -516,7 +518,7 @@ export function CommunityModal({
     })
   }
   const copyLink = (): void => {
-    void navigator.clipboard?.writeText(siteUrl(`/communities/${community.id}`)).catch(() => undefined)
+    void navigator.clipboard?.writeText(siteUrl(`/social/communities/${encodeURIComponent(community.id)}`)).catch(() => undefined)
     setMenuOpen(false)
   }
 
@@ -566,7 +568,7 @@ export function CommunityModal({
               <button type="button" className={styles.iconBtn} aria-label="Open chat" onClick={onOpenChat}><ChatIcon /></button>
             )}
             {inviteId != null ? null : member ? (
-              <Button size="sm" variant="ghost" className={styles.joined} disabled>✓ Joined</Button>
+              <Button size="sm" variant="ghost" className={styles.joined} disabled><Mark name="check" /> Joined</Button>
             ) : isPrivate && community.pendingRequestId != null ? (
               <Button size="sm" variant="ghost" aria-label="Cancel join request" onClick={() => onCancelRequest(community.id, community.pendingRequestId!)}>
                 <SwapLabel idle="Request Sent" hover="Cancel Request" />
@@ -577,7 +579,7 @@ export function CommunityModal({
               <Button size="sm" onClick={() => onJoin(community.id)}>Join</Button>
             )}
             <div className={styles.kebabWrap}>
-              <button type="button" className={styles.kebab} aria-label="More" onClick={() => setMenuOpen((o) => !o)}>⋮</button>
+              <button type="button" className={styles.kebab} aria-label="More" onClick={() => setMenuOpen((o) => !o)}><Mark name="kebab" /></button>
               {menuOpen && (
                 <div className={styles.menu}>
                   <button type="button" className={styles.menuItem} onClick={copyLink}>Copy link</button>
@@ -806,7 +808,7 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
       onMemberMenu={(member, anchor, actions, closed) => {
         // as the friends list's menu: up from the button, 5px right of and 10px above its centre
         const r = anchor.getBoundingClientRect()
-        openProfileCard(member.address, r.left + r.width / 2 + 5, r.top + r.height / 2 - 10, {
+        openProfileCard(member.address, r.left + r.width / 2 + 5 * (getHudScale() || 1), r.top + r.height / 2 - 10 * (getHudScale() || 1), {
           above: true,
           context: 'community',
           communityActions: actions,

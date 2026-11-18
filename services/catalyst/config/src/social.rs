@@ -507,6 +507,15 @@ pub struct SocialConfig {
     #[arg(long, env = "REPORT_EVIDENCE_DAILY_MIB", default_value_t = 2048)]
     pub report_evidence_daily_mib: u32,
 
+    /// The Cast 2.0 web app whose `/s/{key}` and `/w/{location}` pages the
+    /// stream links of `/cast/generate-stream-link` name.
+    #[arg(
+        long,
+        env = "CAST2_URL",
+        default_value = "https://cast2.decentraland.org"
+    )]
+    pub cast2_url: String,
+
     /// Service token in front of the voice routes, the DM privacy patch and
     /// the world ban status; unset answers 503 on them.
     #[arg(long, env = "COMMS_GATEKEEPER_AUTH_TOKEN", hide_env_values = true)]
@@ -719,8 +728,9 @@ pub struct SocialConfig {
     )]
     pub badges_public_asset_base_url: String,
 
-    /// Badge art mirrored from upstream's CDN (`<badge>[/<tier>]/{2d,3d}/...`),
-    /// served at /badges/assets.
+    /// Badge art mirrored from upstream's CDN (`<badge>[/<tier>]/{2d,3d}/...`)
+    /// or uploaded by the admin `PUT`, served at /badges/assets; a shared
+    /// volume when several processes serve the badges routes.
     #[arg(long, env = "BADGES_ASSETS_DIR")]
     pub badges_assets_dir: Option<String>,
 
@@ -749,12 +759,6 @@ pub struct SocialConfig {
     /// no such filter) keeps every deployment.
     #[arg(long, env = "BADGES_DEPLOYMENT_MAX_LAG_SECS", default_value_t = 0)]
     pub badges_deployment_max_lag_secs: u64,
-    /// Count the gatekeeper's room joins and leaves toward the presence
-    /// badges (social.presence_badges): every process stores the events,
-    /// the leased badges-presence jobs apply them and close lost visits.
-    #[arg(long, env = "BADGES_PRESENCE_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
-    pub badges_presence_enabled: bool,
-
     /// A presence grant writes its badge_granted notification; false
     /// grants without one.
     #[arg(long, env = "BADGES_PRESENCE_GRANT_NOTIFICATIONS", default_value_t = presence_badges::GRANT_NOTIFICATIONS, action = clap::ArgAction::Set)]

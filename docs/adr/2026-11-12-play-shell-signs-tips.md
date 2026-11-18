@@ -27,7 +27,9 @@ Donate runs in the `/play` web shell, the same way the Shop's purchases do.
 - **A per-tip guard.** The wallet the shell signs with is wrapped by `shell/donate/guard.ts`. It forwards one
   request: the MANA token's EIP-712 meta-transaction whose call is `transfer(creator, amount)`, for the login's
   account, on the build's chain. It refuses anything else, a transaction sent from the wallet included, before it
-  reaches the wallet, and re-checks the account and the login before the signature.
+  reaches the wallet, and re-checks the account and the login before the signature and again after it: a signature
+  that comes back once the sign-in changed is dropped, and the tip settles as failed. Gift's guard shares this one
+  (`shell/metaTxGuard.ts`).
 - **Gasless only, never twice.** The tip is relayed as a meta-transaction and nothing else: a transaction from the
   wallet beside it would not use up its nonce, so both could land. The relay's refusal (`ok: false`, which it also
   answers after a broadcast it lost) fails the tip. The account's next send first reads the token's nonce. While it

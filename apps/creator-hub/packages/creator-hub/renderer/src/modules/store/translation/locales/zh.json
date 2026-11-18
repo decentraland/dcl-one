@@ -383,6 +383,8 @@
         "select_world": {
           "title": "发布到您的世界",
           "description": "选择将发布您的世界的域名。",
+          "domain_type_label": "域名类型",
+          "world_name_label": "世界名称",
           "world_name": "世界（名稱）",
           "placeholder": "選擇名稱",
           "claim_new_name": "索取新名字",
@@ -616,12 +618,16 @@
         "code_editor": {
           "label": "首选代码编辑器",
           "choose_device": "从设备中选择...",
+          "placeholder": "添加或选择默认编辑器",
+          "list": "已添加的代码编辑器",
+          "remove": "移除 {name}",
           "errors": {
             "load": "加载代码编辑器失败",
             "set": "设置默认编辑器失败",
             "invalid_app_extension": "应用程序无效。请选择有效的 .app 文件",
             "invalid_app_bundle": "应用程序包结构无效",
             "invalid_exe_file": "应用程序无效。请选择有效的 .exe 文件",
+            "invalid_executable": "应用程序无效。请选择可以运行的文件",
             "unknown": "设置默认编辑器失败"
           }
         },
@@ -729,7 +735,6 @@
     },
     "install_client": {
       "title": "要输入，您需要首先安装分散",
-      "download": "下载",
       "download_macos": "下载",
       "download_win": "下载",
       "cancel": "暂不安装"
@@ -796,8 +801,6 @@
       "delete_scene": "删除场景...",
       "delete_scene_failed": "删除场景失败",
       "dependencies_updated": "場景相依性已更新",
-      "multiplayer_sdk_installed": "已安装 Multiplayer Server SDK。",
-      "multiplayer_sdk_uninstalled": "已移除 Multiplayer Server SDK，并安装了最新的 SDK 版本。",
       "updating_sdk_skills": "正在安裝最新的 AI 技能...",
       "sdk_skills_updated": "AI 技能已是最新版本",
       "sdk_skills_update_failed": "無法安裝 AI 技能",
@@ -1470,7 +1473,6 @@
         "title": "互动",
         "description": "了解用户如何与你的 Place 互动。",
         "minutes": "分钟",
-        "delta": "{value} 分钟",
         "vs_last_week": "{value}（对比上周）",
         "daily": {
           "title": "平均每日游玩时长",
@@ -1566,6 +1568,10 @@
       "day_7_retention": {
         "label": "7 日留存",
         "tooltip": "首次访问后 7 天内回访你的 Place 的新用户占比。"
+      },
+      "total_playtime": {
+        "label": "总游玩时长",
+        "tooltip": "用户在你的 Place 中停留的全部时间，累计每一次访问。"
       },
       "median_playtime": {
         "label": "游玩时长中位数",
@@ -1811,9 +1817,9 @@
           "d3_retention": "D3 留存率",
           "d3_retention_info_label": "关于 D3 留存率",
           "playtime": "总游戏时长",
-          "playtime_info": "过去 30 天内每位玩家在你的地点停留的平均时长。",
+          "playtime_info": "过去 30 天内玩家在你的地点停留的总时长。",
           "playtime_info_label": "关于总游玩时长",
-          "minutes": "{value} 分钟",
+          "minutes": "{value} {minutes, plural, other {分钟}}",
           "no_data": "无数据"
         },
         "empty_body": "发布场景后，它会显示在这里，并附上本周期的表现。",

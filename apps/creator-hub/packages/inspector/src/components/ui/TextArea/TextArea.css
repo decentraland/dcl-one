@@ -21,6 +21,7 @@
 }
 
 .TextArea.Field textarea {
+  resize: vertical;
   flex: 1;
   min-height: 72px;
   padding: 4px 8px;
@@ -30,7 +31,7 @@
   font-weight: 500;
   line-height: normal;
   background-color: var(--gray-0);
-  border-radius: 4px;
+  border-radius: var(--shape-borderRadius);
   border: 1px solid var(--gray-0);
   outline: none;
 }
@@ -46,7 +47,7 @@
 }
 
 .TextArea.Field.focused textarea {
-  border-color: var(--base-01);
+  border-color: var(--focus-ring);
 }
 
 .TextArea.Field.hovered:not(.focused):not(.error) textarea {

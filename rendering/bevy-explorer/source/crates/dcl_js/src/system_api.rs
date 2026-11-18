@@ -18,10 +18,12 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
     FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
-    PermissionRequestEvent, PhotoModeState, PortableInfo, ProfileChangedEvent, ProximityEvent,
-    SatelliteView, SceneLoadingUi, SetAvatarData, SetPermanentPermission, SetSinglePermission,
-    SystemApi, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
+    FriendshipEventUpdate, HomeScene, HoverEvent, ListenedCommunity, LiveSceneInfo, LobbyStage,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PlatformBanNotice,
+    PortableInfo, ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi,
+    SetAvatarData, SetPermanentPermission, SetSinglePermission, SystemApi,
+    TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
+    WorldAccessEvent, WorldAccessVerdict,
 };
 use tokio::sync::Notify;
 
@@ -421,6 +423,28 @@ pub async fn op_get_satellite_view(
     rx.await.map_err(|e| anyhow::anyhow!(e))
 }
 
+pub async fn op_get_world_access(
+    state: Rc<RefCell<impl State>>,
+    world: String,
+) -> Result<WorldAccessVerdict, anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetWorldAccess(world, sx))?;
+
+    rx.await.map_err(|e| anyhow::anyhow!(e))
+}
+
+pub fn op_set_lobby_stage(state: Rc<RefCell<impl State>>, stage: Option<LobbyStage>) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::SetLobbyStage(stage))
+        .unwrap();
+}
+
 pub fn op_set_home_scene(state: Rc<RefCell<impl State>>, realm: String, parcel: Vector2) {
     state
         .borrow_mut()
@@ -585,6 +609,21 @@ pub fn op_send_chat(state: Rc<RefCell<impl State>>, message: String, channel: St
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
         .send(SystemApi::SendChat(message, channel))
+        .unwrap();
+}
+
+pub fn op_set_chat_bubble_text(
+    state: Rc<RefCell<impl State>>,
+    message_id: String,
+    message: String,
+) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::SetChatBubbleText {
+            message_id,
+            message,
+        })
         .unwrap();
 }
 
@@ -828,6 +867,26 @@ pub async fn op_read_world_access_stream(
     state: Rc<RefCell<impl State>>,
     rid: u32,
 ) -> Result<Option<WorldAccessEvent>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub async fn op_get_platform_ban_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetPlatformBanStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_platform_ban_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<PlatformBanNotice>, anyhow::Error> {
     Ok(read_stream(state, rid).await)
 }
 
@@ -1148,6 +1207,26 @@ pub async fn op_read_analytics_event_stream(
     state: Rc<RefCell<impl State>>,
     rid: u32,
 ) -> Result<Option<AnalyticsEvent>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub async fn op_get_texture_optimization_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetTextureOptimizationStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_texture_optimization_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<TextureOptimizationStatus>, anyhow::Error> {
     Ok(read_stream(state, rid).await)
 }
 
@@ -1559,11 +1638,14 @@ pub async fn op_read_community_connectivity_stream(
     Ok(read_stream(state, rid).await)
 }
 
-pub fn op_set_community_channels(state: Rc<RefCell<impl State>>, ids: Vec<String>) {
+pub fn op_set_community_channels(
+    state: Rc<RefCell<impl State>>,
+    communities: Vec<ListenedCommunity>,
+) {
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::SetCommunityChannels(ids))
+        .send(SystemApi::SetCommunityChannels(communities))
         .unwrap();
 }
 

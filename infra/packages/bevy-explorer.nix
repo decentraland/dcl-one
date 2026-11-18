@@ -6,13 +6,15 @@ let
   workspaceDir = "${explorerDir}/source";
   patchesDir = root + "/${explorerDir}/patches";
   workspace = root + "/${workspaceDir}";
-  manifest = builtins.fromTOML (builtins.readFile (workspace + /Cargo.toml));
-  lock = builtins.fromTOML (builtins.readFile (workspace + /Cargo.lock));
-  lockVersion = name: (lib.findSingle (package: package.name == name)
-    (throw "Cargo.lock has no package ${name}") (throw "Cargo.lock has several packages ${name}") lock.package).version;
+  manifestText = builtins.readFile (workspace + /Cargo.toml);
+  lockText = builtins.readFile (workspace + /Cargo.lock);
+  manifest = builtins.fromTOML manifestText;
+  lock = builtins.fromTOML lockText;
+  # The compiler, the tools, the libraries and the prebuilt V8 and CEF: the dev shell has the same.
+  native = import ./bevy-explorer-native.nix { inherit pkgs; };
+  inherit (native) binary v8 cef;
 
-  # The CI test job compiles C and C++ with clang 21.
-  crane = craneLib.overrideScope (_: _: { stdenvSelector = p: p.llvmPackages_21.stdenv; });
+  crane = craneLib.overrideScope (_: _: { stdenvSelector = _: native.stdenv; });
 
   tree = dir: lib.fileset.toSource {
     root = root + "/${dir}";
@@ -30,13 +32,6 @@ let
     (root + /.cargo/config.toml)
   ];
   repoFiles = lib.fileset.toSource { inherit root; fileset = lib.fileset.unions ownFiles; };
-  # The build script of the `common` crate compares the patch series with the
-  # stamp in each patched tree, so the last layer holds the series. The first
-  # two do not.
-  explorerFiles = lib.fileset.toSource {
-    inherit root;
-    fileset = lib.fileset.unions (ownFiles ++ [ patchesDir ]);
-  };
 
   # One derivation per patched source: a fetch of the upstream commit, then the
   # tool applies the patch series offline. The tool fails when the result is not
@@ -53,7 +48,7 @@ let
       submodules = spec.submodule or [ ];
     in lib.nameValuePair (treeDir name) (pkgs.runCommand "patched-${name}" {
       nativeBuildInputs = [ pkgs.gitMinimal pkgs.python3 ];
-      passthru = { inherit base; };
+      passthru = { inherit base; inherit (spec) rev; };
     } ''
       mkdir -p repo/tooling repo/${explorerDir}/patches bases
       cp ${patchTool} repo/tooling/patched-sources.py
@@ -66,6 +61,7 @@ let
         '') submodules}
       ''}
       python3 repo/tooling/patched-sources.py materialise ${name} --offline --base-dir bases --dest-root dest
+      rm dest/${treeDir name}/.patched-stamp.json
       mv dest/${treeDir name} $out
     '');
   patchedSources = lib.listToAttrs (map patched (lib.attrNames (lib.filterAttrs
@@ -74,13 +70,14 @@ let
 
   # The third-party trees by repository-relative directory. A tree is a path or
   # a derivation.
-  thirdParty = patchedSources // lib.genAttrs [
+  inTree = lib.genAttrs [
     "library/vendor/rusty_enet"
     "${workspaceDir}/vendor/basisu"
     "${explorerDir}/vendor/rpc-rust"
     "${explorerDir}/vendor/bevy_dui"
     "${explorerDir}/vendor/boimp"
   ] tree;
+  thirdParty = patchedSources // inTree;
 
   # The path crates the workspace manifest names, each with its directory below
   # the repository root.
@@ -101,15 +98,18 @@ let
       named = packagesByName.${part 0};
       versioned = lib.filter (package: package.version == part 1) named;
       source = if lib.length parts > 2 then part 2 else "()";
+      sourceLessCommit = package: lib.head (lib.splitString "#" (package.source or ""));
     in packageId (lib.head (
       if lib.length parts == 1 then named
       else if lib.length versioned == 1 then versioned
-      else lib.filter (package: "(${package.source or ""})" == source) versioned));
+      else lib.filter (package: "(${sourceLessCommit package})" == source) versioned));
   dependents = lib.zipAttrs (lib.concatMap (package:
     map (dependency: { ${dependencyId dependency} = packageId package; }) (package.dependencies or [ ])) lock.package);
-  cratesOf = tree: lib.concatMap
-    (name: map packageId (lib.filter (package: !(package ? source)) (packagesByName.${name} or [ ])))
-    (lib.attrNames (lib.filterAttrs (_: dir: dir == tree || lib.hasPrefix "${tree}/" dir) pathCrates));
+  commitOf = package: lib.last (lib.splitString "#" (package.source or ""));
+  cratesOf = tree: map packageId (
+    if patchedSources ? ${tree} then lib.filter (package: commitOf package == patchedSources.${tree}.rev) lock.package
+    else lib.concatMap (name: lib.filter (package: !(package ? source)) (packagesByName.${name} or [ ]))
+      (lib.attrNames (lib.filterAttrs (_: dir: dir == tree || lib.hasPrefix "${tree}/" dir) pathCrates)));
   usesBevy = lib.genAttrs (map (item: item.key) (builtins.genericClosure {
     startSet = map (key: { inherit key; }) (cratesOf (treeDir "bevy"));
     operator = item: map (key: { inherit key; }) (dependents.${item.key} or [ ]);
@@ -119,6 +119,19 @@ let
   bevyLayer = lib.filter (tree: lib.any (id: usesBevy ? ${id}) (cratesOf tree)) (lib.attrNames thirdParty);
   late = lib.getAttrs bevyLayer thirdParty;
   early = removeAttrs thirdParty bevyLayer;
+  byRev = lib.mapAttrs' (_: source: lib.nameValuePair source.rev source);
+  latePatched = builtins.intersectAttrs late patchedSources;
+  latePatchedByRev = byRev latePatched;
+  inLatePatched = package: latePatchedByRev ? ${commitOf package};
+  registryCratesThatUseBevy = lib.filter
+    (package: usesBevy ? ${packageId package} && package ? source && !inLatePatched package) lock.package;
+  earlyPackages = lib.throwIf (registryCratesThatUseBevy != [ ])
+    "the first layer would compile these against a dummy of Bevy: ${lib.concatMapStringsSep ", " packageId registryCratesThatUseBevy}"
+    (lib.filter (package: !inLatePatched package) lock.package);
+
+  standInRevs = lib.mapAttrs (dir: _: builtins.hashString "sha1" dir) latePatched;
+  withStandInRevs = builtins.replaceStrings
+    (map (source: source.rev) (lib.attrValues latePatched)) (lib.attrValues standInRevs);
 
   # The dummy of a patched tree keeps only its manifests, and the evaluation
   # reads them from the derivation's output (import from derivation). So a
@@ -139,19 +152,76 @@ let
       chmod -R u+w $out/${dir}
     '') trees)}
   '';
-  depsSrc = assemble dummyRepo (early // lib.mapAttrs (_: dummy) late);
-  bevySrc = assemble dummyRepo thirdParty;
-  src = assemble explorerFiles thirdParty;
-
-  # What the build scripts download in a cargo build, fetched here because the
-  # sandbox has no network. Each is passed the way its build script accepts.
-  binary = args: pkgs.fetchurl (args // { meta.sourceProvenance = [ lib.sourceTypes.binaryNativeCode ]; });
-  # The versions come from the files that hold them. The name of each download
-  # carries its version, so a new version never takes the old file by its hash.
-  v8 = pkgs.callPackage ./librusty-v8.nix {
-    v8Version = lockVersion "v8";
-    v8Hashes.x86_64-linux = "sha256-f7aDA74Jn2h4rp9sACGHX4DBbN6yevgWCEKdfI1fJDU=";
+  stableDummyRepo = crane.mkDummySrc {
+    src = assemble repoFiles { "${workspaceDir}/Cargo.toml" = builtins.toFile "Cargo.toml" (withStandInRevs manifestText); };
+    extraDummyScript = "cp ${builtins.toFile "Cargo.lock" (withStandInRevs lockText)} $out/${workspaceDir}/Cargo.lock";
   };
+  depsSrc = assemble stableDummyRepo (builtins.intersectAttrs early inTree);
+  bevySrc = assemble dummyRepo inTree;
+  src = repoFiles;
+
+  gitCrates = pkgs.writeText "git-crates.py" ''
+    import os, pathlib, re, shutil, subprocess, sys, tomllib
+
+    tree, out, *wanted = sys.argv[1:]
+    manifests = {path.parent: tomllib.loads(path.read_text()) for path in pathlib.Path(tree).rglob("Cargo.toml")}
+    crates = {}
+    for crate, manifest in manifests.items():
+        if "package" in manifest:
+            root = next((above for above in [crate, *crate.parents] if "workspace" in manifests.get(above, {})), crate)
+            resolved = subprocess.run(["crane-resolve-workspace-inheritance", crate / "Cargo.toml"], check=True,
+                stdout=subprocess.PIPE, text=True, env=os.environ | {"WORKSPACE_ROOT": str(root)}).stdout
+            package = tomllib.loads(resolved).get("package", {})
+            crates.setdefault(f"{package.get('name')}-{package.get('version', '0.0.0')}", []).append((crate, resolved))
+    for name in wanted:
+        found = crates.get(name, [])
+        if len(found) != 1:
+            sys.exit(f"{name}: {len(found)} crates of this name and version in {tree}")
+        crate, resolved = found[0]
+        target = pathlib.Path(out, name)
+        shutil.copytree(crate, target, ignore=lambda directory, names: [
+            entry for entry in names if pathlib.Path(directory, entry) in manifests])
+        subprocess.run(["chmod", "-R", "u+w", target], check=True)
+        library = tomllib.loads(resolved).get("lib", {}).get("path", "")
+        inside = re.sub(r"^(\.\./)+", "", library)
+        if inside != library:
+            shutil.copytree((crate / library).parent, (target / inside).parent, dirs_exist_ok=True)
+            resolved = resolved.replace(f'"{library}"', f'"{inside}"')
+        (target / "Cargo.toml").write_text(resolved)
+        (target / ".cargo-checksum.json").write_text('{"files":{}, "package":null}')
+  '';
+  workspaceRootOnly = pkgs.writeShellScriptBin "cargo" ''echo "{\"workspace_root\":\"$WORKSPACE_ROOT\"}"'';
+  hashOfUnpatchedGitSource."git+https://github.com/gltf-rs/gltf?rev=50d65229#50d65229477fe5f785c2c90df21eb59c93ea2261" =
+    "sha256-nSlREMX9EKNpBFAXMA9PUj2FeLEr9Yh8UayEzrJIUBQ=";
+  vendor = checkoutsByRev: packages: crane.vendorCargoDeps {
+    cargoLockParsed.package = packages;
+    outputHashes = hashOfUnpatchedGitSource;
+    overrideVendorGitCheckout = crates: fetched:
+      let
+        package = lib.head crates;
+        src = checkoutsByRev.${commitOf package} or null;
+      in if src == null then lib.throwIfNot (hashOfUnpatchedGitSource ? ${package.source})
+        "${package.name}: ${package.source} is not the rev of a patched source and has no hash in hashOfUnpatchedGitSource" fetched
+      else pkgs.runCommand fetched.name {
+        nativeBuildInputs = [ pkgs.python3 crane.craneUtils workspaceRootOnly ];
+      } "python3 ${gitCrates} ${src} $out ${lib.escapeShellArgs (map (crate: "${crate.name}-${crate.version}") crates)}";
+  };
+  earlyVendor = vendor (byRev patchedSources) earlyPackages;
+  lateVendor = vendor latePatchedByRev (lib.filter inLatePatched lock.package);
+  lateDummiesByStandInRev = lib.mapAttrs' (dir: source: lib.nameValuePair standInRevs.${dir} (dummy source)) latePatched;
+  lateDummyVendor = vendor lateDummiesByStandInRev (lib.filter
+    (package: lateDummiesByStandInRev ? ${commitOf package}) (builtins.fromTOML (withStandInRevs lockText)).package);
+  vendorDir = lateDir: pkgs.runCommandLocal "vendor-cargo-deps" { } ''
+    for crate in ${earlyVendor}/*/* ${lateDir}/*/*; do
+      [ -e "$crate/Cargo.toml" ] || { echo "$crate: crane did not find this crate in its checkout" >&2; exit 1; }
+    done
+    mkdir $out
+    cat ${earlyVendor}/config.toml ${lateDir}/config.toml >$out/config.toml
+  '';
+  cargoVendorDir = vendorDir lateVendor;
+
+  # What the build scripts download in a cargo build is fetched ahead, because the sandbox has no
+  # network: V8 and CEF in bevy-explorer-native.nix, WebRTC here.
   # The release the build script of webrtc-sys downloads, read from the patched
   # tree (import from derivation).
   webrtcTag =
@@ -171,38 +241,6 @@ let
     unzip -q $archive
     mv linux-x64-release $out
   '';
-  # The cef-dll-sys version is <crate version>+<CEF version>; the archive name
-  # adds the commit and the Chromium version of that CEF build.
-  cefVersion = lib.last (lib.splitString "+" (lockVersion "cef-dll-sys"));
-  cefArchive = {
-    type = "minimal";
-    name = "cef_binary_${cefVersion}+g465474a+chromium-139.0.7258.139_linux64_minimal.tar.bz2";
-    sha1 = "e23dfadfb4ae8b3551d234d973ff8cd7d7f8469c";
-  };
-  # The layout `export-cef-dir` writes, with the record cef-dll-sys checks.
-  cef = pkgs.stdenv.mkDerivation {
-    pname = "cef-minimal";
-    version = cefVersion;
-    src = binary {
-      name = "cef-${cefVersion}-linux64-minimal.tar.bz2";
-      url = "https://cef-builds.spotifycdn.com/${lib.replaceStrings [ "+" ] [ "%2B" ] cefArchive.name}";
-      hash = "sha256-NettNnBOlIMRHZFHGiQ+atRfSmwPfl1PpYbu+nGAOe4=";
-    };
-    nativeBuildInputs = [ pkgs.autoPatchelfHook ];
-    buildInputs = with pkgs; [
-      alsa-lib at-spi2-atk cairo cups dbus expat glib libdrm libgbm libx11 libxcb libxcomposite
-      libxdamage libxext libxfixes libxkbcommon libxrandr nspr nss pango stdenv.cc.cc.lib udev
-    ];
-    dontConfigure = true;
-    dontBuild = true;
-    dontStrip = true;
-    installPhase = ''
-      mkdir -p $out
-      cp -r Release/. Resources/. $out/
-      cp ${builtins.toFile "archive.json" (builtins.toJSON cefArchive)} $out/archive.json
-    '';
-  };
-
   # The root build script asks git for the revision and the local changes.
   git = pkgs.writeShellScriptBin "git" ''
     if [ "$1" = rev-parse ]; then echo 0000000000000000000000000000000000000000; fi
@@ -218,13 +256,8 @@ let
     strictDeps = true;
     doCheck = false;
     dontUseCmakeConfigure = true;
-    nativeBuildInputs = with pkgs; [
-      pkg-config cmake ninja protobuf rustPlatform.bindgenHook python3 jq git
-    ];
-    buildInputs = with pkgs; [
-      alsa-lib udev openssl ffmpeg_6-headless glib libdrm libgbm libGL
-      libx11 libxext libxfixes libxdamage libxrandr libxcomposite
-    ];
+    nativeBuildInputs = native.tools ++ [ pkgs.rustPlatform.bindgenHook pkgs.python3 pkgs.jq git ];
+    buildInputs = native.libraries;
     # nixpkgs seeds the C compiler flags with the hash of the output, and the
     # bindgen hook copies them. bindgen compiles again when its flags change.
     #
@@ -246,13 +279,6 @@ let
     RUSTY_V8_ARCHIVE = "${v8}";
     LK_CUSTOM_WEBRTC = "${webrtc}";
     CEF_PATH = "${cef}";
-  };
-
-  # gltf is the one git source of the lock file.
-  cargoVendorDir = crane.vendorCargoDeps {
-    cargoLock = workspace + /Cargo.lock;
-    outputHashes."git+https://github.com/gltf-rs/gltf?rev=12fc1b7c#12fc1b7ce28c7b4c6d1b881a30df24060dccfbda" =
-      "sha256-YdTXJXNtGNxGf3KbQpZ8NcCXmVTVdgHTYGc9S6s88s0=";
   };
 
   # The two builds of CI: the binaries of the root package, then every test.
@@ -283,6 +309,7 @@ let
   # empty crate and the layer keeps what does not depend on them.
   deps = crane.buildDepsOnly (common // {
     dummySrc = depsSrc;
+    cargoVendorDir = vendorDir lateDummyVendor;
     buildPhaseCargoCommand = ''
       ${cargoBuild}
       ${countUnits}

@@ -23,7 +23,7 @@ let
     pnpm = pnpm';
     src = depsSrc;
     fetcherVersion = 4;
-    hash = "sha256-4rTu6NSjLrRt5ylJ5VGNSwoh97h6uZGXHWF7MBHf3/Y=";
+    hash = "sha256-7Pa+AKdJfVnUK5PaZz5E/V7Cz+g6W7o5A/Bc4R7Dp8Y=";
   };
   runtimeDeps = stdenv.mkDerivation {
     pname = "foundation-sites-runtime-deps";
@@ -60,12 +60,14 @@ let
       (root + /library/catalyst-api) (root + /library/shop)
       (root + /library/ui/index.ts)
       (root + /library/ui/css-modules.d.ts)
+      (root + /library/ui/content.helpers.ts)
+      (root + /library/ui/link.helpers.ts)
       (root + /library/ui/components)
       (lib.fileset.maybeMissing (root + /library/ui/package.json))
       (lib.fileset.maybeMissing (root + /library/ui/tsconfig.json))
       (lib.fileset.maybeMissing (root + /library/ui/foundations))
       (lib.fileset.maybeMissing (root + /library/ui/apps/sites))
-      (root + /library/ui/apps/hud) (root + /library/explorer-core)
+      (root + /library/ui/apps/hud) (root + /library/ui/apps/shop) (root + /library/explorer-core)
       (root + /library/ui/text-styles.ts)
     ];
   };
@@ -99,13 +101,13 @@ let
       runHook preBuild
       chmod -R u+w ..
       ln -s "$PWD/node_modules" ../node_modules
-      if grep -rIl '^version https://git-lfs.github.com/spec/v1$' ../../library/ui/apps/sites/assets ../../library/ui/foundations/typography/fonts; then
-        echo "Sites media or shared fonts contain Git LFS pointers. Run git lfs pull and build git+file:.?lfs=1#image-sites." >&2
+      if grep -rIl '^version https://git-lfs.github.com/spec/v1$' ../../library/ui/apps/sites/assets ../../library/ui/foundations/typography/fonts ../ui3/public/assets/invite; then
+        echo "Sites media, the invite clip or shared fonts contain Git LFS pointers. Run git lfs pull and build git+file:.?lfs=1#image-sites." >&2
         exit 1
       else
         status=$?
         if [ "$status" -ne 1 ]; then
-          echo "Unable to inspect Sites media and shared fonts." >&2
+          echo "Unable to inspect Sites media, the invite clip and shared fonts." >&2
           exit "$status"
         fi
       fi

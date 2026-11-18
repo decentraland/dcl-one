@@ -1,11 +1,12 @@
-import { useState } from 'react'
-import { EmptyState, Icon, Spinner } from '../../design'
+import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react'
+import { EmptyState, Icon, Spinner, openPopup } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
+import { MenuBackdrop } from '../menu/MenuBackdrop'
 import { PhotoDetail } from './PhotoDetail'
 import { ReelGrid, type ReelGridLayout, type ReelGridMenu } from './ReelGrid'
 import { useReelList } from './useReelList'
 import { useOwnReelActions } from './useOwnReelActions'
-import type { GalleryState, ProfileState } from '../session/useEngineSession'
+import type { GalleryState, ProfileState, TravelOutcome } from '../session/useEngineSession'
 import type { ChatUser } from '../chat/ProfileCardPresentation'
 import styles from './GalleryPage.module.css'
 
@@ -21,65 +22,130 @@ const GALLERY_LAYOUT: ReelGridLayout = {
   monthSpacing: 20,
   optionButtonHeight: 41
 }
+const COMPACT_GALLERY_LAYOUT: ReelGridLayout = { ...GALLERY_LAYOUT, columns: 5, tileWidth: 292, tileHeight: 219 }
+
+type PhotoDetailProps = React.ComponentProps<typeof PhotoDetail>
+
+/** A popup renders once, so the photo over the section modal reads the page's props from here. */
+function photoSource(): {
+  get: () => PhotoDetailProps | null
+  set: (props: PhotoDetailProps | null) => void
+  subscribe: (listener: () => void) => () => void
+} {
+  let props: PhotoDetailProps | null = null
+  const listeners = new Set<() => void>()
+  return {
+    get: () => props,
+    set: (next) => {
+      props = next
+      listeners.forEach((l) => l())
+    },
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    }
+  }
+}
+
+function LivePhoto({ source }: { source: ReturnType<typeof photoSource> }): React.JSX.Element | null {
+  const props = useSyncExternalStore(source.subscribe, source.get)
+  return props != null ? <PhotoDetail {...props} /> : null
+}
 
 export function GalleryPage({
   gallery,
   profile,
   onNavigate,
   onTeleport,
-  onViewProfile
+  onViewProfile,
+  compact
 }: {
   gallery: GalleryState
   profile: ProfileState
   onNavigate: (page: string) => void
   /** Jump to a photo's parcel (closes the gallery). */
-  onTeleport: (x: number, y: number) => void
+  onTeleport: (x: number, y: number) => TravelOutcome
   /** Open a captured person's passport. */
   onViewProfile?: (user: ChatUser) => void
+  /** Hosted in the lobby's section modal; a photo opens over the whole screen. */
+  compact?: { onTravel: () => void }
 }): React.JSX.Element | null {
+  const active = gallery.open || compact != null
   const [index, setIndex] = useState<number | null>(null)
   // The page stays mounted while closed, so each open resets it and reads the reel from the top:
   // photos taken since the last open show up.
   const [opened, setOpened] = useState(0)
-  const [wasOpen, setWasOpen] = useState(gallery.open)
-  if (gallery.open !== wasOpen) {
-    setWasOpen(gallery.open)
-    if (gallery.open) {
+  const [wasOpen, setWasOpen] = useState(active)
+  if (active !== wasOpen) {
+    setWasOpen(active)
+    if (active) {
       setOpened((n) => n + 1)
       setIndex(null)
     }
   }
-  const list = useReelList(gallery.open ? `own:${opened}` : null, gallery.fetchPage)
+  const list = useReelList(active ? `own:${opened}` : null, gallery.fetchPage)
   const actions = useOwnReelActions(gallery, list)
   const menu: ReelGridMenu = { showDelete: true, onSetPublic: actions.setPublic, onDelete: (photo) => void actions.remove(photo) }
 
-  if (!gallery.open) return null
+  const selected = active && index != null ? (list.photos[index] ?? null) : null
+  const detail: PhotoDetailProps | null =
+    selected != null && index != null
+      ? {
+          photos: list.photos,
+          index,
+          meta: gallery.metas[selected.id],
+          isSelf: true,
+          onIndex: (i) => {
+            setIndex(i)
+            list.loadMore(i)
+          },
+          onLoadMeta: gallery.loadPhoto,
+          onClose: () => setIndex(null),
+          onTeleport: (x, y) => {
+            const outcome = onTeleport(x, y)
+            if (outcome === 'refused') return
+            setIndex(null)
+            if (compact != null) compact.onTravel()
+            // over the startup lobby the pick has closed the gallery already
+            else if (outcome === 'sent') gallery.toggle()
+          },
+          onDelete: (photo) =>
+            void actions.remove(photo).then((removed) => {
+              if (removed) setIndex(null)
+            }),
+          onViewPerson: onViewProfile
+        }
+      : null
+
+  const [source] = useState(photoSource)
+  useLayoutEffect(() => source.set(detail))
+  const popupPhoto = compact != null && detail != null
+  useEffect(() => {
+    if (!popupPhoto) return
+    return openPopup(() => <LivePhoto source={source} />, {
+      className: styles.photoLayer,
+      backdropClickCloses: false,
+      onClose: () => setIndex(null)
+    })
+  }, [popupPhoto, source])
+
+  if (!active) return null
 
   const p = profile.data
-  const selected = index != null ? list.photos[index] : null
   const pct = list.max > 0 ? Math.min(100, (list.total / list.max) * 100) : 0
 
-  return (
-    <MainMenuShell
-      active="gallery"
-      profileName={p?.name}
-      profilePicture={p?.picture}
-      profileAddress={p?.address}
-      profileClaimed={p?.hasClaimedName}
-      onNavigate={onNavigate}
-      onClose={gallery.toggle}
-      flushBody
-    >
+  const body = (
+    <>
       <div className={styles.head}>
         <h1 className={styles.title}>Gallery</h1>
         {list.loaded && list.max > 0 && (
           <div className={styles.storage} title={`${list.total} of ${list.max} photos used`}>
-            <div className={styles.storageBar}>
-              <div className={styles.storageFill} style={{ '--fill': `${pct}%` } as React.CSSProperties} />
-            </div>
             <span className={styles.storageText}>
               Storage {list.total}/{list.max} photos taken
             </span>
+            <div className={styles.storageBar}>
+              <div className={styles.storageFill} style={{ '--fill': `${pct}%` } as React.CSSProperties} />
+            </div>
           </div>
         )}
       </div>
@@ -111,7 +177,7 @@ export function GalleryPage({
       ) : (
         <ReelGrid
           photos={list.photos}
-          layout={GALLERY_LAYOUT}
+          layout={compact != null ? COMPACT_GALLERY_LAYOUT : GALLERY_LAYOUT}
           menu={menu}
           onOpen={setIndex}
           onVisibleIndex={list.loadMore}
@@ -119,32 +185,25 @@ export function GalleryPage({
           aria-label="Photos"
         />
       )}
-
-      {selected && index != null && (
-        <PhotoDetail
-          photos={list.photos}
-          index={index}
-          meta={gallery.metas[selected.id]}
-          isSelf
-          onIndex={(i) => {
-            setIndex(i)
-            list.loadMore(i)
-          }}
-          onLoadMeta={gallery.loadPhoto}
-          onClose={() => setIndex(null)}
-          onTeleport={(x, y) => {
-            setIndex(null)
-            gallery.toggle() // close the gallery so the teleport lands in-world
-            onTeleport(x, y)
-          }}
-          onDelete={(photo) =>
-            void actions.remove(photo).then((removed) => {
-              if (removed) setIndex(null)
-            })
-          }
-          onViewPerson={onViewProfile}
-        />
-      )}
+    </>
+  )
+  if (compact != null) return <div className={styles.compact}>{body}</div>
+  return (
+    <MainMenuShell
+      active="gallery"
+      profileName={p?.name}
+      profilePicture={p?.picture}
+      profileAddress={p?.address}
+      profileClaimed={p?.hasClaimedName}
+      onNavigate={onNavigate}
+      onClose={gallery.toggle}
+      transparentBody
+    >
+      <div className={styles.page}>
+        <MenuBackdrop />
+        {body}
+      </div>
+      {detail != null && <PhotoDetail {...detail} />}
     </MainMenuShell>
   )
 }

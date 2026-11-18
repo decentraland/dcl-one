@@ -16,7 +16,7 @@ use dcl_component::proto_components::sdk::components::VideoState;
 use futures_channel::mpsc::{UnboundedSender, unbounded};
 use futures_lite::StreamExt;
 use js_sys::{Function, Reflect};
-use wasm_bindgen::{JsCast, JsValue, closure::Closure, prelude::wasm_bindgen};
+use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{HtmlMediaElement, HtmlVideoElement, VideoFrame, Worker};
 
@@ -24,29 +24,6 @@ use super::{HOST, HostCommand, HostHandle, MediaEvent, MediaId};
 use crate::{AVCommand, MediaRetry, MediaRetryStatus, RetryStep, first_reopen_delay, reopen_delay};
 
 type RcClosure = Rc<RefCell<Option<Closure<dyn FnMut(f64, JsValue)>>>>;
-
-// Defined by engine.js on the page (HLS-aware source assignment).
-#[wasm_bindgen]
-extern "C" {
-    /// A source engine.js attached to a media element.
-    type AttachedSource;
-
-    /// Attaches `src`; `on_fatal` gets the type of an hls.js error hls.js could not recover.
-    #[wasm_bindgen(js_namespace = window, js_name = setVideoSource)]
-    fn set_video_source(elt: &HtmlVideoElement, src: &str, on_fatal: &Function) -> AttachedSource;
-
-    /// Detaches the source from its element.
-    #[wasm_bindgen(method)]
-    fn destroy(this: &AttachedSource);
-
-    /// The source is a live stream.
-    #[wasm_bindgen(method, getter)]
-    fn live(this: &AttachedSource) -> bool;
-
-    /// The source plays through hls.js.
-    #[wasm_bindgen(method, getter)]
-    fn hls(this: &AttachedSource) -> bool;
-}
 
 thread_local! {
     /// The page's media elements by id; other page code may add to it ([`adopt_video_element`]).
@@ -160,22 +137,12 @@ fn media_error_label(media: &HtmlMediaElement) -> &'static str {
     }
 }
 
-/// The kind of an hls.js error type.
-fn hls_error_label(kind: Option<&str>) -> &'static str {
-    match kind {
-        Some("networkError") => "hls network error",
-        Some("mediaError") => "hls media error",
-        _ => "hls error",
-    }
-}
-
-/// A media element's source: `url` attached through engine.js, reopened after a failure on
+/// A media element's source: `url` assigned to the element's `src`, reopened after a failure on
 /// [`MediaRetry`]'s schedule. Without a url (a placeholder, an adopted element) a failure is
 /// final.
 struct Source {
     id: MediaId,
     media: HtmlMediaElement,
-    video: HtmlVideoElement,
     url: Option<String>,
     events: UnboundedSender<MediaEvent>,
     render_worker: Worker,
@@ -185,9 +152,8 @@ struct Source {
     paused: Cell<bool>,
     /// The last `play()` was refused.
     play_refused: Rc<Cell<bool>>,
-    attached: RefCell<Option<AttachedSource>>,
-    /// The attached source's `on_fatal`.
-    on_fatal: RefCell<Option<Closure<dyn FnMut(JsValue)>>>,
+    /// `url` is the element's `src`.
+    attached: Cell<bool>,
     retry: Cell<MediaRetry>,
     /// Failures counted since the source was created.
     failures: Cell<u32>,
@@ -242,42 +208,25 @@ impl Source {
         let Some(url) = &self.url else {
             return;
         };
-        let source = Rc::downgrade(self);
-        let on_fatal = Closure::<dyn FnMut(JsValue)>::new(move |kind: JsValue| {
-            if let Some(source) = source.upgrade() {
-                source.fail(hls_error_label(kind.as_string().as_deref()));
-            }
-        });
-        let attached = set_video_source(&self.video, url, on_fatal.as_ref().unchecked_ref());
-        *self.attached.borrow_mut() = Some(attached);
-        *self.on_fatal.borrow_mut() = Some(on_fatal);
+        self.media.set_src(url);
+        self.attached.set(true);
     }
 
     /// Detaches the attached source.
     fn detach(&self) {
-        if let Some(attached) = self.attached.borrow_mut().take() {
-            attached.destroy();
+        if self.attached.replace(false) {
+            let _ = self.media.remove_attribute("src");
+            self.media.load();
         }
-        self.on_fatal.borrow_mut().take();
     }
 
     fn is_live(&self) -> bool {
-        self.attached
-            .borrow()
-            .as_ref()
-            .is_some_and(|attached| attached.live())
+        self.attached.get() && self.media.duration() == f64::INFINITY
     }
 
     /// The source is or was a live stream: it has no position to resume.
     fn live_stream(&self) -> bool {
         self.was_live.get() || self.is_live()
-    }
-
-    fn uses_hls(&self) -> bool {
-        self.attached
-            .borrow()
-            .as_ref()
-            .is_some_and(|attached| attached.hls())
     }
 
     /// A failure of the attached source: schedules its reopen, or gives up. Failures while a
@@ -473,15 +422,13 @@ impl HostMedia {
         let source = Rc::new(Source {
             id,
             media: media.clone(),
-            video: video.clone(),
             url,
             events: events.clone(),
             render_worker: render_worker.clone(),
             wants_play: Cell::new(false),
             paused: Cell::new(false),
             play_refused: Rc::new(Cell::new(false)),
-            attached: RefCell::new(None),
-            on_fatal: RefCell::new(None),
+            attached: Cell::new(false),
             retry: Cell::new(MediaRetry::default()),
             failures: Cell::new(0),
             was_live: Cell::new(false),
@@ -541,12 +488,7 @@ impl HostMedia {
         })));
         media.set_onerror(Some(&register({
             let source = source.clone();
-            Box::new(move || {
-                // ignored while hls.js is attached: only `on_fatal` counts its failures
-                if !source.uses_hls() {
-                    source.fail(media_error_label(&source.media));
-                }
-            })
+            Box::new(move || source.fail(media_error_label(&source.media)))
         })));
         media.set_onended(Some(&register({
             let source = source.clone();
@@ -554,14 +496,8 @@ impl HostMedia {
                 if source.failed.get() {
                     return;
                 }
-                // the end of a live source counts as a failure; under hls.js liveness is the
-                // attached source's current one, otherwise whether the source was ever live
-                let live = if source.uses_hls() {
-                    source.is_live()
-                } else {
-                    source.live_stream()
-                };
-                if live {
+                // the end of a source that was ever live counts as a failure
+                if source.live_stream() {
                     source.fail("live stream ended");
                     return;
                 }

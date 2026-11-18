@@ -1,8 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
-import ParcelsIcon from '@mui/icons-material/GridViewRounded';
-import { Atlas } from 'decentraland-ui2/dist/components/Atlas/Atlas';
-import type { AtlasProps } from 'decentraland-ui2/dist/components/Atlas/Atlas.types';
-import { Box, Typography } from 'decentraland-ui2';
+import { GridViewRoundedIcon as ParcelsIcon } from '@ui/atoms/icons-material';
+import Text from '@ui/atoms/Text';
 import type { WorldScene } from '/@/lib/worlds';
 import { coordsToId } from '/@/lib/land';
 import {
@@ -12,6 +10,7 @@ import {
   MIN_COORDINATE,
 } from '/@/modules/world';
 import { t } from '/@/modules/store/translation/utils';
+import { Atlas, type AtlasLayer, type AtlasProps } from './Atlas';
 import './styles.css';
 
 export type AtlasScene = Pick<WorldScene, 'parcels'>;
@@ -25,6 +24,9 @@ type Props = Partial<AtlasProps> & {
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
 };
+
+const NO_TILES = {};
+const NO_LAYERS: AtlasLayer[] = [];
 
 export const WorldAtlasColors = {
   noPermissionParcel: '#000000CC', // Black semi-transparent overlay
@@ -48,6 +50,7 @@ const WorldAtlas: React.FC<Props> = React.memo(
     onMouseDownEvent,
     onMouseEnter,
     onMouseLeave,
+    layers: extraLayers = NO_LAYERS,
     ...props
   }) => {
     const dimensions = useMemo(() => getWorldDimensions(worldScenes), [worldScenes]);
@@ -97,19 +100,24 @@ const WorldAtlas: React.FC<Props> = React.memo(
       [sceneParcelsSet, colors],
     );
 
+    // One array per change of a layer, so the map paints again only then.
+    const layers = useMemo(
+      () => [emptyParcelLayer, worldLayer, scenesLayer, ...extraLayers],
+      [emptyParcelLayer, worldLayer, scenesLayer, extraLayers],
+    );
+
     return (
-      <Box
+      <div
         className="WorldAtlasContainer"
-        height={height}
+        style={{ height }}
         onMouseDown={onMouseDownEvent}
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
       >
-        {/* @ts-expect-error TODO: Update properties in UI2, making the not required `optional` */}
         <Atlas
           {...props}
-          tiles={{}} // Empty to override Genesis City default tiles.
-          layers={[emptyParcelLayer, worldLayer, scenesLayer, ...(props.layers ?? [])]}
+          tiles={NO_TILES} // Empty: a world has no Genesis City tiles.
+          layers={layers}
           isDraggable={isDraggable}
           withZoomControls={withZoomControls}
           height={height}
@@ -117,19 +125,17 @@ const WorldAtlas: React.FC<Props> = React.memo(
           y={props.y ?? centerY}
         />
         {(floatingContent || (showWorldSize && worldSize)) && (
-          <Box className="TopLeftOverlay">
+          <div className="TopLeftOverlay">
             {showWorldSize && worldSize && (
-              <Box className="WorldSize">
+              <div className="WorldSize">
                 <ParcelsIcon />
-                <Typography variant="body2">
-                  {t('world_atlas.world_size', { size: worldSize })}
-                </Typography>
-              </Box>
+                <Text variant="body2">{t('world_atlas.world_size', { size: worldSize })}</Text>
+              </div>
             )}
             {floatingContent}
-          </Box>
+          </div>
         )}
-      </Box>
+      </div>
     );
   },
 );

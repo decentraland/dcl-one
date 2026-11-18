@@ -41,8 +41,6 @@ name: Bevy Explorer / E2E
     paths:
       - 'apps/bevy-explorer/**'
       - 'rendering/bevy-explorer/**'
-      - 'tooling/patched-sources.py'
-      - '.github/actions/bevy-explorer-sources/**'
       - 'library/protocol/**'
       - '.cargo/**'
       - 'rust-toolchain*'
@@ -303,6 +301,13 @@ jobs:
       # WebGPU finds no hardware there; the probe names the NVIDIA adapter's LUID, and the
       # scenarios start their browser on it. CHROME_EXTRA_ARGS is set here, first thing, so a
       # probe that fails still leaves the scenarios their flags.
+      #
+      # The probe runs under node itself, not `pnpm run`: pnpm writes the script line to stderr,
+      # and Windows PowerShell turns a stderr line captured with `2>&1` into an error that, under
+      # the runner's `$ErrorActionPreference = 'stop'`, ends the step before the LUID is read; the
+      # scenarios then start on the paravirtual adapter (WARP), where no scene starts. The step
+      # keeps going past the probe's own stderr lines for the same reason, and says so when it
+      # finds no LUID.
       - name: GPU probe
         continue-on-error: true
         run: |
@@ -311,16 +316,19 @@ jobs:
           Write-Output "session: interactive=$([Environment]::UserInteractive) id=$((Get-Process -Id $PID).SessionId)"
           $smi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
           if ($smi) { & $smi.Source } else { Write-Output 'nvidia-smi: not on PATH' }
+          $ErrorActionPreference = 'Continue'
           $env:CHROME_EXTRA_ARGS = ''
-          pnpm run gpu-probe
+          node scripts/gpu-probe.ts
           $env:CHROME_EXTRA_ARGS = $env:WEBGPU_FLAGS
-          $lines = pnpm run gpu-probe --adapter nvidia 2>&1 | ForEach-Object { "$_" }
+          $lines = node scripts/gpu-probe.ts --adapter nvidia 2>&1 | ForEach-Object { "$_" }
           $lines
           $luid = ($lines | Select-String -Pattern '^adapter-luid: (\S+)' | Select-Object -First 1)
           if ($luid) {
             $value = $luid.Matches[0].Groups[1].Value
             Add-Content -Path $env:GITHUB_ENV -Value "CHROME_EXTRA_ARGS=$env:WEBGPU_FLAGS --use-adapter-luid=$value"
             Write-Output "the scenarios' browser starts on adapter LUID $value"
+          } else {
+            Write-Output "::warning title=GPU probe::no NVIDIA adapter LUID; the scenarios' browser starts on its default adapter"
           }
       # The accounts secret is on the two scenario steps alone: never in the environment of the
       # install, the builds, or the report.

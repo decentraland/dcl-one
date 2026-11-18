@@ -310,14 +310,19 @@ class PlayImportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'inputs differ'):
             play.install(self.build)
 
-    def test_bevy_patch_edits_invalidate_the_artifact(self):
-        # The patch series decides the Bevy tree the engine compiles; this fixture has no .git, so
-        # this is the walk Nix's filtered contract takes.
-        self.write('rendering/bevy-explorer/patches/bevy/series/0001-scene-spawner.patch', 'fn changed() {}\n')
+    def test_a_changed_revision_of_a_patched_source_invalidates_the_artifact(self):
+        # Bevy and the forked crates are git dependencies: the lock names the revision the engine
+        # compiles. This fixture has no .git, so this is the walk Nix's filtered contract takes.
+        self.write(contract.SOURCE + 'Cargo.lock', '[[package]]\nname = "bevy"\n')
         with self.assertRaisesRegex(ValueError, 'inputs differ'):
             play.install(self.build)
 
-    def test_the_bevy_patch_series_is_an_engine_input_in_git_and_in_the_nix_contract(self):
+    def test_a_patch_series_is_not_an_engine_input(self):
+        # The series only records how a revision was made; the engine compiles the revision.
+        self.write('rendering/bevy-explorer/patches/bevy/series/0001-scene-spawner.patch', 'fn changed() {}\n')
+        play.install(self.build)
+
+    def test_the_in_tree_crates_are_engine_inputs_in_git_and_in_the_nix_contract(self):
         bevy = 'rendering/bevy-explorer/patches/bevy/series/0001-scene-spawner.patch'
         self.write(bevy, 'fn spawn() {}\n')
         crate = 'rendering/bevy-explorer/vendor/boimp/src/lib.rs'
@@ -330,7 +335,10 @@ class PlayImportTests(unittest.TestCase):
         git('config', 'gc.auto', '0')
         git('add', '.')
         git('commit', '-qm', 'fixture')
-        self.assertLessEqual({bevy, crate, 'tooling/patched-sources.py'}, set(contract.input_files(self.root, engine_only=True)))
+        inputs = set(contract.input_files(self.root, engine_only=True))
+        self.assertIn(crate, inputs)
+        self.assertNotIn('tooling/patched-sources.py', inputs)
+        self.assertNotIn(bevy, inputs)
         key = contract.engine_inputs(self.root)
         self.assertEqual(key, contract.engine_inputs(self.root, git('rev-parse', 'HEAD')))
         filtered = self.root / 'nix-contract'
@@ -340,18 +348,24 @@ class PlayImportTests(unittest.TestCase):
             shutil.copyfile(self.root / name, target)
         self.assertEqual(key, contract.engine_inputs(filtered))
         self.write(bevy, 'fn spawn_sliced() {}\n')
+        self.assertEqual(key, contract.engine_inputs(self.root))
+        self.write(crate, 'pub fn import_sliced() {}\n')
         self.assertNotEqual(key, contract.engine_inputs(self.root))
 
-    def test_in_tree_crate_and_rebuild_tool_edits_invalidate_the_artifact(self):
-        # bevy_dui, boimp and rpc-rust are compiled from tracked bytes; tooling/patched-sources.py writes the
-        # Bevy and fork trees. No .git here: the walk Nix's filtered contract takes.
-        for name in ('rendering/bevy-explorer/vendor/boimp/src/lib.rs', 'tooling/patched-sources.py'):
-            with self.subTest(name=name):
-                key = contract.engine_inputs(self.root)
-                self.write(name, name + ' changed\n')
-                self.assertNotEqual(key, contract.engine_inputs(self.root))
-                with self.assertRaisesRegex(ValueError, 'inputs differ'):
-                    play.install(self.build)
+    def test_an_in_tree_crate_edit_invalidates_the_artifact(self):
+        # bevy_dui, boimp and rpc-rust are compiled from tracked bytes. No .git here: the walk Nix's
+        # filtered contract takes.
+        name = 'rendering/bevy-explorer/vendor/boimp/src/lib.rs'
+        key = contract.engine_inputs(self.root)
+        self.write(name, name + ' changed\n')
+        self.assertNotEqual(key, contract.engine_inputs(self.root))
+        with self.assertRaisesRegex(ValueError, 'inputs differ'):
+            play.install(self.build)
+
+    def test_the_patch_tool_is_not_an_engine_input(self):
+        # No build step runs the tool: Cargo fetches each revision.
+        self.write('tooling/patched-sources.py', 'changed\n')
+        play.install(self.build)
 
     def test_shared_hud_sources_rebuild_the_artifact_but_not_the_engine(self):
         # react-web compiles these through its aliases (react-web/vite.shared.ts).

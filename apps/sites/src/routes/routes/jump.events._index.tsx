@@ -1,4 +1,3 @@
-import "@dcl/one-ui/foundations/foundations.css";
 import { JumpCard } from "@dcl/one-ui/apps/sites/jump/JumpCard";
 import { JumpEventActions } from "@dcl/one-ui/apps/sites/jump/JumpEventActions";
 import { JumpPage } from "@dcl/one-ui/apps/sites/jump/JumpPage";
@@ -24,7 +23,7 @@ export function meta() {
 }
 
 const INVALID = "/jump/events/invalid";
-const EVENTS_HREF = "/whats-on";
+const EVENTS_HREF = "/events";
 
 /** An unknown id, a malformed position or no event at the target lands on the invalid page; a failed read is a 503. */
 export async function loader({ request }: Route.LoaderArgs) {
@@ -109,7 +108,7 @@ export default function JumpEvents({ loaderData }: Route.ComponentProps) {
     );
 
   return (
-    <SitesChrome active="play">
+    <SitesChrome active="play" overlayNav>
       <JumpPage>
         <JumpCard {...card} {...jumpInFor(card.jumpInHref, launch)} when={when} actions={actions} />
       </JumpPage>

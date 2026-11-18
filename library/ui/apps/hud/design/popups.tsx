@@ -259,6 +259,7 @@ export function showDialog(opts: DialogOptions): Promise<string | null> {
       (close) => (
         <ModalShell
           title={opts.title}
+          ariaLabel={opts.title}
           onClose={close}
           closeButton={opts.dismissible ?? true}
           width={opts.width ?? 420}

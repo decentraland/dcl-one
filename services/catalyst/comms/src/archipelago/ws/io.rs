@@ -1,5 +1,7 @@
 use crate::archipelago::feed::FeedCache;
-use crate::archipelago::registry::PeerLink;
+use crate::archipelago::registry::{
+    OutputBudget, OutputCredit, PeerLink, ReceivedSocketEvent, SocketEvent, SocketEvents,
+};
 use crate::gatekeeper::admission::cluster::fence::TokenFence;
 use axum::extract::ws::Message;
 use futures::{Sink, SinkExt};
@@ -238,12 +240,10 @@ use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use tokio::sync::{Notify, OwnedSemaphorePermit};
+use tokio::sync::OwnedSemaphorePermit;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-const QUEUE_CAPACITY: usize = 64;
-const FULL_DEADLINE: Duration = Duration::from_secs(10);
 const POSITION_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Poll the transport directly on both halves. There is no intermediate sink
@@ -284,7 +284,6 @@ impl<S: Sink<Message> + Unpin> Sink<Message> for SharedTransport<S> {
 struct Pending {
     frames: VecDeque<Frame>,
     terminal: Option<Terminal>,
-    full_since: Option<Instant>,
     owner: Option<PeerLink>,
     done: bool,
     write_phase: WritePhase,
@@ -298,32 +297,18 @@ enum WritePhase {
 }
 impl Pending {
     fn pop(&mut self) -> Option<Frame> {
-        let frame = self.frames.pop_front();
-        if self.frames.len() < QUEUE_CAPACITY {
-            self.full_since = None;
-        }
-        frame
-    }
-    fn full_expired(&self, now: Instant) -> bool {
-        self.frames.len() == QUEUE_CAPACITY
-            && self.full_since.is_some_and(|at| now >= at + FULL_DEADLINE)
+        self.frames.pop_front()
     }
     // A full queue hands the frame back; boxing it would allocate on the send path.
     #[allow(clippy::result_large_err)]
-    fn push(&mut self, frame: Frame) -> Result<(), Frame> {
-        if frame.assignment
-            && let Some(index) = self.frames.iter().position(|held| held.assignment)
-        {
-            self.frames[index] = frame;
-            return Ok(());
+    fn push(&mut self, mut frame: Frame, budget: &Arc<OutputBudget>) -> Result<(), Frame> {
+        if frame.credit.is_none() {
+            frame.credit = budget.reserve();
         }
-        if self.frames.len() == QUEUE_CAPACITY {
+        if frame.credit.is_none() {
             return Err(frame);
         }
         self.frames.push_back(frame);
-        if self.frames.len() == QUEUE_CAPACITY {
-            self.full_since = Some(Instant::now());
-        }
         Ok(())
     }
 }
@@ -338,13 +323,14 @@ pub(super) enum Outgoing {
         message: Message,
         stamp: crate::gatekeeper::admission::cluster::fence::PulseAdmissionStamp,
         token_fence: TokenFence,
-        owner: V4Owner,
+        permit: crate::archipelago::registry::ControlPositionPermit,
     },
     Kick(Message),
 }
 
 struct Frame {
     message: Message,
+    credit: Option<OutputCredit>,
     owner: Option<PeerLink>,
     delivery: Option<(Option<bool>, bool)>,
     assignment: bool,
@@ -353,6 +339,124 @@ struct Frame {
     permit: Option<crate::archipelago::registry::ControlPositionPermit>,
     fence_bound: bool,
 }
+struct Assignments {
+    owner: PeerLink,
+    events: SocketEvents,
+    ignore: bool,
+    last: Option<(Vec<u8>, i64)>,
+    stamp: Option<crate::gatekeeper::admission::cluster::fence::PulseAdmissionStamp>,
+}
+
+impl Assignments {
+    fn new(owner: PeerLink, events: SocketEvents, ignore: bool) -> Self {
+        Self {
+            owner,
+            events,
+            ignore,
+            last: None,
+            stamp: None,
+        }
+    }
+
+    fn accept(&mut self, received: ReceivedSocketEvent, queue: &Queue, state: &AppState) -> bool {
+        use crate::protocol::archipelago::archipelago::{IslandChangedMessage, server_packet};
+        use prost::Message as _;
+        let ReceivedSocketEvent { event, credit } = received;
+        let SocketEvent::IslandChanged(payload, stamp) = event else {
+            queue.terminal(Terminal::Kick(kick_message()));
+            return false;
+        };
+        if self.ignore {
+            return true;
+        }
+        let Ok(assignment) = IslandChangedMessage::decode(payload.as_slice()) else {
+            return true;
+        };
+        let now = chrono::Utc::now().timestamp_millis();
+        if self.stamp == stamp
+            && super::is_repeat(
+                self.last.as_ref(),
+                &payload,
+                now,
+                state.settings.server.island_changed_dedup_ms,
+            )
+        {
+            state.feed.on_deduplicated();
+            return true;
+        }
+        let frame = Frame {
+            message: Message::Binary(
+                super::craft(server_packet::Message::IslandChanged(assignment)).into(),
+            ),
+            credit,
+            owner: Some(self.owner.clone()),
+            delivery: Some((Some(true), true)),
+            assignment: true,
+            pulse_admission: stamp.clone(),
+            island_token_fence: None,
+            permit: None,
+            fence_bound: false,
+        };
+        {
+            let mut pending = queue.pending.lock();
+            if self.owner.was_kicked() {
+                drop(pending);
+                queue.terminal(Terminal::Kick(kick_message()));
+                return false;
+            }
+            if state.restart.is_cancelled()
+                || queue.peer_close.is_cancelled()
+                || queue.closed.is_cancelled()
+                || pending.done
+                || pending.terminal.is_some()
+                || pending.write_phase == WritePhase::Retired
+                || self.owner.is_closed()
+            {
+                return false;
+            }
+            if queue.budget.full_expired(Instant::now()) {
+                drop(pending);
+                queue.terminal(Terminal::Close(
+                    1013,
+                    "Island assignment dropped; reconnect".into(),
+                ));
+                return false;
+            }
+            // Mailbox ownership transfers the existing credit; no reservation can wait here.
+            if pending.push(frame, &queue.budget).is_err() {
+                return false;
+            }
+        }
+        queue.budget.changed.notify_waiters();
+        self.last = Some((payload, now));
+        self.stamp = stamp;
+        true
+    }
+
+    fn progress(&mut self, queue: &Queue, state: &AppState) -> Result<bool, ()> {
+        match self.events.try_recv_credited() {
+            Ok(received) => self
+                .accept(received, queue, state)
+                .then_some(true)
+                .ok_or(()),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => Ok(false),
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => Err(()),
+        }
+    }
+}
+
+async fn next_assignment(assignments: Option<&mut Assignments>) -> Option<ReceivedSocketEvent> {
+    match assignments {
+        Some(assignments) => assignments.events.recv_credited().await,
+        None => std::future::pending().await,
+    }
+}
+
+enum SocketInput {
+    Assignment(Option<ReceivedSocketEvent>),
+    Transport(Option<Result<Message, axum::Error>>),
+}
+
 enum Terminal {
     Kick(Message),
     Close(u16, String),
@@ -362,7 +466,7 @@ enum Terminal {
 struct Queue {
     raw: Option<super::raw_transport::Signal>,
     pending: Mutex<Pending>,
-    changed: Notify,
+    budget: Arc<OutputBudget>,
     closed: CancellationToken,
     peer_close: CancellationToken,
 }
@@ -378,7 +482,6 @@ impl Queue {
     fn peer_closed(&self) {
         let mut pending = self.pending.lock();
         pending.frames.clear();
-        pending.full_since = None;
         pending.terminal = None;
         pending.done = true;
         if pending.write_phase == WritePhase::Active {
@@ -386,7 +489,7 @@ impl Queue {
             self.retire();
         }
         self.peer_close.cancel();
-        self.changed.notify_waiters();
+        self.budget.changed.notify_waiters();
     }
 
     fn terminal(&self, reason: Terminal) {
@@ -403,12 +506,14 @@ impl Queue {
         {
             pending.terminal = Some(reason);
         }
-        self.changed.notify_waiters();
+        self.budget.changed.notify_waiters();
     }
 }
 
 /// One bounded transport adapter. Writer owns the permit until actual termination.
 pub(super) struct WebSocket {
+    accepted_credit: Option<OutputCredit>,
+    assignments: Option<Assignments>,
     incoming: SharedTransport<Transport>,
     queue: Arc<Queue>,
     state: AppState,
@@ -483,8 +588,10 @@ impl WebSocket {
         // The parser is dropped before either half releases its capacity share.
         sink.1 = Some(permit.clone());
         incoming.1 = Some(permit.clone());
-        tokio::spawn(writer(sink, queue.clone(), state.clone(), permit.clone()));
+        crate::shared::task::spawn(writer(sink, queue.clone(), state.clone(), permit.clone()));
         Self {
+            accepted_credit: None,
+            assignments: None,
             incoming,
             queue,
             idle: Idle::new(Instant::from_std(state.started_at), Instant::now()),
@@ -495,9 +602,28 @@ impl WebSocket {
             next_position: Instant::now(),
         }
     }
+    pub(super) fn output_budget(&self) -> Arc<OutputBudget> {
+        self.queue.budget.clone()
+    }
+    pub(super) fn accept_credit(&mut self, credit: Option<OutputCredit>) {
+        self.accepted_credit = credit;
+    }
+    pub(super) fn attach_assignments(
+        &mut self,
+        owner: PeerLink,
+        events: SocketEvents,
+        ignore: bool,
+    ) {
+        self.bind_owner(&owner);
+        self.assignments = Some(Assignments::new(owner, events, ignore));
+    }
+    #[cfg(feature = "test-support")]
+    pub(super) async fn pause_ping_for_test(&self) {
+        self.state.ws_ping_gate.pause(&self.queue).await;
+    }
     pub(super) fn bind_owner(&mut self, owner: &PeerLink) {
         self.queue.pending.lock().owner = Some(owner.clone());
-        self.queue.changed.notify_waiters();
+        self.queue.budget.changed.notify_waiters();
     }
     pub(super) async fn position(
         &mut self,
@@ -609,7 +735,21 @@ impl WebSocket {
                     }
                 }
                 _ = tokio::time::sleep_until(self.next_position), if self.sample.is_some() => self.apply_position().await,
-                message = self.incoming.next() => {
+                input = async {
+                    tokio::select! {
+                        event = next_assignment(self.assignments.as_mut()) => SocketInput::Assignment(event),
+                        message = self.incoming.next() => SocketInput::Transport(message),
+                    }
+                } => {
+                    let message = match input {
+                        SocketInput::Assignment(Some(received)) => {
+                            if !self.assignments.as_mut().unwrap().accept(received, &self.queue, &self.state) { return None; }
+                            tokio::task::yield_now().await;
+                            continue;
+                        }
+                        SocketInput::Assignment(None) => return None,
+                        SocketInput::Transport(message) => message,
+                    };
                     if matches!(message, Some(Ok(Message::Close(_)))) {
                         self.sample = None;
                         self.queue.peer_closed();
@@ -666,7 +806,7 @@ async fn commit_position<F, C, A>(
 impl Drop for WebSocket {
     fn drop(&mut self) {
         self.queue.pending.lock().done = true;
-        self.queue.changed.notify_waiters();
+        self.queue.budget.changed.notify_waiters();
     }
 }
 
@@ -683,10 +823,11 @@ pub(super) async fn send_outgoing(
     outgoing: Outgoing,
     owner: Option<&PeerLink>,
 ) -> bool {
+    let credit = socket.accepted_credit.take();
     if socket.queue.peer_close.is_cancelled() {
         return false;
     }
-    let (message, assignment, pulse_admission, island_token_fence, fence) = match outgoing {
+    let (message, assignment, pulse_admission, island_token_fence, permit) = match outgoing {
         Outgoing::Kick(message) => {
             socket.queue.terminal(Terminal::Kick(message));
             return !socket.queue.peer_close.is_cancelled();
@@ -697,8 +838,8 @@ pub(super) async fn send_outgoing(
             message,
             stamp,
             token_fence,
-            owner,
-        } => (message, true, Some(stamp), Some(token_fence), Some(owner)),
+            permit,
+        } => (message, true, Some(stamp), Some(token_fence), Some(permit)),
     };
     if let Message::Close(frame) = &message {
         socket.queue.terminal(Terminal::Close(
@@ -709,17 +850,10 @@ pub(super) async fn send_outgoing(
         ));
         return !socket.queue.peer_close.is_cancelled();
     }
-    let fence_bound = fence.is_some();
-    let permit = fence.as_ref().and_then(|owner| {
-        socket.state.registry.control_position_permit(
-            &owner.address,
-            &owner.session,
-            owner.epoch,
-            false,
-        )
-    });
-    let mut frame = Some(Frame {
+    let fence_bound = island_token_fence.is_some();
+    let frame = Frame {
         message,
+        credit,
         owner: owner.cloned(),
         delivery: assignment.then_some((Some(true), true)),
         assignment,
@@ -727,50 +861,97 @@ pub(super) async fn send_outgoing(
         island_token_fence,
         permit,
         fence_bound,
-    });
+    };
+    enqueue(
+        &socket.queue,
+        &socket.state,
+        frame,
+        socket.assignments.as_mut(),
+    )
+    .await
+}
+
+async fn enqueue(
+    queue: &Arc<Queue>,
+    state: &AppState,
+    frame: Frame,
+    mut assignments: Option<&mut Assignments>,
+) -> bool {
+    let owner = frame.owner.clone();
+    let owner = owner.as_ref();
+    let mut frame = Some(frame);
     loop {
-        let changed = socket.queue.changed.notified();
+        let changed = queue.budget.changed.notified();
         tokio::pin!(changed);
         changed.as_mut().enable();
         let deadline = {
-            let mut pending = socket.queue.pending.lock();
-            if socket.state.restart.is_cancelled()
+            let mut pending = queue.pending.lock();
+            if state.restart.is_cancelled()
                 || pending.terminal.is_some()
                 || pending.done
-                || socket.queue.closed.is_cancelled()
+                || pending.write_phase == WritePhase::Retired
+                || queue.peer_close.is_cancelled()
+                || queue.closed.is_cancelled()
             {
+                return false;
+            }
+            if pending.owner.as_ref().is_some_and(PeerLink::was_kicked) {
+                drop(pending);
+                queue.terminal(Terminal::Kick(kick_message()));
+                return false;
+            }
+            if queue.budget.full_expired(Instant::now()) {
+                drop(pending);
+                queue.terminal(Terminal::Close(
+                    1013,
+                    "Island assignment dropped; reconnect".into(),
+                ));
                 return false;
             }
             if owner.is_some_and(PeerLink::is_closed) {
                 if owner.is_some_and(PeerLink::was_kicked) {
                     drop(pending);
-                    socket.queue.terminal(Terminal::Kick(kick_message()));
+                    queue.terminal(Terminal::Kick(kick_message()));
                 }
                 return false;
             }
             if let Some(owner) = owner {
                 pending.owner = Some(owner.clone());
             }
-            match pending.push(frame.take().unwrap()) {
+            match pending.push(frame.take().unwrap(), &queue.budget) {
                 Ok(()) => {
-                    socket.queue.changed.notify_waiters();
+                    queue.budget.changed.notify_waiters();
                     return true;
                 }
                 Err(held) => frame = Some(held),
             }
-            *pending.full_since.get_or_insert_with(Instant::now) + FULL_DEADLINE
+            let Some(deadline) = queue.budget.deadline() else {
+                continue;
+            };
+            deadline
         };
+        if let Some(assignments) = assignments.as_deref_mut() {
+            match assignments.progress(queue, state) {
+                Ok(true) => {
+                    // Hand off one accepted item, then let the physical writer release its credit.
+                    tokio::task::yield_now().await;
+                    continue;
+                }
+                Ok(false) => {}
+                Err(()) => return false,
+            }
+        }
         tokio::select! {
-            _ = socket.state.restart.cancelled() => return false,
-            _ = socket.queue.closed.cancelled() => return false,
+            _ = state.restart.cancelled() => return false,
+            _ = queue.closed.cancelled() => return false,
             _ = async { if let Some(owner) = owner { owner.cancelled().await } else { std::future::pending().await } } => {
-                if owner.is_some_and(PeerLink::was_kicked) { socket.queue.terminal(Terminal::Kick(kick_message())); }
+                if owner.is_some_and(PeerLink::was_kicked) { queue.terminal(Terminal::Kick(kick_message())); }
                 return false;
             },
             _ = changed => {},
             _ = tokio::time::sleep_until(deadline) => {
-                let full = { let pending = socket.queue.pending.lock(); pending.full_expired(Instant::now()) };
-                if full { socket.queue.terminal(Terminal::Close(1013, "Island assignment dropped; reconnect".into())); return false; }
+                let full = queue.budget.full_expired(Instant::now());
+                if full { queue.terminal(Terminal::Close(1013, "Island assignment dropped; reconnect".into())); return false; }
             }
         }
     }
@@ -784,7 +965,7 @@ async fn writer<S: Sink<Message> + Unpin>(
 ) {
     let _permit = permit.into();
     loop {
-        let changed = queue.changed.notified();
+        let changed = queue.budget.changed.notified();
         tokio::pin!(changed);
         changed.as_mut().enable();
         let peer_close = {
@@ -825,7 +1006,7 @@ async fn writer<S: Sink<Message> + Unpin>(
             {
                 pending.terminal = Some(Terminal::Close(1012, String::new()));
             }
-            if pending.full_expired(Instant::now()) && pending.terminal.is_none() {
+            if queue.budget.full_expired(Instant::now()) && pending.terminal.is_none() {
                 pending.terminal = Some(Terminal::Close(
                     1013,
                     "Island assignment dropped; reconnect".into(),
@@ -838,13 +1019,10 @@ async fn writer<S: Sink<Message> + Unpin>(
                 pending.frames.clear();
                 None
             };
-            if pending.frames.len() < QUEUE_CAPACITY {
-                pending.full_since = None;
-            }
             (frame, terminal, pending.done)
         };
         if frame.is_some() || terminal.is_some() {
-            queue.changed.notify_waiters();
+            queue.budget.changed.notify_waiters();
         }
         if let Some(terminal) = terminal {
             if matches!(terminal, Terminal::Abort) {
@@ -925,11 +1103,21 @@ async fn writer<S: Sink<Message> + Unpin>(
             }
             break;
         } else {
-            tokio::select! { _ = changed => {}, _ = state.restart.cancelled() => {} }
+            tokio::select! {
+                _ = changed => {},
+                _ = state.restart.cancelled() => {},
+                _ = async {
+                    if let Some(deadline) = queue.budget.deadline() {
+                        tokio::time::sleep_until(deadline).await;
+                    } else { std::future::pending::<()>().await; }
+                } => {},
+            }
         }
     }
     queue.retire();
+    queue.pending.lock().frames.clear();
     queue.closed.cancel();
+    queue.budget.changed.notify_waiters();
 }
 
 enum FrameWrite {
@@ -1005,6 +1193,14 @@ async fn write_frame<S: Sink<Message> + Unpin>(
         if !frame_authorized(frame, state).await {
             return FrameWrite::Dropped;
         }
+        let generation = if let Some(stamp) = frame.pulse_admission.as_ref() {
+            match state.gatekeeper.generation_grant(stamp).await {
+                Ok(grant) => grant,
+                Err(_) => return FrameWrite::Dropped,
+            }
+        } else {
+            None
+        };
         // Reading can queue an automatic control reply during authorization.
         // If readiness was lost, discard this unstarted frame; only assignment
         // frames have a reconciliation retry. Never loop remote authorization.
@@ -1022,6 +1218,14 @@ async fn write_frame<S: Sink<Message> + Unpin>(
                 || pending.terminal.is_some()
                 || state.restart.is_cancelled()
             {
+                return;
+            }
+            if generation.as_ref().is_some_and(|grant| {
+                frame
+                    .pulse_admission
+                    .as_ref()
+                    .is_none_or(|stamp| !grant.consume(stamp))
+            }) {
                 return;
             }
             pending.write_phase = WritePhase::Active;
@@ -1255,6 +1459,114 @@ mod bounds_tests {
     }
 
     #[tokio::test]
+    async fn blocked_direct_output_keeps_original_stamp_while_servicing_full_mailbox() {
+        use crate::gatekeeper::admission::cluster::{
+            fence::PulseAdmissionStamp, peer_state::ClusterPeerState, subscriber::ClusterSubscriber,
+        };
+        use crate::gatekeeper::bus::InProcessBus;
+        use crate::protocol::archipelago::archipelago::IslandChangedMessage;
+        use crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot;
+        use prost::Message as _;
+        for revoke in [false, true] {
+            let selected = Arc::new(Mutex::new(PeerClusterSnapshot {
+                selected_origin: 1,
+                selected_identity: Some(1),
+                assignment_state: 1,
+                wallet: "0x1111111111111111111111111111111111111111".into(),
+                session: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+                cluster_id: "current".into(),
+                realm: "realm".into(),
+                source_incarnation: "source".into(),
+                assignment_version: 1,
+                token_not_before: Some(0),
+                pass: 1,
+                pending_takeovers: vec![],
+            }));
+            let bus = Arc::new(InProcessBus::new());
+            let response = selected.clone();
+            bus.respond_to_requests(Arc::new(move |_, _| Ok(response.lock().encode_to_vec())));
+            let state = crate::archipelago::test_support::state_over(
+                crate::archipelago::Settings::for_tests(),
+                bus.clone(),
+            )
+            .await;
+            let subscriber = ClusterSubscriber::new(
+                bus,
+                Arc::new(crate::archipelago::test_support::OpenGateway),
+                Arc::new(ClusterPeerState::default()),
+                Default::default(),
+            );
+            state
+                .gatekeeper
+                .attach_island_subscriber_for_tests(&subscriber);
+            let before = selected.lock().clone();
+            let queue = Arc::new(Queue::default());
+            let (owner, events, _) = state.registry.on_peer_connected_with_budget(
+                &before.wallet,
+                &before.session,
+                queue.budget.clone(),
+            );
+            queue.pending.lock().owner = Some(owner.clone());
+            let mut assignments = Assignments::new(owner.clone(), events, false);
+            for index in 0..64 {
+                let payload = IslandChangedMessage {
+                    island_id: format!("accepted-{index}"),
+                    ..Default::default()
+                }
+                .encode_to_vec();
+                assert!(owner.send(SocketEvent::IslandChanged(payload, None)));
+            }
+            let mut direct = frame(Some(owner.clone()), true);
+            direct.message = Message::Binary(vec![9].into());
+            direct.pulse_admission = PulseAdmissionStamp::from_snapshot(&before, 0);
+            let mut admitting = Box::pin(enqueue(&queue, &state, direct, Some(&mut assignments)));
+            assert!(futures::poll!(&mut admitting).is_pending());
+            assert_eq!(
+                queue.pending.lock().frames.len(),
+                1,
+                "one-item handoff before yielding"
+            );
+            assert!(
+                queue.budget.reserve().is_none(),
+                "no implicit65th accepted item"
+            );
+            if revoke {
+                selected.lock().assignment_version += 1;
+            }
+            let wire = Arc::new(Mutex::new(WireProbe {
+                ready: true,
+                flushed: true,
+                ..Default::default()
+            }));
+            let (sink, _reader) = SharedTransport::pair(Probe(wire.clone()));
+            let mut writing = Box::pin(writer(
+                sink,
+                queue.clone(),
+                state.clone(),
+                Arc::new(tokio::sync::Semaphore::new(1))
+                    .acquire_owned()
+                    .await
+                    .unwrap(),
+            ));
+            tokio::select! {
+                accepted = &mut admitting => assert!(accepted),
+                _ = &mut writing => panic!("writer ended while direct output waited for a credit"),
+            }
+            drop(admitting);
+            while assignments.progress(&queue, &state).unwrap() {}
+            queue.pending.lock().done = true;
+            writing.await;
+            assert_eq!(
+                wire.lock().messages.iter().any(
+                    |message| matches!(message, Message::Binary(bytes) if bytes.as_ref() == [9])
+                ),
+                !revoke,
+                "mailbox progress must not replace the direct frame's original stamp"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn physical_readiness_rechecks_selected_credentials_and_keeps_signaling_live() {
         use crate::gatekeeper::admission::cluster::{
             fence::PulseAdmissionStamp, peer_state::ClusterPeerState, subscriber::ClusterSubscriber,
@@ -1316,7 +1628,7 @@ mod bounds_tests {
             queue
                 .pending
                 .lock()
-                .push(credential)
+                .push(credential, &queue.budget)
                 .unwrap_or_else(|_| panic!("space"));
             let wire = Arc::new(Mutex::new(WireProbe {
                 flushed: true,
@@ -1362,21 +1674,30 @@ mod bounds_tests {
                 "closed" => owner.close(),
                 _ => {}
             }
+            if change == "version" {
+                let mut fresh = frame(Some(owner.clone()), true);
+                fresh.message = Message::Binary(vec![2].into());
+                fresh.pulse_admission = PulseAdmissionStamp::from_snapshot(&selected.lock(), 0);
+                assert!(queue.pending.lock().push(fresh, &queue.budget).is_ok());
+            }
             wire.lock().ready = true;
             assert!(futures::poll!(&mut job).is_pending());
             assert_eq!(
                 !wire.lock().bytes.is_empty(),
-                change == "unchanged",
+                matches!(change, "unchanged" | "version"),
                 "{change}"
             );
-            if change != "unchanged" {
+            if change == "version" {
+                assert_eq!(wire.lock().messages, vec![Message::Binary(vec![2].into())]);
+            }
+            if !matches!(change, "unchanged" | "version") {
                 assert!(owner.needs_assignment() || owner.is_closed());
                 assert!(
                     !queue.closed.is_cancelled(),
                     "stale unstarted frame preserves signaling"
                 );
             }
-            if matches!(change, "identity" | "version" | "source" | "readiness-lost") {
+            if matches!(change, "identity" | "source" | "readiness-lost") {
                 if change == "readiness-lost" {
                     wire.lock().ready = true;
                     let response = selected.clone();
@@ -1389,9 +1710,9 @@ mod bounds_tests {
                 queue
                     .pending
                     .lock()
-                    .push(fresh)
+                    .push(fresh, &queue.budget)
                     .unwrap_or_else(|_| panic!("space"));
-                queue.changed.notify_waiters();
+                queue.budget.changed.notify_waiters();
                 assert!(futures::poll!(&mut job).is_pending());
                 assert_eq!(wire.lock().bytes, b"\x82\x06secret");
                 assert!(!owner.needs_assignment());
@@ -1410,7 +1731,7 @@ mod bounds_tests {
             queue
                 .pending
                 .lock()
-                .push(frame(None, false))
+                .push(frame(None, false), &queue.budget)
                 .unwrap_or_else(|_| panic!("space"));
             let wire = Arc::new(Mutex::new(WireProbe {
                 ready,
@@ -1462,7 +1783,11 @@ mod bounds_tests {
             {
                 let mut pending = queue.pending.lock();
                 pending.owner = Some(owner.clone());
-                assert!(pending.push(frame(Some(owner.clone()), true)).is_ok());
+                assert!(
+                    pending
+                        .push(frame(Some(owner.clone()), true), &queue.budget)
+                        .is_ok()
+                );
             }
             let wire = Arc::new(Mutex::new(WireProbe {
                 ready: true,
@@ -1481,7 +1806,7 @@ mod bounds_tests {
             assert_eq!(wire.lock().messages.len(), 1);
             let flushes = wire.lock().flushes;
             owner.send(SocketEvent::Kicked);
-            queue.changed.notify_waiters();
+            queue.budget.changed.notify_waiters();
             wire.lock().flushed = true;
             job.await;
             let wire = wire.lock();
@@ -1510,7 +1835,7 @@ mod bounds_tests {
             let mut pending = queue.pending.lock();
             pending.owner = Some(owner.clone());
             pending
-                .push(frame(Some(owner.clone()), true))
+                .push(frame(Some(owner.clone()), true), &queue.budget)
                 .unwrap_or_else(|_| panic!("space"));
         }
         queue.terminal(Terminal::Kick(kick_message()));
@@ -1699,7 +2024,7 @@ mod bounds_tests {
         queue
             .pending
             .lock()
-            .push(credential)
+            .push(credential, &queue.budget)
             .unwrap_or_else(|_| panic!("space"));
         let wire = Arc::new(Mutex::new(WireProbe {
             ready: true,
@@ -1766,7 +2091,7 @@ mod bounds_tests {
             queue
                 .pending
                 .lock()
-                .push(frame(None, false))
+                .push(frame(None, false), &queue.budget)
                 .unwrap_or_else(|_| panic!("space"));
             let wire = Arc::new(Mutex::new(WireProbe {
                 ready: true,
@@ -1896,10 +2221,10 @@ mod bounds_tests {
             }
             {
                 let mut pending = queue.pending.lock();
-                for _ in 0..QUEUE_CAPACITY - 1 {
-                    assert!(pending.push(frame(None, false)).is_ok());
+                for _ in 0..crate::archipelago::registry::OUTPUT_CAPACITY - 1 {
+                    assert!(pending.push(frame(None, false), &queue.budget).is_ok());
                 }
-                assert!(pending.push(credential).is_ok());
+                assert!(pending.push(credential, &queue.budget).is_ok());
                 pending.done = true;
             }
             match change {
@@ -2008,20 +2333,57 @@ mod bounds_tests {
             durable_writer_case(change, true, true).await;
         }
     }
+    #[tokio::test]
+    async fn durable_selected_transport_delivery_retains_exact_binding_and_socket_generation() {
+        if !durable_writer_pg_available() {
+            return;
+        }
+        for held_readiness in [false, true] {
+            for change in [
+                "unchanged",
+                "binding-detached",
+                "binding-revision",
+                "same-session",
+                "revision",
+                "epoch",
+                "token",
+                "generation",
+                "floor",
+                "hazard",
+            ] {
+                durable_writer_case_with_binding(change, true, held_readiness, true).await;
+            }
+        }
+    }
     async fn durable_writer_case(change: &str, fenced: bool, held_readiness: bool) {
-        use crate::gatekeeper::admission::cluster::{
-            ClusterConfig, fence::PulseAdmissionStamp, safety::SafetyStore,
-        };
+        durable_writer_case_with_binding(change, fenced, held_readiness, false).await;
+    }
+    async fn durable_writer_case_with_binding(
+        change: &str,
+        fenced: bool,
+        held_readiness: bool,
+        selected_transport: bool,
+    ) {
+        use crate::gatekeeper::admission::cluster::{ClusterConfig, fence::PulseAdmissionStamp};
         use crate::gatekeeper::bus::InProcessBus;
         use crate::interfaces::test_support::{StubDirectory, StubPolicy, StubScenes};
-        use crate::protocol::pulse::decentraland::pulse::{PeerClusterSnapshot, PendingTakeover};
+        use crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot;
         use prost::Message as _;
         let pool = crate::db::scratch::pool(4).await.unwrap();
         let wallet = format!("0x00000000{}", uuid::Uuid::new_v4().simple());
         let session = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let store = SafetyStore::new(pool.clone());
-        let safety = store.snapshot(&wallet).await.unwrap();
-        assert!(safety.generation > 0);
+        // Seed the admission fence under the pool's statement budget. The
+        // safety store's 1.5 s budget is the writer's to exercise; a shared
+        // database stall during fixture setup must not fail the case before it
+        // starts.
+        let (generation, token_floor): (i64, i64) = sqlx::query_as(
+            "INSERT INTO social.island_admission_fences(wallet) VALUES ($1) RETURNING generation,token_floor",
+        )
+        .bind(&wallet)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((generation, token_floor), (1, 0));
         let token_fence = fenced.then(|| TokenFence {
             audience: "queued-committed-fence".into(),
             lane: "realm".into(),
@@ -2048,8 +2410,8 @@ mod bounds_tests {
             pending_takeovers: vec![],
         };
         let mut stamp = PulseAdmissionStamp::from_snapshot(&plan, 0).unwrap();
-        stamp.safety_generation = safety.generation;
-        stamp.safety_token_floor = safety.token_floor;
+        stamp.safety_generation = generation as u64;
+        stamp.safety_token_floor = token_floor as u64;
         let bus = Arc::new(InProcessBus::new());
         bus.respond_to_requests(Arc::new(move |_, _| Ok(plan.encode_to_vec())));
         let gatekeeper = Arc::new(
@@ -2064,7 +2426,7 @@ mod bounds_tests {
                 Arc::new(crate::presence::Presence::new()),
                 Arc::new(StubDirectory::default()),
             )
-            .with_cluster(ClusterConfig {
+            .with_cluster_for_test(ClusterConfig {
                 nats_url: Some("nats://fixture".into()),
                 control_v4_audience: token_fence.as_ref().map(|fence| fence.audience.clone()),
                 ..Default::default()
@@ -2081,7 +2443,7 @@ mod bounds_tests {
         )
         .await
         .unwrap();
-        let (owner, _events) = if fenced {
+        let (owner, _events) = if fenced && !selected_transport {
             state.registry.on_v4_peer_connected_with_realm_epoch(
                 &wallet,
                 session,
@@ -2096,12 +2458,21 @@ mod bounds_tests {
         let queue = Arc::new(Queue::default());
         let mut credential = frame(Some(owner.clone()), true);
         credential.message = Message::Binary(vec![9].into());
-        credential.pulse_admission = Some(stamp);
+        credential.pulse_admission = Some(stamp.clone());
         if fenced {
             credential.fence_bound = change != "missing-fence-bound";
-            credential.permit = state
-                .registry
-                .control_position_permit(&wallet, session, 7, false);
+            credential.permit = if selected_transport {
+                state.registry.bind_selected_realm(
+                    &wallet,
+                    &owner,
+                    token_fence.clone().unwrap(),
+                    stamp.clone(),
+                )
+            } else {
+                state
+                    .registry
+                    .control_position_permit(&wallet, session, 7, false)
+            };
             if change != "missing-fence" {
                 credential.island_token_fence = token_fence.clone();
             }
@@ -2109,11 +2480,11 @@ mod bounds_tests {
         {
             let mut pending = queue.pending.lock();
             if !held_readiness {
-                for _ in 0..QUEUE_CAPACITY - 1 {
-                    assert!(pending.push(frame(None, false)).is_ok());
+                for _ in 0..crate::archipelago::registry::OUTPUT_CAPACITY - 1 {
+                    assert!(pending.push(frame(None, false), &queue.budget).is_ok());
                 }
             }
-            assert!(pending.push(credential).is_ok());
+            assert!(pending.push(credential, &queue.budget).is_ok());
         }
         let wire = Arc::new(Mutex::new(WireProbe {
             ready: !held_readiness,
@@ -2142,6 +2513,20 @@ mod bounds_tests {
             assert!(wire.lock().messages.is_empty());
         }
         match change {
+            "binding-detached" => state.registry.detach_selected_realm(&owner),
+            "binding-revision" => {
+                let mut next = token_fence.clone().unwrap();
+                next.assignment_revision += 1;
+                assert!(
+                    state
+                        .registry
+                        .bind_selected_realm(&wallet, &owner, next, stamp.clone())
+                        .is_some()
+                );
+            }
+            "same-session" => {
+                state.registry.on_peer_connected(&wallet, session);
+            }
             "generation" => {
                 sqlx::query("UPDATE social.island_admission_fences SET generation=generation+1 WHERE wallet=$1").bind(&wallet).execute(&pool).await.unwrap();
             }
@@ -2155,21 +2540,20 @@ mod bounds_tests {
                 .unwrap();
             }
             "hazard" => {
-                let op = PendingTakeover {
-                    takeover_id: "queued".into(),
-                    displaced_session: session.into(),
-                    displaced_cluster_id: "old".into(),
-                    displaced_realm: "realm".into(),
-                };
-                store
-                    .prepare_takeover(&wallet, "other-source", session, &op)
-                    .await
-                    .unwrap();
-                store
-                    .begin_takeover(&wallet, "other-source", &op, 0)
-                    .await
-                    .unwrap()
-                    .unwrap();
+                // The rows `SafetyStore::prepare_takeover` and `begin_takeover`
+                // leave for a fresh wallet: an open takeover receipt, its
+                // dispatched cleanup, and two fence generation advances.
+                let dispatch = uuid::Uuid::new_v4();
+                let mut tx = pool.begin().await.unwrap();
+                sqlx::query("INSERT INTO social.island_cleanup_dispatches(dispatch_id,wallet,purpose,pulse_source,pulse_takeover_id,room_name,participant_identity,cutoff,fence_generation,phase,state) VALUES ($1,$2,'pulse_takeover','other-source','queued',$3,$2,floor(extract(epoch FROM timezone('UTC',clock_timestamp())))::bigint+5,$4,'initial','dispatched')")
+                    .bind(dispatch).bind(&wallet).bind(crate::rooms::island_room_name("old")).bind(generation + 2)
+                    .execute(&mut *tx).await.unwrap();
+                sqlx::query("INSERT INTO social.island_takeover_receipts(wallet,source_incarnation,takeover_id,predecessor_session,predecessor_cluster,predecessor_realm,last_successor_session,latest_dispatch) VALUES ($1,'other-source','queued',$2,'old','realm',$2,$3)")
+                    .bind(&wallet).bind(session).bind(dispatch)
+                    .execute(&mut *tx).await.unwrap();
+                sqlx::query("UPDATE social.island_admission_fences SET generation=generation+2,updated_at=timezone('UTC',clock_timestamp()) WHERE wallet=$1")
+                    .bind(&wallet).execute(&mut *tx).await.unwrap();
+                tx.commit().await.unwrap();
             }
             "revision" => {
                 sqlx::query("UPDATE social.archipelago_v4_assignments SET assignment_revision=assignment_revision+1 WHERE owner_address=$1").bind(&wallet).execute(&pool).await.unwrap();
@@ -2213,6 +2597,7 @@ mod bounds_tests {
     fn frame(owner: Option<PeerLink>, assignment: bool) -> Frame {
         Frame {
             message: Message::Binary(vec![1].into()),
+            credit: None,
             owner,
             delivery: assignment.then_some((Some(true), true)),
             assignment,
@@ -2232,10 +2617,14 @@ mod bounds_tests {
         {
             let mut pending = queue.pending.lock();
             pending.owner = Some(owner.clone());
-            assert!(pending.push(frame(Some(owner.clone()), true)).is_ok());
+            assert!(
+                pending
+                    .push(frame(Some(owner.clone()), true), &queue.budget)
+                    .is_ok()
+            );
             pending.done = true;
         }
-        // Final-lane recovery uses the same terminal queue path as socket.kick().
+        // Final-lane recovery uses the same typed terminal output path as a session kick.
         queue.terminal(Terminal::Kick(conflict.clone()));
         // Force cleanup to win the scheduling race rather than relying on platform timing.
         owner.close();
@@ -2275,7 +2664,7 @@ mod bounds_tests {
         assert!(rate.sample(start + Duration::from_millis(10_400)));
     }
     #[tokio::test(start_paused = true)]
-    async fn full_queue_replacement_preserves_deadline_and_only_latest_flush_acknowledges() {
+    async fn full_queue_preserves_accepted_frames_and_rejects_later_assignments() {
         let state = state().await;
         let queue = Arc::new(Queue::default());
         let registry = PeersRegistry::new();
@@ -2283,15 +2672,23 @@ mod bounds_tests {
         let (new, _new_events, _) = registry.on_peer_connected("new", "s2");
         {
             let mut pending = queue.pending.lock();
-            assert!(pending.push(frame(Some(old.clone()), true)).is_ok());
-            for _ in 1..QUEUE_CAPACITY {
-                assert!(pending.push(frame(None, false)).is_ok());
+            assert!(
+                pending
+                    .push(frame(Some(old.clone()), true), &queue.budget)
+                    .is_ok()
+            );
+            for _ in 1..crate::archipelago::registry::OUTPUT_CAPACITY {
+                assert!(pending.push(frame(None, false), &queue.budget).is_ok());
             }
-            let at = pending.full_since;
-            assert!(pending.push(frame(Some(new.clone()), true)).is_ok());
-            assert_eq!(pending.full_since, at);
+            let at = queue.budget.deadline();
+            assert!(
+                pending
+                    .push(frame(Some(new.clone()), true), &queue.budget)
+                    .is_err()
+            );
+            assert_eq!(queue.budget.deadline(), at);
             assert_eq!(pending.frames.len(), 64);
-            assert!(pending.push(frame(None, false)).is_err());
+            assert!(pending.push(frame(None, false), &queue.budget).is_err());
             pending.done = true;
         }
         assert!(old.needs_assignment());
@@ -2309,8 +2706,8 @@ mod bounds_tests {
             permit,
         )
         .await;
-        assert!(old.needs_assignment(), "superseded payload never flushed");
-        assert!(!new.needs_assignment());
+        assert!(!old.needs_assignment(), "accepted assignment flushed");
+        assert!(new.needs_assignment(), "rejected assignment never flushed");
         assert_eq!(permits.available_permits(), 1);
         assert!(queue.closed.is_cancelled());
     }
@@ -2324,7 +2721,7 @@ mod bounds_tests {
             let mut pending = queue.pending.lock();
             pending.owner = Some(owner.clone());
             for _ in 0..64 {
-                assert!(pending.push(frame(None, false)).is_ok());
+                assert!(pending.push(frame(None, false), &queue.budget).is_ok());
             }
         }
         owner.send(SocketEvent::Kicked);
@@ -2355,7 +2752,11 @@ mod bounds_tests {
         let (owner, _events, _) = registry.on_peer_connected("a", "s");
         {
             let mut pending = queue.pending.lock();
-            assert!(pending.push(frame(Some(owner.clone()), true)).is_ok());
+            assert!(
+                pending
+                    .push(frame(Some(owner.clone()), true), &queue.budget)
+                    .is_ok()
+            );
             pending.done = true;
         }
         let frames = Arc::new(Mutex::new(vec![]));
@@ -2398,11 +2799,11 @@ mod bounds_tests {
                 };
                 let mut reply = frame(Some(owner.clone()), false);
                 reply.message = Message::Binary(packet.encode_to_vec().into());
-                assert!(pending.push(reply).is_ok());
+                assert!(pending.push(reply, &queue.budget).is_ok());
             }
             let mut stale = frame(Some(owner.clone()), true);
             stale.fence_bound = true;
-            assert!(pending.push(stale).is_ok());
+            assert!(pending.push(stale, &queue.budget).is_ok());
             pending.done = true;
         }
         let frames = Arc::new(Mutex::new(vec![]));
@@ -2442,21 +2843,21 @@ mod bounds_tests {
         {
             let mut pending = queue.pending.lock();
             for _ in 0..64 {
-                assert!(pending.push(frame(None, false)).is_ok());
+                assert!(pending.push(frame(None, false), &queue.budget).is_ok());
             }
         }
         tokio::time::advance(Duration::from_secs(9)).await;
         {
             let mut pending = queue.pending.lock();
-            assert!(!pending.full_expired(Instant::now()));
+            assert!(!queue.budget.full_expired(Instant::now()));
             assert!(pending.pop().is_some());
-            assert_eq!(pending.full_since, None);
-            assert!(pending.push(frame(None, false)).is_ok());
+            assert_eq!(queue.budget.deadline(), None);
+            assert!(pending.push(frame(None, false), &queue.budget).is_ok());
         }
         tokio::time::advance(Duration::from_secs(9)).await;
-        assert!(!queue.pending.lock().full_expired(Instant::now()));
+        assert!(!queue.budget.full_expired(Instant::now()));
         tokio::time::advance(Duration::from_secs(1)).await;
-        assert!(queue.pending.lock().full_expired(Instant::now()));
+        assert!(queue.budget.full_expired(Instant::now()));
         let state = state().await;
         let frames = Arc::new(Mutex::new(vec![]));
         let permits = Arc::new(tokio::sync::Semaphore::new(1));
@@ -2664,5 +3065,189 @@ mod bounds_tests {
             next, deadline,
             "refused owner never advances application cadence"
         );
+    }
+}
+
+#[cfg(feature = "test-support")]
+pub mod assignment_test_support {
+    use super::*;
+    use crate::archipelago::registry::{ReceivedSocketEvent, SocketEvent, SocketEvents};
+    use std::future::Future;
+
+    #[derive(Default)]
+    struct Wire {
+        ready: bool,
+        flush: bool,
+        messages: Vec<Message>,
+    }
+    struct HeldSink(Arc<Mutex<Wire>>);
+    impl Sink<Message> for HeldSink {
+        type Error = ();
+        fn poll_ready(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), ()>> {
+            if self.0.lock().ready {
+                Poll::Ready(Ok(()))
+            } else {
+                Poll::Pending
+            }
+        }
+        fn start_send(self: Pin<&mut Self>, message: Message) -> Result<(), ()> {
+            self.0.lock().messages.push(message);
+            Ok(())
+        }
+        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), ()>> {
+            if self.0.lock().flush {
+                Poll::Ready(Ok(()))
+            } else {
+                Poll::Pending
+            }
+        }
+        fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), ()>> {
+            self.poll_flush(cx)
+        }
+    }
+
+    #[derive(Default)]
+    pub struct PingGate {
+        armed: std::sync::atomic::AtomicBool,
+        entered: tokio::sync::Notify,
+        released: tokio::sync::Notify,
+        snapshot: Mutex<Option<(Arc<OutputBudget>, std::sync::Weak<Queue>)>>,
+    }
+    impl PingGate {
+        pub fn arm(&self) {
+            assert!(!self.armed.swap(true, std::sync::atomic::Ordering::SeqCst));
+        }
+        pub(super) async fn pause(&self, queue: &Arc<Queue>) {
+            if !self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
+            *self.snapshot.lock() = Some((queue.budget.clone(), Arc::downgrade(queue)));
+            self.entered.notify_one();
+            self.released.notified().await;
+        }
+        pub async fn entered(&self) {
+            self.entered.notified().await;
+        }
+        pub fn release(&self) {
+            self.released.notify_one();
+        }
+        pub fn available(&self) -> usize {
+            self.snapshot.lock().as_ref().unwrap().0.available()
+        }
+        pub fn writer_pending(&self) -> usize {
+            self.snapshot
+                .lock()
+                .as_ref()
+                .unwrap()
+                .1
+                .upgrade()
+                .map_or(0, |queue| queue.pending.lock().frames.len())
+        }
+    }
+
+    /// Drives the production mailbox, admission and writer without an OS send buffer.
+    pub struct AssignmentWriter {
+        queue: Arc<Queue>,
+        state: AppState,
+        pub owner: PeerLink,
+        events: SocketEvents,
+        validating: Option<ReceivedSocketEvent>,
+        wire: Arc<Mutex<Wire>>,
+        writing: Pin<Box<dyn Future<Output = ()> + Send>>,
+    }
+    impl AssignmentWriter {
+        pub async fn new(state: AppState) -> Self {
+            let queue = Arc::new(Queue::default());
+            let (owner, events, _) = state.registry.on_peer_connected_with_budget(
+                "wallet",
+                "session",
+                queue.budget.clone(),
+            );
+            queue.pending.lock().owner = Some(owner.clone());
+            let wire = Arc::new(Mutex::new(Wire::default()));
+            let (sink, _reader) = SharedTransport::pair(HeldSink(wire.clone()));
+            let permit = Arc::new(tokio::sync::Semaphore::new(1))
+                .acquire_owned()
+                .await
+                .unwrap();
+            let writing = Box::pin(writer(sink, queue.clone(), state.clone(), permit));
+            Self {
+                queue,
+                state,
+                owner,
+                events,
+                validating: None,
+                wire,
+                writing,
+            }
+        }
+        pub fn send(&self, bytes: &[u8]) -> bool {
+            self.owner
+                .send(SocketEvent::IslandChanged(bytes.to_vec(), None))
+        }
+        pub fn available(&self) -> usize {
+            self.queue.budget.available()
+        }
+        pub async fn take_for_validation(&mut self) {
+            assert!(self.validating.is_none());
+            self.validating = Some(self.events.recv_credited().await.unwrap());
+        }
+        pub fn reject_validation(&mut self) {
+            self.validating.take();
+        }
+        pub async fn admit(&mut self) -> bool {
+            let received = match self.validating.take() {
+                Some(received) => received,
+                None => self.events.recv_credited().await.unwrap(),
+            };
+            let ReceivedSocketEvent { event, credit } = received;
+            let SocketEvent::IslandChanged(bytes, stamp) = event else {
+                return false;
+            };
+            use crate::protocol::archipelago::archipelago::{IslandChangedMessage, server_packet};
+            use prost::Message as _;
+            let Ok(assignment) = IslandChangedMessage::decode(bytes.as_slice()) else {
+                return false;
+            };
+            enqueue(
+                &self.queue,
+                &self.state,
+                Frame {
+                    message: Message::Binary(
+                        super::super::craft(server_packet::Message::IslandChanged(assignment))
+                            .into(),
+                    ),
+                    credit,
+                    owner: Some(self.owner.clone()),
+                    delivery: Some((Some(true), true)),
+                    assignment: true,
+                    pulse_admission: stamp,
+                    island_token_fence: None,
+                    permit: None,
+                    fence_bound: false,
+                },
+                None,
+            )
+            .await
+        }
+        pub fn readiness(&self, ready: bool, flush: bool) {
+            let mut wire = self.wire.lock();
+            wire.ready = ready;
+            wire.flush = flush;
+        }
+        pub async fn step(&mut self) {
+            assert!(futures::poll!(&mut self.writing).is_pending());
+        }
+        pub fn frames(&self) -> Vec<Message> {
+            self.wire.lock().messages.clone()
+        }
+        pub async fn finish(&mut self) {
+            self.owner.close();
+            self.validating.take();
+            self.readiness(true, true);
+            self.queue.pending.lock().done = true;
+            self.queue.budget.changed.notify_waiters();
+            self.writing.as_mut().await;
+        }
     }
 }

@@ -1,0 +1,167 @@
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 416px;
+  height: 383px;
+  border-radius: 16px;
+  overflow: hidden;
+  background-color: var(--palette-whiteTransparent-faint);
+}
+
+.card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  border: 1px solid var(--palette-whiteTransparent-subtle);
+  pointer-events: none;
+}
+
+.card:hover,
+.card:focus-within,
+.card:has([aria-expanded="true"]) {
+  background-color: var(--palette-whiteTransparent-subtle);
+}
+
+.card:has(a:focus-visible) {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.emptyThumbnail {
+  position: relative;
+  isolation: isolate;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 19px;
+  padding-top: 82px;
+  color: var(--palette-neutral-softWhite);
+  font-size: 1.125rem;
+  line-height: 1.5rem;
+}
+
+.emptyThumbnail.emptyThumbnail.emptyThumbnail :global(.hub-button) {
+  position: relative;
+  z-index: 1;
+  width: 160px;
+  padding: 12px 24px;
+  font-size: 1rem;
+  letter-spacing: 0;
+  line-height: 1.375rem;
+  pointer-events: auto;
+}
+
+.emptyThumbnail::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: url("/assets/images/place-entry-texture.png");
+  background-position: center;
+  background-size: cover;
+  opacity: 0.03;
+  mix-blend-mode: luminosity;
+}
+
+.kebab {
+  position: absolute;
+  top: 18px;
+  right: 10px;
+  z-index: 1;
+}
+
+.name {
+  margin: 0;
+  padding-right: 40px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--palette-neutral-softWhite);
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.5rem;
+}
+
+.name[aria-hidden="true"] {
+  visibility: hidden;
+}
+
+.name a,
+.placeRow a {
+  color: inherit;
+  text-decoration: none;
+  outline: none;
+}
+
+.name a::after,
+.placeRow a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+.placeRow {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  gap: 4px;
+  color: var(--dcl-silver);
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.placeRow > svg {
+  font-size: 1rem;
+}
+
+.placeRow > span + span {
+  margin-left: 4px;
+}
+
+.stats {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  border-radius: 100px;
+  background-color: rgba(0, 0, 0, 0.6);
+  color: var(--gray);
+  font-size: 0.875rem;
+  line-height: 1;
+}
+
+.stats svg {
+  font-size: 0.875rem;
+}
+
+.textBlock {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex-shrink: 0;
+  gap: 10px;
+  height: 110px;
+  padding: 20px;
+}
+
+.thumbnail {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  border-radius: 16px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}

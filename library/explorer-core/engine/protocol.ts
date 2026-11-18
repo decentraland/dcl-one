@@ -12,12 +12,15 @@ import type {
   CommunityVoiceStatus,
   ConnectivitySnapshot,
   HomeScene,
+  PlatformBanNotice,
   PortableInfo,
   SatelliteView,
   SceneLoadingUi,
+  TextureOptimizationStatus,
   VoiceChatAction,
   VoiceChatState,
   WelcomeState,
+  WorldAccessVerdict,
 } from './generated'
 import type { AvatarLook } from './avatarEquip'
 
@@ -66,7 +69,7 @@ export type RpcMethod =
   | 'logout'
   | 'guestLogin'
   | 'guestSign'
-  | 'guestDiscard'
+  | 'guestSession'
   | 'emailStart'
   | 'emailComplete'
 
@@ -98,8 +101,8 @@ export interface SendChatReactionRequest {
   remove: boolean
 }
 
-/** Redraw a Nearby chat bubble with other words (its translation), if that message is still the
- *  sender's bubble; its timer starts again. */
+/** Redraw a chat bubble (nearby, community or direct message) with other words (its translation,
+ *  or the original back), if that message is still the sender's bubble. Its time up is kept. */
 export interface ChatBubbleTextRequest {
   kind: 'chatBubbleText'
   sender: string
@@ -107,9 +110,12 @@ export interface ChatBubbleTextRequest {
   message: string
 }
 
-/** Reload the current scene(s) — the `/reload` chat command (scene calls SystemApi.reload). */
+/** Reload a scene: the one under the player (the `/reload` chat command), or `scene`, a live scene's
+ *  hash such as a preview's scene id (the texture optimization toast's Reload). The scene runs the
+ *  engine's `reload <hash>`, which drops the live scene as a preview file save does. */
 export interface ReloadSceneRequest {
   kind: 'reloadScene'
+  scene?: string
 }
 
 /** Run an engine console command (chat `/commands` → `help`, or any passed-through `/command`);
@@ -203,6 +209,7 @@ export type PageToScene =
   | SetNearbyMuteRequest
   | GetWearablesRequest
   | CatalogQueryRequest
+  | GiftingQueryRequest
   | EquipRequest
   | CommitAvatarRequest
   | RevertAvatarRequest
@@ -279,6 +286,9 @@ export type PageToScene =
   | EngineViewportRequest
   | InteractableAreaMessage
   | GetGalleryRequest
+  | QuitRequest
+  | GetPlaceRequest
+  | GetWorldAccessRequest
   | WatchMapPlayersRequest
   | SetPhotoModeRequest
   | TakePhotoRequest
@@ -325,6 +335,13 @@ export type SceneLoadingState = SceneLoadingUi
 export interface SceneLoadingMessage {
   kind: 'sceneLoading'
   state: SceneLoadingState
+}
+
+/** The preview server's background texture import status for a scene (preview mode only), as the
+ *  engine got it from the preview socket. `replay` marks the server's last status, replayed as the
+ *  socket (re)connected (library/ui/apps/hud/features/preview/textureOptimizationToast.ts). */
+export interface TextureOptimizationMessage extends TextureOptimizationStatus {
+  kind: 'textureOptimization'
 }
 
 /** Mirrors SystemApi ChatMessageDefinition (sender_address → sender). */
@@ -1110,6 +1127,16 @@ export interface WorldPasswordRequestMessage {
   error?: string
 }
 
+/** A realm change's refusal for a known platform ban (the engine's `common::platform_ban::REALM_CHANGE_BANNED`). */
+export const PLATFORM_BANNED_REFUSAL = 'You are banned from Decentraland'
+
+/** The signed-in wallet's platform ban, whole on subscribe and on every change (scene → page).
+ *  `banned` is false while the check is unknown or failed. */
+export interface PlatformBanMessage {
+  kind: 'platformBan'
+  ban: PlatformBanNotice
+}
+
 /** The engine no longer needs the password prompt answered (its realm change is over). */
 export interface WorldPasswordWithdrawnMessage {
   kind: 'worldPasswordWithdrawn'
@@ -1203,6 +1230,10 @@ export interface EngineViewportRequest {
    *  what turns it into the physical pixels the scene should actually render — without it a
    *  render target has to assume the worst display and oversample everywhere else. */
   dpr?: number
+  /** A `LOBBY_STAGE_PRESETS` id; lobby region only. */
+  stagePreset?: string
+  /** Lobby region only: the pages that borrow the stage leave the avatar still. */
+  idleEmotes?: boolean
 }
 
 /**
@@ -1826,6 +1857,53 @@ export interface GalleryPhotoMeta {
   people?: GalleryPerson[]
 }
 
+/** Only a signed read carries the player's own votes and favourite. */
+export interface SignedPlace {
+  id: string
+  likes?: number
+  dislikes?: number
+  favorites?: number
+  like_rate?: number | string | null
+  user_like?: boolean
+  user_dislike?: boolean
+  user_favorite?: boolean
+  user_count?: number
+  user_visits?: number
+  updated_at?: string | null
+  creator_address?: string | null
+  connected_addresses?: string[] | null
+}
+
+export interface GetPlaceRequest {
+  kind: 'getPlace'
+  requestId: number
+  id: string
+}
+
+/** `place` is null when the read failed or the service no longer lists the place. */
+export interface PlaceMessage {
+  kind: 'place'
+  requestId: number
+  place: SignedPlace | null
+}
+
+export interface GetWorldAccessRequest {
+  kind: 'getWorldAccess'
+  requestId: number
+  world: string
+}
+
+export interface WorldAccessMessage {
+  kind: 'worldAccess'
+  requestId: number
+  access: WorldAccessVerdict
+}
+
+/** Native only: the web page has nothing to close. */
+export interface QuitRequest {
+  kind: 'quit'
+}
+
 /** One page of the local player's camera reel (signed, so private photos are included), newest
  *  first as the service orders them. `requestId` is echoed in the GalleryMessage that answers it. */
 export interface GetGalleryRequest {
@@ -1991,6 +2069,51 @@ export interface CatalogPageMessage {
   requestId: number
 }
 
+/** One owned token of a giftable item: its full urn (item urn + token id), its id, and when it last changed hands. */
+export interface GiftableToken {
+  urn: string
+  tokenId: string
+  /** Seconds since the epoch, as the owned catalog reports it; 0 when unknown. */
+  transferredAt: number
+}
+
+/** An owned on-chain wearable or emote the gift picker lists. */
+export interface GiftableItem {
+  /** The item urn (no token id). */
+  urn: string
+  name: string
+  rarity: string
+  category: string
+  thumbnail?: string
+  /** How many copies the player owns. */
+  amount: number
+  tokens: GiftableToken[]
+}
+
+/** A page of the player's owned on-chain wearables or emotes for the gift picker: newest first, filtered by name
+ *  on the server. */
+export interface GiftingQueryRequest {
+  kind: 'giftingQuery'
+  catalog: CatalogKind
+  /** 0-based page index. */
+  page: number
+  pageSize: number
+  search?: string
+  /** Echoed in the answer; the picker drops older ones. */
+  requestId: number
+}
+
+/** The answer to a GiftingQueryRequest. `equipped` lists the token urns the player's look wears. */
+export interface GiftingPageMessage {
+  kind: 'giftingPage'
+  catalog: CatalogKind
+  items: GiftableItem[]
+  total: number
+  equipped: string[]
+  failed: boolean
+  requestId: number
+}
+
 /** Equip a new full wearable set on the Backpack's look (page → scene); deployed on commitAvatar. */
 export interface EquipRequest {
   kind: 'equip'
@@ -2022,8 +2145,8 @@ export interface PreviewFocusRequest {
 }
 
 /** The Shop's stage around the preview avatar: where the page draws its stage image on screen, in CSS
- *  pixels like engineViewport's rect. The scene draws the same image (its images/shop-stage.jpg, the HUD's
- *  assets/shop/stage.jpg) there behind the avatar, so the avatar's window shows no seam, and drops the
+ *  pixels like engineViewport's rect. The scene draws the same image (its images/shop-stage.jpg, the in-world Shop's
+ *  library/ui/apps/shop/assets/stage.jpg) there behind the avatar, so the avatar's window shows no seam, and drops the
  *  Backpack's podium: the stage's floor is in the image. `null` gives the preview its own backdrop back. */
 export interface PreviewStageRequest {
   kind: 'previewStage'
@@ -2042,6 +2165,8 @@ export interface PreviewEmoteRequest {
 export interface PreviewRotateRequest {
   kind: 'previewRotate'
   degrees: number
+  /** The stage whose avatar turns: the lobby's when named, else the preview's (the Backpack's, the Shop's). */
+  stage?: 'lobby'
 }
 
 /** Zoom the preview avatar's camera: `zoom` × the framing in use (1 is the framing as it is, up to
@@ -2334,6 +2459,8 @@ export interface AvatarClickMessage {
 
 export type SceneToPage =
   | BridgeReadyMessage
+  | PlaceMessage
+  | WorldAccessMessage
   | { kind: 'connectivity'; state: ConnectivitySnapshot }
   | { kind: 'connectivityRetry'; requestId: string; error?: string }
   | BridgeUnavailableMessage
@@ -2351,6 +2478,7 @@ export type SceneToPage =
   | AnalyticsEventMessage
   | LoginCodeMessage
   | SceneLoadingMessage
+  | TextureOptimizationMessage
   | ChatRelayMessage
   | ChatReactionMessage
   | ConsoleReplyMessage
@@ -2379,6 +2507,7 @@ export type SceneToPage =
   | MicMessage
   | WearablesMessage
   | CatalogPageMessage
+  | GiftingPageMessage
   | OutfitsMessage
   | OutfitHistoryMessage
   | CommunitiesMessage
@@ -2437,6 +2566,7 @@ export type SceneToPage =
   | PermissionRulesMessage
   | WorldPasswordRequestMessage
   | WorldPasswordWithdrawnMessage
+  | PlatformBanMessage
   | EditorSceneResultMessage
   | PortablesMessage
 
@@ -2568,6 +2698,8 @@ export interface DiscoverPlace {
   /** Share of likes among the votes, 0..1; the service sends it as a number or a string. */
   like_rate?: number | string | null
   creator_address?: string | null
+  user_visits?: number
+  updated_at?: string | null
   /** The signed-in user's own vote and favourite (signed reads only). */
   user_like?: boolean
   user_dislike?: boolean
@@ -2578,12 +2710,14 @@ export interface DiscoverPlace {
 // each place carries the signed-in user's own like, dislike and favourite. Every request is
 // answered, a failed one with `failed`.
 
-/** The places covering these `x,y` parcels. */
+/** The places covering these `x,y` parcels: Genesis City's, or `world`'s scenes when given. */
 export interface GetPlacesAtRequest {
   kind: 'getPlacesAt'
   /** Echoed in the answer. */
   request: number
   positions: string[]
+  /** A World's name: its scenes, the ones covering `positions` first. */
+  world?: string
 }
 export interface PlacesAtMessage {
   kind: 'placesAt'

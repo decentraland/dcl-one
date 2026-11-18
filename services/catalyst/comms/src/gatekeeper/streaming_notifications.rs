@@ -1,5 +1,5 @@
 //! Streaming notification recipients and messages shared by cleanup workflows.
-use crate::explore::places::removed::{PlaceContext, RemovedPlaces};
+use crate::gatekeeper::removed_places::{PlaceContext, RemovedPlaces};
 use crate::gatekeeper::{CommsState, errors::ApiError};
 use crate::interfaces::{StreamingNotification, StreamingNotificationKind};
 use crate::{

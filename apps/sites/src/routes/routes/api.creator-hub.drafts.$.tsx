@@ -2,7 +2,7 @@
 // node's builder projects (scene-drafts-client.ts importLegacyDrafts): the
 // signer lists and reads their own, then deletes each once the node holds
 // it. Saves go to the node; the delete, the one write left here, waits on
-// the node's creator writes (CREATE_WRITES_ENABLED and its restore stamps).
+// the node's creator writes (CREATE_WRITES_ENABLED).
 import { isSafeDraftId } from "@/data/lib/catalyst/creator-hub/scene-drafts";
 import {
   DraftStoreUnavailable,

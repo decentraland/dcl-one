@@ -1,16 +1,18 @@
 /*
  * Source: decentraland/sites HelpPageWrapper, HelpPageContainer, HelpSidebar*, HelpContentArea and the status
  * wrappers (src/pages/help/HelpPage.styled.ts). One grid places every part, so the status control is rendered once
- * and moves from the right column (wider screens) to beside the title (phones).
+ * and moves from the right column (from 1280px) to the top right above the section (tablets) and beside the title
+ * (phones).
  *
- * From 768px up the page is one viewport high (never under 640px, where the page scrolls instead): the chat banner
- * keeps its height at the bottom and the active section's list fills the rest, scrolling on its own.
+ * From 768px up the page is at least one viewport high (never under 640px): the chat banner keeps its height at the
+ * bottom and the active section's list fills the rest, scrolling on its own. When the viewport cannot fit the section
+ * with its list at the minimum height, the page grows and scrolls instead, so the section never runs under the banner.
  */
 .root {
   display: flex;
   box-sizing: border-box;
-  height: max(640px, calc(100vh - var(--site-header-h, 64px)));
-  height: max(640px, calc(100svh - var(--site-header-h, 64px)));
+  min-height: max(640px, calc(100vh - var(--site-header-h, 64px)));
+  min-height: max(640px, calc(100svh - var(--site-header-h, 64px)));
   flex-direction: column;
   padding: var(--dcl-space-32) 20px 20px;
   background: var(--dcl-bg-page);
@@ -22,8 +24,7 @@
 
 .layout {
   display: grid;
-  min-height: 0;
-  flex: 1 1 auto;
+  flex: 1 0 auto;
   grid-template-areas:
     'title panel status'
     'description panel status'
@@ -75,18 +76,48 @@
   margin-right: 50px;
 }
 
-@media (max-width: 1023px) {
+/* Under 1280px a third column leaves the questions too narrow: the status moves to the top right, above them. */
+@media (max-width: 1279px) {
   .layout {
-    padding-left: 40px;
-  }
-
-  .panel {
-    margin-left: var(--dcl-space-48);
+    grid-template-areas:
+      'title status'
+      'description panel'
+      'tabs panel'
+      '. panel';
+    grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
+    /* Without the status column the section would run to the page's edge; this lines it up with the header. */
+    padding-right: var(--dcl-space-48);
   }
 
   .status {
     min-width: 0;
+    justify-self: end;
     margin-right: 0;
+  }
+
+  .panel {
+    margin: 0 0 0 var(--dcl-space-48);
+  }
+}
+
+/* Tablets stack the page: the title and status share a row, the tabs sit on one row and the section takes the width. */
+@media (max-width: 1023px) {
+  .layout {
+    grid-template-areas:
+      'title status'
+      'description description'
+      'tabs tabs'
+      'panel panel';
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 0 var(--dcl-space-24);
+  }
+
+  .description {
+    max-width: 600px;
+  }
+
+  .panel {
+    margin: var(--dcl-space-16) 0 0;
   }
 }
 
@@ -109,7 +140,7 @@
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-rows: auto;
     align-items: baseline;
-    padding-left: 0;
+    padding: 0;
   }
 
   .title {

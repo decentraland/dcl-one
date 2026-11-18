@@ -1,8 +1,7 @@
 import { Provider } from 'react-redux';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
@@ -11,22 +10,11 @@ import { actions } from '/@/modules/store/creatorFund';
 import { misc } from '#preload';
 
 import { tracked } from '../../../tests/utils/analytics';
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { createTestStore } from '../../../tests/utils/testStore';
 import { TermsModal } from './TermsModal';
 
 vi.mock('/@/lib/creatorFundApi', () => ({ getTerms: vi.fn() }));
-vi.mock('../Modals', async importOriginal => ({
-  ...((await importOriginal()) as object),
-  Modal: ({
-    open,
-    children,
-    className,
-  }: {
-    open: boolean;
-    children: React.ReactNode;
-    className?: string;
-  }) => (open ? <div className={className}>{children}</div> : null),
-}));
 
 const TERMS = {
   version: 1,
@@ -39,7 +27,7 @@ const TERMS = {
 const renderModal = (ui: React.ReactElement) =>
   render(
     <Provider store={createTestStore()}>
-      <ThemeProvider theme={dark}>{ui}</ThemeProvider>
+      <TestProviders>{ui}</TestProviders>
     </Provider>,
   );
 
@@ -190,6 +178,36 @@ describe('TermsModal', () => {
 
       expect(onClose).toHaveBeenCalled();
     });
+
+    it('should close on Escape before focus moves into it', async () => {
+      const onClose = vi.fn();
+      renderModal(
+        <TermsModal
+          variant="read"
+          onClose={onClose}
+        />,
+      );
+      await screen.findByRole('region', { name: 'Program Terms' });
+
+      fireEvent.keyDown(document.body, { key: 'Escape' });
+
+      expect(onClose).toHaveBeenCalled();
+    });
+
+    it('should be one modal dialog, named by its title', async () => {
+      renderModal(
+        <TermsModal
+          variant="read"
+          onClose={vi.fn()}
+        />,
+      );
+      await screen.findByRole('heading', { name: TERMS.title });
+
+      const dialogs = screen.getAllByRole('dialog');
+      expect(dialogs).toHaveLength(1);
+      expect(screen.getByRole('dialog', { name: TERMS.title })).toBe(dialogs[0]);
+      expect(dialogs[0].getAttribute('aria-modal')).toBe('true');
+    });
   });
 
   describe('when accepting and the terms are longer than the box', () => {
@@ -286,13 +304,13 @@ describe('TermsModal', () => {
       const onAccept = vi.fn();
       render(
         <Provider store={store}>
-          <ThemeProvider theme={dark}>
+          <TestProviders>
             <TermsModal
               variant="accept"
               onAccept={onAccept}
               onClose={vi.fn()}
             />
-          </ThemeProvider>
+          </TestProviders>
         </Provider>,
       );
       fireEvent.click(await screen.findByRole('checkbox'));

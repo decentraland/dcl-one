@@ -101,6 +101,9 @@ pub enum SystemApi {
     LoginLocalGuest(RpcResultSender<Result<(), String>>),
     LoginCancel,
     Logout,
+    /// Drop the stored login, so the next start opens on sign-in: a person signing out. A guest
+    /// account stays reachable through the wallet session the bridge scene keeps.
+    ForgetLogin,
     GetSettings(RpcResultSender<Vec<SettingInfo>>),
     SetSetting(String, f32),
     /// Sign a request with the engine wallet, with caller-supplied metadata. Scene-originated
@@ -137,6 +140,10 @@ pub enum SystemApi {
     LiveSceneInfo(RpcResultSender<Vec<LiveSceneInfo>>),
     GetHomeScene(RpcResultSender<HomeScene>),
     SetHomeScene(HomeScene),
+    /// None takes the lobby stage down.
+    SetLobbyStage(Option<LobbyStage>),
+    /// Whether the local user may enter the named world (`name.dcl.eth`).
+    GetWorldAccess(String, RpcResultSender<WorldAccessVerdict>),
     /// Credential-free resolved service endpoints.
     GetServiceUrls(RpcResultSender<Vec<(String, String)>>),
     GetWelcome(RpcResultSender<WelcomeState>),
@@ -154,6 +161,9 @@ pub enum SystemApi {
     GetProfileChangedStream(RpcStreamSender<ProfileChangedEvent>),
     GetSceneLoadingUiStream(RpcStreamSender<SceneLoadingUi>),
     GetAnalyticsEventStream(RpcStreamSender<AnalyticsEvent>),
+    /// The preview server's texture import status for the previewed scene, as the preview socket
+    /// delivers it (`comms::preview`); nothing outside preview mode.
+    GetTextureOptimizationStream(RpcStreamSender<TextureOptimizationStatus>),
     // Native-only transport for the super-user bridge scene's BroadcastChannel: the scene posts page
     // -bound Envelopes via BridgeToPage, and subscribes to page->scene Envelopes via GetBridgeStream.
     // (In web the browser provides BroadcastChannel directly; native has no cross-process equivalent.)
@@ -183,6 +193,8 @@ pub enum SystemApi {
     GetWorldAccessStream(RpcStreamSender<WorldAccessEvent>),
     /// Answers the password prompt: the password, or `None` when the player gives up.
     SetWorldPassword(Option<world_access::WorldPassword>),
+    /// The signed-in wallet's platform ban: now, then again on every change.
+    GetPlatformBanStream(RpcStreamSender<PlatformBanNotice>),
     SetInteractableArea(Vec4),
     GetMicState(RpcResultSender<MicState>),
     SetMicEnabled(bool),
@@ -221,9 +233,15 @@ pub enum SystemApi {
     // Social / Communities
     /// A community member came online or went offline, until dropped.
     GetCommunityConnectivityStream(RpcStreamSender<CommunityMemberConnectivityData>),
-    /// The community channels the local user listens to (member of, chat not closed), as
-    /// community ids; replaces the previous set.
-    SetCommunityChannels(Vec<String>),
+    /// The communities whose chat channels the local user listens to (member of, chat not
+    /// closed); replaces the previous set.
+    SetCommunityChannels(Vec<ListenedCommunity>),
+    /// Replaces the text of the chat bubble still showing the message `message_id`: its
+    /// translation, or the original back. A message no bubble shows is ignored.
+    SetChatBubbleText {
+        message_id: String,
+        message: String,
+    },
     // Voice chat (private calls and community streams)
     /// Emits the voice chat state now and whenever it changes, until dropped.
     GetVoiceChatStateStream(RpcStreamSender<VoiceChatState>),
