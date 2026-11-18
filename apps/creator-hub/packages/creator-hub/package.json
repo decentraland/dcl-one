@@ -99,11 +99,12 @@
     "test:renderer": "node ../../scripts/rolldown.js vitest run -r renderer --passWithNoTests",
     "test:shared": "node ../../scripts/rolldown.js vitest run -r shared --passWithNoTests",
     "test:unit": "pnpm run test:main && pnpm run test:preload && pnpm run test:renderer && pnpm run test:shared",
-    "typecheck": "pnpm run typecheck:main && pnpm run typecheck:preload && pnpm run typecheck:renderer && pnpm run typecheck:e2e",
+    "typecheck": "pnpm run typecheck:main && pnpm run typecheck:preload && pnpm run typecheck:renderer && pnpm run typecheck:e2e && pnpm run typecheck:scripts",
     "typecheck:e2e": "tsc --noEmit -p e2e/tsconfig.json",
     "typecheck:main": "tsc --noEmit -p main/tsconfig.json",
     "typecheck:preload": "tsc --noEmit -p preload/tsconfig.json",
     "typecheck:renderer": "tsc -p renderer/tsconfig.ui3.json && tsc --noEmit -p renderer/tsconfig.json",
+    "typecheck:scripts": "tsc -p scripts/assistant-manifest/tsconfig.json",
     "watch": "node scripts/watch.js"
   },
   "type": "module"

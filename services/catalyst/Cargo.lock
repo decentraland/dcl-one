@@ -1787,6 +1787,7 @@ dependencies = [
  "catalyst-jobs",
  "catalyst-shared",
  "catalyst-storage",
+ "catalyst-testing",
  "chrono",
  "dashmap",
  "dcl-auth",

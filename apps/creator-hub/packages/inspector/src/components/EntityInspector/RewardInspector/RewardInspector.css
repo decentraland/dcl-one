@@ -20,7 +20,7 @@
   flex: 1;
 }
 
-.RewardInspector .Button.text.link:hover {
+.RewardInspector .btn.link:hover {
   text-decoration: underline;
 }
 

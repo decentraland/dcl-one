@@ -719,6 +719,12 @@ pub fn vec3_to_parcel(position: Vec3) -> IVec2 {
         .as_ivec2()
 }
 
+/// The parcels within Chebyshev ring `ring` of `center`, `center` included: a square `2 * ring + 1`
+/// parcels a side. A negative ring gives none.
+pub fn ring_parcels(center: IVec2, ring: i32) -> impl Iterator<Item = IVec2> {
+    (-ring..=ring).flat_map(move |x| (-ring..=ring).map(move |y| center + IVec2::new(x, y)))
+}
+
 pub fn parcel_to_vec3(parcel: IVec2) -> Vec3 {
     Vec3::new(
         (parcel.x as f32 + 0.5) * PARCEL_SIZE,

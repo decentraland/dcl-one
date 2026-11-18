@@ -51,13 +51,16 @@ export function ModeAdvanced({ value, onSubmit, onGoBack }: Props) {
       />
       <Block>
         <Button
-          type="dark"
+          variant="ghost"
+          size="sm"
           onClick={onGoBack}
         >
           Back
         </Button>
         <Button
-          type="blue"
+          variant="primary"
+          className="info"
+          size="sm"
           onClick={handleSubmit}
           disabled={disabled}
         >

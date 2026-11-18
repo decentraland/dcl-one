@@ -201,7 +201,7 @@ export function useFocusNewRows(rows: number, readAt: number) {
     pending.current = null;
     const active = document.activeElement;
     if (active && active !== document.body) return;
-    const row = listRef.current?.children[from]?.querySelector<HTMLElement>("a, button");
+    const row = listRef.current?.children[from]?.querySelector<HTMLElement>('a:not([tabindex="-1"]), button:not([tabindex="-1"])');
     (row ?? panelRef.current)?.focus();
   }, [rows, readAt]);
   return {
