@@ -594,7 +594,7 @@ pub async fn fold(pool: &PgPool, net: ChainNet, since: Option<i64>) -> anyhow::R
     })
 }
 
-/// Materialized so the per-token order cannot pull in a scan of the network's token index.
+/// Materialized so the per-token order does not shape the window's scan.
 pub(super) const LAND_DATA_SQL: &str = "WITH w AS MATERIALIZED (\
     SELECT contract_address, token_id, detail, block_number, log_index FROM shop.nft_event \
     WHERE network = 'ethereum' AND kind = 'land_data' AND block_number > $1) \
