@@ -11,6 +11,7 @@ pub mod memory;
 mod memory_tests;
 pub mod partition;
 pub mod perf;
+pub mod platform_ban;
 pub mod profile;
 pub mod rpc;
 pub mod sets;

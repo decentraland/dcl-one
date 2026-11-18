@@ -35,6 +35,14 @@ describe("Toggle", () => {
     expect(onChange.mock.calls.map((call) => call[0])).toEqual([true, false, true]);
   });
 
+  test("the small size is a class, and the default size adds none", () => {
+    const { container } = render(<><Toggle ariaLabel="Small" size="small" /><Toggle ariaLabel="Default" /></>);
+
+    expect(screen.getByRole("switch", { name: "Small" }).className).toBe("toggle toggle--small");
+    expect(screen.getByRole("switch", { name: "Default" }).className).toBe("toggle");
+    expect(container.querySelectorAll(".toggle__knob")).toHaveLength(2);
+  });
+
   test("ariaLabelledBy names the switch", () => {
     render(<><span id="l">Auto save</span><Toggle ariaLabelledBy="l" /></>);
 

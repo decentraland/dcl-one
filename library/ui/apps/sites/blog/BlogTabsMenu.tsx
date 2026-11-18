@@ -1,4 +1,5 @@
 // TODO(figma-ds): replace with the generated Tabs component when the DCL UI library lands
+import type { ReactNode } from 'react'
 import { BlogLink } from './BlogRouting'
 import { BlogSearchForm } from './BlogSearchForm'
 import { blogCategoryHref, type BlogCategory } from './blogModel'
@@ -11,10 +12,17 @@ export type BlogTabsMenuProps = {
   /** `page` on a list, where the tab is the page shown; `true` on a post in that category. */
   current: 'page' | 'true'
   query: string
+  desktopSearch?: ReactNode
 }
 
 /** Category tabs, then search (hidden on small screens, where the page shows its own field). */
-export function BlogTabsMenu({ categories, activeCategory, current, query }: BlogTabsMenuProps) {
+export function BlogTabsMenu({
+  categories,
+  activeCategory,
+  current,
+  query,
+  desktopSearch
+}: BlogTabsMenuProps) {
   const tabs = [{ slug: '', title: 'All articles' }, ...categories]
   return (
     <div className={styles.bar}>
@@ -37,7 +45,7 @@ export function BlogTabsMenu({ categories, activeCategory, current, query }: Blo
         </ul>
       </nav>
       <div className={styles.search}>
-        <BlogSearchForm variant="bar" query={query} />
+        {desktopSearch ?? <BlogSearchForm variant="bar" query={query} />}
       </div>
     </div>
   )

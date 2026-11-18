@@ -128,6 +128,28 @@
   /* Layer of the shared ui3 tooltip: above the menus and under the loading overlay. */
   --z-overlay: 1900;
 
+  /* ui3 bridge: the tokens ui3's Button reads that this theme lacks, set to the inspector's
+     button looks. The base values are the small button's; medium and large override in
+     components/Button/Button.css. See docs/DESIGN.md, "ui3 bridge (inspector)". */
+  --brand-cta: var(--primary-main);
+  --brand-hover: var(--palette-primary-light);
+  --on-brand: var(--text-on-primary);
+  --fill-4: var(--palette-whiteTransparent-subtle);
+  --fill-5: var(--palette-whiteTransparent-soft);
+  --ink-45: var(--white);
+  --ink-85: var(--white);
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+  --ctl-radius: var(--shape-borderRadius);
+  --ctl-weight: var(--type-h7-regular-weight);
+  --ctl-tracking: var(--type-h7-regular-letter-spacing);
+  --ctl-fs-sm: var(--type-h7-regular-size);
+  --ctl-fs-md: var(--type-h6-semi-caps-size);
+  --ctl-fs-lg: var(--type-h6-semi-caps-size);
+  --ctl-pad-sm: 6px 10px;
+  --ctl-pad-md: var(--s-2) var(--s-5);
+  --ctl-pad-lg: var(--s-3) var(--s-5);
+
   /* DCL Colors */
   --brand: #ff2d55;
   --primary-main: var(--brand);

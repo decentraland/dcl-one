@@ -1,6 +1,6 @@
 import { platform } from 'node:process';
 import path from 'node:path';
-import { app } from 'electron';
+import { app, systemPreferences } from 'electron';
 import {
   init as sentryInit,
   captureException,
@@ -84,6 +84,12 @@ app.on('second-instance', async (_e: unknown, argv: string[]) => {
   await restoreOrCreateMainWindow();
   handleAppArguments(argv);
 });
+
+// macOS adds its own "Enter Full Screen" to a View menu, next to the "Toggle Full Screen" of
+// Electron's default menu.
+if (platform === 'darwin') {
+  systemPreferences.setUserDefault('NSFullScreenMenuItemEverywhere', 'boolean', false);
+}
 
 /**
  * Register the app as the handler for the deeplink scheme.

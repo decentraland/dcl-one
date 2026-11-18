@@ -112,8 +112,10 @@ export class RendererHost {
   ): Promise<RendererRequestResult[K]> {
     try {
       switch (request.kind) {
-        case 'getPointerWorldPoint':
-          return (await this.renderer.getPointerWorldPoint()) as RendererRequestResult[K];
+        case 'getPointerWorldPoint': {
+          const { ndc } = request as Extract<RendererRequest, { kind: 'getPointerWorldPoint' }>;
+          return (await this.renderer.getPointerWorldPoint(ndc)) as RendererRequestResult[K];
+        }
         case 'getEntityAnimations': {
           const { entity } = request as Extract<RendererRequest, { kind: 'getEntityAnimations' }>;
           return (await this.renderer.getEntityAnimations(
