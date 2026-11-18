@@ -362,13 +362,10 @@ impl DirectSigner {
     ) -> Result<String, ApiError> {
         let _guard = self.send_lock.lock().await;
         let signed = self.sign_call(to, data).await?;
-        let tx_hash = self.send_raw(&signed.raw).await.map_err(|e| {
-            if e.is_execution_revert() {
-                ApiError::RelayReverted(format!("transaction reverted: {}", e.message()))
-            } else {
-                ApiError::RelayerFailed(format!("eth_sendRawTransaction failed: {e}"))
-            }
-        })?;
+        let tx_hash = self
+            .send_raw(&signed.raw)
+            .await
+            .map_err(|e| send_failure(&signed.hash, e))?;
         tracing::info!(tx_hash = %tx_hash, relayer = %self.relayer_address, "{log_msg}");
         Ok(tx_hash)
     }
@@ -644,6 +641,20 @@ impl DirectSigner {
     }
 }
 
+/// What a failed `eth_sendRawTransaction` of a just-signed transaction (`hash`) tells the caller:
+/// never that it was not sent. The failure comes after the send was attempted, and nothing in it
+/// proves the transaction did not go out. No answer at all (a timeout, a cut connection, a gateway
+/// error, an unreadable body) can follow the node taking it. An error the node answers can be about
+/// a retry of a send it already took: a gateway that retried gets "already known", "nonce too low",
+/// or a revert from a node that simulates. So every send failure is `RelayerTimeout` (504): the
+/// buyer's quota slot is kept and a client follows the purchase instead of signing again. The
+/// refusals that prove nothing was sent come before this, from validation and gas estimation.
+fn send_failure(hash: &str, e: RpcError) -> ApiError {
+    ApiError::RelayerTimeout(format!(
+        "transaction {hash} may have been broadcast: eth_sendRawTransaction failed ({e})"
+    ))
+}
+
 /// The nonce a signed EIP-2718 transaction carries.
 fn signed_nonce(raw: &[u8]) -> Option<u64> {
     use alloy_consensus::Transaction;
@@ -665,6 +676,43 @@ fn parse_tx_hash(tx_hash_hex: &str) -> Result<TxHash, ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// No failure of the send itself proves the transaction never went out: no answer, an answer
+    /// that the node already holds it, a revert, or a plain refusal all keep the slot and answer 504.
+    #[test]
+    fn a_failed_send_is_indeterminate_never_a_refusal() {
+        use crate::evm::transaction::{ReservationDisposition, reservation_disposition};
+        let answered = |code: i64, message: &str| RpcError::Response {
+            code,
+            message: message.into(),
+        };
+        for failure in [
+            RpcError::Transport("operation timed out".into()),
+            RpcError::Transport("rpc responded with status 502".into()),
+            answered(3, "execution reverted"),
+            answered(-32000, "already known"),
+            answered(-32000, "nonce too low: next nonce 6, tx nonce 5"),
+            answered(-32000, "replacement transaction underpriced"),
+            answered(-32000, "insufficient funds for gas * price + value"),
+        ] {
+            let what = failure.to_string();
+            let error = send_failure("0x01", failure);
+            assert!(
+                matches!(error, ApiError::RelayerTimeout(_)),
+                "{what}: {error}"
+            );
+            assert_eq!(
+                error.status(),
+                axum::http::StatusCode::GATEWAY_TIMEOUT,
+                "{what}"
+            );
+            assert_eq!(
+                reservation_disposition(&error),
+                ReservationDisposition::Keep,
+                "{what}"
+            );
+        }
+    }
 
     /// The cap bounds the fee per gas a transaction may pay: an EIP-1559 `max_fee_per_gas`
     /// (a tip under the cap is not enough) or a legacy `gas_price`, the cap itself included.

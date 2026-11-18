@@ -135,8 +135,11 @@
   height: 28px;
   object-fit: contain;
 }
+/* The label takes the row's free width, so every switch lines up at the row's end, with or without
+   an icon before it. */
 .layerLabel {
-  width: 164px;
+  flex: 1;
+  min-width: 0;
   font-size: var(--type-16);
   font-weight: var(--fw-semibold);
   line-height: 28px;

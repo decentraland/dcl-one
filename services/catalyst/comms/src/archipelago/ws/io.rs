@@ -588,7 +588,7 @@ impl WebSocket {
         // The parser is dropped before either half releases its capacity share.
         sink.1 = Some(permit.clone());
         incoming.1 = Some(permit.clone());
-        tokio::spawn(writer(sink, queue.clone(), state.clone(), permit.clone()));
+        crate::shared::task::spawn(writer(sink, queue.clone(), state.clone(), permit.clone()));
         Self {
             accepted_credit: None,
             assignments: None,

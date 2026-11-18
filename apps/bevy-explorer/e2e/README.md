@@ -177,7 +177,9 @@ boots a second client with `--comms-gatekeeper` pointed at `driver/gatekeeper-st
 gatekeeper answering as scripted, `DCL_E2E_GATEKEEPER_PORT`, 18745 by default, one shared by
 every spec and closed with the sessions) to see a banned answer and a failed check; a scenario's
 `session.nativeArgs` is what starts that client, on an automation port of its own. On the web
-a service override stops the boot at the launch gate, so those scenarios are todos there.
+a service override stops the boot at the launch gate, so those scenarios are todos there. The
+same file checks realm entry: entered when not banned or when the check fails, and, against the
+stub, a `/changerealm` refused while banned, including for a new sign-in before it asks to enter.
 `specs/scene-ban.test.ts` reads the scene room's admission and moderation lists at Genesis Plaza and
 their absence on an empty parcel, and, on the standalone against the same stub, a refused scene
 adapter reported as a scene ban.
@@ -185,14 +187,14 @@ adapter reported as a scene ban.
 ## Scenario map
 
 explorer-automation's 89 Explorer tests outside the sign-in flows, by fixture; the class of each
-test is in the spec file's header. Port 47, Partial 35, Gap 5, Drop 2.
+test is in the spec file's header. Port 48, Partial 35, Gap 4, Drop 2.
 
 | Fixture (tests) | Spec | Port | Partial | Gap | Drop | What changed |
 | --- | --- | --- | --- | --- | --- | --- |
 | ExplorePanel (7) | `explore-panel` | 6 | 1 | | | Pages instead of one panel, each opened by a row of the rail's Discover, Me or System panel; the top bar's Shop tab is not driven |
 | Shortcuts (7) | `shortcuts` | 6 | 1 | | | Gallery is `G`, not `K` |
 | Navbar (4) | `navbar` | | 3 | 1 | | A fixed rail set, no flags, the other entries rows of the Me, Discover and System panels; the help rows are in the System panel, which has no controls row |
-| Minimap (5) | `minimap` | 3 | 1 | 1 | | The rail's Map button shows the minimap; no favourite heart; the dots menu adds the minimap's own settings; name and compass are unreadable text |
+| Minimap (5) | `minimap` | 4 | 1 | | | The rail's Map button shows the minimap; the dots menu adds the minimap's own settings; name and compass are unreadable text |
 | Navmap (1) | `navmap` | 1 | | | | `Sports`, not `Sport` |
 | Events (3) | `events` | 2 | 1 | | | The detail opens for the first event the service lists, when there is one |
 | Places (5) | `places` | | 4 | 1 | | Tabs, category chips and Filter & Sort, without counters; a card opens the place's detail, which no scenario opens yet |

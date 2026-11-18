@@ -12,12 +12,15 @@ livekit = ["comms/livekit"]
 common = { workspace = true }
 comms = { workspace = true }
 console = { workspace = true }
+ipfs = { workspace = true }
 platform = { workspace = true }
 social = { workspace = true }
+system_bridge = { workspace = true }
 wallet = { workspace = true }
 
 bevy = { workspace = true }
 bevy_console = { workspace = true }
+chrono = { workspace = true }
 clap = { workspace = true }
 alloy-core = { workspace = true }
 reqwest = { workspace = true }
