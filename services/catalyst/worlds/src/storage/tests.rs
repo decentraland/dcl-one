@@ -883,16 +883,12 @@ async fn parked_legacy_storage_survives_migration_without_blocking_the_first_red
         .await
         .unwrap();
     let name = format!("dcl_storage_migration_{}", Uuid::new_v4().simple());
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-        .execute(&admin)
-        .await
-        .unwrap();
+    crate::db::scratch::create_database_with_schema(&admin, &name).await;
     let pool = PgPoolOptions::new()
         .max_connections(4)
         .connect_with(opts.database(&name))
         .await
         .unwrap();
-    crate::db::apply_schema(&pool).await.unwrap();
     let world = world_name();
     seed_world(&pool, &world, Some(&address())).await;
     let player = address();
@@ -2783,16 +2779,12 @@ async fn genesis_storage_admits_estate_owner_and_grants_from_the_land_index() {
         .await
         .unwrap();
     let name = format!("catalyst_test_storage_land_{}", Uuid::new_v4().simple());
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-        .execute(&admin)
-        .await
-        .unwrap();
+    crate::db::scratch::create_database_with_schema(&admin, &name).await;
     let pool = PgPoolOptions::new()
         .max_connections(4)
         .connect_with(opts.database(&name))
         .await
         .unwrap();
-    crate::db::apply_schema(&pool).await.unwrap();
     let (id, p1, _, _) = seed_genesis_scene(&pool).await;
     let parcel = Parcel::parse(&p1).unwrap();
     let keys = [
@@ -3722,16 +3714,12 @@ impl CollaboratorLandFixture {
             .await
             .unwrap();
         let name = format!("storage_collab_{}", Uuid::new_v4().simple());
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let pool = PgPoolOptions::new()
             .max_connections(4)
             .connect_with(opts.database(&name))
             .await
             .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         let settings = crate::land_authz::Settings::for_tests();
         sqlx::query("INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started, history_timestamps_ready) VALUES ($1, $2, $3, 100, 100, timezone('UTC', now()), true, true)")
             .bind(&settings.network).bind(&settings.land_registry).bind(&settings.estate_registry)

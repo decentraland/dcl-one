@@ -338,11 +338,12 @@ pub async fn apply_schema(pool: &PgPool) -> Result<(), ApplySchemaError> {
 /// fixtures; `isolated_pool` creates a fresh database per call for tests
 /// that read or rewrite whole tables; [`OwnedDatabase`] is a fresh database
 /// a test drops itself, blank or seeded. All use `catalyst_test_lib_<pid>_*`
-/// databases on the cluster `CATALYST_TEST_DATABASE_URL` names, seeded with
-/// schema.sql unless blank. The database in that URL is never touched, so a
-/// live node's rows are out of reach. A test that panics before its teardown
-/// leaves its database behind: the next test process drops every
-/// `catalyst_test_lib_<pid>_*` whose pid is gone.
+/// databases on the cluster `CATALYST_TEST_DATABASE_URL` names, cloned from
+/// the schema's template (`catalyst_tpl_<hash>`) unless blank. The database
+/// in that URL is never touched, so a live node's rows are out of reach. A
+/// test that panics before its teardown leaves its database behind: the
+/// next test process drops every `catalyst_test_lib_<pid>_*` whose pid is
+/// gone.
 #[cfg(any(test, feature = "scratch"))]
 pub mod scratch {
     use super::*;
@@ -390,7 +391,6 @@ pub mod scratch {
     }
 
     /// What an [`OwnedDatabase`] starts with.
-    #[cfg(any(test, feature = "test-support"))]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum Schema {
         /// schema.sql, as a fresh node bootstraps it.
@@ -423,7 +423,7 @@ pub mod scratch {
                     .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'),
                 "test database tag {tag:?} holds only letters, digits, _ and -"
             );
-            let (admin, name, url) = create_database(Some(tag)).await?;
+            let (admin, name, url) = create_database(Some(tag), schema).await?;
             let pool = connect_pool(
                 &url,
                 &PoolSettings {
@@ -433,11 +433,6 @@ pub mod scratch {
             )
             .await
             .unwrap_or_else(|e| panic!("connecting to {name}: {e}"));
-            if schema == Schema::Full {
-                apply_schema(&pool)
-                    .await
-                    .unwrap_or_else(|e| panic!("applying schema.sql to {name}: {e}"));
-            }
             Some(Self {
                 pool,
                 url,
@@ -466,29 +461,20 @@ pub mod scratch {
     }
 
     async fn create() -> Option<String> {
-        let (admin, name, url) = create_database(None).await?;
+        let (admin, name, url) = create_database(None, Schema::Full).await?;
         admin.close().await;
-        let pool = connect_pool(
-            &url,
-            &PoolSettings {
-                max_connections: 2,
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap_or_else(|e| panic!("connecting to {name}: {e}"));
-        apply_schema(&pool)
-            .await
-            .unwrap_or_else(|e| panic!("applying schema.sql to {name}: {e}"));
-        pool.close().await;
         eprintln!("lib tests: scratch database {name}");
         Some(url)
     }
 
-    /// Creates an empty `catalyst_test_lib_<pid>[_<tag>]_<rand>` database
-    /// after sweeping dead processes' ones; returns the admin pool (on the
-    /// cluster's `postgres` database), its name and its URL.
-    async fn create_database(tag: Option<&str>) -> Option<(PgPool, String, String)> {
+    /// Creates a `catalyst_test_lib_<pid>[_<tag>]_<rand>` database, empty or
+    /// cloned from the schema template, after sweeping dead processes' ones;
+    /// returns the admin pool (on the cluster's `postgres` database), its name
+    /// and its URL.
+    async fn create_database(
+        tag: Option<&str>,
+        schema: Schema,
+    ) -> Option<(PgPool, String, String)> {
         let base = std::env::var("CATALYST_TEST_DATABASE_URL").ok()?;
         let opts: PgConnectOptions = base
             .parse()
@@ -510,13 +496,270 @@ pub mod scratch {
         // PostgreSQL truncates longer identifiers, and the URL would then name
         // a database that does not exist.
         assert!(name.len() <= 63, "test database name {name} is too long");
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap_or_else(|e| panic!("CREATE DATABASE {name}: {e}"));
+        match schema {
+            Schema::Full => create_with_schema(&admin, &name).await,
+            Schema::Blank => {
+                sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
+                    .execute(&admin)
+                    .await
+                    .unwrap_or_else(|e| panic!("CREATE DATABASE {name}: {e}"));
+            }
+        }
         let mut url = url::Url::parse(&base).expect("CATALYST_TEST_DATABASE_URL must be a URL");
         url.set_path(&format!("/{name}"));
         Some((admin, name, url.to_string()))
+    }
+
+    /// Creates the database `name` on `admin`'s cluster holding schema.sql:
+    /// a clone of the schema's template, which [`apply_schema`] builds once
+    /// per cluster. Clones run concurrently, unlike applies.
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn create_database_with_schema(admin: &PgPool, name: &str) {
+        create_with_schema(admin, name).await;
+    }
+
+    async fn create_with_schema(admin: &PgPool, name: &str) {
+        let opts = admin.connect_options();
+        let mut template = TEMPLATE.get_or_init(|| ensure_template(&opts)).await;
+        let rebuilt;
+        let created = clone_template(admin, name, template).await;
+        match created {
+            Ok(()) => {}
+            // Another checkout's sweep dropped it: build it again, once.
+            Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("3D000") => {
+                rebuilt = ensure_template(&opts).await;
+                template = &rebuilt;
+                clone_template(admin, name, template)
+                    .await
+                    .unwrap_or_else(|e| {
+                        panic!("CREATE DATABASE {name} from {}: {e}", template.name)
+                    });
+            }
+            Err(e) => panic!("CREATE DATABASE {name} from {}: {e}", template.name),
+        }
+        // A clone carries neither the template's database settings
+        // (schema.sql sets the timezone) nor its per-database identity.
+        let settings: Vec<String> = sqlx::query_scalar(
+            "SELECT format('ALTER DATABASE %I SET %I = %L', $1::text, \
+                    split_part(c, '=', 1), substr(c, strpos(c, '=') + 1)) \
+             FROM pg_db_role_setting s CROSS JOIN unnest(s.setconfig) c \
+             WHERE s.setrole = 0 \
+               AND s.setdatabase = (SELECT oid FROM pg_database WHERE datname = $2)",
+        )
+        .bind(name)
+        .bind(&template.name)
+        .fetch_all(admin)
+        .await
+        .unwrap_or_else(|e| panic!("reading {}'s settings: {e}", template.name));
+        for sql in settings {
+            sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                .execute(admin)
+                .await
+                .unwrap_or_else(|e| panic!("{sql}: {e}"));
+        }
+        use sqlx::Connection;
+        let mut conn = sqlx::PgConnection::connect_with(&opts.as_ref().clone().database(name))
+            .await
+            .unwrap_or_else(|e| panic!("connecting to {name}: {e}"));
+        sqlx::query(
+            "UPDATE social.fed_instance_identity SET peer_id = 'instance-' || gen_random_uuid()",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap_or_else(|e| panic!("minting {name}'s instance identity: {e}"));
+        conn.close().await.ok();
+    }
+
+    async fn clone_template(admin: &PgPool, name: &str, template: &Template) -> sqlx::Result<()> {
+        // Copying ~1,900 files does not scale past a couple of clones; more
+        // only load the host's file system.
+        static CLONING: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+        let _permit = CLONING.acquire().await.expect("never closed");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE DATABASE \"{name}\" TEMPLATE \"{}\"{}",
+            template.name, template.strategy
+        )))
+        .execute(admin)
+        .await
+        .map(drop)
+    }
+
+    /// The database `Schema::Full` databases are cloned from.
+    struct Template {
+        name: String,
+        strategy: &'static str,
+    }
+
+    static TEMPLATE: OnceCell<Template> = OnceCell::const_new();
+
+    const TEMPLATE_PREFIX: &str = "catalyst_tpl_";
+    /// A template of another schema is dropped once it is this old.
+    const STALE_TEMPLATE_SECS: i64 = 24 * 3600;
+
+    /// `catalyst_tpl_<hash>`: a schema or step change names a new template.
+    fn template_name() -> String {
+        use sha2::{Digest, Sha256};
+        let mut hash = Sha256::new();
+        hash.update(b"catalyst-test-template-v1\0");
+        hash.update(SCHEMA_SQL);
+        hash.update(b"\0");
+        hash.update(MIGRATIONS_SQL);
+        format!("{TEMPLATE_PREFIX}{}", &hex::encode(hash.finalize())[..16])
+    }
+
+    /// Finds or builds this schema's template. Test processes sharing the
+    /// cluster race here: an advisory lock lets one build while the others
+    /// wait, and the template's name exists only once it is complete.
+    async fn ensure_template(opts: &PgConnectOptions) -> Template {
+        use sqlx::Connection;
+        let name = template_name();
+        let mut conn = sqlx::PgConnection::connect_with(&opts.clone().database("postgres"))
+            .await
+            .unwrap_or_else(|e| {
+                panic!("connecting to the postgres database of the test cluster: {e}")
+            });
+        if !template_ready(&mut conn, &name).await {
+            let key = u64::from_str_radix(&name[TEMPLATE_PREFIX.len()..], 16).unwrap() as i64;
+            // Released with the connection if this process dies.
+            sqlx::query("SELECT pg_advisory_lock($1)")
+                .bind(key)
+                .execute(&mut conn)
+                .await
+                .unwrap_or_else(|e| panic!("locking {name}: {e}"));
+            if !template_ready(&mut conn, &name).await {
+                // A sweep that died between unmarking and dropping it.
+                let leftover: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)",
+                )
+                .bind(&name)
+                .fetch_one(&mut conn)
+                .await
+                .unwrap_or_else(|e| panic!("looking up {name}: {e}"));
+                if leftover {
+                    drop_database(&mut conn, &name)
+                        .await
+                        .unwrap_or_else(|e| panic!("dropping the unfinished {name}: {e}"));
+                }
+                build_template(&mut conn, opts, &name).await;
+            }
+            sqlx::query("SELECT pg_advisory_unlock($1)")
+                .bind(key)
+                .execute(&mut conn)
+                .await
+                .unwrap_or_else(|e| panic!("unlocking {name}: {e}"));
+        }
+        sweep_stale_templates(&mut conn, &name).await;
+        let version: i32 = sqlx::query_scalar("SELECT current_setting('server_version_num')::int")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap_or_else(|e| panic!("reading the server version: {e}"));
+        conn.close().await.ok();
+        Template {
+            name,
+            // PostgreSQL 15+: copying the files beats WAL-logging every page.
+            strategy: if version >= 150_000 {
+                " STRATEGY FILE_COPY"
+            } else {
+                ""
+            },
+        }
+    }
+
+    async fn template_ready(conn: &mut sqlx::PgConnection, name: &str) -> bool {
+        sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1 AND datistemplate)",
+        )
+        .bind(name)
+        .fetch_one(conn)
+        .await
+        .unwrap_or_else(|e| panic!("looking up {name}: {e}"))
+    }
+
+    /// Applies schema.sql to a `catalyst_test_lib_<pid>_tplbuild_*` database,
+    /// swept like any scratch database if this process dies, then marks it a
+    /// template and renames it last.
+    async fn build_template(conn: &mut sqlx::PgConnection, opts: &PgConnectOptions, name: &str) {
+        let building = format!(
+            "catalyst_test_lib_{}_tplbuild_{}",
+            std::process::id(),
+            &uuid::Uuid::new_v4().simple().to_string()[..8]
+        );
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE DATABASE \"{building}\""
+        )))
+        .execute(&mut *conn)
+        .await
+        .unwrap_or_else(|e| panic!("CREATE DATABASE {building}: {e}"));
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                opts.clone()
+                    .database(&building)
+                    .options(SESSION_OPTIONS.iter().copied()),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("connecting to {building}: {e}"));
+        apply_schema(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("applying schema.sql to {building}: {e}"));
+        pool.close().await;
+        let built_at = chrono::Utc::now().timestamp();
+        for sql in [
+            format!("ALTER DATABASE \"{building}\" WITH IS_TEMPLATE true ALLOW_CONNECTIONS false"),
+            format!("COMMENT ON DATABASE \"{building}\" IS '{built_at}'"),
+            format!("ALTER DATABASE \"{building}\" RENAME TO \"{name}\""),
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                .execute(&mut *conn)
+                .await
+                .unwrap_or_else(|e| panic!("{sql}: {e}"));
+        }
+        eprintln!("lib tests: built the schema template {name}");
+    }
+
+    /// Drops other schemas' templates built more than a day ago. A checkout
+    /// still using one rebuilds it on its next clone.
+    async fn sweep_stale_templates(conn: &mut sqlx::PgConnection, current: &str) {
+        let stale: Vec<String> = sqlx::query_scalar(
+            "SELECT datname FROM pg_database \
+             WHERE datname LIKE 'catalyst\\_tpl\\_%' AND datname <> $1 \
+               AND coalesce(substring(shobj_description(oid, 'pg_database') FROM '^[0-9]+$')::bigint, 0) \
+                   < extract(epoch FROM now())::bigint - $2",
+        )
+        .bind(current)
+        .bind(STALE_TEMPLATE_SECS)
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap_or_default();
+        for name in stale {
+            if drop_database(&mut *conn, &name).await.is_ok() {
+                eprintln!("lib tests: dropped the stale schema template {name}");
+            }
+        }
+    }
+
+    /// Drops a database even if it is marked a template. An invalid database
+    /// (an interrupted drop) is never one, and altering it is fatal.
+    async fn drop_database(conn: &mut sqlx::PgConnection, name: &str) -> sqlx::Result<()> {
+        let template: bool = sqlx::query_scalar(
+            "SELECT coalesce(bool_or(datistemplate), false) FROM pg_database WHERE datname = $1",
+        )
+        .bind(name)
+        .fetch_one(&mut *conn)
+        .await?;
+        if template {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "ALTER DATABASE \"{name}\" IS_TEMPLATE false"
+            )))
+            .execute(&mut *conn)
+            .await?;
+        }
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE \"{name}\" WITH (FORCE)"
+        )))
+        .execute(&mut *conn)
+        .await?;
+        Ok(())
     }
 
     /// `/proc` is absent on macOS. Signal zero probes existence without sending
@@ -569,11 +812,10 @@ pub mod scratch {
             if alive {
                 continue;
             }
-            let dropped = sqlx::query(sqlx::AssertSqlSafe(format!(
-                "DROP DATABASE \"{name}\" WITH (FORCE)"
-            )))
-            .execute(admin)
-            .await;
+            let dropped = match admin.acquire().await {
+                Ok(mut conn) => drop_database(&mut conn, &name).await,
+                Err(e) => Err(e),
+            };
             match dropped {
                 Ok(_) => eprintln!("lib tests: dropped the stale scratch database {name}"),
                 Err(e) => eprintln!("lib tests: could not drop {name}: {e}"),
@@ -643,6 +885,82 @@ mod tests {
                 .unwrap();
         assert!(!left, "drop removes the database");
         observer.close().await;
+    }
+
+    /// A database cloned from the schema template is what `apply_schema`
+    /// makes of an empty one, settings and per-database identity included.
+    #[tokio::test]
+    async fn a_template_clone_matches_a_fresh_apply() {
+        let Some(fresh) = scratch::OwnedDatabase::new("fresh", scratch::Schema::Blank, 1).await
+        else {
+            return;
+        };
+        apply_schema(&fresh.pool).await.unwrap();
+        let clone = scratch::OwnedDatabase::new("clone", scratch::Schema::Full, 1)
+            .await
+            .unwrap();
+        let shape = |pool: PgPool| async move {
+            let mut facts: Vec<String> = sqlx::query_scalar(
+                "SELECT concat_ws(' ', 'db', pg_encoding_to_char(encoding), datlocprovider, \
+                        datcollate, datctype, datallowconn, datistemplate, \
+                        (SELECT array_agg(c ORDER BY c) FROM pg_db_role_setting s, unnest(s.setconfig) c \
+                         WHERE s.setdatabase = d.oid AND s.setrole = 0)) \
+                 FROM pg_database d WHERE datname = current_database() \
+                 UNION ALL SELECT 'collation ' || collname || ' ' || coalesce(collcollate, '') \
+                   FROM pg_collation WHERE collname = 'en_US.utf8' \
+                 UNION ALL SELECT 'extension ' || extname || ' ' || extversion FROM pg_extension \
+                 UNION ALL SELECT 'schema ' || nspname || ' ' || coalesce(nspacl::text, '') \
+                   FROM pg_namespace WHERE nspname !~ '^pg_' AND nspname <> 'information_schema' \
+                 UNION ALL SELECT 'relation ' || c.oid::regclass::text || ' ' || c.relkind::text || ' ' \
+                        || coalesce(c.relacl::text, '') \
+                   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+                   WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' \
+                 UNION ALL SELECT 'constraint ' || conrelid::regclass::text || ' ' || conname || ' ' \
+                        || pg_get_constraintdef(k.oid) \
+                   FROM pg_constraint k JOIN pg_namespace n ON n.oid = k.connamespace \
+                   WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' \
+                 UNION ALL SELECT 'index ' || indexdef FROM pg_indexes \
+                   WHERE schemaname !~ '^pg_' AND schemaname <> 'information_schema' \
+                 UNION ALL SELECT 'function ' || p.oid::regprocedure::text || ' ' || md5(p.prosrc) \
+                   FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
+                   WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' \
+                 UNION ALL SELECT 'trigger ' || tgrelid::regclass::text || ' ' || tgname \
+                   FROM pg_trigger WHERE NOT tgisinternal \
+                 UNION ALL SELECT 'rows ' || table_schema || '.' || table_name || ' ' \
+                        || (xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM %I.%I', \
+                            table_schema, table_name), false, true, '')))[1]::text \
+                   FROM information_schema.tables \
+                   WHERE table_type = 'BASE TABLE' \
+                     AND table_schema NOT IN ('pg_catalog', 'information_schema') \
+                 UNION ALL SELECT 'step ' || step || ' ' || sha256 || ' ' || created_fresh \
+                   FROM meta.schema_steps \
+                 UNION ALL SELECT 'stamp ' || identity || ' ' || version FROM meta.schema",
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+            facts.sort();
+            let peer: String =
+                sqlx::query_scalar("SELECT peer_id FROM social.fed_instance_identity")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            (facts, peer)
+        };
+        let (fresh_facts, fresh_peer) = shape(fresh.pool.clone()).await;
+        let (clone_facts, clone_peer) = shape(clone.pool.clone()).await;
+        assert!(
+            fresh_facts.iter().any(|f| f.contains("TimeZone=UTC")),
+            "{:?}",
+            &fresh_facts[..3]
+        );
+        assert_eq!(clone_facts, fresh_facts);
+        assert_ne!(
+            clone_peer, fresh_peer,
+            "each database mints its own identity"
+        );
+        fresh.drop().await;
+        clone.drop().await;
     }
 
     #[tokio::test]

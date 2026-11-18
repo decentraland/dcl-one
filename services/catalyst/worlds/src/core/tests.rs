@@ -3347,10 +3347,7 @@ async fn a_community_closure_rechecks_livekit_when_its_queue_insert_fails() {
         .await
         .unwrap();
     let name = format!("world_closure_{}", Uuid::new_v4().simple());
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-        .execute(&admin)
-        .await
-        .unwrap();
+    crate::db::scratch::create_database_with_schema(&admin, &name).await;
     // Fault-injection DDL must never lock or alter the shared scratch database.
     // Clean up the private database even if setup or an assertion panics.
     let outcome = std::panic::AssertUnwindSafe(async {
@@ -3359,7 +3356,6 @@ async fn a_community_closure_rechecks_livekit_when_its_queue_insert_fails() {
             .connect_with(opts.database(&name))
             .await
             .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         let f = fixture_on_pool(
             pool,
             PersonalWorldsPolicy::disabled(),

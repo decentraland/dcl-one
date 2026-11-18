@@ -234,16 +234,12 @@ async fn scratch_database() -> Option<ScratchDb> {
         .await
         .unwrap();
     let name = format!("catalyst_test_{}", uuid::Uuid::new_v4().simple());
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-        .execute(&admin)
-        .await
-        .unwrap();
+    crate::db::scratch::create_database_with_schema(&admin, &name).await;
     let pool = PgPoolOptions::new()
         .max_connections(6)
         .connect_with(base.database(&name).options([("TimeZone", "UTC")]))
         .await
         .unwrap();
-    crate::db::apply_schema(&pool).await.unwrap();
     Some(ScratchDb { pool, admin, name })
 }
 

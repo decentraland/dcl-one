@@ -426,10 +426,7 @@ mod recheck_regressions {
             .connect_with(base.connect_options().as_ref().clone().database("postgres"))
             .await
             .unwrap();
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         use futures::FutureExt;
         let mut server = None;
         let outcome = std::panic::AssertUnwindSafe(async {
@@ -438,7 +435,6 @@ mod recheck_regressions {
                 .connect_with(base.connect_options().as_ref().clone().database(&name))
                 .await
                 .unwrap();
-            crate::db::apply_schema(&pool).await.unwrap();
             sqlx::query("INSERT INTO social.world_access_rechecks(world_name,next_attempt_at) VALUES ('a-fault.dcl.eth',timestamp '2000-01-01'),('b-later.dcl.eth',timestamp '2000-01-02')")
                 .execute(&pool).await.unwrap();
             sqlx::raw_sql("CREATE FUNCTION social.fail_test_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.world_name='a-fault.dcl.eth' AND NEW.next_attempt_at='infinity'::timestamp THEN RAISE EXCEPTION 'injected completion failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER fail_test_completion BEFORE UPDATE ON social.world_access_rechecks FOR EACH ROW EXECUTE FUNCTION social.fail_test_completion();")

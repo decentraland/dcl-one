@@ -3158,16 +3158,12 @@ async fn liveness_isolated_pool() -> (sqlx::PgPool, sqlx::PgPool, String) {
         .await
         .unwrap();
     let name = format!("dcl_liveness_{}", uuid::Uuid::new_v4().simple());
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-        .execute(&admin)
-        .await
-        .unwrap();
+    crate::db::scratch::create_database_with_schema(&admin, &name).await;
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(8)
         .connect_with(base.connect_options().as_ref().clone().database(&name))
         .await
         .unwrap();
-    crate::db::apply_schema(&pool).await.unwrap();
     (pool, admin, name)
 }
 async fn liveness_drop_pool(pool: &sqlx::PgPool, admin: &sqlx::PgPool, name: &str) {
