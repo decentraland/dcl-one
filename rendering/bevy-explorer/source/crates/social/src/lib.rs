@@ -50,7 +50,6 @@ impl Plugin for SocialPlugin {
         app.add_event::<ConnectivityEvent>();
         app.add_event::<CommunityConnectivityEvent>();
         app.add_event::<BlockUpdateEvent>();
-        app.add_event::<DirectChatEvent>();
         app.add_event::<VoiceEventReceived>();
         app.init_resource::<SocialClient>();
         app.init_resource::<SocialConsumerRequested>();
@@ -1476,9 +1475,6 @@ pub struct BlockUpdateEvent {
     pub address: String,
     pub is_blocked: bool,
 }
-
-#[derive(Event)]
-pub struct DirectChatEvent(pub DirectChatMessage);
 
 /// A voice chat event from the social connection (see [`voice::VoiceEvent`]).
 #[derive(Event, Clone, Debug)]

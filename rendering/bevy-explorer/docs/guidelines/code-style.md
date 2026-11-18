@@ -5,6 +5,11 @@ the code. The one idea behind most of it: lean into the ECS. Bevy already gives 
 change tracking, ownership and cleanup. Code that reinvents those in a resource, a `Local` or a
 side map is not allowed and will fail a review.
 
+Unused code is deleted, used, or gated with `#[cfg]` to the builds that use it. No `allow` or
+`expect` covers `dead_code`, `unused` or `warnings`, except the ShaderType derive's
+never-called check fns, which take `#[expect(dead_code, reason = …)]` with the reason that
+`tooling/bevy-dead-code-check.py` accepts.
+
 ## State lives on the entity it describes
 
 - A fact about an entity is a component on that entity. Not a `HashMap<Entity, T>` in a

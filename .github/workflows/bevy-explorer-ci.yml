@@ -134,6 +134,8 @@ jobs:
           python3 -m unittest discover -s tooling/tests -p 'test_bevy_*.py' -v
           python3 -m unittest discover -s tooling/tests -p 'test_play_*.py' -v
           python3 -m unittest discover -s tooling/tests -p 'test_upstream_*.py' -v
+      - name: Reject suppressed dead code
+        run: python3 tooling/bevy-dead-code-check.py
       - name: Check the avatar preview boot contract
         run: node --experimental-vm-modules --test rendering/avatar-preview/tools/preview-*.test.mjs
       - name: Check the CI status comment scripts
@@ -749,13 +751,6 @@ jobs:
       CARGO_INCREMENTAL: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: No allow(dead_code)
-        # Dead code is deleted, used or gated with #[cfg]. Only the ShaderType derive's
-        # never-called check fns take an #[expect], which fails once they are gone.
-        run: |-
-          if grep -rnE 'allow\(dead_code\)' --include='*.rs' src crates local-harness; then
-            exit 1
-          fi
       - name: Reserve disk space on the hosted Linux runner
         # Check artifacts and the restored cache take a fraction of the runner's free space;
         # removing the SDKs takes a minute.
