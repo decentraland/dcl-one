@@ -51,7 +51,7 @@ use common::{
     structs::{
         AppConfig, AvatarDynamicState, HeadSync, IVec2Arg, LandscapeDistance, PointAtSync,
         PrimaryCamera, PrimaryCameraRes, PrimaryPlayerRes, SceneImposterBake, SceneLoadDistance,
-        ShowOutOfBounds, StartupScene, StartupScenes, Version, GROUND_RENDERLAYER,
+        ShowOutOfBounds, StartupScene, StartupScenes, Version, WindowFocus, GROUND_RENDERLAYER,
     },
     util::UtilsPlugin,
 };
@@ -796,6 +796,9 @@ impl DecentralandApp {
         app.configure_sets(Startup, SetupSets::Init.before(SetupSets::Main));
         app.add_systems(Startup, setup.in_set(SetupSets::Init));
         app.add_systems(Startup, save_fresh_user_id);
+        app.init_resource::<WindowFocus>();
+        #[cfg(not(target_arch = "wasm32"))]
+        app.add_systems(First, update_window_focus);
 
         // Commands
         app.add_console_command::<ChangeLocationCommand, _>(change_location);
@@ -808,6 +811,17 @@ impl DecentralandApp {
         app.add_plugins(debug_panel::MemoryDebugPanelPlugin);
 
         app
+    }
+}
+
+/// Copies the primary window's focus into [`WindowFocus`].
+#[cfg(not(target_arch = "wasm32"))]
+fn update_window_focus(
+    window: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    mut focus: ResMut<WindowFocus>,
+) {
+    if let Ok(window) = window.single() {
+        focus.set_if_neq(WindowFocus(window.focused));
     }
 }
 

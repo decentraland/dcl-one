@@ -1902,6 +1902,17 @@ pub enum AppError {
     NetworkFailure(anyhow::Error),
 }
 
+/// The Explorer has focus: the primary window natively, the page (`document.hasFocus()`) on
+/// the web.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowFocus(pub bool);
+
+impl Default for WindowFocus {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
 #[derive(Resource, Default, Serialize, Deserialize, Clone)]
 pub struct MicState {
     pub available: bool,

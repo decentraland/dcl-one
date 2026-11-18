@@ -6,7 +6,7 @@ use std::sync::{
 };
 
 use bevy::{ecs::relationship::Relationship, prelude::*};
-use common::structs::{MicState, SystemAudio};
+use common::structs::{MicState, SystemAudio, WindowFocus};
 use tokio::{sync::oneshot, task::JoinHandle};
 use web_time::Instant;
 #[cfg(target_arch = "wasm32")]
@@ -74,6 +74,7 @@ impl Plugin for MicPlugin {
         app.init_state::<MicrophoneTransmissionState>();
         app.init_resource::<MicrophoneDrain>();
         app.init_resource::<LastTransmission>();
+        app.init_resource::<NearbyMicFocusPause>();
 
         #[cfg(target_arch = "wasm32")]
         app.add_systems(Startup, setup_microphone_permission);
@@ -118,6 +119,12 @@ impl Plugin for MicPlugin {
 
         app.add_systems(Startup, add_ping_systems);
         app.add_systems(Update, transmission_state);
+        app.add_systems(
+            Update,
+            pause_nearby_mic_on_focus_loss
+                .run_if(resource_exists_and_changed::<WindowFocus>)
+                .before(verify_enabled),
+        );
         app.add_systems(
             Update,
             suppress_nearby_voice_on_refusal
@@ -330,6 +337,33 @@ fn suppress_nearby_voice_on_refusal(
     let banned = admission.is_refused();
     if mic_state.scene_banned() != banned {
         mic_state.set_scene_banned(banned);
+    }
+}
+
+/// The nearby mic was open when the window lost focus.
+#[derive(Resource, Default)]
+struct NearbyMicFocusPause {
+    paused: bool,
+}
+
+/// Closes the open nearby mic while the window lacks focus and reopens it when focus returns,
+/// unless the scene or a call holds nearby voice off by then. Calls are unaffected.
+fn pause_nearby_mic_on_focus_loss(
+    focus: Res<WindowFocus>,
+    mut mic_state: ResMut<MicState>,
+    call_mic: Res<CallMic>,
+    mut pause: ResMut<NearbyMicFocusPause>,
+) {
+    if !focus.0 {
+        if nearby_mic_on(&mic_state, &call_mic) {
+            mic_state.enabled = false;
+            pause.paused = true;
+        }
+    } else if std::mem::take(&mut pause.paused)
+        && !mic_state.scene_blocked()
+        && !call_mic.suppress_nearby
+    {
+        mic_state.request_enabled(true);
     }
 }
 
@@ -1317,5 +1351,61 @@ mod routing_tests {
             mic_off_pings(true, true),
             "call mic muted in a blocked scene"
         );
+    }
+
+    fn focus_world(mic: MicState, call_mic: CallMic) -> World {
+        let mut world = World::new();
+        world.insert_resource(mic);
+        world.insert_resource(call_mic);
+        world.init_resource::<NearbyMicFocusPause>();
+        world
+    }
+
+    /// Sets the window's focus and returns the nearby mic's setting.
+    fn set_focus(world: &mut World, focused: bool) -> bool {
+        use bevy::ecs::system::RunSystemOnce;
+        world.insert_resource(WindowFocus(focused));
+        world
+            .run_system_once(pause_nearby_mic_on_focus_loss)
+            .unwrap();
+        world.resource::<MicState>().enabled
+    }
+
+    #[test]
+    fn losing_focus_pauses_the_open_nearby_mic_until_focus_returns() {
+        let mut world = focus_world(mic_state(true, true), CallMic::default());
+        assert!(!set_focus(&mut world, false));
+        assert!(world.resource::<NearbyMicFocusPause>().paused);
+        assert!(set_focus(&mut world, true));
+        assert!(!world.resource::<NearbyMicFocusPause>().paused);
+    }
+
+    #[test]
+    fn regaining_focus_leaves_a_closed_nearby_mic_closed() {
+        let mut world = focus_world(mic_state(true, false), CallMic::default());
+        assert!(!set_focus(&mut world, false));
+        assert!(!set_focus(&mut world, true));
+    }
+
+    #[test]
+    fn a_scene_block_during_the_pause_keeps_the_nearby_mic_closed() {
+        let mut world = focus_world(mic_state(true, true), CallMic::default());
+        set_focus(&mut world, false);
+        world.resource_mut::<MicState>().set_scene_disabled(true);
+        assert!(!set_focus(&mut world, true));
+        assert_eq!(world.resource::<MicState>().refusals, 0);
+    }
+
+    #[test]
+    fn losing_focus_leaves_the_call_mic_alone() {
+        let call_mic = CallMic {
+            enabled: true,
+            in_call: true,
+            suppress_nearby: true,
+        };
+        let mut world = focus_world(mic_state(true, true), call_mic);
+        assert!(set_focus(&mut world, false), "nearby setting kept");
+        assert!(!world.resource::<NearbyMicFocusPause>().paused);
+        assert!(world.resource::<CallMic>().enabled);
     }
 }
