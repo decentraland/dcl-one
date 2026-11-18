@@ -76,6 +76,15 @@ impl Client {
     /// Connect to the server, open the reliable bidi stream, and start pumping events.
     /// Blocks until the session is established (or fails).
     pub fn connect(config: ClientConfig) -> Result<Client, ClientError> {
+        Client::connect_within(config, None)
+    }
+
+    /// [`Client::connect`] that gives up after `timeout` instead of waiting for QUIC's own
+    /// handshake timeout.
+    pub fn connect_within(
+        config: ClientConfig,
+        timeout: Option<Duration>,
+    ) -> Result<Client, ClientError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -84,7 +93,7 @@ impl Client {
         let url = url::Url::parse(&config.url).map_err(|e| ClientError::Config(e.to_string()))?;
         let cert_hash = config.server_cert_hash;
 
-        let (session, send, recv) = runtime.block_on(async move {
+        let connecting = async move {
             let builder = web_transport_quinn::ClientBuilder::new();
             let client = match cert_hash {
                 Some(hash) => builder.with_server_certificate_hashes(vec![hash]),
@@ -102,6 +111,14 @@ impl Client {
                 .await
                 .map_err(|e| ClientError::Connect(e.to_string()))?;
             Ok::<_, ClientError>((session, send, recv))
+        };
+        let (session, send, recv) = runtime.block_on(async move {
+            match timeout {
+                Some(limit) => tokio::time::timeout(limit, connecting)
+                    .await
+                    .map_err(|_| ClientError::Connect(format!("no session within {limit:?}")))?,
+                None => connecting.await,
+            }
         })?;
 
         let (events_tx, events_rx) = std::sync::mpsc::channel::<ClientEvent>();
@@ -192,6 +209,13 @@ async fn stream_writer(
 }
 
 async fn disconnect_monitor(session: Session, events_tx: Sender<ClientEvent>) {
-    let _ = session.closed().await;
-    let _ = events_tx.send(ClientEvent::Disconnected { reason: 0 });
+    // The code the server closed the session with; 0 when the session ended some other way
+    // (idle timeout, lost connection, local close).
+    let reason = match session.closed().await {
+        web_transport_quinn::SessionError::WebTransportError(
+            web_transport_quinn::WebTransportError::Closed(code, _),
+        ) => code,
+        _ => 0,
+    };
+    let _ = events_tx.send(ClientEvent::Disconnected { reason });
 }
