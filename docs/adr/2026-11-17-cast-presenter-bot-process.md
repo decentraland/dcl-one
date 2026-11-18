@@ -1,6 +1,6 @@
 # ADR: The Cast presenter's LiveKit participant is a separate `cast-bot` process
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-17
 
 ## Context
