@@ -27,7 +27,7 @@ function SitesTestLayout() {
 
 describe("when a legal document is rendered with Sites chrome", () => {
   it.each(["/privacy", "/terms", "/creator-fund-terms"])(
-    "should reserve header space for %s",
+    "should reserve header space on desktop and keep the mobile overlay for %s",
     async (path) => {
       const handler = createStaticHandler([
         {
@@ -60,8 +60,9 @@ describe("when a legal document is rendered with Sites chrome", () => {
       );
 
       expect(html).toContain('data-header-layout="native"');
+      expect(html).toContain("site-layout--overlay-mobile");
       expect(html).not.toMatch(
-        /\b(?:site-layout--overlay|data-header-overlay)\b/,
+        /(?:site-layout--overlay|data-header-overlay)(?=\s|"|=)/,
       );
     },
   );

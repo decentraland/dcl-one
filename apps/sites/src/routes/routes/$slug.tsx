@@ -74,7 +74,7 @@ export default function LegalSlugRoute({ loaderData }: Route.ComponentProps) {
       );
   };
   return (
-    <SitesChrome active="legal">
+    <SitesChrome active="legal" overlayNav="mobile">
       <main onClickCapture={onSectionClick}>
         <LegalPageLayout
           title={legal.title}

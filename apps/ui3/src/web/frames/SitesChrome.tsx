@@ -169,7 +169,7 @@ type SitesChromeProps = {
   mana?: string;
   account?: string;
   onSignIn?: () => void;
-  overlayNav?: boolean;
+  overlayNav?: boolean | "mobile";
   headerSurface?: "solid" | "overlay";
   hideNav?: boolean;
   secondaryNavigation?: { title: string; active?: string; items: readonly { id: string; label: string; href: string }[] };
@@ -269,12 +269,17 @@ export default function SitesChrome({
     document.documentElement.lang = l.code;
   };
 
+  const overlayClass =
+    overlayNav === "mobile" ? " site-layout--overlay-mobile"
+    : overlayNav ? " site-layout--overlay"
+    : "";
+
   return (
     <SiteLayout overlayNavigation={headerSurface === "overlay"} navigation={!hideNav ? <DclTopBar
       variant="sites" transparent={headerSurface === "overlay"} active={ACTIVE_MAP[active]} signedIn={isIn} account={acct}
       onSignIn={signIn} fetchNotifications={auth.fetchNotifications}
       balances={isIn && acct ? <SitesCreditsChip account={acct} /> : undefined}
-    /> : null} className={"site-layout--sites" + (overlayNav ? " site-layout--overlay" : "")} sections={profileNav ? closeMenu => <SiteSectionNavigation
+    /> : null} className={"site-layout--sites" + overlayClass} sections={profileNav ? closeMenu => <SiteSectionNavigation
       title="Profile" label="Profile sections" items={profileNav.tabs} active={profileNav.active}
       onSelect={profileNav.onTab} closeMenu={closeMenu}
     /> : secondaryNavigation ? closeMenu => <SiteSectionNavigation
