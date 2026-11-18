@@ -76,6 +76,7 @@
 # comms
 /services/catalyst/comms/ @decentraland/apis
 /services/catalyst/cast-bot/ @decentraland/apis
+/.github/workflows/cast-presenter.yml @decentraland/apis
 /library/vendor/rusty_enet/ @decentraland/apis
 /library/dcl-livekit-token/ @decentraland/apis
 

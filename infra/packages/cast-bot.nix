@@ -74,6 +74,31 @@ let
         (patchedSource.vendoredCrates crane.craneUtils fetched sdk packages);
   });
   cargoArtifacts = crane.buildDepsOnly (common // { inherit cargoVendorDir; });
+  # The test executables, built here with the package's toolchain and libwebrtc and run outside
+  # the sandbox, where WebRTC can reach a livekit-server (.github/workflows/cast-presenter.yml):
+  # bin/test-cast-bot (unit tests) and bin/test-livekit (tests/livekit.rs; CAST_BOT_BIN names
+  # the bot it drives).
+  tests = crane.mkCargoDerivation (common // {
+    inherit cargoArtifacts cargoVendorDir;
+    pname = "${manifest.package.name}-tests";
+    src = lib.fileset.toSource {
+      root = dir;
+      fileset = lib.fileset.unions [ (dir + /Cargo.toml) (dir + /Cargo.lock) (dir + /build.rs) (dir + /src) (dir + /tests) ];
+    };
+    nativeBuildInputs = common.nativeBuildInputs ++ [ pkgs.jq ];
+    doInstallCargoArtifacts = false;
+    buildPhaseCargoCommand = ''
+      cargo test --locked --release --no-run --message-format json-render-diagnostics > test-build.json
+    '';
+    installPhaseCommand = ''
+      mkdir -p $out/bin
+      jq -r 'select(.reason == "compiler-artifact" and .profile.test and .executable != null)
+        | "\(.target.name) \(.executable)"' test-build.json \
+        | while read -r name exe; do install -m755 "$exe" "$out/bin/test-$name"; done
+      test -x $out/bin/test-livekit
+      removeReferencesToVendoredSources "$out" "${webrtc}"
+    '';
+  });
 in crane.buildPackage (common // {
   inherit cargoArtifacts cargoVendorDir;
   # The bridge keeps libwebrtc's header paths (__FILE__ in its checks); the 1 GB archive stays out
@@ -83,6 +108,6 @@ in crane.buildPackage (common // {
     removeReferencesToVendoredSources "$out" "${webrtc}"
     install -Dm644 ${webrtc}/LICENSE.md $out/share/doc/cast-bot/libwebrtc-LICENSE.md
   '';
-  passthru = { inherit cargoArtifacts cargoVendorDir webrtc sdk; };
+  passthru = { inherit cargoArtifacts cargoVendorDir webrtc sdk tests; };
   meta.mainProgram = "cast-bot";
 })

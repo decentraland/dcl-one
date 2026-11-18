@@ -184,6 +184,7 @@
       "paths": [
         "/services/catalyst/comms/",
         "/services/catalyst/cast-bot/",
+        "/.github/workflows/cast-presenter.yml",
         "/library/vendor/rusty_enet/",
         "/library/dcl-livekit-token/"
       ]
