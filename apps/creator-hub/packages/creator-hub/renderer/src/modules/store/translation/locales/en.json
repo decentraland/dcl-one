@@ -179,10 +179,13 @@
         "api_key_alternative": "Or use an API key: set {envVar} and turn on \"{setting}\" in Settings → AI."
       },
       "recording": {
-        "chip": "Session recording · {duration} · {actions} actions",
-        "chip_no_speech": "Session recording · {duration} · {actions} actions (no speech)",
+        "chip": "Session recording · {duration} · {actions} {actions, plural, one {action} other {actions}}",
+        "chip_no_speech": "Session recording · {duration} · {actions} {actions, plural, one {action} other {actions}} (no speech)",
         "remove": "Discard recording",
-        "attachment": "Session recording {duration}"
+        "attachment": "Session recording {duration}",
+        "chip_many": "{count} {count, plural, one {recording} other {recordings}} · {duration} · {actions} {actions, plural, one {action} other {actions}}",
+        "chip_many_no_speech": "{count} {count, plural, one {recording} other {recordings}} · {duration} · {actions} {actions, plural, one {action} other {actions}} (no speech)",
+        "attachment_many": "{count} {count, plural, one {recording} other {recordings}} {duration}"
       }
     },
     "publish": {

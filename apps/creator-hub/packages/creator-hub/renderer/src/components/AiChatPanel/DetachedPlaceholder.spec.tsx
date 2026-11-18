@@ -19,6 +19,7 @@ function renderPlaceholder(available: boolean, recording = false) {
       aiActions.setRecorderState({
         status: 'recording',
         startedAt: Date.now(),
+        stoppedAt: null,
         micLabel: '',
         tools: null,
         actionCount: 3,

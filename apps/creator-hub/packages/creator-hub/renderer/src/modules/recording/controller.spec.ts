@@ -137,10 +137,16 @@ describe('the session recorder', () => {
       expect(recording.stop).toHaveBeenCalledWith('s1');
       expect(recorderState().status).toBe('idle');
       expect(store.getState().ai.recording).toEqual({
-        dir: '/recordings/p/s1',
+        sessions: [
+          {
+            dir: '/recordings/p/s1',
+            durationMs: 1000,
+            actionCount: 2,
+            context: '[Session recording]',
+          },
+        ],
         durationMs: 1000,
         actionCount: 2,
-        context: '[Session recording]',
       });
       expect(store.getState().ai.draftPrompt?.text).toBe('hello');
       expect(onFinished).toHaveBeenCalled();
@@ -346,7 +352,7 @@ describe('the session recorder', () => {
       });
       await settle();
 
-      expect(store.getState().ai.recording?.dir).toBe('/recordings/p/s1');
+      expect(store.getState().ai.recording?.sessions[0].dir).toBe('/recordings/p/s1');
       expect(store.getState().ai.draftPrompt).toBeNull();
       expect(notifications()).toHaveLength(before);
     });
@@ -496,6 +502,113 @@ describe('the session recorder', () => {
       expect(setInspectorRecording).not.toHaveBeenCalled();
       flush.resolve();
       await stopped;
+    });
+  });
+
+  describe('when a second recording is made before the first is sent', () => {
+    it('should keep both, so neither timeline is lost', async () => {
+      await startRecording();
+      await stopRecording();
+      vi.mocked(recording.start).mockResolvedValue({ sessionId: 's2' });
+      vi.mocked(recording.stop).mockResolvedValue({
+        sessionId: 's2',
+        dir: '/recordings/p/s2',
+        durationMs: 2000,
+        transcript: 'and taller',
+        actionCount: 3,
+        context: '[Session recording 2]',
+      });
+
+      await startRecording();
+      await stopRecording();
+
+      const pending = store.getState().ai.recording;
+      expect(pending?.sessions.map(one => one.dir)).toEqual([
+        '/recordings/p/s1',
+        '/recordings/p/s2',
+      ]);
+      expect(pending?.durationMs).toBe(3000);
+      expect(pending?.actionCount).toBe(5);
+    });
+  });
+
+  describe('when the recording is stopped', () => {
+    it('should remember when, so the card shows the length it had', async () => {
+      const stopping = deferred<Awaited<ReturnType<typeof recording.stop>>>();
+      vi.mocked(recording.stop).mockReturnValue(stopping.promise);
+      await startRecording();
+      const startedAt = recorderState().startedAt;
+
+      void stopRecording();
+      await settle();
+
+      expect(recorderState().status).toBe('stopping');
+      expect(recorderState().stoppedAt).toBeGreaterThanOrEqual(startedAt ?? 0);
+      stopping.resolve({
+        sessionId: 's1',
+        dir: '/recordings/p/s1',
+        durationMs: 1000,
+        transcript: '',
+        actionCount: 2,
+        context: '[Session recording]',
+      });
+      await settle();
+      expect(recorderState().stoppedAt).toBeNull();
+    });
+  });
+
+  describe('when the editor goes away while main is transcribing', () => {
+    it('should tell main to give up on that transcript', async () => {
+      const stopping = deferred<Awaited<ReturnType<typeof recording.stop>>>();
+      vi.mocked(recording.stop).mockReturnValue(stopping.promise);
+      await startRecording();
+      void stopRecording();
+      await settle();
+
+      abortRecording();
+
+      expect(recording.skipTranscription).toHaveBeenCalledWith('s1');
+    });
+  });
+
+  describe('when the editor goes away while the creator is being asked to agree', () => {
+    it('should take the question away with it', async () => {
+      acknowledgeConsent(false);
+      await pressRecord();
+      expect(getConsentPrompt()).not.toBeNull();
+
+      abortRecording();
+
+      expect(getConsentPrompt()).toBeNull();
+    });
+
+    it('should not ask in the next editor when it left mid-check', async () => {
+      acknowledgeConsent(false);
+      const checking = deferred<{ state: 'ready' }>();
+      vi.mocked(recording.toolsStatus).mockReturnValue(checking.promise);
+      const pressed = pressRecord();
+      await settle();
+      setRecorderHost(null);
+
+      checking.resolve({ state: 'ready' });
+      await pressed;
+
+      expect(getConsentPrompt()).toBeNull();
+    });
+  });
+
+  describe('when the editor goes away while main is checking the tools', () => {
+    it('should not open a session for an editor that is gone', async () => {
+      const checking = deferred<{ state: 'ready' }>();
+      vi.mocked(recording.toolsStatus).mockReturnValue(checking.promise);
+      const started = startRecording();
+      await settle();
+      setRecorderHost(null);
+
+      checking.resolve({ state: 'ready' });
+      await started;
+
+      expect(recording.start).not.toHaveBeenCalled();
     });
   });
 

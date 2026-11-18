@@ -1,9 +1,10 @@
-import { useLayoutEffect, useEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useEffect, useRef, useState, type CSSProperties } from 'react';
 import Tooltip from '@ui/atoms/Tooltip';
 
 import { MAX_RECORDING_MS } from '/shared/types/recording';
 
 import { onMicLevel } from '/@/modules/recording/level';
+import { pauseHubCapture } from '/@/modules/recording/session';
 import { t } from '/@/modules/store/translation/utils';
 import { DefaultModal } from '../Modals/DefaultModal';
 import { LIMIT, elapsed, useNow } from './time';
@@ -12,6 +13,11 @@ import styles from './RecordingCard.module.css';
 const BARS = 48;
 const BAR_MIN_PX = 4;
 const BAR_RANGE_PX = 24;
+
+/** Speech sits low in the range, so a bar follows the square root; a linear one barely moves. */
+function barHeightPx(level: number): number {
+  return BAR_MIN_PX + Math.round(Math.sqrt(level) * BAR_RANGE_PX);
+}
 
 // The microphone's recent loudness, newest on the right. Renders nothing until a level arrives:
 // only the window that records hears the microphone, so the popped-out chat has no waveform.
@@ -31,8 +37,7 @@ function Waveform() {
         <span
           key={index}
           className={styles.bar}
-          // Square root: speech sits low in the range, and a linear bar would barely move.
-          style={{ height: BAR_MIN_PX + Math.round(Math.sqrt(level) * BAR_RANGE_PX) }}
+          style={{ '--bar-height': `${barHeightPx(level)}px` } as CSSProperties}
         />
       ))}
     </div>
@@ -64,6 +69,7 @@ export function RecordingCard({
 }: Props) {
   const now = useNow(true);
   const [confirming, setConfirming] = useState(false);
+  useEffect(() => (confirming ? pauseHubCapture() : undefined), [confirming]);
   const cardRef = useRef<HTMLDivElement>(null);
   const stopRef = useRef<HTMLButtonElement>(null);
   const release = useRef(onFocusRelease);

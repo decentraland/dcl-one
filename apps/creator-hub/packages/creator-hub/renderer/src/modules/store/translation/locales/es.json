@@ -179,10 +179,13 @@
         "api_key_alternative": "O usa una clave de API: define {envVar} y activa \"{setting}\" en Configuración → IA."
       },
       "recording": {
-        "chip": "Grabación de sesión · {duration} · {actions} acciones",
-        "chip_no_speech": "Grabación de sesión · {duration} · {actions} acciones (sin voz)",
+        "chip": "Grabación de sesión · {duration} · {actions} {actions, plural, one {acción} other {acciones}}",
+        "chip_no_speech": "Grabación de sesión · {duration} · {actions} {actions, plural, one {acción} other {acciones}} (sin voz)",
         "remove": "Descartar grabación",
-        "attachment": "Grabación de sesión {duration}"
+        "attachment": "Grabación de sesión {duration}",
+        "chip_many": "{count} {count, plural, one {grabación} other {grabaciones}} · {duration} · {actions} {actions, plural, one {acción} other {acciones}}",
+        "chip_many_no_speech": "{count} {count, plural, one {grabación} other {grabaciones}} · {duration} · {actions} {actions, plural, one {acción} other {acciones}} (sin voz)",
+        "attachment_many": "{count} {count, plural, one {grabación} other {grabaciones}} {duration}"
       }
     },
     "publish": {

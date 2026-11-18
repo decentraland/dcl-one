@@ -7,6 +7,7 @@ import type {
   AiAttachmentMeta,
   AiEvent,
   AiPendingRecording,
+  AiRecordingSession,
   AiProvider,
   AiRecorderState,
 } from '/shared/types/ai';
@@ -36,7 +37,14 @@ const initialState: AiState = {
   selection: [],
   assetMentions: [],
   recording: null,
-  recorder: { status: 'idle', startedAt: null, micLabel: '', tools: null, actionCount: 0 },
+  recorder: {
+    status: 'idle',
+    startedAt: null,
+    stoppedAt: null,
+    micLabel: '',
+    tools: null,
+    actionCount: 0,
+  },
   chatVisible: false,
   billingDismissed: false,
   sessions: [],
@@ -118,15 +126,21 @@ export const send = createAsyncThunk<
   dispatch(actions.clearAssetMentions());
   dispatch(actions.setRecording(null));
   const apiKeyFromEnv = state.workspace.settings?.useApiKeyFromEnv ?? false;
-  await ai.send(path, {
-    provider,
-    model,
-    text: trimmed,
-    context,
-    attachments: files,
-    apiKeyFromEnv,
-    sessionId,
-  });
+  try {
+    await ai.send(path, {
+      provider,
+      model,
+      text: trimmed,
+      context,
+      attachments: files,
+      apiKeyFromEnv,
+      sessionId,
+    });
+  } catch (error) {
+    if (recording !== null) dispatch(actions.setRecording(recording));
+    if (trimmed !== '') dispatch(actions.setDraftPrompt({ text: trimmed, mode: 'replace' }));
+    throw error;
+  }
 });
 
 // One line naming what the user has selected, or undefined when nothing is. Kept terse —
@@ -164,7 +178,8 @@ function editorContext(
   const lines = [selectionContext(selection), assetMentionsContext(assetMentions)].filter(
     (line): line is string => line !== undefined,
   );
-  const blocks = [lines.length > 0 ? lines.join('\n') : undefined, recording?.context].filter(
+  const timelines = recording?.sessions.map(one => one.context) ?? [];
+  const blocks = [lines.length > 0 ? lines.join('\n') : undefined, ...timelines].filter(
     (block): block is string => block !== undefined,
   );
   return blocks.length > 0 ? blocks.join('\n\n') : undefined;
@@ -180,10 +195,12 @@ export const discardRecording = createAsyncThunk(
     const pending = getState().ai.recording;
     if (pending === null) return;
     dispatch(actions.setRecording(null));
-    try {
-      await recordingPreload.discard(pending.dir);
-    } catch (error) {
-      console.warn('[Recording] could not delete the discarded recording:', error);
+    for (const one of pending.sessions) {
+      try {
+        await recordingPreload.discard(one.dir);
+      } catch (error) {
+        console.warn('[Recording] could not delete the discarded recording:', error);
+      }
     }
   },
 );
@@ -395,6 +412,18 @@ const slice = createSlice({
     },
     setRecording: (state, { payload }: PayloadAction<AiPendingRecording | null>) => {
       state.recording = payload;
+    },
+    addRecording: (state, { payload }: PayloadAction<AiRecordingSession>) => {
+      const sessions = [...(state.recording?.sessions ?? []), payload];
+      state.recording = {
+        sessions,
+        durationMs: sessions.reduce((total, one) => total + one.durationMs, 0),
+        actionCount: sessions.reduce((total, one) => total + one.actionCount, 0),
+        ...(sessions.some(one => one.transcriptionError !== undefined) && {
+          transcriptionError: sessions.find(one => one.transcriptionError !== undefined)
+            ?.transcriptionError,
+        }),
+      };
     },
     setRecorderState: (state, { payload }: PayloadAction<AiRecorderState>) => {
       state.recorder = payload;

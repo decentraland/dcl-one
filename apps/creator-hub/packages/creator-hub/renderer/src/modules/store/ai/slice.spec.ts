@@ -213,7 +213,7 @@ describe('when sending with a pending session recording and no typed text', () =
     ai = reducer(undefined, actions.setSelection([{ id: 512, name: 'Front Door' }]));
     ai = reducer(
       ai,
-      actions.setRecording({
+      actions.addRecording({
         durationMs: 65_000,
         actionCount: 4,
         dir: '/rec/s1',
@@ -529,7 +529,7 @@ describe('when discarding a pending session recording', () => {
     preloadRecording.discard.mockResolvedValue(undefined);
     ai = reducer(
       undefined,
-      actions.setRecording({
+      actions.addRecording({
         durationMs: 65_000,
         actionCount: 4,
         dir: '/rec/p/s1',
@@ -581,5 +581,115 @@ describe('when a draft prompt is seeded into the composer', () => {
     state = reducer(state, actions.setDraftPrompt({ text: 'second', mode: 'replace' }));
 
     expect(state.draftPrompt?.nonce).toBeGreaterThan(first);
+  });
+});
+
+describe('when a second recording is made before the first is sent', () => {
+  const first = {
+    durationMs: 65_000,
+    actionCount: 4,
+    dir: '/rec/s1',
+    context: '[Session recording 1]',
+  };
+  const second = {
+    durationMs: 85_000,
+    actionCount: 8,
+    dir: '/rec/s2',
+    context: '[Session recording 2]',
+  };
+
+  function pendingAfterBoth() {
+    let ai = reducer(undefined, actions.addRecording(first));
+    ai = reducer(ai, actions.addRecording(second));
+    return ai.recording;
+  }
+
+  it('should keep both sessions, oldest first', () => {
+    expect(pendingAfterBoth()?.sessions.map(s => s.dir)).toEqual(['/rec/s1', '/rec/s2']);
+  });
+
+  it('should sum what the chip shows', () => {
+    const pending = pendingAfterBoth();
+    expect(pending?.durationMs).toBe(150_000);
+    expect(pending?.actionCount).toBe(12);
+  });
+
+  it('should remember that one of them has no transcript', () => {
+    let ai = reducer(undefined, actions.addRecording(first));
+    ai = reducer(ai, actions.addRecording({ ...second, transcriptionError: 'no speech' }));
+
+    expect(ai.recording?.transcriptionError).toBe('no speech');
+  });
+
+  it('should send every timeline in order', async () => {
+    vi.clearAllMocks();
+    preloadAi.isBusy.mockResolvedValue(false);
+    preloadAi.send.mockResolvedValue({ turnId: 't-1' });
+    let ai = reducer(undefined, actions.addRecording(first));
+    ai = reducer(ai, actions.addRecording(second));
+    const dispatch = vi.fn((action: { type: string }) => {
+      ai = reducer(ai, action);
+      return action;
+    });
+    const getState = () => ({ editor: { project: { path: '/scene' } }, ai, workspace: {} });
+
+    await send({ text: '', recordingLabel: '2 recordings 2:30' })(
+      dispatch as never,
+      getState as never,
+      undefined,
+    );
+
+    expect(preloadAi.send.mock.calls[0][1].context).toBe(
+      '[Session recording 1]\n\n[Session recording 2]',
+    );
+  });
+
+  it('should delete every session folder when the chip is removed', async () => {
+    vi.clearAllMocks();
+    preloadRecording.discard.mockResolvedValue(undefined);
+    let ai = reducer(undefined, actions.addRecording(first));
+    ai = reducer(ai, actions.addRecording(second));
+    const dispatch = vi.fn((action: { type: string }) => {
+      ai = reducer(ai, action);
+      return action;
+    });
+    const getState = () => ({ editor: { project: { path: '/scene' } }, ai, workspace: {} });
+
+    await discardRecording()(dispatch as never, getState as never, undefined);
+
+    expect(preloadRecording.discard).toHaveBeenCalledWith('/rec/s1');
+    expect(preloadRecording.discard).toHaveBeenCalledWith('/rec/s2');
+    expect(ai.recording).toBeNull();
+  });
+});
+
+describe('when the send fails', () => {
+  it('should put the recording and the typed text back', async () => {
+    vi.clearAllMocks();
+    preloadAi.isBusy.mockResolvedValue(false);
+    preloadAi.send.mockRejectedValue(new Error('the agent vanished'));
+    let ai = reducer(
+      undefined,
+      actions.addRecording({
+        durationMs: 65_000,
+        actionCount: 4,
+        dir: '/rec/s1',
+        context: '[Session recording]',
+      }),
+    );
+    const dispatch = vi.fn((action: { type: string }) => {
+      ai = reducer(ai, action);
+      return action;
+    });
+    const getState = () => ({ editor: { project: { path: '/scene' } }, ai, workspace: {} });
+
+    await send({ text: 'make it blue', recordingLabel: 'Session recording 1:05' })(
+      dispatch as never,
+      getState as never,
+      undefined,
+    );
+
+    expect(ai.recording?.sessions.map(s => s.dir)).toEqual(['/rec/s1']);
+    expect(ai.draftPrompt?.text).toBe('make it blue');
   });
 });

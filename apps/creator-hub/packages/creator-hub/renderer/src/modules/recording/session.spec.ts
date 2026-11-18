@@ -5,6 +5,7 @@ vi.mock('#preload', () => ({ recording: preload }));
 
 import {
   describeHubElement,
+  pauseHubCapture,
   forwardRecordedEvents,
   hubArea,
   onRecordedActionCount,
@@ -70,6 +71,20 @@ describe('when the Creator Hub window is clicked', () => {
     setActiveRecordingSession('s1');
     document.getElementById('r')!.click();
     expect(preload.sendEvents).not.toHaveBeenCalled();
+  });
+
+  it('should record nothing while the recorder pauses its own dialog', () => {
+    setActiveRecordingSession('s1');
+    const resume = pauseHubCapture();
+
+    document.getElementById('b')!.click();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+    expect(preload.sendEvents).not.toHaveBeenCalled();
+
+    resume();
+    document.getElementById('b')!.click();
+    expect(preload.sendEvents).toHaveBeenCalled();
   });
 
   it('should stop listening once stopped', () => {

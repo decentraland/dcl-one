@@ -41,6 +41,7 @@ type Active = {
 const IDLE: AiRecorderState = {
   status: 'idle',
   startedAt: null,
+  stoppedAt: null,
   micLabel: '',
   tools: null,
   actionCount: 0,
@@ -158,7 +159,7 @@ export async function startRecording(): Promise<void> {
   let microphone: Microphone | null = null;
   try {
     const tools = await recordingPreload.toolsStatus(locale);
-    if (!isCurrentAttempt(token)) return;
+    if (!isCurrentAttempt(token) || host === null) return;
     patch({ tools });
     if (tools.state === 'missing') {
       void recordingPreload.installTools(locale).catch(() => undefined);
@@ -218,7 +219,7 @@ export async function stopRecording(reason: StopReason = 'user'): Promise<void> 
   const current = active;
   if (current === null || state().status !== 'recording') return;
   const token = attempt;
-  patch({ status: 'stopping' });
+  patch({ status: 'stopping', stoppedAt: Date.now() });
   if (current.limitTimer) clearTimeout(current.limitTimer);
   current.microphone?.stop();
   current.stopHubDom();
@@ -240,7 +241,7 @@ export async function stopRecording(reason: StopReason = 'user'): Promise<void> 
     const result = await finishing;
     if (!isCurrentAttempt(token) || !stillTheSameEditor(projectPath)) return;
     store.dispatch(
-      aiActions.setRecording({
+      aiActions.addRecording({
         durationMs: result.durationMs,
         actionCount: result.actionCount,
         dir: result.dir,
@@ -263,7 +264,7 @@ export async function stopRecording(reason: StopReason = 'user'): Promise<void> 
       skipRequested = false;
     }
     current.stopToolsProgress();
-    if (isCurrentAttempt(token)) patch({ status: 'idle', startedAt: null });
+    if (isCurrentAttempt(token)) patch({ status: 'idle', startedAt: null, stoppedAt: null });
   }
 }
 
@@ -299,8 +300,10 @@ export function abortRecording(): void {
     void applyInspectorRecording(false);
     void recordingPreload.abort(current.sessionId).catch(() => undefined);
   }
+  if (stoppingSessionId !== null) sendSkipTranscription(stoppingSessionId);
   stoppingSessionId = null;
   skipRequested = false;
+  setConsentPrompt(null);
   store.dispatch(aiActions.setRecorderState(IDLE));
 }
 
@@ -326,6 +329,7 @@ export async function pressRecord(): Promise<void> {
   const tools = await recordingPreload
     .toolsStatus(locale)
     .catch(() => ({ state: 'missing' as const, downloadMb: 0 }));
+  if (host === null) return;
   setConsentPrompt({ downloadMb: tools.state === 'missing' ? tools.downloadMb : 0 });
   void misc.focusWindow().catch(() => undefined);
 }

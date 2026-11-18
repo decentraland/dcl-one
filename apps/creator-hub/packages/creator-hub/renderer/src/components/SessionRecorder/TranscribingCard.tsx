@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, type CSSProperties } from 'react';
 
 import type { RecordingToolsStatus } from '/shared/types/recording';
 
@@ -8,6 +8,8 @@ import styles from './TranscribingCard.module.css';
 
 type Props = {
   startedAt: number | null;
+  /** Epoch ms when Stop was pressed: the card outlives the panel that was open then. */
+  stoppedAt: number | null;
   actionCount: number;
   tools: RecordingToolsStatus | null;
   /** Gives up on the transcript: the recording goes to the chat with its actions only. */
@@ -17,8 +19,15 @@ type Props = {
 };
 
 /** A stopped recording while its speech is transcribed, in the place the recording card had. */
-export function TranscribingCard({ startedAt, actionCount, tools, onSkip, onFocusRelease }: Props) {
-  const [recorded] = useState(() => elapsed(startedAt, Date.now()));
+export function TranscribingCard({
+  startedAt,
+  stoppedAt,
+  actionCount,
+  tools,
+  onSkip,
+  onFocusRelease,
+}: Props) {
+  const recorded = elapsed(startedAt, stoppedAt ?? Date.now());
   const cardRef = useRef<HTMLDivElement>(null);
   const release = useRef(onFocusRelease);
   release.current = onFocusRelease;
@@ -66,7 +75,7 @@ export function TranscribingCard({ startedAt, actionCount, tools, onSkip, onFocu
           ) : (
             <span
               className={styles.fill}
-              style={{ width: `${percent}%` }}
+              style={{ '--progress': `${percent}%` } as CSSProperties}
             />
           )}
         </div>

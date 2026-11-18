@@ -333,6 +333,24 @@ export interface ChatViewProps {
   onDraftConsumed?: () => void;
 }
 
+/** What the composer's chip says about everything the next message will carry. */
+function recordingChipLabel(recording: AiPendingRecording): string {
+  const values = {
+    count: recording.sessions.length,
+    duration: formatRecordingDuration(recording.durationMs),
+    actions: recording.actionCount,
+  };
+  const key =
+    recording.sessions.length > 1
+      ? recording.transcriptionError
+        ? 'editor.ai.recording.chip_many_no_speech'
+        : 'editor.ai.recording.chip_many'
+      : recording.transcriptionError
+        ? 'editor.ai.recording.chip_no_speech'
+        : 'editor.ai.recording.chip';
+  return t(key, values);
+}
+
 function ClearMentionButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <Tooltip
@@ -1197,6 +1215,7 @@ export function ChatView(props: ChatViewProps) {
           <div className={recordRowStyles.recordRow}>
             <TranscribingCard
               startedAt={recorder.startedAt}
+              stoppedAt={recorder.stoppedAt}
               actionCount={recorder.actionCount}
               tools={recorder.tools}
               onSkip={onSkipTranscription}
@@ -1259,17 +1278,9 @@ export function ChatView(props: ChatViewProps) {
                 <MicrophoneIcon size={16} />
                 <span
                   className={styles.ellipsis}
-                  title={recording.dir}
+                  title={recording.sessions.map(one => one.dir).join('\n')}
                 >
-                  {recording.transcriptionError
-                    ? t('editor.ai.recording.chip_no_speech', {
-                        duration: formatRecordingDuration(recording.durationMs),
-                        actions: recording.actionCount,
-                      })
-                    : t('editor.ai.recording.chip', {
-                        duration: formatRecordingDuration(recording.durationMs),
-                        actions: recording.actionCount,
-                      })}
+                  {recordingChipLabel(recording)}
                 </span>
                 <Tooltip
                   label={t('editor.ai.recording.remove')}

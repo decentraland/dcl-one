@@ -54,7 +54,6 @@ export function RecordButton({
         type="button"
         disabled={busy || (disabled && !live)}
         onClick={onClick}
-        aria-pressed={live}
         aria-label={live ? t('editor.recording.stop') : t('editor.recording.record')}
         data-testid="editor-record-button"
         data-recording-ignore

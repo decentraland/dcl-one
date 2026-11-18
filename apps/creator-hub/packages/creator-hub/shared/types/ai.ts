@@ -236,11 +236,23 @@ export function assetMentionKey(mention: AiAssetMention): string {
   return 'path' in mention ? `path:${mention.path}` : `emote:${mention.builtInEmote}`;
 }
 
-/** A finished session recording waiting to go out with the next message. */
-export type AiPendingRecording = Pick<
+/** One finished session folder waiting to go out with the next message. */
+export type AiRecordingSession = Pick<
   RecordingResult,
   'dir' | 'durationMs' | 'actionCount' | 'context' | 'transcriptionError'
 >;
+
+/** Every recording made since the last message, as one attachment: the sessions oldest first,
+ *  with their lengths and action counts summed for the chip.
+ *
+ * @property transcriptionError Set when any of the sessions could not be transcribed.
+ */
+export type AiPendingRecording = {
+  sessions: AiRecordingSession[];
+  durationMs: number;
+  actionCount: number;
+  transcriptionError?: string;
+};
 
 // What the Record button shows. The recorder runs in the editor window; the assistant panel and
 // the detached window render it from here and send presses back (`toggleRecording`).
@@ -253,6 +265,8 @@ export interface AiRecorderState {
   micLabel: string;
   // Actions captured so far in the running recording.
   actionCount: number;
+  /** Epoch ms when the recording being transcribed was stopped; null while none is. */
+  stoppedAt: number | null;
   // Speech-to-text download progress while it installs on first use.
   tools: RecordingToolsStatus | null;
 }

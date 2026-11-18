@@ -182,7 +182,10 @@
         "chip": "会话录制 · {duration} · {actions} 个操作",
         "chip_no_speech": "会话录制 · {duration} · {actions} 个操作（无语音）",
         "remove": "丢弃录制",
-        "attachment": "会话录制 {duration}"
+        "attachment": "会话录制 {duration}",
+        "chip_many": "{count} 段录制 · {duration} · {actions} 个操作",
+        "chip_many_no_speech": "{count} 段录制 · {duration} · {actions} 个操作（无语音）",
+        "attachment_many": "{count} 段录制 {duration}"
       }
     },
     "publish": {

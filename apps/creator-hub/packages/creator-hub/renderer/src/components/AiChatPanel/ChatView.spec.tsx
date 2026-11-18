@@ -229,16 +229,49 @@ describe('ChatView session recorder', () => {
 
   describe('when a session recording is pending', () => {
     const recording = {
+      sessions: [
+        {
+          dir: '/tmp/recordings/s1',
+          durationMs: 42_000,
+          actionCount: 18,
+          context: '[Session recording] …',
+        },
+      ],
       durationMs: 42_000,
       actionCount: 18,
-      dir: '/tmp/recordings/s1',
-      context: '[Session recording] …',
+    };
+
+    const twoRecordings = {
+      sessions: [
+        recording.sessions[0],
+        {
+          dir: '/tmp/recordings/s2',
+          durationMs: 708_000,
+          actionCount: 22,
+          context: '[Session recording 2] …',
+        },
+      ],
+      durationMs: 750_000,
+      actionCount: 40,
     };
 
     it('should show it with its duration and action count', () => {
       renderChat({ recording });
 
       expect(screen.getByText('Session recording · 0:42 · 18 actions')).toBeTruthy();
+    });
+
+    it('should show one chip for every recording waiting to go out', () => {
+      renderChat({ recording: twoRecordings });
+
+      expect(screen.getByText('2 recordings · 12:30 · 40 actions')).toBeTruthy();
+      expect(screen.getAllByTestId('ai-recording-chip')).toHaveLength(1);
+    });
+
+    it('should say when one of several carried no speech', () => {
+      renderChat({ recording: { ...twoRecordings, transcriptionError: 'no speech found' } });
+
+      expect(screen.getByText('2 recordings · 12:30 · 40 actions (no speech)')).toBeTruthy();
     });
 
     it('should say when it carried no speech', () => {
@@ -270,6 +303,7 @@ describe('ChatView session recorder', () => {
     const idle = {
       status: 'idle' as const,
       startedAt: null,
+      stoppedAt: null,
       micLabel: '',
       tools: null,
       actionCount: 0,
@@ -381,6 +415,7 @@ describe('ChatView session recorder', () => {
         ...idle,
         status: 'stopping' as const,
         startedAt: Date.now() - 42_000,
+        stoppedAt: Date.now(),
       });
 
       it('should show the progress above a composer that stays usable', () => {

@@ -27,8 +27,20 @@ export function setActiveRecordingSession(sessionId: string | null): void {
   setActionCount(0);
 }
 
-export function getActiveRecordingSession(): string | null {
-  return activeSessionId;
+let pausedCaptures = 0;
+
+/**
+ * Stops recording this window's own events until the returned function is called: the recorder's
+ * own dialogs are not part of what the creator was doing.
+ */
+export function pauseHubCapture(): () => void {
+  pausedCaptures += 1;
+  let resumed = false;
+  return () => {
+    if (resumed) return;
+    resumed = true;
+    pausedCaptures -= 1;
+  };
 }
 
 export function forwardRecordedEvents(events: RecordedEvent[]): void {
@@ -102,6 +114,7 @@ function shortcutName(e: KeyboardEvent): string | null {
 // panel). The inspector's iframe records its own; its events never reach this document.
 export function startHubDomRecorder(doc: Document = document): () => void {
   const onClick = (e: MouseEvent) => {
+    if (pausedCaptures > 0) return;
     if (!(e.target instanceof Element) || e.target.closest('[data-recording-ignore]')) return;
     forwardRecordedEvents([
       {
@@ -115,6 +128,7 @@ export function startHubDomRecorder(doc: Document = document): () => void {
     ]);
   };
   const onKeyDown = (e: KeyboardEvent) => {
+    if (pausedCaptures > 0) return;
     const name = shortcutName(e);
     if (!name) return;
     const area = e.target instanceof Element ? hubArea(e.target) : 'Creator Hub';

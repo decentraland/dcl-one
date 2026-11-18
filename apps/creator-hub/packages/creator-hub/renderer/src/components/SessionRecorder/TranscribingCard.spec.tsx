@@ -14,11 +14,13 @@ describe('TranscribingCard', () => {
   let onSkip: Mock<() => void>;
   let tools: RecordingToolsStatus | null;
 
-  function renderCard() {
+  function renderCard(stoppedAt?: number) {
+    const startedAt = Date.now() - 42_000;
     render(
       <TestProviders>
         <TranscribingCard
-          startedAt={Date.now() - 42_000}
+          startedAt={startedAt}
+          stoppedAt={stoppedAt ?? Date.now()}
           actionCount={3}
           tools={tools}
           onSkip={onSkip}
@@ -39,7 +41,7 @@ describe('TranscribingCard', () => {
   afterEach(cleanup);
 
   describe('when the speech tools are ready', () => {
-    beforeEach(renderCard);
+    beforeEach(() => renderCard());
 
     it('should say it is transcribing, for how long it recorded and what was captured', () => {
       const card = screen.getByRole('group', { name: 'Transcribing your recording' });
@@ -77,6 +79,26 @@ describe('TranscribingCard', () => {
 
     it('should give up on the transcript', () => {
       expect(onSkip).toHaveBeenCalled();
+    });
+  });
+
+  describe('when the panel is opened while the transcription runs', () => {
+    it('should show the length the recording had, not the time since it stopped', () => {
+      const startedAt = Date.now() - 600_000;
+      render(
+        <TestProviders>
+          <TranscribingCard
+            startedAt={startedAt}
+            stoppedAt={startedAt + 42_000}
+            actionCount={3}
+            tools={{ state: 'ready' }}
+            onSkip={onSkip}
+          />
+        </TestProviders>,
+      );
+
+      const card = screen.getByRole('group', { name: 'Transcribing your recording' });
+      expect(card.textContent).toContain('0:42');
     });
   });
 });
