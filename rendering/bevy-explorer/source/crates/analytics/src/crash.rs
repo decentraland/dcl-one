@@ -36,8 +36,15 @@ const FEATURE_FLAGS_FIELDS: [&str; 2] = ["feature_flags", "feature_flags_overrid
 /// The session's flags as the page last reported them, `(field, value)`.
 static FEATURE_FLAGS: Mutex<Vec<(&'static str, String)>> = Mutex::new(Vec::new());
 
-/// Keep the flags of a `Feature Flags Resolved` event for the crash report.
-pub fn note_feature_flags(properties: &serde_json::Map<String, serde_json::Value>) {
+/// Keep the flags of a `Feature Flags Resolved` event for the crash report, when the event is
+/// this session's: the page's queue can still hold one from an earlier load.
+pub fn note_feature_flags(
+    properties: &serde_json::Map<String, serde_json::Value>,
+    session_id: &str,
+) {
+    if properties.get("session_id").and_then(|v| v.as_str()) != Some(session_id) {
+        return;
+    }
     let flags = FEATURE_FLAGS_FIELDS
         .into_iter()
         .filter_map(|field| Some((field, properties.get(field)?.as_str()?.to_owned())))
@@ -124,12 +131,17 @@ mod tests {
         assert!(item["timestamp"].is_string());
         assert!(item["properties"].get("feature_flags").is_none());
 
-        let flags = serde_json::json!({
-            "feature_flags": "-*,test",
-            "feature_flags_override": "",
-            "feature_flags_source": "service",
-        });
-        note_feature_flags(flags.as_object().unwrap());
+        let flags = |session: &str, flags: &str| {
+            serde_json::json!({
+                "session_id": session,
+                "feature_flags": flags,
+                "feature_flags_override": "",
+                "feature_flags_source": "service",
+            })
+        };
+        note_feature_flags(flags("s", "-*,test").as_object().unwrap(), "s");
+        // an earlier load's event, still in the page's queue
+        note_feature_flags(flags("earlier", "-*,other").as_object().unwrap(), "s");
         let (_, body) = crash_batch("panicked at x", "panic").unwrap();
         let body: serde_json::Value = serde_json::from_str(&body).unwrap();
         let properties = &body["batch"][0]["properties"];

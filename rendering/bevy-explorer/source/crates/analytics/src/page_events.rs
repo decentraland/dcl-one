@@ -55,7 +55,7 @@ fn track_cmd(
                 let count = items.len();
                 for item in items {
                     if item.event == crash::FEATURE_FLAGS_EVENT {
-                        crash::note_feature_flags(&item.properties);
+                        crash::note_feature_flags(&item.properties, &config.common().session_id);
                     }
                     metrics.add_event_with_id(
                         SegmentEvent::Page {

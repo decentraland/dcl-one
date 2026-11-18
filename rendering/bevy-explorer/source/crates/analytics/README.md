@@ -62,7 +62,7 @@ accepted. Natively the next run reports the previous one's log (`crash_report.rs
 The web crash report carries the session's rollout flags: the page reports them as `Feature Flags
 Resolved` (`feature_flags`, the flags that are on as a `?ff=` value; `feature_flags_override`, the
 entry url's own), and `/track` keeps that event's two fields for `crash_batch` as well as queueing
-it. Opening the page with `?ff=<feature_flags>` runs a session with the same flags
+it, when the event's `session_id` is this session's (the page's queue can hold an earlier load's). Opening the page with `?ff=<feature_flags>` runs a session with the same flags
 (`library/explorer-core/lib/featureFlags.ts`). Other events join to the flags on `session_id`.
 
 The loading screen is reported as mobile's funnel names it (`loading.rs`): `Screen Viewed`

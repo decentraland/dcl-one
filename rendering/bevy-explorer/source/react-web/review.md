@@ -329,7 +329,8 @@ back as `analyticsSession`). Expectations:
   read of the feature-flags service settles (`library/explorer-core/lib/featureFlags.ts`):
   `feature_flags`, the flags that are on with their variants, as a `?ff=` value that runs a session
   with exactly those; `feature_flags_override`, the entry url's own `?ff=` (empty without one);
-  `feature_flags_source`, `service`, `unavailable` (the read failed) or `ignored` (`?ff=-*`). Other
+  `feature_flags_source`, `service`, `unavailable` (the read failed), `ignored` (`?ff=-*`), `native`
+  or `other-domain` (a base domain other than decentraland.org or .zone: nothing is asked). Other
   events join to it on `session_id`; the engine's crash report carries the first two itself
   (`crates/analytics/README.md`).
 - **Sign-in link** (`authLoginUrl`): the entry's `utm_*` params ride along, so the auth site's

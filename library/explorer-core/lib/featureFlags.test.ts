@@ -20,6 +20,10 @@ import {
 } from './featureFlags'
 import { getPref, PREF } from './prefs'
 
+// The names these tests force, in place of FLAG's; this page as a web one on Decentraland's domain.
+const KNOWN = new Set(['a', 'b', 'c', 'ab', 'extra', 'onboarding', 'other', 'photo-mode', 'plain', 'voice'])
+const overridesOf = (search: string) => parseFlagOverrides(search, KNOWN)
+const WEB = { baseDomain: 'decentraland.org', native: false }
 const NO_OVERRIDES = parseFlagOverrides('')
 // These tests read made-up names, not FLAG's.
 const flag = (name: string) => name as Flag
@@ -32,22 +36,34 @@ afterEach(() => {
 
 describe('parseFlagOverrides', () => {
   it('reads names forced on, -names forced off and -* to ignore the service', () => {
-    const o = parseFlagOverrides('?ff=photo-mode,-voice&ff=-*')
+    const o = overridesOf('?ff=photo-mode,-voice&ff=-*')
     expect([...o.on]).toEqual([['photo-mode', null]])
     expect([...o.off]).toEqual(['voice'])
     expect(o.ignoreAll).toBe(true)
   })
 
   it('reads name:variant as forced on with that variant, the variant as written', () => {
-    const o = parseFlagOverrides('?ff=Onboarding:Greetings,plain:')
+    const o = overridesOf('?ff=Onboarding:Greetings,plain:')
     expect([...o.on]).toEqual([
       ['onboarding', 'Greetings'],
       ['plain', null]
     ])
   })
 
+  it('keeps only known names, and a variant only when it is short and plain', () => {
+    const o = overridesOf(`?ff=a,nope,-nope,b:${'x'.repeat(65)},c:x%26y,ab:v1.2_b-c`)
+    expect([...o.on]).toEqual([
+      ['a', null],
+      ['b', null],
+      ['c', null],
+      ['ab', 'v1.2_b-c']
+    ])
+    expect([...o.off]).toEqual([])
+    expect([...parseFlagOverrides('?ff=a,test').on]).toEqual([['test', null]])
+  })
+
   it('lets the last mention of a name win, and skips empty items', () => {
-    const o = parseFlagOverrides('?ff=a,-a,,-,b&ff=-b,b')
+    const o = overridesOf('?ff=a,-a,,-,b&ff=-b,b')
     expect([...o.on]).toEqual([['b', null]])
     expect([...o.off]).toEqual(['a'])
     expect(o.ignoreAll).toBe(false)
@@ -57,7 +73,7 @@ describe('parseFlagOverrides', () => {
 describe('overrides', () => {
   it('force a flag over the answer, either way, and drop a forced-off flag’s variant', () => {
     primeFeatureFlags({ flags: { a: false, b: true }, variants: { b: { name: 'v', enabled: true, payload: null } } })
-    setFlagOverrides(parseFlagOverrides('?ff=a,-b'))
+    setFlagOverrides(overridesOf('?ff=a,-b'))
     expect(featureFlag(flag('a'))).toBe(true)
     expect(featureFlag(flag('b'))).toBe(false)
     expect(featureFlagVariant(flag('b'))).toBeNull()
@@ -66,8 +82,8 @@ describe('overrides', () => {
   it('with -* leave every flag off but the forced ones, and ask the service nothing', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
-    setFlagOverrides(parseFlagOverrides('?ff=-*,a'))
-    await loadFeatureFlags()
+    setFlagOverrides(overridesOf('?ff=-*,a'))
+    await loadFeatureFlags(WEB)
     expect(fetchMock).not.toHaveBeenCalled()
     expect(featureFlagsSettled()).toBe(true)
     expect(featureFlag(flag('a'))).toBe(true)
@@ -78,15 +94,23 @@ describe('overrides', () => {
   it('force a variant: with the answer\u2019s payload when it is that variant, without one otherwise', () => {
     const payload = { type: 'string', value: 'hi' }
     primeFeatureFlags({ flags: { a: true, b: true }, variants: { a: { name: 'x', enabled: true, payload }, b: { name: 'x', enabled: true, payload } } })
-    setFlagOverrides(parseFlagOverrides('?ff=a:x,b:y,c:z'))
+    setFlagOverrides(overridesOf('?ff=a:x,b:y,c:z'))
     expect(featureFlagVariant(flag('a'))).toEqual({ name: 'x', enabled: true, payload })
     expect(featureFlagVariant(flag('b'))).toEqual({ name: 'y', enabled: true, payload: null })
     expect(featureFlag(flag('c'))).toBe(true)
     expect(featureFlagVariant(flag('c'))).toEqual({ name: 'z', enabled: true, payload: null })
   })
 
+  it('find a flag whatever the case FLAG writes it in', () => {
+    primeFeatureFlags({ flags: { a: true }, variants: { a: { name: 'v', enabled: true, payload: null } } })
+    expect(featureFlag(flag('A'))).toBe(true)
+    expect(featureFlagVariant(flag('A'))?.name).toBe('v')
+    setFlagOverrides(overridesOf('?ff=-a'))
+    expect(featureFlag(flag('A'))).toBe(false)
+  })
+
   it('leave an unnamed flag to the service', () => {
-    setFlagOverrides(parseFlagOverrides('?ff=a'))
+    setFlagOverrides(overridesOf('?ff=a'))
     expect(featureFlagOverride(flag('b'))).toBeUndefined()
   })
 })
@@ -103,7 +127,7 @@ describe('the flags for analytics', () => {
 
   it('apply the overrides, and give them on their own', () => {
     primeFeatureFlags({ flags: { voice: true, 'photo-mode': true }, variants: {} })
-    setFlagOverrides(parseFlagOverrides('?ff=-voice,extra,ab:b'))
+    setFlagOverrides(overridesOf('?ff=-voice,extra,ab:b'))
     expect(featureFlagsString()).toBe('-*,ab:b,extra,photo-mode')
     expect(featureFlagOverridesString()).toBe('extra,ab:b,-voice')
   })
@@ -112,7 +136,7 @@ describe('the flags for analytics', () => {
     primeFeatureFlags({ flags: { voice: true, ab: true }, variants: { ab: { name: 'b', enabled: true, payload: null } } })
     const recorded = featureFlagsString()
     primeFeatureFlags({ flags: { other: true }, variants: {} })
-    setFlagOverrides(parseFlagOverrides(`?ff=${recorded}`))
+    setFlagOverrides(overridesOf(`?ff=${recorded}`))
     expect(featureFlag(flag('voice'))).toBe(true)
     expect(featureFlagVariant(flag('ab'))?.name).toBe('b')
     expect(featureFlag(flag('other'))).toBe(false)
@@ -121,19 +145,44 @@ describe('the flags for analytics', () => {
 
   it('are tracked once the read settles, with where they came from', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ flags: { 'explorer-bevy-a': true }, variants: {} })))
-    await loadFeatureFlags()
+    await loadFeatureFlags(WEB)
     const resolved = pending().filter((e) => e.event === 'Feature Flags Resolved').at(-1)
     expect(resolved?.properties).toMatchObject({ feature_flags: '-*,a', feature_flags_override: '', feature_flags_source: 'service' })
+  })
+
+  it('leave out a variant that would not come back the same from a url', () => {
+    primeFeatureFlags({ flags: { a: true, b: true }, variants: { a: { name: 'x&y', enabled: true, payload: null }, b: { name: 'x+y', enabled: true, payload: null } } })
+    expect(featureFlagsString()).toBe('-*,a,b')
+  })
+
+  it.each([
+    ['other-domain', { baseDomain: 'evil.example', native: false }],
+    ['native', { baseDomain: 'decentraland.org', native: true }]
+  ] as const)('ask nothing and say %s where there is no service to ask', async (source, host) => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    setFlagOverrides(overridesOf('?ff=a'))
+    await loadFeatureFlags(host)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(featureFlagsSettled()).toBe(true)
+    expect(pending().at(-1)?.properties).toMatchObject({ feature_flags: '-*,a', feature_flags_source: source })
+  })
+
+  it('ask the zone service on the zone domain', async () => {
+    const fetchMock = vi.fn(async () => Response.json({ flags: {}, variants: {} }))
+    vi.stubGlobal('fetch', fetchMock)
+    await loadFeatureFlags({ baseDomain: 'decentraland.zone', native: false })
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe('https://feature-flags.decentraland.zone/explorer.json')
   })
 
   it('say so when the service could not be read or was ignored', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 503 })))
-    await loadFeatureFlags()
+    await loadFeatureFlags(WEB)
     expect(pending().at(-1)?.properties).toMatchObject({ feature_flags: '-*', feature_flags_source: 'unavailable' })
     primeFeatureFlags(null)
-    setFlagOverrides(parseFlagOverrides('?ff=-*,a'))
-    await loadFeatureFlags()
+    setFlagOverrides(overridesOf('?ff=-*,a'))
+    await loadFeatureFlags(WEB)
     expect(pending().at(-1)?.properties).toMatchObject({ feature_flags: '-*,a', feature_flags_override: '-*,a', feature_flags_source: 'ignored' })
     vi.restoreAllMocks()
   })

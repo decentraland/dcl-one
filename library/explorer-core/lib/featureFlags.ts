@@ -11,11 +11,16 @@
 //   The sign-in address is never sent.
 // - Read once per session, after the prefs load (lib/prefs) and without holding up the HUD. A flag
 //   is off until the answer says `true`, and stays off if the file can't be read.
+// - Only Decentraland's own service is asked (FLAG_SERVICE_DOMAINS). A page whose base domain is
+//   any other (a link's `?baseDomain=`, another deployment) sends nothing, so the anonymous id
+//   never reaches a host a link chose. The native HUD does not read either: the service refuses its
+//   page origin. Both run with every flag off unless `?ff=` forces one.
 // - The entry url's `?ff=` overrides the answer, for testing and for running a reported session
 //   again: a comma list of `name` (forced on), `name:variant` (forced on with that variant) or
 //   `-name` (forced off); `-*` ignores the service entirely (nothing is fetched, every flag not
-//   forced on is off). `?ff=-*,photo-mode` runs with only that flag on. A link can set it: a flag
-//   hides or shows a feature, it is never a permission.
+//   forced on is off). `?ff=-*,photo-mode` runs with only that flag on. Only names in FLAG and
+//   short plain variants are kept, so a link cannot grow what analytics records. A link can set
+//   it: a flag hides or shows a feature, it is never a permission.
 // - Once the read settles the session's flags go to analytics as `Feature Flags Resolved`
 //   (`feature_flags`: the flags that are on, as a `?ff=` value that reproduces them;
 //   `feature_flags_override`: the entry url's own overrides). The engine keeps the pair for its
@@ -24,7 +29,7 @@
 // Name a flag in FLAG before reading it, so its uses can be found from one place. React reads them
 // through the HUD's useFeatureFlag (library/ui/apps/hud/lib/useFeatureFlag.ts).
 
-import { BASE_DOMAIN } from '@hud-host'
+import { BASE_DOMAIN, isNativeHud } from '@hud-host'
 import { launchAnalytics, track } from './analytics'
 import { getPref, PREF, setPref } from './prefs'
 
@@ -49,6 +54,17 @@ export const FLAG = {
 
 export type Flag = (typeof FLAG)[keyof typeof FLAG]
 
+/** FLAG's names as the service's keys and `?ff=` are compared: lowercase. */
+function knownFlags(): ReadonlySet<string> {
+  return new Set(Object.values(FLAG).map((name) => name.toLowerCase()))
+}
+
+/** A variant name that survives a `?ff=` list, a url query and an analytics field unchanged. */
+const SAFE_VARIANT = /^[A-Za-z0-9._-]{1,64}$/
+
+/** The base domains whose feature-flags service this client asks. */
+const FLAG_SERVICE_DOMAINS: readonly string[] = ['decentraland.org', 'decentraland.zone']
+
 /** The entry url param that overrides the service's answer. */
 export const FLAG_OVERRIDE_PARAM = 'ff'
 
@@ -63,8 +79,9 @@ export interface FlagOverrides {
   ignoreAll: boolean
 }
 
-/** The `?ff=` overrides in a query string; repeated params add up, a name's last mention wins. */
-export function parseFlagOverrides(search: string): FlagOverrides {
+/** The `?ff=` overrides in a query string; repeated params add up, a name's last mention wins.
+ *  Only names in `known` (FLAG's) are kept, and a variant only when it is a SAFE_VARIANT. */
+export function parseFlagOverrides(search: string, known: ReadonlySet<string> = knownFlags()): FlagOverrides {
   const on = new Map<string, string | null>()
   const off = new Set<string>()
   let ignoreAll = false
@@ -74,15 +91,15 @@ export function parseFlagOverrides(search: string): FlagOverrides {
       if (item === '-*') ignoreAll = true
       else if (item.startsWith('-')) {
         const name = item.slice(1).toLowerCase()
-        if (name === '') continue
+        if (!known.has(name)) continue
         off.add(name)
         on.delete(name)
       } else {
         const colon = item.indexOf(':')
         const name = (colon < 0 ? item : item.slice(0, colon)).toLowerCase()
-        if (name === '') continue
+        if (!known.has(name)) continue
         const variant = colon < 0 ? '' : item.slice(colon + 1)
-        on.set(name, variant === '' ? null : variant)
+        on.set(name, SAFE_VARIANT.test(variant) ? variant : null)
         off.delete(name)
       }
     }
@@ -101,8 +118,9 @@ export function setFlagOverrides(next: FlagOverrides): void {
 
 /** A flag as `?ff=` forces it, or undefined when the url leaves it to the service. */
 export function featureFlagOverride(flag: Flag): boolean | undefined {
-  if (overrides.on.has(flag)) return true
-  if (overrides.off.has(flag) || overrides.ignoreAll) return false
+  const name = flag.toLowerCase()
+  if (overrides.on.has(name)) return true
+  if (overrides.off.has(name) || overrides.ignoreAll) return false
   return undefined
 }
 
@@ -140,8 +158,9 @@ export function featureFlagsUrl(baseDomain: string = BASE_DOMAIN): string {
 
 /** The anonymous id rollouts are bucketed by: the campaign id, else the one this client keeps. */
 export function featureFlagsUserId(): string {
+  // From the entry url: used only when it can be a header value, or the request itself would throw.
   const campaign = launchAnalytics().campaignAnonUserId
-  if (campaign != null && campaign.trim() !== '') return campaign
+  if (campaign != null && /^[\x21-\x7e]{1,128}$/.test(campaign)) return campaign
   const kept = getPref(PREF.featureFlagsUserId)
   if (kept != null && kept !== '') return kept
   const minted = crypto.randomUUID()
@@ -219,13 +238,21 @@ export function featureFlagOverridesString(): string {
   return [...(overrides.ignoreAll ? ['-*'] : []), ...[...overrides.on].map(flagItem), ...[...overrides.off].map((name) => `-${name}`)].join(',')
 }
 
-// A variant whose name would not survive the list's own separators is left out.
+// A variant whose name would not come back the same from a pasted `?ff=` is left out.
 function flagItem([name, variant]: [string, string | null]): string {
-  return variant == null || /[,:\s]/.test(variant) ? name : `${name}:${variant}`
+  return variant != null && SAFE_VARIANT.test(variant) ? `${name}:${variant}` : name
 }
 
-/** Where the session's flags came from. */
-type FlagsSource = 'service' | 'unavailable' | 'ignored'
+/** Where the session's flags came from: the service's answer; a read that failed; `?ff=-*`; the
+ *  native HUD or a base domain with no service to ask, where nothing is read. */
+export type FlagsSource = 'service' | 'unavailable' | 'ignored' | 'native' | 'other-domain'
+
+/** Why this page does not ask the service, or null when it does. */
+function notRead(host: { baseDomain: string; native: boolean }): FlagsSource | null {
+  if (overrides.ignoreAll) return 'ignored'
+  if (host.native) return 'native'
+  return FLAG_SERVICE_DOMAINS.includes(host.baseDomain) ? null : 'other-domain'
+}
 
 function settle(source: FlagsSource): void {
   settled = true
@@ -237,13 +264,16 @@ function settle(source: FlagsSource): void {
   })
 }
 
-/** Starts the session's one read (after loadPrefs); later calls share it. Never rejects. */
-export function loadFeatureFlags(): Promise<void> {
-  if (overrides.ignoreAll && reading == null) {
-    settle('ignored')
-    reading = Promise.resolve()
+/** Starts the session's one read (after loadPrefs); later calls share it. Never rejects. `host`
+ *  is this page's, given by tests. */
+export function loadFeatureFlags(host: { baseDomain: string; native: boolean } = { baseDomain: BASE_DOMAIN, native: isNativeHud() }): Promise<void> {
+  if (reading != null) return reading
+  const skipped = notRead(host)
+  if (skipped != null) {
+    settle(skipped)
+    return (reading = Promise.resolve())
   }
-  reading ??= fetchFeatureFlags(AbortSignal.timeout(READ_TIMEOUT_MS)).then(
+  reading = fetchFeatureFlags(AbortSignal.timeout(READ_TIMEOUT_MS), featureFlagsUrl(host.baseDomain)).then(
     (flags) => {
       answer = flags
       settle('service')
@@ -276,7 +306,7 @@ export function subscribeFeatureFlags(listener: () => void): () => void {
 
 /** A flag as `?ff=` forces it, else as answered: false until the answer says `true`. */
 export function featureFlag(flag: Flag): boolean {
-  return featureFlagOverride(flag) ?? answer?.flags[flag] === true
+  return featureFlagOverride(flag) ?? answer?.flags[flag.toLowerCase()] === true
 }
 
 /** A flag's variant: the one `?ff=name:variant` forces, else as answered; null without one or
@@ -284,8 +314,9 @@ export function featureFlag(flag: Flag): boolean {
  *  is that same variant. Unleash names a disabled variant `disabled`. */
 export function featureFlagVariant(flag: Flag): FlagVariant | null {
   if (featureFlagOverride(flag) === false) return null
-  const answered = answer?.variants[flag] ?? null
-  const forced = overrides.on.get(flag)
+  const name = flag.toLowerCase()
+  const answered = answer?.variants[name] ?? null
+  const forced = overrides.on.get(name)
   if (forced == null) return answered
   return { name: forced, enabled: true, payload: answered?.name === forced ? answered.payload : null }
 }
