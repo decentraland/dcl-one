@@ -253,6 +253,37 @@ async fn nothing_listening_is_a_failed_connect_not_a_hang(transport: Transport) 
     );
 }
 
+/// A bot that closes ends its session at once: the server hears the close, not an idle timeout 30 s
+/// later, and the others are told it left.
+async fn a_closed_bot_is_gone_for_the_others_at_once(transport: Transport) {
+    let pulse = support::in_process_pulse_both().await;
+    let ctx = pulse.ctx_on(transport, "closed-is-gone");
+    let realm = ctx.realm("plaza");
+    let (stayer_id, leaver_id) = (ctx.identity(0), ctx.identity(1));
+    let stayer = PulseBot::enter(&ctx, "stayer", &stayer_id).await.unwrap();
+    stayer.teleport(&realm, HERE).unwrap();
+    let leaver = PulseBot::enter(&ctx, "leaver", &leaver_id).await.unwrap();
+    leaver.teleport(&realm, NEARBY).unwrap();
+    expect_or(&ctx, "the stayer sees the leaver", SOON, || {
+        stayer
+            .view()
+            .of(&leaver_id.address())
+            .map(|_| ())
+            .ok_or_else(|| "not yet".to_owned())
+    })
+    .await
+    .unwrap();
+    // straight after arriving, with no traffic in between: the close is the last thing the bot does
+    leaver.close();
+    expect_or(&ctx, "the stayer no longer sees the leaver", SOON, || {
+        (stayer.view().count_of(&leaver_id.address()) == 0)
+            .then_some(())
+            .ok_or_else(|| "the leaver is still there".to_owned())
+    })
+    .await
+    .unwrap();
+}
+
 /// Each case runs once per transport: `<case>::enet` and `<case>::webtransport`.
 macro_rules! on_both_transports {
     ($($case:ident),* $(,)?) => {$(
@@ -280,6 +311,7 @@ on_both_transports!(
     the_second_session_of_a_wallet_evicts_the_first,
     a_replayed_handshake_is_refused,
     nothing_listening_is_a_failed_connect_not_a_hang,
+    a_closed_bot_is_gone_for_the_others_at_once,
 );
 
 /// QUIC through an opaque UDP relay: the walker dials WebTransport through the fault link, the
@@ -385,4 +417,41 @@ async fn webtransport_bursts_at_full_length() {
     .await
     .unwrap();
     eprintln!("resyncs in the full run: {resyncs}");
+}
+
+/// What each transport does with a frame far over the message limit. ENet ends the connection at
+/// once with 16 (the packet envelope refuses anything over 8192 bytes). WebTransport's stream
+/// reader reports an overrun as one corrupt frame, which only draws on the corrupt-packet budget:
+/// the connection survives until the budget is spent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_oversized_frame_ends_an_enet_connection_at_once() {
+    let pulse = support::in_process_pulse_both().await;
+    let ctx = pulse.ctx_on(Transport::Enet, "oversized-enet");
+    let bot = PulseBot::enter(&ctx, "walker", &ctx.identity(0))
+        .await
+        .unwrap();
+    bot.send_raw(vec![0_u8; 20_000], Channel::Reliable);
+    bot.expect_disconnect_with(&ctx, DisconnectReason::PacketCorrupted, SOON)
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_oversized_frame_is_charged_to_the_corrupt_budget_on_webtransport() {
+    use catalyst_comms::pulse::hardening::DEFAULT_CORRUPT_BURST;
+    let pulse = support::in_process_pulse_both().await;
+    let ctx = pulse.ctx_on(Transport::WebTransport, "oversized-webtransport");
+    let bot = PulseBot::enter(&ctx, "walker", &ctx.identity(0))
+        .await
+        .unwrap();
+    for _ in 0..DEFAULT_CORRUPT_BURST {
+        bot.send_raw(vec![0_u8; 20_000], Channel::Reliable);
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    bot.expect_alive().unwrap();
+    // the next one is over the budget
+    bot.send_raw(vec![0_u8; 20_000], Channel::Reliable);
+    bot.expect_disconnect_with(&ctx, DisconnectReason::PacketCorrupted, SOON)
+        .await
+        .unwrap();
 }

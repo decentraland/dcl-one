@@ -384,3 +384,184 @@ async fn stall_and_resume_passes() {
     assert_passed(&result);
     println!("{:?}", result.notes);
 }
+
+// ---- the same scenarios over WebTransport, against the same server listening on both ----
+
+async fn run_webtransport_on(
+    server: PulseServer,
+    stack: impl FnOnce(&mut Stack),
+    scenario: &'static Scenario,
+    options: RunOptions,
+) -> ScenarioResult {
+    let pulse = support::serve_both(server).await;
+    let mut stack_file = Stack::pulse_only(pulse.enet);
+    stack_file.pulse_webtransport = Some(pulse.webtransport.clone());
+    stack(&mut stack_file);
+    let options = RunOptions {
+        transport: catalyst_comms_e2e::engine::Transport::WebTransport,
+        ..options
+    };
+    let mut report = run_scenarios(Arc::new(stack_file), &[scenario], &options).await;
+    report.results.remove(0)
+}
+
+async fn run_webtransport(
+    server: PulseServer,
+    scenario: &'static Scenario,
+    repeat: u32,
+) -> ScenarioResult {
+    run_webtransport_on(server, |_| {}, scenario, options(repeat)).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn webtransport_smoke_passes() {
+    assert_passed(&run_webtransport(PulseServer::new(), &SMOKE, 2).await);
+}
+
+/// Known server behaviour, left failing on purpose (the report names it): the WebTransport
+/// stream reader reports a frame over its limit as one corrupt frame, which only draws on the
+/// corrupt-packet budget, where ENet ends the connection at once with code 16. What each transport
+/// does is pinned in `pulse_in_process.rs`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[ignore = "fails by design: an oversized frame does not end a WebTransport connection at once"]
+async fn webtransport_refusal_codes_pass() {
+    assert_passed(&run_webtransport(PulseServer::new(), &REFUSAL_CODES, 1).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn webtransport_rate_limits_pass() {
+    assert_passed(&run_webtransport(PulseServer::new(), &RATE_LIMITS, 1).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn webtransport_same_wallet_race_passes() {
+    assert_passed(&run_webtransport(PulseServer::new(), &SAME_WALLET_RACE, 6).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn webtransport_handshake_swarm_passes() {
+    assert_passed(&run_webtransport(PulseServer::new(), &HANDSHAKE_SWARM, 1).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn webtransport_handshake_swarm_fails_against_a_server_without_a_per_address_budget() {
+    let mut server = PulseServer::new();
+    server.pre_auth_wt = PreAuthAdmission::new(0, 0);
+    let failure =
+        failure_of(&run_webtransport_on(server, |_| {}, &HANDSHAKE_SWARM, options(1)).await);
+    assert!(failure.contains("allowed"), "{failure}");
+    assert!(failure.contains("accepted"), "{failure}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn webtransport_handshake_swarm_fails_against_a_server_that_refuses_within_the_budget() {
+    let mut server = PulseServer::new();
+    server.pre_auth_wt = PreAuthAdmission::new(4, 512);
+    let failure =
+        failure_of(&run_webtransport_on(server, |_| {}, &HANDSHAKE_SWARM, options(1)).await);
+    assert!(failure.contains("within the budget"), "{failure}");
+    assert!(failure.contains("PreAuthIpLimitExhausted"), "{failure}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn webtransport_churn_passes() {
+    assert_passed(&run_webtransport(PulseServer::new(), &CHURN, 1).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn webtransport_realm_round_trip_passes() {
+    assert_passed(&run_webtransport(PulseServer::new(), &REALM_ROUND_TRIP, 2).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn webtransport_emote_lifecycle_passes() {
+    assert_passed(&run_webtransport(PulseServer::new(), &EMOTE_LIFECYCLE, 2).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn webtransport_resync_requests_pass() {
+    assert_passed(&run_webtransport(PulseServer::new(), &RESYNC_REQUESTS, 2).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn webtransport_scene_listener_passes_when_the_server_admits_its_wallet() {
+    let key = use_listener_key();
+    let wallet = Identity::from_wallet_key(&key, "test").unwrap().address();
+    let mut server = PulseServer::new();
+    server.scene_listener_wallets = Some(HashSet::from([wallet]));
+    assert_passed(
+        &run_webtransport_on(server, name_listener_key, &SCENE_LISTENER, options(1)).await,
+    );
+}
+
+/// Known server behaviour, left failing on purpose (the report names it): QUIC's idle timeout and
+/// the server's authentication timeout are both 30 s, so the connection of a silent client usually
+/// ends by the idle timeout, which carries no code; code 2 arrives only when the authentication
+/// timeout wins the race.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[ignore = "fails by design: the close code 2 of a WebTransport session is a race with QUIC's idle timeout"]
+async fn webtransport_auth_timeout_passes() {
+    assert_passed(&run_webtransport(PulseServer::new(), &AUTH_TIMEOUT, 1).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[ignore = "the stall past the transport timeout takes about 15 s"]
+async fn webtransport_stall_and_resume_passes() {
+    assert_passed(&run_webtransport(PulseServer::new(), &STALL_AND_RESUME, 1).await);
+}
+
+/// Other people come and go on a shared stack, and the server tells every connected player when
+/// any player leaves: the scenario counts what it saw of its own traveller, nothing else.
+async fn amid_strangers(
+    scenario: &'static Scenario,
+    transport: catalyst_comms_e2e::engine::Transport,
+) {
+    let pulse = support::serve_both(PulseServer::new()).await;
+    let strangers = pulse.ctx_on(transport, "strangers");
+    let churn = tokio::spawn(async move {
+        for number in 0_u32..200 {
+            let identity = Identity::derive("a stranger passing by", number);
+            if let Ok(bot) = PulseBot::enter(&strangers, "stranger", &identity).await {
+                bot.close();
+            }
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        }
+    });
+    let mut stack_file = Stack::pulse_only(pulse.enet);
+    stack_file.pulse_webtransport = Some(pulse.webtransport.clone());
+    let options = RunOptions {
+        transport,
+        ..options(1)
+    };
+    let mut report = run_scenarios(Arc::new(stack_file), &[scenario], &options).await;
+    churn.abort();
+    assert_passed(&report.results.remove(0));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn realm_round_trip_counts_only_its_own_traveller_on_enet() {
+    amid_strangers(
+        &REALM_ROUND_TRIP,
+        catalyst_comms_e2e::engine::Transport::Enet,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn realm_round_trip_counts_only_its_own_traveller_on_webtransport() {
+    amid_strangers(
+        &REALM_ROUND_TRIP,
+        catalyst_comms_e2e::engine::Transport::WebTransport,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn smoke_counts_only_its_own_traveller_on_enet() {
+    amid_strangers(&SMOKE, catalyst_comms_e2e::engine::Transport::Enet).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn smoke_counts_only_its_own_traveller_on_webtransport() {
+    amid_strangers(&SMOKE, catalyst_comms_e2e::engine::Transport::WebTransport).await;
+}

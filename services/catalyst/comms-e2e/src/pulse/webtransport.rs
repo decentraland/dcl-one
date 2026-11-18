@@ -30,6 +30,8 @@ const GRACEFUL: u32 = 1;
 pub(crate) struct Dial {
     pub url: String,
     pub certificate_hash: Option<Vec<u8>>,
+    /// The local address to dial from; the server counts its per-address limits by it.
+    pub local: Option<std::net::IpAddr>,
     pub deadline: Duration,
 }
 
@@ -65,12 +67,13 @@ impl Wire {
 }
 
 fn run(dial: Dial, shared: Arc<Shared>, commands: Receiver<Command>) {
-    let client = match Client::connect_within(
+    let client = match Client::connect_within_from(
         ClientConfig {
             url: dial.url,
             server_cert_hash: dial.certificate_hash,
         },
         Some(dial.deadline),
+        dial.local,
     ) {
         Ok(client) => client,
         Err(error) => return shared.transport_failed(format!("WebTransport: {error}")),
