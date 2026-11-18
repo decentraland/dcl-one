@@ -55,7 +55,7 @@ import type {
   DraftPromptMode,
 } from '/@/modules/store/ai/types';
 import { MicrophoneIcon, WarningCircleIcon } from '../Icons';
-import { RecordButton, RecordingCard, TranscribingStrip } from '../SessionRecorder';
+import { RecordButton, RecordingCard, TranscribingCard } from '../SessionRecorder';
 import { SignInCodeField } from '../SignInCodeField';
 import { toolChipLabel } from './labels';
 import recordRowStyles from './RecordRow.module.css';
@@ -1193,6 +1193,17 @@ export function ChatView(props: ChatViewProps) {
             />
           </div>
         )}
+        {recorder?.status === 'stopping' && (
+          <div className={recordRowStyles.recordRow}>
+            <TranscribingCard
+              startedAt={recorder.startedAt}
+              actionCount={recorder.actionCount}
+              tools={recorder.tools}
+              onSkip={onSkipTranscription}
+              onFocusRelease={() => composerRef.current?.focus()}
+            />
+          </div>
+        )}
 
         <div
           className={styles.composer}
@@ -1284,14 +1295,6 @@ export function ChatView(props: ChatViewProps) {
             hidden
             onChange={handleFilePick}
           />
-          {recorder?.status === 'stopping' && (
-            <TranscribingStrip
-              status={recorder.status}
-              startedAt={recorder.startedAt}
-              tools={recorder.tools}
-              onSkip={onSkipTranscription}
-            />
-          )}
           <TextField
             fullWidth
             multiline

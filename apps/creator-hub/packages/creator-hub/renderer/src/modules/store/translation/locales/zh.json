@@ -197,7 +197,6 @@
       "live": "正在录制",
       "actions_captured": "已记录 {count} 个操作",
       "discard": "放弃",
-      "recorded": "已录制 {time}",
       "discard_confirm": {
         "title": "放弃这段录制？",
         "body": "录制将停止，已记录的内容会被删除。此操作无法撤销。",
@@ -225,6 +224,10 @@
         "accept": "开始录制"
       },
       "send_without_transcript": "不转写直接发送",
+      "transcribing_title": "正在转写你的录制",
+      "preparing_title": "正在准备转写",
+      "transcribing_detail": "正在这台电脑上将语音转为文字",
+      "downloading_detail": "正在下载语音模型（仅一次）",
       "microphone_lost": "麦克风已断开，录制已停止。它会随你的下一条消息发送。"
     }
   },

@@ -1,0 +1,149 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--white-10);
+  border-radius: 10px;
+  background-color: var(--panel-2);
+  color: var(--palette-neutral-softWhite);
+  font-family: var(--font-family);
+  font-size: 0.8125rem;
+}
+
+.header,
+.footer,
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background-color: var(--palette-info-light);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.time {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.track {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background-color: var(--white-10);
+}
+
+.fill,
+.sweep {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 2px;
+  background-color: var(--palette-info-light);
+}
+
+.fill {
+  transition: width 0.3s ease;
+}
+
+.sweep {
+  width: 35%;
+  animation: sweep 1.4s ease-in-out infinite;
+}
+
+.percent {
+  color: var(--gray);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.detail {
+  margin: 0;
+  color: var(--gray);
+  font-size: 0.75rem;
+}
+
+.meta {
+  flex: 1;
+  min-width: 0;
+  color: var(--gray);
+  font-size: 0.75rem;
+}
+
+.skip {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--white-10);
+  border-radius: 8px;
+  background-color: transparent;
+  color: var(--palette-neutral-softWhite);
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.skip:hover {
+  background-color: var(--palette-whiteTransparent-hover);
+}
+
+.skip:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot,
+  .sweep {
+    animation: none;
+  }
+
+  .sweep {
+    width: 100%;
+    opacity: 0.5;
+  }
+
+  .fill {
+    transition: none;
+  }
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(290%);
+  }
+}

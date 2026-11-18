@@ -387,19 +387,29 @@ describe('ChatView session recorder', () => {
         const onStop = vi.fn();
         renderChat({ recorder: stopping(), busy: true, onToggleRecording: vi.fn(), onStop });
 
-        const strip = screen.getByTestId('recording-transcribing');
-        expect(within(strip).getByText('Transcribing…')).toBeTruthy();
-        expect(within(strip).getByText('0:42 recorded')).toBeTruthy();
+        const card = screen.getByRole('group', { name: 'Transcribing your recording' });
+        expect(within(card).getByText('0:42')).toBeTruthy();
         expect(screen.getByRole('textbox')).toBeTruthy();
 
         fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
         expect(onStop).toHaveBeenCalled();
       });
 
-      it('should say it is transcribing only in the strip', () => {
+      it('should say it is transcribing only in the card', () => {
         renderChat({ recorder: stopping(), onToggleRecording: vi.fn() });
 
         expect(screen.queryAllByText(/^Transcribing/)).toHaveLength(1);
+      });
+
+      it('should put the card where the recording card was, above the composer', () => {
+        renderChat({ recorder: stopping(), onToggleRecording: vi.fn() });
+
+        const card = screen.getByTestId('recording-transcribing');
+        const composer = screen.getByRole('textbox');
+        expect(composer.contains(card)).toBe(false);
+        expect(
+          card.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
       });
 
       it('should offer sending the recording without waiting for the transcript', () => {

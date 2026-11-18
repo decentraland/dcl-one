@@ -197,7 +197,6 @@
       "live": "Recording",
       "actions_captured": "{count} {count, plural, one {action} other {actions}} captured",
       "discard": "Discard",
-      "recorded": "{time} recorded",
       "discard_confirm": {
         "title": "Discard this recording?",
         "body": "The recording stops and what it captured so far is deleted. This can't be undone.",
@@ -225,6 +224,10 @@
         "accept": "Start recording"
       },
       "send_without_transcript": "Send without transcript",
+      "transcribing_title": "Transcribing your recording",
+      "preparing_title": "Getting ready to transcribe",
+      "transcribing_detail": "Turning your speech into text on this computer",
+      "downloading_detail": "Downloading the speech model (one time)",
       "microphone_lost": "The recording stopped because your microphone was disconnected. It goes out with your next message."
     }
   },

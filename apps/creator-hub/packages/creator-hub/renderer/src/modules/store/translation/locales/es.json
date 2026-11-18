@@ -197,7 +197,6 @@
       "live": "Grabando",
       "actions_captured": "{count} {count, plural, one {acción capturada} other {acciones capturadas}}",
       "discard": "Descartar",
-      "recorded": "{time} grabados",
       "discard_confirm": {
         "title": "¿Descartar esta grabación?",
         "body": "La grabación se detiene y se elimina lo capturado hasta ahora. Esta acción no se puede deshacer.",
@@ -225,6 +224,10 @@
         "accept": "Empezar a grabar"
       },
       "send_without_transcript": "Enviar sin transcripción",
+      "transcribing_title": "Transcribiendo tu grabación",
+      "preparing_title": "Preparando la transcripción",
+      "transcribing_detail": "Convirtiendo tu voz en texto en esta computadora",
+      "downloading_detail": "Descargando el modelo de voz (solo una vez)",
       "microphone_lost": "La grabación se detuvo porque se desconectó tu micrófono. Se envía con tu próximo mensaje."
     }
   },
