@@ -44,7 +44,7 @@ impl CommsState {
             return;
         }
         let state = self.clone();
-        tokio::spawn(async move {
+        crate::shared::task::spawn(async move {
             match &revocation {
                 RoomRevocation::WorldAddress { world, address } => {
                     let rooms = match live_world_rooms(&state, world).await {

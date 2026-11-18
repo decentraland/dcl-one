@@ -64,7 +64,7 @@ impl FlagsPoller {
             }
         };
         let (tx, rx) = tokio::sync::watch::channel(initial.clone());
-        tokio::spawn(async move {
+        crate::shared::task::spawn(async move {
             loop {
                 tokio::select! { biased; _ = tx.closed() => break, _ = tokio::time::sleep(POLL_INTERVAL) => {} }
                 tokio::select! {

@@ -1437,7 +1437,7 @@ pub fn spawn_admin_presenter_on_join(state: SharedState, room: String, identity:
         );
         return;
     };
-    tokio::spawn(async move {
+    crate::shared::task::spawn(async move {
         let _permit = permit;
         match tokio::time::timeout(
             ADMIN_LOOKUP_TIMEOUT,
