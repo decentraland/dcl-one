@@ -719,7 +719,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   save almost nothing, and the water material draws without fog, so nothing would soften it
   appearing and disappearing.
 - **The lens flare's rings are procedural, and its random copies use a hash.** Unity draws the
-  rings from images that are not carried, and places the copies with its seeded random generator.
+  rings from URP's sample textures, which are not carried; Bevy draws bands of colour measured
+  from them (radius, width and brightness per channel, and the partial ring's arc). Unity places
+  the copies with its seeded random generator.
 - **The lens flare sees transparent surfaces only through depth of field.** Its occlusion test
   reads the depth buffer and, where the view has depth of field's transparent focus texture, the
   transparent coverage in it. A view without that texture (every MSAA view) is hidden only by

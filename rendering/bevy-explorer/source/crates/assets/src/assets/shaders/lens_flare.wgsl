@@ -162,35 +162,53 @@ fn polygon(v: vec2<f32>, edge: f32, falloff: f32, sides: u32, roundness: f32) ->
     return pow(shape, falloff);
 }
 
-// a ring at the quad's rim, fading linearly from its middle to its edges; the partial ring keeps
-// only the arc toward +x
-fn ring(v: vec2<f32>, partial: bool) -> f32 {
-    let thickness = bitcast<f32>(#{RING_THICKNESS}u);
-    let len = length(v);
-    var shape = clamp((thickness - abs(len - (1.0 - thickness))) / thickness, 0.0, 1.0);
-    if partial {
-        shape *= clamp((v.x / max(len, 1e-4) - 0.5) * 2.0, 0.0, 1.0);
-    }
-    return shape;
+// a bump of `height` at `peak`, `inner` wide inside it and `outer` wide outside
+fn band(x: f32, peak: f32, height: f32, inner: f32, outer: f32) -> f32 {
+    let d = (x - peak) / select(outer, inner, x < peak);
+    return height * exp(-0.5 * d * d);
+}
+
+// The ring images Unity's flares draw, as bands of colour by radius. The ring: red, green, then
+// blue outward, around two thirds of the quad out
+fn ring(v: vec2<f32>) -> vec3<f32> {
+    let r = length(v);
+    return vec3<f32>(
+        band(r, 0.66, 0.099, 0.033, 0.033),
+        band(r, 0.70, 0.087, 0.035, 0.035),
+        band(r, 0.735, 0.081, 0.035, 0.035),
+    );
+}
+
+// The partial ring: a thin arc toward +x near the quad's rim, red outside and violet inside, fading
+// over about 40 degrees either side
+fn partial_ring(v: vec2<f32>) -> vec3<f32> {
+    let r = length(v);
+    let angle = abs(atan2(v.y, v.x)) / radians(34.0);
+    let arc = exp(-angle * angle * angle * angle);
+    return arc * vec3<f32>(
+        band(r, 0.92, 0.47, 0.029, 0.016),
+        band(r, 0.905, 0.04, 0.026, 0.026),
+        band(r, 0.885, 0.185, 0.038, 0.028),
+    );
 }
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // the shapes are mirrored across the quad
     let v = vec2<f32>(-in.quad.x, in.quad.y);
-    var shape: f32;
+    var shape: vec3<f32>;
     switch in.kind {
         case #{KIND_CIRCLE}u: {
-            shape = circle(v, in.edge, in.falloff);
+            shape = vec3<f32>(circle(v, in.edge, in.falloff));
         }
         case #{KIND_POLYGON}u: {
-            shape = polygon(v, in.edge, in.falloff, in.sides, in.roundness);
+            shape = vec3<f32>(polygon(v, in.edge, in.falloff, in.sides, in.roundness));
         }
         case #{KIND_RING}u: {
-            shape = ring(v, false);
+            shape = ring(v);
         }
         default: {
-            shape = ring(v, true);
+            shape = partial_ring(v);
         }
     }
     return vec4<f32>(in.color * shape, 0.0);

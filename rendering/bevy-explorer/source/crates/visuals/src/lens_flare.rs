@@ -62,7 +62,8 @@ pub enum FlareKind {
         sides: u32,
         roundness: f32,
     },
-    /// a ring, or with `partial` only its arc on one side, drawn procedurally
+    /// a thin band of colours, or with `partial` only a red and violet arc on one side, drawn
+    /// procedurally in the colours of the ring images Unity draws
     Ring {
         partial: bool,
     },
@@ -99,6 +100,8 @@ pub struct FlareElement {
     pub scale_variation: f32,
     /// how much the copies' rotations vary
     pub rotation_variation: f32,
+    /// the size `size_xy` grows toward as the element moves from the screen's centre to its edge
+    pub radial_distortion: Option<Vec2>,
 }
 
 /// The day flare: a warm glow on the sun, hexagonal ghosts, small streaks and two rings.
@@ -119,6 +122,7 @@ pub static DAY_FLARE: [FlareElement; 5] = [
         modulate_by_light: true,
         scale_variation: 1.0,
         rotation_variation: 180.0,
+        radial_distortion: None,
     },
     FlareElement {
         kind: FlareKind::Polygon {
@@ -139,6 +143,7 @@ pub static DAY_FLARE: [FlareElement; 5] = [
         modulate_by_light: true,
         scale_variation: 0.9,
         rotation_variation: 360.0,
+        radial_distortion: None,
     },
     FlareElement {
         kind: FlareKind::Circle,
@@ -156,6 +161,7 @@ pub static DAY_FLARE: [FlareElement; 5] = [
         modulate_by_light: true,
         scale_variation: 1.0,
         rotation_variation: 0.0,
+        radial_distortion: None,
     },
     FlareElement {
         kind: FlareKind::Ring { partial: false },
@@ -173,6 +179,7 @@ pub static DAY_FLARE: [FlareElement; 5] = [
         modulate_by_light: false,
         scale_variation: 1.0,
         rotation_variation: 180.0,
+        radial_distortion: Some(Vec2::new(20.0, 20.0)),
     },
     FlareElement {
         kind: FlareKind::Ring { partial: true },
@@ -190,6 +197,7 @@ pub static DAY_FLARE: [FlareElement; 5] = [
         modulate_by_light: false,
         scale_variation: 1.0,
         rotation_variation: 180.0,
+        radial_distortion: Some(Vec2::new(1.0, 1.0)),
     },
 ];
 
@@ -211,6 +219,7 @@ pub static NIGHT_FLARE: [FlareElement; 4] = [
         modulate_by_light: true,
         scale_variation: 1.0,
         rotation_variation: 180.0,
+        radial_distortion: None,
     },
     FlareElement {
         kind: FlareKind::Polygon {
@@ -231,6 +240,7 @@ pub static NIGHT_FLARE: [FlareElement; 4] = [
         modulate_by_light: true,
         scale_variation: 0.9,
         rotation_variation: 360.0,
+        radial_distortion: None,
     },
     FlareElement {
         kind: FlareKind::Circle,
@@ -248,6 +258,7 @@ pub static NIGHT_FLARE: [FlareElement; 4] = [
         modulate_by_light: true,
         scale_variation: 1.0,
         rotation_variation: 0.0,
+        radial_distortion: None,
     },
     FlareElement {
         kind: FlareKind::Ring { partial: true },
@@ -265,6 +276,7 @@ pub static NIGHT_FLARE: [FlareElement; 4] = [
         modulate_by_light: false,
         scale_variation: 1.0,
         rotation_variation: 180.0,
+        radial_distortion: Some(Vec2::new(1.0, 1.0)),
     },
 ];
 
@@ -295,9 +307,6 @@ const RANDOM_TINT: [(f32, Vec3); 3] = [
     (52043.0 / 65535.0, Vec3::new(1.0, 0.6600066, 0.3537736)),
     (65342.0 / 65535.0, Vec3::new(1.0, 0.33182937, 0.1462264)),
 ];
-
-/// The rings' thickness, as a share of their radius.
-const RING_THICKNESS: f32 = 0.25;
 
 /// An element's half size on screen, in half screen heights, is `size_xy * scale` times this.
 const SCALE_SIZE: f32 = 0.1;
@@ -539,6 +548,17 @@ fn flare_quads(
             edge = (edge + 1.0).powi(5);
         }
         let size = element.size_xy * SCALE_SIZE * element.scale;
+        // toward its distortion target the further the element sits from the screen's centre
+        let distorted = |position: f32| match element.radial_distortion {
+            Some(target) => {
+                let centre = sun * (1.0 - position);
+                size.lerp(
+                    target * SCALE_SIZE * element.scale,
+                    centre.length().clamp(0.0, 1.0),
+                )
+            }
+            None => size,
+        };
 
         let mut push = |position: f32, size: Vec2, rotation: f32, color: Vec3| {
             if size.x <= 0.0 || size.y <= 0.0 {
@@ -565,7 +585,8 @@ fn flare_quads(
         };
 
         if element.count <= 1 {
-            push(2.0 * element.position, size, element.rotation, color);
+            let position = 2.0 * element.position;
+            push(position, distorted(position), element.rotation, color);
             continue;
         }
         let step = 2.0 * element.spread / (element.count - 1) as f32;
@@ -573,7 +594,8 @@ fn flare_quads(
         for i in 0..element.count {
             let k = i * 6;
             let local_intensity = (hash(k) * 2.0 - 1.0) * INTENSITY_VARIATION + 1.0;
-            let copy_size = size * (1.0 + element.scale_variation * (hash(k + 1) * 2.0 - 1.0));
+            let copy_size =
+                distorted(position) * (1.0 + element.scale_variation * (hash(k + 1) * 2.0 - 1.0));
             let tint = random_tint(hash(k + 2)) * local_intensity;
             // k + 3 would move the copy sideways, by a variation these flares leave at 0
             let rotation = element.rotation
@@ -754,10 +776,8 @@ impl FromWorld for LensFlarePipeline {
     }
 }
 
-/// The numbers `lens_flare.wgsl` shares with this file; floats as their bit patterns, which it
-/// reads back with `bitcast<f32>`.
+/// The numbers `lens_flare.wgsl` shares with this file.
 fn shader_constants() -> Vec<ShaderDefVal> {
-    let float = |name: &str, value: f32| ShaderDefVal::UInt(name.into(), value.to_bits());
     vec![
         ShaderDefVal::UInt("MAX_QUADS".into(), MAX_QUADS as u32),
         ShaderDefVal::UInt("OCCLUSION_SAMPLES".into(), OCCLUSION_SAMPLES),
@@ -765,7 +785,6 @@ fn shader_constants() -> Vec<ShaderDefVal> {
         ShaderDefVal::UInt("KIND_POLYGON".into(), KIND_POLYGON),
         ShaderDefVal::UInt("KIND_RING".into(), KIND_RING),
         ShaderDefVal::UInt("KIND_PARTIAL_RING".into(), KIND_PARTIAL_RING),
-        float("RING_THICKNESS", RING_THICKNESS),
     ]
 }
 

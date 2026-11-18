@@ -82,6 +82,30 @@ fn quads_follow_the_ray_through_the_screen_centre() {
     }
 }
 
+/// The day's full ring grows from its own size toward 20 times it as it moves off the screen's
+/// centre; the partial ring's target is its own size, so it keeps it.
+#[test]
+fn the_full_ring_grows_away_from_the_centre() {
+    let size_of = |sun: Vec2, kind: u32| {
+        flare_quads(&DAY_FLARE, sun, 1.0, Vec3::ONE, 1.0)
+            .into_iter()
+            .find(|q| q.kind == kind)
+            .unwrap()
+            .size
+    };
+    let base = SCALE_SIZE * 4.2;
+    let centred = size_of(Vec2::ZERO, KIND_RING);
+    assert!((centred.x - base).abs() < 1e-6);
+    // the ring sits at 0.3 of the light's offset: half way to the edge for a light at 1/0.6
+    let off = size_of(Vec2::new(0.5 / 0.3, 0.0), KIND_RING);
+    assert!(
+        (off.x - (base + 0.5 * (20.0 * base - base))).abs() < 1e-5,
+        "{off}"
+    );
+    let partial = size_of(Vec2::new(0.9, 0.0), KIND_PARTIAL_RING);
+    assert!((partial.x - SCALE_SIZE * 3.93).abs() < 1e-6);
+}
+
 /// The light's colour tints only the elements that ask for it.
 #[test]
 fn light_colour_tints_only_modulated_elements() {
@@ -365,7 +389,7 @@ fn lens_flare_renders() {
     let ndc = clip.xy() / clip.w;
     let half = 0.5 * FRAME as f32;
     let light = UVec2::new(((ndc.x + 1.0) * half) as u32, ((1.0 - ndc.y) * half) as u32);
-    // the glow: full on the light, warm around it (its tint is orange; the rings are white)
+    // the glow: full on the light, warm around it (its tint is orange; the rings are faint)
     let on = open.get_pixel(light.x, light.y).0;
     let beside = open.get_pixel(light.x + 24, light.y).0;
     println!("light at {light}: {on:?}, 24 px right: {beside:?}");
