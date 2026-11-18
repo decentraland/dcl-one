@@ -132,7 +132,7 @@ impl Plugin for CommsPlugin {
             voice_chat::VoiceChatPlugin,
         ));
         app.init_resource::<MicState>()
-            .init_resource::<ClientWindowFocus>()
+            .insert_resource(ClientWindowFocus::Focused)
             .init_resource::<global_crdt::NearbyPanning>();
 
         // Pulse movement transport. Inert until a `pulse::plugin::PulseConfig` resource is

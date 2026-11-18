@@ -1903,9 +1903,8 @@ pub enum AppError {
 }
 
 /// Whether the Explorer has focus.
-#[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientWindowFocus {
-    #[default]
     Focused,
     NoFocus,
 }

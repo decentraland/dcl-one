@@ -797,7 +797,6 @@ impl DecentralandApp {
         app.configure_sets(Startup, SetupSets::Init.before(SetupSets::Main));
         app.add_systems(Startup, setup.in_set(SetupSets::Init));
         app.add_systems(Startup, save_fresh_user_id);
-        app.init_resource::<ClientWindowFocus>();
         #[cfg(not(target_arch = "wasm32"))]
         app.add_systems(First, update_window_focus_system);
 
