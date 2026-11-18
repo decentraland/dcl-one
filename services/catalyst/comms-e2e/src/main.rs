@@ -237,11 +237,19 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Doctor { stack_file } => {
-            let stack = Stack::load(&stack_file)?;
-            println!("hosts: {}", stack.hosts().join(", "));
-            println!("limits in use: {:?}", stack.limits);
-            println!("grid in use: {:?}", stack.grid);
-            Ok(ExitCode::SUCCESS)
+            let stack = Arc::new(Stack::load(&stack_file)?);
+            println!("limits expected: {:?}", stack.limits);
+            println!("grid expected: {:?}", stack.grid);
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            let checks = runtime.block_on(catalyst_comms_e2e::doctor::examine(stack));
+            print!("{}", catalyst_comms_e2e::doctor::render(&checks));
+            Ok(if catalyst_comms_e2e::doctor::usable(&checks) {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            })
         }
     }
 }

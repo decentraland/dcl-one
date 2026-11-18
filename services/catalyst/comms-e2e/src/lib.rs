@@ -6,6 +6,7 @@
 //! `engine` runs scenarios, repeats races with seeds, and reports.
 
 pub mod archipelago;
+pub mod doctor;
 pub mod engine;
 pub mod explorer;
 pub mod fault;
