@@ -8,8 +8,8 @@ import { getAvatarBackgroundColor, getDisplayName, syntheticAvatar } from "@ui/s
 
 import { FOUNDATION_CONTACT_NAME } from "@/data/lib/catalyst/jump/jump";
 import type { Place } from "@/data/lib/catalyst/schema";
-import { FOUNDATION_AVATAR_BACKGROUND } from "@/features/places/cards";
 
+import { FOUNDATION_AVATAR_BACKGROUND } from "../places/cards";
 import type { SceneChat } from "./scene-chat/useSceneChat";
 
 export function usePlaceDetailCreator(place: Pick<Place, "title" | "contact_name" | "owner"> | null): PlaceDetailCreator | undefined {
