@@ -49,6 +49,7 @@ export function initIpc({ beforeQuitCleanup }: InitIpcOptions) {
   handle('electron.showOpenDialog', (_event, opts) => electron.showOpenDialog(opts));
   handle('electron.showSaveDialog', (_event, opts) => electron.showSaveDialog(opts));
   handle('electron.openExternal', (_event, url) => electron.openExternal(url));
+  handle('electron.logDeployment', (_event, entry) => electron.logDeployment(entry));
   handle('electron.copyToClipboard', (_event, text) => electron.copyToClipboard(text));
 
   // analytics API (fetched here because the renderer's `Origin: null` fails CORS)

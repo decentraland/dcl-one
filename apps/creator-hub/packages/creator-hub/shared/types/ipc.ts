@@ -202,6 +202,7 @@ export interface Ipc {
   'landUnpublish.prepare': (parcel: string) => Promise<EmptySceneDraft>;
   'landUnpublish.deploy': (request: EmptySceneDeploy) => Promise<void>;
   'electron.openExternal': (url: string) => Promise<void>;
+  'electron.logDeployment': (entry: DeploymentLogEntry) => Promise<void>;
   'electron.copyToClipboard': (text: string) => Promise<void>;
   'oxc.parse': (filename: string, source: string) => Promise<OxcParseResult>;
   'optimizer.scan': (path: string) => Promise<OptimizeScanResult>;
@@ -332,3 +333,14 @@ export interface Ipc {
     port: number;
   }>;
 }
+
+/** A publish outcome, written to the app log. */
+export type DeploymentLogEntry =
+  | {
+      outcome: 'published';
+      title: string;
+      rootCID: string;
+      target: 'world' | 'land';
+      baseParcel: string;
+    }
+  | { outcome: 'failed'; error: string };

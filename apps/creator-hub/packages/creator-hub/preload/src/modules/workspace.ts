@@ -337,8 +337,12 @@ export function initializeWorkspace(services: Services) {
       const scene = await getScene(fullName);
       scene.display!.title = name;
 
-      // Remove worldConfiguration for non-empty templates
-      if (templateRepo !== EMPTY_SCENE_TEMPLATE_REPO) {
+      if (templateRepo === EMPTY_SCENE_TEMPLATE_REPO) {
+        // The template describes itself ("Empty Scene Template"), which a publish would show
+        // players as the scene's description.
+        scene.display!.description = '';
+      } else {
+        // Remove worldConfiguration for non-empty templates
         delete scene.worldConfiguration;
       }
 
