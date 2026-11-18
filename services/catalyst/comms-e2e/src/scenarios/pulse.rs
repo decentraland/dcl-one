@@ -296,11 +296,15 @@ async fn smoke(ctx: Ctx) -> Result<()> {
     )
     .await?;
     let view = observer.view();
-    if (view.joins, view.leaves) != (1, 1) {
+    // the traveller's own: the server tells every player about every leave, and other people
+    // come and go on a shared stack
+    let (joins, leaves) = (
+        view.joins_of(&traveller_wallet),
+        view.leaves_of(&traveller_wallet),
+    );
+    if (joins, leaves) != (1, 1) {
         bail!(
-            "the observer saw {} joins and {} leaves, expected one of each",
-            view.joins,
-            view.leaves
+            "the observer saw the traveller join {joins} times and leave {leaves} times, expected once each"
         );
     }
     Ok(())
@@ -1511,8 +1515,13 @@ async fn realm_round_trip(ctx: Ctx) -> Result<()> {
         for bot in [&observer_a, &observer_b, &traveller] {
             bot.alive()?;
         }
+        // only this traveller's: the server tells every player about every leave, and other
+        // people come and go on a shared stack
         let (a, b) = (observer_a.view(), observer_b.view());
-        let counts = [(a.joins, 2, a.leaves, 1, "A"), (b.joins, 1, b.leaves, 1, "B")];
+        let counts = [
+            (a.joins_of(&wallet), 2, a.leaves_of(&wallet), 1, "A"),
+            (b.joins_of(&wallet), 1, b.leaves_of(&wallet), 1, "B"),
+        ];
         for (joins, want_joins, leaves, want_leaves, label) in counts {
             if joins != want_joins || leaves != want_leaves {
                 return Err(format!(
