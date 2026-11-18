@@ -580,6 +580,13 @@ fn private_addresses_are_refused() {
         "::7f00:1",
         "2002:a00:1::",
         "64:ff9b::a00:1",
+        // IPv4-translated.
+        "::ffff:0:a00:1",
+        "::ffff:0:7f00:1",
+        // Local-use NAT64, 10.0.0.1 in its /96, /64 and /48 layouts.
+        "64:ff9b:1::a00:1",
+        "64:ff9b:1:0:a:0:100::",
+        "64:ff9b:1:a00:0:100::",
         "fec0::1",
         "ff02::1",
         "2001:0:4136:e378::1",
@@ -598,6 +605,9 @@ fn private_addresses_are_refused() {
         "2002:808:808::",
         "192.0.1.1",
         "2001:4860::8888",
+        "::ffff:0:808:808",
+        "64:ff9b:1::808:808",
+        "64:ff9b:1:0:8:808:800::",
     ] {
         assert!(
             !ssrf::is_private_ip(ip.parse().unwrap()),

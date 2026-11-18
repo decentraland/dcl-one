@@ -9,7 +9,9 @@
 //! A refused host's message names the host, not the address it resolved to
 //! (upstream's adds the address, which would tell a caller the node's
 //! internal DNS answers). The ranges are upstream's plus 0.0.0.0/8,
-//! 192.0.0.0/24, fec0::/10, ff00::/8 and Teredo (2001::/32).
+//! 192.0.0.0/24, fec0::/10, ff00::/8 and Teredo (2001::/32); the IPv4-translated
+//! (`::ffff:0:0:0/96`) and local-use NAT64 (`64:ff9b:1::/48`) forms are judged
+//! by their IPv4 address.
 //!
 //! Upstream resolves with `dns.resolve4`/`resolve6`, which skip the hosts
 //! file; this resolves with the system resolver, which reads it, so a name
@@ -69,15 +71,37 @@ fn embedded_v4(high: u16, low: u16) -> Ipv4Addr {
     Ipv4Addr::new(a, b, c, d)
 }
 
+/// The IPv4 address an RFC 6052 layout with `prefix` bits puts in `octets`
+/// (bits 64-71 are skipped), when the bits it requires to be zero are.
+fn rfc6052_v4(octets: [u8; 16], prefix: usize) -> Option<Ipv4Addr> {
+    let at: [usize; 4] = match prefix {
+        48 => [6, 7, 9, 10],
+        56 => [7, 9, 10, 11],
+        64 => [9, 10, 11, 12],
+        96 => [12, 13, 14, 15],
+        _ => return None,
+    };
+    let zero_from = at[3] + 1;
+    let consistent =
+        (prefix == 96 || octets[8] == 0) && octets[zero_from..].iter().all(|&b| b == 0);
+    consistent.then(|| Ipv4Addr::new(octets[at[0]], octets[at[1]], octets[at[2]], octets[at[3]]))
+}
+
 /// IPv6 loopback, unspecified, link-local, site-local, unique local,
 /// multicast, Teredo, and the forms that embed an IPv4 address (mapped,
-/// compatible, 6to4, NAT64), judged by it.
+/// translated, compatible, 6to4, NAT64), judged by it. The local-use NAT64
+/// prefix (`64:ff9b:1::/48`, RFC 8215) does not say where its IPv4 address
+/// sits, so it is judged by every RFC 6052 layout of 48 bits or more the
+/// address fits, and is private when any of them reads a private address.
 pub fn is_private_ipv6(ip: Ipv6Addr) -> bool {
     let g = ip.segments();
     if ip == Ipv6Addr::LOCALHOST || ip == Ipv6Addr::UNSPECIFIED {
         return true;
     }
-    if g[..5].iter().all(|&s| s == 0) && g[5] == 0xffff {
+    // IPv4-mapped (`::ffff:0:0/96`) and IPv4-translated (`::ffff:0:0:0/96`).
+    if (g[..5].iter().all(|&s| s == 0) && g[5] == 0xffff)
+        || (g[..4].iter().all(|&s| s == 0) && g[4] == 0xffff && g[5] == 0)
+    {
         return is_private_ipv4(embedded_v4(g[6], g[7]));
     }
     if g[..6].iter().all(|&s| s == 0) && (g[6] != 0 || g[7] > 1) {
@@ -88,6 +112,12 @@ pub fn is_private_ipv6(ip: Ipv6Addr) -> bool {
     }
     if g[0] == 0x0064 && g[1] == 0xff9b && g[2..6].iter().all(|&s| s == 0) {
         return is_private_ipv4(embedded_v4(g[6], g[7]));
+    }
+    if g[0] == 0x0064 && g[1] == 0xff9b && g[2] == 0x0001 {
+        return [48, 56, 64, 96]
+            .into_iter()
+            .filter_map(|prefix| rfc6052_v4(ip.octets(), prefix))
+            .any(is_private_ipv4);
     }
     (g[0] & 0xffc0) == 0xfe80
         || (g[0] & 0xffc0) == 0xfec0
