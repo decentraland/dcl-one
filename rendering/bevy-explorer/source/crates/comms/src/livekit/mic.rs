@@ -368,6 +368,14 @@ fn transmission_state(
     if transmitting && last.call != call {
         last.call = call;
     }
+    // the pause ends on focus with nothing left to resume or a mic change since
+    if *focus == ClientWindowFocus::Focused
+        && (!can_capture_microphone(&mic, &call_mic, *focus)
+            || mic.is_changed()
+            || call_mic.is_changed())
+    {
+        last.focus_paused = false;
+    }
     if !transmitting && microphone_transmission_state.get() == &MicrophoneTransmissionState::Enabled
     {
         last.focus_paused = *focus == ClientWindowFocus::NoFocus;
@@ -376,11 +384,8 @@ fn transmission_state(
         && microphone_transmission_state.get() == &MicrophoneTransmissionState::Disabled
     {
         next_state.set(MicrophoneTransmissionState::Enabled);
-    } else if transmitting
-        || (*focus == ClientWindowFocus::Focused
-            && !can_capture_microphone(&mic, &call_mic, *focus))
-    {
-        // the pause ends once transmission is back, or on focus with nothing left to resume
+    } else if transmitting {
+        // the pause ends once transmission is back
         last.focus_paused = false;
     }
 }
@@ -507,13 +512,25 @@ const fn can_capture_microphone(
         && (nearby_mic_on(mic_state, call_mic) || call_mic.enabled)
 }
 
+/// The focus [`MicrophoneState`] follows: the client window's natively, always `Focused` on the
+/// web.
+const fn microphone_state_focus(focus: ClientWindowFocus) -> ClientWindowFocus {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = focus;
+        ClientWindowFocus::Focused
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    focus
+}
+
 fn enable_microphone_state_system(
     mut commands: Commands,
     mic_state: Res<MicState>,
     call_mic: Res<CallMic>,
     focus: Res<ClientWindowFocus>,
 ) {
-    if can_capture_microphone(&mic_state, &call_mic, *focus) {
+    if can_capture_microphone(&mic_state, &call_mic, microphone_state_focus(*focus)) {
         debug!("Microphone is now enabled.");
         commands.set_state(MicrophoneState::Enabled);
     }
@@ -595,7 +612,7 @@ fn disable_microphone_state_system(
     call_mic: Res<CallMic>,
     focus: Res<ClientWindowFocus>,
 ) {
-    if !can_capture_microphone(&mic_state, &call_mic, *focus) {
+    if !can_capture_microphone(&mic_state, &call_mic, microphone_state_focus(*focus)) {
         debug!("Microphone is now disabled.");
         commands.set_state(MicrophoneState::Disabled);
     }
@@ -1462,10 +1479,35 @@ mod routing_tests {
         transmit(false);
         assert_eq!(chimes(&mut app), 0, "focus loss");
         app.insert_resource(ClientWindowFocus::Focused);
+        assert_eq!(chimes(&mut app), 0, "focus return, republish pending");
         transmit(true);
-        assert_eq!(chimes(&mut app), 0, "focus return");
+        assert_eq!(chimes(&mut app), 0, "resume");
 
         transmit(false);
         assert_eq!(chimes(&mut app), 1, "the player closes the mic");
+
+        // the mic closed during the pause: nothing resumes, and reopening it chimes
+        transmit(true);
+        assert_eq!(chimes(&mut app), 1, "the player opens the mic");
+        app.insert_resource(ClientWindowFocus::NoFocus);
+        transmit(false);
+        assert_eq!(chimes(&mut app), 0, "focus loss");
+        app.world_mut().resource_mut::<MicState>().enabled = false;
+        assert_eq!(chimes(&mut app), 0, "the player closes the mic while away");
+        app.insert_resource(ClientWindowFocus::Focused);
+        assert_eq!(chimes(&mut app), 0, "focus return");
+        app.world_mut().resource_mut::<MicState>().enabled = true;
+        transmit(true);
+        assert_eq!(chimes(&mut app), 1, "the player reopens the mic");
+
+        // a resume that never republishes: the player's next start still chimes
+        app.insert_resource(ClientWindowFocus::NoFocus);
+        transmit(false);
+        assert_eq!(chimes(&mut app), 0, "focus loss");
+        app.insert_resource(ClientWindowFocus::Focused);
+        assert_eq!(chimes(&mut app), 0, "focus return, nothing republishes");
+        app.world_mut().resource_mut::<CallMic>().enabled = true;
+        transmit(true);
+        assert_eq!(chimes(&mut app), 1, "the player's call mic starts");
     }
 }

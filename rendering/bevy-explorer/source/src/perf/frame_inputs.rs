@@ -110,16 +110,14 @@ pub(crate) fn collect_frame_inputs_system(
     client_window_focus: Res<ClientWindowFocus>,
 ) {
     #[cfg(target_arch = "wasm32")]
-    let viewport_active = crate::web::viewport_active();
+    let viewport_paused =
+        (!crate::web::viewport_active()).then_some(SamplingPausedReason::ViewportInactive);
     #[cfg(not(target_arch = "wasm32"))]
-    let viewport_active = true;
-    let focus_paused = if !viewport_active {
-        Some(SamplingPausedReason::ViewportInactive)
-    } else if *client_window_focus == ClientWindowFocus::NoFocus {
-        Some(SamplingPausedReason::WindowUnfocused)
-    } else {
-        None
-    };
+    let viewport_paused = None;
+    let focus_paused = viewport_paused.or_else(|| {
+        (*client_window_focus == ClientWindowFocus::NoFocus)
+            .then_some(SamplingPausedReason::WindowUnfocused)
+    });
     #[cfg(target_arch = "wasm32")]
     let hud_main_thread_cost_window = crate::web::take_hud_main_thread_cost_window();
     #[cfg(not(target_arch = "wasm32"))]

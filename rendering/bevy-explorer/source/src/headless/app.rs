@@ -160,7 +160,6 @@ pub fn assemble(
             add_bevy_console: false,
         })
         .add_plugins(WalletPlugin)
-        .add_plugins(crate::client_window_focus::ClientWindowFocusPlugin)
         .add_plugins(CommsPlugin)
         .add_plugins(ban_block::BanBlockPlugin)
         // emote metadata (the loop flag scenes are told) resolves through the collectible
