@@ -61,6 +61,8 @@ put back at rest.
 
 **One setting turns it on:** `GraphicsSettings::spring_bones`, shown as "Jiggle Bones". It is off
 by default and in the Low preset, and on in the Medium and High presets.
+A config saved before the presets carried the setting keeps it off: one that matched Medium or
+High then reads as Custom until the player picks the preset again.
 
 `gravityDir` is authored for a left-handed world and is read as `(x, y, -z)`, the mapping scene
 transforms use.
@@ -83,4 +85,4 @@ transforms use.
 ## Not yet measured
 
 The cost of ten simulated avatars on the web build, and the worst frames while avatars enter and
-leave the simulated set. The Low preset keeps the setting off.
+leave the simulated set. The setting stays off by default until that is recorded.
