@@ -24,6 +24,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   ambient, and the sky preset keeps the bands a scene leaves out. A scene's fog density is in the
   sky preset's units, so it goes through the same conversion to bevy's falloff, and it takes the
   place of the `/fog` density while the scene is active.
+- **Scene colour gradients are linear (#1293).** Sun, sky, fog and cloud gradients are read as
+  linear colours, as `gradient.proto` specifies for `ColorKey.color`, with values above 1
+  allowed. A Sun key above 1 is scaled back to 1 for the hue, and the light is multiplied by its
+  largest channel. Unity's environment profile at `0a8bafca9e62ced7f34ac182158b11edd0c842a4`
+  puts the Sun gradient straight into the light colour, which it decodes as sRGB: the same key
+  gives a darker, more saturated hue there, and a key of (2, 2, 2) lights the scene about 4.6
+  times rather than 2. We follow the protocol.
 - **A root light source replaces what it sets.** Point and spot light intensities are scaled to
   the sky preset's light unit (the default 16000 is 8 units). A `LightSource` on a scene's root
   entity replaces the sun's colour and, when it gives an intensity, the sun's intensity as lux,
