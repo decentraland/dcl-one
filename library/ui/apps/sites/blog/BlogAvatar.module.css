@@ -27,3 +27,11 @@
   border-radius: inherit;
   object-fit: cover;
 }
+
+@media (min-width: 768px) {
+  .card {
+    width: 28px;
+    height: 28px;
+    border: 2px solid var(--dcl-transparencies-white-60);
+  }
+}

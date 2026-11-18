@@ -1,7 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+
+import { useLocation } from "react-router";
 
 import SitesChrome from "@ui/web/frames/SitesChrome";
-import { BlogIndexPage, BlogNotFound, BlogRoutingProvider, BlogUnavailable } from "@dcl/one-ui/apps/sites/blog";
+import { BlogIndexPage, BlogNotFound, BlogRoutingProvider, BlogSearchForm, BlogUnavailable } from "@dcl/one-ui/apps/sites/blog";
 
 import type { BlogListPayload } from "@/data/lib/blog/types";
 import { track } from "@/core/lib/telemetry/track";
@@ -9,12 +11,21 @@ import type { StoryId } from "@/core/lib/telemetry/story-id";
 
 import { blogRouting, clickedPostSlug } from "./routing";
 
+import { useBlogSearchSuggestions } from "./useBlogSearchSuggestions";
+
+function DesktopBlogSearch({ query }: { query: string }) {
+  const [input, setInput] = useState("");
+  const preview = useBlogSearchSuggestions(input);
+  return <BlogSearchForm variant="bar" query={query} preview={{ ...preview, onQueryChange: setInput }} />;
+}
+
 const STORY: StoryId = "misc/blog";
 
 export type BlogIndexData = { sid: string } & BlogListPayload;
 
 export function BlogIndexView(data: BlogIndexData) {
   const { sid } = data;
+  const location = useLocation();
   const viewKey = data.state === "ok" ? data.viewKey : null;
   const total = data.state === "ok" ? data.total : 0;
   // Once per list view (the home, a category, an author), as on main where each was a page load.
@@ -42,6 +53,7 @@ export function BlogIndexView(data: BlogIndexData) {
               title={data.title}
               subtitle={data.subtitle}
               query={data.query}
+              desktopSearch={<DesktopBlogSearch key={location.key} query={data.query} />}
               searched={data.kind === "search"}
               posts={data.posts}
               total={data.total}

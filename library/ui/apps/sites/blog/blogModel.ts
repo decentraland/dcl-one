@@ -49,6 +49,26 @@ export type BlogArticle = BlogCard & {
 export const BLOG_HOME = '/blog'
 export const BLOG_SEARCH = '/blog/search'
 
+/** The search dropdown's suggestions endpoint (`?q=`); it answers BlogSearchSuggestions. */
+export const BLOG_SEARCH_SUGGESTIONS_API = '/api/blog/search'
+/** How many suggestions the dropdown shows; "See more results" opens the full search. */
+export const BLOG_SEARCH_SUGGESTIONS_LIMIT = 4
+
+/** One dropdown row: a post's card fields plus the URL it opens. */
+export type BlogSearchSuggestion = Pick<
+  BlogCard,
+  'slug' | 'title' | 'description' | 'image' | 'hue'
+> & {
+  href: string
+}
+
+/** The suggestions for `query`: the first matches and how many the full search has. */
+export type BlogSearchSuggestions = {
+  query: string
+  posts: BlogSearchSuggestion[]
+  total: number
+}
+
 /** The longest search the blog reads; the input's maxLength and the loader's trim both use it. */
 export const BLOG_QUERY_MAX = 200
 
@@ -61,6 +81,8 @@ export const blogCategoryHref = (slug: string) =>
   slug ? `${BLOG_HOME}/${segment(slug)}` : BLOG_HOME
 
 export const blogAuthorHref = (slug: string) => `${BLOG_HOME}/author/${segment(slug)}`
+
+export const blogSearchHref = (query: string) => `${BLOG_SEARCH}?q=${encodeURIComponent(query)}`
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
