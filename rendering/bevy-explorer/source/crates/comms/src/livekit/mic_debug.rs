@@ -29,6 +29,7 @@ impl Plugin for MicDebugPlugin {
                     ("Microphone enabled", "enabled"),
                     ("Room connected", "connected"),
                     ("Permission", "permission"),
+                    ("Client window focus", "windowFocus"),
                     ("Local microphone track active", "transmitting"),
                     ("Active remote speakers (up to 32)", "speakers"),
                     #[cfg(not(target_arch = "wasm32"))]
@@ -50,8 +51,6 @@ impl Plugin for MicDebugPlugin {
                     ("Island connected", "connected"),
                     ("Turned off by the scene", "sceneBlocked"),
                     ("Mic opens refused by the scene", "refusals"),
-                    ("Window focused", "windowFocused"),
-                    ("Mic paused until focus returns", "focusPaused"),
                     ("Local speaking", "speaking"),
                     ("Remote participants", "participants"),
                     ("Active speakers", "speakerCount"),
@@ -110,6 +109,7 @@ fn microphone_info(
         ),
     >,
     permission: Res<State<MicrophonePermission>>,
+    focus: Res<ClientWindowFocus>,
     transmission: Res<State<MicrophoneTransmissionState>>,
     speakers: Query<&LivekitParticipant, (With<ActiveSpeaker>, Without<Local>)>,
     #[cfg(not(target_arch = "wasm32"))] device: Option<Res<MicrophoneDevice>>,
@@ -118,7 +118,7 @@ fn microphone_info(
     let Some(Ok(_)) = input.take() else { return };
     let speakers: BTreeSet<_> = speakers.iter().map(|p| p.identity().to_string()).collect();
     #[allow(unused_mut)]
-    let mut report = json!({"available": mic.available, "enabled": mic.enabled, "connected": !connected.is_empty(), "permission": format!("{:?}", permission.get()),
+    let mut report = json!({"available": mic.available, "enabled": mic.enabled, "connected": !connected.is_empty(), "permission": format!("{:?}", permission.get()), "windowFocus": format!("{:?}", *focus),
         "transmitting": *transmission.get() == MicrophoneTransmissionState::Enabled, "speakers": speakers.into_iter().take(32).collect::<Vec<_>>()});
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -148,8 +148,6 @@ struct NearbyVoice;
 fn nearby_voice(
     mut input: ConsoleCommand<NearbyVoice>,
     mic: Res<MicState>,
-    focus: Res<WindowFocus>,
-    focus_pause: Res<NearbyMicFocusPause>,
     settings: Res<NearbyPanning>,
     islands: Query<
         Has<Connected>,
@@ -184,7 +182,7 @@ fn nearby_voice(
                 speakers.insert(participant.identity().to_string());
             }
         }
-        input.reply_ok(json!({"connected": islands.iter().any(|connected| connected), "sceneBlocked": mic.scene_blocked(), "refusals": mic.refusals, "windowFocused": focus.0, "focusPaused": focus_pause.paused, "speaking": speaking, "participants": remotes,
+        input.reply_ok(json!({"connected": islands.iter().any(|connected| connected), "sceneBlocked": mic.scene_blocked(), "refusals": mic.refusals, "speaking": speaking, "participants": remotes,
             "speakerCount": speakers.len(), "speakers": speakers.into_iter().take(32).collect::<Vec<_>>(), "tracks": tracks.iter().count(),
             "sources": sources.iter().count(), "assigned": sources.iter().filter(|s| s.current_transport.is_some()).count(),
             "spatialize": settings.spatialize, "smooth": settings.smooth, "strength": settings.strength}).to_string());

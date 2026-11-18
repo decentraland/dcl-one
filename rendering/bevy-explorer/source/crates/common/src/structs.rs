@@ -1903,13 +1903,11 @@ pub enum AppError {
 }
 
 /// Whether the Explorer has focus.
-#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WindowFocus(pub bool);
-
-impl Default for WindowFocus {
-    fn default() -> Self {
-        Self(true)
-    }
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum ClientWindowFocus {
+    #[default]
+    Focused,
+    NoFocus,
 }
 
 #[derive(Resource, Default, Serialize, Deserialize, Clone)]

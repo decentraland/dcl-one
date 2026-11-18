@@ -6,7 +6,7 @@ use std::sync::{
 };
 
 use bevy::{ecs::relationship::Relationship, prelude::*};
-use common::structs::{MicState, SystemAudio, WindowFocus};
+use common::structs::{ClientWindowFocus, MicState, SystemAudio};
 use tokio::{sync::oneshot, task::JoinHandle};
 use web_time::Instant;
 #[cfg(target_arch = "wasm32")]
@@ -74,7 +74,6 @@ impl Plugin for MicPlugin {
         app.init_state::<MicrophoneTransmissionState>();
         app.init_resource::<MicrophoneDrain>();
         app.init_resource::<LastTransmission>();
-        app.init_resource::<NearbyMicFocusPause>();
 
         #[cfg(target_arch = "wasm32")]
         app.add_systems(Startup, setup_microphone_permission);
@@ -119,12 +118,6 @@ impl Plugin for MicPlugin {
 
         app.add_systems(Startup, add_ping_systems);
         app.add_systems(Update, transmission_state);
-        app.add_systems(
-            Update,
-            pause_nearby_mic_on_focus_loss
-                .run_if(resource_exists_and_changed::<WindowFocus>)
-                .before(verify_enabled),
-        );
         app.add_systems(
             Update,
             suppress_nearby_voice_on_refusal
@@ -340,33 +333,6 @@ fn suppress_nearby_voice_on_refusal(
     }
 }
 
-/// Set while a focus loss holds the nearby mic closed.
-#[derive(Resource, Default)]
-struct NearbyMicFocusPause {
-    paused: bool,
-}
-
-/// Closes the open nearby mic on focus loss and reopens it on focus return, unless nearby voice
-/// is blocked by then.
-fn pause_nearby_mic_on_focus_loss(
-    focus: Res<WindowFocus>,
-    mut mic_state: ResMut<MicState>,
-    call_mic: Res<CallMic>,
-    mut pause: ResMut<NearbyMicFocusPause>,
-) {
-    if !focus.0 {
-        if nearby_mic_on(&mic_state, &call_mic) {
-            mic_state.enabled = false;
-            pause.paused = true;
-        }
-    } else if std::mem::take(&mut pause.paused)
-        && !mic_state.scene_blocked()
-        && !call_mic.suppress_nearby
-    {
-        mic_state.request_enabled(true);
-    }
-}
-
 /// While the scene blocks nearby voice, only the call's mic can be the one that stopped by choice.
 fn mic_off_pings(scene_blocked: bool, call_was_transmitting: bool) -> bool {
     !scene_blocked || call_was_transmitting
@@ -516,8 +482,18 @@ fn nearby_mic_on(mic_state: &MicState, call_mic: &CallMic) -> bool {
     mic_state.enabled && !mic_state.scene_blocked() && !call_mic.suppress_nearby
 }
 
-fn verify_enabled(mut commands: Commands, mic_state: Res<MicState>, call_mic: Res<CallMic>) {
-    if nearby_mic_on(&mic_state, &call_mic) || call_mic.enabled {
+/// The mic captures for the nearby or the call route only while the client window has focus.
+fn microphone_captures(mic_state: &MicState, call_mic: &CallMic, focus: ClientWindowFocus) -> bool {
+    focus == ClientWindowFocus::Focused && (nearby_mic_on(mic_state, call_mic) || call_mic.enabled)
+}
+
+fn verify_enabled(
+    mut commands: Commands,
+    mic_state: Res<MicState>,
+    call_mic: Res<CallMic>,
+    focus: Res<ClientWindowFocus>,
+) {
+    if microphone_captures(&mic_state, &call_mic, *focus) {
         debug!("Microphone is now enabled.");
         commands.set_state(MicrophoneState::Enabled);
     }
@@ -593,8 +569,13 @@ fn drop_cpal_stream(mut commands: Commands, mut mic_stream: NonSendMut<MicStream
     commands.set_state(MicrophoneState::Disabled);
 }
 
-fn verify_disabled(mut commands: Commands, mic_state: Res<MicState>, call_mic: Res<CallMic>) {
-    if !nearby_mic_on(&mic_state, &call_mic) && !call_mic.enabled {
+fn verify_disabled(
+    mut commands: Commands,
+    mic_state: Res<MicState>,
+    call_mic: Res<CallMic>,
+    focus: Res<ClientWindowFocus>,
+) {
+    if !microphone_captures(&mic_state, &call_mic, *focus) {
         debug!("Microphone is now disabled.");
         commands.set_state(MicrophoneState::Disabled);
     }
@@ -644,6 +625,7 @@ fn reconcile_publications(
     )>,
     mic: Res<MicState>,
     call_mic: Res<CallMic>,
+    focus: Res<ClientWindowFocus>,
     permission: Res<State<MicrophonePermission>>,
     availability: Res<State<MicrophoneAvailability>>,
     drain: Res<MicrophoneDrain>,
@@ -651,7 +633,8 @@ fn reconcile_publications(
     #[cfg(not(target_arch = "wasm32"))] source: Res<LocalAudioSource>,
     #[cfg(not(target_arch = "wasm32"))] format: Option<Res<CaptureFormat>>,
 ) {
-    let enabled = mic.available
+    let enabled = *focus == ClientWindowFocus::Focused
+        && mic.available
         && *permission.get() == MicrophonePermission::Granted
         && *availability.get() == MicrophoneAvailability::Available;
     let eligible = |room: Entity, participant: &LivekitParticipant| {
@@ -1353,59 +1336,62 @@ mod routing_tests {
         );
     }
 
-    fn focus_world(mic: MicState, call_mic: CallMic) -> World {
-        let mut world = World::new();
-        world.insert_resource(mic);
-        world.insert_resource(call_mic);
-        world.init_resource::<NearbyMicFocusPause>();
-        world
-    }
-
-    /// Runs the pause with the given focus; returns `MicState::enabled`.
-    fn set_focus(world: &mut World, focused: bool) -> bool {
-        use bevy::ecs::system::RunSystemOnce;
-        world.insert_resource(WindowFocus(focused));
-        world
-            .run_system_once(pause_nearby_mic_on_focus_loss)
-            .unwrap();
-        world.resource::<MicState>().enabled
+    #[test]
+    fn the_nearby_mic_captures_only_while_the_window_has_focus() {
+        let mic = mic_state(true, true);
+        let call_mic = CallMic::default();
+        assert!(microphone_captures(
+            &mic,
+            &call_mic,
+            ClientWindowFocus::Focused
+        ));
+        assert!(!microphone_captures(
+            &mic,
+            &call_mic,
+            ClientWindowFocus::NoFocus
+        ));
     }
 
     #[test]
-    fn losing_focus_pauses_the_open_nearby_mic_until_focus_returns() {
-        let mut world = focus_world(mic_state(true, true), CallMic::default());
-        assert!(!set_focus(&mut world, false));
-        assert!(world.resource::<NearbyMicFocusPause>().paused);
-        assert!(set_focus(&mut world, true));
-        assert!(!world.resource::<NearbyMicFocusPause>().paused);
-    }
-
-    #[test]
-    fn regaining_focus_leaves_a_closed_nearby_mic_closed() {
-        let mut world = focus_world(mic_state(true, false), CallMic::default());
-        assert!(!set_focus(&mut world, false));
-        assert!(!set_focus(&mut world, true));
-    }
-
-    #[test]
-    fn a_scene_block_during_the_pause_keeps_the_nearby_mic_closed() {
-        let mut world = focus_world(mic_state(true, true), CallMic::default());
-        set_focus(&mut world, false);
-        world.resource_mut::<MicState>().set_scene_disabled(true);
-        assert!(!set_focus(&mut world, true));
-        assert_eq!(world.resource::<MicState>().refusals, 0);
-    }
-
-    #[test]
-    fn losing_focus_leaves_the_call_mic_alone() {
+    fn the_call_mic_captures_only_while_the_window_has_focus() {
+        let mic = mic_state(true, false);
         let call_mic = CallMic {
             enabled: true,
             in_call: true,
             suppress_nearby: true,
         };
-        let mut world = focus_world(mic_state(true, true), call_mic);
-        assert!(set_focus(&mut world, false), "nearby setting kept");
-        assert!(!world.resource::<NearbyMicFocusPause>().paused);
-        assert!(world.resource::<CallMic>().enabled);
+        assert!(microphone_captures(
+            &mic,
+            &call_mic,
+            ClientWindowFocus::Focused
+        ));
+        assert!(!microphone_captures(
+            &mic,
+            &call_mic,
+            ClientWindowFocus::NoFocus
+        ));
+    }
+
+    #[test]
+    fn regaining_focus_leaves_a_closed_mic_closed() {
+        let mic = mic_state(true, false);
+        let call_mic = CallMic::default();
+        assert!(!microphone_captures(
+            &mic,
+            &call_mic,
+            ClientWindowFocus::Focused
+        ));
+    }
+
+    #[test]
+    fn regaining_focus_in_a_scene_that_disables_nearby_voice_keeps_the_nearby_mic_closed() {
+        let mut mic = mic_state(true, true);
+        mic.set_scene_disabled(true);
+        let call_mic = CallMic::default();
+        assert!(!microphone_captures(
+            &mic,
+            &call_mic,
+            ClientWindowFocus::Focused
+        ));
     }
 }

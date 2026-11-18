@@ -14,8 +14,8 @@ use common::{
     },
     rpc::RpcResultSender,
     structs::{
-        AppConfig, CurrentRealm, EditorMode, PreviewMode, PrimaryUser, SessionGraphics,
-        StartupScenes, WindowFocus, WorldHold,
+        AppConfig, ClientWindowFocus, CurrentRealm, EditorMode, PreviewMode, PrimaryUser,
+        SessionGraphics, StartupScenes, WorldHold,
     },
     util::JsThread,
 };
@@ -865,14 +865,18 @@ impl BrowserPageFocus {
 }
 
 /// Copies the page's focus and the viewport's activity into [`BrowserPageFocus`], and the
-/// page's focus into [`WindowFocus`].
+/// page's focus into [`ClientWindowFocus`].
 fn update_browser_page_focus_system(
     mut focus: ResMut<BrowserPageFocus>,
-    mut window_focus: ResMut<WindowFocus>,
+    mut window_focus: ResMut<ClientWindowFocus>,
 ) {
     let current = BrowserPageFocus::current();
     focus.set_if_neq(current);
-    window_focus.set_if_neq(WindowFocus(current.page_has_focus));
+    window_focus.set_if_neq(if current.page_has_focus {
+        ClientWindowFocus::Focused
+    } else {
+        ClientWindowFocus::NoFocus
+    });
 }
 
 /// Takes the HUD cost windows the page stored since the last take, summed; `None` when none

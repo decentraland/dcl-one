@@ -170,12 +170,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     too: the platform ban-status poll (every 300 s) reads the ban but never admits the room
     again. unity-explorer suppresses on any 401 or 403 from the scene room and lifts it on the
     room's next connect or disconnect; its scene room asks again every 5 s while refused.
-- **The nearby mic pauses while the Explorer lacks focus**, as unity-explorer's does: losing
-  focus (the primary window natively, `document.hasFocus()` on the web) closes an open nearby
-  mic, and regaining it reopens the mic unless the scene or a call holds nearby voice off by
-  then. Calls and community streams keep their mic.
-  unity-explorer lets the player turn the pause off in settings ("mute mic in background", on
-  by default); the Explorer has no such setting.
+- **The mic pauses while the Explorer lacks focus** (the primary window natively,
+  `document.hasFocus()` on the web): it stops capturing and publishing for nearby voice and
+  calls alike, and resumes when focus returns. The mic setting does not change, so the HUD
+  keeps showing it open. unity-explorer pauses only the nearby mic, turns it off in its HUD
+  while paused, and lets the player turn the pause off in settings ("mute mic in background",
+  on by default); the Explorer has no such setting.
 - **Blocked and scene-banned players are not heard nearby.** A player blocked in either
   direction, or banned by the connected scene room, carries `BlockedOrBanned`, and their nearby
   voice track is unsubscribed while it lasts; unity-explorer keeps the track and creates no audio
