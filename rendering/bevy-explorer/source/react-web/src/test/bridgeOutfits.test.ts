@@ -382,6 +382,77 @@ describe('the bridge outfits domain', () => {
     })
   })
 
+  describe('when a player who owns no name deletes one of two extra-slot outfits', () => {
+    beforeEach(() => {
+      player = { userId: '0xA', isGuest: false }
+      stored = {
+        outfits: [
+          { slot: 0, outfit: outfit(['urn:old']) },
+          { slot: 6, outfit: outfit(['urn:six']) },
+          { slot: 8, outfit: outfit(['urn:eight']) }
+        ],
+        namesForExtraSlots: ['sold']
+      }
+      getJson.mockResolvedValue({ metadata: stored })
+      readOwnedNames.mockResolvedValue([])
+      storage.set('outfit-thumb:0xa:8', PICTURE)
+    })
+
+    it('should deploy without any extra slot and drop their pictures', async () => {
+      const { request, failures, lastOutfits } = await bridge()
+      await request({ kind: 'deleteOutfit', slot: 6 })
+      expect(deployOutfits).toHaveBeenCalledWith('0xA', {
+        outfits: [{ slot: 0, outfit: deployed(['urn:old']) }],
+        namesForExtraSlots: []
+      })
+      expect(failures()).toEqual([])
+      expect(storage.has('outfit-thumb:0xa:8')).toBe(false)
+      expect(lastOutfits()?.outfits.map((o) => o.slot)).toEqual([0])
+    })
+  })
+
+  describe('when the names lookup fails as a player deletes one of two extra-slot outfits', () => {
+    beforeEach(() => {
+      player = { userId: '0xA', isGuest: false }
+      stored = {
+        outfits: [
+          { slot: 6, outfit: outfit(['urn:six']) },
+          { slot: 8, outfit: outfit(['urn:eight']) }
+        ],
+        namesForExtraSlots: ['mine']
+      }
+      getJson.mockResolvedValue({ metadata: stored })
+      readOwnedNames.mockResolvedValue(undefined)
+    })
+
+    it('should delete only that outfit', async () => {
+      const { request } = await bridge()
+      await request({ kind: 'deleteOutfit', slot: 6 })
+      expect(deployOutfits.mock.calls[0]?.[1].outfits.map((o) => o.slot)).toEqual([8])
+    })
+  })
+
+  describe('when a player who owns a name deletes one of two extra-slot outfits', () => {
+    beforeEach(() => {
+      player = { userId: '0xA', isGuest: false }
+      stored = {
+        outfits: [
+          { slot: 6, outfit: outfit(['urn:six']) },
+          { slot: 8, outfit: outfit(['urn:eight']) }
+        ],
+        namesForExtraSlots: ['mine']
+      }
+      getJson.mockResolvedValue({ metadata: stored })
+      readOwnedNames.mockResolvedValue(['mine'])
+    })
+
+    it('should delete only that outfit', async () => {
+      const { request } = await bridge()
+      await request({ kind: 'deleteOutfit', slot: 6 })
+      expect(deployOutfits.mock.calls[0]?.[1].outfits.map((o) => o.slot)).toEqual([8])
+    })
+  })
+
   describe('when the same look is saved twice into a slot', () => {
     beforeEach(() => {
       player = { userId: '0xA', isGuest: false }

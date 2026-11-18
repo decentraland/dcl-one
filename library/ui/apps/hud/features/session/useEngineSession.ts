@@ -203,7 +203,7 @@ export const SAVE_FAILED_MESSAGE = 'There was an error updating your avatar prof
 export const OUTFIT_FAILED_MESSAGE = {
   save: "Couldn't save this outfit. Try again.",
   delete: "Couldn't delete this outfit. Try again.",
-  extraSlotWithoutName: 'Outfits in slots 6 to 10 need a NAME you own. Delete them before changing your other outfits.'
+  extraSlotWithoutName: 'Outfits in the second row need a NAME you own. Delete them before changing your other outfits.'
 } as const
 
 /** A gift picker page request, without the id the session adds. */
@@ -3920,11 +3920,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const extraOutfitSlots =
     extraSlotUsed || (ownedNamesKnown ? ownedNames.length > 0 : outfits.namesForExtraSlots.length > 0)
   // With no name, every change that keeps an outfit in an extra slot is refused, so say which to delete.
+  // A delete in the extra row clears all of them, so its own failure is a plain one.
   const blockedByExtraSlot =
     outfitFailure != null &&
     ownedNamesKnown &&
     ownedNames.length === 0 &&
-    outfits.outfits.some((o) => o.slot >= 5 && !(outfitFailure.action === 'delete' && o.slot === outfitFailure.slot))
+    extraSlotUsed &&
+    !(outfitFailure.action === 'delete' && outfitFailure.slot >= 5)
   const outfitError =
     outfitFailure == null
       ? null

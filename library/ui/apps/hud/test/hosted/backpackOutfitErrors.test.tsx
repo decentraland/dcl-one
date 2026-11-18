@@ -62,8 +62,8 @@ describe('a refused outfit save or delete', () => {
 
     describe('and a save to a free slot is refused', () => {
       beforeEach(() => {
-        expectConsoleOutput('error', [['[outfits] save of slot 1 failed:', 'Error: no names for extra slots']])
-        act(() => h.driver.emit({ kind: 'outfitSaveFailed', slot: 1, action: 'save', message: 'Error: no names for extra slots' }))
+        expectConsoleOutput('error', [['[outfits] save of slot 1 failed:', 'Error: outfit slot 6 needs an owned name']])
+        act(() => h.driver.emit({ kind: 'outfitSaveFailed', slot: 1, action: 'save', message: 'Error: outfit slot 6 needs an owned name' }))
       })
 
       it('should say to delete the outfits in the extra slots first', () => {

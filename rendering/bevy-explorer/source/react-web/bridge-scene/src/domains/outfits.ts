@@ -5,6 +5,7 @@
 //                 (slots past FREE_SLOTS carry names the player owns now)
 //                 (a guest's saves last until the scene restarts)
 //                 a save only fills an empty slot
+//                 with no name owned, deleting an extra slot clears every extra slot
 //                 a refused one → outfitSaveFailed to the page
 //   pictures → localStorage, per account and slot: a cache, never deployed, recaptured on equip
 //   equip → the Backpack's look (body shape + colors + wearables; ./avatarDraft deploys it on close)
@@ -259,12 +260,18 @@ export function registerOutfits(ctx: Ctx): void {
     const me = getPlayer()
     if (me == null) return
     await serially(async () => {
-      const next = await apply(me, { slot: msg.slot, action: 'delete' }, (metadata) => ({
-        ...metadata,
-        outfits: metadata.outfits.filter((o) => o.slot !== msg.slot)
-      }))
+      // With no name owned, the catalyst refuses any deploy that still holds a slot past the free
+      // ones, so deleting one of them one at a time is refused while another remains: clear them all.
+      const clearExtras =
+        msg.slot >= FREE_SLOTS && !me.isGuest && (await readOwnedNames(me.userId))?.length === 0
+      const removed = (o: { slot: number }): boolean => (clearExtras ? o.slot >= FREE_SLOTS : o.slot === msg.slot)
+      let slots: number[] = []
+      const next = await apply(me, { slot: msg.slot, action: 'delete' }, (metadata) => {
+        slots = metadata.outfits.filter(removed).map((o) => o.slot)
+        return { ...metadata, outfits: metadata.outfits.filter((o) => !removed(o)) }
+      })
       if (next == null) return
-      writeThumbnail(me.userId, msg.slot, null)
+      for (const slot of slots.length > 0 ? slots : [msg.slot]) writeThumbnail(me.userId, slot, null)
       await emit(me.userId, next)
     })
   })
