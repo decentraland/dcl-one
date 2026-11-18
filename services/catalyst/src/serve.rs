@@ -330,6 +330,9 @@ pub async fn serve(
         asset_rewrite_base: explore::Settings::asset_rewrite_base_for(
             config.node.public_url.as_deref(),
         ),
+        configured_public_base: explore::Settings::configured_public_base_for(
+            config.node.public_url.as_deref(),
+        ),
         events_admin_token: config.explore.catalyrst_events_admin_token.clone(),
         events_slack_webhook: config.explore.events_slack_webhook.clone(),
         events_upcoming_summaries_enabled: config.explore.events_upcoming_summaries_enabled,

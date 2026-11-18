@@ -139,15 +139,21 @@ async fn seed(pool: &PgPool) {
     );
 }
 
-async fn check_explore_reads(public_url: Option<&str>) {
+async fn check_explore_reads(public_url: Option<&str>, rewrite_upstream: bool) {
     let Some(database) = db::scratch_database().await else {
         return;
     };
     seed(&database.pool).await;
+    let rewrite_base = Settings::asset_rewrite_base_for(public_url);
+    assert_eq!(
+        rewrite_base.as_deref(),
+        public_url.filter(|_| rewrite_upstream)
+    );
     let state = Arc::new(ExploreState::new(
         database.pool.clone(),
         Settings {
-            asset_rewrite_base: Settings::asset_rewrite_base_for(public_url),
+            asset_rewrite_base: rewrite_base.clone(),
+            configured_public_base: Settings::configured_public_base_for(public_url),
             ..Settings::for_tests()
         },
         None,
@@ -180,7 +186,8 @@ async fn check_explore_reads(public_url: Option<&str>) {
         assert_eq!(status, StatusCode::OK, "{route}: {body}");
 
         for &(upstream, path) in urls {
-            let expected = public_url
+            let expected = rewrite_base
+                .as_deref()
                 .map(|origin| format!("{origin}{path}"))
                 .unwrap_or_else(|| upstream.to_owned());
             assert!(
@@ -195,7 +202,7 @@ async fn check_explore_reads(public_url: Option<&str>) {
                 assert!(body.contains(&url), "{route}: expected {url}: {body}");
             }
         }
-        if public_url.is_some() {
+        if rewrite_base.is_some() {
             for reference in PRODUCTION_REFERENCES {
                 assert!(
                     !body.contains(reference),
@@ -211,15 +218,20 @@ async fn check_explore_reads(public_url: Option<&str>) {
 
 #[tokio::test]
 async fn no_answer_names_a_production_asset_host() {
-    check_explore_reads(Some("https://node.example")).await;
+    check_explore_reads(Some("https://node.example"), true).await;
 }
 
 #[tokio::test]
 async fn answers_keep_stored_urls_without_a_public_url() {
-    check_explore_reads(None).await;
+    check_explore_reads(None, false).await;
 }
 
 #[tokio::test]
 async fn answers_keep_the_public_prefix_and_port() {
-    check_explore_reads(Some("https://node.example:8443/prefix")).await;
+    check_explore_reads(Some("https://node.example:8443/prefix"), true).await;
+}
+
+#[tokio::test]
+async fn decentraland_subdomain_projects_only_local_posters() {
+    check_explore_reads(Some("https://events.decentraland.org"), false).await;
 }

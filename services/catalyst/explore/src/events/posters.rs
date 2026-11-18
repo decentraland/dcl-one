@@ -294,7 +294,7 @@ async fn upload(
     .execute(&state.pool)
     .await?;
     Ok(Json(poster_response(
-        state.settings.asset_rewrite_base.as_deref(),
+        state.settings.configured_public_base.as_deref(),
         kind,
         &name,
         size,
@@ -304,13 +304,19 @@ async fn upload(
 
 /// The old `PosterAttributes` answer (`Poster/routes.ts:132-137`), `url`
 /// on the same mounted path as event records.
-fn poster_response(domain: Option<&str>, kind: &str, name: &str, size: usize, mime: &str) -> Value {
+fn poster_response(
+    public_base: Option<&str>,
+    kind: &str,
+    name: &str,
+    size: usize,
+    mime: &str,
+) -> Value {
     let filename = format!("{kind}/{name}");
     json!({
         "ok": true,
         "data": {
             "filename": filename,
-            "url": node_assets::mounted_poster_url(&format!("/{filename}"), domain),
+            "url": node_assets::mounted_poster_url(&format!("/{filename}"), public_base),
             "size": size,
             "type": mime,
         }

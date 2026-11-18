@@ -135,6 +135,8 @@ pub struct Settings {
     /// The deployment's public base used for node-local asset paths in API records.
     /// When unset, records retain their upstream asset URLs.
     pub asset_rewrite_base: Option<String>,
+    /// The configured public base for local posters. An unset value stays relative.
+    pub configured_public_base: Option<String>,
     /// Bearer for the events moderation routes; unset refuses them.
     pub events_admin_token: Option<String>,
     /// Optional moderation webhook, dispatched only with operator writes enabled.
@@ -221,22 +223,28 @@ impl Settings {
     /// Use the complete public base for node-local paths when the node has
     /// a public domain outside decentraland.org.
     pub fn asset_rewrite_base_for(public_url: Option<&str>) -> Option<String> {
-        let url = url::Url::parse(public_url?).ok()?;
+        let url = Self::parse_public_base(public_url?)?;
         let url::Host::Domain(host) = url.host()? else {
             return None;
         };
-        if !matches!(url.scheme(), "http" | "https")
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.query().is_some()
-            || url.fragment().is_some()
-            || !host.contains('.')
-            || host == "decentraland.org"
-            || host.ends_with(".decentraland.org")
-        {
-            return None;
-        }
+        (host.contains('.') && host != "decentraland.org" && !host.ends_with(".decentraland.org"))
+            .then(|| url.as_str().trim_end_matches('/').to_owned())
+    }
+
+    pub fn configured_public_base_for(public_url: Option<&str>) -> Option<String> {
+        let url = Self::parse_public_base(public_url?)?;
         Some(url.as_str().trim_end_matches('/').to_owned())
+    }
+
+    fn parse_public_base(value: &str) -> Option<url::Url> {
+        let url = url::Url::parse(value).ok()?;
+        (matches!(url.scheme(), "http" | "https")
+            && url.host().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none())
+        .then_some(url)
     }
 
     pub fn events_asset_base_for(public_url: &str) -> String {
@@ -247,6 +255,7 @@ impl Settings {
         Self {
             content_public_url: "http://localhost/content/".to_string(),
             asset_rewrite_base: None,
+            configured_public_base: None,
             events_admin_token: None,
             events_slack_webhook: None,
             events_upcoming_summaries_enabled: false,
@@ -329,6 +338,7 @@ impl ExploreState {
             events: EventsComponent::new(
                 pool.clone(),
                 settings.asset_rewrite_base.clone(),
+                settings.configured_public_base.clone(),
                 settings.events_asset_base_url.clone(),
             ),
             schedules: SchedulesComponent::new(pool.clone()),

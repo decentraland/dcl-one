@@ -21,8 +21,8 @@ A per-bucket hostname preserves the production URL layout but needs additional d
 
 ## Consequences
 
-The catalogue accepts upstream asset URLs and router-local poster keys. New events store indexed poster keys in router-local form. Uploaded posters use the same prefixed paths on reads and upload responses, with root-relative URLs when no public rewrite domain is configured. Authoring recognizes the mounted path and retains the existing stored value when a caller echoes the read projection. The root `/poster` and `/poster-vertical` routes continue to serve operators that configure a dedicated `events-assets-099ac00.<domain>` vhost.
+The catalogue accepts upstream asset URLs and router-local poster keys. New events store indexed poster keys in router-local form. Reads of local keys and upload responses use the same mounted path under the configured `PUBLIC_URL` in every mode. When `PUBLIC_URL` is unset, they return root-relative paths for same-origin clients. Authoring recognizes the mounted path and retains the existing stored value when a caller echoes the read projection. The root `/poster` and `/poster-vertical` routes continue to serve operators that configure a dedicated `events-assets-099ac00.<domain>` vhost.
 
-Clients may submit root-relative upload response URLs as given or resolve them against a configured listener. The node's existing asset handlers determine whether each asset is available. The path mapping does not copy world thumbnails into storage.
+Clients can submit the upload response URL as given. A configured listener also accepts its own absolute mounted URLs. The node's existing asset handlers determine whether each asset is available. The path mapping does not copy world thumbnails into storage.
 
 Sites pages that use the Explore API receive this projection. Sites direct database reads for place detail and Creator Hub still carry stored image URLs. The `/places` listing uses the destinations API.

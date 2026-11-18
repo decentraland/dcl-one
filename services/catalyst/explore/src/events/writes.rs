@@ -871,7 +871,12 @@ async fn update_event(
         }
         let projected = match field {
             "url" => super::project_event_url(stored, base),
-            _ => super::project_event_image(stored, base, &state.settings.events_asset_base_url),
+            _ => super::project_event_image(
+                stored,
+                base,
+                state.settings.configured_public_base.as_deref(),
+                &state.settings.events_asset_base_url,
+            ),
         };
         if projected.as_deref() == Some(submitted) {
             body.insert(field.into(), json!(stored));
@@ -1639,6 +1644,7 @@ mod tests {
         pool: &sqlx::PgPool,
         app: &axum::Router,
         vertical: bool,
+        public_base: Option<&str>,
     ) -> (String, Vec<u8>) {
         if super::super::profiles::local_profile(pool, &address())
             .await
@@ -1676,7 +1682,7 @@ mod tests {
         let local = format!("/{filename}");
         assert_eq!(
             body["data"]["url"],
-            format!("/events-assets-099ac00{local}")
+            format!("{}/events-assets-099ac00{local}", public_base.unwrap_or(""))
         );
         (local, png)
     }
@@ -2309,6 +2315,7 @@ mod tests {
         ensure_profile(&pool).await;
         let settings = Settings {
             asset_rewrite_base: Some("https://node.example".into()),
+            configured_public_base: Some("https://node.example".into()),
             events_asset_base_url: Settings::events_asset_base_for("https://node.example"),
             user_writes_enabled: true,
             operator_writes_enabled: true,
@@ -2470,6 +2477,7 @@ mod tests {
             pool.clone(),
             Settings {
                 asset_rewrite_base: None,
+                configured_public_base: None,
                 events_asset_base_url: Settings::events_asset_base_for("http://localhost:8080"),
                 ..settings
             },
@@ -2741,6 +2749,108 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn uploaded_and_copied_posters_round_trip_with_each_public_base() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        ensure_profile(&pool).await;
+        let dir = std::env::temp_dir().join(format!("poster-base-{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        sqlx::query(
+            "INSERT INTO explore.poster (kind,file,blob_cid,content_type,byte_size,origin,fetched_at)
+             VALUES ('poster','copied.png','fixture','image/png',1,'upstream',now()),
+                    ('poster-vertical','copied.png','fixture','image/png',1,'upstream',now())",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        for public_url in super::super::POSTER_PUBLIC_URLS {
+            let settings = Settings {
+                asset_rewrite_base: Settings::asset_rewrite_base_for(public_url),
+                configured_public_base: Settings::configured_public_base_for(public_url),
+                events_asset_base_url: Settings::events_asset_base_for(
+                    public_url.unwrap_or("http://127.0.0.1:5210"),
+                ),
+                user_writes_enabled: true,
+                operator_writes_enabled: true,
+                events_admin_token: Some("admin-test".into()),
+                ..Settings::for_tests()
+            };
+            let app = router(Arc::new(
+                ExploreState::new(pool.clone(), settings, None).with_storage(storage.clone()),
+            ));
+            let (uploaded, _) = upload_native_poster(&pool, &app, false, public_url).await;
+            let (vertical, _) = upload_native_poster(&pool, &app, true, public_url).await;
+            let mounted =
+                |key: &str| format!("{}/events-assets-099ac00{key}", public_url.unwrap_or(""));
+            for (key, vertical_key, image, image_vertical) in [
+                (
+                    uploaded.as_str(),
+                    vertical.as_str(),
+                    mounted(&uploaded),
+                    mounted(&vertical),
+                ),
+                (
+                    "/poster/copied.png",
+                    "/poster-vertical/copied.png",
+                    "https://events-assets-099ac00.decentraland.org/poster/copied.png".into(),
+                    "https://events-assets-099ac00.decentraland.org/poster-vertical/copied.png"
+                        .into(),
+                ),
+            ] {
+                let mut body = new_event();
+                body["image"] = json!(image);
+                body["image_vertical"] = json!(image_vertical);
+                let (status, created) =
+                    call(&app, "POST", "/api/events", Some("signed"), Some(body)).await;
+                assert_eq!(status, StatusCode::CREATED, "{public_url:?}: {created}");
+                let id = created["data"]["id"].as_str().unwrap();
+                let path = format!("/api/events/{id}");
+                let (status, approved) = call(
+                    &app,
+                    "PATCH",
+                    &path,
+                    Some("admin-test"),
+                    Some(json!({"approved":true})),
+                )
+                .await;
+                assert_eq!(status, StatusCode::CREATED, "{approved}");
+                let stored = || async {
+                    sqlx::query_scalar::<_, String>(
+                        "SELECT row_to_json(e)::text FROM explore.event e WHERE id=$1",
+                    )
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap()
+                };
+                let before = stored().await;
+                let raw: Value = serde_json::from_str(&before).unwrap();
+                assert_eq!(raw["raw"]["image"], key);
+                assert_eq!(raw["raw"]["image_vertical"], vertical_key);
+                let (status, view) = call(&app, "GET", &path, Some("signed"), None).await;
+                assert_eq!(status, StatusCode::OK, "{view}");
+                for envelope in [&created, &view] {
+                    assert_eq!(envelope["data"]["image"], mounted(key));
+                    assert_eq!(envelope["data"]["image_vertical"], mounted(vertical_key));
+                }
+                let echo = json!({
+                    "image": view["data"]["image"],
+                    "image_vertical": view["data"]["image_vertical"],
+                    "url": view["data"]["url"],
+                });
+                let (status, saved) =
+                    call(&app, "PATCH", &path, Some("admin-test"), Some(echo)).await;
+                assert_eq!(status, StatusCode::CREATED, "{saved}");
+                assert_eq!(saved["data"]["approved"], true);
+                assert_eq!(stored().await, before, "{public_url:?}");
+            }
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
     async fn native_uploaded_posters_and_broad_admin_fields_preserve_privilege_boundaries() {
         let Some(pool) = crate::db::scratch::pool(6).await else {
             return;
@@ -2759,8 +2869,8 @@ mod tests {
         let app = router(Arc::new(
             ExploreState::new(pool.clone(), settings.clone(), None).with_storage(storage.clone()),
         ));
-        let (poster, bytes) = upload_native_poster(&pool, &app, false).await;
-        let (vertical, _) = upload_native_poster(&pool, &app, true).await;
+        let (poster, bytes) = upload_native_poster(&pool, &app, false, None).await;
+        let (vertical, _) = upload_native_poster(&pool, &app, true, None).await;
         let cid: String = sqlx::query_scalar(
             "SELECT blob_cid FROM explore.poster WHERE kind='poster' AND file=$1",
         )
@@ -3142,7 +3252,7 @@ mod tests {
             )
             .with_storage(storage),
         ));
-        let (poster, _) = upload_native_poster(&pool, &app, false).await;
+        let (poster, _) = upload_native_poster(&pool, &app, false, None).await;
         let mut event = new_event();
         event["x"] = json!(41);
         event["y"] = json!(42);
@@ -3333,7 +3443,7 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::CREATED, "{moved}");
         assert!(moved["data"]["image"].is_null());
-        let (uploaded, _) = upload_native_poster(&pool, &app, false).await;
+        let (uploaded, _) = upload_native_poster(&pool, &app, false, None).await;
         let (status, poster) = call(
             &app,
             "PATCH",

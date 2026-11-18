@@ -313,15 +313,13 @@ describe("when uploading event covers", () => {
     });
   });
 
-  describe("and the server returns a same-origin mounted poster", () => {
-    let url: string;
-
-    beforeEach(() => {
-      url = "/events-assets-099ac00/poster-vertical/cover.png";
+  describe("and the server returns a mounted poster URL", () => {
+    it.each([
+      "/events-assets-099ac00/poster-vertical/cover.png",
+      "https://events.decentraland.org:8443/prefix/events-assets-099ac00/poster-vertical/cover.png",
+    ])("should preserve %s for the next write", async (url) => {
       vi.mocked(signedFetch).mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, data: { url } })));
-    });
 
-    it("should preserve the mounted path for the next write", async () => {
       await expect(uploadHangoutPoster(identity, file, true)).resolves.toBe(url);
     });
   });

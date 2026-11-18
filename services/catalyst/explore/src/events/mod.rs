@@ -232,6 +232,7 @@ pub struct NextEvent {
 pub struct EventsComponent {
     pool: PgPool,
     rewrite_base: Option<String>,
+    configured_public_base: Option<String>,
     events_asset_base_url: String,
     pub foundation: Arc<foundation::Foundation>,
 }
@@ -322,10 +323,16 @@ struct EventRow {
 
 impl EventsComponent {
     /// `rewrite_base`: the public base for node-local asset paths in event records.
-    pub fn new(pool: PgPool, rewrite_base: Option<String>, events_asset_base_url: String) -> Self {
+    pub fn new(
+        pool: PgPool,
+        rewrite_base: Option<String>,
+        configured_public_base: Option<String>,
+        events_asset_base_url: String,
+    ) -> Self {
         Self {
             pool,
             rewrite_base,
+            configured_public_base,
             events_asset_base_url,
             foundation: Arc::new(foundation::Foundation::default()),
         }
@@ -337,6 +344,7 @@ impl EventsComponent {
         self.foundation.refresh_if_stale(&self.pool).await;
         RecordView {
             rewrite_base: self.rewrite_base.as_deref(),
+            configured_public_base: self.configured_public_base.as_deref(),
             events_asset_base_url: &self.events_asset_base_url,
             max_dates,
             foundation: self.foundation.snapshot(),
@@ -1007,6 +1015,7 @@ pub const FULL_RECURRENCE_WINDOW: usize = 1000;
 /// What a read projects a row with.
 struct RecordView<'a> {
     rewrite_base: Option<&'a str>,
+    configured_public_base: Option<&'a str>,
     events_asset_base_url: &'a str,
     max_dates: usize,
     foundation: foundation::Names,
@@ -1014,13 +1023,15 @@ struct RecordView<'a> {
 
 fn project_event_image(
     image: &str,
-    base: Option<&str>,
+    rewrite_base: Option<&str>,
+    configured_public_base: Option<&str>,
     events_asset_base_url: &str,
 ) -> Option<String> {
     let image = sanitize_asset_url(image).ok()?;
     Some(crate::node_assets::event_image_url(
         &image,
-        base,
+        rewrite_base,
+        configured_public_base,
         events_asset_base_url,
     ))
 }
@@ -1039,7 +1050,14 @@ fn event_row_to_record(
     view: &RecordView<'_>,
 ) -> EventRecord {
     let rewrite_base = view.rewrite_base;
-    let events_asset_base_url = view.events_asset_base_url;
+    let project_image = |image: &str| {
+        project_event_image(
+            image,
+            rewrite_base,
+            view.configured_public_base,
+            view.events_asset_base_url,
+        )
+    };
     let raw = &r.raw;
     let start_at = r.start_at.map(|n| n.and_utc());
     let finish_at = r.finish_at.map(|n| n.and_utc());
@@ -1048,11 +1066,9 @@ fn event_row_to_record(
     let image = raw
         .get("image")
         .and_then(Value::as_str)
-        .and_then(|s| project_event_image(s, rewrite_base, events_asset_base_url));
+        .and_then(project_image);
     let image_vertical = raw.get("image_vertical").cloned().and_then(|v| match v {
-        Value::String(s) => {
-            project_event_image(&s, rewrite_base, events_asset_base_url).map(Value::String)
-        }
+        Value::String(s) => project_image(&s).map(Value::String),
         other => Some(other),
     });
     let server = raw_str(raw, "server");
@@ -1279,18 +1295,88 @@ fn parse_dt(v: Option<&Value>) -> Option<DateTime<Utc>> {
 }
 
 #[cfg(test)]
+const POSTER_PUBLIC_URLS: [Option<&str>; 5] = [
+    None,
+    Some("http://localhost:8080"),
+    Some("http://192.0.2.10:8181/prefix"),
+    Some("https://events.decentraland.org"),
+    Some("https://node.example:8443/prefix"),
+];
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
-    fn test_view(rewrite_base: Option<&'static str>) -> RecordView<'static> {
+    fn test_view(rewrite_base: Option<&str>) -> RecordView<'_> {
         RecordView {
             rewrite_base,
+            configured_public_base: rewrite_base,
             events_asset_base_url: "https://events.decentraland.org",
             max_dates: MAX_EVENT_RECURRENT,
             foundation: Arc::new(std::collections::HashSet::new()),
         }
     }
     use serde_json::json;
+
+    #[test]
+    fn event_poster_reads_use_the_configured_public_base_only_for_local_keys() {
+        let hash = "a".repeat(64);
+        for public_url in POSTER_PUBLIC_URLS {
+            let rewrite_base = crate::Settings::asset_rewrite_base_for(public_url);
+            let configured_public_base = crate::Settings::configured_public_base_for(public_url);
+            let view = RecordView {
+                configured_public_base: configured_public_base.as_deref(),
+                ..test_view(rewrite_base.as_deref())
+            };
+            let base = public_url.unwrap_or("");
+            for (stored_base, output_base, filename) in [
+                (
+                    "",
+                    format!("{base}/events-assets-099ac00"),
+                    format!("{hash}.png"),
+                ),
+                (
+                    "",
+                    format!("{base}/events-assets-099ac00"),
+                    "copied.png".into(),
+                ),
+                (
+                    "https://events-assets-099ac00.decentraland.org",
+                    rewrite_base.as_ref().map_or_else(
+                        || "https://events-assets-099ac00.decentraland.org".into(),
+                        |base| format!("{base}/events-assets-099ac00"),
+                    ),
+                    "upstream.png".into(),
+                ),
+                (
+                    "https://images.example",
+                    "https://images.example".into(),
+                    "custom.png".into(),
+                ),
+            ] {
+                let record = event_row_to_record(
+                    row_with(
+                        json!({
+                            "image": format!("{stored_base}/poster/{filename}"),
+                            "image_vertical": format!("{stored_base}/poster-vertical/{filename}"),
+                        }),
+                        None,
+                        None,
+                    ),
+                    None,
+                    &view,
+                );
+                assert_eq!(
+                    record.image,
+                    Some(format!("{output_base}/poster/{filename}"))
+                );
+                assert_eq!(
+                    record.image_vertical,
+                    Some(json!(format!("{output_base}/poster-vertical/{filename}")))
+                );
+            }
+        }
+    }
 
     /// The feed's live and next lookups decode the effective next start, a
     /// `timestamp without time zone` like the columns it derives from.
@@ -1319,8 +1405,12 @@ mod tests {
             .await
             .unwrap();
         }
-        let component =
-            EventsComponent::new(pool.clone(), None, "https://events.decentraland.org".into());
+        let component = EventsComponent::new(
+            pool.clone(),
+            None,
+            None,
+            "https://events.decentraland.org".into(),
+        );
         let live = component
             .live_event_names(std::slice::from_ref(&place))
             .await

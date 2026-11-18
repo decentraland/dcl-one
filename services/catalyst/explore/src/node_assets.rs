@@ -19,11 +19,19 @@ pub(crate) fn mounted_poster_url(path: &str, base: Option<&str>) -> String {
 }
 
 /// Projects upload keys and copied posters onto the same mounted routes.
-pub(crate) fn event_image_url(image: &str, base: Option<&str>, events_asset_base: &str) -> String {
+pub(crate) fn event_image_url(
+    image: &str,
+    rewrite_base: Option<&str>,
+    configured_public_base: Option<&str>,
+    events_asset_base: &str,
+) -> String {
     if poster_path(image).is_some() {
-        return mounted_poster_url(image, base);
+        return mounted_poster_url(image, configured_public_base);
     }
-    to_node(&absolute_default_image(image, events_asset_base), base)
+    to_node(
+        &absolute_default_image(image, events_asset_base),
+        rewrite_base,
+    )
 }
 
 /// Expand the bundled default for consumers that render a stored event.
@@ -69,7 +77,7 @@ pub(crate) fn event_poster_input<'a>(
         return Some(input);
     }
     let base = settings
-        .asset_rewrite_base
+        .configured_public_base
         .as_deref()
         .and_then(|base| Url::parse(base).ok());
     if let Some(base) = &base
@@ -235,6 +243,7 @@ mod tests {
         for domain in [None, Some(D.to_owned())] {
             let settings = Settings {
                 asset_rewrite_base: domain.clone(),
+                configured_public_base: domain.clone(),
                 events_asset_base_url: format!("{D}/events"),
                 ..Settings::for_tests()
             };
@@ -249,7 +258,12 @@ mod tests {
                     let upstream = format!("https://{}{}", super::POSTER_BUCKET, path);
                     let mounted = super::mounted_poster_url(&path, domain.as_deref());
                     let project = |image: &str| {
-                        event_image_url(image, domain.as_deref(), &settings.events_asset_base_url)
+                        event_image_url(
+                            image,
+                            domain.as_deref(),
+                            domain.as_deref(),
+                            &settings.events_asset_base_url,
+                        )
                     };
                     assert_eq!(project(&path), mounted);
                     let (copied_url, copied_input) = if domain.is_some() {
@@ -270,6 +284,7 @@ mod tests {
                 let default = event_image_url(
                     DEFAULT_EVENT_IMAGE,
                     domain.as_deref(),
+                    domain.as_deref(),
                     &settings.events_asset_base_url,
                 );
                 assert_eq!(
@@ -286,6 +301,7 @@ mod tests {
         let base = "https://node.example:8443/prefix";
         let settings = crate::Settings {
             asset_rewrite_base: Some(base.into()),
+            configured_public_base: Some(base.into()),
             events_asset_base_url: format!("{base}/events"),
             ..crate::Settings::for_tests()
         };
@@ -354,10 +370,12 @@ mod tests {
     fn a_third_party_image_is_preserved_on_read_and_refused_by_upload_policy() {
         let settings = crate::Settings {
             asset_rewrite_base: Some(D.into()),
+            configured_public_base: Some(D.into()),
             ..crate::Settings::for_tests()
         };
         let image = "https://images.example.org/cover.png";
-        let projected = super::event_image_url(image, Some(D), &settings.events_asset_base_url);
+        let projected =
+            super::event_image_url(image, Some(D), Some(D), &settings.events_asset_base_url);
         assert_eq!(projected, image);
         assert!(super::event_poster_input(image, &settings, "poster").is_none());
     }
@@ -369,6 +387,7 @@ mod tests {
 
         let settings = Settings {
             asset_rewrite_base: Some(D.to_owned()),
+            configured_public_base: Some(D.to_owned()),
             events_asset_base_url: format!("{D}/events"),
             ..Settings::for_tests()
         };
