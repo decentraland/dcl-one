@@ -1,10 +1,12 @@
 .subnav {
   position: sticky;
-  top: var(--nav-h);
+  /* Under Sites' top bar. Keep the heights in sync with --sub-nav-h in CreatorsShell.module.css. */
+  top: var(--site-header-h, 92px);
   z-index: 10;
   display: flex;
   align-items: center;
-  height: var(--sub-nav-h);
+  box-sizing: border-box;
+  height: 56px;
   padding: 0 16px;
   background: var(--color-subnav-overlay);
   backdrop-filter: saturate(180%) blur(20px);
@@ -13,7 +15,22 @@
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 
   @media (min-width: 1024px) {
+    height: 64px;
     padding: 0 64px;
+  }
+
+}
+
+/* On a page whose top bar overlays its content (the landing's hero), the tabs overlay it too: they stick under
+   the top bar without taking room in the page. */
+.overlay {
+  position: sticky;
+  top: var(--site-header-h, 92px);
+  z-index: 10;
+  height: 0;
+
+  & > .subnav {
+    position: static;
   }
 }
 
@@ -35,6 +52,7 @@
   & a {
     display: flex;
     align-items: center;
+    box-sizing: border-box;
     height: 100%;
     white-space: nowrap;
     text-transform: uppercase;
@@ -42,6 +60,7 @@
     font-size: 15px;
     font-weight: 600;
     color: var(--color-muted2);
+    text-decoration: none;
     border-bottom: 4px solid transparent;
   }
   & a:hover {

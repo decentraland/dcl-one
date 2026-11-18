@@ -1,21 +1,27 @@
+import { useEffect } from 'react'
 import { Link, useLocation } from 'react-router'
 import { useCommittee } from '../../hooks/useCommittee'
 import { useWallet } from '../../store/wallet'
 import { useTranslation } from '@/data/lib/creators/intl'
+import '../../styles/tokens.css'
 import styles from './SubNav.module.css'
 
 /** The Create section's tabs: the pages of this section, and the ones Sites serves beside it. */
-export function SubNav() {
+export function SubNav({ overlay = false }: { overlay?: boolean }) {
   const { t } = useTranslation()
   const address = useWallet(state => state.session?.address)
+  const restore = useWallet(state => state.restore)
+  useEffect(() => restore(), [restore])
   const { isCurator } = useCommittee(address)
   const { pathname } = useLocation()
   const current = (path: string) => (pathname === path || pathname.startsWith(`${path}/`) ? 'page' : undefined)
 
-  return (
+  const tabs = (
     <div className={styles.subnav} data-testid="subnav">
       <nav className={styles.tabs} data-testid="subnav-tabs">
-        <Link to="/create">{t('nav.overview')}</Link>
+        <Link to="/create" aria-current={pathname === '/create' ? 'page' : undefined}>
+          {t('nav.overview')}
+        </Link>
         <Link to="/create/collections" aria-current={current('/create/collections')}>
           {t('nav.collections')}
         </Link>
@@ -29,4 +35,6 @@ export function SubNav() {
       </nav>
     </div>
   )
+
+  return overlay ? <div className={styles.overlay}>{tabs}</div> : tabs
 }
