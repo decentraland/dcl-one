@@ -9,7 +9,7 @@ use crate::api::posters::{HOST_PREFIX, valid_file};
 const POSTER_BUCKET: &str = "events-assets-099ac00.decentraland.org";
 pub const DEFAULT_EVENT_IMAGE: &str = "/assets/event-default.webp";
 
-fn poster_path(path: &str) -> Option<(&str, &str)> {
+pub(crate) fn poster_path(path: &str) -> Option<(&str, &str)> {
     let (kind, file) = path.strip_prefix('/')?.split_once('/')?;
     (matches!(kind, "poster" | "poster-vertical") && valid_file(file)).then_some((kind, file))
 }
@@ -94,14 +94,23 @@ pub(crate) fn event_poster_input<'a>(
         return valid_kind(path).then_some(PosterInput::Mounted(path));
     }
     [
-        &settings.events_asset_base_url,
-        &settings.content_public_url,
+        (&settings.events_asset_base_url, "/events"),
+        (&settings.content_public_url, "/content"),
     ]
     .into_iter()
-    .filter_map(|base| Url::parse(base).ok())
-    .filter(|base| base.origin() == url.origin())
-    .find_map(|base| {
-        path.strip_prefix(base.path().trim_end_matches('/'))
+    .filter_map(|(base, mount)| Some((Url::parse(base).ok()?, mount)))
+    .filter(|(base, _)| base.origin() == url.origin())
+    .find_map(|(base, mount)| {
+        let prefix = base.path().trim_end_matches('/');
+        if settings.asset_rewrite_base.is_none() {
+            let public_prefix = prefix.strip_suffix(mount).unwrap_or(prefix);
+            let copy = mounted_path(path)
+                .or_else(|| path.strip_prefix(public_prefix).and_then(mounted_path));
+            if let Some(path) = copy {
+                return valid_kind(path).then_some(PosterInput::Mounted(path));
+            }
+        }
+        path.strip_prefix(prefix)
             .and_then(legacy)
             .or_else(|| legacy(path))
     })
@@ -109,12 +118,15 @@ pub(crate) fn event_poster_input<'a>(
 
 /// Maps a recognised upstream asset to its path on the node's public domain.
 pub fn node_asset_url(url: &str, base: &str) -> Option<String> {
-    let (parsed, path_and_query) = parse_upstream_url(url)?;
+    let (parsed, _) = parse_upstream_url(url)?;
     let host = parsed.host_str()?;
     let path = parsed.path();
 
     if host == "api.decentraland.org" && matches!(path, "/v1/map.png" | "/v2/map.png") {
-        return Some(format!("{base}/api{path_and_query}"));
+        return Some(format!(
+            "{base}/api{}",
+            &parsed[Position::BeforePath..Position::AfterQuery]
+        ));
     }
     if parsed.query().is_some() {
         return None;
@@ -310,6 +322,35 @@ mod tests {
     }
 
     #[test]
+    fn absolute_upload_links_work_on_configured_origins_without_rewriting() {
+        use super::{PosterInput, event_poster_input};
+        let settings = crate::Settings {
+            events_asset_base_url: "http://127.0.0.1:8080/nested/events".into(),
+            content_public_url: "https://content.example/nested/content/".into(),
+            ..crate::Settings::for_tests()
+        };
+        let path = "/poster/own_file.png";
+        for url in [
+            "http://127.0.0.1:8080/events-assets-099ac00/poster/own_file.png",
+            "http://127.0.0.1:8080/nested/events-assets-099ac00/poster/own_file.png",
+            "https://content.example/nested/events-assets-099ac00/poster/own_file.png",
+        ] {
+            assert_eq!(
+                event_poster_input(url, &settings, "poster"),
+                Some(PosterInput::Mounted(path)),
+                "{url}"
+            );
+        }
+        for url in [
+            "http://127.0.0.1:8081/events-assets-099ac00/poster/own_file.png",
+            "https://content.example.other/nested/events-assets-099ac00/poster/own_file.png",
+            "https://content.example/sibling/events-assets-099ac00/poster/own_file.png",
+        ] {
+            assert_eq!(event_poster_input(url, &settings, "poster"), None, "{url}");
+        }
+    }
+
+    #[test]
     fn a_third_party_image_is_preserved_on_read_and_refused_by_upload_policy() {
         let settings = crate::Settings {
             asset_rewrite_base: Some(D.into()),
@@ -387,6 +428,10 @@ mod tests {
             (
                 "https://worlds-content-server.decentraland.org/contents/1b79f38a",
                 "https://node.example/worlds-content-server/contents/1b79f38a",
+            ),
+            (
+                "https://api.decentraland.org/v1/map.png?name=hello world",
+                "https://node.example/api/v1/map.png?name=hello%20world",
             ),
             (
                 "https://api.decentraland.org/v1/map.png",

@@ -47,7 +47,7 @@ function parseBase(value: string | undefined): URL | undefined {
   }
 }
 
-function mountedPoster(url: URL, publicBase: string | undefined): { path: string; prefix: string } | undefined {
+function mountedPoster(url: URL, publicBase: string | undefined): { path: string; converterBase: string } | undefined {
   // The SSR transport can use a different origin than the public page.
   const renderedBase = import.meta.env.SSR
     ? (typeof process === "undefined" ? undefined : process.env.PUBLIC_CATALYST_URL)
@@ -59,7 +59,7 @@ function mountedPoster(url: URL, publicBase: string | undefined): { path: string
   const mount = `${prefix}/${POSTER_MOUNT}`;
   if (!url.pathname.startsWith(mount)) return undefined;
   const path = url.pathname.slice(mount.length);
-  return /^\/poster(?:-vertical)?\/[^/]+$/.test(path) ? { path, prefix } : undefined;
+  return /^\/poster(?:-vertical)?\/[^/]+$/.test(path) ? { path, converterBase: base.origin + prefix } : undefined;
 }
 
 function resized(source: string, width: ThumbnailWidth, base: string): string {
@@ -81,7 +81,7 @@ export function publicThumbnail(source: string | null | undefined, width: Thumbn
     if (mounted) {
       return UPLOADED_POSTER.test(mounted.path)
         ? source
-        : resized(`https://${POSTER_BUCKET}${mounted.path}`, width, mediaBase() || mounted.prefix);
+        : resized(`https://${POSTER_BUCKET}${mounted.path}`, width, mediaBase() || mounted.converterBase);
     }
     const known = url.hostname === POSTER_BUCKET
       || /^(peer(?:-[a-z]+\d)?|worlds-content-server|assets-cdn)\.decentraland\.org$/.test(url.hostname);

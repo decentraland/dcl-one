@@ -2390,14 +2390,15 @@ mod tests {
         sqlx::query("UPDATE explore.event SET raw = raw || $2 WHERE id=$1")
             .bind(other_id)
             .bind(
-                json!({"image": "https://events-assets-099ac00.decentraland.org/poster/other.png"}),
+                json!({"image": "https://events-assets-099ac00.decentraland.org/poster/other_copy.png"}),
             )
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
             "INSERT INTO explore.poster (kind, file, blob_cid, content_type, byte_size, origin, fetched_at)
-             VALUES ('poster','other.png','fixture','image/png',1,'upstream',now()),
+             VALUES ('poster','other_copy.png','fixture','image/png',1,'upstream',now()),
+                    ('poster','copy.png','fixture','image/png',1,'upstream',now()),
                     ('poster','replacement.png','fixture','image/png',1,'local',now())",
         )
         .execute(&pool)
@@ -2415,7 +2416,7 @@ mod tests {
         for body in [
             json!({"image":other["data"]["image"]}),
             json!({"image":"/events-assets-099ac00/poster/copy.png"}),
-            json!({"image":"https://events-assets-099ac00.decentraland.org/poster/other.png"}),
+            json!({"image":"https://events-assets-099ac00.decentraland.org/poster/other_copy.png"}),
             json!({"image":"https://other.example/events-assets-099ac00/poster/copy.png"}),
             json!({"image":"https://node.example.other.test/events-assets-099ac00/poster/copy.png"}),
             json!({"image_vertical":"https://node.example/events-assets-099ac00/poster/copy.png"}),
@@ -2429,11 +2430,11 @@ mod tests {
 
         for (image, expected) in [
             (
-                "https://events-assets-099ac00.decentraland.org/poster/other.png",
+                "https://events-assets-099ac00.decentraland.org/poster/other_copy.png",
                 StatusCode::CREATED,
             ),
             (
-                "https://node.example/events-assets-099ac00/poster/other.png",
+                "https://node.example/events-assets-099ac00/poster/other_copy.png",
                 StatusCode::CREATED,
             ),
             (
@@ -2457,7 +2458,11 @@ mod tests {
                         .fetch_one(&pool)
                         .await
                         .unwrap();
-                assert_eq!(copied, "/poster/other.png");
+                assert_eq!(copied, "/poster/other_copy.png");
+                assert_eq!(
+                    reply["data"]["image"],
+                    "https://node.example/events-assets-099ac00/poster/other_copy.png"
+                );
             }
         }
 
@@ -2768,8 +2773,12 @@ mod tests {
             bytes.as_slice()
         );
         let mut event = new_event();
-        event["image"] = json!(format!("https://native.example.org{poster}"));
-        event["image_vertical"] = json!(format!("https://content.example.org{vertical}"));
+        event["image"] = json!(format!(
+            "https://native.example.org/events-assets-099ac00{poster}"
+        ));
+        event["image_vertical"] = json!(format!(
+            "https://content.example.org/events-assets-099ac00{vertical}"
+        ));
         let mut invalid = event.clone();
         invalid["image_vertical"] = json!(poster);
         assert_eq!(
@@ -2796,6 +2805,23 @@ mod tests {
             format!("/events-assets-099ac00{vertical}")
         );
         let path = format!("/api/events/{}", created["data"]["id"].as_str().unwrap());
+        let (status, echoed) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("signed"),
+            Some(json!({
+                "image": event["image"],
+                "image_vertical": event["image_vertical"],
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{echoed}");
+        assert_eq!(echoed["data"]["image"], created["data"]["image"]);
+        assert_eq!(
+            echoed["data"]["image_vertical"],
+            created["data"]["image_vertical"]
+        );
         let schedule = uuid::Uuid::new_v4().to_string();
         sqlx::query("INSERT INTO explore.schedules_local (id,name) VALUES ($1,'Native calendar')")
             .bind(&schedule)

@@ -9,7 +9,7 @@ An asset URL on a per-bucket subdomain requires a DNS record and a TLS certifica
 
 ## Decision
 
-The Explore API projects recognised mirrored asset URLs onto the full `PUBLIC_URL` base at read time. The configured scheme, port and deployment path prefix carry through to the published URLs. Event posters use `/events-assets-099ac00/poster/` and `/events-assets-099ac00/poster-vertical/`. Parcel thumbnails use `/content/contents/`, world thumbnails use `/worlds-content-server/contents/`, and map images use `/api/v1/map.png` or `/api/v2/map.png` with the original query.
+The Explore API projects recognised mirrored asset URLs onto the full `PUBLIC_URL` base at read time. The configured scheme, port and deployment path prefix carry through to the published URLs. Event posters use `/events-assets-099ac00/poster/` and `/events-assets-099ac00/poster-vertical/`. Parcel thumbnails use `/content/contents/`, world thumbnails use `/worlds-content-server/contents/`, and grid map images use `/api/v1/map.png` or `/api/v2/map.png`. Valid query parameters keep their original order and spelling. The dedicated parcel and estate map URLs used by generated land-event posters remain catalogue values.
 
 Production event jump links on `decentraland.org` use the node's public origin with their original path and query. Rewriting applies when the node has a public domain outside `decentraland.org`. Decentraland domains, IP addresses, single-label hosts and absent public URLs retain the upstream addresses.
 
@@ -23,6 +23,6 @@ A per-bucket hostname preserves the production URL layout but needs additional d
 
 The catalogue accepts upstream asset URLs and router-local poster keys. New events store indexed poster keys in router-local form. Uploaded posters use the same prefixed paths on reads and upload responses, with root-relative URLs when no public rewrite domain is configured. Authoring recognizes the mounted path and retains the existing stored value when a caller echoes the read projection. The root `/poster` and `/poster-vertical` routes continue to serve operators that configure a dedicated `events-assets-099ac00.<domain>` vhost.
 
-Clients resolve root-relative upload response URLs against the listener that returned them. The node's existing asset handlers determine whether each asset is available. The path mapping does not copy world thumbnails into storage.
+Clients may submit root-relative upload response URLs as given or resolve them against a configured listener. The node's existing asset handlers determine whether each asset is available. The path mapping does not copy world thumbnails into storage.
 
 Sites pages that use the Explore API receive this projection. Sites direct database reads for place detail and Creator Hub still carry stored image URLs. The `/places` listing uses the destinations API.

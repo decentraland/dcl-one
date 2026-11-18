@@ -56,6 +56,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const pulseServer = (typeof process !== "undefined" && process.env.PUBLIC_PULSE_SERVER) || "";
   const catalystBase = browserCatalystBase();
   const requestUrl = new URL(request.url);
+  const forwardedScheme = request.headers.get("x-forwarded-proto");
+  if (forwardedScheme === "http" || forwardedScheme === "https") requestUrl.protocol = forwardedScheme + ":";
   const shopApiMode = serverShopApiMode();
   const wallet = readWallet(request);
   // Only the Creator Hub reads the committee seat: other pages do not ask the node for the curation committee.

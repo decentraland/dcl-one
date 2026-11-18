@@ -128,7 +128,7 @@ test("resizes posters served from paths on the node", () => {
     const path = `/${folder}/1ad0d5dd6a03ac29.jpg`;
     const source = `https://node.example/events-assets-099ac00${path}`;
     const upstream = `https://events-assets-099ac00.decentraland.org${path}`;
-    expect(publicThumbnail(source, 320)).toBe(`/media/convert?width=320&url=${encodeURIComponent(upstream)}`);
+    expect(publicThumbnail(source, 320)).toBe(`https://node.example/media/convert?width=320&url=${encodeURIComponent(upstream)}`);
   }
 });
 
@@ -177,7 +177,7 @@ describe("when a mounted poster uses the page's public base", () => {
 
     beforeEach(() => {
       vi.stubEnv("PUBLIC_CATALYST_URL", "");
-      expected = "/media/convert?width=640&url=" + encodeURIComponent("https://events-assets-099ac00.decentraland.org/poster/copied.webp");
+      expected = `${base}/media/convert?width=640&url=` + encodeURIComponent("https://events-assets-099ac00.decentraland.org/poster/copied.webp");
     });
 
     it("should resize on both server and client with the same page base", () => {
@@ -194,7 +194,7 @@ describe("when a mounted poster uses the page's public base", () => {
     beforeEach(() => {
       base = "https://node.example:8443/prefix";
       source = `${base}/events-assets-099ac00/poster/copied.webp`;
-      expected = "/prefix/media/convert?width=640&url=" + encodeURIComponent("https://events-assets-099ac00.decentraland.org/poster/copied.webp");
+      expected = `${base}/media/convert?width=640&url=` + encodeURIComponent("https://events-assets-099ac00.decentraland.org/poster/copied.webp");
       vi.stubEnv("PUBLIC_CATALYST_URL", base);
       vi.stubGlobal("__CATALYST_BASE__", base);
     });
