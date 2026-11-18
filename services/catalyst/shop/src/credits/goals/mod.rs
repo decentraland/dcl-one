@@ -108,6 +108,18 @@ impl Gate {
     }
 }
 async fn gate(state: &SharedState, conn: &mut PgConnection) -> Result<Gate, ApiError> {
+    // A credits trial (`CREDITS_TRIAL_MODE`) issues credits only through the authorize lane, to
+    // the buyers it names. A goal credit is signed by the same key for the same manager, but for
+    // any wallet that completes a goal, and it is never an authorization: the usage fold does not
+    // settle its spends and the revoker never sees it. So the program is off while a trial is
+    // configured, for its buyers too, whatever the flags say. A photo processed meanwhile gets a
+    // terminal receipt (`disabled`, or `no-season` outside a season) and is never counted later.
+    if state.settings.trial.is_some() {
+        return Ok(Gate {
+            disabled: true,
+            allowlist: None,
+        });
+    }
     let [mut dapps, mut explorer] = state.goal_flags.documents();
     let overrides = sqlx::query("SELECT app,name,value FROM explore_api.feature_flags_local WHERE app IN ('dapps','explorer')")
         .fetch_all(&mut *conn).await?;
