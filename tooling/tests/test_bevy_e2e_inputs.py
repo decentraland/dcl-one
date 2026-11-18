@@ -187,12 +187,14 @@ class ResolveTests(unittest.TestCase):
             inputs.wait_for_ci(REPO, SHA_PR, 300, sleep=lambda _: None, clock=lambda: next(clock))
         self.assertEqual(caught.exception.args[0], 30)
 
-    # --- nightly, by hand ---
+    # --- other events ---
 
     def test_events_the_workflow_does_not_list_start_nothing(self):
         for name in ('workflow_run', 'issue_comment'):
             with self.subTest(event=name):
                 self.assertEqual(inputs.resolve(name, {}, REPO)['run'], False)
+
+    # --- nightly, by hand ---
 
     def test_the_schedule_takes_mains_newest(self):
         result = inputs.resolve('schedule', {}, REPO)
