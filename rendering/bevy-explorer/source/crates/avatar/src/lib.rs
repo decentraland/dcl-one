@@ -2337,7 +2337,7 @@ fn set_avatar_visibility(
     // an avatar whose player is hidden for another reason (a block or ban, an avatar modifier
     // area, its scene) draws nothing, so it takes no slot from one that would show. The cap
     // itself hides the build, below its player, so it never feeds back into this
-    let counts = |player: Entity| shown.get(player).is_ok_and(InheritedVisibility::get);
+    let counts = |player: Entity| shown.get(player).is_ok_and(|shown| shown.get());
     let default_layer = RenderLayers::layer(0);
     let mut distances = q
         .iter()
