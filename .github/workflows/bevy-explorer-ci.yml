@@ -848,6 +848,7 @@ jobs:
         if: failure()
         run: echo "Run taplo fmt to apply TOML formatting; taplo fmt --check --diff shows the changes."
       - name: Check that every package inherits the workspace lints
+        if: ${{ !cancelled() }}
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-workspace-lints.py"
     defaults:
       run:
