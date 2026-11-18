@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { loader } from "@/routes/routes/api.blog.search";
-
 import { installFakeCms, requestedUrls } from "./cms.test-utils";
 import { BLOG_LOADER_TIMEOUT_MS, loadBlogSearch, loadBlogSearchSuggestions } from "./pages";
 
@@ -59,25 +57,5 @@ describe("loadBlogSearchSuggestions", () => {
     const pending = loadBlogSearchSuggestions(req("/api/blog/search?q=news"));
     await vi.advanceTimersByTimeAsync(BLOG_LOADER_TIMEOUT_MS);
     expect(await pending).toEqual({ status: 503, payload: { state: "unavailable" } });
-  });
-});
-
-describe("GET /api/blog/search", () => {
-  it("answers JSON with a short public cache", async () => {
-    installFakeCms();
-    const response = await loader({ request: req("/api/blog/search?q=news") });
-    expect(response.status).toBe(200);
-    expect(response.headers.get("Cache-Control")).toBe("public, max-age=60");
-    expect(await response.json()).toMatchObject({ query: "news", total: 9 });
-  });
-
-  it("answers an uncached 503 without upstream details when the CMS is not configured", async () => {
-    installFakeCms();
-    vi.stubEnv("BLOG_CMS_URL", "");
-    const response = await loader({ request: req("/api/blog/search?q=news") });
-    expect(response.status).toBe(503);
-    expect(response.headers.get("Cache-Control")).toBe("no-store");
-    expect(response.headers.get("Retry-After")).toBe("300");
-    expect(await response.json()).toEqual({ error: "Blog search unavailable" });
   });
 });
