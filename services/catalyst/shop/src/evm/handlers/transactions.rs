@@ -14,18 +14,43 @@ use crate::evm::transaction::{
 };
 use crate::evm::upstream::UpstreamForwarder;
 
+/// `POST /transactions`. An error answered before anything was sent, or after a send attempt
+/// that proves nothing went out, carries `"not_sent": true`: the only evidence a client takes
+/// that it may release the buyer's credit and sign again. Every other failure, and every answer
+/// forwarded from an upstream relay, is answered without it.
 pub async fn send_transaction(
     State(state): State<SharedState>,
     headers: HeaderMap,
     body: Result<Bytes, BytesRejection>,
-) -> Result<Response, ApiError> {
-    let body = body.map_err(|e| ApiError::MalformedBody(e.body_text()))?;
-    let tx = parse_send_transaction_request(&body)?;
+) -> Response {
+    match relay(&state, &headers, body).await {
+        Ok(response) => response,
+        Err(Failure::NotSent(err)) => not_sent(err).await,
+        Err(Failure::MaybeSent(err)) => err.into_response(),
+    }
+}
+
+enum Failure {
+    /// Nothing was sent: no send was attempted, or the attempt proves nothing went out.
+    NotSent(ApiError),
+    /// The transaction may be out.
+    MaybeSent(ApiError),
+}
+
+async fn relay(
+    state: &SharedState,
+    headers: &HeaderMap,
+    body: Result<Bytes, BytesRejection>,
+) -> Result<Response, Failure> {
+    use Failure::NotSent;
+    let body = body.map_err(|e| NotSent(ApiError::MalformedBody(e.body_text())))?;
+    let tx = parse_send_transaction_request(&body).map_err(NotSent)?;
 
     let sender = state
         .transaction
         .check_data(&state.settings, &state.contracts, &tx)
-        .await?;
+        .await
+        .map_err(NotSent)?;
 
     crate::guards::relay::guard_meta_transaction(
         &state.pool,
@@ -34,7 +59,8 @@ pub async fn send_transaction(
         &tx.params[0],
         &tx.params[1],
     )
-    .await?;
+    .await
+    .map_err(NotSent)?;
 
     let session_id = uuid::Uuid::new_v4().to_string();
 
@@ -50,7 +76,8 @@ pub async fn send_transaction(
                 &tx.params[0],
                 crate::evm::now(),
             )
-            .await?;
+            .await
+            .map_err(NotSent)?;
     } else {
         state
             .transaction
@@ -63,24 +90,17 @@ pub async fn send_transaction(
                 &tx.params[0],
                 crate::evm::now(),
             )
-            .await?;
+            .await
+            .map_err(NotSent)?;
     }
 
     if let Some(upstream) = state.transaction.upstream_route() {
-        return forward_upstream(&state, upstream, &headers, &body, &sender, &session_id).await;
+        return forward_upstream(state, upstream, headers, &body, &sender, &session_id).await;
     }
 
     let tx_hash = match state.transaction.send_meta_transaction(&tx).await {
         Ok(hash) => hash,
-        Err(err) => {
-            if matches!(
-                reservation_disposition(&err),
-                ReservationDisposition::Release
-            ) {
-                release_quota_slot(&state, &session_id, &sender).await;
-            }
-            return Err(err);
-        }
+        Err(err) => return Err(failed_send(state, &session_id, &sender, err).await),
     };
 
     // The transaction is out, so the answer carries its hash whatever recording it does. An error
@@ -101,6 +121,44 @@ pub async fn send_transaction(
     Ok(Json(json!({ "ok": true, "txHash": tx_hash })).into_response())
 }
 
+/// A failed send or forward: the slot is released, and the answer says nothing was sent, only
+/// for an error that proves it (`reservation_disposition`).
+async fn failed_send(
+    state: &SharedState,
+    session_id: &str,
+    sender: &MetaTxSender,
+    err: ApiError,
+) -> Failure {
+    match reservation_disposition(&err) {
+        ReservationDisposition::Release => {
+            release_quota_slot(state, session_id, sender).await;
+            Failure::NotSent(err)
+        }
+        ReservationDisposition::Keep => Failure::MaybeSent(err),
+    }
+}
+
+/// The error's envelope with `"not_sent": true` added. A body that is not a JSON object is
+/// answered as it is, without the evidence.
+async fn not_sent(err: ApiError) -> Response {
+    let (mut parts, body) = err.into_response().into_parts();
+    let bytes = axum::body::to_bytes(body, 64 * 1024)
+        .await
+        .unwrap_or_default();
+    let body = match serde_json::from_slice::<serde_json::Value>(&bytes) {
+        Ok(serde_json::Value::Object(mut envelope)) => {
+            envelope.insert("not_sent".into(), serde_json::Value::Bool(true));
+            parts.headers.remove(header::CONTENT_LENGTH);
+            serde_json::to_vec(&envelope).unwrap_or_default()
+        }
+        _ => bytes.to_vec(),
+    };
+    Response::from_parts(parts, axum::body::Body::from(body))
+}
+
+/// Forwards to the upstream relay. Its answer passes through as it is: whatever its status, it is
+/// never evidence from this relay that nothing was sent. Only a forward that never reached the
+/// upstream (`RelayerUnavailable`) is answered as not sent.
 async fn forward_upstream(
     state: &SharedState,
     upstream: &UpstreamForwarder,
@@ -108,22 +166,14 @@ async fn forward_upstream(
     body: &[u8],
     sender: &MetaTxSender,
     session_id: &str,
-) -> Result<Response, ApiError> {
+) -> Result<Response, Failure> {
     let content_type = headers
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok());
 
     let forwarded = match upstream.forward(body, content_type).await {
         Ok(f) => f,
-        Err(err) => {
-            if matches!(
-                reservation_disposition(&err),
-                ReservationDisposition::Release
-            ) {
-                release_quota_slot(state, session_id, sender).await;
-            }
-            return Err(err);
-        }
+        Err(err) => return Err(failed_send(state, session_id, sender, err).await),
     };
 
     if forwarded.is_success() {
@@ -152,25 +202,13 @@ async fn forward_upstream(
         release_quota_slot(state, session_id, sender).await;
     }
 
-    let status = forwarded.status();
-    let mut response = forwarded.into_response();
-    if upstream_status_is_served_as_502(status) {
-        *response.status_mut() = axum::http::StatusCode::BAD_GATEWAY;
-    }
-    Ok(response)
-}
-
-/// The relay answers a 500 or a 503 of its own only before it sends anything (a failed lookup
-/// before signing, the fee cap, a paused or missing route), and a client reads them as refusals.
-/// An upstream's 500 or 503 can follow its send, so it reaches the client as a 502, its body
-/// unchanged: never mistaken for the relay's own refusal.
-fn upstream_status_is_served_as_502(status: u16) -> bool {
-    matches!(status, 500 | 503)
+    Ok(forwarded.into_response())
 }
 
 /// Whether a non-2xx upstream status proves the transaction was never
-/// broadcast, so the quota slot can be refunded. The status passes through
-/// to the client, which reads a 4xx the same way. The evidence for a 4xx is
+/// broadcast, so the quota slot can be refunded. This is the relay's own
+/// quota decision; the answer passes through unchanged and is never marked
+/// `not_sent` for a client. The evidence for a 4xx is
 /// the transactions-server's own code, as inspected at
 /// `decentraland/transactions-server@8b9549bbe51a8bf14da5efbe0847da18e9b208bd`
 /// (`sendTransaction` in `src/controllers/handlers.ts`, the OpenZeppelin port
@@ -214,16 +252,6 @@ pub async fn get_user_transactions(
 #[cfg(test)]
 mod tests {
     use super::refunds_quota_slot;
-
-    #[test]
-    fn an_upstream_500_or_503_never_reaches_the_client_as_the_relays_own() {
-        use super::upstream_status_is_served_as_502;
-        assert!(upstream_status_is_served_as_502(500));
-        assert!(upstream_status_is_served_as_502(503));
-        for status in [400u16, 429, 501, 502, 504, 524] {
-            assert!(!upstream_status_is_served_as_502(status), "{status}");
-        }
-    }
 
     #[test]
     fn only_4xx_upstream_statuses_refund_the_quota_slot() {

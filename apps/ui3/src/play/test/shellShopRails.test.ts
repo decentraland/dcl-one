@@ -167,12 +167,18 @@ describe('the shell purchase on the real rails', () => {
     expect(r.relay.posts).toHaveLength(0)
   })
 
-  // The relay's answer to an error after the send (the node took it but its answer was lost, or
-  // it answered an error to the send): a 504 with no hash.
-  it.each(['managed', 'web3'] as const)('follows a %s wallet’s purchase the relay may have sent, and never signs a second one for it', async (kind) => {
+  // Answers after a send, without the relay's evidence that nothing was sent: this relay's 504 (the
+  // node took it but its answer was lost, or answered an error to the send), and the 500 JSON an
+  // earlier version of this relay, or a transactions-server, answers after it sent.
+  it.each([
+    ['managed', 504],
+    ['web3', 504],
+    ['managed', 500],
+    ['web3', 500]
+  ] as const)('follows a %s wallet’s purchase the relay may have sent (%i), and never signs a second one for it', async (kind, failStatus) => {
     const r = rails({ trusted: DEDICATED, kind })
     r.relay.state.mode = 'fail-after-send'
-    r.relay.state.failStatus = 504
+    r.relay.state.failStatus = failStatus
     await r.buy()
     const pending = await r.until('pending')
     expect(r.events.at(-1)).toMatchObject({ state: 'pending' })
@@ -192,8 +198,9 @@ describe('the shell purchase on the real rails', () => {
     expect(r.wallet.sent).toHaveLength(0)
   })
 
-  it('still treats a refusal the relay proves before sending as one', async () => {
-    // A managed wallet: the purchase fails with TRY AGAIN and gives its credit back.
+  it('still treats a refusal the relay marks as not sent as one', async () => {
+    // The relay's 400 with `"not_sent": true`. A managed wallet: the purchase fails with TRY AGAIN and
+    // gives its credit back.
     const managed = rails({ trusted: DEDICATED, kind: 'managed' })
     managed.relay.state.mode = 'refuse'
     await managed.buy()

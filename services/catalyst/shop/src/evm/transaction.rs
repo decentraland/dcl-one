@@ -244,12 +244,12 @@ pub enum ReservationDisposition {
     Keep,
 }
 
-/// Whether a failed relay leaves the buyer's quota slot consumed. Only an error that proves
-/// nothing went out releases it. A client reads the relay's own 4xx, 500 and 503 as "never sent"
-/// and may sign again, so those statuses come only from errors before any send: `RelayReverted`
-/// (gas estimation reverted, or a relayer that created no transaction), `RelayerFailed` (a lookup
-/// before signing), `HighCongestion`, `RelayerUnavailable`. Anything that can follow a send
-/// attempt is `RelayerTimeout` (504). An upstream's 500 or 503 is served as 502.
+/// Whether a failed send leaves the buyer's quota slot consumed. Only an error that proves
+/// nothing went out releases it, and only those are answered with `"not_sent": true`, the
+/// evidence a client takes to sign again: `RelayReverted` (gas estimation reverted, or a relayer
+/// that created no transaction), `RelayerFailed` (a lookup before signing), `HighCongestion`,
+/// `RelayerUnavailable`, and validation. Anything that can follow a send attempt is
+/// `RelayerTimeout`, answered without it.
 pub fn reservation_disposition(err: &ApiError) -> ReservationDisposition {
     if is_post_broadcast(err) {
         return ReservationDisposition::Keep;
@@ -1124,11 +1124,11 @@ mod tests {
         );
     }
 
-    /// A client reads the relay's own 4xx, 500 and 503 as "never sent" and may sign again, so the
-    /// relay's errors with those statuses after reserving a slot must release it: they prove
-    /// nothing went out. An error that can follow a send keeps the slot and is a 504.
+    /// The send errors that prove nothing went out release the slot, and are the ones the relay
+    /// answers as `not_sent`: a client may sign again. An error that can follow a send keeps the
+    /// slot and is answered without it.
     #[test]
-    fn a_refusal_status_from_the_relay_is_always_before_any_send() {
+    fn only_a_send_error_that_proves_nothing_went_out_frees_the_slot() {
         for err in [
             ApiError::InvalidTransaction("bad".into()),
             ApiError::InvalidSchema("bad".into()),
@@ -1139,11 +1139,6 @@ mod tests {
             ApiError::HighCongestion("fee above the cap".into()),
             ApiError::RelayerUnavailable("paused".into()),
         ] {
-            let status = err.status().as_u16();
-            assert!(
-                (400..500).contains(&status) || status == 500 || status == 503,
-                "{err:?}"
-            );
             assert_eq!(
                 reservation_disposition(&err),
                 ReservationDisposition::Release,
@@ -1151,7 +1146,6 @@ mod tests {
             );
         }
         let after_a_send = ApiError::RelayerTimeout("may have been broadcast".into());
-        assert_eq!(after_a_send.status().as_u16(), 504);
         assert_eq!(
             reservation_disposition(&after_a_send),
             ReservationDisposition::Keep

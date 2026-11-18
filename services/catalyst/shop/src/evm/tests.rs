@@ -1598,6 +1598,10 @@ async fn upstream_connection_refused_refunds_the_slot() {
     let parsed: Value = serde_json::from_str(&text).expect("error envelope is JSON");
     assert_eq!(parsed["ok"], false, "body {text}");
     assert_eq!(parsed["error"], "unknown", "body {text}");
+    assert_eq!(
+        parsed["not_sent"], true,
+        "the forward never reached the upstream: nothing was sent"
+    );
     assert!(
         parsed["message"]
             .as_str()
@@ -1651,10 +1655,10 @@ async fn upstream_429_passes_through_verbatim_and_refunds_the_slot() {
     );
 }
 
-/// An upstream's 500 or 503 can follow its send. It reaches the client as a 502, the body
-/// byte-for-byte, so the client never reads it as the relay's own refusal, and the slot is kept.
+/// An upstream's 500 or 503 can follow its send. It passes through as it is, never marked as
+/// evidence that nothing was sent, and the slot is kept.
 #[tokio::test]
-async fn an_upstream_500_or_503_reaches_the_client_as_a_502_and_keeps_the_slot() {
+async fn an_upstream_500_or_503_passes_through_unmarked_and_keeps_the_slot() {
     let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
         .lock()
         .await;
@@ -1683,10 +1687,10 @@ async fn an_upstream_500_or_503_reaches_the_client_as_a_502_and_keeps_the_slot()
         .await;
         let rows = row_count(&pool, &buyer).await;
         cleanup_user(&pool, &buyer).await;
-        assert_eq!(status, 502, "upstream {upstream_status}: {text}");
+        assert_eq!(status, upstream_status, "{text}");
         assert_eq!(
             text, UPSTREAM_BODY,
-            "the body reaches the client byte-for-byte"
+            "the body passes through byte-for-byte, unmarked"
         );
         assert_eq!(
             rows, 1,
@@ -2313,6 +2317,7 @@ async fn a_send_the_node_took_but_whose_answer_was_lost_is_never_a_refusal() {
     assert_eq!(status, 504, "{body}");
     assert_eq!(body["ok"], false, "{body}");
     assert!(body.get("txHash").is_none(), "{body}");
+    assert!(body.get("not_sent").is_none(), "{body}");
     assert_eq!(rows, 1, "the reservation still counts against the quota");
     assert_eq!(hash, None, "no hash was observed");
 }
@@ -2332,6 +2337,7 @@ async fn an_error_answered_to_the_send_is_never_a_refusal() {
     assert_eq!(sent, 1, "the node holds the transaction");
     assert_eq!(status, 504, "{body}");
     assert_eq!(body["ok"], false, "{body}");
+    assert!(body.get("not_sent").is_none(), "{body}");
     assert_eq!(rows, 1, "the reservation still counts against the quota");
 }
 
@@ -2349,6 +2355,7 @@ async fn a_refusal_before_any_send_is_still_a_4xx_that_frees_the_slot() {
     assert_eq!(sent, 0, "nothing reached the node");
     assert_eq!(status, 400, "{body}");
     assert_eq!(body["ok"], false, "{body}");
+    assert_eq!(body["not_sent"], true, "{body}");
     assert_eq!(rows, 0, "the slot is released");
 }
 
