@@ -84,7 +84,7 @@ impl MediaRetry {
 /// A source's reopen state.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct MediaRetryStatus {
-    /// Reopens since the source last played for [`HEALTHY_PLAYBACK`].
+    /// Reopens since the source last played for `HEALTHY_PLAYBACK` (5 s).
     pub attempt: u32,
     /// Failures counted since the source was created.
     pub failures: u32,
