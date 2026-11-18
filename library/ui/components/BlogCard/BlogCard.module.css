@@ -59,6 +59,7 @@
 .link::after {
   content: '';
   position: absolute;
+  z-index: 1;
   inset: 0;
   border-radius: var(--blog-card-radius);
 }
