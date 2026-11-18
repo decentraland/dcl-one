@@ -75,9 +75,9 @@ fn pause_hidden_avatar_animation(
         let visible = match (processed.is_added(), visibility) {
             (true, Some(Visibility::Hidden)) => false,
             (true, Some(Visibility::Visible)) => true,
-            (true, Some(Visibility::Inherited)) => roots
-                .get(avatar)
-                .map_or(inherited.get(), |root| root.get()),
+            (true, Some(Visibility::Inherited)) => {
+                roots.get(avatar).map_or(inherited.get(), |root| root.get())
+            }
             _ => inherited.get(),
         };
         let paused = paused.get(avatar).ok();
