@@ -567,6 +567,17 @@ describe('map navigation', () => {
     expect(navigation.getSnapshot()).toBeNull()
   })
 
+  it('ends the route to a one-parcel place whose base is elsewhere, as the place detail does', async () => {
+    serve({ search: [{ ...CLUB, base_position: '-21,60' }] })
+    renderMap()
+    await search('club')
+    await userEvent.click(await within(panel()).findByRole('button', { name: /Sugar Club/ }))
+    await userEvent.click(await within(panel()).findByRole('button', { name: 'start navigation' }))
+    expect(navigation.getSnapshot()?.parcel).toEqual({ x: -20, y: 60 })
+    await userEvent.click(within(panel()).getByRole('button', { name: 'JUMP IN' }))
+    expect(navigation.getSnapshot()).toBeNull()
+  })
+
   it("keeps the search and the route in the lobby's modal when the startup lobby refuses the jump", async () => {
     serve({ search: [CLUB] })
     const onTravel = vi.fn()

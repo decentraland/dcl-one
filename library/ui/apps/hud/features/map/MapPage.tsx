@@ -159,7 +159,7 @@ export function MapPage({
       go(() => map.changeRealm(realm), () => nav.clearInput())
     } else {
       if (target == null) return
-      const routeEnds = destination != null && base != null && destination.parcel.x === base.x && destination.parcel.y === base.y
+      const routeEnds = isRouteTo(destination, place)
       go(
         () => map.teleportToPlace(target.x, target.y),
         () => {

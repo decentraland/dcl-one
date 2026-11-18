@@ -235,7 +235,7 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
     )
   }
 
-  const home = useMemo(() => homeOf(session.map.home), [session.map.home])
+  const home = homeOf(session.homeScene())
   const isHome = isPlacePanelHome(home, place, null)
   const setHome = (): void => {
     if (isHome) return

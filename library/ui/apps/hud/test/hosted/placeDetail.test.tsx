@@ -34,14 +34,16 @@ const PLAZA: DetailPlace = {
 }
 const WORLD: DetailPlace = { ...PLAZA, id: 'w', title: 'Party World', world: true, world_name: 'party.dcl.eth', live: false }
 
-function show(session: EngineSession, place: DetailPlace, onJumpIn = vi.fn(() => true)): void {
-  render(
-    <SessionProvider value={session}>
+function show(session: EngineSession, place: DetailPlace, onJumpIn = vi.fn(() => true)): (next: EngineSession) => void {
+  const tree = (s: EngineSession) => (
+    <SessionProvider value={s}>
       <PopupHost />
       <ToastHost />
     </SessionProvider>
   )
+  const { rerender } = render(tree(session))
   act(() => openPlaceDetail({ place, onJumpIn }))
+  return (next) => rerender(tree(next))
 }
 
 afterEach(() => {
@@ -120,16 +122,18 @@ describe('place detail', () => {
 
   it("makes the place home by its base parcel", () => {
     const session = fakeSession()
-    show(session, PLAZA)
+    const update = show(session, PLAZA)
     const home = screen.getByRole('button', { name: 'Set as Home' })
     expect(home).toHaveAttribute('aria-pressed', 'false')
     fireEvent.click(home)
     expect(session.map.setHome).toHaveBeenCalledWith(DEFAULT_REALM, { x: 0, y: 0 })
+    update({ ...session, homeScene: () => ({ realm: null, parcel: '0,0' }) })
+    expect(screen.getByRole('button', { name: 'Set as Home' })).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('shows home pressed when any parcel of the place is home, and sets nothing then', () => {
+  it('shows home pressed when any parcel of the place is home, known before the engine answers, and sets nothing then', () => {
     const session = fakeSession()
-    session.map.home = { realm: null, parcel: '1,0' }
+    session.homeScene = () => ({ realm: null, parcel: '1,0' })
     show(session, PLAZA)
     const home = screen.getByRole('button', { name: 'Set as Home' })
     expect(home).toHaveAttribute('aria-pressed', 'true')
