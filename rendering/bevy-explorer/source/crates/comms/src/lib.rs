@@ -38,7 +38,7 @@ use std::marker::PhantomData;
 
 use alloy_core::primitives::Address;
 use bevy::{ecs::system::SystemParam, prelude::*};
-use common::structs::{ClientWindowFocus, CurrentRealm, EmoteMask, MicState, WorldHold};
+use common::structs::{CurrentRealm, EmoteMask, MicState, WorldHold};
 use preview::PreviewPlugin;
 use serde::Serialize;
 use signed_login::{SignedLoginPlugin, StartSignedLogin};
@@ -132,7 +132,6 @@ impl Plugin for CommsPlugin {
             voice_chat::VoiceChatPlugin,
         ));
         app.init_resource::<MicState>()
-            .insert_resource(ClientWindowFocus::Focused)
             .init_resource::<global_crdt::NearbyPanning>();
 
         // Pulse movement transport. Inert until a `pulse::plugin::PulseConfig` resource is

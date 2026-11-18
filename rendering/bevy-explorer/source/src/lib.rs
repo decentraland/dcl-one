@@ -2,6 +2,7 @@
 // the headless binary takes the same launch options
 pub mod automation;
 mod autopilot;
+mod client_window_focus;
 mod commands;
 mod debug_panel;
 mod deep_link;
@@ -45,8 +46,6 @@ use bevy::{
 use build_time::build_time_utc;
 use camera_reel::CameraReelPlugin;
 use collectibles::CollectiblesPlugin;
-#[cfg(not(target_arch = "wasm32"))]
-use common::structs::ClientWindowFocus;
 use common::{
     inputs::InputMap,
     sets::SetupSets,
@@ -784,6 +783,7 @@ impl DecentralandApp {
         // debug panel section; with the `performance-profiler` feature, the scope profiler, Bevy's
         // per-pass render timings (not in a `tracy` build, whose GPU context they would double)
         // and its system information on Windows and Linux
+        app.add_plugins(client_window_focus::ClientWindowFocusPlugin);
         app.add_plugins(perf::PerformanceMonitoringPlugin);
         #[cfg(all(
             feature = "performance-profiler",
@@ -798,12 +798,6 @@ impl DecentralandApp {
         app.configure_sets(Startup, SetupSets::Init.before(SetupSets::Main));
         app.add_systems(Startup, setup.in_set(SetupSets::Init));
         app.add_systems(Startup, save_fresh_user_id);
-        #[cfg(not(target_arch = "wasm32"))]
-        app.add_systems(
-            First,
-            update_client_window_focus_system
-                .before(perf::frame_inputs::collect_frame_inputs_system),
-        );
 
         // Commands
         app.add_console_command::<ChangeLocationCommand, _>(change_location);
@@ -816,17 +810,6 @@ impl DecentralandApp {
         app.add_plugins(debug_panel::MemoryDebugPanelPlugin);
 
         app
-    }
-}
-
-/// Copies the primary window's focus into [`ClientWindowFocus`].
-#[cfg(not(target_arch = "wasm32"))]
-fn update_client_window_focus_system(
-    window: Query<&Window, With<bevy::window::PrimaryWindow>>,
-    mut focus: ResMut<ClientWindowFocus>,
-) {
-    if let Ok(window) = window.single() {
-        focus.set_if_neq(ClientWindowFocus::from_window(window));
     }
 }
 

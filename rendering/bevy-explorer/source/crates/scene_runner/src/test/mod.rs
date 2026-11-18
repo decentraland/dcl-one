@@ -40,7 +40,7 @@ use common::{
     rpc::RpcCallEvent,
     sets::RealmLifecycle,
     structs::{
-        AppConfig, CurrentRealm, CursorLocks, GraphicsSettings, PermissionUsed, PreviewMode,
+        AppConfig, ClientWindowFocus, CurrentRealm, CursorLocks, GraphicsSettings, PermissionUsed, PreviewMode,
         PrimaryCamera, PrimaryPlayerRes, SceneGlobalLight, SceneLoadDistance, ServerConfiguration,
         TimeOfDay, ToolTips,
     },
@@ -121,6 +121,7 @@ fn init_test_app(entity_json: &str) -> App {
     let mut app = App::new();
 
     // Add our systems
+    app.insert_resource(ClientWindowFocus::Focused);
     app.insert_resource(AppConfig {
         graphics: GraphicsSettings {
             fps_target: 0,

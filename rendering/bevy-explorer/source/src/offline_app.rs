@@ -101,6 +101,7 @@ pub fn offline_app(config: AppConfig, realm: &str, content_server: String) -> Ap
         })
         .add_plugins(SceneBoundPlugin)
         .add_plugins(SceneRunnerPlugin)
+        .add_plugins(crate::client_window_focus::ClientWindowFocusPlugin)
         .add_plugins(CommsPlugin)
         .add_plugins(RestrictedActionsPlugin)
         .add_plugins(DclImposterPlugin {

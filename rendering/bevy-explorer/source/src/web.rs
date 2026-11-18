@@ -12,8 +12,8 @@ use common::{
     perf::{HudMainThreadCostDataPoint, LongAnimationFrameSums, ReactCommitSums},
     rpc::RpcResultSender,
     structs::{
-        AppConfig, ClientWindowFocus, CurrentRealm, EditorMode, PreviewMode, PrimaryUser,
-        SessionGraphics, StartupScenes, WorldHold,
+        AppConfig, CurrentRealm, EditorMode, PreviewMode, PrimaryUser, SessionGraphics,
+        StartupScenes, WorldHold,
     },
     util::JsThread,
 };
@@ -643,11 +643,6 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
     app.add_systems(Update, update_winit_fps)
         .add_systems(Update, update_url_params)
         .add_systems(Update, update_text_focus)
-        .add_systems(
-            First,
-            update_client_window_focus_system
-                .before(crate::perf::frame_inputs::collect_frame_inputs_system),
-        )
         .add_systems(Last, engine_heartbeat_system);
     if perf_output::stream::started() {
         app.add_systems(Update, perf_stream_drain)
@@ -830,11 +825,9 @@ fn engine_heartbeat_system(_js: JsThread) {
     engine_heartbeat();
 }
 
-/// Copies the page's focus into [`ClientWindowFocus`].
-fn update_client_window_focus_system(mut focus: ResMut<ClientWindowFocus>) {
-    focus.set_if_neq(ClientWindowFocus::from_page_focus(
-        PAGE_HAS_FOCUS.load(Ordering::Relaxed),
-    ));
+/// The value `engine_set_page_focus` last stored.
+pub(crate) fn page_has_focus() -> bool {
+    PAGE_HAS_FOCUS.load(Ordering::Relaxed)
 }
 
 /// The value `engine_set_viewport_active` last stored.
