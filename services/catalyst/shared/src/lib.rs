@@ -1,7 +1,8 @@
 //! Vocabulary every domain shares: signed-fetch verification, identities,
-//! the dRPC framework, LiveKit tokens, write gates, the descriptive-data
-//! `as_of` rule, the audit writer, caches and HTTP/upstream helpers. It
-//! sits below the domains and uses only the leaf crates.
+//! the dRPC framework, LiveKit tokens, the message router's token contract,
+//! write gates, the descriptive-data `as_of` rule, the audit writer, caches
+//! and HTTP/upstream helpers. It sits below the domains and uses only the
+//! leaf crates.
 
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use dcl_auth as auth;
@@ -23,6 +24,7 @@ pub mod js;
 pub mod limits;
 pub mod livekit;
 pub mod markup;
+pub mod message_router;
 pub mod notifications;
 pub mod nul_guard;
 pub mod openapi;

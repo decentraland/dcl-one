@@ -484,6 +484,10 @@ pub(super) async fn comms_states(
     .with_max_users_per_world(config.worlds.max_users_per_world)
     .with_shared_secret_max_attempts(config.worlds.shared_secret_max_attempts_per_minute)
     .with_room_authority_key(non_empty(&config.room_authority.pulse_room_authority_key).as_deref())?
+    .with_message_router_key(
+        non_empty(&config.message_router.message_router_key).as_deref(),
+        &config.message_router.message_router_identity_prefix,
+    )?
     .with_room_event_sink(room_events);
     let gatekeeper = match room_event_store {
         Some(store) => gatekeeper.with_room_event_store(store),
