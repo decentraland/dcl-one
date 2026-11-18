@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   EventCard,
   EventCardAction,
@@ -9,13 +9,13 @@ import { JumpInCTA } from '../../../components/JumpInCTA/JumpInCTA'
 import { PlaceCard } from '../../../components/PlaceCard/PlaceCard'
 import {
   GeneralAddToCalendar,
-  GeneralBell,
   GeneralCopy,
   GeneralReminderOff,
   GeneralReminderOn,
   MenusShare
 } from '../../../foundations/icons'
 import dclLogo from '../assets/dcl-logo.svg'
+import styles from './cards.module.css'
 import type {
   DayListCardProps,
   EventCardCreator,
@@ -78,14 +78,24 @@ type ActionProps = { title: string; remind?: RemindControl; calendarHref?: strin
  */
 function useCopyLink(href: string) {
   const [status, setStatus] = useState('')
+  const attempt = useRef(0)
+  useEffect(() => {
+    if (status !== 'Copied') return
+    const timer = setTimeout(() => setStatus(''), 2000)
+    return () => clearTimeout(timer)
+  }, [status])
+
   const copy = async () => {
+    const current = ++attempt.current
+    setStatus('')
+    let message: string
     try {
-      if (!navigator.clipboard) throw new Error('Clipboard unavailable')
       await navigator.clipboard.writeText(new URL(href, window.location.href).href)
-      setStatus('Link copied.')
+      message = 'Copied'
     } catch {
-      setStatus("Couldn't copy the link. Try again.")
+      message = "Couldn't copy the link. Try again."
     }
+    if (current === attempt.current) setStatus(message)
   }
   return { status, copy }
 }
@@ -111,7 +121,8 @@ function EventActions({
 }) {
   const small = size === 'small'
   const glyph = small ? 24 : 20
-  const Reminder = small ? (remind?.active ? GeneralReminderOn : GeneralReminderOff) : GeneralBell
+  const [requestedReminder, setRequestedReminder] = useState(false)
+  const Reminder = remind?.active ? GeneralReminderOn : GeneralReminderOff
   const Share = small ? MenusShare : GeneralCopy
   const share = (
     <EventCardAction
@@ -141,9 +152,18 @@ function EventActions({
           aria-label={`Remind me: ${title}`}
           aria-pressed={remind.active}
           disabled={remind.pending}
-          icon={<Reminder size={glyph} aria-hidden="true" />}
+          icon={
+            <Reminder
+              size={glyph}
+              className={requestedReminder && remind.active ? styles.reminderShake : undefined}
+              aria-hidden="true"
+            />
+          }
           label={small ? undefined : 'Remind me'}
-          onClick={remind.onToggle}
+          onClick={() => {
+            setRequestedReminder(!remind.active)
+            remind.onToggle()
+          }}
         />
       ) : null}
       {calendarHref ? (
@@ -203,11 +223,12 @@ function UpcomingCard({
         />
       }
       announcement={status}
+      showAnnouncement
     />
   )
 }
 
-/** A card in an All Events day column: a live event shows its badges, a later one its time and actions. */
+/** A card in an All Events day column, with actions matched to the event state. */
 function DayCard({
   title,
   image,
@@ -219,7 +240,8 @@ function DayCard({
   live,
   time,
   remind,
-  calendarHref
+  calendarHref,
+  jumpIn
 }: ExperienceCardProps) {
   const { status, copy } = useCopyLink(href)
   return (
@@ -236,17 +258,18 @@ function DayCard({
       playersLabel={live ? usersLabel : undefined}
       time={live ? undefined : time}
       actions={
-        live ? undefined : (
-          <EventActions
-            size="day"
-            title={title}
-            remind={remind}
-            calendarHref={calendarHref}
-            onCopy={() => void copy()}
-          />
-        )
+        <EventActions
+          size="day"
+          title={title}
+          live={live}
+          jumpIn={jumpIn}
+          remind={remind}
+          calendarHref={calendarHref}
+          onCopy={() => void copy()}
+        />
       }
-      announcement={live ? undefined : status}
+      announcement={status}
+      showAnnouncement
     />
   )
 }

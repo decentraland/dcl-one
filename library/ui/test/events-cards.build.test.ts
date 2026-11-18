@@ -36,7 +36,7 @@ beforeAll(async () => {
     response.end(
       await server.transformIndexHtml(
         '/',
-        '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;background:#21102f}main{margin:0 auto;padding:0 32px;max-width:1280px}[data-day],[data-live-small]{width:300px}</style><div id="root"></div><script type="module" src="/test/consumer/events-cards-browser.tsx"></script>'
+        '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;background:#21102f}main{margin:0 auto;padding:0 32px;max-width:1280px}[data-day],[data-live-day],[data-live-small],[data-calendar]{width:300px}</style><div id="root"></div><script type="module" src="/test/consumer/events-cards-browser.tsx"></script>'
       )
     )
   })
@@ -68,7 +68,7 @@ beforeEach(async () => {
   })
   await session.navigate(server.resolvedUrls!.local[0]!)
   await evaluate(
-    `(async()=>{for(let n=0;n<100 && (document.querySelectorAll('article').length!==4||document.querySelectorAll('[class*="liveCard"]').length!==2);n++)await new Promise(r=>setTimeout(r,100));await document.fonts.ready})()`
+    `(async()=>{for(let n=0;n<100 && (document.querySelectorAll('article').length!==13||document.querySelectorAll('[class*="liveCard"]').length!==2);n++)await new Promise(r=>setTimeout(r,100));await document.fonts.ready})()`
   )
   await evaluate(`document.activeElement?.blur();scrollTo(0,0)`)
   await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
@@ -156,6 +156,250 @@ describe('when Events cards reveal their controls', () => {
     ).toBe('1')
     expect((await rect(selector)).height).toBeCloseTo(before.height, 1)
   })
+  describe('when a live event is in the desktop day column', () => {
+    it('should grow only the cover on hover and keep Jump In visible at rest', async () => {
+      const card = '[data-live-day] article'
+      const cover = card + ' [class*="media"]'
+      const before = await rect(card)
+      const mediaBefore = await rect(cover)
+      await hover(card)
+      const after = await rect(card)
+      expect(after.width).toBe(before.width)
+      expect((await rect(cover)).height).toBeGreaterThan(mediaBefore.height)
+      expect(await evaluate(`getComputedStyle(document.querySelector('${card}')).boxShadow`)).toBe(
+        'none'
+      )
+      await evaluate(`document.querySelector('${card}').scrollIntoView({block:"center"})`)
+      await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
+      expect(
+        await evaluate(`(() => {
+          const link = document.querySelector('${card} a[href^="/play"]')
+          const r = link.getBoundingClientRect()
+          return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest('a') === link
+        })()`)
+      ).toBe(true)
+    })
+  })
+
+  describe('when All Events cards sit inside a scrolling day column', () => {
+    const column = '[data-calendar] ul[aria-label="Events for Today"]'
+    const live = column + ' li:first-child article'
+    const future = column + ' li:nth-child(2) article'
+
+    it('should keep the live accent and hover stable when the first cover expands above a stationary pointer', async () => {
+      await evaluate(`document.querySelector('${column}').scrollIntoView({block:'center'})`)
+      const box = await rect(live)
+      const cover = live + ' [class*="media"]'
+      const initial = (await rect(cover)).height
+      await session.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x: box.x + box.width / 2,
+        y: box.y + initial / 2
+      })
+      const result = await evaluate<{
+        heights: number[]
+        accent: string
+        shadow: string
+      }>(`(async () => {
+        const card = document.querySelector('${live}')
+        const cover = document.querySelector('${cover}')
+        const heights = []
+        for (let i = 0; i < 8; i++) {
+          await new Promise(resolve => setTimeout(resolve, 55))
+          heights.push(cover.getBoundingClientRect().height)
+        }
+        return { heights, accent: getComputedStyle(card, '::before').width, shadow: getComputedStyle(card).boxShadow }
+      })()`)
+      expect(result.accent).toBe('5px')
+      expect(result.shadow).toBe('none')
+      expect(result.heights.at(-1)).toBeGreaterThan(initial)
+      expect(result.heights.at(-1)).toBe(result.heights.at(-2))
+      expect(
+        result.heights.every((height, index) => index === 0 || height >= result.heights[index - 1]!)
+      ).toBe(true)
+      expect((await rect(live)).x).toBe(box.x)
+    })
+
+    it('should keep the future hover highlight inset with the card partly clipped by the column', async () => {
+      await evaluate(`(() => {
+        const column = document.querySelector('${column}')
+        column.scrollIntoView({block:'center'})
+        const card = document.querySelector('${future}')
+        column.scrollTop = card.getBoundingClientRect().top - column.getBoundingClientRect().top + 12
+      })()`)
+      const before = await rect(future)
+      const bounds = await rect(column)
+      expect(before.y).toBeLessThan(bounds.y)
+      await session.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x: before.x + before.width / 2,
+        y: bounds.y + 20
+      })
+      await evaluate(`new Promise(resolve => setTimeout(resolve, 250))`)
+      expect(await rect(future)).toEqual(before)
+      expect(
+        await evaluate(`getComputedStyle(document.querySelector('${future}')).boxShadow`)
+      ).toContain('inset')
+      expect(
+        await evaluate(`getComputedStyle(document.querySelector('${column}')).overflowY`)
+      ).toBe('auto')
+    })
+
+    it.each(['hover', 'keyboard focus'])(
+      'should fit the reminder label before the calendar action on %s',
+      async (interaction) => {
+        if (interaction === 'hover') {
+          await hover(future)
+        } else {
+          await evaluate(`document.querySelector('${future} h3 a').focus()`)
+          for (let i = 0; i < 2; i++) {
+            await session.send('Input.dispatchKeyEvent', {
+              type: 'rawKeyDown',
+              key: 'Tab',
+              code: 'Tab'
+            })
+            await session.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab' })
+          }
+          expect(await evaluate(`document.activeElement.getAttribute('aria-label')`)).toBe(
+            'Remind me: Future event 1'
+          )
+        }
+
+        const layout = await evaluate(`(async () => {
+          const card = document.querySelector('${future}')
+          const button = card.querySelector('button[aria-label^="Remind me:"]')
+          const row = button.parentElement
+          await Promise.all(row.getAnimations().map(animation => animation.finished))
+          const label = button.lastElementChild.getBoundingClientRect()
+          const bounds = button.getBoundingClientRect()
+          const calendar = card.querySelector('a[aria-label^="Add to calendar:"]').getBoundingClientRect()
+          return {
+            visible: getComputedStyle(row).opacity === '1',
+            fitsButton: label.left >= bounds.left && label.right <= bounds.right,
+            beforeCalendar: label.right <= calendar.left
+          }
+        })()`)
+        expect(layout).toEqual({ visible: true, fitsButton: true, beforeCalendar: true })
+      }
+    )
+
+    it('should reach the live card and Jump In by keyboard with a visible focus outline', async () => {
+      const cardLink = live + ' h3 a'
+      await evaluate(`document.querySelector('${cardLink}').focus()`)
+      await session.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Tab', code: 'Tab' })
+      await session.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab' })
+      await session.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Tab', code: 'Tab' })
+      await session.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab' })
+      expect(await evaluate(`document.activeElement.getAttribute('href')`)).toBe(
+        '/play?realm=gallery.dcl.eth'
+      )
+      expect(await evaluate(`getComputedStyle(document.activeElement).outlineStyle`)).not.toBe(
+        'none'
+      )
+    })
+    it('should skip the cover transition with reduced motion enabled', async () => {
+      await session.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-reduced-motion', value: 'reduce' }]
+      })
+      try {
+        await hover(live)
+        const cover = live + ' [class*="media"]'
+        expect(
+          await evaluate(`getComputedStyle(document.querySelector('${cover}')).transitionDuration`)
+        ).toBe('0s')
+      } finally {
+        await session.send('Emulation.setEmulatedMedia', { features: [] })
+      }
+    })
+
+    it('should use the existing live small card and accessible Jump In at 390px on touch', async () => {
+      await session.send('Emulation.setDeviceMetricsOverride', {
+        width: 390,
+        height: 900,
+        deviceScaleFactor: 1,
+        mobile: true
+      })
+      await session.send('Emulation.setTouchEmulationEnabled', { enabled: true })
+      await session.navigate(server.resolvedUrls!.local[0]!)
+      const state = await evaluate(`(async () => {
+        for (let i = 0; i < 100 && !document.querySelector('${live}'); i++) await new Promise(resolve => setTimeout(resolve, 25))
+        const card = document.querySelector('${live}')
+        const image = card.querySelector('[class*="media"]').getBoundingClientRect()
+        const launch = card.querySelector('a[href^="/play"]')
+        return {
+          small: card.className.includes('small'),
+          hover: matchMedia('(hover: hover)').matches,
+          media: [image.width, image.height],
+          action: launch.getAttribute('href'),
+          visible: launch.getBoundingClientRect().width > 0 && launch.getBoundingClientRect().height > 0
+        }
+      })()`)
+      expect(state).toEqual({
+        small: true,
+        hover: false,
+        media: [135, 135],
+        action: '/play?realm=gallery.dcl.eth',
+        visible: true
+      })
+    })
+  })
+
+  describe('when the card link is copied', () => {
+    it('should visibly announce success and let the user retry after a denial', async () => {
+      await hover('[data-day] article')
+      expect(
+        await evaluate(`(async () => {
+          const card = document.querySelector('[data-day] article')
+          const copy = card.querySelector('button[aria-label^="Copy link"]')
+          const notice = card.querySelector('[role="status"]')
+          let url
+          Object.defineProperty(navigator, 'clipboard', {
+            configurable: true,
+            value: { writeText: async (text) => { url = text; throw new DOMException('Denied', 'NotAllowedError') } }
+          })
+          copy.click()
+          await new Promise(requestAnimationFrame)
+          const failure = notice.textContent
+          navigator.clipboard.writeText = async (text) => { url = text }
+          copy.click()
+          await new Promise(requestAnimationFrame)
+          return { failure, url: new URL(url).pathname + new URL(url).search, success: notice.textContent, visible: notice.getBoundingClientRect().height > 1 }
+        })()`)
+      ).toEqual({
+        failure: "Couldn't copy the link. Try again.",
+        url: '/events?id=event',
+        success: 'Copied',
+        visible: true
+      })
+    })
+  })
+
+  describe('when activating an event reminder', () => {
+    it.each([
+      ['no-preference', true],
+      ['reduce', false]
+    ])('should respect prefers-reduced-motion: %s', async (value, animated) => {
+      await session.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-reduced-motion', value }]
+      })
+      try {
+        await hover('[data-day] article')
+        expect(
+          await evaluate(`(() => {
+            const button = document.querySelector('[data-day] button[aria-pressed]')
+            button.click()
+            return new Promise(resolve => requestAnimationFrame(() => resolve({
+              pressed: button.getAttribute('aria-pressed'),
+              animated: button.querySelector('svg').getAnimations().length > 0
+            })))
+          })()`)
+        ).toEqual({ pressed: 'true', animated })
+      } finally {
+        await session.send('Emulation.setEmulatedMedia', { features: [] })
+      }
+    })
+  })
+
   it('should fold the host and open the small card controls under the time without resizing it', async () => {
     await evaluate(`document.activeElement?.blur()`)
     expect(await evaluate(`matchMedia('(hover: hover)').matches`)).toBe(true)

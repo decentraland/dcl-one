@@ -307,9 +307,9 @@ const mediaOf = (query: string): string => {
 describe('EventCard motion', () => {
   const hover = mediaOf('(hover: hover) and (min-width: 768px)')
 
-  it('lifts and lights the card over 200ms on hover and keyboard focus', () => {
+  it('lifts and lights the small card over 200ms on hover and keyboard focus', () => {
     expect(blockOf(css, '.card')).toMatch(/transition:\s*transform 200ms,\s*box-shadow 200ms/)
-    const lifted = blockOf(hover, '.card:hover,\n    .card:focus-within')
+    const lifted = blockOf(hover, '.small:hover,\n    .small:focus-within')
     expect(lifted).toContain('transform: translateY(-4px)')
     expect(lifted).toContain('box-shadow: 0 2px 12px 12px')
   })
@@ -319,7 +319,7 @@ describe('EventCard motion', () => {
     expect(blockOf(hover, '.day.hasActions:hover .time,\n    .day.hasActions:focus-within .time')).toContain(
       'opacity: 0'
     )
-    const rest = blockOf(hover, '.day.hasActions .actions')
+    const rest = blockOf(hover, '.day.hasActions:not(.isLive) .actions')
     expect(rest).toContain('opacity: 0')
     expect(rest).toContain('transform: translateY(8px)')
     expect(rest).toMatch(/transition:\s*opacity 200ms,\s*transform 200ms/)
@@ -330,7 +330,7 @@ describe('EventCard motion', () => {
 
   it('hides the waiting actions without removing them, so they stay in the accessibility tree', () => {
     expect(hover).not.toMatch(/visibility:\s*hidden|display:\s*none/)
-    expect(blockOf(hover, '.day.hasActions .action')).toContain('pointer-events: none')
+    expect(blockOf(hover, '.day.hasActions:not(.isLive) .action')).toContain('pointer-events: none')
     expect(blockOf(hover, '.day.hasActions:hover .action,\n    .day.hasActions:focus-within .action')).toContain(
       'pointer-events: auto'
     )

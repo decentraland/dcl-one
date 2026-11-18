@@ -76,7 +76,7 @@ export default function Events({ loaderData }: Route.ComponentProps) {
   if (params.get(TAB_PARAM) === "my") return <EventManagement mode="mine" />;
   return (
     <HydrationBoundary state={loaderData?.dehydratedState ?? undefined}>
-      <SitesChrome active="whatson">
+      <SitesChrome active="whatson" headerSurface="overlay" overlayNav>
         <EventsView
           sid={first.sid}
           platform={first.platform}

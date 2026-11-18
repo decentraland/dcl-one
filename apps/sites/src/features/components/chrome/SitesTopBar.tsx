@@ -89,6 +89,7 @@ export default function SitesTopBar({
   active,
   signedIn,
   account,
+  transparent,
   onSignIn,
   onSignOut,
   signInHref = "/shop/my-items",
@@ -238,6 +239,7 @@ export default function SitesTopBar({
         aria-label="Decentraland"
         className={styles.root}
         data-landing={landing || undefined}
+        data-transparent={(transparent && !landing) || undefined}
         data-bare={bare || undefined}
         style={
           avatarColor
