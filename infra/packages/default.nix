@@ -5,7 +5,15 @@ let
   scene-cli = import ./scene-cli.nix { inherit pkgs craneLib; };
   playWeb = pkgs.callPackage ./play.nix { };
   sites = pkgs.callPackage ./sites.nix { inherit playWeb; };
-  gateway = pkgs.callPackage ../gateway/package.nix { };
+  # nginx 1.30.7 (stable), ahead of the flake's nixpkgs pin, which carries 1.30.6.
+  nginx = pkgs.nginx.overrideAttrs (_: rec {
+    version = "1.30.7";
+    src = pkgs.fetchurl {
+      url = "https://nginx.org/download/nginx-${version}.tar.gz";
+      hash = "sha256-JWW1yDcFDpWPcPsPc8SOK8pFQq00n9NW9G+wxyYQvG4=";
+    };
+  });
+  gateway = pkgs.callPackage ../gateway/package.nix { inherit nginx; };
 in {
   inherit catalyst cast-bot scene-cli sites gateway;
   catalyst-deps = catalyst.cargoArtifacts;
@@ -19,4 +27,4 @@ in {
     paths = [ pkgs.skopeo pkgs.jq pkgs.python3 pkgs.curl ];
   };
 } // import ./tools.nix { inherit pkgs; }
-  // import ../containers/images.nix { inherit pkgs catalyst cast-bot sites gateway revision; }
+  // import ../containers/images.nix { inherit pkgs catalyst cast-bot sites gateway nginx revision; }
