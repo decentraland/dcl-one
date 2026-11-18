@@ -41,17 +41,18 @@ for suite in "${suites[@]}"; do
       python3 tooling/dev-regressions.py
       cargo check --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --all-features --all-targets
       cargo test --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --lib
-      # The provisioned tests wait on timers and use little CPU, so they run beside the broad run.
-      provisioned_log="$(mktemp)"
-      python3 tooling/dev-regressions.py --archipelago-external > "$provisioned_log" 2>&1 &
+      # The provisioned tests wait on timers and use little CPU, so they run beside the broad run. Their
+      # output streams with a prefix, and leaving the step early (Ctrl-C, a failure) stops them.
+      python3 tooling/dev-regressions.py --archipelago-external > >(sed -u 's/^/[provisioned] /') 2>&1 &
       provisioned=$!
+      trap 'pkill -P "$provisioned" 2>/dev/null; kill "$provisioned" 2>/dev/null; foundation-dev down' EXIT
       broad=0
       make -C "$FOUNDATION_DEV_ROOT" catalyst-test || broad=$?
       external=0
       wait "$provisioned" || external=$?
-      cat "$provisioned_log"
-      rm -f "$provisioned_log"
+      trap 'foundation-dev down' EXIT
       [ "$external" -eq 0 ] || echo "dev-test: the provisioned Archipelago tests failed with status $external"
+      [ "$external" -eq 0 ] || [ "${GITHUB_ACTIONS:-}" != true ] || echo "::error title=Provisioned Archipelago tests failed::status $external"
       [ "$broad" -eq 0 ] || exit "$broad"
       [ "$external" -eq 0 ] || exit "$external" ;;
     e2e) SITES_E2E_NODE_URL="$FOUNDATION_DEV_API_URL" SITES_E2E_PG_URL="$FOUNDATION_DEV_DATABASE_URL" \

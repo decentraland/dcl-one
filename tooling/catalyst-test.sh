@@ -73,12 +73,17 @@ time = lambda row: recorded.get((row[0], row[1]))
 socket = lambda row: re.search("/sockets_[^/]*$", row[2]) is not None
 group = lambda row: re.match("tests/(node|sockets)_", row[0]) and row[0].split("_")[0]
 order = lambda shard: sorted(shard, key=lambda row: (time(row) is not None, -(time(row) or 0)))
+SLOTS = 4  # binaries at once on the 4-core Linux runners, which bound the job
 def cost(shard):
-    slots = [0] * 4
+    slots = [0] * SLOTS
     for row in order(shard):
         if not socket(row):
             heapq.heappush(slots, heapq.heappop(slots) + (time(row) or 0))
     return max(slots) + sum(time(row) or 0 for row in shard if socket(row))
+missing = sorted(row[0] for row in rows if time(row) is None)
+if missing:
+    print("catalyst-test: no recorded time, cut round-robin (refresh tooling/catalyst-test-durations.tsv): "
+          + " ".join(missing), file=sys.stderr)
 shards = [[] for _ in range(total)]
 for number, row in enumerate(rows):
     if time(row) is None:

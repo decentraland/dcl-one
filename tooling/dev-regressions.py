@@ -20,16 +20,16 @@ EXTERNAL_COMMAND = "python3 tooling/dev-regressions.py --archipelago-external"
 RUNTIME = 'make -C "$FOUNDATION_DEV_ROOT" catalyst-test || broad=$?'
 # The provisioned tests run beside the broad runtime; the step waits for both and fails if either does.
 CONCURRENT = [
-    'provisioned_log="$(mktemp)"',
-    EXTERNAL_COMMAND + ' > "$provisioned_log" 2>&1 &',
+    EXTERNAL_COMMAND + " > >(sed -u 's/^/[provisioned] /') 2>&1 &",
     'provisioned=$!',
+    'trap \'pkill -P "$provisioned" 2>/dev/null; kill "$provisioned" 2>/dev/null; foundation-dev down\' EXIT',
     'broad=0',
     RUNTIME,
     'external=0',
     'wait "$provisioned" || external=$?',
-    'cat "$provisioned_log"',
-    'rm -f "$provisioned_log"',
+    "trap 'foundation-dev down' EXIT",
     '[ "$external" -eq 0 ] || echo "dev-test: the provisioned Archipelago tests failed with status $external"',
+    '[ "$external" -eq 0 ] || [ "${GITHUB_ACTIONS:-}" != true ] || echo "::error title=Provisioned Archipelago tests failed::status $external"',
     '[ "$broad" -eq 0 ] || exit "$broad"',
     '[ "$external" -eq 0 ] || exit "$external" ;;',
 ]

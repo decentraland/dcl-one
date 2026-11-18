@@ -685,8 +685,8 @@ class InventoryTests(unittest.TestCase):
                     script.replace(guard.RUNTIME, 'make -C "$FOUNDATION_DEV_ROOT" catalyst-test &'),
                     script.replace('wait "$provisioned" || external=$?', 'wait "$provisioned" || true'),
                     script.replace('      [ "$external" -eq 0 ] || exit "$external" ;;', '      ;;'),
-                    script.replace(guard.EXTERNAL_COMMAND + ' > "$provisioned_log" 2>&1 &', guard.EXTERNAL_COMMAND + ' > /dev/null 2>&1 &'),
-                    script.replace('      cat "$provisioned_log"\n', ''),
+                    script.replace(guard.EXTERNAL_COMMAND + " > >(sed -u 's/^/[provisioned] /') 2>&1 &", guard.EXTERNAL_COMMAND + ' > /dev/null 2>&1 &'),
+                    script.replace('      trap \'pkill -P "$provisioned" 2>/dev/null; kill "$provisioned" 2>/dev/null; foundation-dev down\' EXIT\n', ''),
                     script + '\nmake -C "$FOUNDATION_DEV_ROOT" catalyst-test']:
             with self.subTest(bad=bad[-100:]), self.assertRaises(ValueError):
                 guard.validate_runtime_script(bad)
