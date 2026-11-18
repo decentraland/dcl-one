@@ -472,6 +472,49 @@ async fn a_credits_trial_signs_no_goal_credit_even_for_its_buyers() {
     db.drop().await;
 }
 
+/// A grant signed before the trial reaches its wallet only when claimed: a wallet outside the
+/// trial's buyers completed the goal before the trial, and claims during it.
+#[tokio::test]
+async fn a_credits_trial_refuses_to_claim_a_goal_grant_signed_before_it() {
+    let Some(db) = OwnDatabase::create("photo_goal_trial_claim").await else {
+        return;
+    };
+    seed(&db.pool, 1, "1000000000000000000", "1000000000000000000000").await;
+    let before = fixture_state(db.pool.clone(), true);
+    let event = photo(&db.pool, OTHER).await;
+    process_event(&before, event, super::super::store::now())
+        .await
+        .unwrap();
+    let unclaimed = "SELECT count(*) FROM credits.goal_grants WHERE claimed_at IS NULL";
+    assert_eq!(count(&db.pool, unclaimed).await, 1);
+    claim_preflight(&before, OTHER)
+        .await
+        .expect("outside a trial the grant is claimable");
+
+    let state = trial_state(db.pool.clone());
+    assert!(!state.settings.trial.as_ref().unwrap().admits(OTHER));
+    for refused in [
+        claim_preflight(&state, OTHER).await.unwrap_err(),
+        claim(&state, OTHER).await.unwrap_err(),
+    ] {
+        assert_eq!(
+            refused.status(),
+            axum::http::StatusCode::BAD_REQUEST,
+            "{refused}"
+        );
+    }
+    assert_eq!(count(&db.pool, unclaimed).await, 1);
+    assert!(
+        user_credits(&state, OTHER, None)
+            .await
+            .unwrap()
+            .0
+            .is_empty(),
+        "no signature reaches the wallet"
+    );
+    db.drop().await;
+}
+
 #[tokio::test]
 async fn notification_failure_rolls_back_completion_and_concurrent_photos_count_once() {
     let Some(db) = OwnDatabase::create("photo_goal_atomic").await else {

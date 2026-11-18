@@ -112,8 +112,11 @@ async fn gate(state: &SharedState, conn: &mut PgConnection) -> Result<Gate, ApiE
     // the buyers it names. A goal credit is signed by the same key for the same manager, but for
     // any wallet that completes a goal, and it is never an authorization: the usage fold does not
     // settle its spends and the revoker never sees it. So the program is off while a trial is
-    // configured, for its buyers too, whatever the flags say. A photo processed meanwhile gets a
-    // terminal receipt (`disabled`, or `no-season` outside a season) and is never counted later.
+    // configured, for its buyers too, whatever the flags say and even when they can't be read. A
+    // photo processed meanwhile gets a terminal receipt (`disabled`, or `no-season` outside a
+    // season) and is never counted later, and claiming a grant is refused (`claim`). Goal credits
+    // claimed before the trial stay spendable until they expire, and the reminder job, which reads
+    // this gate, sends nothing about them.
     if state.settings.trial.is_some() {
         return Ok(Gate {
             disabled: true,
