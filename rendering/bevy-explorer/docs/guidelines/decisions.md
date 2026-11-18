@@ -174,13 +174,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   `document.hasFocus()` on the web), so it never captures while the player is in another app
   or tab: it stops capturing and publishing for nearby voice and calls alike, and resumes when
   focus returns. The mic setting does not change, and neither pause nor resume plays the mic
-  on/off sound.
+  on/off sound. The HUD shows the paused mic off: the call panel at once, the nearby mic toggle
+  at its next mic state poll (up to 1 s).
   - In a community stream no `MuteSpeakerFromCommunityVoiceChat` is sent for the pause, so
     other clients keep showing the paused speaker unmuted while no audio arrives; the mute
     entry above holds only for a mute the player chooses.
-  - unity-explorer pauses only the nearby mic, turns it off in its HUD while paused, and lets
-    the player turn the pause off in settings ("mute mic in background", on by default); the
-    Explorer has no such setting.
+  - unity-explorer pauses only the nearby mic and lets the player turn the pause off in
+    settings ("mute mic in background", on by default); the Explorer has no such setting.
 - **Blocked and scene-banned players are not heard nearby.** A player blocked in either
   direction, or banned by the connected scene room, carries `BlockedOrBanned`, and their nearby
   voice track is unsubscribed while it lasts; unity-explorer keeps the track and creates no audio

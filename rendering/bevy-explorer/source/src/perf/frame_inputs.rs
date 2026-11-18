@@ -92,7 +92,8 @@ pub struct SessionSignals {
     pub focus_paused: Option<SamplingPausedReason>,
 }
 
-/// Fills [`FrameInputs`] from every source.
+/// Fills [`FrameInputs`] from every source. Runs after `TimeSystem` and after the client window
+/// focus is copied in.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn collect_frame_inputs_system(
     mut inputs: ResMut<FrameInputs>,

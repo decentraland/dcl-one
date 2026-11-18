@@ -1911,10 +1911,11 @@ pub enum ClientWindowFocus {
 }
 
 impl ClientWindowFocus {
-    /// From `window.focused`.
+    /// From the OS's focus report for the window, not `Window::focused`, which also holds
+    /// unanswered focus requests.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn from_window(window: &Window) -> Self {
-        Self::from_has_focus(window.focused)
+    pub fn from_window_focused(window_focused: &bevy::window::WindowFocused) -> Self {
+        Self::from_has_focus(window_focused.focused)
     }
 
     /// `page_has_focus` is `document.hasFocus()`, not `Window::focused`.
@@ -1931,6 +1932,11 @@ impl ClientWindowFocus {
         }
     }
 }
+
+/// Asks the OS to focus the primary window. [`ClientWindowFocus`] changes only once the OS
+/// reports the focus.
+#[derive(Event, Debug, Clone, Copy)]
+pub struct RequestClientWindowFocus;
 
 #[derive(Resource, Default, Serialize, Deserialize, Clone)]
 pub struct MicState {
@@ -1953,6 +1959,15 @@ pub struct MicState {
 }
 
 impl MicState {
+    /// This state with `enabled` false while the client window lacks focus, since the mic is
+    /// paused then.
+    pub fn gated_by_client_window_focus(&self, focus: ClientWindowFocus) -> Self {
+        Self {
+            enabled: self.enabled && focus == ClientWindowFocus::Focused,
+            ..self.clone()
+        }
+    }
+
     pub const fn scene_blocked(&self) -> bool {
         self.scene_blocked
     }

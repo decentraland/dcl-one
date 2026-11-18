@@ -556,7 +556,7 @@ fn build_cpal_stream(
     let num_channels = config.channels() as u32;
     let sample_rate = config.sample_rate().0;
 
-    let new_stream = microphone_device
+    let Ok(new_stream) = microphone_device
         .build_input_stream(
             &config.into(),
             move |data_f32: &[f32], _: &cpal::InputCallbackInfo| {
@@ -584,7 +584,10 @@ fn build_cpal_stream(
             },
             None,
         )
-        .unwrap();
+        .inspect_err(|err| error!("{err}"))
+    else {
+        return;
+    };
 
     if let Err(err) = new_stream.play() {
         error!("{err}");
