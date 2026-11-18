@@ -36,6 +36,7 @@ pub(crate) mod json_date;
 mod keyed_locks;
 pub mod mirror_state;
 pub mod moderation_hooks;
+pub mod node_assets;
 pub mod opensea;
 pub mod places;
 pub mod rate;
