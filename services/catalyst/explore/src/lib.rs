@@ -132,8 +132,8 @@ impl MirrorSource {
 pub struct Settings {
     /// The node's content base URL; thumbnails from it pass the image filter.
     pub content_public_url: String,
-    /// The deployment's own domain, swapped into mirrored upstream poster
-    /// URLs; `None` (a decentraland.org node, or no PUBLIC_URL) keeps them.
+    /// The deployment's domain used for node-local asset paths in API records.
+    /// When unset, records retain their upstream asset URLs.
     pub asset_rewrite_domain: Option<String>,
     /// Bearer for the events moderation routes; unset refuses them.
     pub events_admin_token: Option<String>,
@@ -218,10 +218,9 @@ impl std::fmt::Debug for Settings {
 }
 
 impl Settings {
-    /// The old `asset_rewrite_domain` rule: the public host unless it is
-    /// decentraland.org or a subdomain. Only a domain can carry the
-    /// `events-assets-*` subdomain, so an IP address, `localhost` or another
-    /// single-label host (a local development stack) keeps the upstream URLs.
+    /// Use the public domain for node-local asset paths. Keep upstream URLs
+    /// for decentraland.org and its subdomains, IP addresses, single-label
+    /// hosts, and deployments without a public URL.
     pub fn asset_rewrite_domain_for(public_url: Option<&str>) -> Option<String> {
         public_url
             .and_then(|u| url::Url::parse(u).ok())

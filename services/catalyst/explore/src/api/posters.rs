@@ -1,9 +1,7 @@
-//! The event poster bucket: `GET /poster/{file}` and `/poster-vertical/{file}`
-//! as the old gateway fronted them on `events-assets-099ac00.<domain>`, at
-//! the root (the vhost's own paths) and under `/events-assets-099ac00` (the
-//! gateway prefix the explorer-boot corpus maps the host to). Mirrored event
-//! records carry `https://events-assets-099ac00.decentraland.org/poster/...`
-//! URLs, rewritten to this deployment's domain on read (`explore::events`).
+//! The event poster bucket serves `/poster/{file}` and `/poster-vertical/{file}`
+//! at the root and under `/events-assets-099ac00`. Event records with a
+//! rewrite domain point at the prefixed paths on that domain. The root
+//! paths also serve operators that configure a dedicated poster vhost.
 //!
 //! The old vhost asked the events service's own poster store first and, on
 //! its 404, proxied the upstream bucket on the same origin (never a redirect:

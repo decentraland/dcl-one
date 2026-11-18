@@ -321,8 +321,7 @@ struct EventRow {
 }
 
 impl EventsComponent {
-    /// `rewrite_domain`: the deployment's own domain, swapped into mirrored
-    /// `events-assets-*.decentraland.org` poster URLs (`None` keeps them).
+    /// `rewrite_domain`: the domain for node-local asset paths in event records.
     pub fn new(
         pool: PgPool,
         rewrite_domain: Option<String>,
@@ -1005,21 +1004,6 @@ fn bind_one_scalar<'q>(
     }
 }
 
-fn rewrite_asset_host(url: &str, domain: &str) -> Option<String> {
-    let rest = url.strip_prefix("https://")?;
-    let (host, path) = rest.split_once('/')?;
-    let bucket = host.strip_suffix(".decentraland.org")?;
-    bucket
-        .starts_with("events-assets-")
-        .then(|| format!("https://{bucket}.{domain}/{path}"))
-}
-
-fn rewrite_asset_url(url: &str, domain: Option<&str>) -> String {
-    domain
-        .and_then(|d| rewrite_asset_host(url, d))
-        .unwrap_or_else(|| url.to_string())
-}
-
 /// `with_recurrent_dates` on `/v1/events`: the stored window instead of
 /// upstream's ten.
 pub const FULL_RECURRENCE_WINDOW: usize = 1000;
@@ -1049,14 +1033,14 @@ fn event_row_to_record(
         .and_then(|v| v.as_str())
         .and_then(|s| sanitize_asset_url(s).ok())
         .map(|s| {
-            rewrite_asset_url(
+            crate::node_assets::to_node(
                 &posters::absolute_default_image(&s, events_asset_base_url),
                 rewrite_domain,
             )
         });
     let image_vertical = raw.get("image_vertical").cloned().and_then(|v| match v {
         Value::String(s) => sanitize_asset_url(&s).ok().map(|safe| {
-            Value::String(rewrite_asset_url(
+            Value::String(crate::node_assets::to_node(
                 &posters::absolute_default_image(&safe, events_asset_base_url),
                 rewrite_domain,
             ))
@@ -1485,27 +1469,7 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_asset_host_swaps_only_the_upstream_poster_bucket() {
-        assert_eq!(
-            rewrite_asset_host(
-                "https://events-assets-099ac00.decentraland.org/poster/abc.webp",
-                "interconnected.online"
-            )
-            .as_deref(),
-            Some("https://events-assets-099ac00.interconnected.online/poster/abc.webp")
-        );
-        for untouched in [
-            "https://peer.decentraland.org/content/contents/x",
-            "https://example.com/poster/abc.webp",
-            "http://events-assets-099ac00.decentraland.org/poster/abc.webp",
-            "/poster/abc.webp",
-        ] {
-            assert_eq!(
-                rewrite_asset_host(untouched, "interconnected.online"),
-                None,
-                "{untouched}"
-            );
-        }
+    fn event_posters_point_at_the_node_path() {
         let raw = json!({
             "image": "https://events-assets-099ac00.decentraland.org/poster/d2dfb36b6a012314.jpg",
             "image_vertical": "https://events-assets-099ac00.decentraland.org/poster/v.webp",
@@ -1513,22 +1477,28 @@ mod tests {
         let rec = event_row_to_record(
             row_with(raw.clone(), None, None),
             None,
-            &test_view(Some("interconnected.online")),
+            &test_view(Some("node.example")),
         );
         assert_eq!(
             rec.image.as_deref(),
-            Some("https://events-assets-099ac00.interconnected.online/poster/d2dfb36b6a012314.jpg")
+            Some("https://node.example/events-assets-099ac00/poster/d2dfb36b6a012314.jpg")
         );
         assert_eq!(
             rec.image_vertical,
             Some(Value::String(
-                "https://events-assets-099ac00.interconnected.online/poster/v.webp".into()
+                "https://node.example/events-assets-099ac00/poster/v.webp".into()
             ))
         );
         let rec = event_row_to_record(row_with(raw, None, None), None, &test_view(None));
         assert_eq!(
             rec.image.as_deref(),
             Some("https://events-assets-099ac00.decentraland.org/poster/d2dfb36b6a012314.jpg")
+        );
+        assert_eq!(
+            rec.image_vertical,
+            Some(Value::String(
+                "https://events-assets-099ac00.decentraland.org/poster/v.webp".into()
+            ))
         );
     }
 
