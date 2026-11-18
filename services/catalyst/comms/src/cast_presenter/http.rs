@@ -46,17 +46,17 @@ struct Parsed {
     file: Vec<u8>,
     file_name: String,
     livekit_token: String,
-    livekit_url: String,
     presenter_identity: Option<String>,
 }
 
 /// A multipart body as busboy reads it with `files: 1, fields: 10`: the
 /// first part with a file name is the file whatever its field name, later
 /// file parts and fields past the tenth are ignored, the last value of a
-/// field wins.
+/// field wins. Read as it arrives, at most [`MAX_FILE_SIZE`] bytes in all
+/// (413 past that, as upstream's whole-body check).
 async fn parse_multipart(
     content_type: &str,
-    body: bytes::Bytes,
+    body: axum::body::Body,
 ) -> Result<
     (
         Option<(Vec<u8>, String)>,
@@ -65,26 +65,26 @@ async fn parse_multipart(
     Response,
 > {
     let boundary = multer::parse_boundary(content_type).map_err(|_| internal())?;
-    let stream = futures::stream::once(async move { Ok::<_, std::io::Error>(body) });
-    let mut multipart = multer::Multipart::new(stream, boundary);
+    let constraints = multer::Constraints::new()
+        .size_limit(multer::SizeLimit::new().whole_stream(MAX_FILE_SIZE as u64));
+    let mut multipart =
+        multer::Multipart::with_constraints(body.into_data_stream(), boundary, constraints);
+    let failed = |e: multer::Error| match e {
+        multer::Error::StreamSizeExceeded { .. } => too_large(MAX_FILE_SIZE),
+        _ => internal(),
+    };
     let mut file = None;
     let mut fields = std::collections::HashMap::new();
     let mut field_count = 0;
-    while let Some(part) = multipart.next_field().await.map_err(|_| internal())? {
+    while let Some(part) = multipart.next_field().await.map_err(failed)? {
         if let Some(name) = part.file_name().map(str::to_string) {
-            let bytes = part.bytes().await.map_err(|_| internal())?;
+            let bytes = part.bytes().await.map_err(failed)?;
             if file.is_none() {
-                if bytes.len() > MAX_FILE_SIZE {
-                    return Err(error(
-                        StatusCode::PAYLOAD_TOO_LARGE,
-                        "File exceeds maximum size of 100MB",
-                    ));
-                }
-                file = Some((bytes.to_vec(), name));
+                file = Some((Vec::from(bytes), name));
             }
         } else {
             let name = part.name().unwrap_or_default().to_string();
-            let value = part.text().await.map_err(|_| internal())?;
+            let value = part.text().await.map_err(failed)?;
             field_count += 1;
             if field_count <= 10 {
                 fields.insert(name, value);
@@ -111,18 +111,57 @@ fn download_failure(e: DownloadError) -> Response {
     }
 }
 
-fn credentials(token: Option<&str>, url: Option<&str>) -> Result<(String, String), Response> {
+fn credentials(
+    presenter: &Presenter,
+    token: Option<&str>,
+    url: Option<&str>,
+) -> Result<String, Response> {
     let (Some(token), Some(url)) = (
         token.filter(|t| !t.is_empty()),
         url.filter(|u| !u.is_empty()),
     ) else {
         return Err(bad_request("Missing livekitToken or livekitUrl"));
     };
-    files::check_livekit_url(url).map_err(bad_request)?;
-    Ok((token.to_string(), url.to_string()))
+    files::check_livekit_url(url, presenter.livekit()).map_err(bad_request)?;
+    Ok(token.to_string())
 }
 
-async fn parse_json(presenter: &Presenter, body: bytes::Bytes) -> Result<Parsed, Response> {
+fn create_failure(e: CreateError) -> Response {
+    match e {
+        CreateError::MaxConcurrent(max) => error(
+            StatusCode::TOO_MANY_REQUESTS,
+            CreateError::MaxConcurrent(max).to_string(),
+        ),
+        CreateError::SlideRender(message) => {
+            tracing::warn!("{message}");
+            error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "Unable to render the presentation",
+            )
+        }
+        CreateError::InvalidCredentials(message) => {
+            tracing::info!("LiveKit credentials refused: {message}");
+            error(StatusCode::UNAUTHORIZED, "Invalid LiveKit credentials")
+        }
+        CreateError::Unavailable(message) => {
+            tracing::error!("LiveKit credential check failed: {message}");
+            unavailable()
+        }
+        CreateError::Internal(message) => {
+            tracing::error!("Failed to create presentation: {message}");
+            internal()
+        }
+    }
+}
+
+fn unavailable() -> Response {
+    error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Presentation service unavailable",
+    )
+}
+
+async fn parse_json(presenter: &Arc<Presenter>, body: bytes::Bytes) -> Result<Parsed, Response> {
     let value: Value = serde_json::from_slice(&body)
         .map_err(|_| bad_request("Request body must be valid JSON"))?;
     let Value::Object(body) = value else {
@@ -133,18 +172,12 @@ async fn parse_json(presenter: &Presenter, body: bytes::Bytes) -> Result<Parsed,
     let Some(url) = text("url").filter(|u| !u.is_empty()) else {
         return Err(bad_request("Missing url"));
     };
-    let (livekit_token, livekit_url) = credentials(text("livekitToken"), text("livekitUrl"))?;
+    let livekit_token = credentials(presenter, text("livekitToken"), text("livekitUrl"))?;
     // The token first, so a refused one costs no download.
-    if let Err(e) = presenter
-        .validate_credentials(&livekit_url, &livekit_token)
+    presenter
+        .validate_credentials(&livekit_token)
         .await
-    {
-        tracing::info!("LiveKit credentials refused: {e}");
-        return Err(error(
-            StatusCode::UNAUTHORIZED,
-            "Invalid LiveKit credentials",
-        ));
-    }
+        .map_err(create_failure)?;
     let resolved = files::resolve_file_url(url);
     let downloaded = ssrf::download(&resolved.url)
         .await
@@ -153,7 +186,6 @@ async fn parse_json(presenter: &Presenter, body: bytes::Bytes) -> Result<Parsed,
         file: downloaded.bytes,
         file_name: resolved.filename.unwrap_or(downloaded.filename),
         livekit_token,
-        livekit_url,
         presenter_identity,
     })
 }
@@ -164,10 +196,7 @@ pub async fn create_presentation(
     request: Request,
 ) -> Response {
     let Some(presenter) = presenter else {
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Presentation service unavailable",
-        );
+        return unavailable();
     };
     let headers = request.headers().clone();
     let content_type = headers
@@ -189,10 +218,11 @@ pub async fn create_presentation(
         if declared.is_some_and(|len| len > MAX_FILE_SIZE as u64) {
             return too_large(MAX_FILE_SIZE);
         }
-        let Ok(body) = axum::body::to_bytes(request.into_body(), MAX_FILE_SIZE).await else {
-            return too_large(MAX_FILE_SIZE);
-        };
-        match parse_multipart(&content_type, body).await {
+        // Full: answered before the upload is read.
+        if presenter.at_capacity() {
+            return create_failure(presenter.capacity_error());
+        }
+        match parse_multipart(&content_type, request.into_body()).await {
             Err(response) => Err(response),
             Ok((file, fields)) => {
                 let field = |k: &str| fields.get(k).map(String::as_str);
@@ -200,12 +230,11 @@ pub async fn create_presentation(
                 match file {
                     None => Err(bad_request("Missing file in multipart upload")),
                     Some((file, file_name)) => {
-                        credentials(field("livekitToken"), field("livekitUrl")).map(
-                            |(livekit_token, livekit_url)| Parsed {
+                        credentials(&presenter, field("livekitToken"), field("livekitUrl")).map(
+                            |livekit_token| Parsed {
                                 file,
                                 file_name,
                                 livekit_token,
-                                livekit_url,
                                 presenter_identity,
                             },
                         )
@@ -249,30 +278,11 @@ pub async fn create_presentation(
         "Creating presentation from pdf file"
     );
     match presenter
-        .create(
-            parsed.file,
-            &parsed.livekit_url,
-            &parsed.livekit_token,
-            &file_name,
-        )
+        .create(parsed.file, &parsed.livekit_token, &file_name)
         .await
     {
         Ok(info) => (StatusCode::CREATED, Json(info)).into_response(),
-        Err(CreateError::MaxConcurrent(max)) => error(
-            StatusCode::TOO_MANY_REQUESTS,
-            CreateError::MaxConcurrent(max).to_string(),
-        ),
-        Err(CreateError::SlideRender(message)) => {
-            tracing::warn!("{message}");
-            error(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "Unable to render the presentation",
-            )
-        }
-        Err(CreateError::Internal(message)) => {
-            tracing::error!("Failed to create presentation: {message}");
-            internal()
-        }
+        Err(e) => create_failure(e),
     }
 }
 

@@ -15,9 +15,13 @@
 //!   JSON `url`), checks (extension, magic bytes, 100 MiB file, 1 MiB JSON
 //!   body, the download's SSRF guard), `MAX_CONCURRENT_PRESENTATIONS` (429)
 //!   and answers ([`http`]).
+//! - `livekitUrl` must be this node's LiveKit, the URL the gatekeeper's
+//!   presentation-bot token answer names (400 otherwise); the bot dials the
+//!   node's own route to it, never the request's URL ([`session::LiveKitTarget`]).
 //! - The bot connects with the given token before any rendering; a refused
-//!   token answers 401 on the JSON path (checked before the download) and
-//!   500 on the multipart path, as upstream.
+//!   token answers 401 on the JSON path (checked before the download; 503
+//!   when the bot or LiveKit is unavailable) and 500 on the multipart path,
+//!   as upstream.
 //! - PDF slides ([`render`] names the renderer and why), one SCREENSHARE
 //!   track, the commands `navigate`, `get-state`, `stop` and
 //!   `overlay:update` from the room's presenters, the state broadcast and
@@ -29,7 +33,7 @@
 //! `presenter:claim` ignored) and upstream's `/api/drive-video` and `/ping`.
 //!
 //! The LiveKit connection lives in a `cast-bot` process ([`bot`]); with no
-//! `CAST_BOT_BIN` configured the route answers 503.
+//! `CAST_BOT_BIN` or no LiveKit configured the route answers 503.
 
 pub mod bot;
 pub mod files;
@@ -48,15 +52,18 @@ use axum::Router;
 
 use crate::shared::routing::post;
 
-pub use session::Presenter;
+pub use session::{LiveKitTarget, Presenter};
 
-/// A presenter that starts `binary` for each session, or none without one.
+/// A presenter that starts `binary` for each session against the node's
+/// LiveKit, or none without both.
 pub fn presenter(
     binary: Option<std::path::PathBuf>,
+    livekit: Option<LiveKitTarget>,
     max_concurrent: usize,
 ) -> Option<Arc<Presenter>> {
     let presenter = Presenter::new(
         Arc::new(bot::ProcessLauncher { binary: binary? }),
+        livekit?,
         max_concurrent,
     );
     presenter.spawn_reaper();

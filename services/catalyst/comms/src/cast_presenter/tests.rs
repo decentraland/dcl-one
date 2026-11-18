@@ -12,9 +12,11 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tower::ServiceExt;
 
-use super::bot::{BotEvent, BotLauncher, BotLink, ConnectError, Connected, Ready};
+use tokio::sync::watch;
+
+use super::bot::{BotLauncher, BotLink, ConnectError, Connected, RoomData, RoomState};
 use super::render::{Frame, PdfDocument, fit_render_size, is_media_url};
-use super::session::{IDLE_TIMEOUT, Presenter};
+use super::session::{IDLE_TIMEOUT, LiveKitTarget, Presenter};
 use super::wire::*;
 use super::{files, ssrf};
 use crate::protocol::pulse::decentraland::kernel::comms::rfc4::{Packet, Scene, packet};
@@ -62,42 +64,105 @@ impl BotLink for FakeBot {
     }
 }
 
+/// The room side of a fake bot: what the bot would report.
+#[derive(Clone)]
+struct FakeRoom {
+    data: mpsc::Sender<RoomData>,
+    state: Arc<watch::Sender<RoomState>>,
+}
+
+impl FakeRoom {
+    async fn data(&self, identity: &str, payload: Vec<u8>) {
+        let identity = identity.to_string();
+        self.data
+            .send(RoomData { identity, payload })
+            .await
+            .unwrap();
+    }
+    fn metadata(&self, metadata: &str) {
+        self.state
+            .send_modify(|room| room.metadata = metadata.to_string());
+    }
+    fn participants(&self, count: usize) {
+        self.state.send_modify(|room| room.participants = count);
+    }
+}
+
 struct FakeLauncher {
     accept_token: &'static str,
     room_metadata: String,
-    bots: Mutex<Vec<(Arc<FakeBot>, mpsc::Sender<BotEvent>)>>,
+    /// How long a connect takes.
+    delay: Duration,
+    /// The URLs bots were started for.
+    dialed: Mutex<Vec<String>>,
+    bots: Mutex<Vec<(Arc<FakeBot>, Option<FakeRoom>)>>,
 }
 
 impl FakeLauncher {
     fn new(room_metadata: Value) -> Arc<Self> {
+        Self::slow(room_metadata, Duration::ZERO)
+    }
+    fn slow(room_metadata: Value, delay: Duration) -> Arc<Self> {
         Arc::new(Self {
             accept_token: "good-token",
             room_metadata: room_metadata.to_string(),
+            delay,
+            dialed: Mutex::new(Vec::new()),
             bots: Mutex::new(Vec::new()),
         })
     }
-    fn last(&self) -> (Arc<FakeBot>, mpsc::Sender<BotEvent>) {
-        self.bots.lock().unwrap().last().cloned().expect("a bot")
+    fn last(&self) -> (Arc<FakeBot>, FakeRoom) {
+        let bots = self.bots.lock().unwrap();
+        let (bot, room) = bots.last().expect("a bot");
+        (bot.clone(), room.clone().expect("a connected bot"))
+    }
+    /// The last bot's process ends: its room channels close.
+    fn exit_last(&self) {
+        self.bots.lock().unwrap().last_mut().expect("a bot").1 = None;
     }
 }
 
 #[async_trait::async_trait]
 impl BotLauncher for FakeLauncher {
-    async fn connect(&self, _url: &str, token: &str) -> Result<Connected, ConnectError> {
-        if token != self.accept_token {
-            return Err(ConnectError("unauthorized".into()));
+    async fn connect(&self, url: &str, token: &str) -> Result<Connected, ConnectError> {
+        self.dialed.lock().unwrap().push(url.to_string());
+        tokio::time::sleep(self.delay).await;
+        match token {
+            "unavailable" => return Err(ConnectError::Unavailable("no bot".into())),
+            token if token != self.accept_token => {
+                return Err(ConnectError::Refused("unauthorized".into()));
+            }
+            _ => {}
         }
         let bot = Arc::new(FakeBot::default());
-        let (tx, events) = mpsc::channel(16);
-        self.bots.lock().unwrap().push((bot.clone(), tx));
+        let (data_tx, data) = mpsc::channel(16);
+        let (state_tx, room) = watch::channel(RoomState {
+            metadata: self.room_metadata.clone(),
+            participants: 1,
+        });
+        let fake_room = FakeRoom {
+            data: data_tx,
+            state: Arc::new(state_tx),
+        };
+        self.bots
+            .lock()
+            .unwrap()
+            .push((bot.clone(), Some(fake_room)));
         Ok(Connected {
             link: bot,
-            events,
-            ready: Ready {
-                room_metadata: self.room_metadata.clone(),
-                participant_count: 1,
-            },
+            data,
+            room,
         })
+    }
+}
+
+/// The node's LiveKit in these tests.
+const OWN_LIVEKIT: &str = "wss://lk.example.org";
+
+fn target() -> LiveKitTarget {
+    LiveKitTarget {
+        client_url: OWN_LIVEKIT.into(),
+        connect_url: "ws://livekit.internal:7880".into(),
     }
 }
 
@@ -402,19 +467,56 @@ fn magic_bytes_gate_each_type() {
 
 #[test]
 fn livekit_urls_and_presenter_identities() {
-    assert_eq!(files::check_livekit_url("wss://lk.example.org"), Ok(()));
-    assert_eq!(files::check_livekit_url("ws://127.0.0.1:7880"), Ok(()));
+    let own = target();
+    let check = |url: &str| files::check_livekit_url(url, &own);
+    assert_eq!(check("wss://lk.example.org"), Ok(()));
+    assert_eq!(check("wss://lk.example.org/"), Ok(()));
+    // Only the node's own LiveKit: a caller's server is refused.
     assert_eq!(
-        files::check_livekit_url("ws://lk.example.org"),
+        check("wss://attacker.example"),
+        Err("livekitUrl is not this node's LiveKit server")
+    );
+    assert_eq!(
+        check("wss://lk.example.org:8443"),
+        Err("livekitUrl is not this node's LiveKit server")
+    );
+    // ws:// on loopback only when it is the node's own (the local stack).
+    assert_eq!(
+        check("ws://127.0.0.1:7880"),
+        Err("livekitUrl must use wss:// protocol")
+    );
+    let local = LiveKitTarget {
+        client_url: "ws://127.0.0.1:7880".into(),
+        connect_url: "ws://127.0.0.1:7880".into(),
+    };
+    assert_eq!(
+        files::check_livekit_url("ws://127.0.0.1:7880", &local),
+        Ok(())
+    );
+    assert_eq!(
+        files::check_livekit_url("ws://127.0.0.1:7881", &local),
         Err("livekitUrl must use wss:// protocol")
     );
     assert_eq!(
-        files::check_livekit_url("https://lk.example.org"),
+        check("ws://lk.example.org"),
         Err("livekitUrl must use wss:// protocol")
     );
     assert_eq!(
-        files::check_livekit_url("nope"),
-        Err("livekitUrl is not a valid URL")
+        check("https://lk.example.org"),
+        Err("livekitUrl must use wss:// protocol")
+    );
+    assert_eq!(check("nope"), Err("livekitUrl is not a valid URL"));
+    // The bot dials the node's route: LIVEKIT_API_HOST (or LIVEKIT_HOST) as a ws URL.
+    assert_eq!(
+        LiveKitTarget::from_endpoints("wss://lk.example.org", "http://livekit:7880"),
+        Some(LiveKitTarget {
+            client_url: "wss://lk.example.org".into(),
+            connect_url: "ws://livekit:7880".into(),
+        })
+    );
+    assert_eq!(
+        LiveKitTarget::from_endpoints("", "http://livekit:7880"),
+        None
     );
     assert_eq!(
         files::presenter_identity(Some("stream:place:1")).as_deref(),
@@ -466,6 +568,8 @@ fn private_addresses_are_refused() {
         "240.0.0.1",
         "255.255.255.255",
         "0.0.0.0",
+        "0.1.2.3",
+        "192.0.0.8",
         "::1",
         "::",
         "fe80::1",
@@ -476,6 +580,9 @@ fn private_addresses_are_refused() {
         "::7f00:1",
         "2002:a00:1::",
         "64:ff9b::a00:1",
+        "fec0::1",
+        "ff02::1",
+        "2001:0:4136:e378::1",
     ] {
         assert!(
             ssrf::is_private_ip(ip.parse().unwrap()),
@@ -489,6 +596,8 @@ fn private_addresses_are_refused() {
         "2606:4700::1111",
         "::ffff:8.8.8.8",
         "2002:808:808::",
+        "192.0.1.1",
+        "2001:4860::8888",
     ] {
         assert!(
             !ssrf::is_private_ip(ip.parse().unwrap()),
@@ -513,11 +622,11 @@ async fn urls_must_be_https_to_public_hosts() {
         ssrf::validate_url("https://127.0.0.1/a.pdf")
             .await
             .unwrap_err(),
-        "URL resolves to private IP: 127.0.0.1 → 127.0.0.1"
+        "URL resolves to private IP: 127.0.0.1"
     );
     assert_eq!(
         ssrf::validate_url("https://[::1]/a.pdf").await.unwrap_err(),
-        "URL resolves to private IP: [::1] → ::1"
+        "URL resolves to private IP: [::1]"
     );
     assert!(matches!(
         ssrf::download("https://169.254.169.254/latest").await,
@@ -578,9 +687,9 @@ const PRESENTER: &str = "0xPresenter";
 
 async fn presenting(pages: usize) -> (Arc<Presenter>, Arc<FakeLauncher>, PresentationInfo) {
     let launcher = FakeLauncher::new(json!({"presenters": [PRESENTER.to_lowercase()]}));
-    let presenter = Presenter::new(launcher.clone(), 10);
+    let presenter = Presenter::new(launcher.clone(), target(), 10);
     let info = presenter
-        .create(test_pdf(pages), "wss://lk", "good-token", "Deck.pdf")
+        .create(test_pdf(pages), "good-token", "Deck.pdf")
         .await
         .unwrap();
     (presenter, launcher, info)
@@ -624,21 +733,13 @@ async fn presenters_navigate_and_others_are_ignored() {
     let (bot, events) = launcher.last();
     let next = json!({"type": "presentation:navigate", "action": "next"});
     events
-        .send(BotEvent::Data {
-            identity: "0xSomeoneElse".into(),
-            payload: command_packet(next.clone(), "intruder"),
-        })
-        .await
-        .unwrap();
+        .data("0xSomeoneElse", command_packet(next.clone(), "intruder"))
+        .await;
     settle().await;
     assert_eq!(data_messages(&bot).len(), 1);
     events
-        .send(BotEvent::Data {
-            identity: PRESENTER.into(),
-            payload: command_packet(next, "scene-7"),
-        })
-        .await
-        .unwrap();
+        .data(PRESENTER, command_packet(next, "scene-7"))
+        .await;
     settle().await;
     let messages = data_messages(&bot);
     assert_eq!(messages.len(), 2);
@@ -649,40 +750,28 @@ async fn presenters_navigate_and_others_are_ignored() {
     for slide in [9, 1] {
         let goto = json!({"type": "presentation:navigate", "action": "goto", "slideIndex": slide});
         events
-            .send(BotEvent::Data {
-                identity: PRESENTER.into(),
-                payload: command_packet(goto, "scene-7"),
-            })
-            .await
-            .unwrap();
+            .data(PRESENTER, command_packet(goto, "scene-7"))
+            .await;
     }
     // get-state answers with the current state; raw JSON works too.
     events
-        .send(BotEvent::Data {
-            identity: PRESENTER.into(),
-            payload: br#"{"type":"presentation:get-state"}"#.to_vec(),
-        })
-        .await
-        .unwrap();
+        .data(PRESENTER, br#"{"type":"presentation:get-state"}"#.to_vec())
+        .await;
     settle().await;
     let messages = data_messages(&bot);
     assert_eq!(messages.len(), 3);
     assert_eq!(messages[2].0["currentSlide"], 1);
     // A presenter added later through the room metadata is obeyed.
+    events.metadata(r#"{"presenters":["0xnew"]}"#);
     events
-        .send(BotEvent::RoomMetadata(r#"{"presenters":["0xnew"]}"#.into()))
-        .await
-        .unwrap();
-    events
-        .send(BotEvent::Data {
-            identity: "0xNEW".into(),
-            payload: command_packet(
+        .data(
+            "0xNEW",
+            command_packet(
                 json!({"type": "presentation:navigate", "action": "prev"}),
                 "",
             ),
-        })
-        .await
-        .unwrap();
+        )
+        .await;
     settle().await;
     assert_eq!(data_messages(&bot).last().unwrap().0["currentSlide"], 0);
     drop(presenter);
@@ -694,12 +783,11 @@ async fn overlay_updates_coalesce_into_one_broadcast() {
     let (bot, events) = launcher.last();
     for x in [0.1, 0.2, 0.3] {
         events
-            .send(BotEvent::Data {
-                identity: PRESENTER.into(),
-                payload: command_packet(json!({"type": "presentation:overlay:update", "x": x}), ""),
-            })
-            .await
-            .unwrap();
+            .data(
+                PRESENTER,
+                command_packet(json!({"type": "presentation:overlay:update", "x": x}), ""),
+            )
+            .await;
     }
     settle().await;
     assert_eq!(data_messages(&bot).len(), 1);
@@ -717,12 +805,11 @@ async fn stop_announces_and_disconnects() {
     let (presenter, launcher, info) = presenting(1).await;
     let (bot, events) = launcher.last();
     events
-        .send(BotEvent::Data {
-            identity: PRESENTER.into(),
-            payload: command_packet(json!({"type": "presentation:stop"}), "sc"),
-        })
-        .await
-        .unwrap();
+        .data(
+            PRESENTER,
+            command_packet(json!({"type": "presentation:stop"}), "sc"),
+        )
+        .await;
     settle().await;
     let messages = data_messages(&bot);
     assert_eq!(
@@ -737,11 +824,7 @@ async fn stop_announces_and_disconnects() {
 #[tokio::test]
 async fn a_bot_that_disconnects_ends_its_session() {
     let (presenter, launcher, _) = presenting(1).await;
-    let (_, events) = launcher.last();
-    events
-        .send(BotEvent::Disconnected("gone".into()))
-        .await
-        .unwrap();
+    launcher.exit_last();
     settle().await;
     assert_eq!(presenter.active_sessions(), 0);
 }
@@ -754,7 +837,7 @@ async fn sessions_without_participants_stop_after_five_minutes() {
     // With a participant the session stays active.
     presenter.reap_idle(start + IDLE_TIMEOUT * 2).await;
     assert_eq!(presenter.active_sessions(), 1);
-    events.send(BotEvent::ParticipantCount(0)).await.unwrap();
+    events.participants(0);
     settle().await;
     presenter
         .reap_idle(start + IDLE_TIMEOUT * 2 + Duration::from_secs(60))
@@ -770,13 +853,13 @@ async fn sessions_without_participants_stop_after_five_minutes() {
 #[tokio::test]
 async fn the_concurrency_limit_answers_before_connecting() {
     let launcher = FakeLauncher::new(json!({}));
-    let presenter = Presenter::new(launcher.clone(), 1);
+    let presenter = Presenter::new(launcher.clone(), target(), 1);
     presenter
-        .create(test_pdf(1), "wss://lk", "good-token", "a.pdf")
+        .create(test_pdf(1), "good-token", "a.pdf")
         .await
         .unwrap();
     let err = presenter
-        .create(test_pdf(1), "wss://lk", "good-token", "b.pdf")
+        .create(test_pdf(1), "good-token", "b.pdf")
         .await
         .unwrap_err();
     assert_eq!(
@@ -785,10 +868,10 @@ async fn the_concurrency_limit_answers_before_connecting() {
     );
     assert_eq!(launcher.bots.lock().unwrap().len(), 1);
     // 0 is unlimited.
-    let unlimited = Presenter::new(launcher.clone(), 0);
+    let unlimited = Presenter::new(launcher.clone(), target(), 0);
     for _ in 0..3 {
         unlimited
-            .create(test_pdf(1), "wss://lk", "good-token", "c.pdf")
+            .create(test_pdf(1), "good-token", "c.pdf")
             .await
             .unwrap();
     }
@@ -851,7 +934,7 @@ const CREDS: [(&str, &str); 2] = [
 #[tokio::test]
 async fn the_route_answers_upstreams_errors() {
     let launcher = FakeLauncher::new(json!({}));
-    let app = || super::router(Some(Presenter::new(launcher.clone(), 10)));
+    let app = || super::router(Some(Presenter::new(launcher.clone(), target(), 10)));
     let err = |m: &str| json!({ "error": m });
 
     let (status, body) = post(super::router(None), "application/json", b"{}".to_vec()).await;
@@ -925,16 +1008,53 @@ async fn the_route_answers_upstreams_errors() {
         post(
             app(),
             "application/json",
-            body("bad", "wss://lk", "https://x")
+            body("bad", OWN_LIVEKIT, "https://x")
         )
         .await,
         (StatusCode::UNAUTHORIZED, err("Invalid LiveKit credentials"))
+    );
+    // Another LiveKit: refused before any bot starts.
+    let dialed = launcher.dialed.lock().unwrap().len();
+    assert_eq!(
+        post(
+            app(),
+            "application/json",
+            body("good-token", "wss://attacker.example", "https://x")
+        )
+        .await,
+        (
+            StatusCode::BAD_REQUEST,
+            err("livekitUrl is not this node's LiveKit server")
+        )
+    );
+    assert_eq!(launcher.dialed.lock().unwrap().len(), dialed);
+    // The bot or LiveKit unavailable is not a refused token.
+    assert_eq!(
+        post(
+            app(),
+            "application/json",
+            body("unavailable", OWN_LIVEKIT, "https://x")
+        )
+        .await,
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            err("Presentation service unavailable")
+        )
+    );
+    // The bot dials the node's route, never the request's URL.
+    assert!(
+        launcher
+            .dialed
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|url| url == "ws://livekit.internal:7880")
     );
     assert_eq!(
         post(
             app(),
             "application/json",
-            body("good-token", "wss://lk", "http://x/a.pdf")
+            body("good-token", OWN_LIVEKIT, "http://x/a.pdf")
         )
         .await,
         (
@@ -946,12 +1066,12 @@ async fn the_route_answers_upstreams_errors() {
         post(
             app(),
             "application/json",
-            body("good-token", "wss://lk", "https://10.0.0.1/a.pdf")
+            body("good-token", OWN_LIVEKIT, "https://10.0.0.1/a.pdf")
         )
         .await,
         (
             StatusCode::BAD_REQUEST,
-            err("URL resolves to private IP: 10.0.0.1 → 10.0.0.1")
+            err("URL resolves to private IP: 10.0.0.1")
         )
     );
     let big = vec![b' '; super::files::MAX_JSON_BODY_SIZE + 1];
@@ -1006,11 +1126,32 @@ async fn the_route_answers_upstreams_errors() {
     // A refused token on the multipart path is upstream's generic 500.
     let (ct, mp) = multipart(
         Some(("a.pdf", &test_pdf(1))),
-        &[("livekitToken", "bad"), ("livekitUrl", "wss://lk")],
+        &[("livekitToken", "bad"), ("livekitUrl", OWN_LIVEKIT)],
     );
     assert_eq!(
         post(app(), &ct, mp).await,
         (StatusCode::INTERNAL_SERVER_ERROR, err("Internal error"))
+    );
+    // A body over 100 MiB: 413 by its declared length, or as it streams in.
+    let (ct, mut mp) = multipart(Some(("a.pdf", b"%PDF")), &CREDS);
+    mp.resize(super::files::MAX_FILE_SIZE + 1, b' ');
+    let declared = app()
+        .oneshot(
+            Request::post("/presentations")
+                .header("content-type", &ct)
+                .header("content-length", mp.len())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(declared.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        post(app(), &ct, mp).await,
+        (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            err("Request exceeds maximum size of 100MB")
+        )
     );
     // An unreadable PDF too.
     let (ct, mp) = multipart(Some(("a.pdf", b"%PDF-not really")), &CREDS);
@@ -1023,7 +1164,7 @@ async fn the_route_answers_upstreams_errors() {
 #[tokio::test]
 async fn a_multipart_upload_creates_a_presentation() {
     let launcher = FakeLauncher::new(json!({}));
-    let presenter = Presenter::new(launcher.clone(), 1);
+    let presenter = Presenter::new(launcher.clone(), target(), 1);
     let (ct, mp) = multipart(Some(("My Deck.pdf", &test_pdf(2))), &CREDS);
     let (status, body) = post(super::router(Some(presenter.clone())), &ct, mp).await;
     assert_eq!(status, StatusCode::CREATED);
@@ -1038,6 +1179,114 @@ async fn a_multipart_upload_creates_a_presentation() {
             StatusCode::TOO_MANY_REQUESTS,
             json!({"error": "Maximum concurrent presentations reached (1)"})
         )
+    );
+}
+
+#[tokio::test]
+async fn a_dropped_request_still_finishes_its_presentation() {
+    let launcher = FakeLauncher::slow(
+        json!({"presenters": [PRESENTER.to_lowercase()]}),
+        Duration::from_millis(100),
+    );
+    let presenter = Presenter::new(launcher.clone(), target(), 1);
+    let create = presenter.create(test_pdf(1), "good-token", "a.pdf");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(10), create)
+            .await
+            .is_err()
+    );
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // The session runs: its commands are handled and it stops.
+    assert_eq!(presenter.active_sessions(), 1);
+    let (bot, events) = launcher.last();
+    events
+        .data(
+            PRESENTER,
+            command_packet(json!({"type": "presentation:stop"}), ""),
+        )
+        .await;
+    settle().await;
+    assert_eq!(presenter.active_sessions(), 0);
+    assert_eq!(bot.sent.lock().unwrap().last(), Some(&Sent::Shutdown));
+    // Its slot is free again.
+    presenter
+        .create(test_pdf(1), "good-token", "b.pdf")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn the_credential_check_holds_a_slot() {
+    let launcher = FakeLauncher::slow(json!({}), Duration::from_millis(100));
+    let presenter = Presenter::new(launcher.clone(), target(), 1);
+    let checking = crate::shared::task::spawn_with({
+        let presenter = presenter.clone();
+        async move { presenter.validate_credentials("good-token").await }
+    });
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(matches!(
+        presenter.validate_credentials("good-token").await,
+        Err(super::session::CreateError::MaxConcurrent(1))
+    ));
+    checking.await.unwrap().unwrap();
+    presenter.validate_credentials("good-token").await.unwrap();
+    assert!(matches!(
+        presenter.validate_credentials("bad").await,
+        Err(super::session::CreateError::InvalidCredentials(_))
+    ));
+}
+
+// ── downloads ──
+
+/// A local server: `/redirect` to a private host, `/big` one byte over 64,
+/// `/a.pdf` a file.
+async fn file_server() -> std::net::SocketAddr {
+    use axum::response::IntoResponse;
+    let app = axum::Router::new()
+        .route(
+            "/redirect",
+            axum::routing::get(|| async {
+                (StatusCode::FOUND, [("location", "http://10.0.0.1/a.pdf")]).into_response()
+            }),
+        )
+        .route("/big", axum::routing::get(|| async { vec![b'x'; 65] }))
+        .route(
+            "/a.pdf",
+            axum::routing::get(|| async { b"%PDF-1.4".to_vec() }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    crate::shared::task::spawn_with(async move { axum::serve(listener, app).await.unwrap() });
+    addr
+}
+
+#[tokio::test]
+async fn downloads_stop_at_private_redirects_and_the_size_limit() {
+    let addr = file_server().await;
+    // The test server's address only; every other private address stays refused.
+    let guard = ssrf::Guard {
+        https_only: false,
+        allowed: Some(addr.ip()),
+        max_bytes: 64,
+    };
+    let fetched = ssrf::download_guarded(&format!("http://{addr}/a.pdf"), &guard)
+        .await
+        .unwrap();
+    assert_eq!(
+        (fetched.bytes.as_slice(), fetched.filename.as_str()),
+        (&b"%PDF-1.4"[..], "a.pdf")
+    );
+    assert_eq!(
+        ssrf::download_guarded(&format!("http://{addr}/redirect"), &guard)
+            .await
+            .unwrap_err(),
+        ssrf::DownloadError::InvalidUrl("URL resolves to private IP: 10.0.0.1".into())
+    );
+    assert_eq!(
+        ssrf::download_guarded(&format!("http://{addr}/big"), &guard)
+            .await
+            .unwrap_err(),
+        ssrf::DownloadError::TooLarge
     );
 }
 
@@ -1063,15 +1312,23 @@ fn signed_token(key: &str, secret: &str, identity: &str, room: &str) -> String {
 }
 
 /// The node's presenter with the real `cast-bot` (`CAST_BOT_BIN`) and a
-/// `livekit-server` (`LIVEKIT_SERVER_BIN`) on free loopback ports. Without
-/// both, the test says so and passes; `services/catalyst/cast-bot/tests`
-/// covers the data channel and the track as a viewer sees them.
+/// `livekit-server` (`LIVEKIT_SERVER_BIN`) on free loopback ports: the stdio
+/// protocol end to end. Ignored by default (it needs both binaries);
+/// `.github/workflows/cast-presenter.yml` runs it with `--ignored`. Without
+/// both it says so and passes, except under CI, where it fails.
+/// `services/catalyst/cast-bot/tests` covers the data channel and the track
+/// as a viewer sees them.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires CAST_BOT_BIN and LIVEKIT_SERVER_BIN; run by .github/workflows/cast-presenter.yml"]
 async fn a_presentation_goes_live_on_a_real_livekit() {
     let (Ok(bot_bin), Ok(server_bin)) = (
         std::env::var("CAST_BOT_BIN"),
         std::env::var("LIVEKIT_SERVER_BIN"),
     ) else {
+        assert!(
+            std::env::var("CI").as_deref() != Ok("true"),
+            "CAST_BOT_BIN and LIVEKIT_SERVER_BIN are required in CI"
+        );
         eprintln!("SKIPPED: set CAST_BOT_BIN and LIVEKIT_SERVER_BIN to run this test");
         return;
     };
@@ -1107,8 +1364,12 @@ async fn a_presentation_goes_live_on_a_real_livekit() {
     let url = format!("ws://127.0.0.1:{port}");
     let presenter = Presenter::new(
         Arc::new(super::bot::ProcessLauncher {
-            binary: bot_bin.into(),
+            binary: bot_bin.clone().into(),
         }),
+        LiveKitTarget {
+            client_url: url.clone(),
+            connect_url: url.clone(),
+        },
         10,
     );
     // A refused token: 401 on the JSON path, before any download.
@@ -1123,13 +1384,32 @@ async fn a_presentation_goes_live_on_a_real_livekit() {
         )
     );
     let token = signed_token(key, secret, "presentation-bot:room:access:1", "room");
-    presenter.validate_credentials(&url, &token).await.unwrap();
+    presenter.validate_credentials(&token).await.unwrap();
     let info = presenter
-        .create(test_pdf(2), &url, &token, "Live.pdf")
+        .create(test_pdf(2), &token, "Live.pdf")
         .await
         .unwrap();
     assert_eq!((info.file_name.as_str(), info.slide_count), ("Live", 2));
     assert_eq!(presenter.active_sessions(), 1);
     presenter.stop(&info.id).await;
     assert_eq!(presenter.active_sessions(), 0);
+
+    // A bot whose process dies ends its session.
+    let info = presenter
+        .create(test_pdf(1), &token, "Again.pdf")
+        .await
+        .unwrap();
+    assert_eq!(presenter.active_sessions(), 1);
+    let killed = std::process::Command::new("pkill")
+        .args(["-f", &format!("^{}$", regex::escape(&bot_bin))])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    for _ in 0..50 {
+        if presenter.active_sessions() == 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(presenter.active_sessions(), 0, "{} still live", info.id);
 }

@@ -28,10 +28,11 @@ refs that a clone does not fetch.
   file, renders the PDF (hayro, pure Rust), keeps the sessions in memory, handles the
   presenters' commands and builds every byte clients parse.
 - **`cast-bot` owns the LiveKit connection:** `services/catalyst/cast-bot` is one
-  binary, started once per session by the node at `CAST_BOT_BIN`. It connects with the
-  bot token, publishes the frames it is given as a SCREENSHARE track, and forwards data,
-  metadata and participant events. It speaks JSON lines on stdio, the shape of
-  upstream's sidecar IPC. The protocol is documented in `comms::cast_presenter::bot`.
+  binary, started once per session by the node at `CAST_BOT_BIN`. It connects to the
+  node's own LiveKit with the bot token, publishes the frames it is given as a SCREENSHARE
+  track, and forwards the room's presenters' commands, its metadata and participant counts;
+  the rest of the scene's traffic stays in the room. It speaks JSON lines on stdio, the
+  shape of upstream's sidecar IPC. The protocol is documented in `comms::cast_presenter::bot`.
 - **A workspace of its own:** `cast-bot` has its own `Cargo.lock` and is excluded from
   the node's workspace. A node build, test or Nix package never compiles libwebrtc. It
   uses the Explorer's SDK rev.
@@ -47,10 +48,14 @@ refs that a clone does not fetch.
 
 ## Consequences
 
-- The route answers 503 until `CAST_BOT_BIN` names a built `cast-bot`.
+- The route answers 503 until `CAST_BOT_BIN` names a built `cast-bot` and the node has a
+  LiveKit. A request's `livekitUrl` must be that LiveKit's client URL.
 - Each session costs a process, and a frame crosses the pipe as base64 RGBA (about
   11 MB for 1920x1080). Frames cross only on navigation, because the bot repeats the
   last frame itself.
 - `cast-bot` is a Nix package of its own (`infra/packages/cast-bot.nix`) with the
   Explorer's libwebrtc provisioning; the APIs image carries it and sets `CAST_BOT_BIN`.
 - On macOS its build script adds `-ObjC` to the link, as the Explorer's cargo config does.
+- `.github/workflows/cast-presenter.yml`, filtered to the presenter's and the bot's paths,
+  runs both against a `livekit-server`; the Development workflow's Rust shards never build
+  libwebrtc.

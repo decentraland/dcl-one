@@ -8,7 +8,9 @@
 //! - `{"type":"init","url","token"}` is the first line, so the token is never
 //!   on argv or in the environment. The bot connects and answers
 //!   `{"type":"ready","roomMetadata","participantCount"}`, or
-//!   `{"type":"error","code":"connect-failed","message"}` and exits.
+//!   `{"type":"error","code","message"}` and exits: `connect-failed` when
+//!   LiveKit refused the token, `connect-unavailable` when it could not be
+//!   reached or did not answer.
 //! - Later commands carry an `id` and get one `{"type":"ack","id"}` or
 //!   `{"type":"error","id","code","message"}`: `publishVideo {width,height}`
 //!   (a SCREENSHARE track named `presentation`, VP8, 6 Mbps, 30 fps, no
@@ -16,9 +18,17 @@
 //!   (base64 RGBA; the bot repeats the last frame every 500 ms),
 //!   `publishData {data}` (base64 bytes, reliable), `updateMetadata
 //!   {metadata}` and `shutdown`. A command without an answer in 10 s fails.
-//! - Events: `dataReceived {identity, payload}` (base64 packet),
-//!   `roomMetadata {metadata}`, `participantCount {count}` (remote
-//!   participants) and `disconnected {reason}`.
+//! - Events: `dataReceived {identity, payload}` (base64 packet; only from
+//!   the room metadata's presenters and carrying `presentation:`, so scene
+//!   traffic never crosses), `roomMetadata {metadata}`, `participantCount
+//!   {count}` (remote participants) and `disconnected {reason}`, after which
+//!   the bot exits.
+//!
+//! One reader takes the bot's stdout and never waits on the session: replies
+//! complete their commands at once, the room's metadata and participant
+//! count are kept as the latest value ([`RoomState`]), and data packets queue
+//! up to [`DATA_QUEUE`]; a packet that finds the queue full is dropped and
+//! counted. The session sees the bot gone when the queue closes.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -33,7 +43,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
 use super::render::Frame;
 
@@ -41,34 +51,34 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(25);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const EXIT_WAIT: Duration = Duration::from_secs(3);
-/// Room events queued for a session before the oldest waits.
-const EVENT_QUEUE: usize = 256;
+/// Data packets queued for a session; more are dropped.
+pub const DATA_QUEUE: usize = 256;
 
-/// What the room tells a session.
+/// A data packet and its sender's identity (original case).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BotEvent {
-    /// A data packet and its sender's identity (original case).
-    Data {
-        identity: String,
-        payload: Vec<u8>,
-    },
-    RoomMetadata(String),
-    /// Remote participants in the room.
-    ParticipantCount(usize),
-    Disconnected(String),
+pub struct RoomData {
+    pub identity: String,
+    pub payload: Vec<u8>,
 }
 
-/// The room as the bot found it on connect.
+/// The room as the bot last reported it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Ready {
-    pub room_metadata: String,
-    pub participant_count: usize,
+pub struct RoomState {
+    pub metadata: String,
+    /// Remote participants in the room.
+    pub participants: usize,
 }
 
-/// A failed connect: the token or URL was refused, or the bot did not start.
+/// A failed connect: the bot refused the token, or it did not start or answer.
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
-#[error("LiveKit connect failed: {0}")]
-pub struct ConnectError(pub String);
+pub enum ConnectError {
+    /// LiveKit refused the connection (the bot's `connect-failed`).
+    #[error("LiveKit connect failed: {0}")]
+    Refused(String),
+    /// The bot did not start, exited or did not answer in time.
+    #[error("cast-bot unavailable: {0}")]
+    Unavailable(String),
+}
 
 /// A connected bot.
 #[async_trait::async_trait]
@@ -81,11 +91,12 @@ pub trait BotLink: Send + Sync {
     async fn shutdown(&self);
 }
 
-/// A connected bot, its events and the room it joined.
+/// A connected bot, the room's data packets (closed when the bot is gone)
+/// and the room's state (as of connect, then each change).
 pub struct Connected {
     pub link: Arc<dyn BotLink>,
-    pub events: mpsc::Receiver<BotEvent>,
-    pub ready: Ready,
+    pub data: mpsc::Receiver<RoomData>,
+    pub room: watch::Receiver<RoomState>,
 }
 
 /// Starts bots.
@@ -114,6 +125,7 @@ struct Line {
     #[serde(rename = "type")]
     kind: String,
     id: Option<u64>,
+    code: Option<String>,
     message: Option<String>,
     identity: Option<String>,
     payload: Option<String>,
@@ -124,25 +136,51 @@ struct Line {
     reason: Option<String>,
 }
 
-async fn write_line(stdin: &Mutex<Option<ChildStdin>>, line: &Value) -> anyhow::Result<()> {
-    let mut text = serde_json::to_vec(line)?;
-    text.push(b'\n');
+async fn write_line(stdin: &Mutex<Option<ChildStdin>>, line: &[u8]) -> anyhow::Result<()> {
     let mut guard = stdin.lock().await;
     let pipe = guard
         .as_mut()
         .ok_or_else(|| anyhow::anyhow!("bot stdin closed"))?;
-    pipe.write_all(&text).await?;
+    pipe.write_all(line).await?;
     pipe.flush().await?;
     Ok(())
 }
 
+fn json_line(value: &Value) -> anyhow::Result<Vec<u8>> {
+    let mut line = serde_json::to_vec(value)?;
+    line.push(b'\n');
+    Ok(line)
+}
+
+/// A `frame` command line: ~11 MB for 1920x1080, built off the runtime.
+fn frame_line(id: u64, frame: &Frame) -> Vec<u8> {
+    let rgba = frame.rgba.as_slice();
+    let mut line = format!(
+        r#"{{"type":"frame","id":{id},"width":{},"height":{},"rgba":""#,
+        frame.width, frame.height
+    )
+    .into_bytes();
+    // Base64 needs no JSON escaping; encoded in place, with no second copy.
+    let start = line.len();
+    line.resize(start + rgba.len().div_ceil(3) * 4, 0);
+    let written = BASE64
+        .encode_slice(rgba, &mut line[start..])
+        .expect("sized for the encoding");
+    line.truncate(start + written);
+    line.extend_from_slice(b"\"}\n");
+    line
+}
+
 impl ProcessLink {
-    async fn command(&self, mut command: Value) -> anyhow::Result<()> {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        command["id"] = json!(id);
+    fn next_id(&self) -> u64 {
+        self.next_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Writes command `id`'s line and waits for its answer.
+    async fn request(&self, id: u64, line: &[u8]) -> anyhow::Result<()> {
         let (tx, rx) = oneshot::channel();
         self.pending.lock().unwrap().insert(id, tx);
-        if let Err(e) = write_line(&self.stdin, &command).await {
+        if let Err(e) = write_line(&self.stdin, line).await {
             self.pending.lock().unwrap().remove(&id);
             return Err(e);
         }
@@ -156,6 +194,12 @@ impl ProcessLink {
             }
         }
     }
+
+    async fn command(&self, mut command: Value) -> anyhow::Result<()> {
+        let id = self.next_id();
+        command["id"] = json!(id);
+        self.request(id, &json_line(&command)?).await
+    }
 }
 
 #[async_trait::async_trait]
@@ -166,13 +210,10 @@ impl BotLink for ProcessLink {
     }
 
     async fn push_frame(&self, frame: &Frame) -> anyhow::Result<()> {
-        self.command(json!({
-            "type": "frame",
-            "width": frame.width,
-            "height": frame.height,
-            "rgba": BASE64.encode(frame.rgba.as_slice()),
-        }))
-        .await
+        let id = self.next_id();
+        let frame = frame.clone();
+        let line = tokio::task::spawn_blocking(move || frame_line(id, &frame)).await?;
+        self.request(id, &line).await
     }
 
     async fn publish_data(&self, packet: Vec<u8>) -> anyhow::Result<()> {
@@ -197,21 +238,94 @@ impl BotLink for ProcessLink {
     }
 }
 
-fn event_of(line: &Line) -> Option<BotEvent> {
-    match line.kind.as_str() {
-        "dataReceived" => Some(BotEvent::Data {
-            identity: line.identity.clone().unwrap_or_else(|| "unknown".into()),
-            payload: BASE64.decode(line.payload.as_deref()?).ok()?,
-        }),
-        "roomMetadata" => Some(BotEvent::RoomMetadata(
-            line.metadata.clone().unwrap_or_default(),
-        )),
-        "participantCount" => Some(BotEvent::ParticipantCount(line.count.unwrap_or(0))),
-        "disconnected" => Some(BotEvent::Disconnected(
-            line.reason.clone().unwrap_or_default(),
-        )),
-        _ => None,
-    }
+/// Reads the bot's stdout until it closes; never waits on the session.
+fn spawn_reader(
+    stdout: tokio::process::ChildStdout,
+    pending: Pending,
+    ready_tx: oneshot::Sender<Result<(), ConnectError>>,
+    data_tx: mpsc::Sender<RoomData>,
+    room_tx: watch::Sender<RoomState>,
+) {
+    crate::shared::task::spawn(async move {
+        let mut ready_tx = Some(ready_tx);
+        let mut dropped: u64 = 0;
+        // A frame line is ~11 MB, but the bot only sends small lines.
+        let mut lines = BufReader::new(stdout).lines();
+        while let Ok(Some(text)) = lines.next_line().await {
+            let Ok(line) = serde_json::from_str::<Line>(&text) else {
+                tracing::warn!(target: "cast_bot", "unreadable bot line");
+                continue;
+            };
+            match (line.kind.as_str(), line.id) {
+                ("ready", _) => {
+                    room_tx.send_replace(RoomState {
+                        metadata: line.room_metadata.unwrap_or_default(),
+                        participants: line.participant_count.unwrap_or(0),
+                    });
+                    if let Some(tx) = ready_tx.take() {
+                        let _ = tx.send(Ok(()));
+                    }
+                }
+                ("ack", Some(id)) => {
+                    if let Some(tx) = pending.lock().unwrap().remove(&id) {
+                        let _ = tx.send(Ok(()));
+                    }
+                }
+                ("error", Some(id)) => {
+                    if let Some(tx) = pending.lock().unwrap().remove(&id) {
+                        let _ = tx.send(Err(line.message.unwrap_or_default()));
+                    }
+                }
+                ("error", None) => {
+                    let why = line.message.unwrap_or_default();
+                    match ready_tx.take() {
+                        Some(tx) if line.code.as_deref() == Some("connect-failed") => {
+                            let _ = tx.send(Err(ConnectError::Refused(why)));
+                        }
+                        Some(tx) => {
+                            let _ = tx.send(Err(ConnectError::Unavailable(why)));
+                        }
+                        None => tracing::warn!(target: "cast_bot", "bot failed: {why}"),
+                    }
+                }
+                ("dataReceived", _) => {
+                    let Some(payload) = line.payload.and_then(|p| BASE64.decode(p).ok()) else {
+                        continue;
+                    };
+                    let data = RoomData {
+                        identity: line.identity.unwrap_or_else(|| "unknown".into()),
+                        payload,
+                    };
+                    if let Err(mpsc::error::TrySendError::Full(_)) = data_tx.try_send(data) {
+                        dropped += 1;
+                        if dropped.is_power_of_two() {
+                            tracing::warn!(target: "cast_bot", dropped, "session busy, data packets dropped");
+                        }
+                    }
+                }
+                ("roomMetadata", _) => {
+                    let metadata = line.metadata.unwrap_or_default();
+                    room_tx.send_modify(|room| room.metadata = metadata);
+                }
+                ("participantCount", _) => {
+                    let count = line.count.unwrap_or(0);
+                    room_tx.send_modify(|room| room.participants = count);
+                }
+                ("disconnected", _) => {
+                    let reason = line.reason.unwrap_or_default();
+                    tracing::warn!(target: "cast_bot", %reason, "bot disconnected from LiveKit");
+                }
+                _ => {}
+            }
+        }
+        if let Some(tx) = ready_tx.take() {
+            let _ = tx.send(Err(ConnectError::Unavailable(
+                "bot exited before connecting".into(),
+            )));
+        }
+        // Fail what is still waiting; dropping the senders tells the session.
+        pending.lock().unwrap().clear();
+    });
 }
 
 #[async_trait::async_trait]
@@ -223,11 +337,11 @@ impl BotLauncher for ProcessLauncher {
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| ConnectError(format!("cannot start the bot: {e}")))?;
+            .map_err(|e| ConnectError::Unavailable(format!("cannot start the bot: {e}")))?;
         let stdin = Mutex::new(child.stdin.take());
         let stdout = child.stdout.take().expect("piped stdout");
         if let Some(stderr) = child.stderr.take() {
-            tokio::spawn(async move {
+            crate::shared::task::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
                     tracing::debug!(target: "cast_bot", "{line}");
@@ -235,89 +349,65 @@ impl BotLauncher for ProcessLauncher {
             });
         }
         let pending: Pending = Default::default();
-        let (events_tx, events) = mpsc::channel(EVENT_QUEUE);
-        let (ready_tx, ready_rx) = oneshot::channel::<Result<Ready, String>>();
-        let reader_pending = pending.clone();
-        tokio::spawn(async move {
-            let mut ready_tx = Some(ready_tx);
-            // A frame line is ~11 MB, but the bot only sends small events.
-            let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(text)) = lines.next_line().await {
-                let Ok(line) = serde_json::from_str::<Line>(&text) else {
-                    tracing::warn!(target: "cast_bot", "unreadable bot line");
-                    continue;
-                };
-                match (line.kind.as_str(), line.id) {
-                    ("ready", _) => {
-                        if let Some(tx) = ready_tx.take() {
-                            let _ = tx.send(Ok(Ready {
-                                room_metadata: line.room_metadata.clone().unwrap_or_default(),
-                                participant_count: line.participant_count.unwrap_or(0),
-                            }));
-                        }
-                    }
-                    ("ack", Some(id)) => {
-                        if let Some(tx) = reader_pending.lock().unwrap().remove(&id) {
-                            let _ = tx.send(Ok(()));
-                        }
-                    }
-                    ("error", Some(id)) => {
-                        if let Some(tx) = reader_pending.lock().unwrap().remove(&id) {
-                            let _ = tx.send(Err(line.message.clone().unwrap_or_default()));
-                        }
-                    }
-                    ("error", None) => {
-                        let why = line.message.clone().unwrap_or_default();
-                        if let Some(tx) = ready_tx.take() {
-                            let _ = tx.send(Err(why));
-                        } else {
-                            let _ = events_tx.send(BotEvent::Disconnected(why)).await;
-                        }
-                    }
-                    _ => {
-                        if let Some(event) = event_of(&line) {
-                            let _ = events_tx.send(event).await;
-                        }
-                    }
-                }
-            }
-            if let Some(tx) = ready_tx.take() {
-                let _ = tx.send(Err("bot exited before connecting".into()));
-            }
-            // Fail what is still waiting, and tell the session the bot is gone.
-            reader_pending.lock().unwrap().clear();
-            let _ = events_tx
-                .send(BotEvent::Disconnected("bot exited".into()))
-                .await;
-        });
+        let (data_tx, data) = mpsc::channel(DATA_QUEUE);
+        let (room_tx, room) = watch::channel(RoomState::default());
+        let (ready_tx, ready_rx) = oneshot::channel();
+        spawn_reader(stdout, pending.clone(), ready_tx, data_tx, room_tx);
         let link = ProcessLink {
             stdin,
             child: Mutex::new(Some(child)),
             pending,
             next_id: AtomicU64::new(1),
         };
-        let init = json!({"type": "init", "url": url, "token": token});
         let ready = async {
+            let init = json_line(&json!({"type": "init", "url": url, "token": token}))
+                .map_err(|e| ConnectError::Unavailable(e.to_string()))?;
             write_line(&link.stdin, &init)
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| ConnectError::Unavailable(e.to_string()))?;
             match tokio::time::timeout(CONNECT_TIMEOUT, ready_rx).await {
                 Ok(Ok(result)) => result,
-                Ok(Err(_)) => Err("bot exited before connecting".to_string()),
-                Err(_) => Err("LiveKit connect timed out".to_string()),
+                Ok(Err(_)) => Err(ConnectError::Unavailable(
+                    "bot exited before connecting".into(),
+                )),
+                Err(_) => Err(ConnectError::Unavailable(
+                    "LiveKit connect timed out".into(),
+                )),
             }
         }
         .await;
         match ready {
-            Ok(ready) => Ok(Connected {
+            Ok(()) => Ok(Connected {
                 link: Arc::new(link),
-                events,
-                ready,
+                data,
+                room,
             }),
             Err(why) => {
                 link.shutdown().await;
-                Err(ConnectError(why))
+                Err(why)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_frame_line_is_the_json_command() {
+        let frame = Frame {
+            rgba: Arc::new(vec![1, 2, 3, 4, 5, 6, 7, 8]),
+            width: 2,
+            height: 1,
+        };
+        let line = frame_line(7, &frame);
+        assert_eq!(line.last(), Some(&b'\n'));
+        let value: Value = serde_json::from_slice(&line).unwrap();
+        assert_eq!(
+            value,
+            json!({"type": "frame", "id": 7, "width": 2, "height": 1,
+                   "rgba": BASE64.encode([1, 2, 3, 4, 5, 6, 7, 8])})
+        );
     }
 }

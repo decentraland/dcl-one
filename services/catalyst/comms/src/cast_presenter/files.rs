@@ -1,5 +1,6 @@
 //! Request and file checks, as upstream does them: the file name
-//! (`src/logic/file-validator.ts`), the LiveKit URL and the presenter
+//! (`src/logic/file-validator.ts`), the LiveKit URL (plus this node's own
+//! check) and the presenter
 //! identity (`src/controllers/handlers/create-presentation-handler.ts:14-36`)
 //! and the sharing-link rewrite (`src/adapters/file-provider/file-url-providers.ts`).
 
@@ -7,6 +8,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
+use super::session::LiveKitTarget;
 use super::wire::FileType;
 
 /// Largest presentation file, uploaded or downloaded (100 MiB).
@@ -102,21 +104,25 @@ pub fn presentation_name(file_name: &str) -> String {
     }
 }
 
-/// Why a `livekitUrl` is refused (the 400 body's message).
-pub fn check_livekit_url(value: &str) -> Result<(), &'static str> {
+/// Why a `livekitUrl` is refused (the 400 body's message): upstream's
+/// checks, then this node's own (`own`): only the node's LiveKit is joined.
+pub fn check_livekit_url(value: &str, own: &LiveKitTarget) -> Result<(), &'static str> {
     let Ok(parsed) = url::Url::parse(value) else {
         return Err("livekitUrl is not a valid URL");
     };
     let host = parsed.host_str().unwrap_or_default();
-    // Upstream accepts wss:// only. The node also accepts ws:// to a loopback
-    // host, the local stack's LiveKit (`tooling/dev.py`), as upstream does
-    // for its own http://localhost base URL.
+    let is_own = own.is_own(value);
+    // Upstream accepts wss:// only. A node whose own LiveKit is a ws:// one
+    // on loopback (the local stack's, `tooling/dev.py`) accepts that URL too.
     let loopback = matches!(host, "localhost" | "127.0.0.1" | "[::1]");
-    if parsed.scheme() != "wss" && !(parsed.scheme() == "ws" && loopback) {
+    if parsed.scheme() != "wss" && !(parsed.scheme() == "ws" && loopback && is_own) {
         return Err("livekitUrl must use wss:// protocol");
     }
     if host.is_empty() {
         return Err("livekitUrl must specify a host");
+    }
+    if !is_own {
+        return Err("livekitUrl is not this node's LiveKit server");
     }
     Ok(())
 }

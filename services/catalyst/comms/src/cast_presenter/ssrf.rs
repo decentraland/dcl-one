@@ -6,6 +6,11 @@
 //! redirects are followed by hand, at most 5, each hop checked again; the
 //! body stops at 100 MiB and the whole download at 60 s.
 //!
+//! A refused host's message names the host, not the address it resolved to
+//! (upstream's adds the address, which would tell a caller the node's
+//! internal DNS answers). The ranges are upstream's plus 0.0.0.0/8,
+//! 192.0.0.0/24, fec0::/10, ff00::/8 and Teredo (2001::/32).
+//!
 //! Upstream resolves with `dns.resolve4`/`resolve6`, which skip the hosts
 //! file; this resolves with the system resolver, which reads it, so a name
 //! the hosts file maps to a private address is refused as private rather
@@ -39,10 +44,13 @@ pub enum DownloadError {
 }
 
 /// IPv4 private, loopback, link-local, CGNAT, benchmarking, multicast,
-/// reserved, broadcast and the zero address.
+/// reserved, broadcast, "this network" (0.0.0.0/8) and IETF protocol
+/// assignments (192.0.0.0/24).
 pub fn is_private_ipv4(ip: Ipv4Addr) -> bool {
-    let [a, b, _, _] = ip.octets();
-    a == 127
+    let [a, b, c, _] = ip.octets();
+    a == 0
+        || (a == 192 && b == 0 && c == 0)
+        || a == 127
         || a == 10
         || (a == 172 && (16..=31).contains(&b))
         || (a == 192 && b == 168)
@@ -61,8 +69,9 @@ fn embedded_v4(high: u16, low: u16) -> Ipv4Addr {
     Ipv4Addr::new(a, b, c, d)
 }
 
-/// IPv6 loopback, unspecified, link-local, unique local, and the forms that
-/// embed an IPv4 address (mapped, compatible, 6to4, NAT64), judged by it.
+/// IPv6 loopback, unspecified, link-local, site-local, unique local,
+/// multicast, Teredo, and the forms that embed an IPv4 address (mapped,
+/// compatible, 6to4, NAT64), judged by it.
 pub fn is_private_ipv6(ip: Ipv6Addr) -> bool {
     let g = ip.segments();
     if ip == Ipv6Addr::LOCALHOST || ip == Ipv6Addr::UNSPECIFIED {
@@ -80,7 +89,11 @@ pub fn is_private_ipv6(ip: Ipv6Addr) -> bool {
     if g[0] == 0x0064 && g[1] == 0xff9b && g[2..6].iter().all(|&s| s == 0) {
         return is_private_ipv4(embedded_v4(g[6], g[7]));
     }
-    (g[0] & 0xffc0) == 0xfe80 || (g[0] & 0xfe00) == 0xfc00
+    (g[0] & 0xffc0) == 0xfe80
+        || (g[0] & 0xffc0) == 0xfec0
+        || (g[0] & 0xfe00) == 0xfc00
+        || (g[0] & 0xff00) == 0xff00
+        || (g[0] == 0x2001 && g[1] == 0)
 }
 
 pub fn is_private_ip(ip: IpAddr) -> bool {
@@ -90,8 +103,36 @@ pub fn is_private_ip(ip: IpAddr) -> bool {
     }
 }
 
+/// What a download may reach and fetch. [`Guard::STRICT`] is the route's;
+/// tests loosen it to reach a local server.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Guard {
+    /// HTTPS only.
+    pub https_only: bool,
+    /// One private address allowed anyway (a test server's).
+    pub allowed: Option<IpAddr>,
+    /// The largest body.
+    pub max_bytes: usize,
+}
+
+impl Guard {
+    pub const STRICT: Guard = Guard {
+        https_only: true,
+        allowed: None,
+        max_bytes: MAX_FILE_SIZE,
+    };
+
+    fn refuses(&self, ip: IpAddr) -> bool {
+        is_private_ip(ip) && self.allowed != Some(ip)
+    }
+}
+
 /// A host's addresses, every one public, or why not.
 pub async fn resolve_public(host: &str) -> Result<Vec<IpAddr>, String> {
+    resolve_guarded(host, &Guard::STRICT).await
+}
+
+async fn resolve_guarded(host: &str, guard: &Guard) -> Result<Vec<IpAddr>, String> {
     let literal = host
         .strip_prefix('[')
         .and_then(|h| h.strip_suffix(']'))
@@ -103,8 +144,8 @@ pub async fn resolve_public(host: &str) -> Result<Vec<IpAddr>, String> {
             .map(|found| found.map(|a| a.ip()).collect())
             .unwrap_or_default(),
     };
-    if let Some(private) = addresses.iter().find(|ip| is_private_ip(**ip)) {
-        return Err(format!("URL resolves to private IP: {host} → {private}"));
+    if addresses.iter().any(|ip| guard.refuses(*ip)) {
+        return Err(format!("URL resolves to private IP: {host}"));
     }
     if addresses.is_empty() {
         return Err(format!("Could not resolve any addresses for {host}"));
@@ -115,15 +156,19 @@ pub async fn resolve_public(host: &str) -> Result<Vec<IpAddr>, String> {
 /// `resolveAndValidateUrl`: an absolute HTTPS URL whose host resolves only
 /// to public addresses.
 pub async fn validate_url(raw: &str) -> Result<(url::Url, Vec<IpAddr>), String> {
+    validate_guarded(raw, &Guard::STRICT).await
+}
+
+async fn validate_guarded(raw: &str, guard: &Guard) -> Result<(url::Url, Vec<IpAddr>), String> {
     let parsed = url::Url::parse(raw).map_err(|_| format!("Invalid URL: {raw}"))?;
-    if parsed.scheme() != "https" {
+    if parsed.scheme() != "https" && (guard.https_only || parsed.scheme() != "http") {
         return Err(format!(
             "URL must use HTTPS, got {}: for {raw}",
             parsed.scheme()
         ));
     }
     let host = parsed.host_str().unwrap_or_default().to_string();
-    let addresses = resolve_public(&host).await?;
+    let addresses = resolve_guarded(&host, guard).await?;
     Ok((parsed, addresses))
 }
 
@@ -135,7 +180,11 @@ pub struct Downloaded {
 }
 
 /// One pinned hop: a client that dials only `addresses` for `url`'s host.
-fn pinned_client(url: &url::Url, addresses: &[IpAddr]) -> Result<reqwest::Client, String> {
+fn pinned_client(
+    url: &url::Url,
+    addresses: &[IpAddr],
+    guard: &Guard,
+) -> Result<reqwest::Client, String> {
     let host = url.host_str().unwrap_or_default();
     let port = url.port_or_known_default().unwrap_or(443);
     let sockets: Vec<SocketAddr> = addresses
@@ -144,20 +193,20 @@ fn pinned_client(url: &url::Url, addresses: &[IpAddr]) -> Result<reqwest::Client
         .collect();
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .https_only(true)
+        .https_only(guard.https_only)
         .no_proxy()
         .resolve_to_addrs(host, &sockets)
         .build()
         .map_err(|e| e.to_string())
 }
 
-async fn download_hops(start: &str) -> Result<Downloaded, DownloadError> {
+async fn download_hops(start: &str, guard: &Guard) -> Result<Downloaded, DownloadError> {
     let mut current = start.to_string();
     for _ in 0..MAX_REDIRECTS {
-        let (url, addresses) = validate_url(&current)
+        let (url, addresses) = validate_guarded(&current, guard)
             .await
             .map_err(DownloadError::InvalidUrl)?;
-        let client = pinned_client(&url, &addresses).map_err(DownloadError::Network)?;
+        let client = pinned_client(&url, &addresses, guard).map_err(DownloadError::Network)?;
         let response = client
             .get(url.clone())
             .send()
@@ -188,7 +237,7 @@ async fn download_hops(start: &str) -> Result<Downloaded, DownloadError> {
         let mut body = response.bytes_stream();
         while let Some(chunk) = body.next().await {
             let chunk = chunk.map_err(|e| DownloadError::Network(e.to_string()))?;
-            if bytes.len() + chunk.len() > MAX_FILE_SIZE {
+            if bytes.len() + chunk.len() > guard.max_bytes {
                 return Err(DownloadError::TooLarge);
             }
             bytes.extend_from_slice(&chunk);
@@ -203,7 +252,15 @@ async fn download_hops(start: &str) -> Result<Downloaded, DownloadError> {
 
 /// Downloads `url` within the limits above.
 pub async fn download(url: &str) -> Result<Downloaded, DownloadError> {
-    match tokio::time::timeout(DOWNLOAD_TIMEOUT, download_hops(url)).await {
+    download_guarded(url, &Guard::STRICT).await
+}
+
+/// [`download`] under another [`Guard`].
+pub(super) async fn download_guarded(
+    url: &str,
+    guard: &Guard,
+) -> Result<Downloaded, DownloadError> {
+    match tokio::time::timeout(DOWNLOAD_TIMEOUT, download_hops(url, guard)).await {
         Ok(result) => result,
         Err(_) => Err(DownloadError::Failed(format!(
             "Download timed out after {}s",
