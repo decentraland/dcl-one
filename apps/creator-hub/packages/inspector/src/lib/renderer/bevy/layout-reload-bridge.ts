@@ -105,7 +105,6 @@ export function createLayoutReloadBridge(options: LayoutReloadBridgeOptions): ()
     void reboot()
       .then(() => options.onReloaded?.())
       .catch(error => {
-        // eslint-disable-next-line no-console
         console.warn('[bevy] engine reboot after layout change failed:', error);
       });
   };

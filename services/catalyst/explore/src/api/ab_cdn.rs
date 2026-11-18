@@ -26,12 +26,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::get;
 use anyhow::Context as _;
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 
 use super::Shared;
 use crate::filecache::{FileCache, Served, Source, Supply, valid_rel};

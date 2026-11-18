@@ -6,11 +6,11 @@ use crate::protocol::archipelago::archipelago::{
     ChallengeResponseMessage, KickedMessage, KickedReason, ServerPacket, WelcomeMessage,
     client_packet, server_packet,
 };
+use crate::shared::routing::{any, get};
 use axum::Router;
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocketUpgrade};
 use axum::response::IntoResponse;
-use axum::routing::get;
 use io::WebSocket;
 use prost::Message as _;
 use rand::RngExt;
@@ -36,7 +36,7 @@ pub(super) fn connector_routes(
 ) -> Router<AppState> {
     Router::new().route(
         "/ws",
-        axum::routing::any(move |method, uri, headers, peer, ws, raw, state| {
+        any(move |method, uri, headers, peer, ws, raw, state| {
             connector_upgrade(method, uri, headers, peer, ws, raw, state, http.clone())
         }),
     )

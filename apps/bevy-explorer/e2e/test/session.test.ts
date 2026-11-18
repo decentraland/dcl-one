@@ -3,7 +3,7 @@ import { describe, test } from 'node:test'
 import { ConsoleError, FakeConsole } from '../driver/console.ts'
 import { Explorer, type WorldState } from '../driver/explorer.ts'
 import { type AuthIdentity, addressOf } from '../driver/identity.ts'
-import { MAX_BOOTS, arrive, closeSession, closeSessions, keepBootFailure, openSession, parsePosition, sameRealm, signIn } from '../driver/session.ts'
+import { MAX_BOOTS, NO_LANDING_POLLS, arrive, closeSession, closeSessions, enterWorld, keepBootFailure, openSession, parsePosition, sameRealm, signIn } from '../driver/session.ts'
 import type { Target } from '../driver/target.ts'
 import { BootError } from '../driver/web.ts'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
@@ -107,6 +107,49 @@ describe('arrive', () => {
     assert.equal(state.arrivals, 3)
     assert.deepEqual(fake.sent('changerealm'), ['/changerealm https://zone.example.test'])
     assert.deepEqual(fake.sent('teleport'), ['/teleport 100 100'])
+  })
+})
+
+describe('enterWorld', () => {
+  const control = (name: string) => JSON.stringify({ found: true, role: 'button', name, text: name, disabled: false, visible: true, actionable: true, x: 10, y: 20, width: 40, height: 30, input: 'trusted' })
+  const nameOf = (line: string): string => (JSON.parse(line.slice(line.indexOf(' ') + 1)) as { name: string }).name
+
+  test('presses Jump In when the lobby shows it, and touches no layout', async () => {
+    let jumped = false
+    const fake = new FakeConsole({
+      world_state: () => world({ inWorld: jumped }),
+      hud_read: (line) => (nameOf(line) === 'Jump In' ? control('Jump In') : '{"found":false}'),
+      hud_wait: (line) => control(nameOf(line)),
+      hud_click: (line) => {
+        jumped = nameOf(line) === 'Jump In'
+        return control(nameOf(line))
+      }
+    })
+    await enterWorld(new Explorer(fake), 5_000, 1)
+    assert.deepEqual(fake.sent('hud_click').map(nameOf), ['Jump In'])
+  })
+
+  test('a stored layout without the Landing card is put back to the shipped one once, then Jump In', async () => {
+    let saved = false
+    let jumped = false
+    const fake = new FakeConsole({
+      world_state: () => world({ inWorld: jumped, worldHeld: !jumped }),
+      hud_read: (line) => {
+        const name = nameOf(line)
+        if (name === 'Jump In') return saved ? control(name) : '{"found":false}'
+        return name === 'Customize lobby layout' ? control(name) : '{"found":false}'
+      },
+      hud_wait: (line) => control(nameOf(line)),
+      hud_click: (line) => {
+        const name = nameOf(line)
+        if (name === 'SAVE') saved = true
+        if (name === 'Jump In') jumped = true
+        return control(name)
+      }
+    })
+    await enterWorld(new Explorer(fake), 5_000, 1)
+    assert.deepEqual(fake.sent('hud_click').map(nameOf), ['Customize lobby layout', 'Reset to Default', 'SAVE', 'Jump In'])
+    assert.equal(fake.sent('hud_read').filter((line) => nameOf(line) === 'Customize lobby layout').length, NO_LANDING_POLLS)
   })
 })
 

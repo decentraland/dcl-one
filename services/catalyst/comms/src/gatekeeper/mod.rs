@@ -75,9 +75,9 @@ mod tests;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
+use crate::shared::routing::{delete, erase, get, patch, post, put};
 use anyhow::{Context, anyhow};
 use axum::Router;
-use axum::routing::{delete, get, patch, post, put};
 use sqlx::PgPool;
 
 use crate::Address;
@@ -854,14 +854,14 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/scene-admin",
             get(moderation::handlers::list_admins)
-                .post(moderation::handlers::add_admin)
-                .delete(moderation::handlers::remove_admin),
+                .post(erase(moderation::handlers::add_admin))
+                .delete(erase(moderation::handlers::remove_admin)),
         )
         .route(
             "/scene-bans",
             get(moderation::handlers::list_bans)
-                .post(moderation::handlers::ban_user)
-                .delete(moderation::handlers::unban_user),
+                .post(erase(moderation::handlers::ban_user))
+                .delete(erase(moderation::handlers::unban_user)),
         )
         .route(
             "/scene-bans/addresses",
@@ -874,13 +874,13 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/users/{address}/bans",
             get(moderation::handlers::get_user_ban_status)
-                .post(moderation::handlers::post_user_ban)
-                .delete(moderation::handlers::delete_user_ban),
+                .post(erase(moderation::handlers::post_user_ban))
+                .delete(erase(moderation::handlers::delete_user_ban)),
         )
         .route(
             "/users/{address}/warnings",
             get(moderation::handlers::get_user_warnings)
-                .post(moderation::handlers::post_user_warning),
+                .post(erase(moderation::handlers::post_user_warning)),
         )
         .route("/bans", get(moderation::handlers::list_all_bans))
         .route("/livekit-webhook", post(webhook::livekit_webhook))
@@ -930,11 +930,12 @@ pub fn router(state: SharedState) -> Router {
         )
         .route(
             "/community-voice-chat/{id}/users/{address}/speak-request",
-            post(voice::community_request_to_speak).delete(voice::community_reject_speak_request),
+            post(voice::community_request_to_speak)
+                .delete(erase(voice::community_reject_speak_request)),
         )
         .route(
             "/community-voice-chat/{id}/users/{address}/speaker",
-            post(voice::community_promote_speaker).delete(voice::community_demote_speaker),
+            post(voice::community_promote_speaker).delete(erase(voice::community_demote_speaker)),
         )
         .route(
             "/community-voice-chat/{id}/users/{address}/mute",
@@ -947,9 +948,9 @@ pub fn router(state: SharedState) -> Router {
         .route(
             streaming::PATH,
             get(streaming::scene_stream_access)
-                .post(streaming::scene_stream_access)
-                .put(streaming::scene_stream_access)
-                .delete(streaming::scene_stream_access),
+                .post(erase(streaming::scene_stream_access))
+                .put(erase(streaming::scene_stream_access))
+                .delete(erase(streaming::scene_stream_access)),
         )
         .route(
             "/cast/streamer-token",
@@ -971,7 +972,8 @@ pub fn router(state: SharedState) -> Router {
         .route("/cast/presenters", get(streaming::cast::list_presenters))
         .route(
             "/cast/presenters/{participant_identity}",
-            put(streaming::cast::promote_presenter).delete(streaming::cast::demote_presenter),
+            put(streaming::cast::promote_presenter)
+                .delete(erase(streaming::cast::demote_presenter)),
         )
         .route(
             admission::island_refresh::ISLAND_REFRESH_PATH,

@@ -26,6 +26,19 @@ on:
     branches: [main]
     paths:
       - 'apps/creator-hub/**'
+      # The ui3 and shop files in the renderer bundle: the include list of
+      # apps/creator-hub/packages/creator-hub/renderer/tsconfig.ui3.json. The bundlers also read
+      # the ui3 package (sideEffects) and its compiler settings (jsx, paths).
+      - 'apps/ui3/package.json'
+      - 'apps/ui3/tsconfig.json'
+      - 'apps/ui3/src/atoms/**'
+      - 'apps/ui3/src/shop/land/**'
+      - 'apps/ui3/src/shop/checkout/chain/**'
+      - 'apps/ui3/src/explorer/components/MapSurface.tsx'
+      - 'apps/ui3/src/explorer/components/mapsurface.css'
+      - 'apps/ui3/src/data/**'
+      - 'apps/ui3/src/generated/bridge/**'
+      - 'library/shop/**'
       - '.github/workflows/creator-hub-*'
       - '.github/actions/creator-hub-*/**'
   pull_request:
@@ -66,7 +79,7 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
             echo "creator-hub=true" >> "$GITHUB_OUTPUT"
           elif git diff --name-only "$BASE...$HEAD" \
-              | grep -qE '^(apps/creator-hub/|\.github/workflows/creator-hub-|\.github/actions/creator-hub-)'; then
+              | grep -qE '^(apps/creator-hub/|apps/ui3/(package|tsconfig)\.json$|apps/ui3/src/(atoms|shop/land|shop/checkout/chain|data|generated/bridge)/|apps/ui3/src/explorer/components/(MapSurface\.tsx|mapsurface\.css)$|library/shop/|\.github/workflows/creator-hub-|\.github/actions/creator-hub-)'; then
             echo "creator-hub=true" >> "$GITHUB_OUTPUT"
             if [ "$DESKTOP" != true ]; then
               echo "::notice::The desktop builds run on main. Add the ci:desktop label to build the desktop app for macOS and Windows on this pull request, or ci:linux for Linux."

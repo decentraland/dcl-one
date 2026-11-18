@@ -1,6 +1,6 @@
 import type { Scene, Mesh, LinesMesh } from '@babylonjs/core';
 import { TransformNode, Vector3 } from '@babylonjs/core';
-import mitt from 'mitt';
+import { createEmitter } from '../../utils/emitter';
 import { memoize } from '../../logic/once';
 import type { SceneSpawnPoint, SceneSpawnPointCoord } from '../../sdk/components';
 import {
@@ -71,7 +71,7 @@ function rotateAvatarToFaceTarget(avatarMesh: Mesh, spawnPos: Vector3, targetPos
  * Follows the layout-manager.ts pattern (memoized per Babylon scene).
  */
 export const createSpawnPointManager = memoize((scene: Scene) => {
-  const events = mitt<SpawnPointManagerEvents>();
+  const events = createEmitter<SpawnPointManagerEvents>();
 
   const spawnPointsNode = new TransformNode('spawn_points', scene);
 

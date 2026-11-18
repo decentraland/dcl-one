@@ -39,7 +39,7 @@ const asset = {
 } as unknown as Asset;
 
 const fetchedHashes = () =>
-  mocks.fetch.mock.calls.map(([url]: [string]) => url.split('/contents/')[1].split('?')[0]);
+  mocks.fetch.mock.calls.map(([url]: string[]) => url.split('/contents/')[1].split('?')[0]);
 
 describe('useImportAssetToFilesystem', () => {
   beforeEach(() => {

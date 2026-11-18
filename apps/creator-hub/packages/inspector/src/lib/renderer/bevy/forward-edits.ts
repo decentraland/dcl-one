@@ -208,7 +208,6 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
   const onError =
     options.onError ??
     ((ctx: string, error: unknown) => {
-      // eslint-disable-next-line no-console
       console.warn(`[bevy] forward edit failed (${ctx}):`, error);
     });
 

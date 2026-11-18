@@ -5,7 +5,8 @@
 //! sent, and its answer and effect (the `social.client_events` row, the
 //! onboarding checkpoint) compared; `known_gaps.json` ratchets the recorded
 //! differences. Needs CATALYST_TEST_DATABASE_URL; one scratch database for
-//! the file, the tables truncated and the onboarding state fresh per entry.
+//! the file, its `social.client_events` and onboarding checkpoints truncated
+//! per entry.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -345,7 +346,11 @@ struct Effects {
     onboarding: Arc<OnboardingState>,
 }
 
-fn compare_effects(entry: &Entry, identity: Option<&Identity>, effects: &Effects) -> Vec<String> {
+async fn compare_effects(
+    entry: &Entry,
+    identity: Option<&Identity>,
+    effects: &Effects,
+) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(rows) = entry.effect.rows
         && rows != effects.rows
@@ -362,7 +367,7 @@ fn compare_effects(entry: &Entry, identity: Option<&Identity>, effects: &Effects
         let expected = substitute(expected, identity);
         let user = expected["user"].as_str().unwrap_or_default();
         let checkpoint = expected["checkpoint"].as_i64().unwrap_or_default();
-        let state = effects.onboarding.checkpoint_state(user, checkpoint);
+        let state = effects.onboarding.checkpoint_state(user, checkpoint).await;
         if expected.get("recorded") == Some(&json!(false)) {
             if let Some(state) = state {
                 out.push(format!(
@@ -393,7 +398,7 @@ enum Outcome {
 }
 
 async fn run_entry(entry: &Entry, pool: &PgPool) -> Outcome {
-    sqlx::query("TRUNCATE social.client_events")
+    sqlx::query("TRUNCATE social.client_events, explore_api.onboarding_checkpoints")
         .execute(pool)
         .await
         .unwrap();
@@ -410,14 +415,14 @@ async fn run_entry(entry: &Entry, pool: &PgPool) -> Outcome {
         Some(Err(reason)) => return Outcome::Invalid(reason),
         None => None,
     };
-    let onboarding = Arc::new(OnboardingState::default());
+    let onboarding = Arc::new(OnboardingState::new(pool.clone()));
     if let Some(seed) = &harness.seed_checkpoint {
         let seed: CheckpointRequest =
             match serde_json::from_value(substitute(seed, identity.as_ref())) {
                 Ok(seed) => seed,
                 Err(e) => return Outcome::Invalid(format!("seed_checkpoint: {e}")),
             };
-        if let Err(e) = onboarding.record_checkpoint(seed) {
+        if let Err(e) = onboarding.record_checkpoint(seed).await {
             return Outcome::Invalid(format!("seed_checkpoint refused: {e}"));
         }
     }
@@ -483,15 +488,18 @@ async fn run_entry(entry: &Entry, pool: &PgPool) -> Outcome {
     .fetch_optional(pool)
     .await
     .unwrap();
-    diffs.extend(compare_effects(
-        entry,
-        identity.as_ref(),
-        &Effects {
-            rows,
-            row,
-            onboarding,
-        },
-    ));
+    diffs.extend(
+        compare_effects(
+            entry,
+            identity.as_ref(),
+            &Effects {
+                rows,
+                row,
+                onboarding,
+            },
+        )
+        .await,
+    );
     if diffs.is_empty() {
         Outcome::Pass
     } else {

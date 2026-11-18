@@ -5,7 +5,7 @@ import { CREATE_EVENT_URL, getSceneJumpInUrl } from '/@/modules/utils';
 import type { ManagedProject } from '/shared/types/manage';
 
 import type { Option } from '../../Dropdown';
-import { CalendarGlyph, JumpInGlyph, LinkGlyph, SwapGlyph } from '../cardMenuGlyphs.styled';
+import { CalendarGlyph, JumpInGlyph, LinkGlyph, SwapGlyph } from '../cardMenuGlyphs';
 
 type Actions = {
   onTransfer: () => void;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Box, CircularProgress } from 'decentraland-ui2';
+import Spinner from '@ui/atoms/Spinner';
 
 import type { AiAssetMention, AiAttachment, AiMirrorState, AiProvider } from '/shared/types/ai';
 
@@ -11,6 +11,8 @@ import type { Locale } from '/shared/types/translation';
 
 import type { AiMessage } from '/@/modules/store/ai/types';
 import { ChatView } from '../AiChatPanel/ChatView';
+
+import styles from './component.module.css';
 
 // The detached chat window (#1504). It keeps no chat store of its own: it renders the
 // state the main window mirrors here and sends the user's actions back as remote commands
@@ -87,11 +89,14 @@ export function AiChatWindow() {
 
   if (mirror === null) {
     return (
-      <Box
-        sx={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center' }}
-      >
-        <CircularProgress />
-      </Box>
+      <div className={styles.loading}>
+        <Spinner
+          ring="wide"
+          role="progressbar"
+          size={40}
+          color="primary"
+        />
+      </div>
     );
   }
 

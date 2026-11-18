@@ -1,0 +1,13 @@
+/* Three classes: the menu rows and the card rows set a size on their svg. */
+.s16.s16.s16 {
+  font-size: 1rem;
+}
+
+.s22.s22.s22 {
+  font-size: 1.375rem;
+}
+
+.jumpIn.jumpIn.jumpIn {
+  color: var(--brand);
+  font-size: 1.5rem;
+}

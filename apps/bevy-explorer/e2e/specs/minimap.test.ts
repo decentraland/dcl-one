@@ -4,7 +4,7 @@
 // | Unity test                    | Here                                                     | Class   |
 // | TestMinimapHudPresence        | the square map and the parcel the player stands on       | Partial |
 // | TestToggleFavoriteFromMinimap | the minimap has no favourite control                     | Gap     |
-// | TestOpenMinimapContextMenu    | the dots menu has Copy Link where the place has a link   | Gap     |
+// | TestOpenMinimapContextMenu    | the dots menu has Set as Home, Copy Link, Reload Scene   | Port    |
 // | TestCollapseAndExpandMinimap  | Collapse minimap and Expand minimap swap                 | Port    |
 // | TestOpenMapFromMinimap        | Open map opens the Map page                              | Port    |
 //
@@ -40,6 +40,15 @@ const WIDGET_CONTROLS = [
   { name: 'Zoom in', role: 'button' },
   { name: 'Zoom out', role: 'button' },
   { name: 'Minimap settings', role: 'button' }
+] satisfies Selector[]
+
+const SETTINGS: Selector = { name: 'Minimap settings', role: 'button' }
+const MENU: Selector = { name: 'Minimap settings', role: 'menu' }
+/** The menu's first entries, in Genesis City where the place has a link. */
+const MENU_ENTRIES = [
+  { name: 'Set as Home', role: 'switch' },
+  { name: 'Copy Link', role: 'menuitem' },
+  { name: 'Reload Scene', role: 'menuitem' }
 ] satisfies Selector[]
 
 /** Click once the control is one a user could click, as explorer-automation's Click waits for it. */
@@ -101,8 +110,19 @@ scenario('the favourite heart toggles the current place and restores it', async 
   todo: 'the Bevy HUD has no favourite control: the minimap has none, and the Places page lists favourites without a way to add or remove one'
 })
 
-scenario('the kebab menu offers Set as Home, Copy Link and Reload Scene, and Escape closes it', async () => {}, {
-  todo: 'the Bevy minimap\'s dots button (Minimap settings) opens a menu with Copy Link (only where the place has a link) and the minimap\'s own settings (rotation, map style, markers); it has no Set as Home and no Reload Scene'
+scenario('the kebab menu offers Set as Home, Copy Link and Reload Scene, and Escape closes it', async ({ explorer }) => {
+  const wasShown = await setShown(explorer, true)
+  const wasExpanded = await isExpanded(explorer)
+  await setExpanded(explorer, true)
+  await press(explorer, SETTINGS)
+  await explorer.hud.wait(MENU, { timeoutMs: CONTROL_TIMEOUT_MS })
+  for (const entry of MENU_ENTRIES) {
+    assert.ok(await explorer.hud.isVisible(entry), `the minimap menu should offer ${entry.name}`)
+  }
+  await explorer.escape()
+  await explorer.hud.waitHidden(MENU, CONTROL_TIMEOUT_MS)
+  await setExpanded(explorer, wasExpanded)
+  await setShown(explorer, wasShown)
 })
 
 scenario('the collapse and expand chevrons swap', async ({ explorer }) => {

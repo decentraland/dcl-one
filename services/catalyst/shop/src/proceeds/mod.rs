@@ -20,12 +20,12 @@
 //! seller past the bound, is the unavailable envelope, never a short total
 //! presented as the whole.
 
+use crate::shared::routing::get;
 use axum::Json;
 use axum::Router;
 use axum::extract::{Query, State};
 use axum::http::header::CACHE_CONTROL;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use serde::Serialize;
 use serde_json::{Value, json};
 

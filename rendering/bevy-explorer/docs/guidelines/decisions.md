@@ -19,10 +19,28 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   `c78b1f0c59545b0d3b1ff43e109fa63997267850` clamps negative speed to zero. Missing overrides
   retain this renderer's time-of-day atmosphere, lighting and quality settings; component
   compatibility does not imply identical default pixels across renderers. A sky image changes
-  the visible sky while the authored color bands continue to drive procedural ambient lighting.
+  the visible sky while the authored color bands continue to drive ambient lighting: an
+  authored zenith, horizon or nadir replaces the sky, equator or ground colour of the Trilight
+  ambient, and the sky preset keeps the bands a scene leaves out. A scene's fog density is in the
+  sky preset's units, so it goes through the same conversion to bevy's falloff, and it takes the
+  place of the `/fog` density while the scene is active.
+- **A root light source replaces what it sets.** Point and spot light intensities are scaled to
+  the sky preset's light unit (the default 16000 is 8 units). A `LightSource` on a scene's root
+  entity replaces the sun's colour and, when it gives an intensity, the sun's intensity as lux,
+  unscaled: the Unity client creates no light for a light source without a type, so there is no
+  unit to match, and scenes already set it in lux here. Without an intensity the sky preset's
+  light stays: the lamps' default of 16000 is not applied to the sun, where it is over four
+  times the preset's noon.
+- **The light sets with the sun.** From sunset until the swing to the moon, and from the swing
+  back until sunrise, the directional light stays on the sun's arc below the horizon while the
+  intensity curve fades it, as in Unity. It grazes walls from under the horizon and floors get
+  no direct light; at most a tenth of a light unit points upward. It is not clamped to the
+  horizon.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
   it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
   the extension is not the fix; the long-term answer is still open.
+- **Sky preset curves are linear.** The fog colour, light colour, light intensity and Trilight
+  ambient keys are interpolated linearly; Unity's curve tangents are not carried.
 - **Render scale compositor.** At scale 1 the world camera draws to the window and carries the
   UI, at no extra cost. Below it, the world renders to an image that a 2D camera composites onto
   the window with FSR EASU; bevy's CAS at 0.92 stands in for RCAS; the UI rides the compositor
@@ -39,10 +57,6 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   cascade spreads that over the whole shadow distance, and the bias is in texels, so past about
   75 m on 1024 the avatar's shadow disappeared, and on 2048 it was a smudge at the feet. 4096
   keeps it.
-- **Sun shadows block 0.65 of the sun.** Unity's sun shadow strength is 1, and its Trilight
-  ambient fills the shadow in. Our ambient is darker, so a full-strength shadow comes out far
-  darker than Unity's. `SHADOW_OPACITY` in `shadow_softening.wgsl` stays at 0.65 until Unity's
-  ambient lands, and the two get tuned together after that.
 - **Sun shadows hold a floor past the shadow distance.** URP fades the shadow out completely at
   the shadow distance. We fade over the same squared-distance curve, but towards a partial
   shadow (`CASCADE_FAR_SHADOW` in `shadow_softening.wgsl`) that holds past the distance, so the
@@ -498,10 +512,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   The sea around the city is one image, rendered once from unity-explorer's sea shader and placed
   under the satellite map like its tiles; its water stands still, where unity-explorer animates
   it every frame. Nothing on the map is drawn per frame.
-- **The map's layers are on the full map only.** unity-explorer draws live events, points of
-  interest, players, scene pins and the home pin on the minimap too, and the Layers panel switches
-  both. Here the minimap keeps its own place markers and settings, so the Layers panel changes the
-  full map alone, and a route shows no pin on the minimap's edge.
+- **The map's layers are on the full map only, except the home pin.** unity-explorer draws live
+  events, points of interest, players, scene pins and the home pin on the minimap too, and the
+  Layers panel switches both. Here the minimap draws the home pin and keeps its own place markers
+  and settings, so the Layers panel changes the full map alone, and a route shows no pin on the
+  minimap's edge. The minimap has no favourite button for the place the player stands in.
 - **The map draws no scene map pins.** unity-explorer shows the `MapPin`s of every portable
   experience, among them the quests' global one (`globalpx.dcl.eth`, loaded at startup from
   `alfa-global-portable-experiences`), and of any scene under `alfa-map-pins`, with a Quest
@@ -509,10 +524,16 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   reads no `MapPin` and has no such layer.
 - **Home can be set, not cleared, and is one for the install.** unity-explorer's Set as Home also
   takes the home back, and it keeps one home per wallet. Here the engine keeps one home in its
-  config, parcel 0,0 of the default realm until one is set, and the place panel's button only
-  sets it.
-- **Home is set from the map's place panel only.** unity-explorer also sets it from the minimap's
-  menu and from Places cards; neither has that control here.
+  config, parcel 0,0 of the default realm until one is set, and the place panel's button and the
+  minimap's switch only set it: the switch reads on where the player stands in their home, and
+  can't be turned off.
+- **Home is set from the map's place panel and the minimap's menu.** unity-explorer also sets it
+  from Places cards, which have no such control here. The minimap's menu is unity-explorer's: Set
+  as Home, Copy Link and Reload Scene, then this HUD's own Minimap settings. As unity-explorer's,
+  the minimap saves the parcel the player stands on, where the place panel saves the place's base
+  parcel (a road's, the picked one), and it compares a World's name without case where the place
+  panel compares it exactly. A World's copied link names the World and the parcel and carries the
+  sharer's address, as unity-explorer's.
 - **The map fixes what the upstream panel leaves broken.** Search results carry their LIVE badge
   (upstream keys the lookup by a malformed parcel, so none shows); "remind me" on an event row
   starts from the player's saved interest and keeps working after the list is rebuilt; a like or
@@ -564,6 +585,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   known, as it already does for a photo's teleport. A friend found nowhere leaves it open, and
   nothing is shown, as there. The profile card offers the jump after View Profile, since its rows
   already follow a different order from unity-explorer's user menu.
+- **INVITE FRIENDS is for a signed-in player only.** unity-explorer's copy runs for any
+  identity it holds. Here a guest gets no button, since a guest's address is never kept and a referral
+  to it could not be credited. As there, it copies the deployment site's `/invite/<address>`
+  and says "Link copied!"; the panel stays open.
+- **A new referral tier opens the site's Referral Rewards tab.** unity-explorer opens
+  `profile/accounts/<address>/referral`, which this site does not serve; its profile names the
+  same page `/profile/<address>/referral-rewards`.
 - **The hills follow the Landscape Distance.** The distance is the config's `landscape_distance`
   (default 1000 m), read at startup and held to 500 to 7000 m.
   Unity displaces its whole terrain and its Landscape Distance setting does not drive it. Here the
@@ -580,9 +608,20 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Distance. Bevy has one sea plane, a single opaque quad that casts no shadows, so hiding it would
   save almost nothing, and the water material draws without fog, so nothing would soften it
   appearing and disappearing.
+- **No satellite floor.** unity-explorer lays the minimap's satellite images flat at 0.205 m under the
+  terrain in Genesis City; here the ground covers that plane everywhere, so the floor would never be
+  seen and is not shipped.
 
 ## Deliberate choices that look like mistakes
 
+- **Fog does not hide the loading edge.** The fog is the sky preset's: one exponential density
+  (0.0005 per metre) and a colour by time of day, as the Unity client renders it. It does not
+  thicken with a shorter scene load distance, so the edge of the loaded scenes shows through it,
+  and a scene's global light does not tint it. A scene sets fog colour and density with its fog
+  component. The Off setting is no fog at all.
+- **glTF occlusion textures are ignored.** Scene materials drop a glTF's occlusion texture, so
+  baked ambient occlusion does not darken the ambient light. The Unity client's scene shader
+  does not sample it either, and content is authored against that look.
 - **The map carries over upstream's marker rules as they are**, so the two clients' maps match.
   A place of several parcels is marked on the parcel a walk over them stops at, which depends on
   their order and is not always the middle one; a cluster stands half a parcel south-west of the
@@ -599,13 +638,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   downloaded again in every session. An entry under a content hash is never dropped this way: it
   was checked against the hash before it was written, so a bad one is the asset processor's
   output or disk damage, which belong to the processor and the disk, not to a retry.
-- **Engine content downloads carry no `X-IPFS` header on web.** The engine reads
-  `ipfs-path-cache-v2` itself before it queues a download (`crates/ipfs/src/lib.rs`, the variants
-  client), so the worker passes the request to the network untouched; a lookup there could only
-  repeat that miss. The worker still answers requests that carry the header from that cache, and
-  only the engine writes it. A hit missed in between (the same hash finishing under another url,
-  another tab), or one that appears before a retry (the engine reads the cache only before the
-  first attempt), costs one more download of the same bytes.
+- **The service worker does not answer content requests from the content cache.** The engine
+  reads `ipfs-path-cache-v2` itself before it queues a download (`crates/ipfs/src/lib.rs`, the
+  variants client), so a lookup in the worker could only repeat that miss; the worker only trims
+  the cache. A hit missed in between (the same hash finishing under another url, another tab), or
+  one that appears before a retry (the engine reads the cache only before the first attempt),
+  costs one more download of the same bytes (#726).
 - **Web-only engine switches are page params**, not `LaunchOptions` fields.
 - **`CommsApi.consumeMessages` resolves to a bare array** of `{ sender, data }`, not the
   protocol's `{ messages }`, because unity-explorer, the client scenes are tested on, returns
@@ -634,14 +672,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Collectible cache retention must be generic** across wearables and emotes, and an emote's
   ownership is its membership of the avatar's animation graph. A pruning PR that special-cases
   emotes (#1323) is parked for that reason.
-- **A missing content file stays missing until restart.** When a server answers 400, 404, 405,
-  410, 414 or 451 to a read of a content hash, later reads of that url by content hash are
-  answered from memory for the rest of the session. Any other read of the same url (by url, or
-  from a loopback content server, which is never keyed by hash) is answered from memory for 10 s
-  after the failure and then asked for again; other failures are answered from memory for 10 s;
-  preview mode asks again on every read. A later failure of another kind does not shorten a
-  session entry, and a successful download of the url clears its entry. At most 4096 urls are
-  held.
+- **Definitive failures on hash-keyed content reads are remembered for the session.** Outside
+  preview, a definitive failure (404 and similar) is remembered for that URL when read by hash.
+  A catalyst only activates an entity once it holds all of its files, so the answer is final.
+  Other reads and failures keep the 10 s retry. Preview asks again on every read (#727).
+- **A content download that does not match its hash fails the read**, so bytes that are not the
+  file the scene named never reach a loader. It is a failure like a dropped transfer, asked for
+  again after 10 s, not a missing file. A name the check cannot verify is read as before, uncached.
+  Measured first: no correct file of 4574 from live scenes, worlds, wearables and emotes failed it.
 - **Camera layers are identified by entity**, not by an explicit layer number; the cleanup in
   #1320 waits on the protocol change.
 - **`-logFile` with one dash is accepted** (rewritten to `--log-file` before clap, `main.rs`):
@@ -664,6 +702,26 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the frame also counts the render world's CPU time up to the submission, which on a CPU-bound
   frame is most of the sample (measurements (evidence supplied for the task)).
   See [GPU time](benchmark.md#gpu-time).
+- **The profiler is opt-in.** The
+  `performance-profiler` cargo feature (Bevy's `trace` spans, the scope profiler's layer, its
+  console commands and the Render and Profiler debug panel sections, the counting allocator,
+  Bevy's render and system-information diagnostics) is out of `default` and of the web build's features: those
+  inputs cost every frame even while nothing records (process CPU per frame +2.1% with recording
+  off, +9.8% with it on, native release on an Apple M4 Max), and a macOS build with the feature
+  renders incorrectly, recording or not ([profiling](profiling.md)). Tracy covers native
+  profiling. A build with the feature, native or web, profiles Bevy's systems. On the web,
+  Bevy's `tracing-wasm` layer marks and measures every span on the page's performance timeline,
+  entries nothing clears, so a web build with the feature grows the page's memory and main-thread
+  time over the session; Bevy keeps that layer, since only profiling builds pay for
+  it. Recording stays a runtime switch within a `performance-profiler` build. See
+  [profiling](profiling.md#profiler-profile_top-count---sort-metric-profile_enable-onoffreset).
+- **The analytics performance event reads the sampler's snapshot.** `PerformanceMetrics` counts
+  hiccups against the sampler's threshold (the larger of 50 ms and two target frames, so 66.7 ms
+  at a 30 FPS cap), takes real frame times with no 250 ms cap, and is sent once per 15 s sample,
+  in world and focused only, instead of once per 1000 frames of virtual time through loading
+  screens and unfocused windows. The old event's own sampling was removed rather than kept beside
+  the sampler. Dashboards comparing across this change see a step from the definitions; whether
+  the event gets a schema field or a fixed 50 ms count is the analytics owners' call.
 - **Bevy stays on the 0.16 fork for now.** Security-relevant dependencies (V8 and deno,
   libwebrtc, ffmpeg, wgpu) get bumped inside it. Whether to ever move the bevy version is an
   open discussion, not a decision.
@@ -713,3 +771,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   HUD does not have and reads as a fault; the control appears when its function exists. The
   Portable experiences button follows the same rule and shows only while an experience is
   active.
+- **The embedded assets stay in plain git, not Git LFS.** `crates/assets/build.rs` embeds whatever
+  is on disk, so an LFS pointer would compile and be wrong at runtime, and an LFS checkout would
+  have to be pulled by every Explorer build and matched by every check that hashes the build's
+  inputs. The build fails on a file that is an LFS pointer. Revisit if the landscape folder
+  (`crates/assets/src/assets/landscape`) reaches tens of MB.

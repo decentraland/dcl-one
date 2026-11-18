@@ -1,26 +1,28 @@
-import { Backdrop, CircularProgress, type CircularProgressProps } from 'decentraland-ui2';
+import type { ComponentPropsWithoutRef } from 'react';
+import Spinner from '@ui/atoms/Spinner';
+
+import styles from './component.module.css';
 
 import './styles.css';
 
-type Props = CircularProgressProps & {
+type Props = Omit<ComponentPropsWithoutRef<'span'>, 'color'> & {
+  size?: number;
+  color?: string;
   overlay?: boolean;
 };
 
-export function Loader({ overlay, ...props }: Props) {
-  if (overlay) {
-    return (
-      <Backdrop
-        open
-        sx={{ position: 'absolute', zIndex: 1, backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
-      >
-        <CircularProgress {...props} />
-      </Backdrop>
-    );
-  }
-
-  return (
-    <div className="Loader">
-      <CircularProgress {...props} />
-    </div>
+/** A spinner centred in the box of its parent, or over it with `overlay`. */
+export function Loader({ overlay, size = 40, color = 'primary', ...props }: Props) {
+  const spinner = (
+    <Spinner
+      role="progressbar"
+      size={size}
+      color={color}
+      {...props}
+    />
   );
+
+  if (overlay) return <div className={styles.overlay}>{spinner}</div>;
+
+  return <div className="Loader">{spinner}</div>;
 }

@@ -1,17 +1,16 @@
-import { readFileSync, writeFileSync } from 'fs';
-import { glob } from 'glob';
+import { globSync, readFileSync, writeFileSync } from 'fs';
 import type {
   AssetData,
   LegacyAssetData,
   Component,
   AssetDataWithoutComposite,
-} from '../src/types';
+} from '../src/types.ts';
 import {
   isAssetData,
   isAssetPackData,
   isLegacyAssetData,
   isAssetDataWithoutComposite,
-} from '../src/types';
+} from '../src/types.ts';
 
 /**
  * Creates a component object with the specified name and data.
@@ -110,7 +109,7 @@ function migrateFile(filePath: string) {
 
 async function migrate() {
   // Find all data.json files in packs directory
-  const files = await glob('packs/**/data.json');
+  const files = globSync('packs/**/data.json');
 
   console.log(`Found ${files.length} files to process`);
 

@@ -4,7 +4,7 @@ use js_sys::{ArrayBuffer, Uint8Array};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
-// the service worker stores the raw fetch in its cache: we read it, process, and write the
+// the engine stores the raw download in the web cache: we read it, process, and write the
 // processed bytes back over the same entry so subsequent loads are served pre-processed.
 // The entry is the one read, by its key: looking the url up again can find a shared entry made
 // meanwhile, which the url's unchecked bytes must not overwrite.

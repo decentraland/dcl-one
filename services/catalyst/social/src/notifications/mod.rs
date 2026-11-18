@@ -40,7 +40,7 @@ pub mod unsubscribe;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use crate::routing::{erase, get, post, put};
+use crate::shared::routing::{erase, get, post, put};
 use axum::Router;
 use sqlx::PgPool;
 
@@ -339,7 +339,7 @@ pub fn router(state: SharedState) -> Router {
             "/unsubscribe/{address}/{notificationType}",
             get(unsubscribe::unsubscribe_one),
         )
-        .fallback(crate::routing::erase(|| async {
+        .fallback(crate::shared::routing::erase(|| async {
             (axum::http::StatusCode::NOT_FOUND, "Not found")
         }))
         .layer(axum::middleware::from_fn(errors::json_wire))

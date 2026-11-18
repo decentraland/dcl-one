@@ -83,12 +83,15 @@ ends that much earlier for spawning and glTF processing.
   waiting (`take_while` on the gate): they wait as they are, untouched and unvisited, with no
   resolving and no marker written again. The tick's arrivals are still all gone through, to mark
   the new ones and apply changes, so a frame costs what it admits plus that tick's arrivals,
-  whatever the backlog's size. Removals are handled before that loop and drop the marker,
-  unless the component was put back in the same tick: the entity then keeps waiting. Every path
-  that gives up on an item (no scene context, a glTF mesh the resolver rejects) drops it too.
-  A refused material leaves only its resolved glTF base (`BaseMaterial`), so a retry does not
-  resolve it again; `MaterialSource` and the texture camera's cursor are inserted once it is
-  admitted.
+  whatever the backlog's size. The stop needs a refusal, though: a waiting item retrying a
+  source that is not ready yet (a glTF mesh still loading, a material's texture source or glTF
+  base) never asks the gate, so it is resolved again each frame up to the stop, and a backlog
+  made only of such items is walked in full. Removals are handled before that loop and drop the
+  marker, unless the component was put back in the same tick: the entity then keeps waiting.
+  Every path that gives up on an item (no scene context, a glTF mesh the resolver rejects) drops
+  it too. A refused material leaves only its resolved glTF base (`BaseMaterial`), so a retry
+  does not resolve it again; `MaterialSource` and the texture camera's cursor are inserted once
+  it is admitted.
 - **A new primitive brings its material.** When `update_mesh` admits a first mesh for an entity
   that has a `PbMaterialComponent` and no material yet, it charges a new material too and marks
   the entity `MaterialPrepaid`; `update_materials` creates a prepaid material without asking the

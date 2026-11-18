@@ -2,9 +2,8 @@ import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import type { ChainId, Scene } from '@dcl/schemas';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import type { Project } from '/shared/types/projects';
 import { editor, scene } from '#preload';
@@ -18,6 +17,7 @@ import en from '/@/modules/store/translation/locales/en.json';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
 import { createTestStore } from '../../../../../../tests/utils/testStore';
+import { TestProviders } from '../../../../../../tests/utils/TestProviders';
 import { PublishToLand } from './component';
 
 /** The real store module boots the app on import. */
@@ -26,13 +26,13 @@ vi.mock('#store', async () => {
   return { useDispatch, useSelector };
 });
 
-/** The ui2 modal shell reads breakpoints this environment does not populate. */
+/** The flow under test lives in the step, not in the modal shell. */
 vi.mock('../../PublishModal', () => ({
   PublishModal: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
 // The real atlas draws on a canvas; this one lets the test hover and pick a parcel.
-vi.mock('decentraland-ui2/dist/components/Atlas/Atlas', () => ({
+vi.mock('/@/components/WorldAtlas/Atlas', () => ({
   Atlas: ({
     onHover,
     onClick,
@@ -90,15 +90,15 @@ describe('PublishToLand', () => {
   let order: string[];
   let sceneJson: Scene;
   let deployedSceneJson: Scene | undefined;
-  let saveScene: Mock<[], Promise<void>>;
-  let setSceneSettings: Mock<[{ layout: EditorLayout }], Promise<{ settings: object }>>;
+  let saveScene: Mock<() => Promise<void>>;
+  let setSceneSettings: Mock<(settings: { layout: EditorLayout }) => Promise<{ settings: object }>>;
   let onStep: Mock;
 
   const renderStep = () =>
     render(
       <Provider store={store}>
         <MemoryRouter>
-          <ThemeProvider theme={dark}>
+          <TestProviders>
             <AuthContext.Provider
               value={
                 {
@@ -114,7 +114,7 @@ describe('PublishToLand', () => {
                 onStep={onStep}
               />
             </AuthContext.Provider>
-          </ThemeProvider>
+          </TestProviders>
         </MemoryRouter>
       </Provider>,
     );

@@ -39,7 +39,7 @@ export class Client extends RPC<Method, Params, Result> {
     super(id, transport);
   }
 
-  readFile(path: string) {
+  readFile(path: string): Promise<Buffer> {
     return this.request('read_file', { path });
   }
 
