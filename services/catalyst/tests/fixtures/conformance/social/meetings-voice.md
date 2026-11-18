@@ -22,7 +22,7 @@ stream from OBS, and talk over voice (nearby, private calls, community voice).
 | Nearby (proximity) voice in scenes and islands | Server and Bevy client present. No multi-client run against a real LiveKit. |
 | Private 1:1 calls | Server routes and RPCs at parity; client flow in the Bevy engine and the shared HUD. |
 | Community voice (stage, raise hand, promote, kick, end) | Server at parity. Client lacks moderator mute (MV-6, MV-7). |
-| OBS/RTMP stream onto a scene screen | Served: `/scene-stream-access` and LiveKit Ingress into the scene room. Not run end to end. |
+| OBS/RTMP stream onto a scene screen | Served: `/scene-stream-access` and LiveKit Ingress into the scene room. The local stack runs the ingress (`tooling/dev.py`); an RTMP push to a key created with the request the API makes reaches the room as H264 and Opus. Not run end to end through the API and a client. |
 | Share a screen or camera from a browser (Decentraland Cast) | Served: every `/cast/*` route, and the `apps/sites` streamer and watcher pages. Run headless against a local LiveKit; no multi-client run in the explorer. |
 | Presentations (slides) and presenters | Presenters routes and the presentation-bot token served; no presenter service (`cast-presenter-service`) is hosted. |
 
