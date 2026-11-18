@@ -74,9 +74,9 @@ async function fetchSnapshot(application: string): Promise<Snapshot> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
   try {
-    const response = await fetch(`${config.get('FEATURE_FLAGS_URL')}/${application}.json`, {
-      signal: controller.signal
-    })
+    // Read through this app: the flag service answers by the asking site, which only the server can name.
+    const query = new URLSearchParams({ app: application, env: config.getEnv() })
+    const response = await fetch(`/internal/creators-flags?${query}`, { signal: controller.signal })
     if (!response.ok) {
       await response.body?.cancel()
       throw new Error(`feature flags request failed with ${response.status}`)

@@ -9,14 +9,19 @@ export { Env } from './env'
 const fallback =
   resolveEnv({ host: '', search: `?env=${import.meta.env.VITE_CREATORS_ENV ?? ''}` }, import.meta.env.DEV ? Env.DEVELOPMENT : Env.PRODUCTION)
 
-export const config = createEnvConfig(
-  {
-    [Env.DEVELOPMENT]: dev,
-    [Env.STAGING]: stg,
-    [Env.PRODUCTION]: prod
-  },
-  resolveEnv(typeof window === 'undefined' ? undefined : window.location, fallback)
-)
+const BY_ENV = {
+  [Env.DEVELOPMENT]: dev,
+  [Env.STAGING]: stg,
+  [Env.PRODUCTION]: prod
+}
+
+/** The page's environment: in the browser, the one its address names. */
+export const config = createEnvConfig(BY_ENV, resolveEnv(typeof window === 'undefined' ? undefined : window.location, fallback))
+
+/** The environment a request addresses, for server code, which serves every environment's pages. */
+export function configForRequest(url: URL) {
+  return createEnvConfig(BY_ENV, resolveEnv({ host: url.host, search: url.search }, fallback))
+}
 
 const search = typeof window === 'undefined' ? new URLSearchParams() : new URLSearchParams(window.location.search)
 
