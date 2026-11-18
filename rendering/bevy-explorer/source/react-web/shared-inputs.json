@@ -5162,6 +5162,10 @@
         {
           "name": "textureOptimization.test.tsx",
           "kind": "regular"
+        },
+        {
+          "name": "useFeatureFlag.test.tsx",
+          "kind": "regular"
         }
       ]
     },
@@ -6753,11 +6757,11 @@
     },
     {
       "path": "library/explorer-core/lib/featureFlags.test.ts",
-      "sha256": "95edefe6852a2a23a86598a41990ed8f06bae68597ff404efa3442ee6e2ddc26"
+      "sha256": "c47a132fc2651b76b50e8a209138ab66ff277c29782a6e7f3c88fe376da87b8e"
     },
     {
       "path": "library/explorer-core/lib/featureFlags.ts",
-      "sha256": "11070e05144cf796fe137b409e609ccf559e751b1f4070731ebe0124e24128a9"
+      "sha256": "8cee434dbe75a6135255a5cd14ed5fc63090ce5f0cda4e4f6e1fb86a188f9fb5"
     },
     {
       "path": "library/explorer-core/lib/gpu.test.ts",
@@ -10818,6 +10822,10 @@
     {
       "path": "library/ui/apps/hud/test/textureOptimization.test.tsx",
       "sha256": "97048bb11827e332f4bbf987f7380d5227412789a10e54da40d910faadbef8f3"
+    },
+    {
+      "path": "library/ui/apps/hud/test/useFeatureFlag.test.tsx",
+      "sha256": "33f9138bc786c2985721ee8925e32bacc7daf8592fdc9bfbc8998d2d103aeeef"
     },
     {
       "path": "library/ui/foundations/colors/colors.css",
@@ -43540,6 +43548,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/useFeatureFlag.test.tsx",
+      "to": "library/explorer-core/lib/featureFlags.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/useFeatureFlag.test.tsx",
+      "to": "library/explorer-core/lib/featureFlags.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/useFeatureFlag.test.tsx",
+      "to": "library/explorer-core/lib/featureFlags.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/useFeatureFlag.test.tsx",
+      "to": "library/ui/apps/hud/lib/useFeatureFlag.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/useFeatureFlag.test.tsx",
+      "to": "library/ui/apps/hud/lib/useFeatureFlag.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/useFeatureFlag.test.tsx",
+      "to": "library/ui/apps/hud/lib/useFeatureFlag.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/foundations/foundations.css",
       "to": "library/ui/foundations/colors/colors.css",
       "kind": "native:css"
@@ -47447,6 +47485,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/textureOptimization.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/useFeatureFlag.test.tsx",
       "kind": "type"
     },
     {
