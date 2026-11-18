@@ -1985,9 +1985,9 @@ pub struct ShowOutOfBounds(pub bool);
 
 impl ShowOutOfBounds {
     /// The switch for a run on `realm`: on in the editor, in preview and on a loopback realm
-    /// (local development).
-    pub fn for_run(editor: bool, preview: bool, realm: &str) -> Self {
-        Self(editor || preview || crate::util::is_loopback_url(realm))
+    /// (local development). A run with no realm of its own passes none.
+    pub fn for_run(editor: bool, preview: bool, realm: Option<&str>) -> Self {
+        Self(editor || preview || realm.is_some_and(crate::util::is_loopback_url))
     }
 }
 
@@ -2245,14 +2245,17 @@ mod tests {
 
     #[test]
     fn out_of_bounds_geometry_shows_in_the_editor_in_preview_and_on_a_loopback_realm() {
-        let public = "https://realm.example.test/main";
+        let public = Some("https://realm.example.test/main");
         assert!(!ShowOutOfBounds::for_run(false, false, public).0);
         assert!(ShowOutOfBounds::for_run(true, false, public).0);
         assert!(ShowOutOfBounds::for_run(false, true, public).0);
-        assert!(ShowOutOfBounds::for_run(false, false, "http://127.0.0.1:8000").0);
-        assert!(ShowOutOfBounds::for_run(false, false, "http://localhost:8000").0);
+        assert!(ShowOutOfBounds::for_run(false, false, Some("http://127.0.0.1:8000")).0);
+        assert!(ShowOutOfBounds::for_run(false, false, Some("http://localhost:8000")).0);
         // a preview server reached by its LAN address
-        assert!(!ShowOutOfBounds::for_run(false, false, "http://192.168.1.20:8000").0);
+        assert!(!ShowOutOfBounds::for_run(false, false, Some("http://192.168.1.20:8000")).0);
+        // no realm of its own
+        assert!(!ShowOutOfBounds::for_run(false, false, None).0);
+        assert!(ShowOutOfBounds::for_run(false, true, None).0);
     }
 
     #[test]

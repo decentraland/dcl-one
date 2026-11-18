@@ -488,7 +488,7 @@ impl DecentralandApp {
         let ShowOutOfBounds(show_out_of_bounds) = ShowOutOfBounds::for_run(
             decentraland_app_config.arguments.client.editor,
             decentraland_app_config.arguments.launch.preview,
-            &boot_server,
+            Some(&boot_server),
         );
 
         // Resources

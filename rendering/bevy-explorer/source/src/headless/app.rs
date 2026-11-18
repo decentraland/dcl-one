@@ -131,10 +131,10 @@ pub fn assemble(
     app.insert_resource(NoRenderApp);
     // A scene server keeps what reaches out of a scene's bounds solid in the runs where its
     // clients do, or the two sides' raycasts and triggers would disagree.
-    app.insert_resource(ShowOutOfBounds::for_run(
-        false,
-        launch.preview,
+    app.insert_resource(show_out_of_bounds(
+        launch,
         &map_realm_name(realm),
+        common::structs::multi_tenant(),
     ));
 
     // ---- render-free plugin set (mirrors scene_runner TestPlugins) ----
@@ -384,9 +384,30 @@ fn drain_permissions(mut manager: ResMut<PermissionManager>, config: Res<AppConf
     }
 }
 
+/// Whether a headless run on `realm` shows what is out of bounds. A multi-tenant server is
+/// started with no realm, each of its scenes bringing its own, so `realm` is a placeholder
+/// there and does not count.
+fn show_out_of_bounds(launch: &LaunchOptions, realm: &str, multi_tenant: bool) -> ShowOutOfBounds {
+    ShowOutOfBounds::for_run(false, launch.preview, (!multi_tenant).then_some(realm))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_multi_tenant_server_takes_no_realm_of_its_own_for_out_of_bounds() {
+        // started with no realm, so its realm is the binary's placeholder
+        let placeholder = "http://localhost:8000";
+        let preview = LaunchOptions {
+            preview: true,
+            ..Default::default()
+        };
+        assert!(!show_out_of_bounds(&LaunchOptions::default(), placeholder, true).0);
+        assert!(show_out_of_bounds(&preview, placeholder, true).0);
+        // a client or a standalone server booted into the same address is on that realm
+        assert!(show_out_of_bounds(&LaunchOptions::default(), placeholder, false).0);
+    }
 
     /// The scene server's app for a run, as `assemble` builds it.
     fn assembled(preview: bool, realm: &str) -> App {
