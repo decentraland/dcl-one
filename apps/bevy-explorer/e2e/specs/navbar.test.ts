@@ -24,7 +24,7 @@
 //   panel has FAQ, Report Bug, Contact Support and Discord under its Settings row, and no controls
 //   row. The rows are read, not pressed: each opens a browser tab.
 import assert from 'node:assert/strict'
-import { readTarget, spec, until, type Explorer, type OpenOptions, type Selector } from '../driver/index.ts'
+import { DocumentGoneError, readTarget, spec, until, type Explorer, type OpenOptions, type Selector } from '../driver/index.ts'
 
 const scenario = spec(import.meta.url)
 const target = readTarget()
@@ -160,8 +160,11 @@ scenario(
     await explorer.hud.wait(ME_PANEL, { timeoutMs: CONTROL_TIMEOUT_MS })
     await press(explorer, SIGN_OUT_ROW)
     await explorer.hud.wait(SIGN_OUT_QUESTION, { timeoutMs: CONTROL_TIMEOUT_MS })
-    // two controls are named Sign Out while the question is open: the row, then the question's button
-    await press(explorer, { name: 'Sign Out', role: 'button', index: 1 })
+    // two controls are named Sign Out while the question is open: the row, then the question's button.
+    // The page then loads again, and the click's answer may go with the document it ran in.
+    await press(explorer, { name: 'Sign Out', role: 'button', index: 1 }).catch((error: unknown) => {
+      if (!(error instanceof DocumentGoneError)) throw error
+    })
     await until(
       () => explorer.worldState(),
       (state) => !state.signedIn,

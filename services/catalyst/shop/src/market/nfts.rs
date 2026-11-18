@@ -1,6 +1,7 @@
 //! `/v1/nfts` over the subgraph readers (first ≤ 100, skip ≤ 5000, 30 s):
 //! wearables and emotes from the collections subgraphs, LAND, estates and
-//! names from the marketplace subgraph. The filters become the subgraph's
+//! names from the marketplace subgraph; a read that names no category reads
+//! both, as upstream's answers every category. The filters become the subgraph's
 //! `where`; `search` and a page past the reader window read the nft index
 //! instead (`nft_reads`, the envelope until it is published). `isOnRent`
 //! over LAND and the page's rental listings read the local rentals
@@ -389,6 +390,40 @@ fn only_land_registries(addresses: &[String]) -> bool {
         })
 }
 
+/// The marketplace subgraph's `where` when a read names no category: upstream's `/v1/nfts`
+/// answers every category, so an owner's unfiltered list holds their LAND, estates and names
+/// next to their wearables and emotes. Only a read whose filters that subgraph's NFT carries
+/// joins it (no wearable, emote, item or creator filter, no contract, Ethereum or no network).
+fn land_merge_where(f: &NftFilters, where_: &Value) -> Option<Value> {
+    let collection_only = f.is_wearable_head
+        || f.is_wearable_accessory
+        || f.is_wearable_smart
+        || f.wearable_category.is_some()
+        || !f.wearable_genders.is_empty()
+        || f.emote_category.is_some()
+        || !f.emote_genders.is_empty()
+        || !f.emote_play_mode.is_empty()
+        || f.emote_has_geometry
+        || f.emote_has_sound
+        || !f.creator.is_empty()
+        || !f.item_rarities.is_empty()
+        || f.item_id.is_some()
+        || !f.contract_addresses.is_empty();
+    if f.category.is_some()
+        || is_land_routed(f)
+        || collection_only
+        || matches!(f.network, Some(Network::Matic))
+    {
+        return None;
+    }
+    let mut w = where_.clone();
+    if let Some(map) = w.as_object_mut() {
+        map.remove("searchEmoteOutcomeType");
+    }
+    w["category_in"] = json!(["parcel", "estate", "ens"]);
+    Some(w)
+}
+
 /// The subgraph `where` for the filters; `now_ms` bounds the open order.
 pub fn graph_where(f: &NftFilters, now_ms: i64) -> Value {
     let mut w = json!({});
@@ -514,11 +549,11 @@ fn graph_sort(sort_by: Option<NftSortBy>) -> (&'static str, &'static str) {
 const COLLECTION_FIELDS: &str = "id tokenId contractAddress category itemType urn image issuedId itemBlockchainId tokenURI createdAt updatedAt soldAt \
     owner { address } item { id } \
     metadata { wearable { name description category rarity bodyShapes } emote { name description category rarity bodyShapes loop hasSound hasGeometry } } \
-    searchOrderStatus searchOrderExpiresAt activeOrder { id marketplaceAddress nftAddress tokenId owner buyer price status expiresAt createdAt updatedAt }";
+    searchOrderStatus searchOrderExpiresAt searchOrderPrice searchOrderCreatedAt activeOrder { id marketplaceAddress nftAddress tokenId owner buyer price status expiresAt createdAt updatedAt }";
 
 const LAND_FIELDS: &str = "id tokenId contractAddress category tokenURI image createdAt updatedAt soldAt name owner { address } \
     parcel { x y data { description } estate { id tokenId data { name } } } estate { size data { name description } parcels { x y } } ens { subdomain } \
-    searchOrderStatus searchOrderExpiresAt activeOrder { id marketplaceAddress nftAddress tokenId owner buyer price status expiresAt createdAt updatedAt }";
+    searchOrderStatus searchOrderExpiresAt searchOrderPrice searchOrderCreatedAt activeOrder { id marketplaceAddress nftAddress tokenId owner buyer price status expiresAt createdAt updatedAt }";
 
 fn capitalize(s: &str) -> String {
     let mut c = s.chars();
@@ -815,6 +850,31 @@ fn validate(f: &NftFilters) -> Result<(), Response> {
     Ok(())
 }
 
+/// The order of a row among the merged sources' rows: the sort field (a wei price compared as
+/// the whole number it is, never truncated to `i64`), then the name or the id. A collections NFT
+/// carries its name in its metadata.
+fn merge_key(v: &Value, order_by: &str) -> (u128, String) {
+    let number = |key: &str| -> u128 { readers::str_of(v, key).trim().parse().unwrap_or(0) };
+    match order_by {
+        "name" => {
+            let name = readers::opt_str_of(v, "name")
+                .filter(|n| !n.is_empty())
+                .or_else(|| {
+                    ["metadata/wearable/name", "metadata/emote/name"]
+                        .iter()
+                        .find_map(|p| {
+                            readers::at(v, p)
+                                .and_then(|n| n.as_str())
+                                .map(str::to_string)
+                        })
+                })
+                .unwrap_or_default();
+            (0, name)
+        }
+        field => (number(field), readers::str_of(v, "id")),
+    }
+}
+
 async fn list_page(
     state: &MarketplaceState,
     f: &NftFilters,
@@ -840,11 +900,14 @@ async fn list_page(
     let now_ms = readers::now_ms();
     let where_ = graph_where(f, now_ms);
     let (order_by, direction) = graph_sort(f.sort_by);
-    let sources: Vec<(Network, &str, &str)> = if is_land_routed(f) {
+    // The fifth field marks a source the read can answer without (see below).
+    let mut sources: Vec<(Network, &str, &str, Value, bool)> = if is_land_routed(f) {
         vec![(
             Network::Ethereum,
             readers::require_marketplace(state)?,
             LAND_FIELDS,
+            where_.clone(),
+            false,
         )]
     } else {
         match f.network {
@@ -852,18 +915,36 @@ async fn list_page(
                 n,
                 readers::require_collections(state, n.graph())?,
                 COLLECTION_FIELDS,
+                where_.clone(),
+                false,
             )],
             None => readers::require_both_collections(state)?
                 .into_iter()
-                .map(|(n, url)| (Network::from(n), url, COLLECTION_FIELDS))
+                .map(|(n, url)| {
+                    (
+                        Network::from(n),
+                        url,
+                        COLLECTION_FIELDS,
+                        where_.clone(),
+                        false,
+                    )
+                })
                 .collect(),
         }
     };
+    // LAND, estates and names join an unfiltered read best-effort: a node without the marketplace
+    // subgraph, or one whose subgraph fails, still answers the wearables and emotes.
+    if let (Some(w), Some(url)) = (
+        land_merge_where(f, &where_),
+        state.settings.marketplace_subgraph_url.as_deref(),
+    ) {
+        sources.push((Network::Ethereum, url, LAND_FIELDS, w, true));
+    }
     let mut rows: Vec<(Network, Value)> = Vec::new();
     let mut total = 0;
     let mut offset = 0;
     let count = sources.len();
-    for (network, url, fields) in sources {
+    for (network, url, fields, where_, optional) in sources {
         let page = GraphPage {
             entity: "nfts",
             filter_type: "NFT_filter",
@@ -874,48 +955,36 @@ async fn list_page(
             first,
             skip,
         };
-        let (got, skip_after) = readers::source_rows(
-            state,
-            network.graph(),
-            url,
-            Ttl::S30,
-            &page,
-            first,
-            skip,
-            count,
-        )
-        .await
-        .map_err(|e| readers::upstream_failed("/v1/nfts", &e))?;
+        let read = async {
+            let (got, skip_after) = readers::source_rows(
+                state,
+                network.graph(),
+                url,
+                Ttl::S30,
+                &page,
+                first,
+                skip,
+                count,
+            )
+            .await?;
+            let matching =
+                readers::count_capped(state, network.graph(), url, "nfts", "NFT_filter", where_)
+                    .await?;
+            Ok::<_, String>((got, skip_after, matching))
+        };
+        let (got, skip_after, matching) = match read.await {
+            Ok(page) => page,
+            Err(e) if optional => {
+                tracing::warn!(error = %e, "/v1/nfts: the marketplace subgraph failed; serving wearables and emotes only");
+                continue;
+            }
+            Err(e) => return Err(readers::upstream_failed("/v1/nfts", &e)),
+        };
         offset = skip_after;
-        total += readers::count_capped(
-            state,
-            network.graph(),
-            url,
-            "nfts",
-            "NFT_filter",
-            where_.clone(),
-        )
-        .await
-        .map_err(|e| readers::upstream_failed("/v1/nfts", &e))?;
+        total += matching;
         rows.extend(got.into_iter().map(|v| (network, v)));
     }
-    let key = |v: &Value| -> (i64, String) {
-        let n = match order_by {
-            "name" => 0,
-            "soldAt" => readers::int_of(v, "soldAt"),
-            "searchOrderPrice" => readers::int_of(v, "searchOrderPrice"),
-            "searchOrderCreatedAt" => readers::int_of(v, "searchOrderCreatedAt"),
-            _ => readers::int_of(v, "createdAt"),
-        };
-        (
-            n,
-            if order_by == "name" {
-                readers::str_of(v, "name")
-            } else {
-                readers::str_of(v, "id")
-            },
-        )
-    };
+    let key = |v: &Value| merge_key(v, order_by);
     rows.sort_by(|(_, a), (_, b)| {
         let (ka, kb) = (key(a), key(b));
         let primary = if direction == "asc" {
@@ -1031,6 +1100,55 @@ mod tests {
             &parse_filters(&pairs(&[("category", "estate")])).unwrap()
         ));
         assert!(!is_land_routed(&f));
+    }
+
+    #[test]
+    fn an_owner_read_without_a_category_also_reads_land_estates_and_names() {
+        let where_of = |list: &[(&str, &str)]| {
+            let f = parse_filters(&pairs(list)).unwrap();
+            land_merge_where(&f, &graph_where(&f, 5_000))
+        };
+        let owner = ("owner", "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd");
+        let w = where_of(&[owner, ("includeSocialEmotes", "false")]).unwrap();
+        assert_eq!(w["owner"], owner.1);
+        assert_eq!(w["category_in"], json!(["parcel", "estate", "ens"]));
+        assert!(w.get("searchEmoteOutcomeType").is_none());
+        assert!(where_of(&[owner, ("network", "ETHEREUM")]).is_some());
+        assert!(where_of(&[owner, ("isOnSale", "true")]).is_some());
+        // A category, Polygon, or a filter only collections carry keeps the collections read alone.
+        for extra in [
+            ("category", "wearable"),
+            ("category", "ens"),
+            ("network", "MATIC"),
+            ("itemRarity", "epic"),
+            ("creator", "0x1111111111111111111111111111111111111111"),
+            ("isWearableSmart", "true"),
+            (
+                "contractAddress",
+                "0x4c290f486bae507719c562b6b524bdb71a2570c9",
+            ),
+        ] {
+            assert!(where_of(&[owner, extra]).is_none(), "{extra:?}");
+        }
+    }
+
+    #[test]
+    fn merged_rows_sort_by_fields_every_source_carries() {
+        let wearable = json!({ "id": "w", "metadata": { "wearable": { "name": "Zebra hat" } }, "searchOrderPrice": "340282366920938463463374607431768211455" });
+        let parcel =
+            json!({ "id": "p", "name": "Alpha plaza", "searchOrderPrice": "9223372036854775808" });
+        let emote = json!({ "id": "e", "metadata": { "emote": { "name": "Bow" } } });
+        assert_eq!(merge_key(&wearable, "name").1, "Zebra hat");
+        assert_eq!(merge_key(&parcel, "name").1, "Alpha plaza");
+        assert_eq!(merge_key(&emote, "name").1, "Bow");
+        // Wei past i64::MAX keeps its order; a row with no listing sorts as 0.
+        assert!(merge_key(&parcel, "searchOrderPrice") < merge_key(&wearable, "searchOrderPrice"));
+        assert!(merge_key(&parcel, "searchOrderPrice").0 > i64::MAX as u128);
+        assert_eq!(merge_key(&emote, "searchOrderPrice").0, 0);
+        assert_eq!(
+            merge_key(&json!({ "id": "x", "createdAt": "1700" }), "createdAt"),
+            (1700, "x".to_string())
+        );
     }
 
     #[test]

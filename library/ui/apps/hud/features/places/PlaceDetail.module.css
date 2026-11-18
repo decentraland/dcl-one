@@ -184,6 +184,9 @@
   font-size: var(--type-15);
   font-weight: 600;
 }
+.navigation {
+  text-transform: uppercase;
+}
 
 .body {
   position: absolute;

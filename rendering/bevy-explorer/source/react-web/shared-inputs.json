@@ -1018,6 +1018,10 @@
           "kind": "directory"
         },
         {
+          "name": "shop",
+          "kind": "directory"
+        },
+        {
           "name": "sites",
           "kind": "directory"
         }
@@ -6445,7 +6449,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "faad3876c599cc00be6b1f603e6da088da219df3be8fb6d9656804eae22aa40f"
+      "sha256": "f302f76b0423a53887eb6d1e19d43addb63596fa7edf1a038e108a127119ed50"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -6625,7 +6629,7 @@
     },
     {
       "path": "library/explorer-core/features/map/home.ts",
-      "sha256": "d670b1117e1bf56139c854bb00509f403a91c22661be783ba714667a57a50932"
+      "sha256": "323550de0c24a4cfa82b6dc586a2b95d8ab6597fd3abcd3276832e3dbb482cea"
     },
     {
       "path": "library/explorer-core/features/map/mapApi.ts",
@@ -6657,7 +6661,7 @@
     },
     {
       "path": "library/explorer-core/features/map/navigation.ts",
-      "sha256": "8af1832432c5da1b5fafa191b44a85f674d93d706af896bb33460b41dd86ab59"
+      "sha256": "3378c568107670d9e01cd86c551cdaa2acc576fbca1464328993e784978d591e"
     },
     {
       "path": "library/explorer-core/features/map/navmap.ts",
@@ -6765,7 +6769,7 @@
     },
     {
       "path": "library/explorer-core/lib/hudAutomation.ts",
-      "sha256": "e8b933805487a1e9b7591d98dcfcc97d0b0570a2e756d4331c4459e22818bd8e"
+      "sha256": "640bc14f946e7eaa02be8ec6fb0eccad8e1e92ec1e4bfd025b4990d5e4319e85"
     },
     {
       "path": "library/explorer-core/lib/hudScale.ts",
@@ -6937,7 +6941,7 @@
     },
     {
       "path": "library/explorer-core/test/hudAutomation.test.ts",
-      "sha256": "b93bbc6f16817f308e3f5430c62c1fc9ad1cac5e2a43bb20a9bf6dbbc0843770"
+      "sha256": "81e90466c917da2efa66b641786bba4ab66e16896140767fe4d80a85a0f4c43d"
     },
     {
       "path": "library/explorer-core/test/hudScale.test.ts",
@@ -6973,7 +6977,7 @@
     },
     {
       "path": "library/explorer-core/test/navmap.test.ts",
-      "sha256": "bd4fc1cc49d650edf356f0357efcf616dbc9431d0fed03690c163ee96c1a180a"
+      "sha256": "8acfddb3c427f039d4dfdadddd8eff3be6ac0102acd567132ecf8fd91ac6260e"
     },
     {
       "path": "library/explorer-core/test/outfitRandomizer.test.ts",
@@ -8609,11 +8613,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Button.module.css",
-      "sha256": "7ba9f72c7b4e2f32f9f5f115057ee4bef28be65e4c4ae83fac2c11e32982f2f0"
+      "sha256": "eb45c86cd3fe22ad59058c314ff8920aaaa9addc48abb72de9c5f0ed7f43688d"
     },
     {
       "path": "library/ui/apps/hud/design/Button.tsx",
-      "sha256": "1d3fa7f377c016bf6cb04bb3cffca8098c436771214c933a5e68775b61e1ba31"
+      "sha256": "7b9474b5854b9c2f6951b81a7691e45ba12834b6963348fbe1bae36cd7a3432b"
     },
     {
       "path": "library/ui/apps/hud/design/CharCounter.module.css",
@@ -8869,7 +8873,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "a0ac3bf7b995b6ba895c642bcfd02ef3599f87ab05fc8519d29bd4975a346b9d"
+      "sha256": "bb7676d7f84cbe45d93707b39040f123311155b15370ec8dd6876cfb16ce20f7"
     },
     {
       "path": "library/ui/apps/hud/design/Skeleton.module.css",
@@ -9637,7 +9641,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "sha256": "8b618b9f24f9d74a433914f79b8a492d0d6072ee9227dfd3b73a60a2b8613b5f"
+      "sha256": "116f02f8f9e3374403a442b4d8226aeb0337b6a1d7aefda593a387764d5e8c7b"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapToolbar.tsx",
@@ -9809,11 +9813,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/places/PlaceDetail.module.css",
-      "sha256": "f61a7282aeb38a98a1440ecc40f1ace6b15ce12b60b32556e311293ef21cec58"
+      "sha256": "46298ccbb2b91ca7b4e6c35b835fccbc506bd0da2b457209be28658eeaf01770"
     },
     {
       "path": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "sha256": "b144d044e673e76fb68f3b34bb12b7a1ccd33c61af7a055349fcbccd1bd5e869"
+      "sha256": "a4eb98487570a34bd3e71d6b0ce2f31c0e7cec3cf2d53496f90728da1d66d565"
     },
     {
       "path": "library/ui/apps/hud/features/places/PlacesBrowser.tsx",
@@ -9949,7 +9953,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "fe35194409cd6be3dbb3e533b44ce52b0e5b185650a29f7bdec231663d91a435"
+      "sha256": "f9bc91079fd228b353ddaa563f4d7cdfc46b6edecef99eb5210858f8c18eea13"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10477,7 +10481,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/home.session.test.tsx",
-      "sha256": "e3df8952ae4aa9328e45ac8836ed9f72b3e260086acfff593ba534213d70adc5"
+      "sha256": "452415320e5b3409412d42e87421372e1633970d0b44630880dcba424af1f95f"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/hudLogin.test.tsx",
@@ -10529,7 +10533,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
-      "sha256": "9ebc293c907b48a7ed1eea1aa532009a28679d7bbdabccc945ea0788d63902a5"
+      "sha256": "ba2ac781a012c9b686e65dfdcb7ffb32693882490e9c0f78fb0a8b60bf11445d"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/mapPanel.test.tsx",
@@ -10601,7 +10605,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/placeDetail.test.tsx",
-      "sha256": "2823292e61c0d770a0ef39a17656333c3a479b1ba625175c6ad646f87e4448e8"
+      "sha256": "435fe901f017daf79fd8b7cf993540c6bda870d82cf498084e07bbb94de3f902"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/placesDiscovery.test.tsx",
@@ -11928,6 +11932,21 @@
     },
     {
       "from": "library/explorer-core/features/map/navigation.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/navigation.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/navigation.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/navigation.ts",
       "to": "library/explorer-core/features/map/mapCoords.ts",
       "kind": "native:runtime"
     },
@@ -30543,6 +30562,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "to": "library/explorer-core/features/map/mapApi.ts",
       "kind": "native:runtime"
     },
@@ -30554,6 +30588,21 @@
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/explorer-core/features/map/navigation.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/explorer-core/features/map/navigation.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/explorer-core/features/map/navigation.ts",
       "kind": "test:runtime"
     },
     {
@@ -30693,6 +30742,36 @@
     },
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/home-solid.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/home-solid.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/home-solid.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "to": "library/ui/apps/hud/assets/map/panel/jump-in.png",
       "kind": "native:runtime"
     },
@@ -30734,6 +30813,21 @@
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "to": "library/ui/apps/hud/assets/map/panel/like-solid.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/navigation.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/navigation.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/navigation.png",
       "kind": "test:runtime"
     },
     {
@@ -41564,6 +41658,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/placeDetail.test.tsx",
       "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/placeDetail.test.tsx",
+      "to": "library/explorer-core/features/map/navigation.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/placeDetail.test.tsx",
+      "to": "library/explorer-core/features/map/navigation.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/placeDetail.test.tsx",
+      "to": "library/explorer-core/features/map/navigation.ts",
       "kind": "test:runtime"
     },
     {

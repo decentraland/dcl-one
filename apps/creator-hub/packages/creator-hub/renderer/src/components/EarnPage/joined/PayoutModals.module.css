@@ -17,6 +17,13 @@
   gap: 25px;
 }
 
+/* The modal title with its info button beside it. */
+.modalTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .body {
   font-family: var(--font-family);
   font-optical-sizing: none;

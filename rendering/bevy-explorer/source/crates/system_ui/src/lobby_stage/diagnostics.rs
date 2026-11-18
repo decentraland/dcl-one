@@ -56,6 +56,7 @@ fn lobby_stage_command(
                     marked && !bloom && tonemapping == Some(&Tonemapping::None)
                 }),
             "unavailable": {
+                "requested": "no request: the system scene has not asked for a lobby stage, or has cleared it",
                 "shown": "no stage: the lobby is closed or the system scene's camera is not up yet",
                 "layers": "no stage",
                 "camera": "no stage",

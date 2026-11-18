@@ -534,11 +534,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   centre, then "You have arrived to your destination" and the pin goes.
 - **Home can be set, not cleared, and is one for the install.** unity-explorer's Set as Home also
   takes the home back, and it keeps one home per wallet. Here the engine keeps one home in its
-  config, parcel 0,0 of the default realm until one is set, and the place panel's button and the
-  minimap's switch only set it: the switch reads on where the player stands in their home, and
-  can't be turned off.
-- **Home is set from the map's place panel and the minimap's menu.** unity-explorer also sets it
-  from Places cards, which have no such control here. The minimap's menu is unity-explorer's: Set
+  config, parcel 0,0 of the default realm until one is set, and the place panel's and the place
+  detail's buttons and the minimap's switch only set it: the switch reads on where the player
+  stands in their home, and can't be turned off.
+- **Home is set from the map's place panel, the place detail and the minimap's menu.** The place
+  detail, opened from the lobby's cards and the Places page, saves the place's base parcel (a
+  World, its name) and offers start and exit navigation for a Genesis City place; a Jump in there
+  that goes ahead ends a route to that place, as the map's does. unity-explorer also sets home from
+  Places cards, which have no such control here. The minimap's menu is unity-explorer's: Set
   as Home, Copy Link and Reload Scene, then this HUD's own Minimap settings. As unity-explorer's,
   the minimap saves the parcel the player stands on, where the place panel saves the place's base
   parcel (a road's, the picked one), and it compares a World's name without case where the place
@@ -582,6 +585,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Events page: analytics.** unity-explorer reports `event_card_clicked` from calendar cards
   only and nothing for an open from the sidebar; here a day view's cards report it too, and the
   sidebar reports `events_section_opened` with `source: sidebar`.
+- **Place detail: no analytics for home or navigation.** unity-explorer reports
+  `place_set_as_home` and `place_navigation_started` from its place detail, and
+  `home_position_set` whenever home changes; this explorer reports none of them, from the place
+  detail or the map.
 - **Events page: no "error loading friends" or "My Communities" toast.** The friends list and
   the member-of list reach the HUD as snapshots with no failure signal, so there is nothing to
   report; cards show friends and community marks once the lists are there.
@@ -621,6 +628,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **No satellite floor.** unity-explorer lays the minimap's satellite images flat at 0.205 m under the
   terrain in Genesis City; here the ground covers that plane everywhere, so the floor would never be
   seen and is not shipped.
+- **Spring bones skip avatars the avatar limit hides.** Unity ranks every avatar in front of the
+  camera for its ten simulated places. Here an avatar hidden for being beyond the `max_avatars`
+  nearest to the player takes no place: its bones stay at rest and the place goes to the next
+  visible avatar, since a swing nobody sees would cost a place and its transform walks. Do not
+  rank hidden avatars to match.
 
 ## Deliberate choices that look like mistakes
 

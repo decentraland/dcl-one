@@ -567,6 +567,17 @@ describe('map navigation', () => {
     expect(navigation.getSnapshot()).toBeNull()
   })
 
+  it('ends the route to a one-parcel place whose base is elsewhere, as the place detail does', async () => {
+    serve({ search: [{ ...CLUB, base_position: '-21,60' }] })
+    renderMap()
+    await search('club')
+    await userEvent.click(await within(panel()).findByRole('button', { name: /Sugar Club/ }))
+    await userEvent.click(await within(panel()).findByRole('button', { name: 'start navigation' }))
+    expect(navigation.getSnapshot()?.parcel).toEqual({ x: -20, y: 60 })
+    await userEvent.click(within(panel()).getByRole('button', { name: 'JUMP IN' }))
+    expect(navigation.getSnapshot()).toBeNull()
+  })
+
   it("keeps the search and the route in the lobby's modal when the startup lobby refuses the jump", async () => {
     serve({ search: [CLUB] })
     const onTravel = vi.fn()
@@ -602,6 +613,35 @@ describe('map navigation', () => {
     await userEvent.click(within(panel()).getByRole('button', { name: 'Back' }))
     await userEvent.click(await within(panel()).findByRole('button', { name: /Sugar Club/ }))
     expect(await within(panel()).findByRole('button', { name: 'exit navigation' })).toBeInTheDocument()
+  })
+
+  // a parcel's centre, `metres` along both axes
+  const standAt = (metres: number, genesis: boolean): void => {
+    const session = fakeSession()
+    const minimap = { ...session.minimap, pose: { current: { ...session.minimap.pose.current, x: metres, z: metres } }, satelliteView: genesis ? session.minimap.satelliteView : null }
+    render(<MapPage map={{ ...session.map, open: false }} minimap={minimap} profile={fakeProfileState()} gallery={session.gallery} onNavigate={vi.fn()} />)
+  }
+
+  it('ends the route on arrival in Genesis City', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    act(() => navigation.start(PLAZA))
+    standAt(8, true)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+    })
+    expect(navigation.getSnapshot()).toBeNull()
+    vi.useRealTimers()
+  })
+
+  it('keeps the route in a World standing on the destination parcel numbers', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    act(() => navigation.start(place('far', 'Far', ['5,5'])))
+    standAt(88, false)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+    })
+    expect(navigation.getSnapshot()?.parcel).toEqual({ x: 5, y: 5 })
+    vi.useRealTimers()
   })
 })
 

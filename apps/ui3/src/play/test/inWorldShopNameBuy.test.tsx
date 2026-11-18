@@ -22,10 +22,10 @@ vi.mock('@explorer-core/lib/shell', () => ({
   }
 }))
 
-import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop'
-import { webNameUrl } from '../features/shop/itemLinks'
+import InWorldShop, { type InWorldShopProps } from '@dcl/one-ui/apps/shop/InWorldShop'
+import { webNameUrl } from '@dcl/one-ui/apps/shop/itemLinks'
 import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
-import { LEGACY_SHOP_BUSY_MESSAGE, SHOP_EVENT, shopBusy } from '../lib/shopProtocol'
+import { LEGACY_SHOP_BUSY_MESSAGE, SHOP_EVENT, shopBusy } from '@dcl/one-ui/apps/shop/shopProtocol'
 import type { Profile } from '@explorer-core/engine/protocol'
 import { PopupHost, resetPopups, ToastHost } from '@hud/design'
 import { fakeProfileState } from '@hud/test/harness'
