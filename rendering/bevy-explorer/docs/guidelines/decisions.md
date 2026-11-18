@@ -173,7 +173,7 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **The nearby mic pauses while the Explorer lacks focus**, as unity-explorer's does: losing
   focus (the primary window natively, `document.hasFocus()` on the web) closes an open nearby
   mic, and regaining it reopens the mic unless the scene or a call holds nearby voice off by
-  then. The HUD shows the mic closed meanwhile. Calls and community streams keep their mic.
+  then. Calls and community streams keep their mic.
   unity-explorer lets the player turn the pause off in settings ("mute mic in background", on
   by default); the Explorer has no such setting.
 - **Blocked and scene-banned players are not heard nearby.** A player blocked in either

@@ -340,14 +340,14 @@ fn suppress_nearby_voice_on_refusal(
     }
 }
 
-/// The nearby mic was open when the window lost focus.
+/// Set while a focus loss holds the nearby mic closed.
 #[derive(Resource, Default)]
 struct NearbyMicFocusPause {
     paused: bool,
 }
 
-/// Closes the open nearby mic while the window lacks focus and reopens it when focus returns,
-/// unless the scene or a call holds nearby voice off by then. Calls are unaffected.
+/// Closes the open nearby mic on focus loss and reopens it on focus return, unless nearby voice
+/// is blocked by then.
 fn pause_nearby_mic_on_focus_loss(
     focus: Res<WindowFocus>,
     mut mic_state: ResMut<MicState>,
@@ -1361,7 +1361,7 @@ mod routing_tests {
         world
     }
 
-    /// Sets the window's focus and returns the nearby mic's setting.
+    /// Runs the pause with the given focus; returns `MicState::enabled`.
     fn set_focus(world: &mut World, focused: bool) -> bool {
         use bevy::ecs::system::RunSystemOnce;
         world.insert_resource(WindowFocus(focused));

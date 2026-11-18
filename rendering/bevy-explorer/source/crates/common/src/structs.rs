@@ -1902,8 +1902,7 @@ pub enum AppError {
     NetworkFailure(anyhow::Error),
 }
 
-/// The Explorer has focus: the primary window natively, the page (`document.hasFocus()`) on
-/// the web.
+/// Whether the Explorer has focus.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowFocus(pub bool);
 
