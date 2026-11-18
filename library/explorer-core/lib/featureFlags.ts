@@ -6,9 +6,9 @@
 // - This client's flags are named `explorer-bevy-<flag>` in Unleash and read as `<flag>`. A flag
 //   both clients share keeps the Unity Explorer's name, `explorer-<flag>`, and is read only when
 //   FLAG lists it with `shared()`. Every other key in the file is ignored.
-// - `X-Address-Hash` carries a stable anonymous id so gradual rollouts stick to the player: the
-//   landing page's campaign id when the entry url has one, else one minted here and kept in prefs.
-//   The sign-in address is never sent.
+// - `X-Address-Hash` carries a stable anonymous id so gradual rollouts stick to the player: one
+//   kept in prefs, first taken from the landing page's campaign id when the entry url has one,
+//   else minted here. The sign-in address is never sent.
 // - Read once per session, after the prefs load (lib/prefs) and without holding up the HUD. A flag
 //   is off until the answer says `true`, and stays off if the file can't be read.
 // - Only Decentraland's own service is asked (FLAG_SERVICE_DOMAINS). A page whose base domain is
@@ -41,7 +41,7 @@ const SHARED = new Set<string>()
 
 /** Marks a FLAG entry as a flag shared with the Unity Explorer: `shared('x')` reads `explorer-x`. */
 export function shared<const T extends string>(name: T): T {
-  SHARED.add(name)
+  SHARED.add(name.toLowerCase())
   return name
 }
 
@@ -66,10 +66,10 @@ const SAFE_VARIANT = /^[A-Za-z0-9._-]{1,64}$/
 const FLAG_SERVICE_DOMAINS: readonly string[] = ['decentraland.org', 'decentraland.zone']
 
 /** The entry url param that overrides the service's answer. */
-export const FLAG_OVERRIDE_PARAM = 'ff'
+const FLAG_OVERRIDE_PARAM = 'ff'
 
 /** The analytics event carrying the session's flags; the engine reads it too (page_events.rs). */
-export const FLAGS_RESOLVED_EVENT = 'Feature Flags Resolved'
+const FLAGS_RESOLVED_EVENT = 'Feature Flags Resolved'
 
 export interface FlagOverrides {
   /** Flags forced on, each with the variant it is forced to or null. */
@@ -156,16 +156,15 @@ export function featureFlagsUrl(baseDomain: string = BASE_DOMAIN): string {
   return `https://feature-flags.${baseDomain}/explorer.json`
 }
 
-/** The anonymous id rollouts are bucketed by: the campaign id, else the one this client keeps. */
-export function featureFlagsUserId(): string {
-  // From the entry url: used only when it can be a header value, or the request itself would throw.
-  const campaign = launchAnalytics().campaignAnonUserId
-  if (campaign != null && /^[\x21-\x7e]{1,128}$/.test(campaign)) return campaign
+/** The anonymous id rollouts are bucketed by: the one this client keeps, so a player stays in the
+ *  same bucket from one session to the next. Its first value is the landing page's campaign id
+ *  when the entry url has one that can be a header value (`campaign`), else one minted here. */
+export function featureFlagsUserId(campaign: string | undefined = launchAnalytics().campaignAnonUserId): string {
   const kept = getPref(PREF.featureFlagsUserId)
   if (kept != null && kept !== '') return kept
-  const minted = crypto.randomUUID()
-  setPref(PREF.featureFlagsUserId, minted)
-  return minted
+  const first = campaign != null && /^[\x21-\x7e]{1,128}$/.test(campaign) ? campaign : crypto.randomUUID()
+  setPref(PREF.featureFlagsUserId, first)
+  return first
 }
 
 /** A key's flag name: this client's own without its prefix, a shared one without the application's,
@@ -286,7 +285,7 @@ export function loadFeatureFlags(host: { baseDomain: string; native: boolean } =
   return reading
 }
 
-/** Holds these flags as the answer, for tests and the mock HUD; null goes back to unread. */
+/** Holds these flags as the answer, for tests; null goes back to unread. */
 export function primeFeatureFlags(flags: Partial<FeatureFlags> | null): void {
   reading = flags == null ? null : Promise.resolve()
   answer = flags == null ? null : { flags: { ...flags.flags }, variants: { ...flags.variants } }

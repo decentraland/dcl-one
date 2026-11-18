@@ -30,7 +30,7 @@ static SNAPSHOT: Mutex<Option<Snapshot>> = Mutex::new(None);
 
 /// The page's `Feature Flags Resolved` event: the session's rollout flags, which a crash report
 /// carries so the session can be run again with them.
-pub const FEATURE_FLAGS_EVENT: &str = "Feature Flags Resolved";
+pub(crate) const FEATURE_FLAGS_EVENT: &str = "Feature Flags Resolved";
 const FEATURE_FLAGS_FIELDS: [&str; 2] = ["feature_flags", "feature_flags_override"];
 
 /// The session's flags as the page last reported them, `(field, value)`.
@@ -38,7 +38,7 @@ static FEATURE_FLAGS: Mutex<Vec<(&'static str, String)>> = Mutex::new(Vec::new()
 
 /// Keep the flags of a `Feature Flags Resolved` event for the crash report, when the event is
 /// this session's: the page's queue can still hold one from an earlier load.
-pub fn note_feature_flags(
+pub(crate) fn note_feature_flags(
     properties: &serde_json::Map<String, serde_json::Value>,
     session_id: &str,
 ) {
@@ -140,8 +140,11 @@ mod tests {
             })
         };
         note_feature_flags(flags("s", "-*,test").as_object().unwrap(), "s");
-        // an earlier load's event, still in the page's queue
+        // an earlier load's event, still in the page's queue, and one that names no session
         note_feature_flags(flags("earlier", "-*,other").as_object().unwrap(), "s");
+        let mut unnamed = flags("s", "-*,unnamed");
+        unnamed.as_object_mut().unwrap().remove("session_id");
+        note_feature_flags(unnamed.as_object().unwrap(), "s");
         let (_, body) = crash_batch("panicked at x", "panic").unwrap();
         let body: serde_json::Value = serde_json::from_str(&body).unwrap();
         let properties = &body["batch"][0]["properties"];

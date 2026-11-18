@@ -18,7 +18,7 @@ import {
   shared,
   type Flag
 } from './featureFlags'
-import { getPref, PREF } from './prefs'
+import { getPref, PREF, setPref } from './prefs'
 
 // The names these tests force, in place of FLAG's; this page as a web one on Decentraland's domain.
 const KNOWN = new Set(['a', 'b', 'c', 'ab', 'extra', 'onboarding', 'other', 'photo-mode', 'plain', 'voice'])
@@ -175,6 +175,15 @@ describe('the flags for analytics', () => {
     expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe('https://feature-flags.decentraland.zone/explorer.json')
   })
 
+  it('say unavailable when the request itself fails, a timeout included', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new DOMException('timed out', 'TimeoutError'))))
+    await loadFeatureFlags(WEB)
+    expect(featureFlagsSettled()).toBe(true)
+    expect(pending().at(-1)?.properties).toMatchObject({ feature_flags: '-*', feature_flags_source: 'unavailable' })
+    vi.restoreAllMocks()
+  })
+
   it('say so when the service could not be read or was ignored', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 503 })))
@@ -192,7 +201,8 @@ describe('parseFeatureFlags', () => {
   it('keeps a flag shared with the other client under its own name, only once FLAG lists it', () => {
     const file = { flags: { 'explorer-shared-thing': true }, variants: { 'explorer-shared-thing': { name: 'v', enabled: true } } }
     expect(parseFeatureFlags(file)).toEqual({ flags: {}, variants: {} })
-    shared('shared-thing')
+    // as ownFlag compares it: lowercase
+    shared('Shared-Thing')
     expect(parseFeatureFlags(file)).toEqual({ flags: { 'shared-thing': true }, variants: { 'shared-thing': { name: 'v', enabled: true, payload: null } } })
   })
 
@@ -244,7 +254,22 @@ describe('fetchFeatureFlags', () => {
 })
 
 describe('featureFlagsUserId', () => {
+  it('starts from a campaign id that can be a header value, and keeps it over a later one', () => {
+    setPref(PREF.featureFlagsUserId, '')
+    expect(featureFlagsUserId('campaign-1')).toBe('campaign-1')
+    expect(featureFlagsUserId('campaign-2')).toBe('campaign-1')
+    expect(featureFlagsUserId(undefined)).toBe('campaign-1')
+  })
+
+  it.each(['line\nbreak', 'caf\u00e9', 'with space', '', 'x'.repeat(129)])('mints one over the unsafe campaign id %j', (campaign) => {
+    setPref(PREF.featureFlagsUserId, '')
+    const id = featureFlagsUserId(campaign)
+    expect(id).toMatch(/^[0-9a-f-]{36}$/)
+    expect(getPref(PREF.featureFlagsUserId)).toBe(id)
+  })
+
   it('mints one anonymous id and keeps it', () => {
+    setPref(PREF.featureFlagsUserId, '')
     const first = featureFlagsUserId()
     expect(first).toMatch(/^[0-9a-f-]{36}$/)
     expect(featureFlagsUserId()).toBe(first)
