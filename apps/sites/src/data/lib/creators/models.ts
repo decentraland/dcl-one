@@ -1,7 +1,7 @@
 // Three.js model analysis for uploaded items: emote detection, emote metrics and the GLB
 // validation suite. Ported from the legacy builder's lib/getModelData; rendering (metrics +
 // thumbnails) is NOT done here — that comes from the WearablePreview iframe controller.
-import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { loadGltfLoader, loadThree, type GLTF } from '@/data/lib/creators/three'
 import { ArmatureId, WearableCategory } from '@dcl/schemas'
 import { ItemType } from './items'
 import { ItemFileError, MAX_EMOTE_DURATION, isImageFile } from './itemFiles'
@@ -40,8 +40,8 @@ function revokeObjectURLs(mappings: Record<string, string>): void {
 }
 
 export async function loadGltf(url: string, mappings: Record<string, string>): Promise<GLTF> {
-  const Three = await import('three')
-  const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js')
+  const Three = await loadThree()
+  const GLTFLoader = await loadGltfLoader()
 
   const manager = new Three.LoadingManager()
   const missingResources: string[] = []
@@ -132,7 +132,7 @@ export async function analyzeModel(
     return { type: ItemType.WEARABLE, validationIssues: [], suggestedCategory: null }
   }
 
-  const Three = await import('three')
+  const Three = await loadThree()
   const mappings = toObjectURLs(contents)
   const url = mappings[model]
   const source = { kind: 'blob', contents, mainFile: model } as const

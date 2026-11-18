@@ -334,6 +334,9 @@ importers:
       '@types/react-dom':
         specifier: 19.3.0
         version: 19.3.0(@types/react@19.3.0)
+      '@types/three':
+        specifier: 0.186.0
+        version: 0.186.0
       '@types/upng-js':
         specifier: 2.1.5
         version: 2.1.5
@@ -547,6 +550,9 @@ packages:
   '@dcl/social-rpc-client@2.0.1':
     resolution: {integrity: sha512-0tKy+DC4Qx50/KsgD9PsUHYcocCuQRAzsTxR2YikOuyT6klhL0u6f2IZOwiBx9mXOWfMOQUiKlD+Tc8/bPPqaA==}
     engines: {node: '>=22.0.0'}
+
+  '@dimforge/rapier3d-compat@0.12.0':
+    resolution: {integrity: sha512-uekIGetywIgopfD97oDL5PfeezkFpNhwlzlaEYNOA0N6ghdsOvh/HYjSMek5Q2O1PYvRSDFcqFVJl4r4ZBwOow==}
 
   '@esbuild/aix-ppc64@0.28.2':
     resolution: {integrity: sha512-XExcO+dvLKvVtNTibSTBej1NCAbaGhWn9Ww1ZPx80qsahhPFe/8jgWP0IchNe0F3HwkU7n8ejhH8bjonqht8mQ==}
@@ -1257,6 +1263,9 @@ packages:
   '@tokenizer/token@0.3.0':
     resolution: {integrity: sha512-OvjF+z51L3ov0OyAU0duzsYuvO01PH7x4t6DJx+guahgTnBHkhJdG7soQeTSFLWN3efnHyibZ4Z8l2EuWwJN3A==}
 
+  '@tweenjs/tween.js@23.1.3':
+    resolution: {integrity: sha512-vJmvvwFxYuGnF2axRtPYocag6Clbb5YS7kLL+SO/TeVFzHqDIWrNKYtcsPMibjDx9O+bu+psAy9NKfWklassUA==}
+
   '@types/aria-query@5.0.4':
     resolution: {integrity: sha512-rfT93uj5s0PRL7EzccGMs3brplhcrghnDoV26NqKhCAS1hVo+WdNsPvE/yb6ilfr5hi2MEk6d5EWJTKdxg8jVw==}
 
@@ -1316,11 +1325,20 @@ packages:
   '@types/secp256k1@4.0.7':
     resolution: {integrity: sha512-Rcvjl6vARGAKRO6jHeKMatGrvOMGrR/AR11N1x2LqintPCyDZ7NBhrh238Z2VZc7aM7KIwnFpFQ7fnfK4H/9Qw==}
 
+  '@types/stats.js@0.17.4':
+    resolution: {integrity: sha512-jIBvWWShCvlBqBNIZt0KAshWpvSjhkwkEu4ZUcASoAvhmrgAUI2t1dXrjSL4xXVLB4FznPrIsX3nKXFl/Dt4vA==}
+
+  '@types/three@0.186.0':
+    resolution: {integrity: sha512-mxYSBpDC+D0pLfSP6sW4WZTcT+nrtmZcimMqnVmy36Hte3XpeYSrvgg4TRdaM1GemGog1AWzI5qL2VoIfMXbJQ==}
+
   '@types/trusted-types@2.0.7':
     resolution: {integrity: sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw==}
 
   '@types/upng-js@2.1.5':
     resolution: {integrity: sha512-CzXg1lcCcWzrmYmke9BLbBPzb2DpdC1bXuXf0BtK3Bygvsozslei8S1bheDI1QUfZzZpMeQI5fywfnMj4CxocQ==}
+
+  '@types/webxr@0.5.24':
+    resolution: {integrity: sha512-h8fgEd/DpoS9CBrjEQXR+dIDraopAEfu4wYVNY2tEPwk60stPWhvZMf4Foo5FakuQ7HFZoa8WceaWFervK2Ovg==}
 
   '@typescript/typescript-aix-ppc64@7.0.2':
     resolution: {integrity: sha512-MTKKkWB7p/0E9xi1d1tHtZ5PiLkGEMIq88pK2CubZjOsLtYTLqhgIgi6zepFa+9GHZ6h05NMCkQxGKiPXMxXtQ==}
@@ -2542,6 +2560,9 @@ packages:
   merge-descriptors@2.0.0:
     resolution: {integrity: sha512-Snk314V5ayFLhp3fkUREub6WtjBfPdCPY1Ln8/8munuLuiYhsABgBVWsozAG+MWMbVEvcdcpbi9R7ww22l9Q3g==}
     engines: {node: '>=18'}
+
+  meshoptimizer@1.1.1:
+    resolution: {integrity: sha512-oRFNWJRDA/WTrVj7NWvqa5HqE1t9MYDj2VaWirQCzCCrAd2GHrqR/sQezCxiWATPNlKTcRaPRHPJwIRoPBAp5g==}
 
   micro-ftch@0.3.1:
     resolution: {integrity: sha512-/0LLxhzP0tfiR5hcQebtudP56gUurs2CLkGarnCiB/OqEyUFQ6U3paQi/tgLv0hBJYt2rnr9MNpxz4fiiugstg==}
@@ -3925,6 +3946,8 @@ snapshots:
       - encoding
       - utf-8-validate
 
+  '@dimforge/rapier3d-compat@0.12.0': {}
+
   '@esbuild/aix-ppc64@0.28.2':
     optional: true
 
@@ -4710,6 +4733,8 @@ snapshots:
 
   '@tokenizer/token@0.3.0': {}
 
+  '@tweenjs/tween.js@23.1.3': {}
+
   '@types/aria-query@5.0.4': {}
 
   '@types/bn.js@4.11.6':
@@ -4774,10 +4799,23 @@ snapshots:
     dependencies:
       '@types/node': 26.6.5
 
+  '@types/stats.js@0.17.4': {}
+
+  '@types/three@0.186.0':
+    dependencies:
+      '@dimforge/rapier3d-compat': 0.12.0
+      '@tweenjs/tween.js': 23.1.3
+      '@types/stats.js': 0.17.4
+      '@types/webxr': 0.5.24
+      fflate: 0.8.3
+      meshoptimizer: 1.1.1
+
   '@types/trusted-types@2.0.7':
     optional: true
 
   '@types/upng-js@2.1.5': {}
+
+  '@types/webxr@0.5.24': {}
 
   '@typescript/typescript-aix-ppc64@7.0.2':
     optional: true
@@ -6188,6 +6226,8 @@ snapshots:
   media-typer@2.0.0: {}
 
   merge-descriptors@2.0.0: {}
+
+  meshoptimizer@1.1.1: {}
 
   micro-ftch@0.3.1: {}
 

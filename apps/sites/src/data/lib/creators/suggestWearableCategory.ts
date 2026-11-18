@@ -1,7 +1,6 @@
-import type { BufferGeometry, Object3D } from 'three'
+import type { BufferGeometry, Object3D, ThreeModules } from '@/data/lib/creators/three'
 import { WearableCategory } from '@dcl/schemas'
 
-type ThreeModules = typeof import('three')
 
 /**
  * Avatar skeleton landmark body-part tokens used to locate body regions.

@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
 import '@/data/lib/creators/test/setup'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import type { Scene } from 'three'
+import type { Scene, ThreeModules } from '@/data/lib/creators/three'
 import { WearableCategory } from '@dcl/schemas'
 import { suggestWearableCategory } from './suggestWearableCategory'
 
-type ThreeModules = typeof import('three')
 
 // Mock Three.js classes that support instanceof checks, mirroring wearableValidators.spec.ts.
 function createMockThree() {

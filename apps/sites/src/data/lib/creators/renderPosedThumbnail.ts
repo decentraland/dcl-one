@@ -1,7 +1,7 @@
 // Offscreen posed thumbnail render (legacy builder's lib/getScreenshot, ported from Babylon to three):
 // the wearable alone, front-facing orthographic camera, transparent background, avatar-reference
 // materials hidden. Used for categories with a pose; everything else screenshots the preview iframe.
-import type { AnimationClip, Material, Object3D } from 'three'
+import { loadThree, type AnimationClip, type Material, type Object3D } from '@/data/lib/creators/three'
 import { loadGltf } from './models'
 
 const THUMBNAIL_SIZE = 1024
@@ -50,7 +50,7 @@ export async function renderPosedThumbnail(
   model: string,
   poseUrl: string
 ): Promise<string> {
-  const Three = await import('three')
+  const Three = await loadThree()
   const mappings = toObjectURLs(contents)
   try {
     const [gltf, pose] = await Promise.all([loadGltf(mappings[model], mappings), loadGltf(poseUrl, {})])
