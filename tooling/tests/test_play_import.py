@@ -483,7 +483,10 @@ class PlayImportTests(unittest.TestCase):
             nonlocal bootstraps
             status, stdout = 0, ''
             if args[:2] == ('image', 'inspect'):
-                stdout = json.dumps([{'Config': {'User': '1000:1000'}}])
+                stdout = json.dumps([{'Config': {'User': '1000:1000',
+                                                 'Env': ['CAST_BOT_BIN=/nix/store/fixture-cast-bot/bin/cast-bot']}}])
+            elif args[0] == 'run' and '--entrypoint' in args:
+                requested.append(args[args.index('--entrypoint') + 1])
             elif args[0] == 'exec' and args[2] == 'node':
                 url, mode = args[-2:]
                 requested.append(url)
@@ -501,6 +504,7 @@ class PlayImportTests(unittest.TestCase):
                 patch('sys.argv', ['image-smoke', '--play', str(self.build)]), \
                 patch('sys.stdout', output):
             smoke.main()
+        self.assertIn('/nix/store/fixture-cast-bot/bin/cast-bot', requested)
         self.assertIn('http://sites:5212/play/bridge/about', requested)
         self.assertIn(f'http://sites:5212/play/bridge-scene/static/{entity}', requested)
         self.assertIn(f'Sites serves verified Bevy producer {SHA}', output.getvalue())

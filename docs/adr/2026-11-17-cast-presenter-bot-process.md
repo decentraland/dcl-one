@@ -51,6 +51,6 @@ refs that a clone does not fetch.
 - Each session costs a process, and a frame crosses the pipe as base64 RGBA (about
   11 MB for 1920x1080). Frames cross only on navigation, because the bot repeats the
   last frame itself.
-- `cast-bot` has no Nix package or container image yet. A deployment must build it
-  with the Explorer's libwebrtc provisioning.
+- `cast-bot` is a Nix package of its own (`infra/packages/cast-bot.nix`) with the
+  Explorer's libwebrtc provisioning; the APIs image carries it and sets `CAST_BOT_BIN`.
 - On macOS its build script adds `-ObjC` to the link, as the Explorer's cargo config does.

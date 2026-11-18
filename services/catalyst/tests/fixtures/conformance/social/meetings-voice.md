@@ -166,7 +166,8 @@ see the Cast table above.
    - Client composition: no `slide` field, no `/presentations/:id/slides/:file`, `presenter:claim`
      ignored.
    - `/api/drive-video` and `/ping`.
-   Not run: a scene client presenting through the Admin Toolkit; `cast-bot` has no Nix package or image.
+   Not run: a scene client presenting through the Admin Toolkit. The APIs image carries `cast-bot` and
+   sets `CAST_BOT_BIN` (`infra/containers/README.md`).
 6. **MV-6: The Bevy client ignores a moderator mute.** P1, S. `sync_local`
    (`B/crates/comms/src/voice_chat/state.rs:738-754`) reads role and speaker but not `muted`; a speaker
    muted by a moderator keeps publishing. Upstream mute is metadata-only, so the client must enforce it.
