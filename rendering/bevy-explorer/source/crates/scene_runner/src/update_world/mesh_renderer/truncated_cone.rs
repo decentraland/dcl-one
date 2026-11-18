@@ -68,9 +68,10 @@ impl From<TruncatedCone> for Mesh {
 
                 positions.push([radius * cos, y, radius * sin]);
                 normals.push([cos, 0., sin]);
+                // the top of the texture at the tip, as on the default cylinder
                 uvs.push([
                     segment as f32 / c.resolution as f32,
-                    ring as f32 / c.segments as f32,
+                    1.0 - ring as f32 / c.segments as f32,
                 ]);
             }
         }

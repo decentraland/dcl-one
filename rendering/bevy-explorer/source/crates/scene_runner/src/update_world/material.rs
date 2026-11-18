@@ -61,6 +61,8 @@ pub struct BaseMaterial {
 pub struct MaterialDefinition {
     pub material: StandardMaterial,
     pub shadow_caster: bool,
+    /// An SDK PBR material: its emissive colour is not multiplied by its albedo texture.
+    pub plain_emissive: bool,
     pub base_color_texture: Option<TextureUnion>,
     pub emmissive_texture: Option<TextureUnion>,
     pub normal_map: Option<TextureUnion>,
@@ -91,6 +93,28 @@ fn tex_is_present(tex: &Option<TextureUnion>) -> bool {
     })
 }
 
+/// `bound_material.wgsl` multiplies every emissive by 10; an SDK emissive of 1 is as bright as a
+/// white surface under a light of intensity 1.
+const SDK_EMISSIVE_SCALE: f32 = 0.1;
+
+/// The uv transform of a material, from its main texture's tiling and offset: `offset + uv *
+/// tiling` with the texture's origin at its bottom left. The meshes' v runs down from the top
+/// (`1 - v`), which moves the offset's sign and the tiling's anchor.
+fn texture_uv_transform(texture: &Option<TextureUnion>) -> Affine2 {
+    let Some(TextureUnion {
+        tex: Some(texture_union::Tex::Texture(texture)),
+    }) = texture
+    else {
+        return Affine2::IDENTITY;
+    };
+    let tiling = texture.tiling.map(|t| Vec2::from(&t)).unwrap_or(Vec2::ONE);
+    let offset = texture.offset.map(|o| Vec2::from(&o)).unwrap_or(Vec2::ZERO);
+    Affine2 {
+        matrix2: Mat2::from_diagonal(tiling),
+        translation: Vec2::new(offset.x, 1.0 - tiling.y - offset.y),
+    }
+}
+
 impl MaterialDefinition {
     pub fn from_base_and_material(base: Option<&BaseMaterial>, pb_material: &PbMaterial) -> Self {
         let base = base
@@ -117,35 +141,18 @@ impl MaterialDefinition {
 
                 let base_color = unlit
                     .diffuse_color
-                    .map(Color4DclToBevy::convert_linear_rgba)
+                    .map(Color4DclToBevy::convert_srgba)
                     .unwrap_or(base.base_color);
 
-                let alpha_mode = if let Some(test) = unlit.alpha_test {
-                    AlphaMode::Mask(test)
-                } else if base_color.alpha() < 1.0 || tex_is_present(&unlit.alpha_texture) {
+                // an unlit material blends through its alpha texture only; `alpha_test` and
+                // the diffuse alpha leave it opaque
+                let alpha_mode = if tex_is_present(&unlit.alpha_texture) {
                     AlphaMode::Blend
                 } else {
                     AlphaMode::Opaque
                 };
 
-                let uv_transform = match &unlit.texture {
-                    Some(TextureUnion {
-                        tex: Some(texture_union::Tex::Texture(inner_texture)),
-                        ..
-                    }) => Affine2 {
-                        matrix2: Mat2::from_diagonal(
-                            inner_texture
-                                .tiling
-                                .map(|t| Vec2::from(&t))
-                                .unwrap_or(Vec2::ONE),
-                        ),
-                        translation: inner_texture
-                            .offset
-                            .map(|o| Vec2::from(&o) * Vec2::new(1.0, -1.0))
-                            .unwrap_or(Vec2::ZERO),
-                    },
-                    _ => Affine2::IDENTITY,
-                };
+                let uv_transform = texture_uv_transform(&unlit.texture);
 
                 (
                     StandardMaterial {
@@ -161,16 +168,9 @@ impl MaterialDefinition {
                 )
             }
             Some(pb_material::Material::Pbr(pbr)) => {
-                if tex_is_present(&pbr.alpha_texture)
-                    && tex_is_present(&pbr.texture)
-                    && pbr.alpha_texture != pbr.texture
-                {
-                    debug!("separate alpha texture not supported");
-                }
-
                 let base_color = pbr
                     .albedo_color
-                    .map(Color4DclToBevy::convert_linear_rgba)
+                    .map(Color4DclToBevy::convert_srgba)
                     .unwrap_or(base.base_color);
 
                 let alpha_mode = match pbr
@@ -190,10 +190,10 @@ impl MaterialDefinition {
                         );
                         AlphaMode::Blend
                     }
+                    // the albedo alpha alone decides; `alpha_test` applies in the alpha-test
+                    // mode only and the deprecated alpha texture never
                     Some(MaterialTransparencyMode::MtmAuto) | None => {
-                        if let Some(test) = pbr.alpha_test {
-                            AlphaMode::Mask(test)
-                        } else if base_color.alpha() < 1.0 || tex_is_present(&pbr.alpha_texture) {
+                        if base_color.alpha() < 1.0 {
                             AlphaMode::Blend
                         } else {
                             AlphaMode::Opaque
@@ -201,33 +201,19 @@ impl MaterialDefinition {
                     }
                 };
 
-                let emissive_intensity = pbr.emissive_intensity.unwrap_or(2.0);
-                let emissive = if let Some(color) = pbr.emissive_color {
-                    color.convert_linear_rgb().to_linear() * emissive_intensity
-                } else if pbr.emissive_texture.is_some() {
-                    Color::WHITE.to_linear() * emissive_intensity
-                } else {
-                    Color::BLACK.to_linear()
-                };
+                // the emissive colour is HDR: its values are linear, unlike the other colours.
+                // an unset colour is black, so an emissive texture alone emits nothing
+                let emissive = pbr
+                    .emissive_color
+                    .map(|color| {
+                        color.convert_linear_rgb().to_linear()
+                            * pbr.emissive_intensity.unwrap_or(2.0)
+                            * SDK_EMISSIVE_SCALE
+                    })
+                    .unwrap_or(LinearRgba::BLACK);
+                let emits = emissive.red > 0.0 || emissive.green > 0.0 || emissive.blue > 0.0;
 
-                let uv_transform = match &pbr.texture {
-                    Some(TextureUnion {
-                        tex: Some(texture_union::Tex::Texture(inner_texture)),
-                        ..
-                    }) => Affine2 {
-                        matrix2: Mat2::from_diagonal(
-                            inner_texture
-                                .tiling
-                                .map(|t| Vec2::from(&t))
-                                .unwrap_or(Vec2::ONE),
-                        ),
-                        translation: inner_texture
-                            .offset
-                            .map(|o| Vec2::from(&o) * Vec2::new(1.0, -1.0))
-                            .unwrap_or(Vec2::ZERO),
-                    },
-                    _ => Affine2::IDENTITY,
-                };
+                let uv_transform = texture_uv_transform(&pbr.texture);
 
                 (
                     StandardMaterial {
@@ -238,11 +224,15 @@ impl MaterialDefinition {
                         perceptual_roughness: pbr.roughness.unwrap_or(base.perceptual_roughness),
                         // TODO specular intensity
                         alpha_mode,
+                        // a bump texture's green channel points down the image
+                        flip_normal_map_y: pbr.bump_texture.is_some(),
                         uv_transform,
                         ..base.clone()
                     },
                     pbr.texture.clone(),
-                    pbr.emissive_texture.clone(),
+                    // the shader reads a black emissive with a texture as "use the texture"
+                    // (glTF materials rely on it), so a material that emits nothing binds none
+                    pbr.emissive_texture.clone().filter(|_| emits),
                     pbr.bump_texture.clone(),
                 )
             }
@@ -253,7 +243,8 @@ impl MaterialDefinition {
         };
 
         let shadow_caster = match &pb_material.material {
-            Some(pb_material::Material::Unlit(unlit)) => unlit.cast_shadows.unwrap_or(false),
+            // an unlit material casts no shadow, whatever `cast_shadows` says
+            Some(pb_material::Material::Unlit(_)) => false,
             Some(pb_material::Material::Pbr(pbr)) => pbr.cast_shadows.unwrap_or(true),
             None => !base.unlit,
         };
@@ -261,6 +252,7 @@ impl MaterialDefinition {
         Self {
             material,
             shadow_caster,
+            plain_emissive: matches!(&pb_material.material, Some(pb_material::Material::Pbr(_))),
             base_color_texture,
             emmissive_texture,
             normal_map,
@@ -358,6 +350,16 @@ impl TextureResolver<'_, '_> {
         scene: &RendererSceneContext,
         texture: &texture_union::Tex,
     ) -> Result<ResolvedTexture, TextureResolveError> {
+        self.resolve_texture_as(scene, texture, true)
+    }
+
+    /// `is_srgb` is false for data the shader reads as numbers, a normal map.
+    pub fn resolve_texture_as(
+        &mut self,
+        scene: &RendererSceneContext,
+        texture: &texture_union::Tex,
+        is_srgb: bool,
+    ) -> Result<ResolvedTexture, TextureResolveError> {
         match texture {
             texture_union::Tex::Texture(texture) => {
                 if texture.src.is_empty() {
@@ -367,30 +369,46 @@ impl TextureResolver<'_, '_> {
                     .filter_mode
                     .and_then(TextureFilterMode::from_i32)
                     .unwrap_or(TextureFilterMode::TfmBilinear);
-                let filter_mode = match filter_mode {
-                    TextureFilterMode::TfmPoint => ImageFilterMode::Nearest,
-                    TextureFilterMode::TfmBilinear => ImageFilterMode::Linear,
-                    TextureFilterMode::TfmTrilinear => ImageFilterMode::Linear,
+                let point = filter_mode == TextureFilterMode::TfmPoint;
+                let filter_mode = if point {
+                    ImageFilterMode::Nearest
+                } else {
+                    ImageFilterMode::Linear
                 };
 
                 let wrap_mode = texture
                     .wrap_mode
                     .and_then(TextureWrapMode::from_i32)
                     .unwrap_or(TextureWrapMode::TwmClamp);
+                // an image is one asset for each sampler and colour space it is used with; the
+                // usual one (clamped, bilinear, sRGB) keeps the file's own path
+                let mut variant = String::new();
+                variant.push_str(match wrap_mode {
+                    TextureWrapMode::TwmRepeat => "repeat",
+                    TextureWrapMode::TwmClamp => "",
+                    TextureWrapMode::TwmMirror => "mirror",
+                });
+                if point {
+                    variant.push_str("-point");
+                }
+                if !is_srgb {
+                    variant.push_str("-linear");
+                }
                 let wrap_mode = match wrap_mode {
                     TextureWrapMode::TwmRepeat => ImageAddressMode::Repeat,
                     TextureWrapMode::TwmClamp => ImageAddressMode::ClampToEdge,
                     TextureWrapMode::TwmMirror => ImageAddressMode::MirrorRepeat,
                 };
 
-                // TODO handle different wrapmode and filtering for the same image at some point...
                 Ok(ResolvedTexture {
                     image: self
                         .ipfas
-                        .load_content_file_with_settings::<Image, _>(
+                        .load_content_file_variant::<Image, _>(
                             &texture.src,
                             &scene.hash,
+                            &variant,
                             move |s: &mut ImageLoaderSettings| {
+                                s.is_srgb = is_srgb;
                                 s.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
                                     address_mode_u: wrap_mode,
                                     address_mode_v: wrap_mode,
@@ -704,18 +722,20 @@ pub fn update_materials(
 
                 let defn = MaterialDefinition::from_base_and_material(base, &mat.0);
                 let textures: Result<Vec<_>, _> = [
-                    &defn.base_color_texture,
-                    &defn.emmissive_texture,
-                    &defn.normal_map,
+                    (&defn.base_color_texture, true),
+                    (&defn.emmissive_texture, true),
+                    (&defn.normal_map, false),
                 ]
                 .into_iter()
                 .map(
-                    |texture| match texture.as_ref().and_then(|t| t.tex.as_ref()) {
-                        Some(texture) => match resolver.resolve_texture(&scene, texture) {
-                            Ok(resolved) => Ok(Some(resolved)),
-                            Err(TextureResolveError::SourceNotReady) => Err(()),
-                            Err(_) => Ok(None),
-                        },
+                    |(texture, is_srgb)| match texture.as_ref().and_then(|t| t.tex.as_ref()) {
+                        Some(texture) => {
+                            match resolver.resolve_texture_as(&scene, texture, is_srgb) {
+                                Ok(resolved) => Ok(Some(resolved)),
+                                Err(TextureResolveError::SourceNotReady) => Err(()),
+                                Err(_) => Ok(None),
+                            }
+                        }
                         None => Ok(None),
                     },
                 )
@@ -785,7 +805,11 @@ pub fn update_materials(
                         uv_transform: ui_uv_transform.unwrap_or(defn.material.uv_transform),
                         ..defn.material.clone()
                     },
-                    extension: SceneBound::new(&bounds, config.graphics.oob),
+                    extension: if defn.plain_emissive {
+                        SceneBound::new(&bounds, config.graphics.oob).with_plain_emissive()
+                    } else {
+                        SceneBound::new(&bounds, config.graphics.oob)
+                    },
                 });
 
                 if can_cache {

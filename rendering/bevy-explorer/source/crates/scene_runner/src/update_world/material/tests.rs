@@ -579,3 +579,214 @@ fn per_frame_cost_with_a_large_backlog() {
         );
     }
 }
+
+mod definition {
+    use dcl_component::proto_components::{
+        common::{texture_union::Tex, Color3, Color4, Texture, TextureUnion, Vector2},
+        sdk::components::{
+            pb_material::{self, PbrMaterial, UnlitMaterial},
+            MaterialTransparencyMode, PbMaterial,
+        },
+    };
+
+    use super::super::*;
+
+    fn texture(src: &str) -> Option<TextureUnion> {
+        Some(TextureUnion {
+            tex: Some(Tex::Texture(Texture {
+                src: src.to_owned(),
+                ..Default::default()
+            })),
+        })
+    }
+
+    fn grey(v: f32, a: f32) -> Option<Color4> {
+        Some(Color4 {
+            r: v,
+            g: v,
+            b: v,
+            a,
+        })
+    }
+
+    fn pbr(pbr: PbrMaterial) -> MaterialDefinition {
+        MaterialDefinition::from_base_and_material(
+            None,
+            &PbMaterial {
+                material: Some(pb_material::Material::Pbr(pbr)),
+                ..Default::default()
+            },
+        )
+    }
+
+    fn unlit(unlit: UnlitMaterial) -> MaterialDefinition {
+        MaterialDefinition::from_base_and_material(
+            None,
+            &PbMaterial {
+                material: Some(pb_material::Material::Unlit(unlit)),
+                ..Default::default()
+            },
+        )
+    }
+
+    #[test]
+    fn albedo_and_diffuse_colours_are_srgb() {
+        let lit = pbr(PbrMaterial {
+            albedo_color: grey(0.5, 1.0),
+            ..Default::default()
+        });
+        let flat = unlit(UnlitMaterial {
+            diffuse_color: grey(0.5, 1.0),
+            ..Default::default()
+        });
+        for definition in [lit, flat] {
+            let linear = definition.material.base_color.to_linear().red;
+            assert!((linear - 0.214).abs() < 0.001, "{linear}");
+        }
+    }
+
+    #[test]
+    fn the_emissive_colour_is_linear_times_its_intensity() {
+        let half = Some(Color3 {
+            r: 0.5,
+            g: 0.5,
+            b: 0.5,
+        });
+        let default_intensity = pbr(PbrMaterial {
+            emissive_color: half,
+            ..Default::default()
+        });
+        let intensity_four = pbr(PbrMaterial {
+            emissive_color: half,
+            emissive_intensity: Some(4.0),
+            ..Default::default()
+        });
+        assert_eq!(
+            default_intensity.material.emissive.red,
+            0.5 * 2.0 * SDK_EMISSIVE_SCALE
+        );
+        assert_eq!(
+            intensity_four.material.emissive.red,
+            0.5 * 4.0 * SDK_EMISSIVE_SCALE
+        );
+    }
+
+    #[test]
+    fn an_emissive_texture_emits_only_with_a_colour_and_an_intensity() {
+        let white = Some(Color3 {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+        });
+        let no_colour = pbr(PbrMaterial {
+            emissive_texture: texture("lava.png"),
+            ..Default::default()
+        });
+        let no_intensity = pbr(PbrMaterial {
+            emissive_texture: texture("lava.png"),
+            emissive_color: white,
+            emissive_intensity: Some(0.0),
+            ..Default::default()
+        });
+        for definition in [no_colour, no_intensity] {
+            let emissive = definition.material.emissive;
+            assert_eq!([emissive.red, emissive.green, emissive.blue], [0.0; 3]);
+            assert!(definition.emmissive_texture.is_none());
+        }
+        let lit = pbr(PbrMaterial {
+            emissive_texture: texture("lava.png"),
+            emissive_color: white,
+            ..Default::default()
+        });
+        assert!(lit.emmissive_texture.is_some());
+    }
+
+    #[test]
+    fn automatic_transparency_follows_the_albedo_alpha_alone() {
+        let alpha_mode = |material: PbrMaterial| pbr(material).material.alpha_mode;
+        assert_eq!(
+            alpha_mode(PbrMaterial {
+                albedo_color: grey(1.0, 0.5),
+                ..Default::default()
+            }),
+            AlphaMode::Blend
+        );
+        assert_eq!(
+            alpha_mode(PbrMaterial {
+                alpha_test: Some(0.3),
+                ..Default::default()
+            }),
+            AlphaMode::Opaque
+        );
+        assert_eq!(
+            alpha_mode(PbrMaterial {
+                alpha_texture: texture("alpha.png"),
+                ..Default::default()
+            }),
+            AlphaMode::Opaque
+        );
+        assert_eq!(
+            alpha_mode(PbrMaterial {
+                transparency_mode: Some(MaterialTransparencyMode::MtmAlphaTest as i32),
+                alpha_test: Some(0.3),
+                ..Default::default()
+            }),
+            AlphaMode::Mask(0.3)
+        );
+    }
+
+    #[test]
+    fn an_unlit_material_blends_through_its_alpha_texture_only() {
+        let alpha_mode = |material: UnlitMaterial| unlit(material).material.alpha_mode;
+        assert_eq!(
+            alpha_mode(UnlitMaterial {
+                diffuse_color: grey(1.0, 0.5),
+                alpha_test: Some(0.3),
+                ..Default::default()
+            }),
+            AlphaMode::Opaque
+        );
+        assert_eq!(
+            alpha_mode(UnlitMaterial {
+                alpha_texture: texture("alpha.png"),
+                ..Default::default()
+            }),
+            AlphaMode::Blend
+        );
+    }
+
+    #[test]
+    fn an_unlit_material_casts_no_shadow() {
+        let definition = unlit(UnlitMaterial {
+            cast_shadows: Some(true),
+            ..Default::default()
+        });
+        assert!(!definition.shadow_caster);
+    }
+
+    #[test]
+    fn tiling_keeps_the_bottom_left_of_the_texture() {
+        // meshes carry `1 - v`, so `offset + uv * tiling` from the bottom left is, in mesh uvs,
+        // `v * tiling + (1 - tiling - offset)`
+        let tiled = pbr(PbrMaterial {
+            texture: Some(TextureUnion {
+                tex: Some(Tex::Texture(Texture {
+                    src: "lava.png".to_owned(),
+                    tiling: Some(Vector2 { x: 0.5, y: 0.25 }),
+                    offset: Some(Vector2 { x: 0.1, y: 0.2 }),
+                    ..Default::default()
+                })),
+            }),
+            ..Default::default()
+        });
+        let transform = tiled.material.uv_transform;
+        assert_eq!(transform.matrix2, Mat2::from_diagonal(Vec2::new(0.5, 0.25)));
+        assert!((transform.translation - Vec2::new(0.1, 0.55)).length() < 1e-6);
+
+        let plain = pbr(PbrMaterial {
+            texture: texture("lava.png"),
+            ..Default::default()
+        });
+        assert_eq!(plain.material.uv_transform, Affine2::IDENTITY);
+    }
+}

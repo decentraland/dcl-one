@@ -410,12 +410,16 @@ where
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum IpfsKey {
     BaseUrl,
+    /// Names nothing to fetch: it gives one file a second asset path, for a load of it with
+    /// other loader settings (see `IpfsResource::load_content_file_variant`).
+    Variant,
 }
 
 impl AsRef<Path> for IpfsKey {
     fn as_ref(&self) -> &Path {
         match self {
             IpfsKey::BaseUrl => Path::new("&baseUrl"),
+            IpfsKey::Variant => Path::new("&variant"),
         }
     }
 }
@@ -426,6 +430,7 @@ impl TryFrom<&str> for IpfsKey {
     fn try_from(key: &str) -> Result<Self, Self::Error> {
         match key {
             "&baseUrl" => Ok(Self::BaseUrl),
+            "&variant" => Ok(Self::Variant),
             other => anyhow::bail!("unrecognised ipfs key `{other}`"),
         }
     }

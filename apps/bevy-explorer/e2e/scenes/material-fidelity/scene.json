@@ -1,0 +1,55 @@
+{
+  "ecs7": true,
+  "runtimeVersion": "7",
+  "display": {
+    "title": "Material fidelity charts",
+    "description": "SDK material parameter charts with one locked camera per chart"
+  },
+  "owner": "",
+  "contact": {
+    "name": "bevy-explorer-e2e",
+    "email": ""
+  },
+  "main": "bin/index.js",
+  "tags": [],
+  "scene": {
+    "parcels": [
+      "0,26",
+      "1,26",
+      "2,26",
+      "3,26",
+      "4,26",
+      "5,26",
+      "6,26",
+      "7,26",
+      "8,26"
+    ],
+    "base": "0,26"
+  },
+  "requiredPermissions": [],
+  "spawnPoints": [
+    {
+      "name": "default",
+      "default": true,
+      "position": {
+        "x": [
+          12
+        ],
+        "y": [
+          0
+        ],
+        "z": [
+          2
+        ]
+      },
+      "cameraTarget": {
+        "x": 12,
+        "y": 1,
+        "z": 8
+      }
+    }
+  ],
+  "skyboxConfig": {
+    "fixedTime": 43200
+  }
+}

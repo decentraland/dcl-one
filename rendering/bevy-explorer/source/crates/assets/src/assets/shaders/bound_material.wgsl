@@ -1,8 +1,8 @@
 #import bevy_pbr::{
     forward_io::{VertexOutput, FragmentOutput},
     pbr_fragment::pbr_input_from_standard_material,
-    pbr_functions::{SampleBias, alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
-    pbr_bindings::{material, emissive_texture, emissive_sampler},
+    pbr_functions::{SampleBias, alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing, calculate_tbn_mikktspace, apply_normal_mapping},
+    pbr_bindings::{material, emissive_texture, emissive_sampler, normal_map_texture, normal_map_sampler},
     pbr_types::{STANDARD_MATERIAL_FLAGS_EMISSIVE_TEXTURE_BIT, STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT, STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT},
     mesh_functions,
     mesh_view_bindings::{globals, view, lights},
@@ -16,7 +16,7 @@
 #import "embedded://shaders/bound_material_effect.wgsl"::{apply_outline, discard_dither, reveal_discard}
 #import "embedded://shaders/toon.wgsl"::toon_lighting
 #import "embedded://shaders/shadow_softening.wgsl"::soften_directional_shadow
-#import "embedded://shaders/scene_bounds.wgsl"::{scene_bounds, scene_outside_amount, SCENE_DITHER_CAPSULE}
+#import "embedded://shaders/scene_bounds.wgsl"::{scene_bounds, scene_outside_amount, SCENE_DITHER_CAPSULE, SCENE_PLAIN_EMISSIVE}
 
 override fn shadows::fetch_directional_shadow(light_id: u32, frag_position: vec4<f32>, surface_normal: vec3<f32>, view_z: f32) -> f32 {
     let base = shadows::fetch_directional_shadow(light_id, frag_position, surface_normal, view_z);
@@ -82,6 +82,29 @@ fn fragment(
     var pbr_input = pbr_input_from_standard_material(in, is_front_m);
     var out: FragmentOutput;
 
+    // with a normal prepass and no MSAA, an opaque material takes its normal from the prepass,
+    // which holds the geometric normal (bound_prepass.wgsl; the avatar outline finds its edges
+    // in it), so the normal map is applied here
+#ifdef LOAD_PREPASS_NORMALS
+#ifdef VERTEX_UVS
+#ifdef VERTEX_TANGENTS
+#ifdef STANDARD_MATERIAL_NORMAL_MAP
+    {
+#ifdef STANDARD_MATERIAL_NORMAL_MAP_UV_B
+        let normal_uv = (material.uv_transform * vec3(in.uv_b, 1.0)).xy;
+#else
+        let normal_uv = (material.uv_transform * vec3(in.uv, 1.0)).xy;
+#endif
+        let Nt = textureSampleBias(normal_map_texture, normal_map_sampler, normal_uv, view.mip_bias).rgb;
+        let TBN = calculate_tbn_mikktspace(pbr_input.world_normal, in.world_tangent);
+        let double_sided = (material.flags & STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT) != 0u;
+        pbr_input.N = apply_normal_mapping(material.flags, TBN, double_sided, is_front_m, Nt);
+    }
+#endif
+#endif
+#endif
+#endif
+
 #ifndef MULTISAMPLED
     let sample_index = 0u;
 #endif
@@ -95,6 +118,8 @@ fn fragment(
     // x                no                  x * base color
     // 0                t                   2 * t
     // x != 0           t                   x * t
+    // an SDK material (SCENE_PLAIN_EMISSIVE) differs in two rows: x with no texture stays x,
+    // and it binds no emissive texture when x is 0, so 0 with a texture is 0
     var emissive: vec3<f32> = material.emissive.rgb;
 #ifdef VERTEX_UVS
     if ((material.flags & STANDARD_MATERIAL_FLAGS_EMISSIVE_TEXTURE_BIT) != 0u) {
@@ -119,7 +144,7 @@ fn fragment(
         ).rgb);
     } else {
         // emissive is set, no emissive texture, use base color texture as emissive texture (only if present)
-        if ((material.flags & STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT) != 0u) {
+        if ((material.flags & STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT) != 0u && (scene_bounds.flags & SCENE_PLAIN_EMISSIVE) == 0u) {
             emissive = emissive * pbr_input.material.base_color.rgb;
         }
     }

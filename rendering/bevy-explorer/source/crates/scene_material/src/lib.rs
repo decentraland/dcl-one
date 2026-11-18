@@ -149,12 +149,19 @@ impl SceneBound {
         self.data.flags |= SCENE_DITHER_CAPSULE;
         self
     }
+
+    pub fn with_plain_emissive(mut self) -> Self {
+        self.data.flags |= SCENE_PLAIN_EMISSIVE;
+        self
+    }
 }
 
 pub const SCENE_BOUNDED: u32 = 1;
 pub const SCENE_FULL_RECT: u32 = 2;
 /// an avatar: the camera-to-player dither fades it as a whole, by its capsule
 pub const SCENE_DITHER_CAPSULE: u32 = 4;
+/// an SDK material: its emissive colour is not multiplied by its albedo texture
+pub const SCENE_PLAIN_EMISSIVE: u32 = 8;
 /// scenes with a larger bounding box fall back to the bounding box itself
 const MAX_SCENE_CELLS: u64 = 1 << 20;
 /// empty cell table for unbounded and full-rect scenes, which never read it

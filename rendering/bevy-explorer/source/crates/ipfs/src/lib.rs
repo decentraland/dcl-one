@@ -403,6 +403,28 @@ impl IpfsAssetServer<'_, '_> {
             .load_with_settings(PathBuf::from(&ipfs_path), settings))
     }
 
+    /// As `load_content_file_with_settings`, under an asset path of its own when `variant` is
+    /// not empty. The asset server keeps one asset for a path and the settings of its first
+    /// load, so a file wanted with two sets of settings needs a `variant` naming the second.
+    pub fn load_content_file_variant<T: Asset, S: Settings>(
+        &self,
+        file_path: &str,
+        content_hash: &str,
+        variant: &str,
+        settings: impl Fn(&mut S) + Send + Sync + 'static,
+    ) -> Result<Handle<T>, anyhow::Error> {
+        let mut ipfs_path = IpfsPath::new(IpfsType::new_content_file(
+            content_hash.to_owned(),
+            file_path.to_owned(),
+        ));
+        if !variant.is_empty() {
+            ipfs_path = ipfs_path.with_keyvalue(IpfsKey::Variant, variant.to_owned());
+        }
+        Ok(self
+            .server
+            .load_with_settings(PathBuf::from(&ipfs_path), settings))
+    }
+
     pub fn load_urn<T: IpfsAsset>(&self, urn: &str) -> Result<Handle<T>, anyhow::Error> {
         let ext = T::ext();
         let ipfs_path = IpfsPath::new_from_urn::<T>(urn)?;
