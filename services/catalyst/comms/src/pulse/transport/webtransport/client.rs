@@ -276,8 +276,7 @@ fn bound_client(local: IpAddr, hash: Vec<u8>) -> Result<web_transport_quinn::Cli
         .with_no_client_auth();
     crypto.alpn_protocols = vec![web_transport_quinn::ALPN.as_bytes().to_vec()];
     let quic = quinn::crypto::rustls::QuicClientConfig::try_from(crypto).map_err(|e| fail(&e))?;
-    let endpoint =
-        quinn::Endpoint::client(SocketAddr::new(local, 0)).map_err(|e| fail(&e))?;
+    let endpoint = quinn::Endpoint::client(SocketAddr::new(local, 0)).map_err(|e| fail(&e))?;
     Ok(web_transport_quinn::Client::new(
         endpoint,
         quinn::ClientConfig::new(Arc::new(quic)),
