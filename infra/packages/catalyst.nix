@@ -46,7 +46,13 @@ let
     OPENSSL_NO_VENDOR = "1";
     RUSTY_V8_ARCHIVE = "${pkgs.callPackage ./librusty-v8.nix { }}";
   };
-  cargoVendorDir = craneLib.vendorCargoDeps common;
+  # The lock's one git source: the message router's LiveKit SDK, the commit of this repository
+  # that rendering/bevy-explorer/patches/client-sdk-rust/source.toml names. With its hash crane
+  # fetches that commit alone instead of every ref of the repository; `catalyst` does not compile
+  # it, the vendor directory only has to hold it.
+  outputHashes."git+https://github.com/decentraland/dcl-one?rev=b2f8bc84000333ea843578959c9d11caccaa9474#b2f8bc84000333ea843578959c9d11caccaa9474" =
+    "sha256-pu+EoXyqMEQ/N5Wx9r4x2K/3o6HGBhZtDcg7GTP26Vk=";
+  cargoVendorDir = craneLib.vendorCargoDeps (common // { inherit outputHashes; });
   cargoArtifacts = craneLib.buildDepsOnly (common // { inherit cargoVendorDir; });
 in craneLib.buildPackage (common // {
   inherit cargoArtifacts cargoVendorDir;
