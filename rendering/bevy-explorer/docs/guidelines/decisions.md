@@ -63,9 +63,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   worst-case change between near and far is smaller. Fading to no shadow looked worse about
   half the time.
 - **Low shadows keep hardware 2x2 filtering.** Unity's soft shadows filter every quality. Low is
-  the default preset and the filter applies per view, spot shadows included, so Low keeps
-  bevy's `Hardware2x2` (one PCF sample) instead of `Gaussian` (nine) to stay cheap on weak GPUs
-  and web. High uses `Gaussian`.
+  the Medium preset's shadow quality and the filter applies per view, spot shadows included, so
+  Low keeps bevy's `Hardware2x2` (one PCF sample) instead of `Gaussian` (nine) to stay cheap on
+  weak GPUs and web. High uses `Gaussian`.
 - **Jump marker reads the depth prepass.** Like Unity's projector, the blob (`BlobShadow.mat`)
   is projected onto the surface below, so it follows slopes, steps and ledges; a flat quad
   cut into rising ground. A depth bias does not fix that: it offsets the quad's depth test,
@@ -608,6 +608,19 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Distance. Bevy has one sea plane, a single opaque quad that casts no shadows, so hiding it would
   save almost nothing, and the water material draws without fog, so nothing would soften it
   appearing and disappearing.
+- **Graphics presets set fewer settings than Unity's.** Low, Medium and High carry Unity's values
+  for the frame rate, VSync, render scale, anti-aliasing, bloom, avatar outline, sun shadows,
+  shadow distance and scene lights; Medium is the default and the one every saved config migrates
+  to. They leave out Unity's scene distance (in parcels, where far scenes load as LODs; here
+  imposters draw them and the load distance stays the player's), the landscape distance (read
+  only at startup; its default is Medium's 1000 m), current-scene streams, spring bones and HDR
+  (always on). The preset is not stored: the HUD reads it off the settings, and any difference
+  shows as Custom.
+- **Depth of field yields to MSAA.** The fork's transparent focus texture takes the sample count
+  of the resolved main texture, so a multisampled transparent pass with depth of field fails
+  wgpu validation. While MSAA is on, the camera has no depth of field and the stars draw before
+  the transparent pass. Unity has no depth of field, so no preset combines them; the native
+  Medium preset is MSAA 2x.
 
 ## Deliberate choices that look like mistakes
 

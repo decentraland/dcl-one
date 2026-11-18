@@ -36,7 +36,7 @@ impl AppSetting for FpsTargetSetting {
     }
 
     fn description(&self) -> String {
-        "The target frame rate. Lower values may be uncomfortable or jerky, while higher values will result in a smoother experience but increased CPU and GPU load.\n\n".to_owned()
+        "The target frame rate. Lower values may be uncomfortable or jerky, while higher values will result in a smoother experience but increased CPU and GPU load. Ignored while VSync is on: the monitor sets the rate.".to_owned()
     }
 
     fn save(&self, config: &mut AppConfig) {

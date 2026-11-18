@@ -676,7 +676,7 @@ pub struct AppConfig {
 
 /// bump to run one-time migrations of the preset-managed settings in existing configs
 /// (see [`AppConfig::reset_outdated_settings`])
-pub const SETTINGS_GENERATION: u32 = 3;
+pub const SETTINGS_GENERATION: u32 = 4;
 
 /// bump to run one-time migrations of saved input binding tables
 /// (see [`AppConfig::migrate_inputs`])
@@ -772,6 +772,8 @@ impl AppConfig {
     /// else. gen 1: reinitialize the preset-managed settings to the current defaults.
     /// gen 2: default bloom dropped High -> Low; move configs still on the old default.
     /// gen 3: native gpu uploads became capped by default; move configs still uncapped (0).
+    /// gen 4: the defaults became the Medium graphics preset; reset the settings the presets set,
+    /// so every saved config lands on Medium.
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;
@@ -785,6 +787,9 @@ impl AppConfig {
         }
         if self.settings_generation < 3 && self.graphics.gpu_bytes_per_frame == 0 {
             self.graphics.gpu_bytes_per_frame = default.graphics.gpu_bytes_per_frame;
+        }
+        if self.settings_generation < 4 {
+            self.graphics.reset_quality_preset(&default.graphics);
         }
         self.settings_generation = SETTINGS_GENERATION;
     }
@@ -983,22 +988,33 @@ pub struct GraphicsSettings {
 /// (visuals::sky_envmap).
 pub const AMBIENT_BRIGHTNESS_DEFAULT: i32 = 50;
 
+/// The defaults are the Medium graphics preset, the one a new install gets. The HUD's Graphics
+/// Preset (`react-web/bridge-scene/src/domains/graphicsPresets.ts`) holds the same values as
+/// Medium, so the two change together.
 impl Default for GraphicsSettings {
     fn default() -> Self {
         Self {
-            vsync: false,
+            // the browser paces the web build to the display, whatever this says
+            vsync: !cfg!(target_arch = "wasm32"),
             log_fps: !cfg!(target_arch = "wasm32"),
-            msaa: AaSetting::FxaaLow,
+            // MSAA 2x; the web build has no MSAA, so it takes the sharper FXAA
+            msaa: if cfg!(target_arch = "wasm32") {
+                AaSetting::FxaaHigh
+            } else {
+                AaSetting::Msaa2x
+            },
             fps_target: 60,
-            shadow_distance: 20.0,
+            shadow_distance: 60.0,
+            // one cascade
             shadow_settings: ShadowSetting::Low,
-            light_count: 4,
-            shadow_caster_count: 0,
+            light_count: 6,
+            // spot light shadows within 20 m
+            shadow_caster_count: 3,
             window: WindowSetting::Windowed,
             // fullscreen_res: FullscreenResSetting(UVec2::new(1280,720)),
             fog: FogSetting::On,
-            bloom: BloomSetting::Low,
-            dof: DofSetting::High,
+            bloom: BloomSetting::High,
+            dof: DofSetting::Off,
             ssao: SsaoSetting::Off,
             sky_reflections: SkyReflectionSetting::High,
             oob: 2.0,
@@ -1009,6 +1025,26 @@ impl Default for GraphicsSettings {
             gpu_bytes_per_frame: 10_000_000,
             render_scale: 1.0,
         }
+    }
+}
+
+impl GraphicsSettings {
+    /// Set every setting the HUD's Graphics Preset sets to `preset`'s value, keeping the rest.
+    pub fn reset_quality_preset(&mut self, preset: &Self) {
+        self.vsync = preset.vsync;
+        self.fps_target = preset.fps_target;
+        self.render_scale = preset.render_scale;
+        self.msaa = preset.msaa;
+        self.bloom = preset.bloom;
+        self.avatar_outline = preset.avatar_outline;
+        self.shadow_settings = preset.shadow_settings;
+        self.shadow_distance = preset.shadow_distance;
+        self.light_count = preset.light_count;
+        self.shadow_caster_count = preset.shadow_caster_count;
+        self.dof = preset.dof;
+        self.ssao = preset.ssao;
+        self.fog = preset.fog;
+        self.sky_reflections = preset.sky_reflections;
     }
 }
 
@@ -1146,6 +1182,12 @@ pub enum AaSetting {
     Msaa2x,
     Msaa4x,
     Msaa8x,
+}
+
+impl AaSetting {
+    pub fn is_msaa(self) -> bool {
+        matches!(self, Self::Msaa2x | Self::Msaa4x | Self::Msaa8x)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -2474,6 +2516,63 @@ mod tests {
         assert_eq!(uncapped.graphics.gpu_bytes_per_frame, 10_000_000);
         assert_eq!(uncapped.settings_generation, SETTINGS_GENERATION);
         assert_eq!(saved(500_000).graphics.gpu_bytes_per_frame, 500_000);
+    }
+
+    #[test]
+    fn default_graphics_are_the_medium_preset() {
+        let g = GraphicsSettings::default();
+        assert_eq!((g.fps_target, g.render_scale), (60, 1.0));
+        assert_eq!((g.bloom, g.avatar_outline), (BloomSetting::High, true));
+        assert_eq!(
+            (
+                g.shadow_settings,
+                g.shadow_distance,
+                g.light_count,
+                g.shadow_caster_count
+            ),
+            (ShadowSetting::Low, 60.0, 6, 3)
+        );
+        assert_eq!(
+            (g.dof, g.ssao, g.fog, g.sky_reflections),
+            (
+                DofSetting::Off,
+                SsaoSetting::Off,
+                FogSetting::On,
+                SkyReflectionSetting::High
+            )
+        );
+        #[cfg(not(target_arch = "wasm32"))]
+        assert_eq!((g.vsync, g.msaa), (true, AaSetting::Msaa2x));
+        #[cfg(target_arch = "wasm32")]
+        assert_eq!((g.vsync, g.msaa), (false, AaSetting::FxaaHigh));
+    }
+
+    #[test]
+    fn generation_4_lands_on_medium_and_keeps_the_rest() {
+        let mut config = AppConfig {
+            settings_generation: 3,
+            scene_load_distance: 100.0,
+            max_avatars: 50,
+            ..Default::default()
+        };
+        let g = &mut config.graphics;
+        (g.vsync, g.fps_target, g.render_scale) = (false, 144, 0.5);
+        (g.msaa, g.bloom, g.dof) = (AaSetting::FxaaLow, BloomSetting::Low, DofSetting::High);
+        (g.shadow_distance, g.light_count, g.shadow_caster_count) = (200.0, 32, 8);
+        (g.ambient_brightness, g.oob, g.cel_shading) = (10, 0.0, false);
+        config.reset_outdated_settings();
+
+        let mut medium = GraphicsSettings::default();
+        (medium.ambient_brightness, medium.oob, medium.cel_shading) = (10, 0.0, false);
+        assert_eq!(
+            serde_json::to_value(&config.graphics).unwrap(),
+            serde_json::to_value(&medium).unwrap()
+        );
+        assert_eq!(
+            (config.scene_load_distance, config.max_avatars),
+            (100.0, 50)
+        );
+        assert_eq!(config.settings_generation, SETTINGS_GENERATION);
     }
 
     #[test]
