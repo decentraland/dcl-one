@@ -427,23 +427,33 @@ impl IpfsIo {
         }
         let data = SharedBytes(Arc::new(fetched.body));
 
-        // A cache keyed on the hash alone answers for every server, so it only takes bytes
-        // that are what the hash names: any server (and on web any scene, through the service
-        // worker) can otherwise file its own bytes under another's hash.
-        let cacheable = |key: &CacheKey| match key {
-            CacheKey::Url(_) => true,
-            CacheKey::Content(hash) => {
-                let matches = content_hash::matches_content_hash(hash, &data);
-                if !matches {
-                    // not expected from a decentraland deployment: either the server sent
-                    // other bytes, or the hash was made in a way `content_hash` doesn't know
-                    warn!(
-                        "`{remote}` ({} bytes) does not hash to `{hash}`: not caching it under that hash",
+        // Bytes that are not what their hash names fail the read like a failed transfer: they
+        // never reach a loader, nor the cache, which is keyed on the hash alone and answers for
+        // every server. The url is asked for again after the retry window. A name the check
+        // can't verify is read but not cached.
+        let verified = match &cache_key {
+            Some(CacheKey::Content(hash)) => match content_hash::check_content_hash(hash, &data) {
+                content_hash::Check::Matches => true,
+                content_hash::Check::Differs => {
+                    let message = format!(
+                        "[{token:?}] `{remote}` ({} bytes) does not hash to `{hash}`",
                         data.len()
                     );
+                    warn!("{message}");
+                    self.failed_remotes
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .record(remote.clone(), None, Instant::now());
+                    return ipfs_io_read_state.send_failure(Err(AssetReaderError::Io(Arc::new(
+                        std::io::Error::other(message),
+                    ))));
                 }
-                matches
-            }
+                content_hash::Check::Unknown => {
+                    warn!("`{remote}` is named `{hash}`, which is not a content hash this client checks: not caching it");
+                    false
+                }
+            },
+            _ => true,
         };
 
         // fill the web cache, which callers read before they download: content under its hash,
@@ -452,7 +462,7 @@ impl IpfsIo {
         {
             let kept = match &cache_key {
                 Some(key @ CacheKey::Content(_)) => {
-                    web_cache::share(&remote, key.name(), &data, || cacheable(key)).await
+                    web_cache::share(&remote, key.name(), &data, || verified).await
                 }
                 Some(CacheKey::Url(_)) if !no_cache => web_cache::keep(&remote, &data).await,
                 _ => Ok(()),
@@ -467,7 +477,7 @@ impl IpfsIo {
             .as_ref()
             .filter(|_| !no_cache && self.cache_path().is_some())
         {
-            if cacheable(key) {
+            if verified {
                 if let Err(error) = self.cache_bytes(key.name(), &data).await {
                     warn!("failed to cache `{remote}`: {error}");
                 }

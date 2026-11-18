@@ -855,3 +855,106 @@ async fn a_poisoned_failure_memory_keeps_answering() {
     .await
     .expect("a poisoned failure memory stopped answering");
 }
+
+/// One shared download of `path` keyed by `key`, answered with [`OK`] (the byte `x`).
+async fn download_x(
+    io: &Arc<IpfsIo>,
+    server: &Server,
+    path: &str,
+    key: CacheKey,
+) -> Result<SharedBytes, AssetReaderError> {
+    let (reader, task) = io.share_download(key, 1, path.into(), server.url(path), None);
+    IoTaskPool::get().spawn_compat(task.unwrap()).detach();
+    server.reply(path, OK).await;
+    let mut result = reader.result();
+    let result = result.wait_for(Option::is_some).await.unwrap().clone();
+    result.unwrap()
+}
+
+#[tokio::test]
+async fn a_download_that_does_not_match_its_hash_fails_and_is_not_cached() {
+    timeout(LIMIT, async {
+        let (io, dir) = cache_fixture("hash-mismatch");
+        let server = Server::start().await;
+        let hash = crate::content_hash::raw_cid(b"y");
+        let error = download_x(&io, &server, "other", CacheKey::Content(hash.clone()))
+            .await
+            .err()
+            .expect("bytes that are not the hash's fail the read");
+        assert!(error.to_string().contains("does not hash to"), "{error}");
+        assert!(!dir.join(&hash).exists());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        std::fs::remove_dir(dir).unwrap();
+    })
+    .await
+    .expect("the mismatched download did not finish");
+}
+
+#[tokio::test]
+async fn a_hash_mismatch_is_asked_for_again_after_the_retry_window() {
+    timeout(LIMIT, async {
+        let io = ipfs();
+        let server = Server::start().await;
+        let url = server.url("flaky");
+        let wrong = CacheKey::Content(crate::content_hash::raw_cid(b"y"));
+        assert!(download_x(&io, &server, "flaky", wrong).await.is_err());
+        {
+            let mut failed = io.failed_remotes.lock().unwrap();
+            assert_eq!(
+                failed.repeat(&url, Instant::now(), true),
+                Some(Repeat::Recent)
+            );
+            assert_eq!(
+                failed.repeat(&url, Instant::now() + Duration::from_secs(11), true),
+                None
+            );
+            assert_eq!(failed.session_len(), 0);
+        }
+        // the next download of the url, answered with the right bytes, is read
+        let right = CacheKey::Content(crate::content_hash::raw_cid(b"x"));
+        let bytes = download_x(&io, &server, "flaky", right).await.unwrap();
+        assert_eq!(bytes.as_ref(), b"x");
+        assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 2);
+    })
+    .await
+    .expect("a hash mismatch was not retried");
+}
+
+#[tokio::test]
+async fn a_download_that_matches_its_hash_is_read_and_cached() {
+    timeout(LIMIT, async {
+        let (io, dir) = cache_fixture("hash-match");
+        let server = Server::start().await;
+        let hash = crate::content_hash::raw_cid(b"x");
+        let bytes = download_x(&io, &server, "same", CacheKey::Content(hash.clone()))
+            .await
+            .unwrap();
+        assert_eq!(bytes.as_ref(), b"x");
+        assert_eq!(std::fs::read(dir.join(&hash)).unwrap(), b"x");
+        std::fs::remove_file(dir.join(&hash)).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    })
+    .await
+    .expect("the matching download did not finish");
+}
+
+#[tokio::test]
+async fn a_name_the_hash_check_cannot_verify_is_read_and_not_cached() {
+    timeout(LIMIT, async {
+        let (io, dir) = cache_fixture("hash-unknown");
+        let server = Server::start().await;
+        // not a hash `content_hash` computes: a realm's own name, a cid of another codec or hash
+        let short_qm = "Qm".to_owned() + &crate::content_hash::raw_cid(b"y")[2..20];
+        let blake3 = "bafkr4i".to_owned() + &crate::content_hash::raw_cid(b"y")[7..];
+        for name in ["realm-file-1".to_owned(), short_qm, blake3] {
+            let key = CacheKey::Content(name.clone());
+            let bytes = download_x(&io, &server, &name, key).await.unwrap();
+            assert_eq!(bytes.as_ref(), b"x", "{name}");
+        }
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        assert_eq!(io.failed_remotes.lock().unwrap().session_len(), 0);
+        std::fs::remove_dir(dir).unwrap();
+    })
+    .await
+    .expect("an unverifiable download did not finish");
+}
