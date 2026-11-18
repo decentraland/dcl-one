@@ -793,6 +793,119 @@ mod tests {
         media_server.abort();
     }
 
+    /// A world scene published through this node's deploy path advertises
+    /// its realm name without `.dcl.eth` in `/about`; the explorer signs that
+    /// name with the realm URL `<host>/world/<name>`, and the Admin Toolkit's
+    /// moderation reads resolve that signed scene in the world.
+    #[tokio::test]
+    async fn a_scene_published_here_moderates_under_the_realm_name_its_about_advertises() {
+        use catalyst::comms::world_identity::{Parcel, ParcelSet, WorldName};
+        use catalyst::worlds::core::store::{self, SceneDeployment};
+        use catalyst::worlds::policy::Deploy;
+
+        let Some(pool) = scratch().await else { return };
+        let state = state_with(pool.clone(), Settings::for_tests());
+        let label = format!("direct{}", tag());
+        let world = WorldName::parse(&format!("{label}.dcl.eth")).unwrap();
+        let scene_id = format!("DirectScene{}", tag());
+        let owner = Address::parse(&address_of(KEY)).unwrap();
+        let entity = serde_json::json!({
+            "type": "scene",
+            "timestamp": 1000,
+            "pointers": ["0,0"],
+            "metadata": {
+                "display": { "title": "Direct" },
+                "scene": { "base": "0,0", "parcels": ["0,0"] },
+                "worldConfiguration": { "name": world.display() },
+            },
+        });
+        let dir = std::env::temp_dir().join(format!("catalyst-gk-direct-{}", tag()));
+        let storage = catalyst::storage::Storage::from_config(&dir).await.unwrap();
+        let parcels: ParcelSet = [Parcel::parse("0,0").unwrap()].into_iter().collect();
+        store::deploy_scene(
+            &pool,
+            &storage,
+            SceneDeployment {
+                world: &world,
+                name_owner: Some(&owner),
+                entity_id: &scene_id,
+                deployer: &owner,
+                deployment_auth_chain: &serde_json::json!([{ "type": "SIGNER", "payload": owner.as_str() }]),
+                entity: &entity,
+                parcels: &parcels,
+                size: 1,
+                replacement: &Deploy::Owner,
+                forward_to: None,
+                quota: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let about = catalyst::worlds::about::build_about(
+            &catalyst::worlds::Settings::for_tests("https://node.example"),
+            world.display(),
+            catalyst::worlds::queries::world_about(&pool, world.display())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let realm_name = about.configurations.realm_name.clone();
+        assert_eq!(realm_name, label, "a world published here strips .dcl.eth");
+
+        state
+            .moderation
+            .add_admin(&scene_id, &owner, &owner)
+            .await
+            .unwrap();
+        // What the explorer signs for a scene of that realm
+        // (`restricted_actions::SignedFetchMeta`).
+        let metadata = serde_json::json!({
+            "signer": "decentraland-kernel-scene",
+            "sceneId": scene_id,
+            "parcel": "0,0",
+            "realm": {
+                "hostname": format!("node.example/world/{}", world.display()),
+                "protocol": "v3",
+                "serverName": realm_name,
+            },
+        })
+        .to_string();
+        let Json(admins) = moderation::handlers::list_admins(
+            State(state.clone()),
+            at("/scene-admin"),
+            signed(KEY, "get", "/scene-admin", &metadata).await,
+            Query(moderation::handlers::PlaceQuery {
+                place_id: None,
+                admin: None,
+            }),
+        )
+        .await
+        .expect("the signed scene resolves in its world");
+        assert!(
+            admins
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["admin"].as_str() == Some(owner.as_str()))
+        );
+        let Json(bans) = moderation::handlers::list_bans(
+            State(state.clone()),
+            at("/scene-bans"),
+            signed(KEY, "get", "/scene-bans", &metadata).await,
+            Query(moderation::handlers::BanQuery {
+                place_id: None,
+                banned_address: None,
+                limit: None,
+                offset: None,
+            }),
+        )
+        .await
+        .expect("the owner's admin lists the world scene's bans");
+        assert_eq!(bans.total, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Both ban listings take the authority the ban writes take: the world's
     /// owner and an explicit scene admin read them, anyone else gets the
     /// upstream 401 on both routes.
