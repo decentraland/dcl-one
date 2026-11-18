@@ -339,7 +339,10 @@ fn handle_input(
         _ => None,
     };
     let in_call = call_mic_open.is_some();
-    let released = input_manager.just_up(SystemAction::Microphone);
+    // a press lasts while any binding of the action is held; the highest priority reads the
+    // bindings whatever has reserved the keyboard
+    let released = input_manager.just_up(SystemAction::Microphone)
+        && !input_manager.is_button_down(SystemAction::Microphone, InputPriority::BindInput);
     let held = if released { press.take() } else { None };
     let release_pending = released && held.is_none();
     if let Some(held) = held {
@@ -349,7 +352,7 @@ fn handle_input(
             voice_inputs.as_deref_mut().filter(|_| in_call),
         );
     }
-    if !input_manager.just_down(SystemAction::Microphone, InputPriority::None) {
+    if press.is_some() || !input_manager.just_down(SystemAction::Microphone, InputPriority::None) {
         return;
     }
     let pressed = match call_mic_open {
@@ -482,6 +485,8 @@ mod mic_key_tests {
     const TAP_SECS: f64 = CALL_MIC_HOLD_SECS / 2.0;
     /// A press longer than the call mic's hold threshold.
     const HOLD_SECS: f64 = CALL_MIC_HOLD_SECS * 2.0;
+    /// A key the tests bind to the mic action beside the default one.
+    const SECOND_MIC_KEY: KeyCode = KeyCode::F9;
 
     fn app() -> App {
         let mut app = App::new();
@@ -508,21 +513,27 @@ mod mic_key_tests {
             .unwrap()
     }
 
-    /// One frame, `secs` after the last: the mic key goes down, comes up, or both.
-    fn frame(app: &mut App, secs: f64, down: bool, up: bool) {
-        let key = mic_key(app);
+    /// One frame, `secs` after the last: the `down` keys go down, then the `up` keys come up.
+    fn keys_frame(app: &mut App, secs: f64, down: &[KeyCode], up: &[KeyCode]) {
         app.world_mut()
             .resource_mut::<Time<Real>>()
             .advance_by(Duration::from_secs_f64(secs));
         let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
         keys.clear();
-        if down {
+        for &key in down {
             keys.press(key);
         }
-        if up {
+        for &key in up {
             keys.release(key);
         }
         app.update();
+    }
+
+    /// One frame, `secs` after the last: the mic key goes down, comes up, or both.
+    fn frame(app: &mut App, secs: f64, down: bool, up: bool) {
+        let key = mic_key(app);
+        let keys = |on: bool| if on { vec![key] } else { vec![] };
+        keys_frame(app, secs, &keys(down), &keys(up));
     }
 
     fn set_call(app: &mut App, in_call: bool, enabled: bool) {
@@ -654,5 +665,26 @@ mod mic_key_tests {
         frame(&mut app, FRAME_SECS, false, true);
         assert!(!nearby_open(&app));
         assert!(call_mic_switches(&mut app).is_empty());
+    }
+
+    #[test]
+    fn a_second_mic_binding_neither_restarts_nor_ends_a_held_press() {
+        let mut app = app();
+        let mic_key = mic_key(&app);
+        app.world_mut()
+            .resource_mut::<InputMap>()
+            .inputs
+            .get_mut(&Action::System(SystemAction::Microphone))
+            .unwrap()
+            .push(InputIdentifier::Key(SECOND_MIC_KEY));
+        set_call(&mut app, true, false);
+        keys_frame(&mut app, FRAME_SECS, &[mic_key], &[]);
+        assert_eq!(call_mic_switches(&mut app), [true]);
+        set_call(&mut app, true, true);
+        keys_frame(&mut app, FRAME_SECS, &[SECOND_MIC_KEY], &[]);
+        keys_frame(&mut app, HOLD_SECS, &[], &[SECOND_MIC_KEY]);
+        assert!(call_mic_switches(&mut app).is_empty());
+        keys_frame(&mut app, FRAME_SECS, &[], &[mic_key]);
+        assert_eq!(call_mic_switches(&mut app), [false]);
     }
 }
