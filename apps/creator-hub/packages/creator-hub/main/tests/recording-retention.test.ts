@@ -151,7 +151,12 @@ describe('when the app crashed in the middle of a transcription', () => {
   beforeEach(() => {
     mocks.userData = fs.mkdtempSync(path.join(os.tmpdir(), 'retention-'));
     dir = session('scene-hhh', '2026-01-01_00-00-00.000-x');
-    for (const file of ['audio.wav', 'transcribe-job.json', 'transcribe-result.json']) {
+    for (const file of [
+      'audio.wav',
+      'transcribe-job.json',
+      'transcribe-result.json',
+      'transcribe-result.json.part',
+    ]) {
       fs.writeFileSync(path.join(dir, file), 'left over');
     }
   });
@@ -172,6 +177,7 @@ describe('when the app crashed in the middle of a transcription', () => {
       'audio.wav',
       'transcribe-job.json',
       'transcribe-result.json',
+      'transcribe-result.json.part',
     ]);
   });
 

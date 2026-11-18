@@ -32,6 +32,7 @@ vi.mock('../src/modules/recording/transcribe', () => transcriber);
 
 import { MAX_RECORDING_MS, RECORDING_SAMPLE_RATE } from '../../shared/types/recording';
 import { discard, getRecordingsDir } from '../src/modules/recording/retention';
+import { TranscriptCutShort } from '../src/modules/recording/words';
 import {
   abort,
   abortTranscription,
@@ -227,6 +228,22 @@ describe('when recording a session', () => {
       expect(result.transcript).toBe('delete this');
       expect(result.transcriptionError).toBeUndefined();
       expect(fs.existsSync(path.join(dir, 'SESSION.md'))).toBe(true);
+    });
+
+    describe('and the transcription runs out of time partway', () => {
+      beforeEach(() => {
+        transcriber.transcribe.mockRejectedValueOnce(
+          new TranscriptCutShort([{ start: 1000, end: 1200, text: ' delete', segment: 0 }]),
+        );
+      });
+
+      it('should keep the words and say they stop early, in SESSION.md and in the context', async () => {
+        const result = await stop(owner.id, sessionId);
+        const md = fs.readFileSync(path.join(dir, 'SESSION.md'), 'utf8');
+        expect([result.transcript, result.transcriptionError]).toEqual(['delete', undefined]);
+        expect(md).toContain('Transcription: stopped at the time limit; later speech is missing');
+        expect(result.context).toContain('later speech is missing');
+      });
     });
 
     it('should delete the audio and report the failure when transcription fails', async () => {
@@ -585,6 +602,14 @@ describe('when the session files cannot be written at the end', () => {
 
   it('should still delete the audio when stop fails to write them', async () => {
     vi.spyOn(fs, 'writeFileSync').mockImplementationOnce(() => {
+      throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
+    });
+    await expect(stop(owner.id, sessionId)).rejects.toThrow('no space left on device');
+    expect(fs.existsSync(path.join(dir, 'audio.wav'))).toBe(false);
+  });
+
+  it('should still delete the audio when the WAV header cannot be finished', async () => {
+    vi.spyOn(fs, 'writeSync').mockImplementationOnce(() => {
       throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
     });
     await expect(stop(owner.id, sessionId)).rejects.toThrow('no space left on device');

@@ -40,14 +40,14 @@ Each recording gets its own folder under the app's user data folder: `recordings
 | `transcript.json` | The transcribed words with their timings.                                    |
 | `SESSION.md`      | The full timeline. The context sent to the assistant links it.               |
 
-A recording stops by itself after 10 minutes (`MAX_RECORDING_MS`), and main drops audio past that length. Recording again before sending adds a session: the pending attachment holds every session in order, sends each one's timeline, and discarding it deletes every folder.
+A recording stops by itself after 10 minutes (`MAX_RECORDING_MS`), and main drops audio past that length. Recording again before sending adds a session: the pending attachment holds every session in order, and discarding it deletes every folder. When several sessions go out together, main rebuilds their timelines from `events.jsonl` and `transcript.json` (`recording.combinedContext`) into one block with numbered parts, oldest first, that share the single context budget: Gemini and Cursor receive the prompt as a command-line argument, which Windows limits to 32 KB.
 
 ## Retention
 
 The recorder keeps as little as the assistant needs:
 
 - Main deletes `audio.wav` when the session ends, whatever the outcome: transcribed, skipped, failed, ended early because the project or the app closed, or a session file failed to write. Nothing reads the audio after the transcription. Quitting waits, for a bounded time, for a transcription being abandoned.
-- At startup, main deletes any `audio.wav`, `transcribe-job.json` or `transcribe-result.json` left in a session folder by a crash or a force-quit.
+- At startup, main deletes any `audio.wav`, `transcribe-job.json`, `transcribe-result.json` or `transcribe-result.json.part` left in a session folder by a crash or a force-quit.
 - Discarding a recording deletes its folder right away. Main refuses to delete a session that is still recording or being transcribed.
 - Each project keeps its 20 newest sessions.
 - At startup, main deletes every session folder that hasn't changed for `RECORDING_RETENTION_DAYS` (30) days, and project folders left empty. Age is the folder's modification time.
@@ -62,7 +62,8 @@ Speech is transcribed on your computer. The whisper bindings (`@fugood/whisper.n
 - The models download from a pinned commit and are checked against their SHA-256 before use. A download fails when no data arrives for 60 seconds.
 - A worker process (`main/src/transcribe-worker.ts`) runs whisper. It reads its job from a file (`transcribe-job.json`) and writes its result to another file (`transcribe-result.json`). Nothing it transcribes goes to stdout, because the app log records the stdout of every child process and **Report Issue** can upload that log.
 - The worker transcribes the stretches of speech in windows of up to 30 seconds, merging stretches that are close together, and rewrites the result file after each window.
-- The worker gets 10 minutes. On a timeout, main kills the worker, waits for it to exit, and keeps the words already written.
+- The worker gets 10 minutes. On a timeout, main kills the worker, waits for it to exit, and keeps the words already written; `SESSION.md` and the context then say the transcript stops early.
+- A download only counts toward the 60-second idle limit while it waits on the network: the limit stops once the last byte arrives, so a slow disk can't fail it.
 - Main tracks each session being transcribed separately, so a second recording's stop never replaces the first's.
 
 While main waits for the tools or the transcription, **Send without transcript** calls `recording.skipTranscription`. Main kills a running worker, lets a shared install continue in the background, and resolves the stop with the full action timeline, an empty transcript, and `transcriptionSkipped`.

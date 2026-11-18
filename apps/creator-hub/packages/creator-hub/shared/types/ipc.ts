@@ -224,6 +224,7 @@ export interface Ipc {
   'recording.toolsStatus': (language: string) => Promise<RecordingToolsStatus>;
   'recording.installTools': (language: string) => Promise<void>;
   'recording.discard': (dir: string) => Promise<void>;
+  'recording.combinedContext': (dirs: string[]) => Promise<string>;
   'metrics.request': (request: MetricsRequest) => Promise<MetricsResponse>;
   'inspector.start': () => Promise<number>;
   'inspector.attachSceneDebugger': (

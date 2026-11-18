@@ -154,9 +154,16 @@ export function releaseAgeProblems(lock, packages, minimumReleaseAge, now = Date
   return problems;
 }
 
-/** The npm binary of this platform: on Windows, the shim `execFile` can start. */
-export function npmCommand() {
-  return process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const SHELL_SPECIAL = /[\s"^&|<>()%!]/;
+
+function quoteForShell(arg) {
+  return SHELL_SPECIAL.test(arg) ? `"${arg.replace(/"/g, '""')}"` : arg;
+}
+
+/** How to start npm here: the Windows `.cmd` shim needs a shell, and a shell needs quoting. */
+export function npmRun(args) {
+  if (process.platform !== 'win32') return { command: 'npm', args, options: {} };
+  return { command: 'npm.cmd', args: args.map(quoteForShell), options: { shell: true } };
 }
 
 /** Writes a new lock, or throws and leaves the committed one as it is. */
@@ -201,11 +208,14 @@ function makeLock() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'optimizer-tools-'));
   try {
     fs.copyFileSync(MANIFEST_FILE, path.join(tmp, 'package.json'));
-    execFileSync(
-      npmCommand(),
-      ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'],
-      { cwd: tmp, stdio: 'inherit' },
-    );
+    const npm = npmRun([
+      'install',
+      '--package-lock-only',
+      '--ignore-scripts',
+      '--no-audit',
+      '--no-fund',
+    ]);
+    execFileSync(npm.command, npm.args, { cwd: tmp, stdio: 'inherit', ...npm.options });
     return fs.readFileSync(path.join(tmp, 'package-lock.json'), 'utf8');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

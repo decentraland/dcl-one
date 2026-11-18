@@ -12,6 +12,7 @@ import {
 import { StreamError, run as runBin } from '../bin';
 import { ensureWorkerPackage } from '../downloaded-tools';
 import { getModelPath, getToolsDir, getVadModelPath, isInstalled, type ModelId } from './tools';
+import { TranscriptCutShort } from './words';
 
 const WORKER_PKG = '@dcl-creator-hub/transcribe-worker';
 const WORKER_BIN = 'transcribe-worker';
@@ -61,8 +62,9 @@ export async function transcribe(
   try {
     return await runWorker(toolsDir, jobFile, resultPath, signal);
   } finally {
-    await fs.rm(jobFile, { force: true }).catch(() => undefined);
-    await fs.rm(resultPath, { force: true }).catch(() => undefined);
+    for (const file of [jobFile, resultPath, `${resultPath}.part`]) {
+      await fs.rm(file, { force: true }).catch(() => undefined);
+    }
   }
 }
 
@@ -109,7 +111,7 @@ async function runWorker(
     const partial = timedOut ? await readResult(resultPath) : null;
     if (partial && 'words' in partial && partial.words.length > 0) {
       log.warn(`[Recording] transcription timed out after ${partial.words.length} words`);
-      return partial.words;
+      throw new TranscriptCutShort(partial.words);
     }
     throw new Error(timedOut ? 'Transcription took too long.' : 'Transcription was skipped.');
   }

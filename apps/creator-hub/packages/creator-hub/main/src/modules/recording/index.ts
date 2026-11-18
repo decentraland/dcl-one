@@ -20,6 +20,7 @@ import { cleanTitle, sanitizeEvent, vocabularyPrompt } from './sanitize';
 import { buildTimeline, renderContext, renderSessionMarkdown } from './timeline';
 import { install, isInstalled, modelFor } from './tools';
 import { transcribe } from './transcribe';
+import { TranscriptCutShort } from './words';
 import { pcmPeak, wavHeader, WAV_HEADER_BYTES } from './wav';
 
 const MAX_EVENTS = 20_000;
@@ -28,6 +29,7 @@ const SILENCE_PEAK = 600;
 const AUDIO_FILE = 'audio.wav';
 const SESSION_FILES = ['events.jsonl', 'transcript.json'];
 const SKIPPED_NOTE = 'skipped, the recording was sent without waiting for it';
+const CUT_SHORT_NOTE = 'stopped at the time limit; later speech is missing';
 const RUNNING_REFUSAL = 'This recording is still running.';
 const TRANSCRIBING_REFUSAL = 'This recording is still being transcribed.';
 
@@ -55,6 +57,7 @@ let session: Session | null = null;
 const stopping = new Map<string, Stopping>();
 
 export { discard };
+export { combinedContext } from './combined';
 
 function projectFolder(projectPath: string): string {
   const slug = path
@@ -231,7 +234,7 @@ function writeSessionFiles(
   s: Session,
   endedAt: number,
   words: TranscriptWord[],
-  transcription: { error?: string; skipped?: boolean } = {},
+  transcription: { error?: string; skipped?: boolean; cutShort?: boolean } = {},
 ): RecordingResult {
   const timeline = buildTimeline({
     startedAt: s.startedAt,
@@ -243,7 +246,17 @@ function writeSessionFiles(
   const sessionFile = path.join(s.dir, 'SESSION.md');
   fs.writeFileSync(
     path.join(s.dir, 'transcript.json'),
-    JSON.stringify({ audioStartedAt: s.audioStartedAt, words }, null, 2),
+    JSON.stringify(
+      {
+        startedAt: s.startedAt,
+        endedAt,
+        audioStartedAt: s.audioStartedAt,
+        words,
+        ...(transcription.cutShort && { cutShort: true }),
+      },
+      null,
+      2,
+    ),
   );
   fs.writeFileSync(
     sessionFile,
@@ -251,7 +264,11 @@ function writeSessionFiles(
       projectTitle: s.projectTitle,
       startedAt: s.startedAt,
       files: SESSION_FILES.filter(file => fs.existsSync(path.join(s.dir, file))),
-      transcriptionNote: transcription.skipped ? SKIPPED_NOTE : transcription.error,
+      transcriptionNote: transcription.skipped
+        ? SKIPPED_NOTE
+        : transcription.cutShort
+          ? CUT_SHORT_NOTE
+          : transcription.error,
     }),
   );
   return {
@@ -260,7 +277,9 @@ function writeSessionFiles(
     durationMs: timeline.durationMs,
     transcript: timeline.utterances.map(u => u.text).join(' '),
     actionCount: timeline.actionCount,
-    context: renderContext(timeline, s.startedAt, sessionFile),
+    context: renderContext(timeline, s.startedAt, sessionFile, {
+      note: transcription.cutShort ? `Transcript ${CUT_SHORT_NOTE}.` : undefined,
+    }),
     ...(transcription.error &&
       !transcription.skipped && { transcriptionError: transcription.error }),
     ...(transcription.skipped && { transcriptionSkipped: true }),
@@ -334,26 +353,35 @@ export function stop(senderId: number, sessionId: string): Promise<RecordingResu
     return Promise.reject(new Error('This recording is no longer active.'));
   }
   session = null;
-  const endedAt = finalizeFiles(s);
-
   const skip = new AbortController();
   const entry: Stopping = { ownerId: s.ownerId, skip, done: Promise.resolve() };
   stopping.set(s.id, entry);
-  const done = runStop(s, endedAt, skip.signal).finally(() => {
+  const done = runStop(s, skip.signal).finally(() => {
     if (stopping.get(s.id) === entry) stopping.delete(s.id);
   });
   entry.done = done;
   return done;
 }
 
-async function runStop(s: Session, endedAt: number, signal: AbortSignal): Promise<RecordingResult> {
+async function runStop(s: Session, signal: AbortSignal): Promise<RecordingResult> {
   const release = holdSession(s.dir, TRANSCRIBING_REFUSAL);
   let words: TranscriptWord[] = [];
   let transcriptionError: string | undefined;
   let skipped = false;
+  let cutShort = false;
   try {
-    ({ words, transcriptionError, skipped = false } = await transcribeSession(s, signal));
-    const result = writeSessionFiles(s, endedAt, words, { error: transcriptionError, skipped });
+    const endedAt = finalizeFiles(s);
+    ({
+      words,
+      transcriptionError,
+      skipped = false,
+      cutShort = false,
+    } = await transcribeSession(s, signal));
+    const result = writeSessionFiles(s, endedAt, words, {
+      error: transcriptionError,
+      skipped,
+      cutShort,
+    });
     void pruneProject(path.dirname(s.dir));
     log.info(
       `[Recording] stopped ${s.dir} (${Math.round(result.durationMs / 1000)}s, ${result.actionCount} actions, ${words.length} words)`,
@@ -388,7 +416,12 @@ function removeAudio(dir: string): void {
 async function transcribeSession(
   s: Session,
   signal: AbortSignal,
-): Promise<{ words: TranscriptWord[]; transcriptionError?: string; skipped?: boolean }> {
+): Promise<{
+  words: TranscriptWord[];
+  transcriptionError?: string;
+  skipped?: boolean;
+  cutShort?: boolean;
+}> {
   if (s.audioBytes === 0) return { words: [], transcriptionError: 'no audio was captured' };
   if (s.peak === 0) {
     return {
@@ -417,6 +450,9 @@ async function transcribeSession(
     return { words };
   } catch (error) {
     if (signal.aborted) return { words: [], skipped: true };
+    if (error instanceof TranscriptCutShort) {
+      return { words: dropNonSpeech(error.words), cutShort: true };
+    }
     log.error('[Recording] transcription failed:', error);
     captureException(error, { tags: { source: 'recording' } });
     return {

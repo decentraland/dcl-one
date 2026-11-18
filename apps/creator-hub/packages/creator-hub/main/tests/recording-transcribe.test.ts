@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { TranscriptCutShort } from '../src/modules/recording/words';
+
 import {
   TRANSCRIBE_JOB_FILE_ENV,
   type TranscribeWorkerJob,
@@ -155,7 +157,9 @@ describe('when the worker never answers', () => {
     await vi.waitFor(() => expect(mocks.run).toHaveBeenCalled());
     await vi.advanceTimersByTimeAsync(10 * 60_000 + 100);
 
-    await expect(outcome).resolves.toEqual([{ start: 0, end: 200, text: ' half' }]);
+    await expect(outcome).rejects.toEqual(
+      new TranscriptCutShort([{ start: 0, end: 200, text: ' half' }]),
+    );
   });
 
   it('should say that it took too long', async () => {
@@ -326,6 +330,28 @@ describe('when transcribing a recording', () => {
       await expect(transcribe(wavPath, 'en', 'en', undefined)).rejects.toThrow();
       expect(fs.existsSync(worker.env[TRANSCRIBE_JOB_FILE_ENV])).toBe(false);
       expect(fs.existsSync(worker.job!.resultPath)).toBe(false);
+    });
+  });
+
+  describe('and the worker was killed with a half-written result beside it', () => {
+    it('should leave neither the result nor its part file behind', async () => {
+      const worker = fakeWorker({ result: { words: [] } });
+      const partials: string[] = [];
+      mocks.run.mockImplementation(((pkg: string, bin: string, options: { env: EnvOf }) => {
+        const job = JSON.parse(
+          fs.readFileSync(options.env[TRANSCRIBE_JOB_FILE_ENV], 'utf8'),
+        ) as TranscribeWorkerJob;
+        partials.push(`${job.resultPath}.part`);
+        fs.writeFileSync(`${job.resultPath}.part`, '{"words":');
+        fs.writeFileSync(job.resultPath, '{"words":[]}');
+        return { on: () => 0, kill: vi.fn(async () => {}), wait: async () => Buffer.alloc(0) };
+      }) as never);
+
+      await transcribe(wavPath, 'en', 'en', undefined);
+
+      expect(worker.job).toBeNull();
+      expect(partials).toHaveLength(1);
+      expect(fs.readdirSync(sessionDir)).toEqual(['audio.wav']);
     });
   });
 

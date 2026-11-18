@@ -215,14 +215,20 @@ describe('when downloading a speech model', () => {
   });
 });
 
+type Network = { waiting: boolean; closed: boolean };
+
 function pacedFetch(chunks: Buffer[], gapMs: number, { stalls = false } = {}) {
-  return vi.fn(async () => {
+  const network: Network = { waiting: false, closed: false };
+  const fetchImpl = vi.fn(async () => {
     let sent = 0;
     const body = new ReadableStream<Uint8Array>({
       async pull(controller) {
+        network.waiting = true;
         await new Promise(resolve => setTimeout(resolve, gapMs));
+        network.waiting = false;
         if (sent >= chunks.length) {
           if (stalls) return new Promise<void>(() => {});
+          network.closed = true;
           controller.close();
           return;
         }
@@ -238,6 +244,7 @@ function pacedFetch(chunks: Buffer[], gapMs: number, { stalls = false } = {}) {
       body,
     } as unknown as Response;
   });
+  return { fetchImpl, network };
 }
 
 describe('when a speech model download is slow', () => {
@@ -278,16 +285,49 @@ describe('when a speech model download is slow', () => {
     );
   }
 
+  async function advanceWhileTheNetworkWaits(network: Network, step: number, steps: number) {
+    for (let i = 0; i < steps && !network.closed; i++) {
+      await new Promise(resolve => setImmediate(resolve));
+      if (network.waiting) await vi.advanceTimersByTimeAsync(step);
+    }
+  }
+
   it('should keep waiting while bytes keep arriving, however long the whole download takes', async () => {
     expect(CHUNK_GAP_MS * chunks.length).toBeGreaterThan(OLD_TOTAL_CAP_MS);
-    const outcome = download(pacedFetch(chunks, CHUNK_GAP_MS));
-    await advanceLettingRealIoRun(CHUNK_GAP_MS * (chunks.length + 20), CHUNK_GAP_MS);
+    const { fetchImpl, network } = pacedFetch(chunks, CHUNK_GAP_MS);
+    const outcome = download(fetchImpl);
+    await advanceWhileTheNetworkWaits(network, CHUNK_GAP_MS, chunks.length * 10);
+    expect(await outcome).toBe('done');
+    expect(fs.readFileSync(target)).toEqual(data);
+  });
+
+  it('should stop waiting for bytes once the last one is in, however slow the disk is', async () => {
+    const { fetchImpl, network } = pacedFetch(chunks, CHUNK_GAP_MS);
+    let letTheDiskFinish!: () => void;
+    const flushed = new Promise<void>(resolve => {
+      letTheDiskFinish = resolve;
+    });
+    const open = fsp.open;
+    vi.spyOn(fsp, 'open').mockImplementationOnce(async (file, flags) => {
+      await flushed;
+      return open(file as string, flags as string);
+    });
+
+    const outcome = download(fetchImpl);
+    await advanceWhileTheNetworkWaits(network, CHUNK_GAP_MS, chunks.length * 10);
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(vi.getTimerCount()).toBe(0);
+
+    await advanceLettingRealIoRun(IDLE_MS * 2, 1000);
+    letTheDiskFinish();
+
     expect(await outcome).toBe('done');
     expect(fs.readFileSync(target)).toEqual(data);
   });
 
   it('should give up once no bytes have arrived for the idle timeout, and clean up', async () => {
-    const outcome = download(pacedFetch(chunks, CHUNK_GAP_MS, { stalls: true }));
+    const outcome = download(pacedFetch(chunks, CHUNK_GAP_MS, { stalls: true }).fetchImpl);
     await advanceLettingRealIoRun(CHUNK_GAP_MS * (chunks.length + 20), CHUNK_GAP_MS);
     expect(fs.existsSync(target)).toBe(false);
     await advanceLettingRealIoRun(IDLE_MS * 2, 1000);

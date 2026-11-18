@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -140,5 +141,65 @@ describe('when the user spoke in two stretches close together', () => {
         { start: 300, end: 600, text: ' this', segment: 0 },
       ],
     });
+  });
+});
+
+describe('when the result file cannot be replaced', () => {
+  let dir: string;
+  let resultPath: string;
+
+  function startJob() {
+    const wavPath = path.join(dir, 'audio.wav');
+    fs.writeFileSync(wavPath, tone(1000));
+    const job: TranscribeWorkerJob = {
+      modelPath: path.join(dir, 'model.bin'),
+      vadModelPath: path.join(dir, 'vad.bin'),
+      wavPath,
+      resultPath,
+      language: 'en',
+    };
+    fs.writeFileSync(path.join(dir, 'job.json'), JSON.stringify(job));
+    process.env[TRANSCRIBE_JOB_FILE_ENV] = path.join(dir, 'job.json');
+    return import('../src/transcribe-worker');
+  }
+
+  beforeEach(() => {
+    vi.resetModules();
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'transcribe-worker-'));
+    resultPath = path.join(dir, 'transcribe-result.json');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env[TRANSCRIBE_JOB_FILE_ENV];
+    process.exitCode = 0;
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('should carry on when a window could only be saved as progress', async () => {
+    const rename = vi
+      .spyOn(fsp, 'rename')
+      .mockRejectedValueOnce(Object.assign(new Error('EPERM'), { code: 'EPERM' }));
+
+    await startJob();
+    await vi.waitFor(() => expect(fs.existsSync(resultPath)).toBe(true));
+
+    expect(rename).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fs.readFileSync(resultPath, 'utf8'))).toEqual({
+      words: [
+        { start: 0, end: 300, text: ' delete', segment: 0 },
+        { start: 300, end: 600, text: ' this', segment: 0 },
+      ],
+    });
+    expect(process.exitCode).toBe(0);
+  });
+
+  it('should fail the job when the result itself cannot be written', async () => {
+    vi.spyOn(fsp, 'rename').mockRejectedValue(Object.assign(new Error('EPERM'), { code: 'EPERM' }));
+
+    await startJob();
+    await vi.waitFor(() => expect(process.exitCode).toBe(1));
+
+    expect(fs.existsSync(resultPath)).toBe(false);
   });
 });

@@ -216,7 +216,7 @@ describe('when building the timeline', () => {
       endedAt: T0 + 300_000,
       events: [...input.events, ...many],
     });
-    const context = renderContext(timeline, T0, '/tmp/SESSION.md', 2000);
+    const context = renderContext(timeline, T0, '/tmp/SESSION.md', { budget: 2000 });
     expect(context.length).toBeLessThanOrEqual(2100);
     expect(context).toContain('SAID: "delete this one"');
     expect(context).toContain('Selected Crate_1 (#530)');

@@ -221,6 +221,7 @@ function progressCounter(
   total: number,
   onPercent: (percent: number) => void,
   onChunk: () => void,
+  onLastChunk: () => void,
 ): Transform {
   let received = 0;
   let lastPercent = -1;
@@ -234,6 +235,10 @@ function progressCounter(
         onPercent(percent);
       }
       callback(null, chunk);
+    },
+    flush(callback) {
+      onLastChunk();
+      callback();
     },
   });
 }
@@ -256,17 +261,13 @@ export async function downloadModel(
   const download = (async () => {
     const response = await fetchImpl(url, { signal: controller.signal });
     if (!response.ok || !response.body) {
-      // An unconsumed body keeps the connection and its buffers alive.
       await response.body?.cancel().catch(() => undefined);
       throw new Error(`Downloading the speech model failed (HTTP ${response.status}).`);
     }
     const total = Number(response.headers.get('content-length')) || bytes;
-    // pipeline() destroys every stage on the first error (a stalled socket, a full disk, EACCES
-    // on the target folder) and rejects with it, instead of leaving the write stream to throw
-    // 'error' with nobody listening.
     await pipeline(
       Readable.fromWeb(response.body as WebReadableStream<Uint8Array>),
-      progressCounter(total, onPercent, idle.restart),
+      progressCounter(total, onPercent, idle.restart, idle.stop),
       createWriteStream(partial),
     );
   })();

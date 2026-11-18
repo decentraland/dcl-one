@@ -87,6 +87,7 @@ A message may start with a [Session recording] block: the user pressed Record an
 - While playing, the timeline also logs what the scene's code made appear and disappear. A "just appeared" item in a ← note is a candidate for "this"/"that" even if the pointer was elsewhere: when something new pops up, that is usually what the user is reacting to. Prefer it over a pointer target that is scenery or the floor; prefer the pointer target when it is itself something that just appeared or something the user clicked.
 - Make an educated guess and act, then say in one short line which entity you understood ("Deleted Barrel_3 — the one you were pointing at."). The user can undo.
 - Ask (ask_user) only when the action is destructive or hard to undo AND two or more candidates are about equally likely, or when there is no candidate at all. Don't ask about harmless or easily undone changes.
+- Several recordings sent together come as one [Session recordings] block with numbered parts ("Recording 1 of 3"), oldest first, sharing one size budget; each part names its own SESSION.md.
 - The full timeline is in the SESSION.md file the block names; read it only if the condensed block was trimmed and you need the missing part.
 
 WORKING STYLE.

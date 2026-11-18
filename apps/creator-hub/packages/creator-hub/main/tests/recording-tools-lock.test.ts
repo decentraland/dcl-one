@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { npmCommand } from '../../scripts/lock-optimizer-tools.js';
+import { npmRun } from '../../scripts/lock-optimizer-tools.js';
 import {
   MANIFEST_FILE,
   PLATFORMS,
@@ -182,8 +182,40 @@ describe('the speech-to-text locks', () => {
   });
 
   describe('when npm is started to make a lock', () => {
-    it('should name the shim that Windows can start', () => {
-      expect(npmCommand()).toBe(process.platform === 'win32' ? 'npm.cmd' : 'npm');
+    const asPlatform = (platform: string) =>
+      Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+    const real = process.platform;
+
+    afterEach(() => asPlatform(real));
+
+    it('should start the binary directly everywhere but Windows', () => {
+      asPlatform('darwin');
+
+      expect(npmRun(['install', '--no-fund'])).toEqual({
+        command: 'npm',
+        args: ['install', '--no-fund'],
+        options: {},
+      });
+    });
+
+    it('should start the Windows shim through a shell, since execFile cannot', () => {
+      asPlatform('win32');
+
+      expect(npmRun(['install', '--no-fund'])).toEqual({
+        command: 'npm.cmd',
+        args: ['install', '--no-fund'],
+        options: { shell: true },
+      });
+    });
+
+    it('should quote an argument the shell would otherwise read as its own', () => {
+      asPlatform('win32');
+
+      expect(npmRun(['--prefix=C:\\Program Files\\dcl', 'a&b', 'plain']).args).toEqual([
+        '"--prefix=C:\\Program Files\\dcl"',
+        '"a&b"',
+        'plain',
+      ]);
     });
   });
 });

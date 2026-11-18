@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   checkLock,
-  npmCommand,
+  npmRun,
   readMinimumReleaseAge,
   writeCheckedLock,
 } from './lock-optimizer-tools.js';
@@ -83,18 +83,15 @@ function makeLock(manifest, platform, arch) {
   const pastThisMachinesPlatformCheck = ['--force', `--os=${platform}`, `--cpu=${arch}`];
   try {
     fs.writeFileSync(path.join(tmp, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-    execFileSync(
-      npmCommand(),
-      [
-        'install',
-        '--package-lock-only',
-        '--ignore-scripts',
-        '--no-audit',
-        '--no-fund',
-        ...pastThisMachinesPlatformCheck,
-      ],
-      { cwd: tmp, stdio: 'inherit' },
-    );
+    const npm = npmRun([
+      'install',
+      '--package-lock-only',
+      '--ignore-scripts',
+      '--no-audit',
+      '--no-fund',
+      ...pastThisMachinesPlatformCheck,
+    ]);
+    execFileSync(npm.command, npm.args, { cwd: tmp, stdio: 'inherit', ...npm.options });
     return fs.readFileSync(path.join(tmp, 'package-lock.json'), 'utf8');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

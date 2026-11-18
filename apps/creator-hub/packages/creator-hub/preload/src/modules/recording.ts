@@ -36,6 +36,10 @@ export async function skipTranscription(sessionId: string) {
   return invoke('recording.skipTranscription', sessionId);
 }
 
+export async function combinedContext(dirs: string[]) {
+  return invoke('recording.combinedContext', dirs);
+}
+
 export async function toolsStatus(language: string) {
   return invoke('recording.toolsStatus', language);
 }

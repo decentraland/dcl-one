@@ -7,7 +7,12 @@ import { RECORDING_RETENTION_DAYS } from '/shared/types/recording';
 
 const KEEP_SESSIONS_PER_PROJECT = 20;
 const MAX_SESSION_AGE_MS = RECORDING_RETENTION_DAYS * 24 * 60 * 60_000;
-const LEFTOVER_FILES = ['audio.wav', 'transcribe-job.json', 'transcribe-result.json'];
+const LEFTOVER_FILES = [
+  'audio.wav',
+  'transcribe-job.json',
+  'transcribe-result.json',
+  'transcribe-result.json.part',
+];
 
 export function getRecordingsDir(): string {
   return path.join(app.getPath('userData'), 'recordings');
@@ -80,17 +85,22 @@ export async function sweepLeftovers(): Promise<void> {
 
 /** Deletes one finished session folder: the user discarded it before sending it. */
 export async function discard(dir: string): Promise<void> {
-  const root = getRecordingsDir();
-  const target = path.resolve(dir);
-  const relative = path.relative(root, target);
-  const inside = relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
-  if (!inside || relative.split(path.sep).length !== 2) {
-    throw new Error('Not a session recording folder.');
-  }
+  const target = sessionFolder(dir);
   const refusal = inUse.get(target);
   if (refusal) throw new Error(refusal);
   await fsp.rm(target, { recursive: true, force: true });
   log.info(`[Recording] discarded ${target}`);
+}
+
+/** The resolved path of a session folder (exactly two levels under recordings/), or a throw. */
+export function sessionFolder(dir: string): string {
+  const target = path.resolve(dir);
+  const relative = path.relative(getRecordingsDir(), target);
+  const inside = relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+  if (!inside || relative.split(path.sep).length !== 2) {
+    throw new Error('Not a session recording folder.');
+  }
+  return target;
 }
 
 async function remove(dir: string): Promise<boolean> {

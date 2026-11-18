@@ -37,3 +37,11 @@ export function toWords(region: Region, segments: WhisperSegment[]): TranscriptW
     segment: region.segment,
   }));
 }
+
+/** The transcription ran out of time: `words` holds what was transcribed before that. */
+export class TranscriptCutShort extends Error {
+  constructor(readonly words: TranscriptWord[]) {
+    super('Transcription stopped at the time limit.');
+    this.name = 'TranscriptCutShort';
+  }
+}

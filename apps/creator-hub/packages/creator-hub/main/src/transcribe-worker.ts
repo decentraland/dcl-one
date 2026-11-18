@@ -92,7 +92,7 @@ async function transcribeJob(job: TranscribeWorkerJob): Promise<TranscriptWord[]
       if (to <= from) continue;
       const { segments } = await context.transcribeData(pcm.slice(from, to), options).promise;
       words.push(...toWords(region, segments));
-      await writeResult(job, { words });
+      await writeResult(job, { words }).catch(() => undefined);
     }
     return words;
   } finally {

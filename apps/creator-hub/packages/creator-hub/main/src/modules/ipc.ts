@@ -242,6 +242,7 @@ export function initIpc({ beforeQuitCleanup }: InitIpcOptions) {
     recordingTools.getStatus(recordingTools.modelFor(language)),
   );
   handle('recording.discard', (_event, dir) => recording.discard(dir));
+  handle('recording.combinedContext', (_event, dirs) => recording.combinedContext(dirs));
   handle('recording.installTools', (event, language) =>
     recordingTools.install(recordingTools.modelFor(language), status => {
       if (!event.sender.isDestroyed()) event.sender.send(RECORDING_TOOLS_PROGRESS_EVENT, status);
