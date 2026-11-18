@@ -7,7 +7,7 @@ import { acceptedEntryParams, entryRealm, unrecognisedEntryParams } from './lib/
 import { untrustedLaunchParams } from './lib/launchGate'
 import { PAGE_DIR, publicUrl } from './lib/publicUrl'
 import { engineLaunch, seedBridgeSession } from './lib/engineLaunch'
-import { IN_WORLD_SHOP } from './features/shop/entry'
+import { IN_WORLD_SHOP } from '@dcl/one-ui/apps/shop/entry'
 import { donations } from './lib/donations'
 import { gifting } from './lib/gifting'
 

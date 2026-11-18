@@ -23,6 +23,7 @@ import { openSignIn } from "../components/auth/signin-store";
 
 import { useMyFavoritePlaces, usePlaceOwners, useProfilePlaces } from "./hooks";
 import { GET_A_NAME_HREF, MANAGE_WORLD_HREF, ProfileShell, type ProfileShellTab } from "./ProfileShell";
+import { EmptyMessage } from "./EmptyMessage";
 import styles from "./ProfilePlacesScreen.module.css";
 import { profileHref } from "./tabs";
 
@@ -71,22 +72,6 @@ function trackJumpIn(sid: string, placeId: string, launchUrl: string) {
 function countLabel(shown: number, total: number): string {
   const noun = (n: number) => (n === 1 ? "1 place" : `${n} places`);
   return total > shown ? `Showing ${shown} of ${noun(total)}` : noun(shown);
-}
-
-/** The icon frame, title, text and next step shown when a list has nothing in it. */
-function EmptyMessage({ icon, title, subtitle, action }: { icon: ReactNode; title: string; subtitle: string; action: ReactNode }) {
-  return (
-    <div className={styles.empty}>
-      <span className={styles.emptyIcon} aria-hidden="true">
-        {icon}
-      </span>
-      <div className={styles.emptyBody}>
-        <p className={styles.emptyTitle}>{title}</p>
-        <p className={styles.emptySubtitle}>{subtitle}</p>
-        <div className={styles.emptyAction}>{action}</div>
-      </div>
-    </div>
-  );
 }
 
 /** The owner's empty My Places: someone without a NAME needs one, someone with one needs to publish. */

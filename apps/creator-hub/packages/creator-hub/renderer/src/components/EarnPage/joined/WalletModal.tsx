@@ -9,17 +9,22 @@ import { useDispatch } from '#store';
 import { actions } from '/@/modules/store/creatorFund';
 import type { TranslationPath } from '/@/modules/store/translation/types';
 import { t } from '/@/modules/store/translation/utils';
+import { CREATOR_FUND_RULES_URL } from '/@/modules/utils';
 
 import { EarnDialog } from '../EarnDialog';
 import modal from '../EarnModal.module.css';
 import contact from '../ContactInfoForm.module.css';
 import { WarningIcon } from '../icons';
 
+import { InfoTip } from './InfoTip';
 import { isWalletAddress } from './wallet';
 import parts from './parts.module.css';
 import styles from './PayoutModals.module.css';
 
 export type WalletModalVariant = 'add' | 'change';
+
+/** The Program Rules section on payouts: currency, timing, the payout wallet and how to set it. */
+const PAYOUT_RULES_URL = `${CREATOR_FUND_RULES_URL}#payout-process`;
 
 const COPY: Record<
   WalletModalVariant,
@@ -154,12 +159,19 @@ export function WalletModal({
         onSubmit={submit}
       >
         <div className={styles.modalIntro}>
-          <h2
-            className={modal.modalTitle}
-            id={titleId}
-          >
-            {t(copy.title)}
-          </h2>
+          <div className={styles.modalTitleRow}>
+            <h2
+              className={modal.modalTitle}
+              id={titleId}
+            >
+              {t(copy.title)}
+            </h2>
+            <InfoTip
+              label="earn.joined.payouts.wallet.info_label"
+              text="earn.joined.payouts.wallet.payout_info"
+              href={PAYOUT_RULES_URL}
+            />
+          </div>
           <p className={styles.body}>{t(copy.body)}</p>
         </div>
         <WalletField

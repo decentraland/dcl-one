@@ -492,7 +492,7 @@ impl HttpAuthority {
             return;
         };
         let inner = self.inner.clone();
-        tokio::spawn(async move {
+        crate::shared::task::spawn(async move {
             let _permit = permit;
             let operation =
                 wire::authority_request::Operation::Release(context(&inner, &nonce, &lease));

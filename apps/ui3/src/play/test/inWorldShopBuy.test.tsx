@@ -22,10 +22,10 @@ vi.mock('@explorer-core/lib/shell', () => ({
   }
 }))
 
-import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop'
-import shopStyles from '../features/shop/InWorldShop.module.css'
+import InWorldShop, { type InWorldShopProps } from '@dcl/one-ui/apps/shop/InWorldShop'
+import shopStyles from '@dcl/one-ui/apps/shop/InWorldShop.module.css'
 import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
-import { LEGACY_SHOP_BUSY_MESSAGE, SHOP_EVENT, shopBusy } from '../lib/shopProtocol'
+import { LEGACY_SHOP_BUSY_MESSAGE, SHOP_EVENT, shopBusy } from '@dcl/one-ui/apps/shop/shopProtocol'
 import type { Wearable } from '@explorer-core/engine/protocol'
 import { fakeProfileState } from '@hud/test/harness'
 import { PopupHost, resetPopups } from '@hud/design'
@@ -131,7 +131,7 @@ function renderShop(): InWorldShopProps {
 function withShopStyles(): HTMLStyleElement {
   const sheet = document.createElement('style')
   const names = shopStyles as Record<string, string>
-  sheet.textContent = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../features/shop/InWorldShop.module.css'), 'utf8').replace(/\.([a-zA-Z]\w*)/g, (selector, name: string) => (names[name] ? `.${names[name]}` : selector))
+  sheet.textContent = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../library/ui/apps/shop/InWorldShop.module.css'), 'utf8').replace(/\.([a-zA-Z]\w*)/g, (selector, name: string) => (names[name] ? `.${names[name]}` : selector))
   document.head.append(sheet)
   return sheet
 }

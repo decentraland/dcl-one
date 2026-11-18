@@ -88,7 +88,7 @@ const LOBBY_CAMERA_DISTANCE = 6
 const LOBBY_FOV = (26.2 * Math.PI) / 180
 // The avatar's feet in this scene's coordinates, where the engine builds the stage around it.
 const LOBBY_FEET = { x: 8, y: 0, z: 8 }
-// The Shop's stage (the HUD's assets/shop/stage.jpg, the same file): drawn behind the avatar where the page
+// The Shop's stage (library/ui/apps/shop/assets/stage.jpg, the same file): drawn behind the avatar where the page
 // says it draws it, so the avatar's window in the page shows no seam.
 const SHOP_STAGE = 'images/shop-stage.jpg'
 // Frames to let the stage and the avatar's first look settle before the page drops its stand-in,

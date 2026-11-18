@@ -2,8 +2,8 @@ import { describe, it, expect, vi } from 'vitest'
 import type { MapSearch } from '../features/map/mapApi'
 import type { DiscoverPlace } from '../features/places/placesApi'
 import type { EventData } from '../engine/protocol'
-import { homeOf, isHomePlace, NO_HOME } from '../features/map/home'
-import { createNavigationStore, destinationParcel } from '../features/map/navigation'
+import { homeOf, isHomePlace, NO_HOME, placeHomeTarget } from '../features/map/home'
+import { createNavigationStore, destinationParcel, isRouteTo, placeParcel } from '../features/map/navigation'
 import { Navmap, pagination, type NavmapApi } from '../features/map/navmap'
 import { parcelCenter } from '../features/map/mapCoords'
 import { calendarLink, eventSchedule, eventShareLinks, jumpInLink, placeShareLinks, upcomingDates } from '../features/map/shareLinks'
@@ -15,6 +15,7 @@ const event = (id: string, x: number, y: number, extra: Partial<EventData> = {})
 const PLAZA = place('plaza', 'Genesis Plaza', ['0,0', '1,0'])
 const CLUB = place('club', 'Sugar Club', ['-20,60'])
 const WORLD = place('world', 'Mansion', ['0,0'], { world_name: 'mansion.dcl.eth' })
+const ROAD_TITLE = 'Long Road'
 
 function setup(over: Partial<NavmapApi> = {}): { nav: Navmap; api: { [K in keyof NavmapApi]: ReturnType<typeof vi.fn> }; moves: unknown[] } {
   const api = {
@@ -546,6 +547,14 @@ describe('home', () => {
     expect(isHomePlace({ parcel: null, world: 'mansion.dcl.eth' }, PLAZA)).toBe(false)
     expect(isHomePlace(NO_HOME, PLAZA)).toBe(false)
   })
+
+  it('saves a place as home by its base parcel, a road by the picked parcel and a world by its name', () => {
+    expect(placeHomeTarget(place('big', 'Big', ['5,5', '6,5'], { base_position: '6,5' }), { x: 5, y: 5 })).toEqual({ realm: null, parcel: { x: 6, y: 5 } })
+    expect(placeHomeTarget(place('road', ROAD_TITLE, ['1,1', '1,2'], { base_position: '1,1' }), { x: 1, y: 2 })).toEqual({ realm: null, parcel: { x: 1, y: 2 } })
+    expect(placeHomeTarget(place('road', ROAD_TITLE, ['1,1', '1,2'], { base_position: '1,1' }), null)).toEqual({ realm: null, parcel: { x: 1, y: 1 } })
+    expect(placeHomeTarget(WORLD, null)).toEqual({ realm: 'mansion.dcl.eth', parcel: { x: 0, y: 0 } })
+    expect(placeHomeTarget(place('broken', 'Broken', [], { base_position: '' }), null)).toBeNull()
+  })
 })
 
 describe('navigation', () => {
@@ -568,6 +577,24 @@ describe('navigation', () => {
     expect(store.getSnapshot()).not.toBeNull()
     expect(store.playerMoved({ x: destination.x + 5, y: destination.y + 4 })).toBe(true)
     expect(store.getSnapshot()).toBeNull()
+  })
+
+  it('tells whether the route ends at a place; a world has no route', () => {
+    const store = createNavigationStore()
+    expect(isRouteTo(store.getSnapshot(), CLUB)).toBe(false)
+    store.start(CLUB)
+    expect(isRouteTo(store.getSnapshot(), CLUB)).toBe(true)
+    expect(isRouteTo(store.getSnapshot(), PLAZA)).toBe(false)
+    expect(isRouteTo({ parcel: { x: 0, y: 0 }, position: parcelCenter({ x: 0, y: 0 }), title: '' }, { ...WORLD, positions: ['0,0'], base_position: '0,0' })).toBe(false)
+  })
+
+  it('has no route end for a place whose parcel does not read', () => {
+    const unreadable = place('broken', 'Broken', ['1,1', '1,2'], { base_position: '' })
+    expect(placeParcel(unreadable)).toBeNull()
+    const store = createNavigationStore()
+    store.start(PLAZA)
+    expect(store.getSnapshot()?.parcel).toEqual({ x: 0, y: 0 })
+    expect(isRouteTo(store.getSnapshot(), unreadable)).toBe(false)
   })
 
   it('ends on the spot however the player came at it, and while they stand there', () => {
