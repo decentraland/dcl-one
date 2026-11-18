@@ -72,7 +72,7 @@ impl Adapter {
         };
         let adapter = self.clone();
         let message = self.milestone(referrer);
-        tokio::spawn(async move {
+        crate::shared::task::spawn(async move {
             let _permit = permit;
             adapter.send(message).await;
         });

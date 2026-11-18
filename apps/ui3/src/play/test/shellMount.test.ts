@@ -11,7 +11,7 @@ vi.mock('../shell/shop/overlay', () => ({ createShopOverlay: () => ({}) }))
 const page = vi.hoisted(() => ({ reload: vi.fn() }))
 vi.mock('@explorer-core/lib/reloadPage', () => ({ reloadPage: page.reload }))
 
-import { SHOP_BUSY, shopBusy } from '../lib/shopProtocol'
+import { SHOP_BUSY, shopBusy } from '@dcl/one-ui/apps/shop/shopProtocol'
 import { mountPlayShell } from '../shell/mount'
 
 let app: Window

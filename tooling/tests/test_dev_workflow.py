@@ -97,6 +97,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         # One of those shards runs the provisioned Archipelago tests; tooling/dev-regressions.py reads the setting.
         self.assertIn("      CATALYST_TEST_PROVISIONED_SHARD: '1'\n", rust)
         self.assertEqual(rust.count('CATALYST_TEST_PROVISIONED_SHARD:'), 1)
+        # One shard runs the doc-tests; tooling/catalyst-test.sh rejects a shard outside 1 to n.
+        self.assertIn("      CATALYST_TEST_DOC_SHARD: '2'\n", rust)
+        self.assertEqual(rust.count('CATALYST_TEST_DOC_SHARD:'), 1)
         # The dependency cache: the action prunes workspace output before saving, main writes, PRs read.
         self.assertNotIn('actions/cache', rust)
         cache = re.search(r'(?ms)^      - name: Restore the Rust dependency cache\n(.*?)(?=^      - |\Z)', rust).group(1)

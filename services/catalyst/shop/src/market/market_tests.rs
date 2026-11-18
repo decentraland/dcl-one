@@ -2796,6 +2796,74 @@ async fn deep_pages_past_the_graph_window_read_by_keyset() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "past the deep bound");
 }
 
+/// An owner's read with no category answers every category, as upstream's: the wearables and emotes
+/// of both collections subgraphs and the LAND, estates and names of the marketplace subgraph, all
+/// filtered by owner. The marketplace source is best-effort: when it fails the read still answers
+/// the collections.
+#[tokio::test]
+async fn an_owner_read_without_a_category_merges_the_marketplace_best_effort() {
+    let (matic, eth, market) = (FakeGraph::new(), FakeGraph::new(), FakeGraph::new());
+    let nft = |id: &str, category: &str, owner: &str, created: &str| json!({ "id": id, "tokenId": created, "contractAddress": "0x0000000000000000000000000000000000000001", "category": category, "owner": { "address": owner }, "createdAt": created, "updatedAt": "1", "name": id });
+    matic.set("nfts", vec![nft("matic-hat", "wearable", WALLET_A, "30")]);
+    eth.set("nfts", vec![nft("eth-mask", "wearable", WALLET_A, "10")]);
+    market.set(
+        "nfts",
+        vec![
+            nft("brai", "ens", WALLET_A, "20"),
+            nft("parcel-b", "parcel", WALLET_B, "40"),
+        ],
+    );
+    // Rows by name (the wire id is contract-token).
+    let ids = |body: &Value| -> Vec<String> {
+        body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n["nft"]["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let (matic_url, eth_url, market_url) = (
+        serve_graph(matic.clone()).await,
+        serve_graph(eth.clone()).await,
+        serve_graph(market.clone()).await,
+    );
+    let with_market = |url: Option<String>| {
+        let state = state_without_db_settings(Settings {
+            matic_collections_subgraph_url: Some(matic_url.clone()),
+            eth_collections_subgraph_url: Some(eth_url.clone()),
+            marketplace_subgraph_url: url,
+            ..Settings::for_tests()
+        });
+        state.test_allow_loopback.store(true, Ordering::Relaxed);
+        state
+    };
+    let path = format!("/v1/nfts?owner={WALLET_A}");
+
+    let state = with_market(Some(market_url));
+    let (status, body) = get(market_router(state.clone()), &path).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        ids(&body),
+        ["matic-hat", "brai", "eth-mask"],
+        "newest first, the other owner's parcel left out"
+    );
+    assert_eq!(body["total"], 3);
+
+    // A category keeps the collections read alone.
+    let (_, body) = get(market_router(state), &format!("{path}&category=wearable")).await;
+    assert_eq!(ids(&body), ["matic-hat", "eth-mask"]);
+
+    // Nothing listens on port 9: the marketplace read fails, the collections still answer.
+    let (status, body) = get(
+        market_router(with_market(Some("http://127.0.0.1:9/".into()))),
+        &path,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(ids(&body), ["matic-hat", "eth-mask"]);
+    assert_eq!(body["total"], 2);
+}
+
 /// Pages merged across the two networks need each network's top
 /// `first + skip` rows, and The Graph refuses a `first` above 1000: those
 /// windows are read in pages it accepts (the fake enforces its bounds), so a

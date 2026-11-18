@@ -50,15 +50,18 @@ impl DenyList {
         self.url.is_some()
     }
 
-    pub async fn is_denied(&self, address: &str) -> bool {
-        if self.url.is_none() {
-            return false;
-        }
-        let Some(normalized) = normalize_eth_address(address) else {
-            return true;
-        };
-        let wallets = self.current().await;
-        wallets.contains(&normalized)
+    /// Boxed so its awaiters don't re-prove the future `Send`.
+    pub fn is_denied<'a>(&'a self, address: &'a str) -> futures::future::BoxFuture<'a, bool> {
+        Box::pin(async move {
+            if self.url.is_none() {
+                return false;
+            }
+            let Some(normalized) = normalize_eth_address(address) else {
+                return true;
+            };
+            let wallets = self.current().await;
+            wallets.contains(&normalized)
+        })
     }
 
     async fn current(&self) -> HashSet<String> {

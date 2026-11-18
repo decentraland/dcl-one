@@ -1,24 +1,23 @@
-import { useCallback } from "react";
-import { skipToken, useQuery } from "@tanstack/react-query";
+import { hashKey, skipToken, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
-import { withCreatorName, type Creations } from "@/data/lib/catalyst/marketplace/index";
+import type { AssetCategory, CreationsCategory } from "@/data/lib/catalyst/marketplace/profile-collectibles";
 import {
+  assetsQuery,
   canReadProfile,
   badgesQuery,
   creationsQuery,
   myCommunitiesQuery,
   myFavoritePlacesQuery,
-  ownedNamesQuery,
-  ownedWearablesQuery,
+  photoQuery,
   photosQuery,
   placeOwnersQuery,
   placesQuery,
   PROFILE_STALE_MS,
   profileKeys,
   profileQuery,
+  signsFor,
 } from "@/data/lib/profile/queries";
-import { EMPTY_ASSETS, mapAssets, type ProfileAssets } from "@/data/lib/profile/view";
 
 export function useProfile(address: string) {
   return useQuery({ ...profileQuery(address), enabled: canReadProfile(address) });
@@ -37,13 +36,14 @@ export function useRequiredProfile(address: string) {
   });
 }
 
-/** Creations are relabelled with the profile's display name, as the creator's own page shows them. */
-export function useProfileCreations(address: string, creatorName?: string) {
-  const select = useCallback(
-    (creations: Creations) => withCreatorName(creations, creatorName),
-    [creatorName],
-  );
-  return useQuery({ ...creationsQuery(address), enabled: canReadProfile(address), select });
+/** The items a wallet created in one category, a page at a time. */
+export function useProfileCreations(address: string, category: CreationsCategory) {
+  return useInfiniteQuery({ ...creationsQuery(address, category), enabled: canReadProfile(address) });
+}
+
+/** The tokens a wallet owns, every category or one, a page at a time. */
+export function useProfileAssets(address: string, category: AssetCategory | null) {
+  return useInfiniteQuery({ ...assetsQuery(address, category), enabled: canReadProfile(address) });
 }
 
 export function useProfilePlaces(address: string) {
@@ -69,28 +69,28 @@ export function useProfileBadges(address: string, hasProfile: boolean) {
   return useQuery({ ...badgesQuery(address), enabled: hasProfile && canReadProfile(address) });
 }
 
-export function useProfilePhotos(address: string) {
-  return useQuery({ ...photosQuery(address), enabled: canReadProfile(address) });
+/**
+ * A profile's snapshots, a page at a time: the owner's signed list (private ones included) with their
+ * identity, the public list otherwise. While the signed list first loads, the public one already on
+ * screen stays; never the other way round, so a signed-out page never keeps private rows.
+ */
+export function useProfilePhotos(address: string, identity: AuthIdentity | null) {
+  const signed = signsFor(identity, address);
+  const publicKey = profileKeys.photos(address);
+  return useInfiniteQuery({
+    ...photosQuery(address, identity),
+    enabled: canReadProfile(address),
+    placeholderData: (previous, previousQuery) =>
+      signed && previousQuery && hashKey(previousQuery.queryKey) === hashKey(publicKey) ? previous : undefined,
+  });
 }
 
-/** Owned wearables and names load apart, so one failing still shows the other. */
-export function useProfileAssets(address: string): {
-  data: ProfileAssets;
-  isPending: boolean;
-  isError: boolean;
-} {
-  const enabled = canReadProfile(address);
-  const wearables = useQuery({ ...ownedWearablesQuery(address), enabled });
-  const names = useQuery({ ...ownedNamesQuery(address), enabled });
-  const empty = { elements: [], total: 0 };
-  return {
-    data: enabled
-      ? mapAssets(wearables.data ?? empty, names.data ?? empty)
-      : EMPTY_ASSETS,
-    isPending: enabled && (wearables.isPending || names.isPending),
-    isError: wearables.isError || names.isError,
-  };
+/** One snapshot by id; only read while a link names a photo the loaded pages do not hold. */
+export function useProfilePhoto(id: string | null) {
+  const options = photoQuery(id ?? "");
+  return useQuery({ ...options, queryFn: id === null ? skipToken : options.queryFn });
 }
+
 
 /** The signed-in member's communities; nothing is requested without an identity. */
 export function useMyCommunities(identity: AuthIdentity | null, enabled = true) {

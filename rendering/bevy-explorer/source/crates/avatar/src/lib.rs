@@ -70,6 +70,7 @@ pub mod material_cache;
 pub mod nametag;
 #[cfg(feature = "explorer")]
 pub mod npc_dynamics;
+pub mod pause_hidden;
 pub mod point_at_ik;
 #[cfg(feature = "explorer")]
 pub mod point_at_marker;
@@ -221,6 +222,7 @@ impl Plugin for AvatarPlugin {
         app.add_plugins(debug_avatars::DebugAvatarsPlugin);
         app.add_plugins(PointAtIkPlugin);
         app.add_plugins(PointAtMarkerPlugin);
+        app.add_plugins(pause_hidden::PauseHiddenAvatarsPlugin);
         app.add_systems(
             Update,
             (
