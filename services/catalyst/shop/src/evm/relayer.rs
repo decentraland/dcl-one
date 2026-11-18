@@ -30,12 +30,20 @@ struct OzResponse {
 #[derive(Debug, Deserialize)]
 struct OzTransactionData {
     id: String,
-    #[serde(default)]
-    hash: Option<String>,
+    /// `None`: the answer has no `hash` field. `Some(None)`: the relayer says, with an explicit
+    /// `null`, that it holds no hash. Only the second is evidence of a transaction never signed.
+    #[serde(default, deserialize_with = "present")]
+    hash: Option<Option<String>>,
     #[serde(default)]
     status: String,
     #[serde(default)]
     status_reason: Option<String>,
+}
+
+/// Tells a present field (`Some`, its value possibly `null`) from a missing one (`None`, by the
+/// field's `default`), which a plain `Option` cannot.
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<String>>, D::Error> {
+    Option::<String>::deserialize(d).map(Some)
 }
 
 pub struct Relayer {
@@ -140,15 +148,26 @@ impl Relayer {
                 )));
             }
         };
-        if let Some(hash) = &tx_data.hash
+        let signed = tx_data.hash.clone().flatten();
+        if let Some(hash) = &signed
             && BROADCAST_STATUSES.contains(&tx_data.status.as_str())
         {
             return Ok(hash.clone());
         }
-        self.wait_for_broadcast(&tx_data.id).await
+        self.wait_for_broadcast(&tx_data.id, signed).await
     }
 
-    async fn wait_for_broadcast(&self, tx_id: &str) -> Result<String, ApiError> {
+    /// Polls `tx_id` until it has a hash in a broadcast status, a terminal status, or the budget
+    /// runs out. A status answer is evidence only when it is a success about this transaction;
+    /// any other answer is read as no answer. A terminal status is a refusal (`RelayReverted`,
+    /// nothing went out) only with an explicit `"hash": null` and no hash seen before, in the
+    /// submission or an earlier status. Otherwise the relayer may have signed and sent it, and the
+    /// outcome is unknown: `RelayerTimeout`.
+    async fn wait_for_broadcast(
+        &self,
+        tx_id: &str,
+        mut signed: Option<String>,
+    ) -> Result<String, ApiError> {
         let url = self.transaction_url(tx_id);
         // The checks run until the configured budget, `sleep × checks`: the
         // backoff starts under one interval, so a count of attempts would
@@ -188,32 +207,41 @@ impl Relayer {
             let Ok(body) = read_body_capped(resp, OZ_BODY_CAP).await else {
                 continue;
             };
-            let Ok(parsed) = serde_json::from_slice::<OzResponse>(&body) else {
+            let Ok(OzResponse { success, data, .. }) = serde_json::from_slice::<OzResponse>(&body)
+            else {
                 continue;
             };
-            let Some(data) = parsed.data else { continue };
+            let Some(data) = data.filter(|d| success && d.id == tx_id) else {
+                continue;
+            };
             if FAILED_STATUSES.contains(&data.status.as_str()) {
                 let reason = data
                     .status_reason
                     .clone()
                     .unwrap_or_else(|| data.status.clone());
-                // With a hash the relayer signed and may have sent it: a terminal status is its
-                // view, not proof that transaction can no longer land. Without one, nothing went
-                // out.
-                return Err(match data.hash {
-                    Some(hash) => ApiError::RelayerTimeout(format!(
-                        "Transaction {} after it was submitted as {hash}: {reason}",
-                        data.status
-                    )),
-                    None => {
+                // A terminal status is the relayer's view, not proof that a transaction it signed
+                // can no longer land. Only an explicit null hash, with none seen before, says it
+                // never signed one.
+                return Err(match (&data.hash, &signed) {
+                    (Some(None), None) => {
                         ApiError::RelayReverted(format!("Transaction {}: {}", data.status, reason))
                     }
+                    _ => ApiError::RelayerTimeout(format!(
+                        "Transaction {} after the relayer may have signed it ({}): {reason}",
+                        data.status,
+                        data.hash
+                            .clone()
+                            .flatten()
+                            .or(signed)
+                            .unwrap_or_else(|| "no hash reported".into())
+                    )),
                 });
             }
-            if BROADCAST_STATUSES.contains(&data.status.as_str())
-                && let Some(hash) = data.hash
-            {
-                return Ok(hash);
+            if let Some(Some(hash)) = data.hash {
+                if BROADCAST_STATUSES.contains(&data.status.as_str()) {
+                    return Ok(hash);
+                }
+                signed = Some(hash);
             }
         }
         self.cancel_transaction(tx_id).await;
@@ -286,11 +314,13 @@ mod tests {
                     Duration::from_millis(10)
                 },
             );
-            let result =
-                tokio::time::timeout(Duration::from_secs(2), relayer.wait_for_broadcast("tx"))
-                    .await
-                    .unwrap()
-                    .unwrap();
+            let result = tokio::time::timeout(
+                Duration::from_secs(2),
+                relayer.wait_for_broadcast("tx", None),
+            )
+            .await
+            .unwrap()
+            .unwrap();
             assert_eq!(result, "0xhash");
             assert_eq!(calls.load(Ordering::SeqCst), pending + 1);
             server.abort();
@@ -331,9 +361,12 @@ mod tests {
             3,
             Duration::from_millis(10),
         );
-        let result = tokio::time::timeout(Duration::from_secs(2), relayer.wait_for_broadcast("tx"))
-            .await
-            .unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            relayer.wait_for_broadcast("tx", None),
+        )
+        .await
+        .unwrap();
         assert!(matches!(result, Err(ApiError::RelayerTimeout(_))));
         let checks = checks.load(Ordering::SeqCst);
         assert!(
@@ -365,41 +398,146 @@ mod tests {
         )
     }
 
-    /// A terminal status is a refusal only when the relayer never signed the transaction (no
-    /// hash). With a hash it may be out, so the outcome is unknown.
-    #[tokio::test]
-    async fn a_terminal_status_is_a_refusal_only_without_a_hash() {
-        for (status, hash) in [
-            ("failed", None),
-            ("canceled", None),
-            ("failed", Some("0xhash")),
-            ("expired", Some("0xhash")),
-        ] {
-            let app = axum::Router::new().route(
-                "/api/v1/relayers/rid/transactions/tx",
-                axum::routing::get(move || async move {
-                    axum::Json(serde_json::json!({"success": true, "data": {"id": "tx", "status": status, "hash": hash, "status_reason": "reverted"}}))
+    const HASH: &str = "0x00000000000000000000000000000000000000000000000000000000000000ab";
+
+    /// A relayer whose submission answers `post` and whose status checks answer `polls` in order,
+    /// the last one repeated.
+    async fn oz(
+        post: serde_json::Value,
+        polls: Vec<serde_json::Value>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let polls = Arc::new(polls);
+        let at = Arc::new(AtomicUsize::new(0));
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/relayers/rid/transactions",
+                axum::routing::post(move || {
+                    let post = post.clone();
+                    async move { axum::Json(post) }
                 }),
-            );
-            let (url, server) = serve(app).await;
-            let result = tokio::time::timeout(
-                Duration::from_secs(2),
-                relayer(&url).wait_for_broadcast("tx"),
             )
-            .await
-            .unwrap();
-            match hash {
-                None => assert!(
-                    matches!(result, Err(ApiError::RelayReverted(_))),
-                    "{status}: {result:?}"
-                ),
-                Some(_) => assert!(
-                    matches!(result, Err(ApiError::RelayerTimeout(_))),
-                    "{status} with a hash: {result:?}"
-                ),
-            }
-            server.abort();
+            .route(
+                "/api/v1/relayers/rid/transactions/tx",
+                axum::routing::get(move || {
+                    let i = at.fetch_add(1, Ordering::SeqCst).min(polls.len() - 1);
+                    let answer = polls[i].clone();
+                    async move { axum::Json(answer) }
+                })
+                .delete(|| async { axum::http::StatusCode::NO_CONTENT }),
+            );
+        serve(app).await
+    }
+
+    fn status(status: &str, hash: Option<Option<&str>>) -> serde_json::Value {
+        let mut data = serde_json::json!({"id": "tx", "status": status, "status_reason": "failed"});
+        if let Some(hash) = hash {
+            data["hash"] = serde_json::json!(hash);
         }
+        serde_json::json!({"success": true, "data": data})
+    }
+
+    async fn relay(
+        post: serde_json::Value,
+        polls: Vec<serde_json::Value>,
+    ) -> Result<String, ApiError> {
+        let (url, server) = oz(post, polls).await;
+        let tx = TransactionData {
+            from: "0x0000000000000000000000000000000000000001".into(),
+            params: vec![
+                "0x0000000000000000000000000000000000000002".into(),
+                "0x12".into(),
+            ],
+        };
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            relayer(&url).send_meta_transaction(&tx),
+        )
+        .await
+        .unwrap();
+        server.abort();
+        result
+    }
+
+    /// The control: a terminal status that says, with an explicit null, that the relayer holds
+    /// no hash, after a submission with none either, is a refusal: nothing was signed.
+    #[tokio::test]
+    async fn a_terminal_status_with_an_explicit_null_hash_is_a_refusal() {
+        for terminal in ["failed", "canceled", "expired"] {
+            let result = relay(
+                status("pending", Some(None)),
+                vec![status(terminal, Some(None))],
+            )
+            .await;
+            assert!(
+                matches!(result, Err(ApiError::RelayReverted(_))),
+                "{terminal}: {result:?}"
+            );
+        }
+    }
+
+    /// A terminal status with a hash, or with no `hash` field at all, is no proof that nothing
+    /// was signed: the outcome is unknown.
+    #[tokio::test]
+    async fn a_terminal_status_with_a_hash_or_without_the_field_is_in_flight() {
+        for terminal in [
+            status("failed", Some(Some(HASH))),
+            status("expired", Some(Some(HASH))),
+            status("failed", None),
+        ] {
+            let result = relay(status("pending", Some(None)), vec![terminal.clone()]).await;
+            assert!(
+                matches!(result, Err(ApiError::RelayerTimeout(_))),
+                "{terminal}: {result:?}"
+            );
+        }
+    }
+
+    /// A status answer that is not a success about this transaction is no answer: an explicit null
+    /// hash in it proves nothing, and the checks run out in flight.
+    #[tokio::test]
+    async fn a_status_answer_about_something_else_is_no_evidence() {
+        let mut refused = status("failed", Some(None));
+        refused["success"] = serde_json::json!(false);
+        let mut other = status("failed", Some(None));
+        other["data"]["id"] = serde_json::json!("another");
+        for answer in [refused, other] {
+            let result = relay(status("pending", Some(None)), vec![answer.clone()]).await;
+            assert!(
+                matches!(result, Err(ApiError::RelayerTimeout(_))),
+                "{answer}: {result:?}"
+            );
+        }
+    }
+
+    /// A hash seen in the submission or an earlier status is evidence the relayer signed it: a
+    /// later terminal status with a null hash does not make it "never sent".
+    #[tokio::test]
+    async fn a_hash_seen_before_keeps_a_later_terminal_status_in_flight() {
+        let in_submission = relay(
+            status("sent", Some(Some(HASH))),
+            vec![status("failed", Some(None))],
+        )
+        .await;
+        assert!(
+            matches!(in_submission, Err(ApiError::RelayerTimeout(_))),
+            "{in_submission:?}"
+        );
+        let in_a_poll = relay(
+            status("pending", Some(None)),
+            vec![
+                status("sent", Some(Some(HASH))),
+                status("failed", Some(None)),
+            ],
+        )
+        .await;
+        assert!(
+            matches!(in_a_poll, Err(ApiError::RelayerTimeout(_))),
+            "{in_a_poll:?}"
+        );
     }
 
     /// A 400 or 422 to the submission created no transaction. A 5xx, or a 2xx that cannot be read,

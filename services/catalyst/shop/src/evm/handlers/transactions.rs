@@ -157,14 +157,16 @@ async fn forward_upstream(
 
 /// Whether a non-2xx upstream status proves the transaction was never
 /// broadcast, so the quota slot can be refunded. The status passes through
-/// to the client, which reads a 4xx the same way. A 4xx is issued before any
-/// broadcast: Cloudflare's own refusals never reach the origin, and the
-/// transactions-server (`decentraland/transactions-server`, `sendTransaction`
-/// in `src/controllers/handlers.ts` at 8b9549bb) answers a 4xx only for
+/// to the client, which reads a 4xx the same way. The evidence for a 4xx is
+/// the transactions-server's own code, as inspected at
+/// `decentraland/transactions-server@8b9549bbe51a8bf14da5efbe0847da18e9b208bd`
+/// (`sendTransaction` in `src/controllers/handlers.ts`, the OpenZeppelin port
+/// in `src/ports/openzeppelin/components.ts`): it answers a 4xx only for
 /// validation, quota and rate limits, and for a relayer that created no
-/// transaction (a 400/422 to the submission, or a terminal status with no
-/// hash). It reports a failure after a submission (a terminal status with a
-/// hash, a timeout) as a 5xx. Every 5xx is
+/// transaction (a 400/422 to the submission, or a terminal status whose
+/// `hash` is `null`). It reports a failure after a submission (a terminal
+/// status with a hash, a timeout) as a 5xx. That covers the transactions-server
+/// itself, not a 4xx from an intermediary in front of it. Every 5xx is
 /// indeterminate: the upstream sits behind Cloudflare, so 502/504 and
 /// Cloudflare's own 522/524 arrive after the request reached the intermediary,
 /// and even a 500/503 can be emitted by the origin after it already submitted
