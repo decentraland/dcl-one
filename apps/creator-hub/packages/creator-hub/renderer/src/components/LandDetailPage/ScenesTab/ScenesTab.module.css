@@ -105,13 +105,34 @@
 }
 
 /* Three classes: over the two classes of the ViewBar bar. */
+/* The stats and the controls share one row while they fit, and the controls drop to a second row
+   in a narrow window instead of running over the stats. */
 .scenesBar.scenesBar.scenesBar {
-  padding: 0 10px 0 20px;
+  height: auto;
+  min-height: 56px;
+  padding: 8px 10px 8px 20px;
+  flex-wrap: wrap;
+  row-gap: 8px;
+  border-radius: 28px;
+}
+
+.scenesBar.scenesBar.scenesBar > :global(.left) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.scenesBar.scenesBar.scenesBar > :global(.right) {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px 16px;
+  margin-left: auto;
 }
 
 .stats {
   display: flex;
-  gap: 20px;
+  flex-wrap: wrap;
+  gap: 4px 20px;
 }
 
 .stats > span {

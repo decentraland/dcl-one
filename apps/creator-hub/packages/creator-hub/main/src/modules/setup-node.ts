@@ -4,15 +4,22 @@ import { platform } from 'os';
 import { app } from 'electron';
 import log from 'electron-log/main';
 import { writeCmdShim } from './cmd-shim';
-import { getBinPath } from './path';
+import { getBinPath, getNodeCmdPath } from './path';
 
-const APP_UNPACKED_PATH = path.join(
-  app.getAppPath(),
-  import.meta.env.DEV ? '.' : '../app.asar.unpacked',
-);
+// Where releases up to 0.56 put the `node` link: inside the app bundle.
+const LEGACY_NODE_LINK = path.join(app.getAppPath(), '../app.asar.unpacked', 'node');
 
-function getNodeCmdPath() {
-  return path.join(APP_UNPACKED_PATH, platform() === 'win32' ? 'node.cmd' : 'node');
+/**
+ * Removes the `node` link an earlier release left inside the bundle, so the installed app passes
+ * its signature check again. Only a link to an executable is removed; failing to is harmless.
+ */
+function removeLegacyNodeLink() {
+  if (platform() === 'win32') return;
+  try {
+    if (fs.lstatSync(LEGACY_NODE_LINK).isSymbolicLink()) fs.rmSync(LEGACY_NODE_LINK);
+  } catch {
+    /* not there, or the bundle is read-only */
+  }
 }
 
 function joinEnvPaths(...paths: string[]) {
@@ -35,8 +42,7 @@ export function getInjectedPathEntries(): string[] {
 }
 
 /**
- * True when the user cannot write the app folder: an AppImage is a read-only mount, and a system
- * package installs to a folder that belongs to root.
+ * True when the shim folder can't be written (a locked-down home folder, say).
  */
 function isReadOnlyInstall(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException).code;
@@ -62,6 +68,7 @@ function linkNode(nodeCmdPath: string, nodeBinPath: string): boolean {
 
   log.info(`[Install] Installing node bin linking from ${nodeCmdPath} to ${nodeBinPath}`);
   try {
+    fs.mkdirSync(path.dirname(nodeCmdPath), { recursive: true });
     if (existing) fs.rmSync(nodeCmdPath);
     if (platform() === 'win32') {
       // writeCmdShim adds the .cmd extension itself
@@ -74,7 +81,7 @@ function linkNode(nodeCmdPath: string, nodeBinPath: string): boolean {
     return true;
   } catch (error) {
     if (!isReadOnlyInstall(error)) throw error;
-    log.warn(`[Install] The app folder is read-only, no node link: ${nodeCmdPath}`);
+    log.warn(`[Install] The node shim folder is read-only, no node link: ${nodeCmdPath}`);
     return false;
   }
 }
@@ -85,6 +92,7 @@ export function setupNodeBinary() {
     return;
   }
 
+  removeLegacyNodeLink();
   const nodeCmdPath = getNodeCmdPath();
   const nodeBinPath = process.execPath;
   const npmBinPath = getBinPath('npm', 'npm');

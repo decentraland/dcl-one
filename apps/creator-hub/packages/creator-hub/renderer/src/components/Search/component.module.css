@@ -9,3 +9,11 @@
 .search > div > span {
   color: inherit;
 }
+
+/* The root draws the field's outline (a pill in the Manage bars), so the inner field's own square
+   one would show inside it on hover and focus. */
+.search.search > div,
+.search.search > div:hover,
+.search.search > div:focus-within {
+  box-shadow: none;
+}

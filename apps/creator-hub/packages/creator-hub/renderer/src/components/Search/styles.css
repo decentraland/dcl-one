@@ -4,6 +4,10 @@
   border: 1px solid var(--transparent-gray-light);
 }
 
+.SearchInput:focus-within {
+  border-color: var(--text);
+}
+
 .SearchInput input {
   padding: 12px;
   font-weight: 600;
