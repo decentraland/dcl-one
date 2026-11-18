@@ -354,6 +354,24 @@ async fn a_scenario_fails_fast_when_the_server_ends_a_bot_unexpectedly() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn emote_lifecycle_fails_against_a_server_that_refuses_the_emote() {
+    let mut server = PulseServer::new();
+    // an emote limit shorter than the emote the scenario plays
+    server.max_emote_duration_ms = 100;
+    let failure = failure_of(&run(server, &EMOTE_LIFECYCLE, 1).await);
+    assert!(failure.contains("InvalidEmoteField"), "{failure}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn realm_round_trip_fails_against_a_server_that_limits_teleports_too_hard() {
+    let mut server = PulseServer::new();
+    // one discrete event at a time: the second teleport ends the traveller
+    server.gameplay_limiter = GameplayRateLimiter::new(20, 16, 1, 1);
+    let failure = failure_of(&run(server, &REALM_ROUND_TRIP, 1).await);
+    assert!(failure.contains("DiscreteEventRateExceeded"), "{failure}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[ignore = "waits for the server's 30 s authentication timeout"]
 async fn auth_timeout_passes() {
     assert_passed(&run(PulseServer::new(), &AUTH_TIMEOUT, 1).await);

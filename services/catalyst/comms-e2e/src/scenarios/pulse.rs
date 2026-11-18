@@ -18,7 +18,7 @@ use parking_lot::Mutex;
 use super::support::{
     PACE, SOON, enter_at, expect_gone, expect_roster, expect_sees, expect_sees_at, leave,
     leave_all, listener_identity, meeting_place, metric_total, offset, refusal_code_in,
-    sorted_wallets, stay_connected, walk,
+    sorted_wallets, stay_connected, walk, while_alive,
 };
 use crate::engine::{Ctx, Needs, Scenario, ScenarioFuture, expect_or, holds_for, together};
 use crate::fault::{Direction, Fault, FaultLink};
@@ -235,51 +235,55 @@ async fn smoke(ctx: Ctx) -> Result<()> {
 
     let observer = enter_at(&ctx, "observer", &observer_id, &realm, here).await?;
     let traveller = PulseBot::enter(&ctx, "traveller", &traveller_id).await?;
-    let arrival = offset(here, 2.0, 1.0);
-    traveller.teleport(&realm, arrival)?;
+    while_alive(&[&observer, &traveller], async {
+        let arrival = offset(here, 2.0, 1.0);
+        traveller.teleport(&realm, arrival)?;
 
-    let seen = expect_sees_at(
-        &ctx,
-        &observer,
-        "the traveller arriving",
-        &traveller_wallet,
-        arrival,
-        QUANTIZATION,
-        SOON,
-    )
-    .await?;
-    if seen.realm != realm {
-        bail!(
-            "the observer holds the traveller in realm {:?}, expected {realm:?}",
-            seen.realm
-        );
-    }
+        let seen = expect_sees_at(
+            &ctx,
+            &observer,
+            "the traveller arriving",
+            &traveller_wallet,
+            arrival,
+            QUANTIZATION,
+            SOON,
+        )
+        .await?;
+        if seen.realm != realm {
+            bail!(
+                "the observer holds the traveller in realm {:?}, expected {realm:?}",
+                seen.realm
+            );
+        }
 
-    let destination = offset(here, 6.0, 1.0);
-    walk(&traveller, arrival, destination, 10).await?;
-    expect_sees_at(
-        &ctx,
-        &observer,
-        "the traveller after walking 4 m",
-        &traveller_wallet,
-        destination,
-        QUANTIZATION,
-        SOON,
-    )
-    .await?;
-    // the traveller sees the observer and is never told about itself
-    expect_sees(
-        &ctx,
-        &traveller,
-        "the observer",
-        &observer_id.address(),
-        SOON,
-    )
-    .await?;
-    if traveller.view().self_joins != 0 {
-        bail!("the traveller was told that it joined");
-    }
+        let destination = offset(here, 6.0, 1.0);
+        walk(&traveller, arrival, destination, 10).await?;
+        expect_sees_at(
+            &ctx,
+            &observer,
+            "the traveller after walking 4 m",
+            &traveller_wallet,
+            destination,
+            QUANTIZATION,
+            SOON,
+        )
+        .await?;
+        // the traveller sees the observer and is never told about itself
+        expect_sees(
+            &ctx,
+            &traveller,
+            "the observer",
+            &observer_id.address(),
+            SOON,
+        )
+        .await?;
+        if traveller.view().self_joins != 0 {
+            bail!("the traveller was told that it joined");
+        }
 
+        Ok::<(), anyhow::Error>(())
+    })
+    .await?;
     traveller.close();
     expect_gone(
         &ctx,
@@ -1400,6 +1404,7 @@ async fn realm_round_trip(ctx: Ctx) -> Result<()> {
     .await?;
     let traveller = PulseBot::enter(&ctx, "traveller", &traveller_id).await?;
 
+    while_alive(&[&observer_a, &observer_b, &traveller], async {
     let in_a = offset(here, 1.0, 1.0);
     let in_b = offset(here, 3.0, 1.0);
     let back_in_a = offset(here, 1.0, 3.0);
@@ -1514,6 +1519,8 @@ async fn realm_round_trip(ctx: Ctx) -> Result<()> {
             }
         }
         Ok(())
+    })
+    .await
     })
     .await
 }
@@ -1688,72 +1695,75 @@ async fn resync_requests(ctx: Ctx) -> Result<()> {
         offset(here, 2.0, 2.0),
     )
     .await?;
-    let held = expect_sees(&ctx, &asker, "the subject", &wallet, SOON).await?;
-    expect_sees(&ctx, &bystander, "the subject", &wallet, SOON).await?;
+    while_alive(&[&asker, &subject, &bystander], async {
+        let held = expect_sees(&ctx, &asker, "the subject", &wallet, SOON).await?;
+        expect_sees(&ctx, &bystander, "the subject", &wallet, SOON).await?;
 
-    let series = "pulse_resync_seq_gap_count";
-    let before = metric_total(&ctx, series).await;
+        let series = "pulse_resync_seq_gap_count";
+        let before = metric_total(&ctx, series).await;
 
-    // the subject's id and the sequence the asker holds of it, then four claims about what the
-    // asker knows, and one request for somebody who is not there
-    let id = held.subject_id;
-    let sequence = held.sequence;
-    let requests: [(&str, u32, u32); 5] = [
-        ("valid", id, sequence),
-        ("stale", id, sequence.saturating_sub(100)),
-        ("future", id, sequence.saturating_add(1000)),
-        ("absurd", id, u32::MAX),
-        ("unknown-subject", id.wrapping_add(50_000), 0),
-    ];
-    let mut spot = offset(here, 1.0, 1.0);
-    for (label, requested, known) in requests {
-        asker.send(messages::resync(requested, known), Channel::Reliable);
-        // the subject keeps walking: the asker's picture must stay correct whatever it was sent
-        let next = offset(spot, 3.0, 0.0);
-        walk(&subject, spot, next, 6).await?;
-        spot = next;
+        // the subject's id and the sequence the asker holds of it, then four claims about what the
+        // asker knows, and one request for somebody who is not there
+        let id = held.subject_id;
+        let sequence = held.sequence;
+        let requests: [(&str, u32, u32); 5] = [
+            ("valid", id, sequence),
+            ("stale", id, sequence.saturating_sub(100)),
+            ("future", id, sequence.saturating_add(1000)),
+            ("absurd", id, u32::MAX),
+            ("unknown-subject", id.wrapping_add(50_000), 0),
+        ];
+        let mut spot = offset(here, 1.0, 1.0);
+        for (label, requested, known) in requests {
+            asker.send(messages::resync(requested, known), Channel::Reliable);
+            // the subject keeps walking: the asker's picture must stay correct whatever it was sent
+            let next = offset(spot, 3.0, 0.0);
+            walk(&subject, spot, next, 6).await?;
+            spot = next;
+            expect_sees_at(
+                &ctx,
+                &asker,
+                &format!("the subject after a {label} request"),
+                &wallet,
+                spot,
+                QUANTIZATION,
+                SOON,
+            )
+            .await
+            .with_context(|| format!("after a {label} resync request"))?;
+            stay_connected(
+                &ctx,
+                &format!("every player after a {label} resync request"),
+                &[&asker, &subject, &bystander],
+                Duration::from_millis(100),
+            )
+            .await?;
+            // walk back so the next request starts near the same place
+            let back = offset(spot, -3.0, 0.0);
+            walk(&subject, spot, back, 6).await?;
+            spot = back;
+        }
+
         expect_sees_at(
             &ctx,
-            &asker,
-            &format!("the subject after a {label} request"),
+            &bystander,
+            "the subject for the bystander",
             &wallet,
             spot,
             QUANTIZATION,
             SOON,
         )
-        .await
-        .with_context(|| format!("after a {label} resync request"))?;
-        stay_connected(
-            &ctx,
-            &format!("every player after a {label} resync request"),
-            &[&asker, &subject, &bystander],
-            Duration::from_millis(100),
-        )
         .await?;
-        // walk back so the next request starts near the same place
-        let back = offset(spot, -3.0, 0.0);
-        walk(&subject, spot, back, 6).await?;
-        spot = back;
-    }
-
-    expect_sees_at(
-        &ctx,
-        &bystander,
-        "the subject for the bystander",
-        &wallet,
-        spot,
-        QUANTIZATION,
-        SOON,
-    )
-    .await?;
-    if let (Some(before), Some(after)) = (before, metric_total(&ctx, series).await) {
-        ctx.note("resync_metric_before", before);
-        ctx.note("resync_metric_after", after);
-        if after < before {
-            bail!("the resync metric went down from {before} to {after}");
+        if let (Some(before), Some(after)) = (before, metric_total(&ctx, series).await) {
+            ctx.note("resync_metric_before", before);
+            ctx.note("resync_metric_after", after);
+            if after < before {
+                bail!("the resync metric went down from {before} to {after}");
+            }
         }
-    }
-    Ok(())
+        Ok(())
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1983,136 +1993,145 @@ async fn scene_listener(ctx: Ctx) -> Result<()> {
     )
     .await?;
 
-    let listener = dial(&ctx, "listener").await?;
-    listener.send_listener_handshake(&listener_wallet, vec![area((1, 1))]);
-    match listener.handshake_outcome(&ctx, Some(SOON)).await? {
-        HandshakeOutcome::Accepted => {}
-        other => {
-            bail!("the scene listener of the stack file's wallet must be accepted, got {other:?}")
+    while_alive(&[&witness, &other_witness, &outsider, &away], async {
+        let listener = dial(&ctx, "listener").await?;
+        listener.send_listener_handshake(&listener_wallet, vec![area((1, 1))]);
+        match listener.handshake_outcome(&ctx, Some(SOON)).await? {
+            HandshakeOutcome::Accepted => {}
+            other => {
+                bail!(
+                    "the scene listener of the stack file's wallet must be accepted, got {other:?}"
+                )
+            }
         }
-    }
 
-    let first = enter_at(&ctx, "inside-1", first_id, &realm, inside_1).await?;
-    let second = enter_at(&ctx, "inside-2", second_id, &realm, inside_2).await?;
-    let inside_wallets = sorted_wallets(&[first_id, second_id]);
-    expect_roster(&ctx, &listener, &inside_wallets, SOON).await?;
-    let heard = expect_sees_at(
-        &ctx,
-        &listener,
-        "the first player inside",
-        &first_id.address(),
-        inside_1,
-        QUANTIZATION,
-        SOON,
-    )
-    .await?;
-    if heard.realm != realm {
-        bail!(
-            "the listener holds the first player in realm {:?}, expected {realm:?}",
-            heard.realm
+        let first = enter_at(&ctx, "inside-1", first_id, &realm, inside_1).await?;
+        let second = enter_at(&ctx, "inside-2", second_id, &realm, inside_2).await?;
+        let inside_wallets = sorted_wallets(&[first_id, second_id]);
+        expect_roster(&ctx, &listener, &inside_wallets, SOON).await?;
+        let heard = expect_sees_at(
+            &ctx,
+            &listener,
+            "the first player inside",
+            &first_id.address(),
+            inside_1,
+            QUANTIZATION,
+            SOON,
+        )
+        .await?;
+        if heard.realm != realm {
+            bail!(
+                "the listener holds the first player in realm {:?}, expected {realm:?}",
+                heard.realm
+            );
+        }
+        // nobody outside the area or in another realm reaches it
+        holds_for(
+            &ctx,
+            "the listener hears only the players inside",
+            Duration::from_secs(1),
+            || {
+                listener.alive()?;
+                let held = listener.view().wallets();
+                if held == inside_wallets {
+                    Ok(())
+                } else {
+                    Err(format!("the listener holds {held:?}"))
+                }
+            },
+        )
+        .await?;
+
+        // a profile announcement reaches a regular player but never the listener
+        first.send(messages::profile_announcement(7), Channel::Reliable);
+        expect_or(
+            &ctx,
+            "a regular player receives the profile announcement",
+            SOON,
+            || {
+                witness.alive()?;
+                witness
+                    .view()
+                    .of(&first_id.address())
+                    .is_some_and(|subject| subject.profile_version == 7)
+                    .then_some(())
+                    .ok_or_else(|| "not announced yet".to_owned())
+            },
+        )
+        .await?;
+        holds_for(
+            &ctx,
+            "the listener receives no profile announcement",
+            Duration::from_millis(500),
+            || {
+                listener.alive()?;
+                match listener.view().profile_announcements {
+                    0 => Ok(()),
+                    count => Err(format!("{count} announcements reached the listener")),
+                }
+            },
+        )
+        .await?;
+
+        // what it hears follows the players
+        let moved = offset(inside_1, 3.0, 0.0);
+        walk(&first, inside_1, moved, 8).await?;
+        expect_sees_at(
+            &ctx,
+            &listener,
+            "the first player after it moved",
+            &first_id.address(),
+            moved,
+            QUANTIZATION,
+            SOON,
+        )
+        .await?;
+
+        // an update of the area takes effect: parcels (0, 0) to (4, 0) hold the first player and
+        // the outsider now, and no longer the second player, who stands in parcel (1, 1); the one
+        // in the other realm stays out
+        listener.send(
+            messages::scene_listener_update(vec![area((4, 0))]),
+            Channel::Reliable,
         );
-    }
-    // nobody outside the area or in another realm reaches it
-    holds_for(
-        &ctx,
-        "the listener hears only the players inside",
-        Duration::from_secs(1),
-        || {
-            listener.alive()?;
-            let held = listener.view().wallets();
-            if held == inside_wallets {
-                Ok(())
-            } else {
-                Err(format!("the listener holds {held:?}"))
-            }
-        },
-    )
-    .await?;
+        let wanted = sorted_wallets(&[first_id, outside_id]);
+        expect_roster(&ctx, &listener, &wanted, Duration::from_secs(10)).await?;
 
-    // a profile announcement reaches a regular player but never the listener
-    first.send(messages::profile_announcement(7), Channel::Reliable);
-    expect_or(
-        &ctx,
-        "a regular player receives the profile announcement",
-        SOON,
-        || {
-            witness.alive()?;
-            witness
-                .view()
-                .of(&first_id.address())
-                .is_some_and(|subject| subject.profile_version == 7)
-                .then_some(())
-                .ok_or_else(|| "not announced yet".to_owned())
-        },
-    )
-    .await?;
-    holds_for(
-        &ctx,
-        "the listener receives no profile announcement",
-        Duration::from_millis(500),
-        || {
-            listener.alive()?;
-            match listener.view().profile_announcements {
-                0 => Ok(()),
-                count => Err(format!("{count} announcements reached the listener")),
-            }
-        },
-    )
-    .await?;
-
-    // what it hears follows the players
-    let moved = offset(inside_1, 3.0, 0.0);
-    walk(&first, inside_1, moved, 8).await?;
-    expect_sees_at(
-        &ctx,
-        &listener,
-        "the first player after it moved",
-        &first_id.address(),
-        moved,
-        QUANTIZATION,
-        SOON,
-    )
-    .await?;
-
-    // an update of the area takes effect: parcels (0, 0) to (4, 0) hold the first player and
-    // the outsider now, and no longer the second player, who stands in parcel (1, 1); the one
-    // in the other realm stays out
-    listener.send(
-        messages::scene_listener_update(vec![area((4, 0))]),
-        Channel::Reliable,
-    );
-    let wanted = sorted_wallets(&[first_id, outside_id]);
-    expect_roster(&ctx, &listener, &wanted, Duration::from_secs(10)).await?;
-
-    // an invalid area gets its code: at the handshake, and as an update
-    let bad = dial(&ctx, "listener-with-invalid-area").await?;
-    bad.send_listener_handshake(
-        &listener_wallet,
-        vec![messages::area_of_interest(&realm, (1, 1), (0, 0))],
-    );
-    let expected = DisconnectReason::InvalidHandshakeField.code();
-    let outcome = bad.handshake_outcome(&ctx, Some(SOON)).await?;
-    if outcome != (HandshakeOutcome::Disconnected { code: expected }) {
-        bail!(
-            "a listener handshake with an invalid area must end with {}, got {outcome:?}",
-            messages::reason(expected)
+        // an invalid area gets its code: at the handshake, and as an update
+        let bad = dial(&ctx, "listener-with-invalid-area").await?;
+        bad.send_listener_handshake(
+            &listener_wallet,
+            vec![messages::area_of_interest(&realm, (1, 1), (0, 0))],
         );
-    }
-    listener.send(
-        messages::scene_listener_update(vec![messages::area_of_interest(&realm, (1, 1), (0, 0))]),
-        Channel::Reliable,
-    );
-    listener
-        .expect_disconnect_with(&ctx, DisconnectReason::InvalidSceneListenerField, SOON)
+        let expected = DisconnectReason::InvalidHandshakeField.code();
+        let outcome = bad.handshake_outcome(&ctx, Some(SOON)).await?;
+        if outcome != (HandshakeOutcome::Disconnected { code: expected }) {
+            bail!(
+                "a listener handshake with an invalid area must end with {}, got {outcome:?}",
+                messages::reason(expected)
+            );
+        }
+        listener.send(
+            messages::scene_listener_update(vec![messages::area_of_interest(
+                &realm,
+                (1, 1),
+                (0, 0),
+            )]),
+            Channel::Reliable,
+        );
+        listener
+            .expect_disconnect_with(&ctx, DisconnectReason::InvalidSceneListenerField, SOON)
+            .await
+            .context(
+                "an update with an invalid area ends the listener with InvalidSceneListenerField",
+            )?;
+        stay_connected(
+            &ctx,
+            "the players",
+            &[&first, &second, &outsider, &away, &witness, &other_witness],
+            Duration::from_millis(200),
+        )
         .await
-        .context(
-            "an update with an invalid area ends the listener with InvalidSceneListenerField",
-        )?;
-    stay_connected(
-        &ctx,
-        "the players",
-        &[&first, &second, &outsider, &away, &witness, &other_witness],
-        Duration::from_millis(200),
-    )
+    })
     .await
 }

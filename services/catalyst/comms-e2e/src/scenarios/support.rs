@@ -289,3 +289,31 @@ pub async fn leave_all(ctx: &Ctx, bots: Vec<PulseBot>) -> Result<()> {
     futures::future::try_join_all(bots.into_iter().map(|bot| leave(ctx, bot))).await?;
     Ok(())
 }
+
+/// Runs `work`, and fails at once, naming the code, if the server ends the connection of any of
+/// `bots`: a scenario that waits on an observer for what another bot does would otherwise wait
+/// out its deadline when that bot is the one the server dropped.
+pub async fn while_alive<T>(
+    bots: &[&PulseBot],
+    work: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    let watch = async {
+        loop {
+            for bot in bots {
+                if let Err(reason) = bot.alive() {
+                    return Err::<T, _>(anyhow::anyhow!(
+                        "{}: {}",
+                        bot.name(),
+                        reason.trim_start_matches("fatal: ")
+                    ));
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    };
+    tokio::select! {
+        biased;
+        done = work => done,
+        ended = watch => ended,
+    }
+}
