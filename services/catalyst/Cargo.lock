@@ -1789,6 +1789,7 @@ dependencies = [
  "hex",
  "parking_lot",
  "prost",
+ "rcgen",
  "reqwest",
  "rustls",
  "rusty_enet",

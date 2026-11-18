@@ -10,7 +10,7 @@ name = "comms-e2e"
 path = "src/main.rs"
 
 [dependencies]
-catalyst-comms = { path = "../comms" }
+catalyst-comms = { path = "../comms", features = ["test-support"] }
 dcl-auth.workspace = true
 dcl-livekit-token.workspace = true
 tokio.workspace = true
@@ -31,3 +31,6 @@ rusty_enet.workspace = true
 web-transport-quinn.workspace = true
 rustls.workspace = true
 tokio-tungstenite.workspace = true
+
+[dev-dependencies]
+rcgen = "0.14.10"
