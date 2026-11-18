@@ -4,8 +4,9 @@ The explorer's Segment events, one sender: the engine. Its own events (Performan
 Explorer Error, Explorer Scene Load Times, Explorer Move To Parcel, System Info Report, Chat
 Message Sent, First Move In World, time_spent_in_world; `data_definition.rs`) and, on the web, the page's screens and clicks, which reach it
 through the `/track` console command (`page_events.rs`: a base64 JSON array of
-`{event, properties, timestamp, messageId}`, queued as sent). Web and desktop send batches through
-Decentraland's Segment domain (`api.e.decentraland.org`) because DNS filters can block the default Segment host.
+`{event, properties, timestamp, messageId}`, queued as sent). The sender posts batches through
+Decentraland's Segment domain (`api.e.decentraland.org`) because browser ad blockers and DNS
+filters can block the default Segment host.
 
 Every event carries the common fields (`dcl_eth_address`, `dcl_is_guest`, `realm`, `position`,
 `dcl_renderer_type`, `session_id`, `renderer_version`, `environment`, `is_local_scene`) as they
