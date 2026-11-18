@@ -190,7 +190,9 @@ impl Answer {
 
 pub struct Explorer {
     name: String,
-    child: Child,
+    /// Behind a lock because `try_wait` needs `&mut` while console calls take `&self` and may run
+    /// concurrently; the lock is never held across an await.
+    child: parking_lot::Mutex<Child>,
     port: u16,
     token: String,
     http: reqwest::Client,
@@ -229,9 +231,9 @@ impl Explorer {
             .spawn()
             .with_context(|| format!("starting the explorer {}", target.binary.display()))?;
 
-        let mut explorer = Explorer {
+        let explorer = Explorer {
             name: name.to_owned(),
-            child,
+            child: parking_lot::Mutex::new(child),
             port,
             token,
             http: reqwest::Client::builder()
@@ -246,10 +248,10 @@ impl Explorer {
         Ok(explorer)
     }
 
-    async fn wait_for_console(&mut self, deadline: Duration) -> Result<()> {
+    async fn wait_for_console(&self, deadline: Duration) -> Result<()> {
         let started = Instant::now();
         loop {
-            if let Some(status) = self.child.try_wait()? {
+            if let Some(status) = self.child.lock().try_wait()? {
                 bail!(
                     "{}: the explorer exited ({status}) before its console opened; the end of its log:\n{}",
                     self.name,
@@ -265,8 +267,9 @@ impl Explorer {
                 return Ok(());
             }
             if started.elapsed() >= deadline {
-                let _ = self.child.start_kill();
-                let _ = self.child.wait().await;
+                // the lock is not held across the wait: the child is killed first
+                let _ = self.child.lock().start_kill();
+                self.wait_for_exit().await;
                 bail!(
                     "{}: the explorer did not open its console within {} s; the end of its log:\n{}",
                     self.name,
@@ -278,18 +281,51 @@ impl Explorer {
         }
     }
 
-    /// One JSON-RPC exchange with the console server: the whole response object.
+    /// One JSON-RPC exchange with the console server: the whole response object. A console that
+    /// cannot be reached because the process has exited is a `fatal:` error carrying the exit
+    /// status and the end of the log, which ends the waits of `engine::expect` at once.
     async fn rpc(&self, method: &str, mut params: Value) -> Result<Value> {
         params["token"] = Value::String(self.token.clone());
         let id = self.request.fetch_add(1, Ordering::Relaxed);
-        Ok(self
-            .http
-            .post(format!("http://127.0.0.1:{}/", self.port))
-            .json(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))
-            .send()
-            .await?
-            .json()
-            .await?)
+        let exchange = async {
+            self.http
+                .post(format!("http://127.0.0.1:{}/", self.port))
+                .json(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))
+                .send()
+                .await?
+                .json()
+                .await
+        };
+        match exchange.await {
+            Ok(response) => Ok(response),
+            Err(error) => {
+                if let Some(status) = self.exit_after(&error).await {
+                    bail!(
+                        "fatal: {}: the explorer exited ({status}); the end of its log:
+{}",
+                        self.name,
+                        self.log_tail(25)
+                    );
+                }
+                Err(error.into())
+            }
+        }
+    }
+
+    /// The exit status of the process after a console call failed with `error`, if it has exited.
+    /// A refused connection can arrive a moment before the operating system reports the exit, so
+    /// that case looks a few times; a call that failed some other way looks once.
+    async fn exit_after(&self, error: &reqwest::Error) -> Option<std::process::ExitStatus> {
+        let looks = if error.is_connect() { 25 } else { 1 };
+        for look in 0..looks {
+            if let Some(status) = self.exit_status() {
+                return Some(status);
+            }
+            if look + 1 < looks {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+        None
     }
 
     /// One call whose result is wanted: a protocol error is an `Err`.
@@ -421,8 +457,20 @@ impl Explorer {
     }
 
     /// Whether the process is still running.
-    pub fn running(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
+    pub fn running(&self) -> bool {
+        matches!(self.child.lock().try_wait(), Ok(None))
+    }
+
+    /// The exit status, once the process has exited.
+    fn exit_status(&self) -> Option<std::process::ExitStatus> {
+        self.child.lock().try_wait().ok().flatten()
+    }
+
+    /// Waits for the killed process to be reaped, without holding the lock while it waits.
+    async fn wait_for_exit(&self) {
+        while self.running() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     /// The last `lines` lines of the log, without access tokens.
@@ -458,12 +506,13 @@ impl Explorer {
     /// Ends the explorer and waits for the process to go.
     pub async fn stop(mut self) {
         let _ = self.command("/exit", Duration::from_secs(2)).await;
-        if tokio::time::timeout(Duration::from_secs(5), self.child.wait())
+        let child = self.child.get_mut();
+        if tokio::time::timeout(Duration::from_secs(5), child.wait())
             .await
             .is_err()
         {
-            let _ = self.child.start_kill();
-            let _ = self.child.wait().await;
+            let _ = child.start_kill();
+            let _ = child.wait().await;
         }
         self.timeline.record(&self.name, "explorer stopped", ());
     }
