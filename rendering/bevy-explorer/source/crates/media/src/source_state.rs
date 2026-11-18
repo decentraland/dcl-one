@@ -1,6 +1,6 @@
 //! One media source's playback and reopen state as a pure machine: [`update`] takes a
 //! [`MediaSourceMsg`] (a fact that already happened) and returns the [`MediaSourceCmd`] to carry
-//! out; [`view`] derives what the scene sees. Neither reads a clock or touches the element.
+//! out; [`view`] derives the source's reported state. Neither reads a clock or touches the element.
 
 use std::time::Duration;
 
@@ -133,7 +133,7 @@ pub enum MediaSourceCmd {
     ClearScreen {
         media_id: MediaId,
     },
-    /// Sends [`MediaSourceMsg::ReopenTimerFired`] with `failure_count` after `delay`.
+    /// A [`MediaSourceMsg::ReopenTimerFired`] with `failure_count`, due after `delay`.
     ScheduleReopen {
         media_id: MediaId,
         delay: Duration,
@@ -213,7 +213,7 @@ pub struct MediaSourceState {
     duration_seconds: f64,
 }
 
-/// What the scene sees.
+/// The source's reported state.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MediaSourceView {
     pub video_state: VideoState,
@@ -417,7 +417,7 @@ fn element_observed(
         }
         (ElementObservation::ReachedEnd, MediaSourcePhase::Open { .. }) => {
             set_element_state(state, VideoState::VsPaused);
-            // a gesture does not restart the ended element
+            // an end clears the intent to play
             state.scene_playback_intent = ScenePlaybackIntent::Pause;
             MediaSourceCmd::ClearScreen { media_id }
         }

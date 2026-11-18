@@ -98,13 +98,13 @@ pub fn media_host_main(render_worker: Worker) {
                             MediaSourceMsg::SceneSeekRequested { position_seconds }
                         }
                         AVCommand::Volume(volume) => MediaSourceMsg::SceneVolumeChanged { volume },
-                        // dispose arrives as `HostCommand::Drop`
+                        // no msg: only `HostCommand::Drop` removes the element
                         AVCommand::Dispose => continue,
                     };
                     dispatch(id, msg);
                 }
                 HostCommand::Drop(id) => {
-                    // dropped outside the borrow: the element's teardown may run page code
+                    // dropped after the borrow ends: `HostMedia`'s drop calls into the element
                     let removed = MEDIA.with(|media| media.borrow_mut().remove(&id));
                     drop(removed);
                 }
@@ -202,7 +202,7 @@ fn execute(cmd: MediaSourceCmd) {
             ..
         } => {
             debug!("media {media_id}: reopen in {delay:?}");
-            // a timer of a removed element finds nothing to dispatch to
+            // holds only the id: once the element is removed it dispatches to nothing
             let callback = Closure::once_into_js(move || {
                 dispatch(media_id, MediaSourceMsg::ReopenTimerFired { failure_count })
             });
@@ -254,7 +254,7 @@ fn set_play_refusal(id: MediaId, play_refusal: PlayRefusal) {
     });
 }
 
-/// Calls `play()`, noting a refusal for the gesture retry.
+/// Calls `play()`; a rejected promise sets [`PlayRefusal::Refused`].
 fn try_play(id: MediaId, media: &HtmlMediaElement) {
     let Ok(promise) = media.play() else {
         return;
@@ -282,7 +282,7 @@ fn observation(event: &str, media: &HtmlMediaElement) -> Option<ElementObservati
         "playing" => ElementObservation::StartedPlaying,
         "waiting" => ElementObservation::Stalled,
         "seeking" => ElementObservation::StartedSeeking,
-        // the end is observed by `ended`
+        // a pause at the end maps to nothing; `ended` maps to `ReachedEnd`
         "pause" if media.ended() => return None,
         "pause" => ElementObservation::Paused,
         "timeupdate" => ElementObservation::PositionAdvanced,
