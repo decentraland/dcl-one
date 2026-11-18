@@ -300,6 +300,23 @@ describe("relaying a meta-transaction", () => {
     expect([400, 404, 409, 429, 499].every(refusedBeforeBroadcast)).toBe(true);
     expect([500, 501, 502, 503, 504, 520, 524].some(refusedBeforeBroadcast)).toBe(false);
   });
+
+  it("reads the relay's own answers by when they were produced", async () => {
+    // The bodies services/catalyst/shop answers (evm/tests.rs): an error the node answered to the
+    // send is a 504, a refusal proven before any send (the relayer's gas estimate reverted) a 400.
+    const provider = { request: async () => `0x${"22".repeat(65)}` };
+    const answering = (status: number, body: unknown) =>
+      (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
+    const relay = (fetchImpl: typeof fetch) => relayMetaTransaction({ provider, reader: fakeReader(), target, from, functionData: "0x12", fetchImpl });
+    const afterTheSend = {
+      ok: false,
+      error: "unknown",
+      message: `transaction 0x${"ab".repeat(32)} may have been broadcast: eth_sendRawTransaction failed (rpc error 3: execution reverted)`,
+    };
+    await expect(relay(answering(504, afterTheSend))).rejects.toMatchObject({ reason: "relayer-unreachable" });
+    const beforeAnySend = { ok: false, error: "invalid_transaction", message: "gas estimation reverted: execution reverted" };
+    await expect(relay(answering(400, beforeAnySend))).rejects.toMatchObject({ reason: "relayer-rejected" });
+  });
 });
 
 describe("the buyer-submitted rail", () => {

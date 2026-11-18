@@ -641,41 +641,18 @@ impl DirectSigner {
     }
 }
 
-/// What a failed `eth_sendRawTransaction` of a just-signed transaction (`hash`) tells the caller.
-/// A revert, or another error the node answers, is the node refusing it: nothing was broadcast.
-/// Two failures can come after the transaction went out, and are indeterminate, `RelayerTimeout`:
-/// never a refusal that releases the buyer's quota slot or tells a client to sign again.
-/// - No usable answer (a timeout, a cut connection, a gateway error, an unreadable body): the
-///   node may have taken it.
-/// - An answer that the node already holds or mined a transaction at this nonce ("already
-///   known", "nonce too low", an underpriced replacement): a gateway that retried the send gets
-///   these about our own transaction.
+/// What a failed `eth_sendRawTransaction` of a just-signed transaction (`hash`) tells the caller:
+/// never that it was not sent. The failure comes after the send was attempted, and nothing in it
+/// proves the transaction did not go out. No answer at all (a timeout, a cut connection, a gateway
+/// error, an unreadable body) can follow the node taking it. An error the node answers can be about
+/// a retry of a send it already took: a gateway that retried gets "already known", "nonce too low",
+/// or a revert from a node that simulates. So every send failure is `RelayerTimeout` (504): the
+/// buyer's quota slot is kept and a client follows the purchase instead of signing again. The
+/// refusals that prove nothing was sent come before this, from validation and gas estimation.
 fn send_failure(hash: &str, e: RpcError) -> ApiError {
-    if e.is_execution_revert() {
-        return ApiError::RelayReverted(format!("transaction reverted: {}", e.message()));
-    }
-    if matches!(e, RpcError::Transport(_)) || may_hold_it(&e) {
-        return ApiError::RelayerTimeout(format!(
-            "transaction {hash} may have been broadcast: eth_sendRawTransaction failed ({e})"
-        ));
-    }
-    ApiError::RelayerFailed(format!("eth_sendRawTransaction failed: {e}"))
-}
-
-/// Whether a node's error answer says it already holds, or has mined, a transaction at this nonce.
-fn may_hold_it(e: &RpcError) -> bool {
-    let m = e.message().to_ascii_lowercase();
-    [
-        "already known",
-        "alreadyknown",
-        "known transaction",
-        "already imported",
-        "nonce too low",
-        "oldnonce",
-        "replacement transaction underpriced",
-    ]
-    .iter()
-    .any(|s| m.contains(s))
+    ApiError::RelayerTimeout(format!(
+        "transaction {hash} may have been broadcast: eth_sendRawTransaction failed ({e})"
+    ))
 }
 
 /// The nonce a signed EIP-2718 transaction carries.
@@ -700,61 +677,39 @@ fn parse_tx_hash(tx_hash_hex: &str) -> Result<TxHash, ApiError> {
 mod tests {
     use super::*;
 
-    /// Only a node's refusal proves a send never went out. No answer, or an answer that the node
-    /// already holds a transaction at this nonce, keeps the slot.
+    /// No failure of the send itself proves the transaction never went out: no answer, an answer
+    /// that the node already holds it, a revert, or a plain refusal all keep the slot and answer 504.
     #[test]
-    fn a_send_with_no_answer_is_indeterminate_not_refused() {
+    fn a_failed_send_is_indeterminate_never_a_refusal() {
         use crate::evm::transaction::{ReservationDisposition, reservation_disposition};
-        let hash = "0x01";
-        let revert = send_failure(
-            hash,
-            RpcError::Response {
-                code: 3,
-                message: "execution reverted".into(),
-            },
-        );
-        assert!(matches!(revert, ApiError::RelayReverted(_)));
-        let refused = send_failure(
-            hash,
-            RpcError::Response {
-                code: -32000,
-                message: "insufficient funds for gas * price + value".into(),
-            },
-        );
-        assert!(matches!(refused, ApiError::RelayerFailed(_)));
-        assert_eq!(
-            reservation_disposition(&refused),
-            ReservationDisposition::Release
-        );
-        let silent = send_failure(hash, RpcError::Transport("operation timed out".into()));
-        assert!(matches!(silent, ApiError::RelayerTimeout(_)), "{silent}");
-        assert_eq!(silent.status(), axum::http::StatusCode::GATEWAY_TIMEOUT);
-        assert_eq!(
-            reservation_disposition(&silent),
-            ReservationDisposition::Keep
-        );
-        for message in [
-            "already known",
-            "AlreadyKnown",
-            "Known transaction",
-            "nonce too low: next nonce 6, tx nonce 5",
-            "replacement transaction underpriced",
+        let answered = |code: i64, message: &str| RpcError::Response {
+            code,
+            message: message.into(),
+        };
+        for failure in [
+            RpcError::Transport("operation timed out".into()),
+            RpcError::Transport("rpc responded with status 502".into()),
+            answered(3, "execution reverted"),
+            answered(-32000, "already known"),
+            answered(-32000, "nonce too low: next nonce 6, tx nonce 5"),
+            answered(-32000, "replacement transaction underpriced"),
+            answered(-32000, "insufficient funds for gas * price + value"),
         ] {
-            let held = send_failure(
-                hash,
-                RpcError::Response {
-                    code: -32000,
-                    message: message.into(),
-                },
-            );
+            let what = failure.to_string();
+            let error = send_failure("0x01", failure);
             assert!(
-                matches!(held, ApiError::RelayerTimeout(_)),
-                "{message}: {held}"
+                matches!(error, ApiError::RelayerTimeout(_)),
+                "{what}: {error}"
             );
             assert_eq!(
-                reservation_disposition(&held),
+                error.status(),
+                axum::http::StatusCode::GATEWAY_TIMEOUT,
+                "{what}"
+            );
+            assert_eq!(
+                reservation_disposition(&error),
                 ReservationDisposition::Keep,
-                "{message}"
+                "{what}"
             );
         }
     }

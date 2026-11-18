@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 use super::errors::ApiError;
 use super::transaction::TransactionData;
-use crate::http::{Outbound, read_body_capped};
+use crate::http::{Outbound, SendError, read_body_capped};
 
 const CANCEL_REQUEST_TIMEOUT: Duration = Duration::from_millis(5000);
 const OZ_BODY_CAP: usize = 256 * 1024;
@@ -84,6 +84,11 @@ impl Relayer {
         format!("Bearer {}", self.api_key)
     }
 
+    /// Submits the call and waits for its hash. Only an answer that proves the relayer created no
+    /// transaction is a refusal: a 400 or 422 to the submission (`RelayReverted`), another 4xx
+    /// (`RelayerFailed`), or a connection that never opened (`RelayerUnavailable`). Once the
+    /// relayer may hold the transaction (a submission cut after it was sent, a 5xx, a 2xx that
+    /// cannot be read), the outcome is unknown: `RelayerTimeout`.
     pub async fn send_meta_transaction(&self, tx: &TransactionData) -> Result<String, ApiError> {
         let resp = self
             .http
@@ -92,7 +97,17 @@ impl Relayer {
             .json(&serde_json::json!({ "to": tx.params[0], "data": tx.params[1], "speed": self.speed, "value": "0x0" }))
             .send()
             .await
-            .map_err(|e| ApiError::RelayerFailed(format!("relayer request failed: {e}")))?;
+            .map_err(|e| match e {
+                SendError::Refused(m) => {
+                    ApiError::RelayerUnavailable(format!("relayer request refused: {m}"))
+                }
+                SendError::Http(ref h) if h.is_connect() => {
+                    ApiError::RelayerUnavailable(format!("relayer could not be reached: {e}"))
+                }
+                SendError::Http(_) => ApiError::RelayerTimeout(format!(
+                    "the relayer did not answer after the request was sent: {e}"
+                )),
+            })?;
 
         let status = resp.status();
         let body = read_body_capped(resp, OZ_BODY_CAP)
@@ -103,21 +118,26 @@ impl Relayer {
             if status.as_u16() == 422 || status.as_u16() == 400 {
                 return Err(ApiError::RelayReverted(text));
             }
-            return Err(ApiError::RelayerFailed(format!(
+            let message = format!(
                 "The relayer responded with a {} status code: {text}",
                 status.as_u16()
-            )));
+            );
+            return Err(if status.is_server_error() {
+                ApiError::RelayerTimeout(message)
+            } else {
+                ApiError::RelayerFailed(message)
+            });
         }
-        let parsed: OzResponse = serde_json::from_slice(&body)
-            .map_err(|e| ApiError::RelayerFailed(format!("relayer decode failed: {e}")))?;
+        let parsed: OzResponse = serde_json::from_slice(&body).map_err(|e| {
+            ApiError::RelayerTimeout(format!("relayer accepted the request, decode failed: {e}"))
+        })?;
         let tx_data = match (parsed.success, parsed.data) {
             (true, Some(d)) => d,
             _ => {
-                return Err(ApiError::RelayerFailed(
-                    parsed
-                        .error
-                        .unwrap_or_else(|| "Unexpected response from relayer".into()),
-                ));
+                return Err(ApiError::RelayerTimeout(format!(
+                    "relayer accepted the request without a transaction: {}",
+                    parsed.error.unwrap_or_else(|| "unexpected response".into())
+                )));
             }
         };
         if let Some(hash) = &tx_data.hash
@@ -177,10 +197,18 @@ impl Relayer {
                     .status_reason
                     .clone()
                     .unwrap_or_else(|| data.status.clone());
-                return Err(ApiError::RelayReverted(format!(
-                    "Transaction {}: {}",
-                    data.status, reason
-                )));
+                // With a hash the relayer signed and may have sent it: a terminal status is its
+                // view, not proof that transaction can no longer land. Without one, nothing went
+                // out.
+                return Err(match data.hash {
+                    Some(hash) => ApiError::RelayerTimeout(format!(
+                        "Transaction {} after it was submitted as {hash}: {reason}",
+                        data.status
+                    )),
+                    None => {
+                        ApiError::RelayReverted(format!("Transaction {}: {}", data.status, reason))
+                    }
+                });
             }
             if BROADCAST_STATUSES.contains(&data.status.as_str())
                 && let Some(hash) = data.hash
@@ -314,6 +342,104 @@ mod tests {
         );
         assert_eq!(cancellations.load(Ordering::SeqCst), 1);
         server.abort();
+    }
+
+    async fn serve(app: axum::Router) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        (
+            url,
+            tokio::spawn(async move { axum::serve(listener, app).await.unwrap() }),
+        )
+    }
+
+    fn relayer(url: &str) -> Relayer {
+        Relayer::new(
+            Outbound::for_tests(),
+            url,
+            "rid",
+            "key",
+            "fast",
+            3,
+            Duration::from_millis(10),
+        )
+    }
+
+    /// A terminal status is a refusal only when the relayer never signed the transaction (no
+    /// hash). With a hash it may be out, so the outcome is unknown.
+    #[tokio::test]
+    async fn a_terminal_status_is_a_refusal_only_without_a_hash() {
+        for (status, hash) in [
+            ("failed", None),
+            ("canceled", None),
+            ("failed", Some("0xhash")),
+            ("expired", Some("0xhash")),
+        ] {
+            let app = axum::Router::new().route(
+                "/api/v1/relayers/rid/transactions/tx",
+                axum::routing::get(move || async move {
+                    axum::Json(serde_json::json!({"success": true, "data": {"id": "tx", "status": status, "hash": hash, "status_reason": "reverted"}}))
+                }),
+            );
+            let (url, server) = serve(app).await;
+            let result = tokio::time::timeout(
+                Duration::from_secs(2),
+                relayer(&url).wait_for_broadcast("tx"),
+            )
+            .await
+            .unwrap();
+            match hash {
+                None => assert!(
+                    matches!(result, Err(ApiError::RelayReverted(_))),
+                    "{status}: {result:?}"
+                ),
+                Some(_) => assert!(
+                    matches!(result, Err(ApiError::RelayerTimeout(_))),
+                    "{status} with a hash: {result:?}"
+                ),
+            }
+            server.abort();
+        }
+    }
+
+    /// A 400 or 422 to the submission created no transaction. A 5xx, or a 2xx that cannot be read,
+    /// may follow the relayer creating one.
+    #[tokio::test]
+    async fn the_submission_is_refused_only_when_no_transaction_was_created() {
+        let tx = TransactionData {
+            from: "0x0000000000000000000000000000000000000001".into(),
+            params: vec![
+                "0x0000000000000000000000000000000000000002".into(),
+                "0x12".into(),
+            ],
+        };
+        for (code, body, refused) in [
+            (422u16, "simulation reverted", true),
+            (400, "bad request", true),
+            (500, "internal", false),
+            (200, "not json", false),
+        ] {
+            let app = axum::Router::new().route(
+                "/api/v1/relayers/rid/transactions",
+                axum::routing::post(move || async move {
+                    (axum::http::StatusCode::from_u16(code).unwrap(), body)
+                }),
+            );
+            let (url, server) = serve(app).await;
+            let result = relayer(&url).send_meta_transaction(&tx).await;
+            if refused {
+                assert!(
+                    matches!(result, Err(ApiError::RelayReverted(_))),
+                    "{code}: {result:?}"
+                );
+            } else {
+                assert!(
+                    matches!(result, Err(ApiError::RelayerTimeout(_))),
+                    "{code}: {result:?}"
+                );
+            }
+            server.abort();
+        }
     }
 
     #[test]

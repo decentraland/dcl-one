@@ -678,7 +678,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         if (record === 'expired') {
           op.expiredSince ??= svc.now()
           if (svc.now() - op.expiredSince >= EXPIRY_CONFIRM_MS) {
-            settled(op, 'failed', {}, 'This purchase never went through, and its Credits expired unused: nothing was bought.', 'one of its transactions never went through, and its Credits expired unused.')
+            // Expiry with no consumption indexed past it: it can no longer land, not proof it was never sent.
+            settled(op, 'failed', {}, 'This purchase expired before its Credits were spent on chain: nothing was bought.', 'one of its transactions expired before its Credits were spent on chain.')
             return true
           }
         } else op.expiredSince = undefined

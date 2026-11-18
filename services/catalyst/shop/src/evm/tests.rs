@@ -2142,18 +2142,46 @@ async fn a_broadcast_whose_hash_cannot_be_recorded_still_answers_the_hash() {
     cleanup_user(&pool, &user).await;
 }
 
-/// A JSON-RPC endpoint in front of `chain_url` that loses the answer to `eth_sendRawTransaction`:
-/// the send reaches the node (the fake chain records it), and the caller gets a gateway's 502 page.
-/// Every other call passes through.
-async fn spawn_rpc_losing_send_answers(chain_url: String) -> String {
+/// What a JSON-RPC endpoint in front of the fake chain does to one call; the rest pass through.
+#[derive(Clone, Copy)]
+enum RpcFault {
+    /// The send reaches the node (the fake chain records it), and the caller gets a gateway 502.
+    LoseTheSendAnswer,
+    /// The send reaches the node, and the caller gets a JSON-RPC revert error, as from a gateway
+    /// that retried a send the node had already taken, or a node that simulates.
+    AnswerTheSendWithARevert,
+    /// The relayer's own gas estimation reverts (the buyer's simulation passes): the relay has
+    /// reserved the slot and refuses before it signs or sends anything.
+    RevertTheRelayersEstimate,
+}
+
+async fn spawn_faulty_rpc(chain_url: String, fault: RpcFault, relayer: Address) -> String {
     async fn handle(
-        axum::extract::State(chain): axum::extract::State<String>,
+        axum::extract::State((chain, fault, relayer)): axum::extract::State<(
+            String,
+            RpcFault,
+            String,
+        )>,
         body: axum::body::Bytes,
     ) -> axum::response::Response {
         use axum::response::IntoResponse;
-        let sending = serde_json::from_slice::<Value>(&body)
-            .ok()
-            .is_some_and(|req| req["method"] == "eth_sendRawTransaction");
+        let req = serde_json::from_slice::<Value>(&body).unwrap_or_default();
+        let revert = Json(json!({
+            "jsonrpc": "2.0",
+            "id": req["id"],
+            "error": { "code": 3, "message": "execution reverted" }
+        }));
+        let method = req["method"].as_str().unwrap_or("");
+        let from = req["params"][0]["from"]
+            .as_str()
+            .unwrap_or("")
+            .to_lowercase();
+        if method == "eth_estimateGas"
+            && matches!(fault, RpcFault::RevertTheRelayersEstimate)
+            && from == relayer
+        {
+            return revert.into_response();
+        }
         let answer = reqwest::Client::new()
             .post(&chain)
             .header("content-type", "application/json")
@@ -2161,43 +2189,45 @@ async fn spawn_rpc_losing_send_answers(chain_url: String) -> String {
             .send()
             .await
             .expect("the fake chain answers");
-        if sending {
-            return (StatusCode::BAD_GATEWAY, "<html>502 Bad Gateway</html>").into_response();
+        if method == "eth_sendRawTransaction" {
+            match fault {
+                RpcFault::LoseTheSendAnswer => {
+                    return (StatusCode::BAD_GATEWAY, "<html>502 Bad Gateway</html>")
+                        .into_response();
+                }
+                RpcFault::AnswerTheSendWithARevert => return revert.into_response(),
+                RpcFault::RevertTheRelayersEstimate => {}
+            }
         }
         let status = StatusCode::from_u16(answer.status().as_u16()).unwrap();
         let text = answer.bytes().await.expect("the fake chain's body");
         (status, [("content-type", "application/json")], text).into_response()
     }
-    let app = axum::Router::new()
-        .route("/", post(handle))
-        .with_state(chain_url);
+    let app = axum::Router::new().route("/", post(handle)).with_state((
+        chain_url,
+        fault,
+        format!("{relayer:#x}"),
+    ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
-        .expect("bind lossy rpc");
-    let addr = listener.local_addr().expect("lossy rpc addr");
+        .expect("bind faulty rpc");
+    let addr = listener.local_addr().expect("faulty rpc addr");
     tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
     format!("http://{addr}")
 }
 
-/// The node took the transaction, but its answer to the send was lost. That is no evidence the
-/// transaction was never sent: the relay answers 504 with no hash, never a refusal (which the
-/// client would read as "sign again"), and the buyer's quota slot stays consumed.
-#[tokio::test]
-async fn a_send_the_node_took_but_whose_answer_was_lost_is_never_a_refusal() {
-    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
-        .lock()
-        .await;
-    let Some(pool) = scratch_pool().await else {
-        return;
-    };
+/// One relayed purchase through a direct signer whose RPC has `fault`: the answer, how many raw
+/// transactions reached the node, and the buyer's reservation (rows, recorded hash).
+async fn relay_through(fault: RpcFault) -> ((u16, Value), usize, i64, Option<String>) {
+    let pool = scratch_pool().await.expect("a scratch database");
     seed_collection(&pool, COLLECTION).await;
     let (chain_url, raws) = spawn_fake_chain().await;
-    let lossy = spawn_rpc_losing_send_answers(chain_url).await;
     let relayer_key = PrivateKeySigner::random();
+    let rpc = spawn_faulty_rpc(chain_url, fault, relayer_key.address()).await;
     let settings = Settings {
-        polygon_rpc_url: Some(lossy),
+        polygon_rpc_url: Some(rpc),
         meta_tx_broadcast_enabled: true,
         relayer_private_key: Some(hex::encode(relayer_key.to_bytes())),
         ..Settings::for_tests()
@@ -2205,7 +2235,7 @@ async fn a_send_the_node_took_but_whose_answer_was_lost_is_never_a_refusal() {
     let app = router(state(pool.clone(), settings));
     let user_key = PrivateKeySigner::random();
     let user = format!("{:#x}", user_key.address());
-    let (status, body) = post_transaction(
+    let answer = post_transaction(
         &app,
         &user,
         COLLECTION,
@@ -2220,12 +2250,62 @@ async fn a_send_the_node_took_but_whose_answer_was_lost_is_never_a_refusal() {
         None
     };
     cleanup_user(&pool, &user).await;
+    (answer, sent, rows, hash)
+}
+
+/// The node took the transaction, but its answer to the send was lost. That is no evidence the
+/// transaction was never sent: the relay answers 504 with no hash, never a refusal (a 4xx, which
+/// the client reads as "sign again"), and the buyer's quota slot stays consumed.
+#[tokio::test]
+async fn a_send_the_node_took_but_whose_answer_was_lost_is_never_a_refusal() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    if scratch_pool().await.is_none() {
+        return;
+    }
+    let ((status, body), sent, rows, hash) = relay_through(RpcFault::LoseTheSendAnswer).await;
     assert_eq!(sent, 1, "the node holds the transaction");
     assert_eq!(status, 504, "{body}");
     assert_eq!(body["ok"], false, "{body}");
     assert!(body.get("txHash").is_none(), "{body}");
     assert_eq!(rows, 1, "the reservation still counts against the quota");
     assert_eq!(hash, None, "no hash was observed");
+}
+
+/// A JSON-RPC error answered to the send (here a revert) comes after the send was attempted, and
+/// the node may hold the transaction: it is a 504 that keeps the slot, never the 400 a client reads
+/// as "never sent".
+#[tokio::test]
+async fn an_error_answered_to_the_send_is_never_a_refusal() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    if scratch_pool().await.is_none() {
+        return;
+    }
+    let ((status, body), sent, rows, _) = relay_through(RpcFault::AnswerTheSendWithARevert).await;
+    assert_eq!(sent, 1, "the node holds the transaction");
+    assert_eq!(status, 504, "{body}");
+    assert_eq!(body["ok"], false, "{body}");
+    assert_eq!(rows, 1, "the reservation still counts against the quota");
+}
+
+/// The control: a refusal proven before any send (the relayer's gas estimation reverts, after the
+/// slot was reserved) is still a 400 that releases the slot, and nothing reaches the node.
+#[tokio::test]
+async fn a_refusal_before_any_send_is_still_a_4xx_that_frees_the_slot() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    if scratch_pool().await.is_none() {
+        return;
+    }
+    let ((status, body), sent, rows, _) = relay_through(RpcFault::RevertTheRelayersEstimate).await;
+    assert_eq!(sent, 0, "nothing reached the node");
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(body["ok"], false, "{body}");
+    assert_eq!(rows, 0, "the slot is released");
 }
 
 /// A real read over a real endpoint, only when `ECONOMY_LIVE_RPC_URL` names
