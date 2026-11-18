@@ -249,7 +249,10 @@ class WorkflowTest(unittest.TestCase):
         jobs = dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)', workflow.split('\njobs:\n', 1)[1]))
         self.assertEqual([name for name, job in jobs.items() if 'materialise' in job], ['test', 'clippy'])
         # Clippy compiles `common`'s tests, which include a shader of the Bevy tree.
-        self.assertIn('        run: python3 "$GITHUB_WORKSPACE/tooling/patched-sources.py" materialise bevy\n', jobs['clippy'])
+        clippy = jobs['clippy']
+        self.assertIn('        run: python3 "$GITHUB_WORKSPACE/tooling/patched-sources.py" materialise bevy\n', clippy)
+        # Written before the file times are restored, so an unchanged tree keeps its cached times.
+        self.assertLess(clippy.index('patched-sources.py" materialise bevy'), clippy.index('bevy-mtimes.py" restore'))
         job = jobs['test']
         python, rebuild, tests = (job.index(step) for step in (
             "python-version: '3.12'\n", 'run: python "$GITHUB_WORKSPACE/tooling/patched-sources.py" materialise bevy\n',
@@ -1132,11 +1135,12 @@ class SelectionTest(unittest.TestCase):
 
     def test_a_bevy_patch_and_the_patch_tool_select_the_test_suite_on_each_system(self):
         # The Test Suite rebuilds the Bevy tree from its series with the tool and tests its crates on
-        # each system. Every build takes a patched source by the revision that Cargo.lock names, so
-        # no other job and no image reads a series or the tool.
-        cases = (('rendering/bevy-explorer/patches/bevy/series/0001-scene-spawner.patch', {'test', 'native-matrix'}),
-                 ('rendering/bevy-explorer/patches/bevy/source.toml', {'test', 'native-matrix'}),
-                 ('tooling/patched-sources.py', {'test', 'native-matrix'}),
+        # each system; Clippy rebuilds it for a shader that `common`'s tests include. Every build takes
+        # a patched source by the revision that Cargo.lock names, so no other job and no image reads a
+        # series or the tool.
+        cases = (('rendering/bevy-explorer/patches/bevy/series/0001-scene-spawner.patch', {'test', 'clippy', 'native-matrix'}),
+                 ('rendering/bevy-explorer/patches/bevy/source.toml', {'test', 'clippy', 'native-matrix'}),
+                 ('tooling/patched-sources.py', {'test', 'clippy', 'native-matrix'}),
                  ('rendering/bevy-explorer/patches/winit/series/0001-one.patch', set()))
         for path, expected in cases:
             with self.subTest(path=path):
