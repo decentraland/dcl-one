@@ -7,8 +7,7 @@
 import { useEffect, useState } from 'react'
 import { Button } from './Button'
 
-/** How long a confirm waits before it answers. The Shop's BUY ITEM waits as long, in its own copy
- *  (ShopPurchaseDialog's ArmedButton). */
+/** How long a confirm waits before it answers (the Shop's BUY ITEM uses this button too). */
 export const ARM_MS = 500
 
 /** Every prop of Button's `<button>` form (variant, size, radius and the element's own), with a plain onClick. */

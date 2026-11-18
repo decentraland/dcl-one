@@ -8621,7 +8621,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/ArmedButton.tsx",
-      "sha256": "30b07387265952b3a41b3544f7aa113b804c227f8b2028416d4f383fba9c5089"
+      "sha256": "bbe567cca558cdf6d5e05753f2ada59d25c55cbf71e4041f992fa5ac441bb486"
     },
     {
       "path": "library/ui/apps/hud/design/Avatar.module.css",
