@@ -4997,7 +4997,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       case 'ChatPanel': toggleChat(); break
       case 'Emote': toggleEmotes(); break
       // 'Microphone' is NOT handled here: MicUiPlugin isn't NativeUi-gated, so the engine
-      // itself still toggles the mic on that action (the mic relay updates the HUD icon).
+      // itself opens the mic on press and closes it on release (the mic relay updates the
+      // HUD icon).
       // 'Chat' (Enter) is NOT handled here: the bridge's chat domain turns it into the
       // dedicated 'focusChat' message (releasing the engine pointer lock scene-side too).
     }

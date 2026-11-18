@@ -271,9 +271,23 @@ export default withSdk<Props>(({ sdk }) => {
                 onChange={e => handleModify({ default: e.target.checked })}
               />
               <MoreOptionsMenu>
-                <Button onClick={handleResetToDefaults}>Reset to defaults</Button>
-                <Button onClick={handleDuplicate}>Duplicate</Button>
                 <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleResetToDefaults}
+                >
+                  Reset to defaults
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleDuplicate}
+                >
+                  Duplicate
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
                   className="RemoveButton"
                   disabled={isLastSpawnArea}
                   onClick={handleDelete}

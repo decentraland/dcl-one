@@ -35,9 +35,25 @@ export async function getUpdateDependenciesStrategy() {
   return DEFAULT_DEPENDENCY_UPDATE_STRATEGY;
 }
 
+/**
+ * Writes the app settings, except the AI sharing keys: the sharing decisions and requests are
+ * written only by `updateAiSharingSettings`, so a screen holding an older copy of the settings
+ * can't bring back a decision the creator has since changed.
+ */
 export async function updateAppSettings(settings: AppSettings) {
-  // update app settings on config file
-  await setConfig(config => (config.settings = settings));
+  await setConfig(config => {
+    const { aiDataSharing, aiSharingPending } = config.settings ?? {};
+    config.settings = { ...settings, aiDataSharing, aiSharingPending };
+  });
+}
+
+export type AiSharingSettings = Pick<AppSettings, 'aiDataSharing' | 'aiSharingPending'>;
+
+/** Writes the AI sharing keys of the settings, and nothing else. */
+export async function updateAiSharingSettings(sharing: AiSharingSettings) {
+  await setConfig(config => {
+    config.settings = { ...config.settings, ...sharing };
+  });
 }
 
 export async function selectSceneFolder(): Promise<string | undefined> {

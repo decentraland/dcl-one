@@ -186,7 +186,12 @@ export const slice = createSlice({
         },
       )
       .addCase(thunks.updateSettings.fulfilled, (state, { meta }) => {
-        state.settings = meta.arg;
+        // The sharing keys are not written by this action (see `updateAppSettings`).
+        const { aiDataSharing, aiSharingPending } = state.settings;
+        state.settings = { ...meta.arg, aiDataSharing, aiSharingPending };
+      })
+      .addCase(thunks.updateAiSharingSettings.fulfilled, (state, { meta }) => {
+        state.settings = { ...state.settings, ...meta.arg };
       })
       .addCase(thunks.fetchSdkCommandsVersion.fulfilled, (state, action) => {
         if (!supportsMultiInstance(action.payload.version)) {

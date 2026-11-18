@@ -222,6 +222,10 @@ export const runProject = createAsyncThunk(
   },
 );
 export const updateSettings = createAsyncThunk('config/updateSettings', settings.updateAppSettings);
+export const updateAiSharingSettings = createAsyncThunk(
+  'config/updateAiSharingSettings',
+  settings.updateAiSharingSettings,
+);
 export const updateSceneJson = createAsyncThunk(
   'scene/updateScene',
   async ({ path, updates }: { path: string; updates: Partial<Scene> }) => {
