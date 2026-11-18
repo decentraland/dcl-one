@@ -555,7 +555,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     position.
   - *The screen.* unity-explorer renders black whenever a player is in `VsError` or `VsNone`; here
     the image turns black when the source gives up or a non-looping source ends, and keeps the
-    last frame while a reopen is pending; the failed source is detached meanwhile.
+    last frame while a reopen is pending; the failed source is detached meanwhile. A non-looping
+    source that ends reports `VsNone`, as in unity-explorer.
 
   Native (FFmpeg) has no reopen: its first error ends playback.
 - **The map's markers are HUD elements, not a rendered scene.** unity-explorer draws its map and

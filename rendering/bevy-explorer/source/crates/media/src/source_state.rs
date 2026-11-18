@@ -416,7 +416,7 @@ fn element_observed(
             MediaSourceCmd::None
         }
         (ElementObservation::ReachedEnd, MediaSourcePhase::Open { .. }) => {
-            set_element_state(state, VideoState::VsPaused);
+            set_element_state(state, VideoState::VsNone);
             // an end clears the intent to play
             state.scene_playback_intent = ScenePlaybackIntent::Pause;
             MediaSourceCmd::ClearScreen { media_id }
@@ -840,7 +840,7 @@ mod tests {
     }
 
     #[test]
-    fn a_live_end_is_a_failure_and_an_on_demand_end_clears_the_screen() {
+    fn a_live_end_is_a_failure_and_an_on_demand_end_reports_none_and_clears_the_screen() {
         let mut live = playing();
         update(
             &mut live,
@@ -864,7 +864,7 @@ mod tests {
             ),
             MediaSourceCmd::ClearScreen { media_id: ID }
         );
-        assert_eq!(video_state(&on_demand), VideoState::VsPaused);
+        assert_eq!(video_state(&on_demand), VideoState::VsNone);
         assert!(!on_demand.wants_element_playback());
         assert_eq!(
             update(&mut on_demand, MediaSourceMsg::ScenePlayRequested),
