@@ -208,9 +208,10 @@ export function registerBevyRenderer(): void {
       // held in mutable holders and rebuilt against the new window on reload (the
       // bus-based bridges below survive a reboot, and `modifiers` is retargeted).
       let forwardBridge: ReturnType<typeof createForwardEditBridge> | null = null;
-      // Editing = the scene is frozen and the user drives the free fly-camera.
+      // Editing = the scene is stopped (frozen at its initial state; a Pause keeps
+      // the scene as it was) and the user drives the free fly-camera.
       const isEditingWithFreeCamera = () =>
-        !bevy.sceneRun.isRunning() && bevy.editorCamera.getMode() === 'free';
+        sceneRunBridge.isStopped() && bevy.editorCamera.getMode() === 'free';
       let disconnectPreview = () => {};
       let disconnectInputFocus = () => {};
       let disconnectFlyInput = () => {};
@@ -223,6 +224,11 @@ export function registerBevyRenderer(): void {
       // polled (a running scene can create more code entities). Tracks the live engine
       // window across reboots.
       let liveEngineWindow = engine.engineWindow;
+      // The last entity list the engine reported. When it changes (the scene's
+      // main() ran after a load or a Stop, or a running scene made entities), the
+      // forward bridge re-reads what the scene's code made: camera attachments and
+      // root lighting exist only in the engine.
+      let lastSceneEntities: string | null = null;
       const updateEntityIdFloor = async () => {
         let reply: string;
         try {
@@ -232,6 +238,10 @@ export function registerBevyRenderer(): void {
         }
         const max = parseMaxLiveEntityId(reply);
         if (max > 0) setEntityIdFloor(max + 1);
+        if (reply !== lastSceneEntities) {
+          lastSceneEntities = reply;
+          forwardBridge?.refreshEngineScene();
+        }
       };
 
       const rewireEngineBindings = (engineWindow: typeof engine.engineWindow) => {
@@ -259,6 +269,7 @@ export function registerBevyRenderer(): void {
           engineWindow,
           // On arm, pause loaded Animator clips if the scene is frozen (#1382).
           isFrozen: () => !sceneRunBridge.isRunning(),
+          isStopped: () => sceneRunBridge.isStopped(),
           hideCameraAttachments: isEditingWithFreeCamera,
         });
 
@@ -418,10 +429,11 @@ export function registerBevyRenderer(): void {
           cameraBridge.setEditingEnabled(bevy.interaction.isEditingEnabled());
         },
       });
-      // The player's avatar is only shown while the scene RUNS or the user drives
-      // the player camera. An avatar standing at the spawn point while you edit a
-      // frozen scene reads as scene content (and the free camera's keys must never
-      // walk it — see fly-input-bridge.ts). The agent enacts it (set-avatar-visible).
+      // The player's avatar is hidden while the scene is stopped and the user drives
+      // the free camera; Play, a Pause and the player camera show it. An avatar
+      // standing at the spawn point while you edit a stopped scene reads as scene
+      // content (and the free camera's keys must never walk it — see
+      // fly-input-bridge.ts). The agent enacts it (set-avatar-visible).
       // For the same reason, entities the scene attaches to its camera are hidden
       // then: the engine's camera entity is the editor's fly-camera, so they would
       // hang in front of the view (the forward bridge enacts it).
@@ -574,7 +586,11 @@ export function registerBevyRenderer(): void {
       const disconnectLayoutReload = createLayoutReloadBridge({
         context: bevy.context,
         reboot: rebootEngine,
-        onReloaded: () => sceneRunBridge.setRunning(sceneRunBridge.isRunning()),
+        onReloaded: () => {
+          // The reboot restarted the scene from its initial state.
+          sceneRunBridge.markRestarted();
+          sceneRunBridge.setRunning(sceneRunBridge.isRunning());
+        },
       });
 
       // Stop/reset (#1376): restart the inspected scene to its initial state, then
@@ -609,6 +625,10 @@ export function registerBevyRenderer(): void {
         // reconcile at reset-complete does it once the scene is pinned again.)
         sceneRunBridge.setRunning(false);
         sceneRunBridge.reset();
+        // Stopped now, also from a Pause (which kept the avatar shown): hide it in the
+        // free camera. The camera attachments are re-hidden on the reloaded scene by
+        // reconcileAfterReload.
+        cameraBridge.setAvatarVisible(!isEditingWithFreeCamera());
       });
 
       // Spawn-point handle: the controller shows/hides the move-handle via the

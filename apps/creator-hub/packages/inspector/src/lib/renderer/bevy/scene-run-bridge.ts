@@ -24,6 +24,13 @@ export interface SceneRunBridge {
    * Used to RE-assert freeze/run after a scene reload, which drops the freeze the
    * agent applied to the previous scene instance. */
   isRunning(): boolean;
+  /** True while the scene is frozen at its initial state: since it loaded or was
+   * stopped, before any Play. A Pause keeps the scene as it was when paused, so it
+   * is frozen but not stopped. Starts true (the editor opens the scene stopped). */
+  isStopped(): boolean;
+  /** The engine restarted the scene from its initial state outside a Stop (a
+   * reboot for a parcel-layout change): unless it is running, it is stopped again. */
+  markRestarted(): void;
   /** Stop/reset (#1376): ask the agent to restart the inspected scene to its
    * initial state (via the engine's scene-scoped `reload`). Fast — no engine
    * reboot. The caller re-asserts freeze afterwards. */
@@ -55,6 +62,7 @@ export function createSceneRunBridge(options: SceneRunBridgeOptions = {}): Scene
   // The editor boots frozen (the agent freezes on boot); track the last intent so
   // it can be re-asserted after a scene reload.
   let running = false;
+  let stopped = true;
 
   if (options.onResetComplete || options.onSceneError) {
     channel.onmessage = ({ data }: { data: unknown }) => {
@@ -69,12 +77,14 @@ export function createSceneRunBridge(options: SceneRunBridgeOptions = {}): Scene
 
   const setRunning = (next: boolean): void => {
     running = next;
+    if (next) stopped = false;
     const msg: PageToScene = { kind: 'set-scene-frozen', frozen: !next };
     const envelope: BusEnvelope = { to: 'scene', msg };
     channel.postMessage(envelope);
   };
 
   const reset = (): void => {
+    stopped = true;
     const msg: PageToScene = { kind: 'reset-scene' };
     const envelope: BusEnvelope = { to: 'scene', msg };
     channel.postMessage(envelope);
@@ -83,6 +93,10 @@ export function createSceneRunBridge(options: SceneRunBridgeOptions = {}): Scene
   return {
     setRunning,
     isRunning: () => running,
+    isStopped: () => stopped,
+    markRestarted: () => {
+      if (!running) stopped = true;
+    },
     reset,
     disconnect: () => {
       if (channel.onmessage) channel.onmessage = null;
