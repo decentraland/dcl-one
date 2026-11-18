@@ -1866,6 +1866,7 @@ dependencies = [
  "const-fnv1a-hash",
  "log",
  "serde",
+ "sysinfo",
 ]
 
 [[package]]
@@ -12455,6 +12456,7 @@ dependencies = [
  "alloy-signer-local",
  "analytics",
  "anyhow",
+ "assets",
  "async-std",
  "avatar",
  "ban_block",
@@ -12473,6 +12475,8 @@ dependencies = [
  "dcl_types",
  "input_manager",
  "ipfs",
+ "naga_oil",
+ "pipeline_test",
  "platform",
  "reqwest",
  "scene_material",
@@ -12482,6 +12486,7 @@ dependencies = [
  "shlex",
  "social",
  "system_bridge",
+ "texture_camera",
  "tokio",
  "tween",
  "ui_core",

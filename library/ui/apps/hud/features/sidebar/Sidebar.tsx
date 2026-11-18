@@ -15,7 +15,7 @@ import type { PassportTab } from '../profile/ProfilePassport'
 import { EDITOR_BUILD } from '@explorer-core/features/editorHost/config'
 import { EditorOffered } from '../editorHost/EditorOffered'
 import { useLiveEventCount } from '../events/useLiveEventCount'
-import { canExit, exitApplication } from '../gate/exitApplication'
+import { exitApplication } from '../gate/exitApplication'
 import { signOutOfWorld } from '../gate/signOutOfWorld'
 import { useAutoHide } from './useAutoHide'
 import { useRailPopover } from './useRailPopover'
@@ -397,7 +397,7 @@ export function Sidebar({
               onProfile={onViewProfile != null ? () => onViewProfile() : session.profile.toggle}
               onBadges={onViewProfile != null ? () => onViewProfile('badges') : undefined}
               onSignOut={signOutOffered ? signOutOfWorld : undefined}
-              onExit={canExit() ? exitApplication : undefined}
+              onExit={exitApplication}
               onClose={closePanel}
             />
           )}

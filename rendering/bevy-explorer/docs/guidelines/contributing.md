@@ -187,6 +187,7 @@ fails the check. For a targeted run, `--filter TEXT` selects matching tests and
 | The failure memory keeps answering after a poisoned lock | `a_poisoned_failure_memory_keeps_answering` |
 | Content reads are keyed by hash and url reads by url, so only content can be remembered for the session | `content_reads_are_keyed_by_hash_and_url_reads_by_url` |
 | A session failure answers only content reads; any other read of the url keeps the retry window, and a success clears the entry | `a_session_failure_answers_only_content_reads`, `a_successful_download_clears_a_failure_of_its_url` |
+| A content download that does not match its hash fails uncached and is asked for again after the retry window; a match is read and cached; a name the check cannot verify is read uncached | `a_download_that_does_not_match_its_hash_fails_and_is_not_cached`, `a_hash_mismatch_is_asked_for_again_after_the_retry_window`, `a_download_that_matches_its_hash_is_read_and_cached`, `a_name_the_hash_check_cannot_verify_is_read_and_not_cached` |
 
 Give each test its own gate and counters so it can run alongside other tests. Trace destructor
 paths for nested locks or file I/O under a lock. When changing diagnostics, check the units

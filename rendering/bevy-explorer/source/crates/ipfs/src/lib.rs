@@ -2198,8 +2198,9 @@ impl IpfsIo {
             };
             // one download per url: a second read of a url already in flight (the same file
             // under another asset path, say) takes the first's bytes instead of queueing a
-            // download of its own behind everything requested since. By url, not by hash: the
-            // bytes are shared before the hash check, and a scene names its own server
+            // download of its own behind everything requested since. By url, not by hash: a
+            // name the hash check can't verify is shared unchecked, and a scene names its own
+            // server
             let (download, task) = self.share_download(key, token, path.to_owned(), remote, scene);
             let joined = task.is_none();
             if let Some(task) = task {

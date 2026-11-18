@@ -35,6 +35,7 @@ import { registerCommunities } from './domains/communities'
 import { registerEvents } from './domains/events'
 import { registerGallery } from './domains/gallery'
 import { registerPlaces } from './domains/places'
+import { registerLobby } from './domains/lobby'
 import { registerMapPlayers } from './domains/mapPlayers'
 import { registerWorld } from './domains/world'
 import { registerVoice } from './domains/voice'
@@ -83,6 +84,7 @@ export function main(): void {
     registerEvents(ctx)
     registerGallery(ctx)
     registerPlaces(ctx)
+    registerLobby(ctx)
     registerMapPlayers(ctx)
     registerWorld(ctx)
     registerPointer(ctx)

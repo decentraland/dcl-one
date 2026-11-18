@@ -691,6 +691,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   preview mode asks again on every read. A later failure of another kind does not shorten a
   session entry, and a successful download of the url clears its entry. At most 4096 urls are
   held.
+- **A content download that does not match its hash fails the read**, so bytes that are not the
+  file the scene named never reach a loader. It is a failure like a dropped transfer, asked for
+  again after 10 s, not a missing file. A name the check cannot verify is read as before, uncached.
+  Measured first: no correct file of 4574 from live scenes, worlds, wearables and emotes failed it.
 - **Camera layers are identified by entity**, not by an explicit layer number; the cleanup in
   #1320 waits on the protocol change.
 - **`-logFile` with one dash is accepted** (rewritten to `--log-file` before clap, `main.rs`):
@@ -713,6 +717,26 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the frame also counts the render world's CPU time up to the submission, which on a CPU-bound
   frame is most of the sample (measurements (evidence supplied for the task)).
   See [GPU time](benchmark.md#gpu-time).
+- **The profiler is opt-in.** The
+  `performance-profiler` cargo feature (Bevy's `trace` spans, the scope profiler's layer, its
+  console commands and the Render and Profiler debug panel sections, the counting allocator,
+  Bevy's render and system-information diagnostics) is out of `default` and of the web build's features: those
+  inputs cost every frame even while nothing records (process CPU per frame +2.1% with recording
+  off, +9.8% with it on, native release on an Apple M4 Max), and a macOS build with the feature
+  renders incorrectly, recording or not ([profiling](profiling.md)). Tracy covers native
+  profiling. A build with the feature, native or web, profiles Bevy's systems. On the web,
+  Bevy's `tracing-wasm` layer marks and measures every span on the page's performance timeline,
+  entries nothing clears, so a web build with the feature grows the page's memory and main-thread
+  time over the session; Bevy keeps that layer, since only profiling builds pay for
+  it. Recording stays a runtime switch within a `performance-profiler` build. See
+  [profiling](profiling.md#profiler-profile_top-count---sort-metric-profile_enable-onoffreset).
+- **The analytics performance event reads the sampler's snapshot.** `PerformanceMetrics` counts
+  hiccups against the sampler's threshold (the larger of 50 ms and two target frames, so 66.7 ms
+  at a 30 FPS cap), takes real frame times with no 250 ms cap, and is sent once per 15 s sample,
+  in world and focused only, instead of once per 1000 frames of virtual time through loading
+  screens and unfocused windows. The old event's own sampling was removed rather than kept beside
+  the sampler. Dashboards comparing across this change see a step from the definitions; whether
+  the event gets a schema field or a fixed 50 ms count is the analytics owners' call.
 - **Bevy stays on the 0.16 fork for now.** Security-relevant dependencies (V8 and deno,
   libwebrtc, ffmpeg, wgpu) get bumped inside it. Whether to ever move the bevy version is an
   open discussion, not a decision.
