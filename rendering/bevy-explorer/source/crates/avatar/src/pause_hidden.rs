@@ -9,8 +9,9 @@
 //! The foot and point-at IK passes skip a paused avatar: they adjust the pose the animation
 //! wrote that frame, so without it they would compound on their own output (feet turning on a
 //! slope, fingers curling further) and the bones, and anything attached to them, would drift.
-//! Skipping them also saves a hidden avatar's foot raycasts. Head IK rests its chain every frame
-//! and keeps running.
+//! Skipping them also saves a hidden avatar's foot raycasts, and the foot IK resets its state so
+//! it ramps back in from the live pose on reveal. Head IK rests its chain every frame and keeps
+//! running.
 //!
 //! The player, its transitions and the emote logic keep running, so the clock stays in step
 //! with other clients: when the avatar shows again its bones take the current pose.
@@ -47,21 +48,40 @@ pub struct PausedAnimation {
 fn pause_hidden_avatar_animation(
     mut commands: Commands,
     builds: Query<
-        (Entity, &InheritedVisibility, &ChildOf),
+        (
+            Entity,
+            &InheritedVisibility,
+            Option<&Visibility>,
+            Ref<AvatarProcessed>,
+            &ChildOf,
+        ),
         (
             With<AvatarProcessed>,
             Or<(Changed<InheritedVisibility>, Added<AvatarProcessed>)>,
         ),
     >,
+    roots: Query<&InheritedVisibility>,
     primary: Query<(), With<PrimaryUser>>,
     paused: Query<&PausedAnimation>,
     children: Query<&Children>,
     targets: Query<&AnimationTarget>,
 ) {
-    for (build, visibility, parent) in &builds {
+    for (build, inherited, visibility, processed, parent) in &builds {
         let avatar = parent.parent();
+        // A build loads hidden and is shown by the same commands that mark it processed, so in
+        // the frame it is processed its `InheritedVisibility` may not have been propagated yet.
+        // Work it out from its own `Visibility` (Max Avatars hides the build) and the root's,
+        // which are both current, so a visible avatar's new build is never paused.
+        let visible = match (processed.is_added(), visibility) {
+            (true, Some(Visibility::Hidden)) => false,
+            (true, Some(Visibility::Visible)) => true,
+            (true, Some(Visibility::Inherited)) => roots
+                .get(avatar)
+                .map_or(inherited.get(), |root| root.get()),
+            _ => inherited.get(),
+        };
         let paused = paused.get(avatar).ok();
-        match (visibility.get(), paused) {
+        match (visible, paused) {
             // shown again, or rebuilt shown: the bones rejoin the evaluation and take the current
             // pose (those of a replaced build are gone, and skipped)
             (true, Some(PausedAnimation { bones, .. })) => {
@@ -206,6 +226,31 @@ mod tests {
         app.update();
         assert!(app.world().get::<AnimationTarget>(shown_bone).is_some());
         assert!(app.world().get::<PausedAnimation>(avatar.root).is_none());
+    }
+
+    #[test]
+    fn a_new_build_of_a_visible_avatar_does_not_wait_for_propagation() {
+        let (mut app, avatar) = app_with_avatar(false);
+        app.world_mut()
+            .entity_mut(avatar.root)
+            .insert(InheritedVisibility::VISIBLE);
+        app.world_mut().entity_mut(avatar.build).despawn();
+
+        // processed this frame: shown, but `InheritedVisibility` still holds the load-time hidden
+        let (build, bone) = spawn_build(&mut app, avatar.root, InheritedVisibility::HIDDEN);
+        app.world_mut()
+            .entity_mut(build)
+            .insert(Visibility::Inherited);
+        app.update();
+        assert!(app.world().get::<AnimationTarget>(bone).is_some());
+        assert!(app.world().get::<PausedAnimation>(avatar.root).is_none());
+
+        // a new build Max Avatars hides pauses at once
+        app.world_mut().entity_mut(build).despawn();
+        let (build, bone) = spawn_build(&mut app, avatar.root, InheritedVisibility::HIDDEN);
+        app.world_mut().entity_mut(build).insert(Visibility::Hidden);
+        app.update();
+        assert!(app.world().get::<AnimationTarget>(bone).is_none());
     }
 
     #[test]

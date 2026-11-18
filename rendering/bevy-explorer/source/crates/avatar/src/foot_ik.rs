@@ -349,9 +349,9 @@ fn apply_foot_ik(
             Option<&ActiveEmote>,
             &mut FootIkRuntime,
             Option<&CameraLayers>,
+            Has<PausedAnimation>,
         ),
-        // a paused avatar's bones keep last frame's pose, which the solve would compound on
-        (With<AvatarShape>, Without<PausedAnimation>),
+        With<AvatarShape>,
     >,
     containing: ContainingScene,
     mut scenes: Query<&mut SceneColliderData>,
@@ -364,7 +364,7 @@ fn apply_foot_ik(
 ) {
     if !config.enabled {
         // Reset all per-avatar runtime state so re-enabling doesn't pop in.
-        for (_, _, _, mut runtime, _) in &mut avatars {
+        for (_, _, _, mut runtime, _, _) in &mut avatars {
             *runtime = FootIkRuntime::default();
         }
         return;
@@ -373,12 +373,14 @@ fn apply_foot_ik(
     let log_now = *log_tick % 60 == 1;
     let dt = time.delta_secs();
 
-    for (avatar_ent, rig, active_emote, mut runtime, layers) in &mut avatars {
+    for (avatar_ent, rig, active_emote, mut runtime, layers, paused) in &mut avatars {
         // Display-only avatars (booth/portrait/secondary cameras) shouldn't
         // raycast against world geometry. cache_foot_ik_rig already strips
         // their FootIkRig, but gate here too in case the layers flipped this
-        // frame.
-        if is_display_only(layers) {
+        // frame. A paused avatar's bones keep last frame's pose, which the
+        // solve would compound on; resetting lets the IK ramp back in from
+        // the live pose when it shows again, as after any disengagement.
+        if paused || is_display_only(layers) {
             *runtime = FootIkRuntime::default();
             continue;
         }
