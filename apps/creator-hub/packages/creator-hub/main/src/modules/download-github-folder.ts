@@ -32,12 +32,30 @@ function parseGitHubUrl(githubUrl: string) {
   throw new Error("URL doesn't match the expected GitHub format.");
 }
 
+// GitHub's zipball answers in under a second when it's well, but a slow answer is common enough
+// that the shared 5 s request timeout failed scene creation from a template.
+const ZIPBALL_TIMEOUT_MS = 30_000;
+const ZIPBALL_ATTEMPTS = 2;
+
+async function fetchZipball(apiUrl: string): Promise<Response> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const response = await fetch(apiUrl, undefined, ZIPBALL_TIMEOUT_MS);
+      if (response.ok || response.status < 500 || attempt >= ZIPBALL_ATTEMPTS) return response;
+      log.warn(`[download-github-folder] ${apiUrl} answered ${response.status}, retrying`);
+    } catch (error) {
+      if (attempt >= ZIPBALL_ATTEMPTS) throw error;
+      log.warn(`[download-github-folder] ${apiUrl} failed, retrying`, error);
+    }
+  }
+}
+
 export async function downloadGithubRepo(githubUrl: string, destination: string) {
   const { owner, repo, branch, path: subfolderPath } = parseGitHubUrl(githubUrl);
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/zipball//${branch}`;
+  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/zipball/${branch}`;
 
   try {
-    const ghResponse = await fetch(apiUrl);
+    const ghResponse = await fetchZipball(apiUrl);
     if (!ghResponse.ok) {
       throw new Error(`GitHub API request failed with status ${ghResponse.status}`);
     }
