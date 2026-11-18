@@ -418,3 +418,40 @@ async fn webtransport_bursts_at_full_length() {
     .unwrap();
     eprintln!("resyncs in the full run: {resyncs}");
 }
+
+/// What each transport does with a frame far over the message limit. ENet ends the connection at
+/// once with 16 (the packet envelope refuses anything over 8192 bytes). WebTransport's stream
+/// reader reports an overrun as one corrupt frame, which only draws on the corrupt-packet budget:
+/// the connection survives until the budget is spent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_oversized_frame_ends_an_enet_connection_at_once() {
+    let pulse = support::in_process_pulse_both().await;
+    let ctx = pulse.ctx_on(Transport::Enet, "oversized-enet");
+    let bot = PulseBot::enter(&ctx, "walker", &ctx.identity(0))
+        .await
+        .unwrap();
+    bot.send_raw(vec![0_u8; 20_000], Channel::Reliable);
+    bot.expect_disconnect_with(&ctx, DisconnectReason::PacketCorrupted, SOON)
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_oversized_frame_is_charged_to_the_corrupt_budget_on_webtransport() {
+    use catalyst_comms::pulse::hardening::DEFAULT_CORRUPT_BURST;
+    let pulse = support::in_process_pulse_both().await;
+    let ctx = pulse.ctx_on(Transport::WebTransport, "oversized-webtransport");
+    let bot = PulseBot::enter(&ctx, "walker", &ctx.identity(0))
+        .await
+        .unwrap();
+    for _ in 0..DEFAULT_CORRUPT_BURST {
+        bot.send_raw(vec![0_u8; 20_000], Channel::Reliable);
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    bot.expect_alive().unwrap();
+    // the next one is over the budget
+    bot.send_raw(vec![0_u8; 20_000], Channel::Reliable);
+    bot.expect_disconnect_with(&ctx, DisconnectReason::PacketCorrupted, SOON)
+        .await
+        .unwrap();
+}
