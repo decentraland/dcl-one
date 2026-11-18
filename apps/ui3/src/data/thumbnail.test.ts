@@ -1,4 +1,4 @@
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, test, vi } from "vitest";
 import { nodeMapImage, publicThumbnail, publicThumbnailSet } from "./thumbnail";
 
 afterEach(() => {
@@ -56,6 +56,18 @@ test("unknown, credentialed and signed sources never get synthetic responsive va
     expect(publicThumbnail(source, 320)).toBe(source);
     expect(publicThumbnailSet(source, [320, 640])).toBeUndefined();
   }
+});
+
+describe("when the event poster is a relative mounted upload", () => {
+  let source: string;
+
+  beforeEach(() => {
+    source = `/events-assets-099ac00/poster-vertical/${"ab".repeat(32)}.webp`;
+  });
+
+  it("should keep the mounted poster URL", () => {
+    expect(publicThumbnail(source, 320)).toBe(source);
+  });
 });
 
 test("the embedded player sends thumbnails through the site it stands in for", () => {

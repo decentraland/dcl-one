@@ -7,11 +7,9 @@
 //! type), at most 500 KiB; they land in the ONE blob store and in
 //! `explore.poster` as a `local` row named `<sha256>.<ext>`, which
 //! `GET /poster/{file}` (`explore::api::posters`) serves. The answer is the
-//! old `{ok:true,data:{filename,url,size,type}}` (`Poster/routes.ts:132-137`)
-//! with `url` absolute on this node's `/events` mount
-//! (`PUBLIC_URL/events/poster/<file>`), where the old service named its
-//! bucket; `filename` is `poster/<file>` with the content hash where the old
-//! service minted a uuid (`docs/events.md`).
+//! old `{ok:true,data:{filename,url,size,type}}` (Poster/routes.ts:132-137).
+//! The URL uses the mounted poster path, absolute with a public rewrite
+//! domain. The filename keeps its `poster/<file>` spelling.
 
 use axum::Json;
 use axum::extract::{Multipart, OriginalUri, State};
@@ -24,117 +22,62 @@ use crate::shared::errors::ApiError;
 use crate::{Settings, SharedState};
 
 pub const MAX_POSTER_BYTES: usize = 500 * 1024;
-pub const DEFAULT_EVENT_IMAGE: &str = "/assets/event-default.webp";
+use crate::node_assets::{self, PosterInput};
+pub use crate::node_assets::{DEFAULT_EVENT_IMAGE, absolute_default_image};
 const POSTER_FILE_TYPES: [&str; 4] = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 const POSTER_VERTICAL_FILE_TYPES: [&str; 3] = ["image/jpeg", "image/png", "image/webp"];
 
-/// Absolute upload links must name a configured deployment origin; stored
-/// URLs use the canonical local path so content is always served here.
-pub(super) fn normalize_image_input(
-    image: &str,
-    settings: &Settings,
-    expected_kind: &str,
-) -> Result<String, ApiError> {
-    let image = image.trim();
-    let path = if image.starts_with('/') && !image.starts_with("//") {
-        image.to_owned()
-    } else {
-        let url = url::Url::parse(image)
-            .map_err(|_| ApiError::bad_request("Upload the image through the poster endpoint"))?;
-        let own_origin = [
-            &settings.events_asset_base_url,
-            &settings.content_public_url,
-        ]
-        .iter()
-        .any(|base| url::Url::parse(base).is_ok_and(|base| base.origin() == url.origin()));
-        if !own_origin
-            || !matches!(url.scheme(), "http" | "https")
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.query().is_some()
-            || url.fragment().is_some()
-        {
-            return Err(ApiError::bad_request(
-                "Image must come from this deployment's poster upload endpoint",
-            ));
-        }
-        let path = url.path();
-        [
-            &settings.events_asset_base_url,
-            &settings.content_public_url,
-        ]
-        .iter()
-        .filter_map(|base| url::Url::parse(base).ok())
-        .filter(|base| base.origin() == url.origin())
-        .filter_map(|base| {
-            let prefix = base.path().trim_end_matches('/');
-            (!prefix.is_empty())
-                .then(|| path.strip_prefix(prefix))
-                .flatten()
-                .filter(|candidate| {
-                    *candidate == DEFAULT_EVENT_IMAGE || poster_key(candidate).is_some()
-                })
-                .map(str::to_owned)
-        })
-        .next()
-        .unwrap_or_else(|| path.to_owned())
-    };
-    if path == DEFAULT_EVENT_IMAGE
-        || poster_key(&path).is_some_and(|(kind, _)| kind == expected_kind)
-    {
-        Ok(path)
-    } else {
-        Err(ApiError::bad_request(
-            "Upload the image through the poster endpoint",
-        ))
-    }
+#[derive(Clone, Copy)]
+pub(super) enum PosterWrite<'a> {
+    Create,
+    Replace(Option<&'a str>),
 }
 
-fn poster_key(image: &str) -> Option<(&'static str, &str)> {
-    for kind in ["poster", "poster-vertical"] {
-        if let Some(file) = image.strip_prefix(&format!("/{kind}/")) {
-            return crate::api::posters::valid_file(file).then_some((kind, file));
-        }
-    }
-    None
-}
-
-/// Normalize and verify a poster in the same policy path for HTTP and console authoring.
+/// Resolve upload and mirror spellings to their stable storage form.
 pub(super) async fn resolve<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     image: &str,
     settings: &Settings,
     expected_kind: &str,
+    write: PosterWrite<'_>,
 ) -> Result<String, ApiError> {
-    let image = normalize_image_input(image, settings, expected_kind)?;
-    if image == DEFAULT_EVENT_IMAGE {
-        return Ok(image);
+    let invalid = || ApiError::bad_request("Upload the image through the poster endpoint");
+    let input =
+        node_assets::event_poster_input(image, settings, expected_kind).ok_or_else(invalid)?;
+    // Retain the legacy policy for another spelling of an existing local poster.
+    if let PosterWrite::Replace(Some(stored)) = write
+        && matches!(input, PosterInput::Local(_) | PosterInput::Default)
+        && node_assets::event_poster_input(stored, settings, expected_kind) == Some(input)
+    {
+        return Ok(stored.to_owned());
     }
-    let (kind, file) = poster_key(&image)
-        .ok_or_else(|| ApiError::bad_request("Upload the image through the poster endpoint"))?;
-    let exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM explore.poster WHERE kind=$1 AND file=$2 AND origin='local')",
-    )
-    .bind(kind)
-    .bind(file)
-    .fetch_one(executor)
-    .await?;
-    if !exists {
-        return Err(ApiError::bad_request("Poster upload not found"));
+    let path = match input {
+        PosterInput::Default => return Ok(DEFAULT_EVENT_IMAGE.into()),
+        PosterInput::Upstream(path) if matches!(write, PosterWrite::Create) => {
+            return Ok(node_assets::upstream_poster_url(path));
+        }
+        PosterInput::Upstream(_) => return Err(invalid()),
+        PosterInput::Local(path) | PosterInput::Mounted(path) => path,
+    };
+    let (kind, file) = path[1..].split_once('/').expect("validated poster path");
+    let origin: Option<String> =
+        sqlx::query_scalar("SELECT origin FROM explore.poster WHERE kind=$1 AND file=$2")
+            .bind(kind)
+            .bind(file)
+            .fetch_optional(executor)
+            .await?;
+    if origin.as_deref() == Some("local") {
+        return Ok(path.to_owned());
     }
-    Ok(image)
-}
-
-pub fn absolute_default_image(image: &str, events_base_url: &str) -> String {
-    if image == DEFAULT_EVENT_IMAGE {
-        format!(
-            "{}{}",
-            events_base_url.trim_end_matches('/'),
-            DEFAULT_EVENT_IMAGE
-        )
-    } else {
-        image.to_owned()
+    if matches!(
+        (write, input),
+        (PosterWrite::Create, PosterInput::Mounted(_))
+    ) && (origin.as_deref() == Some("upstream")
+        || (origin.is_none() && !node_assets::is_uploaded_poster_key(file)))
+    {
+        return Ok(node_assets::upstream_poster_url(path));
     }
+    Err(ApiError::bad_request("Poster upload not found"))
 }
 
 #[cfg(test)]
@@ -350,7 +293,7 @@ async fn upload(
     .execute(&state.pool)
     .await?;
     Ok(Json(poster_response(
-        &state.settings.events_asset_base_url,
+        state.settings.asset_rewrite_domain.as_deref(),
         kind,
         &name,
         size,
@@ -359,15 +302,14 @@ async fn upload(
 }
 
 /// The old `PosterAttributes` answer (`Poster/routes.ts:132-137`), `url`
-/// absolute on this node's events mount (fixtures `events.poster.success`,
-/// `events.poster_vertical.success`).
-fn poster_response(asset_base: &str, kind: &str, name: &str, size: usize, mime: &str) -> Value {
+/// on the same mounted path as event records.
+fn poster_response(domain: Option<&str>, kind: &str, name: &str, size: usize, mime: &str) -> Value {
     let filename = format!("{kind}/{name}");
     json!({
         "ok": true,
         "data": {
             "filename": filename,
-            "url": format!("{}/{filename}", asset_base.trim_end_matches('/')),
+            "url": node_assets::mounted_poster_url(&format!("/{filename}"), domain),
             "size": size,
             "type": mime,
         }
@@ -500,7 +442,7 @@ mod tests {
         let name = format!("{}.png", hex::encode(Sha256::digest(&png)));
         assert_eq!(
             body,
-            json!({ "ok": true, "data": { "filename": format!("poster/{name}"), "url": format!("http://localhost/events/poster/{name}"), "size": png.len(), "type": "image/png" } })
+            json!({ "ok": true, "data": { "filename": format!("poster/{name}"), "url": format!("/events-assets-099ac00/poster/{name}"), "size": png.len(), "type": "image/png" } })
         );
         let (cid, origin): (String, String) = sqlx::query_as(
             "SELECT blob_cid, origin FROM explore.poster WHERE kind = 'poster' AND file = $1",
@@ -537,16 +479,10 @@ mod tests {
     }
 
     #[test]
-    fn the_answer_is_the_old_envelope_with_an_absolute_url_on_the_events_mount() {
+    fn the_answer_is_the_old_envelope_with_a_mounted_poster_url() {
         assert_eq!(
-            poster_response(
-                "https://node.example/prefix/events/",
-                "poster-vertical",
-                "abc.webp",
-                7,
-                "image/webp"
-            ),
-            json!({ "ok": true, "data": { "filename": "poster-vertical/abc.webp", "url": "https://node.example/prefix/events/poster-vertical/abc.webp", "size": 7, "type": "image/webp" } })
+            poster_response(None, "poster-vertical", "abc.webp", 7, "image/webp"),
+            json!({ "ok": true, "data": { "filename": "poster-vertical/abc.webp", "url": "/events-assets-099ac00/poster-vertical/abc.webp", "size": 7, "type": "image/webp" } })
         );
         assert_eq!(
             too_large("poster").to_string(),
@@ -585,34 +521,36 @@ mod tests {
             ..Settings::for_tests()
         };
         assert_eq!(
-            normalize_image_input(
+            node_assets::event_poster_input(
                 "https://native.example.org/events/assets/event-default.webp",
                 &settings,
                 "poster"
-            )
-            .unwrap(),
-            DEFAULT_EVENT_IMAGE
+            ),
+            Some(PosterInput::Default)
         );
         assert_eq!(
-            normalize_image_input(
+            node_assets::event_poster_input(
                 "https://content.example.org/poster-vertical/old.webp",
                 &settings,
                 "poster-vertical"
-            )
-            .unwrap(),
-            "/poster-vertical/old.webp"
+            ),
+            Some(PosterInput::Local("/poster-vertical/old.webp"))
         );
         assert!(
-            normalize_image_input("/poster/animated.gif", &settings, "poster-vertical").is_err()
+            node_assets::event_poster_input("/poster/animated.gif", &settings, "poster-vertical")
+                .is_none()
         );
-        assert!(normalize_image_input("/poster-vertical/old.webp", &settings, "poster").is_err());
         assert!(
-            normalize_image_input(
+            node_assets::event_poster_input("/poster-vertical/old.webp", &settings, "poster")
+                .is_none()
+        );
+        assert!(
+            node_assets::event_poster_input(
                 "https://native.example.org/eventsevil/poster/old.webp",
                 &settings,
                 "poster"
             )
-            .is_err()
+            .is_none()
         );
     }
 }

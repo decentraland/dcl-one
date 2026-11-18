@@ -313,6 +313,19 @@ describe("when uploading event covers", () => {
     });
   });
 
+  describe("and the server returns a same-origin mounted poster", () => {
+    let url: string;
+
+    beforeEach(() => {
+      url = "/events-assets-099ac00/poster-vertical/cover.png";
+      vi.mocked(signedFetch).mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, data: { url } })));
+    });
+
+    it("should preserve the mounted path for the next write", async () => {
+      await expect(uploadHangoutPoster(identity, file, true)).resolves.toBe(url);
+    });
+  });
+
   describe("and the browser uses a relative catalyst base", () => {
     beforeEach(() => vi.stubGlobal("window", { __CATALYST_BASE__: "", location: { origin: "https://discovery.example" } }));
     afterEach(() => vi.unstubAllGlobals());

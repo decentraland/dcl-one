@@ -17,6 +17,6 @@ For a recognised world thumbnail, Explore reads the catalogue key with a join on
 
 ## Consequences
 
-The catalogue keeps the stored upstream URLs. Projected poster URLs point at the prefixed paths. The root `/poster` and `/poster-vertical` routes continue to serve operators that configure a dedicated `events-assets-099ac00.<domain>` vhost.
+The catalogue keeps upstream poster URLs and router-local upload keys. Uploaded posters use the same prefixed paths on reads and upload responses, with root-relative URLs when no public rewrite domain is configured. Authoring recognizes the mounted path and retains the existing stored value when a caller echoes the read projection. The root `/poster` and `/poster-vertical` routes continue to serve operators that configure a dedicated `events-assets-099ac00.<domain>` vhost.
 
 The node's existing asset handlers determine whether each asset is available. The path mapping does not copy world thumbnails into storage.

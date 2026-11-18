@@ -15,6 +15,11 @@ use tower::ServiceExt;
 mod db;
 
 const EVENT_ID: &str = "9a1e0000-0000-4000-8000-000000000001";
+const LOCAL_EVENT_ID: &str = "9a1e0000-0000-4000-8000-000000000003";
+const LOCAL_POSTERS: &[&str] = &[
+    "/events-assets-099ac00/poster/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png",
+    "/events-assets-099ac00/poster-vertical/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png",
+];
 const PLACE_ID: &str = "6b7c1d2e-0000-4000-8000-000000000001";
 const MAP_PLACE_ID: &str = "6b7c1d2e-0000-4000-8000-000000000002";
 const WORLD: &str = "harbour.dcl.eth";
@@ -77,6 +82,27 @@ async fn seed(pool: &PgPool) {
         .await
         .expect("seed event")
     );
+
+    assert!(
+        upsert_event(pool, &json!({
+            "id": LOCAL_EVENT_ID,
+            "name": "Uploaded local event",
+            "approved": true,
+            "start_at": start,
+            "finish_at": finish,
+            "next_start_at": start,
+            "next_finish_at": finish,
+            "image": "/poster/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png",
+            "image_vertical": "/poster-vertical/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png",
+            "x": -97,
+            "y": -99,
+        })).await.expect("seed event with local posters")
+    );
+    sqlx::query("UPDATE explore.event SET origin='local' WHERE id=$1")
+        .bind(LOCAL_EVENT_ID)
+        .execute(pool)
+        .await
+        .expect("adopt local event");
 
     let places = [
         (PLACE_ID, "-97,-99", PARCEL.0),
@@ -161,6 +187,13 @@ async fn check_explore_reads(public_url: Option<&str>) {
                 body.contains(&expected),
                 "{route}: expected {expected}: {body}"
             );
+        }
+        if matches!(route, "/api/events" | "/v1/events") {
+            for path in LOCAL_POSTERS {
+                let expected = format!("{}{path}", public_url.unwrap_or(""));
+                let url = serde_json::to_string(&expected).unwrap();
+                assert!(body.contains(&url), "{route}: expected {url}: {body}");
+            }
         }
         if public_url.is_some() {
             for reference in PRODUCTION_REFERENCES {

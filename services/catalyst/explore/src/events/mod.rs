@@ -1016,6 +1016,28 @@ struct RecordView<'a> {
     foundation: foundation::Names,
 }
 
+fn project_event_image(
+    image: &str,
+    domain: Option<&str>,
+    events_asset_base_url: &str,
+) -> Option<String> {
+    let image = sanitize_asset_url(image).ok()?;
+    Some(crate::node_assets::event_image_url(
+        &image,
+        domain,
+        events_asset_base_url,
+    ))
+}
+
+fn project_event_url(url: &str, domain: Option<&str>) -> Option<String> {
+    let url = validate_event_url(url).ok()?;
+    Some(
+        domain
+            .and_then(|domain| crate::node_assets::node_page_url(&url, domain))
+            .unwrap_or(url),
+    )
+}
+
 fn event_row_to_record(
     r: EventRow,
     verified_viewer: Option<&str>,
@@ -1030,33 +1052,19 @@ fn event_row_to_record(
     let y = r.coordinates_y.unwrap_or(0);
     let image = raw
         .get("image")
-        .and_then(|v| v.as_str())
-        .and_then(|s| sanitize_asset_url(s).ok())
-        .map(|s| {
-            crate::node_assets::to_node(
-                &posters::absolute_default_image(&s, events_asset_base_url),
-                rewrite_domain,
-            )
-        });
+        .and_then(Value::as_str)
+        .and_then(|s| project_event_image(s, rewrite_domain, events_asset_base_url));
     let image_vertical = raw.get("image_vertical").cloned().and_then(|v| match v {
-        Value::String(s) => sanitize_asset_url(&s).ok().map(|safe| {
-            Value::String(crate::node_assets::to_node(
-                &posters::absolute_default_image(&safe, events_asset_base_url),
-                rewrite_domain,
-            ))
-        }),
+        Value::String(s) => {
+            project_event_image(&s, rewrite_domain, events_asset_base_url).map(Value::String)
+        }
         other => Some(other),
     });
     let server = raw_str(raw, "server");
     let url = raw
         .get("url")
-        .and_then(|v| v.as_str())
-        .and_then(|s| validate_event_url(s).ok())
-        .map(|url| {
-            rewrite_domain
-                .and_then(|domain| crate::node_assets::node_page_url(&url, domain))
-                .unwrap_or(url)
-        });
+        .and_then(Value::as_str)
+        .and_then(|s| project_event_url(s, rewrite_domain));
     let user = raw_str(raw, "user").or_else(|| r.user_creator.clone());
     let owner_view = matches!((verified_viewer,user.as_deref()),(Some(viewer),Some(owner)) if viewer.eq_ignore_ascii_case(owner));
     let scene_name = strip_all_markup_opt(raw_str(raw, "scene_name"));
