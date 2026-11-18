@@ -86,9 +86,13 @@ pub fn crash_batch(message: &str, source: &str) -> Option<(String, String)> {
     );
     let mut item = serde_json::to_value(&item).ok()?;
     // Left out rather than waited for: the trapped engine may hold this lock too.
-    if let Ok(flags) = FEATURE_FLAGS.try_lock() {
+    if let (Ok(flags), Some(properties)) = (
+        FEATURE_FLAGS.try_lock(),
+        item.get_mut("properties")
+            .and_then(serde_json::Value::as_object_mut),
+    ) {
         for (field, value) in flags.iter() {
-            item["properties"][*field] = value.clone().into();
+            properties.insert((*field).to_owned(), value.clone().into());
         }
     }
     let item = item.to_string();
@@ -131,6 +135,13 @@ mod tests {
         assert!(item["timestamp"].is_string());
         assert!(item["properties"].get("feature_flags").is_none());
 
+        // The page's names (library/explorer-core/lib/featureFlags.ts, FLAGS_RESOLVED_EVENT and
+        // its `settle`): a rename here needs the same one there.
+        assert_eq!(FEATURE_FLAGS_EVENT, "Feature Flags Resolved");
+        assert_eq!(
+            FEATURE_FLAGS_FIELDS,
+            ["feature_flags", "feature_flags_override"]
+        );
         let flags = |session: &str, flags: &str| {
             serde_json::json!({
                 "session_id": session,

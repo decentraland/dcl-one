@@ -146,6 +146,8 @@ describe('the flags for analytics', () => {
   it('are tracked once the read settles, with where they came from', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ flags: { 'explorer-bevy-a': true }, variants: {} })))
     await loadFeatureFlags(WEB)
+    // The event's name and its two flag fields are the engine's too (crates/analytics/src/crash.rs
+    // FEATURE_FLAGS_EVENT, FEATURE_FLAGS_FIELDS): a rename here needs the same one there.
     const resolved = pending().filter((e) => e.event === 'Feature Flags Resolved').at(-1)
     expect(resolved?.properties).toMatchObject({ feature_flags: '-*,a', feature_flags_override: '', feature_flags_source: 'service' })
   })
@@ -254,20 +256,6 @@ describe('fetchFeatureFlags', () => {
 })
 
 describe('featureFlagsUserId', () => {
-  it('starts from a campaign id that can be a header value, and keeps it over a later one', () => {
-    setPref(PREF.featureFlagsUserId, '')
-    expect(featureFlagsUserId('campaign-1')).toBe('campaign-1')
-    expect(featureFlagsUserId('campaign-2')).toBe('campaign-1')
-    expect(featureFlagsUserId(undefined)).toBe('campaign-1')
-  })
-
-  it.each(['line\nbreak', 'caf\u00e9', 'with space', '', 'x'.repeat(129)])('mints one over the unsafe campaign id %j', (campaign) => {
-    setPref(PREF.featureFlagsUserId, '')
-    const id = featureFlagsUserId(campaign)
-    expect(id).toMatch(/^[0-9a-f-]{36}$/)
-    expect(getPref(PREF.featureFlagsUserId)).toBe(id)
-  })
-
   it('mints one anonymous id and keeps it', () => {
     setPref(PREF.featureFlagsUserId, '')
     const first = featureFlagsUserId()

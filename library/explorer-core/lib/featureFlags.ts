@@ -6,9 +6,10 @@
 // - This client's flags are named `explorer-bevy-<flag>` in Unleash and read as `<flag>`. A flag
 //   both clients share keeps the Unity Explorer's name, `explorer-<flag>`, and is read only when
 //   FLAG lists it with `shared()`. Every other key in the file is ignored.
-// - `X-Address-Hash` carries a stable anonymous id so gradual rollouts stick to the player: one
-//   kept in prefs, first taken from the landing page's campaign id when the entry url has one,
-//   else minted here. The sign-in address is never sent.
+// - `X-Address-Hash` carries a stable anonymous id so gradual rollouts stick to the player: a
+//   random one minted here on first launch and kept in prefs. It is this client's alone: neither
+//   the sign-in address nor an id a link carries is sent, so a shared link cannot put its
+//   visitors in one rollout bucket.
 // - Read once per session, after the prefs load (lib/prefs) and without holding up the HUD. A flag
 //   is off until the answer says `true`, and stays off if the file can't be read.
 // - Only Decentraland's own service is asked (FLAG_SERVICE_DOMAINS). A page whose base domain is
@@ -30,7 +31,7 @@
 // through the HUD's useFeatureFlag (library/ui/apps/hud/lib/useFeatureFlag.ts).
 
 import { BASE_DOMAIN, isNativeHud } from '@hud-host'
-import { launchAnalytics, track } from './analytics'
+import { track } from './analytics'
 import { getPref, PREF, setPref } from './prefs'
 
 const APP_PREFIX = 'explorer-'
@@ -156,15 +157,14 @@ export function featureFlagsUrl(baseDomain: string = BASE_DOMAIN): string {
   return `https://feature-flags.${baseDomain}/explorer.json`
 }
 
-/** The anonymous id rollouts are bucketed by: the one this client keeps, so a player stays in the
- *  same bucket from one session to the next. Its first value is the landing page's campaign id
- *  when the entry url has one that can be a header value (`campaign`), else one minted here. */
-export function featureFlagsUserId(campaign: string | undefined = launchAnalytics().campaignAnonUserId): string {
+/** The anonymous id rollouts are bucketed by: minted on first launch and kept, so a player stays
+ *  in the same bucket from one session to the next. */
+export function featureFlagsUserId(): string {
   const kept = getPref(PREF.featureFlagsUserId)
   if (kept != null && kept !== '') return kept
-  const first = campaign != null && /^[\x21-\x7e]{1,128}$/.test(campaign) ? campaign : crypto.randomUUID()
-  setPref(PREF.featureFlagsUserId, first)
-  return first
+  const minted = crypto.randomUUID()
+  setPref(PREF.featureFlagsUserId, minted)
+  return minted
 }
 
 /** A key's flag name: this client's own without its prefix, a shared one without the application's,
