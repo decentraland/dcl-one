@@ -7,7 +7,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use bevy::{
-    log::{debug, warn},
+    log::{debug, error, warn},
     platform::collections::HashMap,
 };
 use common::util::ReportErr;
@@ -139,7 +139,7 @@ fn insert(id: MediaId, (media, cmd): (HostMedia, MediaSourceCmd)) {
 fn dispatch(id: MediaId, msg: MediaSourceMsg) {
     let cmd = MEDIA.with(|media| {
         let Ok(mut media) = media.try_borrow_mut() else {
-            warn!("media {id}: {msg:?} arrived during another update; dropped");
+            error!("media {id}: {msg:?} arrived during another update; dropped");
             return None;
         };
         let m = media.get_mut(&id)?;
@@ -418,6 +418,16 @@ impl HostMedia {
                 state: current.video_state,
                 duration: current.duration_seconds,
             });
+        }
+        let status = current.retry_status;
+        let error = status.last_error.unwrap_or("media error");
+        if status.gave_up && !self.reported.retry_status.gave_up {
+            warn!(
+                "media {id}: {error}; giving up after {} failures",
+                status.failures
+            );
+        } else if status.failures > self.reported.retry_status.failures {
+            warn!("media {id}: {error}; failure {}", status.failures);
         }
         if current.retry_status != self.reported.retry_status {
             let _ = self.events.unbounded_send(MediaEvent::Retry {

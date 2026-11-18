@@ -442,7 +442,11 @@ fn element_observed(
                 ElementObservation::StartedPlaying => VideoState::VsPlaying,
                 ElementObservation::Stalled => VideoState::VsBuffering,
                 ElementObservation::StartedSeeking => VideoState::VsSeeking,
-                _ => VideoState::VsPaused,
+                ElementObservation::Paused => VideoState::VsPaused,
+                // the arms above handle these
+                ElementObservation::PositionAdvanced
+                | ElementObservation::ReachedEnd
+                | ElementObservation::Failed(_) => return MediaSourceCmd::None,
             };
             set_element_state(state, element_state);
             MediaSourceCmd::None
@@ -1092,6 +1096,21 @@ mod tests {
             cmd,
             MediaSourceCmd::Multi(ref cmds) if cmds[0] == MediaSourceCmd::SeekTo { media_id: ID, position_seconds: 12.0 }
         ));
+    }
+
+    #[test]
+    fn an_open_source_reports_the_element_seeking_and_paused() {
+        let mut state = playing();
+        update(
+            &mut state,
+            observed(ElementObservation::StartedSeeking, snapshot(4.0)),
+        );
+        assert_eq!(video_state(&state), VideoState::VsSeeking);
+        update(
+            &mut state,
+            observed(ElementObservation::Paused, snapshot(4.0)),
+        );
+        assert_eq!(video_state(&state), VideoState::VsPaused);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! The reopen schedule of a failed media source: up to [`MAX_REOPENS`] reopens, the first after
 //! the first delay (2 s) and each later one after twice the one before (4, 8, 16 and 32 s). The
-//! count restarts after `HEALTHY_PLAYBACK` of playback since the last failure, so a source that
+//! count restarts after [`HEALTHY_PLAYBACK`] of playback since the last failure, so a source that
 //! fails again at the same point gives up. A pause keeps the count.
 
 use std::{
@@ -13,7 +13,6 @@ pub const MAX_REOPENS: u32 = 5;
 /// The wait before the first reopen, unless [`set_first_reopen_delay`] changed it.
 pub const FIRST_REOPEN_DELAY: Duration = Duration::from_secs(2);
 /// Playback since the last failure after which the count restarts.
-#[cfg(any(test, all(target_arch = "wasm32", feature = "html")))]
 pub const HEALTHY_PLAYBACK: Duration = Duration::from_secs(5);
 
 static FIRST_REOPEN_DELAY_MS: AtomicU64 = AtomicU64::new(FIRST_REOPEN_DELAY.as_millis() as u64);
@@ -29,13 +28,11 @@ pub fn set_first_reopen_delay(delay: Duration) {
 }
 
 /// The wait before reopen `attempt` (from 1).
-#[cfg(any(test, all(target_arch = "wasm32", feature = "html")))]
 pub fn reopen_delay(first: Duration, attempt: u32) -> Duration {
     first.saturating_mul(1 << attempt.clamp(1, MAX_REOPENS).saturating_sub(1))
 }
 
 /// What follows a failure.
-#[cfg(any(test, all(target_arch = "wasm32", feature = "html")))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetryStep {
     /// Reopen the source after `delay`.
@@ -45,7 +42,6 @@ pub enum RetryStep {
 }
 
 /// One source's failures since it last played for [`HEALTHY_PLAYBACK`].
-#[cfg(any(test, all(target_arch = "wasm32", feature = "html")))]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct MediaRetry {
     attempts: u32,
@@ -53,7 +49,6 @@ pub struct MediaRetry {
     played: Duration,
 }
 
-#[cfg(any(test, all(target_arch = "wasm32", feature = "html")))]
 impl MediaRetry {
     /// Counts a failure of the source: a reopen after its delay, or, past [`MAX_REOPENS`], giving
     /// up.
@@ -89,7 +84,7 @@ impl MediaRetry {
 /// A source's reopen state.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct MediaRetryStatus {
-    /// Reopens since the source last played for `HEALTHY_PLAYBACK`.
+    /// Reopens since the source last played for [`HEALTHY_PLAYBACK`].
     pub attempt: u32,
     /// Failures counted since the source was created.
     pub failures: u32,

@@ -30,7 +30,7 @@ async function start(): Promise<RealmServer> {
   return realm
 }
 
-/** The realm, serving every workspace scene; started once per process. */
+/** The realm, serving every workspace scene except `video`; started once per process. */
 export function visualRealm(): Promise<RealmServer> {
   server ??= start()
   return server

@@ -13,8 +13,8 @@
 // scene with `/set_scene`, and reads the scene's `video <name> state=<VideoState>` lines through
 // `/scene_logs` and each player's reopen state through `/media_state`; the failure checks use
 // `retryFailures`, which does not depend on when the delay was set. The second scenario walks to
-// `broken` first; it relies on `broken` failing its first open while it is not yet the nearest video
-// (one video plays at a time), so that failure reports `VS_ERROR` and the play after the walk
+// `broken` once `broken` has failed its first open, while it is not yet the nearest video (one
+// video plays at a time), so that failure reports `VS_ERROR` and the play after the walk
 // `VS_LOADING`. The third walks to `paused`, which the scene sets playing 1 s after it reports
 // `VS_ERROR`. Each scenario closes its client. Web only: on the standalone all three are todos.
 // Build the scene first: `pnpm run build-scenes video`.
@@ -112,6 +112,9 @@ scenario(
       timeoutMs: GIVE_UP_TIMEOUT_MS,
       what: 'the recover screen to log VS_PLAYING'
     })
+    // the count restarts only after 5 s of playback, not when a reopen opens
+    const playing = await player(explorer, 'assets/recover.webm')
+    assert.equal(playing.retryAttempt, RECOVER_FAILURES, `the recover screen's count was ${playing.retryAttempt} once it played`)
     const row = await until(() => player(explorer, 'assets/recover.webm'), (row) => row.retryAttempt === 0, {
       timeoutMs: RESTART_TIMEOUT_MS,
       what: 'the recover screen\'s reopen count to restart after playing'
@@ -130,6 +133,11 @@ scenario(
   async ({ explorer, restore }) => {
     restore(() => explorer.setScene())
     await prepare(explorer)
+    // broken's first failure, while it is not the nearest video
+    await until(() => explorer.mediaState(), (state) => (state.players.find((row) => row.source === 'assets/broken.webm')?.retryFailures ?? 0) >= 1, {
+      timeoutMs: GIVE_UP_TIMEOUT_MS,
+      what: 'the broken screen\'s first failure'
+    })
     await explorer.walkTo(BASE.x + 11, 0, BASE.z + 12)
     const row = await until(() => player(explorer, 'assets/broken.webm'), (row) => row.retryGaveUp === true && row.lastPlaybackState === 'VS_ERROR', {
       timeoutMs: GIVE_UP_TIMEOUT_MS,

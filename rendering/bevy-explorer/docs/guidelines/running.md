@@ -329,6 +329,7 @@ State, in every build:
   `retryAttempt` (reopens since its last 5 s of playback), `retryFailures` (failures since the
   source was created), `retryDelaySeconds` (the wait before the scheduled one, else null),
   `retryGaveUp` and `lastError`.
+
 On the web only:
 
 - `/media_retry_delay [ms]`: the wait before a failed media source's first reopen
