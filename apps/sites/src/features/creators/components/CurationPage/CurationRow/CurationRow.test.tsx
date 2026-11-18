@@ -65,7 +65,7 @@ describe('CurationRow', () => {
     renderRow(null)
     expect(screen.getByTestId('curation-row-link')).toHaveAttribute(
       'href',
-      '/collections/editor?collection=c1&reviewing=true'
+      '/create/collections/editor?collection=c1&reviewing=true'
     )
   })
 

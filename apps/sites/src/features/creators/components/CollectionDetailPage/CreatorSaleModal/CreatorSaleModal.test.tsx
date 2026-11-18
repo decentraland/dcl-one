@@ -4,7 +4,6 @@ import { StrictMode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ProviderType } from '@dcl/schemas'
 import { TranslationProvider } from '@/data/lib/creators/intl'
 import { DiscountError, type CollectionDiscount } from '@/data/lib/creators/coupons'
 import type { SaleableCollection } from '@/data/lib/creators/saleableCollection'
@@ -53,7 +52,7 @@ function open(
       <QueryClientProvider client={new QueryClient()}>
         <TranslationProvider>
           <CreatorSaleModal
-            session={makeSession(props.social ? ProviderType.MAGIC : ProviderType.INJECTED)}
+            session={makeSession(props.social ? 'managed' : 'web3')}
             collection={props.of ?? collection}
             onSubmit={onSubmit}
             onUnconfirmed={onUnconfirmed}

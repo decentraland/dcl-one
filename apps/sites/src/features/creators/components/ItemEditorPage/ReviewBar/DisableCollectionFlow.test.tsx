@@ -32,7 +32,7 @@ vi.mock('@/data/lib/creators/notifications', () => ({
     select({ showToast: state.showToast })
 }))
 
-const web3 = { address: '0xme', providerType: 'injected' } as Session
+const web3 = { address: '0xme', kind: 'web3' } as Session
 const collection = { id: 'c1', name: 'Hats' } as Collection
 
 function renderFlow(session: Session = web3) {
@@ -104,7 +104,7 @@ describe('DisableCollectionFlow', () => {
   })
 
   it('skips the wallet prompt screen for social logins', () => {
-    renderFlow({ address: '0xme', providerType: 'magic' } as Session)
+    renderFlow({ address: '0xme', kind: 'managed' } as Session)
     fireEvent.click(screen.getByTestId('review-disable-confirm'))
     expect(screen.queryByTestId('review-disable-signing')).not.toBeInTheDocument()
     expect(screen.getByTestId('review-disable')).toBeInTheDocument()

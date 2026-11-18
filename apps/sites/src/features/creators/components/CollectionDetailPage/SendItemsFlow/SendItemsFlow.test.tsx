@@ -3,7 +3,6 @@ import '@/data/lib/creators/test/setup'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { ProviderType } from '@dcl/schemas'
 import type { Item } from '@/data/lib/creators/items'
 import type { Transfer } from '@/data/lib/creators/mint'
 import { useNotifications } from '@/data/lib/creators/notifications'
@@ -32,11 +31,11 @@ const soldOut: Item = { ...item, id: 'i3', name: 'Gone', tokenId: '5', totalSupp
 const draft: Item = { ...item, id: 'i4', name: 'Draft', tokenId: undefined, isPublished: false }
 const items = [item, scarce, soldOut, draft]
 
-function renderFlow(providerType = ProviderType.INJECTED, list = items) {
+function renderFlow(sessionKind: 'web3' | 'managed' = 'web3', list = items) {
   const onClose = vi.fn()
   const view = render(
     <>
-      <SendItemsFlow collection={collection} items={list} session={makeSession(providerType)} onClose={onClose} />
+      <SendItemsFlow collection={collection} items={list} session={makeSession(sessionKind)} onClose={onClose} />
       <Toasts />
     </>,
     { wrapper: Providers }
@@ -158,7 +157,7 @@ describe('SendItemsFlow', () => {
   })
 
   it('caps a send at 100 copies across transfers and explains why', async () => {
-    renderFlow(ProviderType.INJECTED, [{ ...item, rarity: 'epic' }])
+    renderFlow('web3', [{ ...item, rarity: 'epic' }])
     await addRecipient(1, FRIEND)
     const amount = screen.getByTestId('transfer-1-item-i1-amount')
     await userEvent.type(amount, '100')
@@ -387,7 +386,7 @@ describe('SendItemsFlow', () => {
   })
 
   it('keeps a social-login creator on the dialog with a spinning button', async () => {
-    const { view } = renderFlow(ProviderType.MAGIC)
+    const { view } = renderFlow('managed')
     await addRecipient(1, FRIEND)
     await userEvent.click(screen.getByTestId('transfer-1-item-i1-check'))
     await userEvent.click(screen.getByTestId('send-continue'))
@@ -397,7 +396,7 @@ describe('SendItemsFlow', () => {
       <SendItemsFlow
         collection={collection}
         items={items}
-        session={makeSession(ProviderType.MAGIC)}
+        session={makeSession('managed')}
         onClose={vi.fn()}
       />
     )

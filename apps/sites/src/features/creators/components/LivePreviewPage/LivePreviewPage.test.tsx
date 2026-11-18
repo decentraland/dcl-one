@@ -100,10 +100,10 @@ function renderPage(search = '') {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>
       <TranslationProvider>
-        <MemoryRouter initialEntries={[`/live-preview${search}`]}>
+        <MemoryRouter initialEntries={[`/create/live-preview${search}`]}>
           <Routes>
-            <Route path="/live-preview" element={children} />
-            <Route path="/collections/:id" element={<div data-testid="collection-page" />} />
+            <Route path="/create/live-preview" element={children} />
+            <Route path="/create/collections/:id" element={<div data-testid="collection-page" />} />
           </Routes>
         </MemoryRouter>
       </TranslationProvider>

@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ProviderType } from '@dcl/schemas'
 import { TranslationProvider } from '@/data/lib/creators/intl'
 import type { Session } from '@/data/lib/creators/auth'
 import type { Collection } from '@/data/lib/creators/collections'
@@ -50,11 +49,11 @@ export const item: Item = {
   updatedAt: 1
 }
 
-export function makeSession(providerType: ProviderType = ProviderType.INJECTED): Session {
+export function makeSession(kind: Session['kind'] = 'web3'): Session {
   return {
     address: ADDRESS,
     chainId: 11155111,
-    providerType,
+    kind,
     identity: {},
     provider: { request: () => Promise.resolve(null) }
   } as unknown as Session

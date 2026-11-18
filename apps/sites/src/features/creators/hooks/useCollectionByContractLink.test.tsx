@@ -25,7 +25,7 @@ function page(results: Collection[]) {
 
 function renderLink(
   address: string | undefined,
-  url = `/collections?contract=${CONTRACT}`,
+  url = `/create/collections?contract=${CONTRACT}`,
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 ) {
   const wrapper = ({ children }: { children: ReactNode }) => (
@@ -53,16 +53,16 @@ describe('when a signed-in creator opens a contract link', () => {
     const { result } = renderLink(OWNER)
     expect(result.current.isResolving).toBe(true)
 
-    await waitFor(() => expect(result.current.url).toBe('/collections/hats-1'))
+    await waitFor(() => expect(result.current.url).toBe('/create/collections/hats-1'))
     expect(api.fetchCollections).toHaveBeenCalledWith(OWNER, { contractAddress: CONTRACT, page: 1, limit: 1 })
     expect(track).toHaveBeenCalledWith('Open collection by contract', { outcome: 'found', collectionId: 'hats-1' })
   })
 
   it('stays on the list, keeping the other params, when none of their collections is at that address', async () => {
     api.fetchCollections.mockResolvedValue(page([]))
-    const { result } = renderLink(OWNER, `/collections?status=draft&contract=${CONTRACT}`)
+    const { result } = renderLink(OWNER, `/create/collections?status=draft&contract=${CONTRACT}`)
 
-    await waitFor(() => expect(result.current.url).toBe('/collections?status=draft'))
+    await waitFor(() => expect(result.current.url).toBe('/create/collections?status=draft'))
     expect(result.current.isResolving).toBe(false)
     expect(track).toHaveBeenCalledWith('Open collection by contract', { outcome: 'not_found' })
   })
@@ -71,7 +71,7 @@ describe('when a signed-in creator opens a contract link', () => {
     api.fetchCollections.mockResolvedValue(page([draft]))
     const { result } = renderLink(OWNER)
 
-    await waitFor(() => expect(result.current.url).toBe('/collections'))
+    await waitFor(() => expect(result.current.url).toBe('/create/collections'))
     expect(track).toHaveBeenCalledWith('Open collection by contract', { outcome: 'not_found' })
   })
 
@@ -79,14 +79,14 @@ describe('when a signed-in creator opens a contract link', () => {
     api.fetchCollections.mockRejectedValue(new Error('boom'))
     const { result } = renderLink(OWNER)
 
-    await waitFor(() => expect(result.current.url).toBe('/collections'), { timeout: 3000 })
+    await waitFor(() => expect(result.current.url).toBe('/create/collections'), { timeout: 3000 })
     expect(track).toHaveBeenCalledWith('Open collection by contract', { outcome: 'error' })
   })
 
   it('drops a value that is not a contract address without reading their collections', async () => {
-    const { result } = renderLink(OWNER, '/collections?status=draft&contract=undefined')
+    const { result } = renderLink(OWNER, '/create/collections?status=draft&contract=undefined')
 
-    await waitFor(() => expect(result.current.url).toBe('/collections?status=draft'))
+    await waitFor(() => expect(result.current.url).toBe('/create/collections?status=draft'))
     expect(result.current.isResolving).toBe(false)
     expect(api.fetchCollections).not.toHaveBeenCalled()
     expect(track).toHaveBeenCalledWith('Open collection by contract', { outcome: 'invalid' })
@@ -97,7 +97,7 @@ describe('when a signed-in creator opens a contract link', () => {
     client.setQueryData(['collections', OWNER, 'contract', CONTRACT.toLowerCase()], [])
     const { result } = renderLink(OWNER, undefined, client)
 
-    await waitFor(() => expect(result.current.url).toBe('/collections/hats-1'))
+    await waitFor(() => expect(result.current.url).toBe('/create/collections/hats-1'))
   })
 })
 
@@ -105,7 +105,7 @@ describe('when a signed-out visitor opens a contract link', () => {
   it('keeps the link so it resolves after signing in', () => {
     const { result } = renderLink(undefined)
 
-    expect(result.current.url).toBe(`/collections?contract=${CONTRACT}`)
+    expect(result.current.url).toBe(`/create/collections?contract=${CONTRACT}`)
     expect(result.current.isResolving).toBe(false)
     expect(api.fetchCollections).not.toHaveBeenCalled()
   })
@@ -113,7 +113,7 @@ describe('when a signed-out visitor opens a contract link', () => {
 
 describe('when the list is opened without a contract link', () => {
   it('reads nothing extra', () => {
-    renderLink(OWNER, '/collections')
+    renderLink(OWNER, '/create/collections')
 
     expect(api.fetchCollections).not.toHaveBeenCalled()
   })

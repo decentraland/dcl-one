@@ -3,7 +3,6 @@ import '@/data/lib/creators/test/setup'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { ProviderType } from '@dcl/schemas'
 import type { ItemListing } from '@/data/lib/creators/listings'
 import { RemoveListingFlow } from './RemoveListingFlow'
 import { Providers, collection, item, makeSession } from './testUtils'
@@ -16,14 +15,14 @@ vi.mock('../../../hooks/useSales', () => ({ useRemoveListing: () => remove }))
 const listing: ItemListing = { itemId: '3', tradeId: 'trade-1', currency: 'credits', credits: 50 }
 const last = () => remove.mutate.mock.calls[remove.mutate.mock.calls.length - 1]
 
-function renderFlow(providerType = ProviderType.INJECTED) {
+function renderFlow(sessionKind: 'web3' | 'managed' = 'web3') {
   const onClose = vi.fn()
   const view = render(
     <RemoveListingFlow
       item={item}
       collection={collection}
       listing={listing}
-      session={makeSession(providerType)}
+      session={makeSession(sessionKind)}
       onClose={onClose}
     />,
     { wrapper: Providers }
@@ -72,7 +71,7 @@ describe('RemoveListingFlow', () => {
   })
 
   it('keeps a social-login creator on the confirmation with a spinning button', async () => {
-    const { view } = renderFlow(ProviderType.MAGIC)
+    const { view } = renderFlow('managed')
     await userEvent.click(screen.getByTestId('remove-listing-confirm'))
     remove.isPending = true
     view.rerender(
@@ -80,7 +79,7 @@ describe('RemoveListingFlow', () => {
         item={item}
         collection={collection}
         listing={listing}
-        session={makeSession(ProviderType.MAGIC)}
+        session={makeSession('managed')}
         onClose={vi.fn()}
       />
     )

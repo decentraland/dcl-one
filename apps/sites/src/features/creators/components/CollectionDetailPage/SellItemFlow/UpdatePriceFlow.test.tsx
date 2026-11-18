@@ -5,7 +5,6 @@ import { FeatureFlag } from '@/data/lib/creators/featureFlags'
 import { setFeatureFlags } from '@/data/lib/creators/test/featureFlags'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { ProviderType } from '@dcl/schemas'
 import type { ItemListing } from '@/data/lib/creators/listings'
 import { NO_EXPIRATION } from '@/data/lib/creators/sales'
 import { UpdatePriceFlow } from './UpdatePriceFlow'
@@ -43,14 +42,14 @@ vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 40
 const listing: ItemListing & { tradeId: string } = { itemId: '3', tradeId: 'trade-1', currency: 'credits', credits: 50 }
 const last = <T,>(mock: { mock: { calls: T[] } }) => mock.mock.calls[mock.mock.calls.length - 1]
 
-function renderFlow(providerType = ProviderType.INJECTED, current = listing) {
+function renderFlow(sessionKind: 'web3' | 'managed' = 'web3', current = listing) {
   const onClose = vi.fn()
   render(
     <UpdatePriceFlow
       item={item}
       collection={collection}
       listing={current}
-      session={makeSession(providerType)}
+      session={makeSession(sessionKind)}
       onClose={onClose}
     />,
     { wrapper: Providers }
@@ -88,7 +87,7 @@ describe('UpdatePriceFlow', () => {
   })
 
   it("opens in the listing's currency and lets the creator switch it, refusing the same price", async () => {
-    renderFlow(ProviderType.INJECTED, { itemId: '3', tradeId: 'trade-1', currency: 'mana', manaWei: 5n * 10n ** 18n })
+    renderFlow('web3', { itemId: '3', tradeId: 'trade-1', currency: 'mana', manaWei: 5n * 10n ** 18n })
     const input = screen.getByTestId('update-price-input')
     expect(input).toHaveAttribute('data-currency', 'mana')
     await userEvent.type(input, '5')
@@ -154,7 +153,7 @@ describe('UpdatePriceFlow', () => {
   })
 
   it('shows only "Updating price" to a social-login creator', async () => {
-    renderFlow(ProviderType.MAGIC)
+    renderFlow('managed')
     await submitPrice('80')
     expect(screen.getByTestId('update-price-pending-label')).toHaveTextContent(/updating price/i)
     expect(screen.queryByTestId('update-price-pending-cancel')).not.toBeInTheDocument()

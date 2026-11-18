@@ -3,12 +3,17 @@ import '@/data/lib/creators/test/setup'
 import { readdirSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-const TOKENS = 'src/styles/tokens.css'
+const TOKENS = 'src/features/creators/styles/tokens.css'
+// The creators code: its components, and the logic layer that holds the theme.
+const ROOTS = ['src/features/creators', 'src/data/lib/creators']
 
 const read = (path: string) => readFileSync(path, 'utf8')
-const sources = (readdirSync('src', { recursive: true }) as string[])
-  .map(path => `src/${path.replace(/\\/g, '/')}`)
-  .filter(path => /\.(css|tsx?)$/.test(path) && !/\.spec\.tsx?$/.test(path) && path !== TOKENS)
+const sources = ROOTS.flatMap(root =>
+  (readdirSync(root, { recursive: true }) as string[]).map(path => `${root}/${path.replace(/\\/g, '/')}`)
+).filter(path => /\.(css|tsx?)$/.test(path) && !/\.test\.tsx?$/.test(path) && path !== TOKENS)
+
+// Set by Sites' frame around the page, not by this app.
+const FROM_SITES = new Set(['--site-header-h'])
 
 const tokens = [...read(TOKENS).matchAll(/^\s*(--[\w-]+):/gm)].map(match => match[1])
 const used = new Set(sources.flatMap(path => [...read(path).matchAll(/var\((--[\w-]+)/g)].map(match => match[1])))
@@ -22,7 +27,7 @@ const local = new Set(
 describe('tokens.css', () => {
   it('declares every custom property the app reads', () => {
     expect(used.size).toBeGreaterThan(0)
-    const undeclared = [...used].filter(name => !tokens.includes(name) && !local.has(name))
+    const undeclared = [...used].filter(name => !tokens.includes(name) && !local.has(name) && !FROM_SITES.has(name))
     expect(undeclared, 'Declare the token in tokens.css, or fix the name').toEqual([])
   })
 

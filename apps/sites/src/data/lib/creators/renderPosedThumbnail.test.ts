@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
 import './test/setup'
 import { describe, expect, it } from 'vitest'
-import { AnimationClip, Bone, Object3D, QuaternionKeyframeTrack, VectorKeyframeTrack } from 'three'
+import * as three from 'three'
 import { applyPose } from './renderPosedThumbnail'
+import type { ThreeModules } from './three'
+
+const { AnimationClip, Bone, Object3D, QuaternionKeyframeTrack, VectorKeyframeTrack } = three as unknown as ThreeModules
 
 function rig() {
   const root = new Object3D()

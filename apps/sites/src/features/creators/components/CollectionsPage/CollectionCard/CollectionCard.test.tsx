@@ -43,10 +43,10 @@ function renderCard(overrides: Partial<Collection> = {}) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>
       <TranslationProvider>
-        <MemoryRouter initialEntries={['/collections']}>
+        <MemoryRouter initialEntries={['/create/collections']}>
           <Routes>
-            <Route path="/collections" element={children} />
-            <Route path="/collections/:collectionId" element={<div data-testid="detail-page" />} />
+            <Route path="/create/collections" element={children} />
+            <Route path="/create/collections/:collectionId" element={<div data-testid="detail-page" />} />
           </Routes>
         </MemoryRouter>
       </TranslationProvider>

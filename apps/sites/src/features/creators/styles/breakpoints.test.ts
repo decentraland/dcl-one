@@ -7,11 +7,14 @@ import { breakpoints } from '@/data/lib/creators/theme'
 // Widths a module's media query may use besides the canonical breakpoints, keyed by file, each with its reason.
 const ALLOWED: Record<string, number[]> = {}
 
+// The creators code: its components, and the logic layer that holds the theme.
+const ROOTS = ['src/features/creators', 'src/data/lib/creators']
+
 const CANONICAL = new Set<number>(Object.values(breakpoints))
 
-const modules = (readdirSync('src', { recursive: true }) as string[])
-  .map(path => `src/${path.replace(/\\/g, '/')}`)
-  .filter(path => path.endsWith('.module.css'))
+const modules = ROOTS.flatMap(root =>
+  (readdirSync(root, { recursive: true }) as string[]).map(path => `${root}/${path.replace(/\\/g, '/')}`)
+).filter(path => path.endsWith('.module.css'))
 
 function mediaWidths(css: string): number[] {
   const queries = [...css.matchAll(/@media([^{]*)\{/g)].map(match => match[1])

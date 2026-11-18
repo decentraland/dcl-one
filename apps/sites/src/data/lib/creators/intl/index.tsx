@@ -6,7 +6,8 @@ import { formatParts, type FormatValue } from './format'
 const LOCALE = 'en'
 const messages: Record<string, string> = flattenMessages(en)
 
-const TranslationProvider = ({ children }: { children: ReactNode }) => <>{children}</>
+// Returns its children as they are: a wrapping fragment would change how React matches them between renders.
+const TranslationProvider = ({ children }: { children: ReactNode }) => children
 
 type PlainValues = Record<string, string | number | ((chunks: string[]) => string)>
 type RichValues = Record<string, ReactNode | ((chunks: ReactNode[]) => ReactNode)>

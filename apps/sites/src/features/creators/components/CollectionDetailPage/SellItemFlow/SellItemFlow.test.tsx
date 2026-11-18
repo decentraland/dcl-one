@@ -5,7 +5,6 @@ import { FeatureFlag } from '@/data/lib/creators/featureFlags'
 import { setFeatureFlags } from '@/data/lib/creators/test/featureFlags'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { ProviderType } from '@dcl/schemas'
 import { ContractName, getContract } from '@/data/lib/creators/chain/contracts'
 import { getMaticChainId } from '@/data/lib/creators/publishCollection'
 import { SellItemError } from '@/data/lib/creators/sales'
@@ -37,10 +36,10 @@ vi.mock('../../../hooks/useSales', () => ({
 }))
 vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 404 })))
 
-function renderFlow(providerType = ProviderType.INJECTED, current = collection) {
+function renderFlow(sessionKind: 'web3' | 'managed' = 'web3', current = collection) {
   const onClose = vi.fn()
   const view = render(
-    <SellItemFlow item={item} collection={current} session={makeSession(providerType)} onClose={onClose} />,
+    <SellItemFlow item={item} collection={current} session={makeSession(sessionKind)} onClose={onClose} />,
     { wrapper: Providers }
   )
   return { onClose, view }
@@ -186,7 +185,7 @@ describe('SellItemFlow', () => {
   describe('when the collection already sells on an older marketplace', () => {
     beforeEach(() => {
       const older = getContract(ContractName.OffChainMarketplaceV2, getMaticChainId()).address
-      renderFlow(ProviderType.INJECTED, { ...collection, minters: [older] })
+      renderFlow('web3', { ...collection, minters: [older] })
     })
 
     it('should explain that the marketplace was upgraded', () => {
@@ -195,11 +194,11 @@ describe('SellItemFlow', () => {
   })
 
   it('keeps a social-login creator on the Enable Sales dialog with a spinning button', async () => {
-    const { view } = renderFlow(ProviderType.MAGIC)
+    const { view } = renderFlow('managed')
     await userEvent.click(screen.getByTestId('enable-sales-confirm'))
     enable.isPending = true
     view.rerender(
-      <SellItemFlow item={item} collection={collection} session={makeSession(ProviderType.MAGIC)} onClose={vi.fn()} />
+      <SellItemFlow item={item} collection={collection} session={makeSession('managed')} onClose={vi.fn()} />
     )
     expect(screen.getByTestId('enable-sales-confirm')).toHaveAttribute('aria-busy', 'true')
     expect(screen.queryByTestId('enable-sales-pending')).not.toBeInTheDocument()
@@ -259,11 +258,11 @@ describe('SellItemFlow', () => {
 
   it('spins the submit button for a social-login creator instead of showing the wallet status', async () => {
     salesEnabled = true
-    const { view } = renderFlow(ProviderType.MAGIC)
+    const { view } = renderFlow('managed')
     await fillAndSubmit()
     sell.isPending = true
     view.rerender(
-      <SellItemFlow item={item} collection={collection} session={makeSession(ProviderType.MAGIC)} onClose={vi.fn()} />
+      <SellItemFlow item={item} collection={collection} session={makeSession('managed')} onClose={vi.fn()} />
     )
     expect(screen.queryByTestId('sell-item-pending')).not.toBeInTheDocument()
     expect(screen.getByTestId('sell-submit')).toHaveAttribute('aria-busy', 'true')

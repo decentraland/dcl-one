@@ -51,7 +51,7 @@ vi.mock('@/data/lib/creators/analytics', () => ({ track: vi.fn() }))
 const clipboard = vi.hoisted(() => ({ copyToClipboard: vi.fn() }))
 vi.mock('@/data/lib/creators/clipboard', () => clipboard)
 
-const web3 = { address: '0xMe', providerType: 'injected' } as Session
+const web3 = { address: '0xMe', kind: 'web3' } as Session
 const collection = { id: 'c1', name: 'Hats', itemCount: 6 } as Collection
 const item = {
   id: 'i1',
@@ -153,7 +153,7 @@ describe('ApprovalFlowModal', () => {
   it('skips the wallet prompt screen for social logins, which sign without one', () => {
     plan = { steps: ['approve'], rescue: [], deploy: [] }
     view = { kind: 'step', step: 'approve', phase: { kind: 'signing', tx: 1, txs: 1 } }
-    renderModal(undefined, { address: '0xMe', providerType: 'magic' } as Session)
+    renderModal(undefined, { address: '0xMe', kind: 'managed' } as Session)
     expect(screen.queryByTestId('approval-signing')).not.toBeInTheDocument()
     expect(screen.getByTestId('approval-step-approve')).toBeInTheDocument()
   })

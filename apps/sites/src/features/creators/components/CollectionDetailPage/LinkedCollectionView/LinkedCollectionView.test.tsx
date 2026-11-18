@@ -6,7 +6,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ProviderType, type Mappings } from '@dcl/schemas'
+import type { Mappings } from '@dcl/schemas'
 import { TranslationProvider } from '@/data/lib/creators/intl'
 import type { Session } from '@/data/lib/creators/auth'
 import { CurationStatus, type Collection } from '@/data/lib/creators/collections'
@@ -294,7 +294,7 @@ describe('LinkedCollectionView', () => {
   describe('changing the linked contract', () => {
     const NEW = '0x' + 'b'.repeat(40)
     const FROM_KEY = 'linked-collection.relink-from.c1'
-    const social = { address: ADDRESS, providerType: ProviderType.MAGIC } as unknown as Session
+    const social = { address: ADDRESS, kind: 'managed' } as unknown as Session
 
     // A run parked at the wallet prompt: the test decides when and how it ends.
     function parkedRun() {

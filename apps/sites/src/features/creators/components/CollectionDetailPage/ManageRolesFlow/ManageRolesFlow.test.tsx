@@ -3,7 +3,6 @@ import '@/data/lib/creators/test/setup'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { ProviderType } from '@dcl/schemas'
 import { ContractName, getContract } from '@/data/lib/creators/chain/contracts'
 import type { Collection } from '@/data/lib/creators/collections'
 import type { RoleKind } from '@/data/lib/creators/collectionRoles'
@@ -33,9 +32,9 @@ const MANAGER = '0x00000000000000000000000000000000000000ee'
 const MARKETPLACE = getContract(ContractName.OffChainMarketplaceV2, 80002).address
 const withRoles: Collection = { ...collection, minters: [MINTER.toUpperCase(), MARKETPLACE], managers: [MANAGER] }
 
-function renderFlow(kind: RoleKind = 'senders', providerType = ProviderType.INJECTED, target = withRoles) {
+function renderFlow(kind: RoleKind = 'senders', sessionKind: 'web3' | 'managed' = 'web3', target = withRoles) {
   const onClose = vi.fn()
-  render(<ManageRolesFlow collection={target} kind={kind} session={makeSession(providerType)} onClose={onClose} />, {
+  render(<ManageRolesFlow collection={target} kind={kind} session={makeSession(sessionKind)} onClose={onClose} />, {
     wrapper: Providers
   })
   return { onClose }
@@ -144,7 +143,7 @@ describe('ManageRolesFlow', () => {
   })
 
   it('keeps a custodial wallet in the dialog with the button spinning', async () => {
-    renderFlow('collaborators', ProviderType.MAGIC)
+    renderFlow('collaborators', 'managed')
     expect(screen.getByTestId('role-1-selected')).toHaveTextContent(short(MANAGER))
     await userEvent.click(screen.getByTestId('role-1-clear'))
     save.isPending = true

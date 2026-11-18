@@ -3,7 +3,6 @@ import '@/data/lib/creators/test/setup'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { ProviderType } from '@dcl/schemas'
 import { SellItemError } from '@/data/lib/creators/sales'
 import { WrongAccountError } from '@/data/lib/creators/walletErrors'
 import { TransferOwnershipFlow } from './TransferOwnershipFlow'
@@ -26,13 +25,13 @@ vi.mock('../../../hooks/useSales', () => ({
 }))
 vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 404 })))
 
-function renderFlow(providerType = ProviderType.INJECTED) {
+function renderFlow(sessionKind: 'web3' | 'managed' = 'web3') {
   const onClose = vi.fn()
   const onDone = vi.fn()
   render(
     <TransferOwnershipFlow
       collection={collection}
-      session={makeSession(providerType)}
+      session={makeSession(sessionKind)}
       onDone={onDone}
       onClose={onClose}
     />,
@@ -127,7 +126,7 @@ describe('TransferOwnershipFlow', () => {
   })
 
   it('keeps a custodial wallet in the dialog, locked, with the button spinning', async () => {
-    const { onClose } = renderFlow(ProviderType.MAGIC)
+    const { onClose } = renderFlow('managed')
     await fillIn()
     transfer.isPending = true
     await userEvent.click(screen.getByTestId('transfer-submit'))

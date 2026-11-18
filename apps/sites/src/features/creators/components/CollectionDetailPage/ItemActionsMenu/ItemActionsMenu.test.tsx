@@ -105,10 +105,10 @@ function renderMenu(props: Props = {}) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>
       <TranslationProvider>
-        <MemoryRouter initialEntries={['/collections/c1']}>
+        <MemoryRouter initialEntries={['/create/collections/c1']}>
           <Routes>
-            <Route path="/collections/c1" element={children} />
-            <Route path="/collections/editor" element={<LocationProbe />} />
+            <Route path="/create/collections/c1" element={children} />
+            <Route path="/create/collections/editor" element={<LocationProbe />} />
           </Routes>
         </MemoryRouter>
       </TranslationProvider>
@@ -165,7 +165,7 @@ describe('ItemActionsMenu', () => {
     renderMenu()
     await openMenu()
     await userEvent.click(screen.getByTestId('item-preview'))
-    expect(screen.getByTestId('location')).toHaveTextContent('/collections/editor?collection=c1&item=i1')
+    expect(screen.getByTestId('location')).toHaveTextContent('/create/collections/editor?collection=c1&item=i1')
   })
 
   it('copies the URN of a published item and offers the sale actions for a listed item', async () => {
