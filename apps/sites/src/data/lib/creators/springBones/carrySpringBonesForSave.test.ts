@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '../test/setup'
 import { describe, expect, it } from 'vitest'
-import { type SpringBoneParams } from '@dcl/schemas'
+import type { SpringBoneParams } from '@dcl/schemas'
 import { ItemType, type Item } from '../items'
 import { carrySpringBonesForSave, parseSpringBones, type BoneNode } from './index'
 

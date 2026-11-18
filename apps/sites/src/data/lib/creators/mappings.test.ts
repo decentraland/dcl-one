@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import './test/setup'
 import { describe, it, expect } from 'vitest'
-import { type ContractNetwork } from '@dcl/schemas'
+import type { ContractNetwork } from '@dcl/schemas'
 import {
   MappingType,
   areMappingsEqual,

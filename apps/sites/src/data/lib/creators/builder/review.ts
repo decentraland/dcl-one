@@ -1,4 +1,4 @@
-import { type CollectionEvent, type CollectionEventsPage } from '../events'
+import type { CollectionEvent, CollectionEventsPage } from '../events'
 import { fromRemoteEvent } from './mappers'
 import { BuilderServerError, request } from './transport'
 import type { RemoteCollectionEvent, RemoteCollectionEventsPage } from './wire'

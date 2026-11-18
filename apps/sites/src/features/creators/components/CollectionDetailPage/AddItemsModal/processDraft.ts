@@ -1,7 +1,7 @@
 // Async half of draft creation: file loading + model analysis + manifest prefills. Results are
 // dispatched into the pure reducer; WearablePreview-dependent data (wearable metrics, auto
 // thumbnails) is filled afterwards by DraftProcessor.
-import { type WearableCategory } from '@dcl/schemas'
+import type { WearableCategory } from '@dcl/schemas'
 import { blobToDataURL, loadVideoMetadata } from '@/data/lib/creators/media'
 import { sanitizeItemDescription, unique } from '@/data/lib/creators/itemDraft'
 import { EmotePlayMode, ITEM_NAME_MAX_LENGTH } from '@/data/lib/creators/itemFactory'
@@ -12,7 +12,7 @@ import { isRarity } from '@/data/lib/creators/rarities'
 import { imageThumbnailPatch, needsPreviewData } from '@/data/lib/creators/draftPreview'
 import { getWearableCategoryOptions, hidesForCategory } from '@/data/lib/creators/wearableCategories'
 import { resolveLinkedManifest, type LinkedManifestTarget } from '@/data/lib/creators/linkedManifest'
-import { type ItemDraft } from './AddItemsModal.state'
+import type { ItemDraft } from './AddItemsModal.state'
 
 /** The linked collection a draft is for: what its items may be and where their URN and mapping come from. */
 export type LinkedDraftTarget = LinkedManifestTarget

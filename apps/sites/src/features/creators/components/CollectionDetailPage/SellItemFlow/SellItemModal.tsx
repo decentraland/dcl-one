@@ -10,8 +10,8 @@ import { useIntl } from '@/data/lib/creators/intl'
 import 'react-datepicker/dist/react-datepicker.css'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { useFriends } from '../../../hooks/useSales'
-import { type Session } from '@/data/lib/creators/auth'
-import { type Item } from '@/data/lib/creators/items'
+import type { Session } from '@/data/lib/creators/auth'
+import type { Item } from '@/data/lib/creators/items'
 import {
   NO_EXPIRATION,
   formatDateValue,

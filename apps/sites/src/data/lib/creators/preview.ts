@@ -14,7 +14,7 @@ import {
   type WearableDefinition,
   type WearableWithBlobs
 } from '@dcl/schemas'
-import { type AvatarAttributes } from './avatar'
+import type { AvatarAttributes } from './avatar'
 import { getContentsStorageUrl } from './builder'
 import { isImageFile, isModelFile } from './itemFiles'
 import { ItemType, type Item } from './items'

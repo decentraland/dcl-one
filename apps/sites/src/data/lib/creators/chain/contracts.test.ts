@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '../test/setup'
 import { describe, expect, it } from 'vitest'
-import { type Abi, type AbiParameter } from 'viem'
+import type { Abi, AbiParameter } from 'viem'
 import {
   ContractName,
   getCollectionContract,

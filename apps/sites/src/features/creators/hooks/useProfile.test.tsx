@@ -3,7 +3,7 @@ import '@/data/lib/creators/test/setup'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { profileQuery, useProfile, useProfiles, type ProfileAvatar } from './useProfile'
 
 const WITH_PROFILE = '0x00000000000000000000000000000000000000aa'

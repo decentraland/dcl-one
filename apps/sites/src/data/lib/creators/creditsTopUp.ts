@@ -2,7 +2,7 @@
 // which wipes the publish wizard's state; this record is written just before leaving and read once
 // on the way back, so the creator lands on the payment step they left, not on a fresh wizard.
 import { isValidEmail } from './email'
-import { type PaymentMethod } from './publishCollection'
+import type { PaymentMethod } from './publishCollection'
 
 export type TopUpResume = {
   collectionId: string

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { type LinkedContract } from '@/data/lib/creators/thirdParty'
+import type { LinkedContract } from '@/data/lib/creators/thirdParty'
 import { Button } from '../../../Button'
 import { EMPTY_LINKED_CONTRACT, LinkedContractFields } from '../../../LinkedContractFields'
 import { Modal } from '../../../Modal'

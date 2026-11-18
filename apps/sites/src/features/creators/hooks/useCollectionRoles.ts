@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { errorCode, track } from '@/data/lib/creators/analytics'
 import { sendContractTransaction, waitForTransaction, type Session } from '@/data/lib/creators/auth'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { Collection } from '@/data/lib/creators/collections'
 import { buildSetRolesCall, diffRoles, getRoleAddresses, withRoles, type RoleKind } from '@/data/lib/creators/collectionRoles'
 import { getMaticChainId } from '@/data/lib/creators/publishCollection'
 import { SellItemError } from '@/data/lib/creators/sales'

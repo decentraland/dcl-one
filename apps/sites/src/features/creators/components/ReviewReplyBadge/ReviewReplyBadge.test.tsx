@@ -3,7 +3,7 @@ import '@/data/lib/creators/test/setup'
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { TranslationProvider } from '@/data/lib/creators/intl'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { Collection } from '@/data/lib/creators/collections'
 import { ReviewReplyBadge } from './ReviewReplyBadge'
 
 const recent = vi.hoisted(() => ({ events: [] as { type: string; actor: string }[], asked: [] as boolean[] }))

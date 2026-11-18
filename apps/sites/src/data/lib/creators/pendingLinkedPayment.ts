@@ -1,8 +1,8 @@
 // The payment an unfinished linked publish sent, remembered per chain, wallet and collection so that closing the
 // wizard (or reloading) and coming back resumes it instead of paying a second time.
-import { type SentRoot } from './approveLinkedCollection'
-import { type TransactionSender } from './auth'
-import { type LinkedPayment } from './publishLinkedItems'
+import type { SentRoot } from './approveLinkedCollection'
+import type { TransactionSender } from './auth'
+import type { LinkedPayment } from './publishLinkedItems'
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 

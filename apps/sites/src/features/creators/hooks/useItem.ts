@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { type Entity } from '@dcl/schemas'
+import type { Entity } from '@dcl/schemas'
 import { errorCode, track } from '@/data/lib/creators/analytics'
 import { fetchContent, saveItem } from '@/data/lib/creators/builder'
 import { fetchCatalystContent } from '@/data/lib/creators/catalyst'
 import { buildResetItem } from '@/data/lib/creators/itemSync'
-import { type Item } from '@/data/lib/creators/items'
+import type { Item } from '@/data/lib/creators/items'
 import { invalidateCollectionItems } from './usePublishCollection'
 
 /** Moves a draft item into another draft collection: the same item save with a new collection id. */

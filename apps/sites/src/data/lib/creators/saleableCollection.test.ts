@@ -2,9 +2,9 @@
 import './test/setup'
 import { describe, expect, it } from 'vitest'
 import { ContractName, getContract } from './chain/contracts'
-import { type Collection } from './collections'
+import type { Collection } from './collections'
 import { ItemType, type Item } from './items'
-import { type ItemListing } from './listings'
+import type { ItemListing } from './listings'
 import { discountedPriceCredits, manaToCredits, toSaleableCollection, type SaleItem } from './saleableCollection'
 
 const CHAIN_ID = 80002

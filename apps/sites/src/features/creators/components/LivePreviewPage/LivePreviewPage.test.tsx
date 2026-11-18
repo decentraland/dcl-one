@@ -1,15 +1,15 @@
 // @vitest-environment jsdom
 import '@/data/lib/creators/test/setup'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { TranslationProvider } from '@/data/lib/creators/intl'
-import { type Session } from '@/data/lib/creators/auth'
-import { type Collection } from '@/data/lib/creators/collections'
-import { type ValidationContext, type ValidationSource } from '@/data/lib/creators/validation'
+import type { Session } from '@/data/lib/creators/auth'
+import type { Collection } from '@/data/lib/creators/collections'
+import type { ValidationContext, ValidationSource } from '@/data/lib/creators/validation'
 import { useWallet } from '../../store/wallet'
 
 // ui2 lazy-loads MUI and talks to a real iframe; the page's own behaviour is what's under test.

@@ -2,7 +2,7 @@
 import './test/setup'
 import { describe, expect, it } from 'vitest'
 import { toTransaction } from './test/chain'
-import { type Collection } from './collections'
+import type { Collection } from './collections'
 import { ItemType, type Item } from './items'
 import {
   MAX_ITEMS_PER_SEND,

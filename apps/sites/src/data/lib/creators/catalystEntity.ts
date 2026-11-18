@@ -9,7 +9,7 @@ import {
 } from '@dcl/hashing'
 import { EntityType } from '@dcl/schemas'
 import { fetchContent } from './builder'
-import { type Collection } from './collections'
+import type { Collection } from './collections'
 import { THUMBNAIL_PATH } from './itemFiles'
 import { IMAGE_PATH, ItemType, VIDEO_PATH, type Item, type ItemData, type ItemRepresentation } from './items'
 import { getDeployableFiles } from './itemSync'

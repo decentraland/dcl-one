@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import './test/setup'
 import { describe, expect, it } from 'vitest'
-import { type BlockchainRarity } from './rarities'
+import type { BlockchainRarity } from './rarities'
 import {
   creditsForUsdWei,
   formatCredits,

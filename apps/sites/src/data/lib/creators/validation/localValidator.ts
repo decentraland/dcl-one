@@ -8,7 +8,7 @@ import { THUMBNAIL_PATH } from '../itemFiles'
 import { ItemType } from '../items'
 import { AUDIO_LIKE, distinctModels, itemModels, type DistinctModel } from './models'
 import { limited } from './queue'
-import { type RuleBookOutput } from './ruleBook'
+import type { RuleBookOutput } from './ruleBook'
 import { runOffMainThread } from './runner'
 import {
   ValidationSeverity,

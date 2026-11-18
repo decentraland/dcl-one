@@ -13,10 +13,10 @@ import {
   type LinkedApprovalPlan,
   type LinkedDeployDeps
 } from './approveLinkedCollection'
-import { type LinkedApprovalData } from './builder'
+import type { LinkedApprovalData } from './builder'
 import { CurationStatus, type Collection } from './collections'
 import { ItemType, type Item } from './items'
-import { type ThirdParty } from './thirdParty'
+import type { ThirdParty } from './thirdParty'
 
 const CHAIN_ID = 80002
 const THIRD_PARTY_ID = 'urn:decentraland:amoy:collections-thirdparty:brand'

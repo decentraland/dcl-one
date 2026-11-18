@@ -1,5 +1,5 @@
 import { useTranslation } from '@/data/lib/creators/intl'
-import { type ReviewType } from '@/data/lib/creators/curation'
+import type { ReviewType } from '@/data/lib/creators/curation'
 import styles from './ReviewTypePill.module.css'
 
 /** Whether a review is a collection's first one or an update to a collection approved before. */

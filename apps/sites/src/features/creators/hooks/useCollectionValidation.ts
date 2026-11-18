@@ -2,7 +2,7 @@ import { useCallback, useMemo } from 'react'
 import { useQueries, type UseQueryResult } from '@tanstack/react-query'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { track } from '@/data/lib/creators/analytics'
-import { type Item } from '@/data/lib/creators/items'
+import type { Item } from '@/data/lib/creators/items'
 import {
   getValidationStatus,
   itemValidationContext,

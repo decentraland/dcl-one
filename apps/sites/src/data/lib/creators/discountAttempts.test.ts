@@ -2,7 +2,7 @@
 import './test/setup'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Network } from '@dcl/schemas'
-import { type CouponCreation } from './coupons'
+import type { CouponCreation } from './coupons'
 import {
   acknowledgeUnconfirmedCreate,
   clearPendingEnd,

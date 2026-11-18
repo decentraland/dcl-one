@@ -17,7 +17,7 @@ import {
   type ItemDraftPayload
 } from './itemFactory'
 import { assertItemSize, type MeasureDeps } from './itemSize'
-import { type Item } from './items'
+import type { Item } from './items'
 
 export type UploadDraft = ItemDraftPayload & {
   /** When set, this draft is a body-shape variant of another batch draft or an existing item. */

@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type ReactNode } from 'react'
+import type { KeyboardEvent, ReactNode } from 'react'
 import { FemaleIcon, MaleIcon, TransgenderIcon as BothIcon } from '../Icons'
 import { Tooltip } from '../Tooltip'
 import { useTranslation } from '@/data/lib/creators/intl'

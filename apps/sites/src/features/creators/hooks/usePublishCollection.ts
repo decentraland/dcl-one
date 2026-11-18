@@ -21,7 +21,7 @@ import { isContractDeployed, sendContractTransaction, waitForTransaction, type S
 import { isCollectionLocked, isLinkedCollection, type Collection } from '@/data/lib/creators/collections'
 import { authorizePublication } from '@/data/lib/creators/credits'
 import { withRehashedContents } from '@/data/lib/creators/itemFactory'
-import { type Item } from '@/data/lib/creators/items'
+import type { Item } from '@/data/lib/creators/items'
 import { buildManaApproveCall } from '@/data/lib/creators/mana'
 import { useNotifications } from '@/data/lib/creators/notifications'
 import {
@@ -36,7 +36,7 @@ import {
   type PaymentMethod,
   type PublishResult
 } from '@/data/lib/creators/publishCollection'
-import { type PublicationFee } from '@/data/lib/creators/publishFee'
+import type { PublicationFee } from '@/data/lib/creators/publishFee'
 import { buildCollectionInitializeData } from '@/data/lib/creators/saveCollection'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { postToForum } from './useForumPost'

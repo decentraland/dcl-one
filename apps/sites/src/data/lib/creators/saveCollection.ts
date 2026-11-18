@@ -4,7 +4,7 @@
 // without it), and the symbol/items encodings that feed it.
 import { encodeFunctionData, zeroAddress } from 'viem'
 import { config } from './config'
-import { type Collection } from './collections'
+import type { Collection } from './collections'
 import { getItemMetadata, type Item } from './items'
 
 // [rarity, price, beneficiary, metadata] — ERC721BaseCollectionV2.ItemParam.

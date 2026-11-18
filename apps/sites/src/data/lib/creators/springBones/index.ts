@@ -1,10 +1,10 @@
 // Spring bone physics for wearables, ported from the legacy builder's lib/springBones: default
 // params, chain roots, subtree sizes (the MAX_SPRING_BONES cap counts every bone a chain drives) and
 // the merge back into `item.data.springBones`, keyed by representation model hash.
-import { type BuiltItem } from '../itemFactory'
-import { type SpringBoneParams, type SpringBonesData } from '@dcl/schemas'
+import type { BuiltItem } from '../itemFactory'
+import type { SpringBoneParams, SpringBonesData } from '@dcl/schemas'
 import { ItemType, type Item } from '../items'
-import { type BoneNode } from './parseSpringBones'
+import type { BoneNode } from './parseSpringBones'
 
 // Local copies: importing the validator package root pulls every check into the importing chunk.
 // springBones.spec.ts keeps them equal to the validator manifest.

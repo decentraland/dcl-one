@@ -4,7 +4,7 @@
 // preview video never deploys and never counts. The wearable-validator's file-size check (S-05) counts the same.
 // Every place that shows or enforces an item's size goes through here.
 import { getEntityContent, getLinkedEntityContent, type MissingImage } from './catalystEntity'
-import { type BuiltItem } from './itemFactory'
+import type { BuiltItem } from './itemFactory'
 import { ItemFileError, MAX_EMOTE_FILE_SIZE, MAX_SKIN_FILE_SIZE, MAX_WEARABLE_FILE_SIZE } from './itemFiles'
 import { IMAGE_PATH, ItemType, VIDEO_PATH, type Item } from './items'
 import { captureError } from './monitoring'

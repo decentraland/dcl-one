@@ -1,6 +1,6 @@
 import { ContractName, getCollectionContract, getContract } from './chain/contracts'
-import { type ContractCall } from './auth'
-import { type Collection } from './collections'
+import type { ContractCall } from './auth'
+import type { Collection } from './collections'
 import { SellItemError } from './sales'
 
 /** The two on-chain roles an owner hands out: senders are the contract's minters, collaborators its managers. */

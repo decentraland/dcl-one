@@ -8,7 +8,7 @@ import {
 } from '../WearablePreview'
 import { config } from '@/data/lib/creators/config'
 import { usePreviewRenderer } from '../../hooks/usePreviewRenderer'
-import { type AvatarAttributes } from '@/data/lib/creators/avatar'
+import type { AvatarAttributes } from '@/data/lib/creators/avatar'
 import {
   PREVIEW_WHEEL_START,
   PREVIEW_WHEEL_ZOOM,

@@ -7,10 +7,10 @@ import {
   takesDiscount,
   type DiscountReachOptions
 } from './collectionDiscount'
-import { type Collection } from './collections'
+import type { Collection } from './collections'
 import { getItemSales, type Item } from './items'
 import { creditsForUsdWei } from './publishFee'
-import { type ItemListing } from './listings'
+import type { ItemListing } from './listings'
 
 export type SaleItem = {
   key: string

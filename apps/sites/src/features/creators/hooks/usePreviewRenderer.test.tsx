@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { PreviewRenderer } from '@dcl/schemas'
-import { type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 
 const getIsFeatureEnabled = vi.fn()
 vi.mock('@/data/lib/creators/featureFlags', async importOriginal => ({

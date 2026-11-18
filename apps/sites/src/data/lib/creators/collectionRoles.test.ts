@@ -3,7 +3,7 @@ import './test/setup'
 import { describe, expect, it } from 'vitest'
 import { toTransaction } from './test/chain'
 import { ContractName, getContract } from './chain/contracts'
-import { type Collection } from './collections'
+import type { Collection } from './collections'
 import {
   buildSetRolesCall,
   diffRoles,

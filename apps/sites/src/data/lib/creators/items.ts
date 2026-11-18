@@ -7,8 +7,8 @@ import {
   isCollectionLocked,
   type Collection
 } from './collections'
-import { type Mappings, type SpringBonesData } from '@dcl/schemas'
-import { type ItemListing } from './listings'
+import type { Mappings, SpringBonesData } from '@dcl/schemas'
+import type { ItemListing } from './listings'
 import { getRarityMaxSupply } from './rarities'
 
 export enum ItemType {

@@ -18,7 +18,7 @@ import { config } from '../config'
 import { encodeContractCall, type ContractCall, type ContractData } from '../chain/contracts'
 import { sendMetaTransaction, type MetaTransactionWallet } from '../chain/metaTransaction'
 import { WrongAccountError, WrongChainError } from '../walletErrors'
-import { type Session } from './auth'
+import type { Session } from './auth'
 import { readWalletChainId, requireAccount, switchWalletChain } from './provider'
 import { walletClientOf } from './walletClient'
 

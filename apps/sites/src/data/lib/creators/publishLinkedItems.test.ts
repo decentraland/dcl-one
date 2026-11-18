@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import './test/setup'
 import { describe, expect, it, vi } from 'vitest'
-import { type ContractNetwork } from '@dcl/schemas'
+import type { ContractNetwork } from '@dcl/schemas'
 import {
   TEST_SIGNER,
   decodeCall,
@@ -12,7 +12,7 @@ import {
 import { BuilderServerError, type SlotsCheque } from './builder'
 import { CurationStatus, type Collection } from './collections'
 import { ItemType, type Item } from './items'
-import { type ItemCuration } from './linkedItemStatus'
+import type { ItemCuration } from './linkedItemStatus'
 import {
   LinkedPublishError,
   buildChequeTypedData,
@@ -31,7 +31,7 @@ import {
   type PublishLinkedDeps,
   type PublishLinkedParams
 } from './publishLinkedItems'
-import { type ThirdParty } from './thirdParty'
+import type { ThirdParty } from './thirdParty'
 import { getThirdPartyRegistry, type ThirdPartyPrice } from './thirdPartyRegistry'
 import { WrongAccountError } from './walletErrors'
 

@@ -1,16 +1,16 @@
 // @vitest-environment jsdom
 import '@/data/lib/creators/test/setup'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { TranslationProvider } from '@/data/lib/creators/intl'
-import { type ReviewedContent } from '@/data/lib/creators/approveLinkedCollection'
-import { type Session } from '@/data/lib/creators/auth'
-import { type Collection } from '@/data/lib/creators/collections'
-import { type Item } from '@/data/lib/creators/items'
-import { type ThirdParty } from '@/data/lib/creators/thirdParty'
+import type { ReviewedContent } from '@/data/lib/creators/approveLinkedCollection'
+import type { Session } from '@/data/lib/creators/auth'
+import type { Collection } from '@/data/lib/creators/collections'
+import type { Item } from '@/data/lib/creators/items'
+import type { ThirdParty } from '@/data/lib/creators/thirdParty'
 import { LinkedReviewBar } from './LinkedReviewBar'
 
 const rejectMutate = vi.fn()

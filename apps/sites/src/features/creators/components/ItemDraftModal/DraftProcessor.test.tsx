@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render } from '@testing-library/react'
 import { PreviewRenderer } from '@dcl/schemas'
 import { ItemType } from '@/data/lib/creators/items'
-import { type PreviewDraft } from '@/data/lib/creators/draftPreview'
+import type { PreviewDraft } from '@/data/lib/creators/draftPreview'
 
 type PreviewProps = { id: string; onLoad?: () => void; onUpdate?: () => void }
 const previewProps: PreviewProps[] = []

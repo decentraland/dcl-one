@@ -18,7 +18,7 @@ import { EmotePlayMode, ITEM_NAME_MAX_LENGTH, isValidItemName } from '@/data/lib
 import { formatItemSize, isOverSizeLimit, type ItemSize } from '@/data/lib/creators/itemSize'
 import { toMB } from '@/data/lib/creators/itemFiles'
 import { BodyShapeType, ItemType, VIDEO_PATH, type Item } from '@/data/lib/creators/items'
-import { type Mapping } from '@/data/lib/creators/mappings'
+import type { Mapping } from '@/data/lib/creators/mappings'
 import { decodeLinkedUrn, type LinkedContract } from '@/data/lib/creators/thirdParty'
 import { MappingEditor } from '../../MappingEditor'
 import { getCategoryOptions, getVariantTargets, type ItemDraft } from './AddItemsModal.state'

@@ -24,7 +24,7 @@ import {
   type CouponCreation,
   type DiscountTerms
 } from '@/data/lib/creators/coupons'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { Collection } from '@/data/lib/creators/collections'
 import {
   clearPendingEnd,
   clearUnconfirmedCreate,

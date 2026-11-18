@@ -4,7 +4,7 @@
 import { ContractName, getContract } from './chain/contracts'
 import { compactSignatureToSignature, parseCompactSignature, parseSignature, size, zeroHash, type Hex } from 'viem'
 import { readContract, type ContractCall } from './auth'
-import { type SlotsCheque } from './builder'
+import type { SlotsCheque } from './builder'
 import { contractsFromRawMetadata, toRawMetadata, type LinkedContract, type ThirdParty } from './thirdParty'
 
 export function getThirdPartyRegistry(chainId: number) {

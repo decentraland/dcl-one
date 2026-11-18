@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useQueries, type QueryClient } from '@tanstack/react-query'
 import { fetchContent } from '@/data/lib/creators/builder'
-import { type Item } from '@/data/lib/creators/items'
+import type { Item } from '@/data/lib/creators/items'
 import {
   getInitialSpringBoneParams,
   getRepresentationModelHashes,

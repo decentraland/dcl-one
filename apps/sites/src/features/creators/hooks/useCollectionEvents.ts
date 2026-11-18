@@ -11,7 +11,7 @@ import {
   postCollectionComment,
   requestCollectionValidation
 } from '@/data/lib/creators/builder'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { Collection } from '@/data/lib/creators/collections'
 import { collectionCurationKey, collectionEventsKey, refreshReview } from './useCuration'
 import { useFeatureFlag } from './useFeatureFlag'
 import { getValidationAttemptsLeft, isValidationInProgress, type CollectionEvent, type ReviewParty } from '@/data/lib/creators/events'

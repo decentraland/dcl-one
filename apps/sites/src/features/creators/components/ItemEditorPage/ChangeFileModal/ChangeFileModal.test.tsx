@@ -7,7 +7,7 @@ import userEvent from '@testing-library/user-event'
 import { BodyShape } from '@dcl/schemas'
 import { Providers } from '../../CollectionDetailPage/SellItemFlow/testUtils'
 import { BodyShapeType, ItemType, type Item } from '@/data/lib/creators/items'
-import { type ItemFileChange } from '@/data/lib/creators/itemDraft'
+import type { ItemFileChange } from '@/data/lib/creators/itemDraft'
 import { ChangeFileModal } from './ChangeFileModal'
 
 const pickFile = vi.fn()

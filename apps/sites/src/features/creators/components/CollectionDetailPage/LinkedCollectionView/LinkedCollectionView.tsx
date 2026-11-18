@@ -11,7 +11,7 @@ import { shortenAddress } from '@/data/lib/creators/address'
 import { copyToClipboard } from '@/data/lib/creators/clipboard'
 import { isCollectionLocked, type Collection } from '@/data/lib/creators/collections'
 import { ITEM_EXTENSIONS } from '@/data/lib/creators/itemFiles'
-import { type Item } from '@/data/lib/creators/items'
+import type { Item } from '@/data/lib/creators/items'
 import {
   LinkedItemFilter,
   getLinkedItemStatus,
@@ -22,7 +22,7 @@ import {
   type ItemCuration
 } from '@/data/lib/creators/linkedItemStatus'
 import { isContractInUseError } from '@/data/lib/creators/linkedContract'
-import { type Mappings } from '@/data/lib/creators/mappings'
+import type { Mappings } from '@/data/lib/creators/mappings'
 import { getMaticChainId } from '@/data/lib/creators/publishCollection'
 import { RelinkCancelledError, loadRelinkFrom, relinkCollection, type RelinkStep } from '@/data/lib/creators/relinkCollection'
 import { isWalletRejection, isWalletStateError } from '@/data/lib/creators/walletErrors'

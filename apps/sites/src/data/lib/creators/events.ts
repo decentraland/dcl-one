@@ -2,7 +2,7 @@
 // (`GET /collections/:id/events`). The review stage, the validator's verdict and the daily retry
 // allowance are all read off these rows; nothing here is stored on the client.
 
-import { type BodyShape as BodyShapeUrn } from '@dcl/schemas'
+import type { BodyShape as BodyShapeUrn } from '@dcl/schemas'
 import { BODY_SHAPE_FEMALE, BODY_SHAPE_MALE, type Item } from './items'
 import { ValidationSeverity, type ValidationIssue } from './validation/types'
 

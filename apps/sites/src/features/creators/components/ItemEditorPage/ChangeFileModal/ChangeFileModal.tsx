@@ -13,7 +13,7 @@ import { errorCode, track } from '@/data/lib/creators/analytics'
 import { applyPreviewResult, imageThumbnailPatch, needsPreviewData, type PreviewDraft } from '@/data/lib/creators/draftPreview'
 import { pickFile } from '@/data/lib/creators/filePicker'
 import { toFileChangeSaveable, type ItemFileChange } from '@/data/lib/creators/itemDraft'
-import { type BuiltItem } from '@/data/lib/creators/itemFactory'
+import type { BuiltItem } from '@/data/lib/creators/itemFactory'
 import { ITEM_EXTENSIONS, ItemFileError, THUMBNAIL_PATH, getExtension, isImageFile } from '@/data/lib/creators/itemFiles'
 import {
   buildModelUpdate,

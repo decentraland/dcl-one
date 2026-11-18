@@ -17,7 +17,7 @@ import {
   isReviewConflict,
   isValidationRunning
 } from '@/data/lib/creators/builder'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { Collection } from '@/data/lib/creators/collections'
 import {
   getReviewStage,
   hasReviewConversation,
@@ -40,7 +40,7 @@ import {
   type CollectionEvent
 } from '@/data/lib/creators/events'
 import { hasUpdatesSinceRejection } from '@/data/lib/creators/itemSync'
-import { type Item } from '@/data/lib/creators/items'
+import type { Item } from '@/data/lib/creators/items'
 import { useNotifications } from '@/data/lib/creators/notifications'
 import {
   AdditionalReviewModal,
@@ -51,7 +51,7 @@ import {
   SentForReviewModal
 } from './ReviewModals'
 import { markReviewModalSeen, wasReviewModalSeen } from '@/data/lib/creators/reviewModalMemory'
-import { type ItemCheck } from '@/data/lib/creators/validation'
+import type { ItemCheck } from '@/data/lib/creators/validation'
 import styles from './ReviewFlow.module.css'
 
 /** What the page asks for: a modal (right after publishing, or at the daily limit), another automated review, or a curator's. */

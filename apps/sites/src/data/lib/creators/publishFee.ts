@@ -3,7 +3,7 @@
 // oracle). Credits are the shop's USD credits: 1 credit = 10 US cents, always rounded up, matching
 // credits-server's `authorize-publication` rounding.
 import { formatEther } from 'viem'
-import { type BlockchainRarity } from './rarities'
+import type { BlockchainRarity } from './rarities'
 
 export const USD_CENTS_PER_CREDIT = 10
 

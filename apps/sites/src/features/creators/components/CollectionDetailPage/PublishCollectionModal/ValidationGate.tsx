@@ -6,7 +6,7 @@ import { track } from '@/data/lib/creators/analytics'
 import { formatItemSize, isOverSizeLimit } from '@/data/lib/creators/itemSize'
 import { ValidationSeverity, countIssues, getValidationStatus, hasErrors, type ValidationIssue } from '@/data/lib/creators/validation'
 import { PendingModal } from '../../PendingModal'
-import { type ItemCheck } from '@/data/lib/creators/validation'
+import type { ItemCheck } from '@/data/lib/creators/validation'
 import { ValidationIssuesView } from './ValidationIssuesView'
 
 export type ValidationFlow = 'publish' | 'push_changes'

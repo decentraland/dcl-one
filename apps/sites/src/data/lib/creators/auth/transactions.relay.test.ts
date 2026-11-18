@@ -5,7 +5,7 @@ import { parseAbi } from 'viem'
 import { getCollectionContract, getContract, type ContractData } from '../chain/contracts'
 import { WrongAccountError, isWalletRejection } from '../walletErrors'
 import { TEST_SIGNER, testAccount } from '../test/chain'
-import { type Session } from './auth'
+import type { Session } from './auth'
 import { sendContractTransaction } from '.'
 
 vi.mock('decentraland-connect', () => ({ getRpcUrls: () => ({ 80002: 'https://rpc.example.com' }) }))

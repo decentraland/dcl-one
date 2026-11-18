@@ -1,6 +1,6 @@
 import { useTranslation } from '@/data/lib/creators/intl'
-import { type ItemSales } from '@/data/lib/creators/items'
-import { type ItemListing } from '@/data/lib/creators/listings'
+import type { ItemSales } from '@/data/lib/creators/items'
+import type { ItemListing } from '@/data/lib/creators/listings'
 import { openExternal } from '@/data/lib/creators/navigation'
 import { PriceTagIcon, CheckIcon, OpenInNewIcon } from '../../Icons'
 import { cx } from '@/data/lib/creators/cx'

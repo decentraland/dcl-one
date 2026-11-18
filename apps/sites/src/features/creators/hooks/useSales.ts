@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { type TradeCreation } from '@dcl/schemas'
+import type { TradeCreation } from '@dcl/schemas'
 import {
   readContract,
   sendContractTransaction,
@@ -9,10 +9,10 @@ import {
   type Session
 } from '@/data/lib/creators/auth'
 import { errorCode, track } from '@/data/lib/creators/analytics'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { Collection } from '@/data/lib/creators/collections'
 import { allCollectionItemsKey } from './useCollection'
 import { fetchFriends } from '@/data/lib/creators/friends'
-import { type Item } from '@/data/lib/creators/items'
+import type { Item } from '@/data/lib/creators/items'
 import { fetchItemTradeId, type ItemListing } from '@/data/lib/creators/listings'
 import { fetchManaUsdRate } from '@/data/lib/creators/manaRate'
 import { buildIssueTokensCall, copiesPerItem, flattenTransfers, sendBatchSize, type Transfer } from '@/data/lib/creators/mint'

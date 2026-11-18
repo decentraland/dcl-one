@@ -9,7 +9,7 @@ import { hasErrors as anyErrors, type ItemCheck } from '@/data/lib/creators/vali
 import { Button } from '../../Button'
 import { Modal } from '../../Modal'
 import { ItemValidationCard, toValidationSubject } from '../../ValidationBadge'
-import { type ValidationFlow } from './ValidationGate'
+import type { ValidationFlow } from './ValidationGate'
 import styles from './ValidationIssuesView.module.css'
 
 type Props = {

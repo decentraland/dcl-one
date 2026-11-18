@@ -2,7 +2,7 @@
 // everything else the checks read, so an entry never goes stale; the stamp drops every entry at once when the
 // rule book or our mapping of its findings changes.
 import { clear, createStore, del, get, set, type UseStore } from 'idb-keyval'
-import { type ValidationResult } from './types'
+import type { ValidationResult } from './types'
 
 /** Bump when the mapping from rule book findings to issues changes, so old entries are never read again. */
 export const CACHE_REVISION = 2

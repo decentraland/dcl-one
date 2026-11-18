@@ -1,5 +1,5 @@
 // Pure helpers behind the item editor page: URL → mode / selection, dressing rules and the persisted layout.
-import { type BodyShape } from '@dcl/schemas'
+import type { BodyShape } from '@dcl/schemas'
 import { ItemType, type Item } from './items'
 
 export type EditorMode = 'edit' | 'review'

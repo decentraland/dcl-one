@@ -1,7 +1,7 @@
 import errorArt from '../../../assets/modal-error.png'
 import { ConfirmModal } from '../../ConfirmModal'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { type PublishFailureReason } from '@/data/lib/creators/publishCollection'
+import type { PublishFailureReason } from '@/data/lib/creators/publishCollection'
 
 type Props = {
   reason: PublishFailureReason

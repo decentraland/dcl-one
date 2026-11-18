@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { cx } from '@/data/lib/creators/cx'
 import { getRarityMediaBackground } from '@/data/lib/creators/rarities'

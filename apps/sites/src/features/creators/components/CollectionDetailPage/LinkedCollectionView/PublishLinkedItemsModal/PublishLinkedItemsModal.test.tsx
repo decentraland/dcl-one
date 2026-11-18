@@ -1,16 +1,16 @@
 // @vitest-environment jsdom
 import '@/data/lib/creators/test/setup'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { TranslationProvider } from '@/data/lib/creators/intl'
-import { type Session } from '@/data/lib/creators/auth'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { Session } from '@/data/lib/creators/auth'
+import type { Collection } from '@/data/lib/creators/collections'
 import { ItemType, type Item } from '@/data/lib/creators/items'
 import { LinkedPublishError } from '@/data/lib/creators/publishLinkedItems'
-import { type ThirdParty } from '@/data/lib/creators/thirdParty'
-import { type ThirdPartyPrice } from '@/data/lib/creators/thirdPartyRegistry'
+import type { ThirdParty } from '@/data/lib/creators/thirdParty'
+import type { ThirdPartyPrice } from '@/data/lib/creators/thirdPartyRegistry'
 import { PublishLinkedItemsModal } from './PublishLinkedItemsModal'
 
 const publishMutate = vi.fn()

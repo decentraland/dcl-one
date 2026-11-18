@@ -3,9 +3,9 @@
 import { WearableCategory } from '@dcl/schemas'
 import { convertImageIntoWearableThumbnail, dataURLToBlob } from './media'
 import { THUMBNAIL_PATH, isImageFile } from './itemFiles'
-import { type ItemMetrics, type ItemType } from './items'
+import type { ItemMetrics, ItemType } from './items'
 import { isAutoThumbnailStale } from './thumbnailPose'
-import { type ValidationIssue } from './validation'
+import type { ValidationIssue } from './validation'
 
 export type PreviewDraft = {
   id: string

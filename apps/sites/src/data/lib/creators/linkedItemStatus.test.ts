@@ -2,7 +2,7 @@
 import './test/setup'
 import { describe, it, expect } from 'vitest'
 import { CurationStatus } from './collections'
-import { type Mappings } from '@dcl/schemas'
+import type { Mappings } from '@dcl/schemas'
 import { ItemType, type Item } from './items'
 import {
   LinkedItemFilter,

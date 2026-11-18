@@ -3,8 +3,8 @@ import '@/data/lib/creators/test/setup'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { type ReactNode } from 'react'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { ReactNode } from 'react'
+import type { Collection } from '@/data/lib/creators/collections'
 
 const api = vi.hoisted(() => ({
   fetchCollectionEvents: vi.fn(),

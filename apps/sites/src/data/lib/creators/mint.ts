@@ -1,5 +1,5 @@
 import { getCollectionContract } from './chain/contracts'
-import { type ContractCall } from './auth'
+import type { ContractCall } from './auth'
 import { hasBeenApproved, type Collection } from './collections'
 import { getItemSales, type Item } from './items'
 import { SellItemError, isValidAddress } from './sales'

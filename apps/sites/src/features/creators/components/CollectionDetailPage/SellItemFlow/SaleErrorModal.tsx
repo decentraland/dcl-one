@@ -1,7 +1,7 @@
 import errorArt from '../../../assets/modal-error.png'
 import { ConfirmModal } from '../../ConfirmModal'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { type SellFailureReason } from '@/data/lib/creators/sales'
+import type { SellFailureReason } from '@/data/lib/creators/sales'
 
 export type SaleStage = 'enable' | 'sell' | 'remove' | 'update' | 'send' | 'senders' | 'collaborators' | 'transfer'
 

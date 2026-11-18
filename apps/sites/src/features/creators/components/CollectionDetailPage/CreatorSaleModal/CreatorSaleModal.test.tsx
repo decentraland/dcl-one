@@ -7,7 +7,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ProviderType } from '@dcl/schemas'
 import { TranslationProvider } from '@/data/lib/creators/intl'
 import { DiscountError, type CollectionDiscount } from '@/data/lib/creators/coupons'
-import { type SaleableCollection } from '@/data/lib/creators/saleableCollection'
+import type { SaleableCollection } from '@/data/lib/creators/saleableCollection'
 import { makeSession } from '../SellItemFlow/testUtils'
 
 const track = vi.fn()

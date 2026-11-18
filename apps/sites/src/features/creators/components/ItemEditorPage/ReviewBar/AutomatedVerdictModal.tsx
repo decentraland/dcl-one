@@ -17,7 +17,7 @@ import {
   type CuratorVerdict,
   type ValidationItemResult
 } from '@/data/lib/creators/events'
-import { type Item } from '@/data/lib/creators/items'
+import type { Item } from '@/data/lib/creators/items'
 import { formatTimeAgo } from '@/data/lib/creators/time'
 import styles from './AutomatedVerdictModal.module.css'
 

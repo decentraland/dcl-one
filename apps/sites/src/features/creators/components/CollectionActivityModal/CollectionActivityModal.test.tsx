@@ -3,8 +3,8 @@ import '@/data/lib/creators/test/setup'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { TranslationProvider } from '@/data/lib/creators/intl'
-import { type Collection } from '@/data/lib/creators/collections'
-import { type CollectionEvent, type ReviewParty } from '@/data/lib/creators/events'
+import type { Collection } from '@/data/lib/creators/collections'
+import type { CollectionEvent, ReviewParty } from '@/data/lib/creators/events'
 import { CollectionActivityModal } from './CollectionActivityModal'
 
 const state = vi.hoisted(() => ({

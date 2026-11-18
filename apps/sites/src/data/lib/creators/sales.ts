@@ -5,10 +5,10 @@
 import { Network, TradeAssetType, TradeType, type Trade, type TradeCreation } from '@dcl/schemas'
 import { ContractName, getCollectionContract, getContract } from './chain/contracts'
 import { isAddress, maxUint256, parseEther, toHex, zeroAddress } from 'viem'
-import { type ContractCall, type ContractData } from './auth'
-import { type Collection } from './collections'
+import type { ContractCall, ContractData } from './auth'
+import type { Collection } from './collections'
 import { getItemSales, type Item } from './items'
-import { type ItemListing } from './listings'
+import type { ItemListing } from './listings'
 import { getManaContract } from './mana'
 import { USD_CENTS_PER_CREDIT } from './publishFee'
 import {

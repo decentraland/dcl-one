@@ -21,10 +21,10 @@ import { useCollectionValidation } from '../../../hooks/useCollectionValidation'
 import { useCollectionCuration, useRejectCuration } from '../../../hooks/useCuration'
 import { useFeatureFlag } from '../../../hooks/useFeatureFlag'
 import { useItemSyncs } from '../../../hooks/useItemSync'
-import { type ApprovalMode } from '../../../hooks/useApprovalFlow'
+import type { ApprovalMode } from '../../../hooks/useApprovalFlow'
 import { track } from '@/data/lib/creators/analytics'
-import { type Session } from '@/data/lib/creators/auth'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { Session } from '@/data/lib/creators/auth'
+import type { Collection } from '@/data/lib/creators/collections'
 import {
   CurationState,
   ReviewAction,
@@ -40,7 +40,7 @@ import {
 import { getAwaitedReply, getCurrentVerdict } from '@/data/lib/creators/events'
 import { FeatureFlag } from '@/data/lib/creators/featureFlags'
 import { ItemSyncStatus, hasPendingChanges } from '@/data/lib/creators/itemSync'
-import { type Item } from '@/data/lib/creators/items'
+import type { Item } from '@/data/lib/creators/items'
 import { useNotifications } from '@/data/lib/creators/notifications'
 import { formatTimeAgo } from '@/data/lib/creators/time'
 import { countIssues, getValidationStatus } from '@/data/lib/creators/validation'

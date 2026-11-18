@@ -3,7 +3,7 @@ import './test/setup'
 import { describe, expect, it } from 'vitest'
 import { hashV1, keccak256Hash } from '@dcl/hashing'
 import { MappingType } from '@dcl/schemas'
-import { type Collection } from './collections'
+import type { Collection } from './collections'
 import {
   buildDeploymentForm,
   buildItemEntity,

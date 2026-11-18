@@ -1,6 +1,6 @@
 import errorArt from '../../../../assets/modal-error.png'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { type LinkedPublishError, type LinkedPublishFailureReason } from '@/data/lib/creators/publishLinkedItems'
+import type { LinkedPublishError, LinkedPublishFailureReason } from '@/data/lib/creators/publishLinkedItems'
 import { Button } from '../../../Button'
 import { ConfirmModal } from '../../../ConfirmModal'
 import styles from './LinkedPublishRow.module.css'

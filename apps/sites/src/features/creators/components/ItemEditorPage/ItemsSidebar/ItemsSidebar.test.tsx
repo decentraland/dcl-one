@@ -6,10 +6,10 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, useLocation } from 'react-router'
 import { BodyShape } from '@dcl/schemas'
 import { TranslationProvider } from '@/data/lib/creators/intl'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { Collection } from '@/data/lib/creators/collections'
 import { ItemType, type Item } from '@/data/lib/creators/items'
 import { ItemsSidebar } from './ItemsSidebar'
-import { type ComponentProps, type ReactNode } from 'react'
+import type { ComponentProps, ReactNode } from 'react'
 
 const collection: Collection = {
   id: 'c1',

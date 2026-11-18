@@ -2,9 +2,9 @@
 // and the marketplace show. Ported from the legacy builder (modules/item/utils areSynced + the
 // getStatusForStandard selector). The deliberate divergences are `ignoreTags` and `ignoreMetrics`: every view here
 // leaves both out of the comparison, so an item the legacy builder reads as unsynced may read as published here.
-import { type Entity } from '@dcl/schemas'
-import { type Collection } from './collections'
-import { type CollectionCuration } from './curation'
+import type { Entity } from '@dcl/schemas'
+import type { Collection } from './collections'
+import type { CollectionCuration } from './curation'
 import { ItemType, VIDEO_PATH, type Item, type ItemData, type ItemMetrics, type ItemRepresentation } from './items'
 
 /** Edited after approval (submitted for review or not): the Shop and the world still serve the approved version. */

@@ -6,8 +6,8 @@ import {
 } from '../Icons'
 import { Tooltip } from '../Tooltip'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { type ValidationIssue, type ValidationStatus } from '@/data/lib/creators/validation'
-import { type ValidationSubject } from './ItemValidationCard'
+import type { ValidationIssue, ValidationStatus } from '@/data/lib/creators/validation'
+import type { ValidationSubject } from './ItemValidationCard'
 import { ValidationResultsModal, type ItemResult } from './ValidationResultsModal'
 import styles from './ValidationBadge.module.css'
 

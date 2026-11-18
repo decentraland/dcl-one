@@ -9,7 +9,7 @@ import {
   liveDiscountStatus,
   type CollectionDiscount
 } from './coupons'
-import { type ItemListing } from './listings'
+import type { ItemListing } from './listings'
 
 export type DiscountReachOptions = {
   chainId: number

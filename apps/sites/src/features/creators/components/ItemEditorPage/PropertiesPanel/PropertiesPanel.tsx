@@ -55,10 +55,10 @@ import {
   type Item
 } from '@/data/lib/creators/items'
 import { useNotifications } from '@/data/lib/creators/notifications'
-import { type SpringBoneParamsByName } from '@/data/lib/creators/springBones'
+import type { SpringBoneParamsByName } from '@/data/lib/creators/springBones'
 import { getEmoteCategoryOptions, getWearableCategoryOptions } from '@/data/lib/creators/wearableCategories'
 import { buildItemMappings, getItemMapping } from '@/data/lib/creators/mappings'
-import { type LinkedContract } from '@/data/lib/creators/thirdParty'
+import type { LinkedContract } from '@/data/lib/creators/thirdParty'
 import { MappingEditor } from '../../MappingEditor'
 import { DeleteItemModal } from '../../CollectionDetailPage/DeleteItemModal'
 import { ChangeFileModal } from '../ChangeFileModal'
@@ -66,7 +66,7 @@ import { EditorSection } from '../EditorSection'
 import { HidesEditor } from '../HidesEditor'
 import { SpringBonesEditor, type SpringBonesModel } from '../SpringBonesEditor'
 import { TagsInput } from './TagsInput'
-import { type RejectReasonCode } from '@/data/lib/creators/events'
+import type { RejectReasonCode } from '@/data/lib/creators/events'
 import styles from '../ItemEditorPage.module.css'
 
 export type SpringBonesFormProps = {

@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import '@/data/lib/creators/test/setup'
-import { type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { TranslationProvider } from '@/data/lib/creators/intl'
-import { type CollectionDiscount, type CouponCreation } from '@/data/lib/creators/coupons'
+import type { CollectionDiscount, CouponCreation } from '@/data/lib/creators/coupons'
 import { collection, makeSession } from '../components/CollectionDetailPage/SellItemFlow/testUtils'
 
 vi.mock('@/data/lib/creators/auth', async () => {

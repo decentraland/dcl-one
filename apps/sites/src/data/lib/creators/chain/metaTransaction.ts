@@ -1,7 +1,7 @@
 // Gasless calls through Decentraland's transactions relayer, ported from decentraland-transactions@3.3.0
 // (Apache-2.0) so the wallet requests, the signed typed data and the relayed calldata stay what the relayer
 // and the contracts expect. The wallet itself stays behind lib/auth: it hands in the three requests needed.
-import { type ContractData } from './contracts'
+import type { ContractData } from './contracts'
 
 export const MetaTransactionErrorCode = {
   UNKNOWN: 'unknown',

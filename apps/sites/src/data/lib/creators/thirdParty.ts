@@ -3,7 +3,7 @@
 // external NFT contract, and its items are unlocked by tokens of that contract (see lib/mappings).
 import { ContractNetwork } from '@dcl/schemas'
 import { config } from './config'
-import { type Collection } from './collections'
+import type { Collection } from './collections'
 
 export const THIRD_PARTY_URN_TYPE = 'collections-thirdparty'
 

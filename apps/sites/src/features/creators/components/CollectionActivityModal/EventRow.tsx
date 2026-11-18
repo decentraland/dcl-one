@@ -15,7 +15,7 @@ import {
   isFinalValidationError
 } from '@/data/lib/creators/events'
 import { shortenAddress } from '@/data/lib/creators/address'
-import { type Item } from '@/data/lib/creators/items'
+import type { Item } from '@/data/lib/creators/items'
 import { formatTimeAgo } from '@/data/lib/creators/time'
 import { useProfile } from '../../hooks/useProfile'
 import styles from './CollectionActivityModal.module.css'

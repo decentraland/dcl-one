@@ -3,7 +3,7 @@ import '@/data/lib/creators/test/setup'
 import { describe, expect, it, vi } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 
 const fetchCommittee = vi.hoisted(() => vi.fn())
 vi.mock('@/data/lib/creators/builder', () => ({ fetchCommittee }))

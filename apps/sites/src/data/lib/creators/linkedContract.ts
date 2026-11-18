@@ -1,6 +1,6 @@
 // The external NFT contract a linked collection is tied to: address input helpers and the on-chain ERC-165 check
 // the legacy create modal ran, fixed to probe the ERC-721 interface id (legacy probed ERC-165's own id).
-import { type ContractNetwork } from '@dcl/schemas'
+import type { ContractNetwork } from '@dcl/schemas'
 import { parseAbi } from 'viem'
 import { readContract } from './auth'
 import { BuilderServerError } from './builder'

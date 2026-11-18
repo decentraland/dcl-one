@@ -5,7 +5,7 @@ import { TransactionNotFoundError, TransactionReceiptNotFoundError, hashTypedDat
 import { ContractName, getCollectionContract, getContract, getCouponManager } from '../chain/contracts'
 import { buildChequeTypedData } from '../publishLinkedItems'
 import { WrongAccountError, WrongChainError, isWalletRejection } from '../walletErrors'
-import { type Session } from './auth'
+import type { Session } from './auth'
 import {
   readContract,
   readTransactionOutcome,

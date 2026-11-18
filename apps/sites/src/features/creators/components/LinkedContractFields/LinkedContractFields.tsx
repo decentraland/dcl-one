@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef } from 'react'
 import { InfoOutlinedIcon } from '../Icons'
-import { type ContractNetwork } from '@dcl/schemas'
+import type { ContractNetwork } from '@dcl/schemas'
 import { config } from '@/data/lib/creators/config'
 import { useTranslation } from '@/data/lib/creators/intl'
 import {

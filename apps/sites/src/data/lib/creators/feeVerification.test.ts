@@ -2,7 +2,7 @@
 import './test/setup'
 import { describe, expect, it, vi } from 'vitest'
 import { getPublicationFee } from './publishFee'
-import { type BlockchainRarity } from './rarities'
+import type { BlockchainRarity } from './rarities'
 import {
   PublicationFeeMismatchError,
   isWithinFeeTolerance,

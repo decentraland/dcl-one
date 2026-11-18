@@ -1,4 +1,4 @@
-import { type CSSProperties } from 'react'
+import type { CSSProperties } from 'react'
 import { Rarity } from '@dcl/schemas'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { formatRarityLabel, isRarity } from '@/data/lib/creators/rarities'

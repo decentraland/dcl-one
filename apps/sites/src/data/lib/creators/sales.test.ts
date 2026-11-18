@@ -6,7 +6,7 @@ import { ContractName, getContract } from './chain/contracts'
 import { zeroAddress } from 'viem'
 import { TEST_SIGNER, signTypedDataWithTestKey, toTransaction } from './test/chain'
 import { TradeConflictError, TradeNotFoundError, tradeSigner } from './trades'
-import { type Collection } from './collections'
+import type { Collection } from './collections'
 import { ItemType, type Item } from './items'
 import { WrongAccountError, WrongChainError } from './walletErrors'
 import {

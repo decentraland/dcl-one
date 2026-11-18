@@ -4,8 +4,8 @@
 // over-debit credits.
 import { ContractName, getContract } from './chain/contracts'
 import { readContract } from './auth'
-import { type Item } from './items'
-import { type PublicationFee } from './publishFee'
+import type { Item } from './items'
+import type { PublicationFee } from './publishFee'
 
 /** How far the quoted MANA total may sit from the on-chain total (the oracle moves between the two reads). */
 export const FEE_TOLERANCE_BPS = 500n

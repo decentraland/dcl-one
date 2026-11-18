@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 import '@/data/lib/creators/test/setup'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { TranslationProvider } from '@/data/lib/creators/intl'
 import { deleteItem, fetchContent, fetchContentSize, fetchItemContents, saveItem } from '@/data/lib/creators/builder'
-import { type ThumbnailPatch } from '../../ThumbnailModal'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { ThumbnailPatch } from '../../ThumbnailModal'
+import type { Collection } from '@/data/lib/creators/collections'
 import { ItemType, type Item, BODY_SHAPE_MALE } from '@/data/lib/creators/items'
 import { ConfirmItemsStep } from './ConfirmItemsStep'
 

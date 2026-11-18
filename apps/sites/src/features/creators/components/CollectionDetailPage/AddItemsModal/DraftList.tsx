@@ -9,7 +9,7 @@ import {
 import { useTranslation } from '@/data/lib/creators/intl'
 import { isThumbnailGenerating } from '@/data/lib/creators/draftPreview'
 import { ItemType } from '@/data/lib/creators/items'
-import { type ItemDraft } from './AddItemsModal.state'
+import type { ItemDraft } from './AddItemsModal.state'
 import styles from './AddItemsModal.module.css'
 import { ItemThumbnail } from '../../ItemThumbnail'
 

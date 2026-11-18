@@ -5,7 +5,7 @@ import { PendingModal } from '../../PendingModal'
 import { useBeforeUnloadGuard } from '../../../hooks/useBeforeUnloadGuard'
 import { useDisableCollection } from '../../../hooks/useCuration'
 import { isSocialLogin, type Session } from '@/data/lib/creators/auth'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { Collection } from '@/data/lib/creators/collections'
 import { useNotifications } from '@/data/lib/creators/notifications'
 import { isWalletRejection, isWalletStateError } from '@/data/lib/creators/walletErrors'
 

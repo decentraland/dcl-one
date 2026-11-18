@@ -4,20 +4,20 @@
 // cheque to builder-server, which opens one item curation per item, and finally push changes of already-reviewed
 // items. Server and chain access is injected so the sequence runs against fakes in tests.
 import { numberToHex, toHex } from 'viem'
-import {
-  type ContractCall,
-  type TransactionSender,
-  type TransactionSettlement,
-  type TypedDataDomain,
-  type TypedDataTypes
+import type {
+  ContractCall,
+  TransactionSender,
+  TransactionSettlement,
+  TypedDataDomain,
+  TypedDataTypes
 } from './auth'
 import { BuilderServerError, isRefusedRequest, type PublishLinkedItemsResult, type SlotsCheque } from './builder'
 import { CurationStatus, type Collection } from './collections'
-import { type Item } from './items'
+import type { Item } from './items'
 import { canPushLinkedItem, type ItemCuration } from './linkedItemStatus'
 import { buildManaApproveCall } from './mana'
-import { type PushLinkedResult } from './pushLinkedChanges'
-import { type ThirdParty } from './thirdParty'
+import type { PushLinkedResult } from './pushLinkedChanges'
+import type { ThirdParty } from './thirdParty'
 import {
   buildAddThirdPartyCall,
   buildBuyItemSlotsCall,

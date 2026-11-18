@@ -1,4 +1,4 @@
-import { type Item } from './items'
+import type { Item } from './items'
 
 export type SaveItemPatch = (item: Item, patch: Partial<Item>) => Promise<Item>
 

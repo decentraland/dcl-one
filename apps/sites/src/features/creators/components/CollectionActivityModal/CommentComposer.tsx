@@ -3,7 +3,7 @@ import { useTranslation } from '@/data/lib/creators/intl'
 import { Button } from '../Button'
 import { NoteField } from '../NoteField'
 import { usePostComment } from '../../hooks/useCollectionEvents'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { Collection } from '@/data/lib/creators/collections'
 import { COMMENT_MAX_LENGTH, type ReviewParty } from '@/data/lib/creators/events'
 import styles from './CollectionActivityModal.module.css'
 

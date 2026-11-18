@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProviderType } from '@dcl/schemas'
-import { type ItemListing } from '@/data/lib/creators/listings'
+import type { ItemListing } from '@/data/lib/creators/listings'
 import { RemoveListingFlow } from './RemoveListingFlow'
 import { Providers, collection, item, makeSession } from './testUtils'
 

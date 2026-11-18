@@ -2,8 +2,8 @@
 // handleInitiateTPItemsApprovalFlow and its batched deploy: the pending items' curated hashes form the third
 // party's Merkle tree; its root goes on chain (consuming the creator's slots cheque), then each item's entity is
 // deployed with its proof and its curation approved. Every step is idempotent, so a failed run can be resumed.
-import { type ContractCall, type TransactionSender, type TransactionSettlement } from './auth'
-import { type LinkedApprovalData } from './builder'
+import type { ContractCall, TransactionSender, TransactionSettlement } from './auth'
+import type { LinkedApprovalData } from './builder'
 import {
   ApprovalError,
   INDEXER_TIMEOUT_MS,
@@ -19,9 +19,9 @@ import {
   type LinkedMerkleProof
 } from './catalystEntity'
 import { CurationStatus, type Collection } from './collections'
-import { type ItemCuration } from './linkedItemStatus'
+import type { ItemCuration } from './linkedItemStatus'
 import { VIDEO_PATH, type Item } from './items'
-import { type ThirdParty } from './thirdParty'
+import type { ThirdParty } from './thirdParty'
 import { buildReviewThirdPartyWithRootCall, toChequeSlot, type ChequeSlot } from './thirdPartyRegistry'
 
 // Governance proposal f69c4d40-aaaf-11ec-87a7-6d2a41508231: a sample of 1% of the items, between 50 and 300.

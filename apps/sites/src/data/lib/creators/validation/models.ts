@@ -1,7 +1,7 @@
-import { type BodyShape } from '@dcl/schemas'
+import type { BodyShape } from '@dcl/schemas'
 import { isImageFile } from '../itemFiles'
-import { type Item, type ItemRepresentation } from '../items'
-import { type ModelFile, type ValidationContext } from './types'
+import type { Item, ItemRepresentation } from '../items'
+import type { ModelFile, ValidationContext } from './types'
 
 // The audio check (E-08) flags any of these; other content files (thumbnail, preview video) are never read.
 export const AUDIO_LIKE = /\.(mp3|ogg|wav|aac|m4a|flac|opus|wma)$/i

@@ -3,7 +3,7 @@ import '@/data/lib/creators/test/setup'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { FeatureFlag } from '@/data/lib/creators/featureFlags'
 
 const getIsFeatureEnabled = vi.fn()

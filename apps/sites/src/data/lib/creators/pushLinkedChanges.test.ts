@@ -3,7 +3,7 @@ import './test/setup'
 import { describe, expect, it, vi } from 'vitest'
 import { CurationStatus } from './collections'
 import { ItemType, type Item } from './items'
-import { type ItemCuration } from './linkedItemStatus'
+import type { ItemCuration } from './linkedItemStatus'
 import { pushLinkedChanges, type PushLinkedDeps } from './pushLinkedChanges'
 
 function makeItem(id: string): Item {

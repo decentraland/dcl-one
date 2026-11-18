@@ -3,7 +3,7 @@ import '@/data/lib/creators/test/setup'
 import { describe, it, expect, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { type Friend } from '@/data/lib/creators/friends'
+import type { Friend } from '@/data/lib/creators/friends'
 import { BeneficiaryInput } from './BeneficiaryInput'
 import { ADDRESS, FRIEND, Providers } from './testUtils'
 

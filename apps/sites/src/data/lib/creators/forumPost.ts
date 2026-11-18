@@ -4,7 +4,7 @@ import { config } from './config'
 import { errorCode, track } from './analytics'
 import { BuilderServerError } from './builder'
 import { CollectionDisplayStatus, canManageCollectionItems, toSafeLink, type Collection } from './collections'
-import { type Item } from './items'
+import type { Item } from './items'
 import { captureError } from './monitoring'
 import { openExternal } from './navigation'
 

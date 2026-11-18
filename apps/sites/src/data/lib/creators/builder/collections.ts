@@ -1,5 +1,5 @@
-import { type Collection, type CollectionsList, type FetchCollectionsParams } from '../collections'
-import { type Item } from '../items'
+import type { Collection, CollectionsList, FetchCollectionsParams } from '../collections'
+import type { Item } from '../items'
 import {
   fromRemoteCollection,
   fromRemoteItem,

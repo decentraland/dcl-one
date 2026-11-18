@@ -1,6 +1,6 @@
 import { getContentsStorageUrl } from '@/data/lib/creators/builder'
-import { type Item } from '@/data/lib/creators/items'
-import { type ValidationSubject } from './ItemValidationCard'
+import type { Item } from '@/data/lib/creators/items'
+import type { ValidationSubject } from './ItemValidationCard'
 
 /** A saved item as the validation results show it. */
 export function toValidationSubject(item: Item): ValidationSubject {

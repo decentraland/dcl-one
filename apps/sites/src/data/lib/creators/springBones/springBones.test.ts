@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '../test/setup'
 import { describe, expect, it } from 'vitest'
-import { type SpringBoneParams } from '@dcl/schemas'
+import type { SpringBoneParams } from '@dcl/schemas'
 import { manifest } from '@dcl-regenesislabs/wearable-validator'
 import { PROP_ARMATURE_NAME } from '../models'
 import { SPRING_BONE_TOKEN } from './parseSpringBones'

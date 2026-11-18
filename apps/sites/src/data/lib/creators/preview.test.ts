@@ -11,7 +11,7 @@ import {
   type UnsavedFiles
 } from './preview'
 import { ItemType, type Item } from './items'
-import { type AvatarAttributes } from './avatar'
+import type { AvatarAttributes } from './avatar'
 
 const wearable: Item = {
   id: 'w1',

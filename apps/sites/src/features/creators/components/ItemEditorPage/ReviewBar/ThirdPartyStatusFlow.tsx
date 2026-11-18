@@ -6,7 +6,7 @@ import { useBeforeUnloadGuard } from '../../../hooks/useBeforeUnloadGuard'
 import { useReviewThirdParty } from '../../../hooks/useLinkedReview'
 import { isSocialLogin, type Session } from '@/data/lib/creators/auth'
 import { useNotifications } from '@/data/lib/creators/notifications'
-import { type ThirdParty } from '@/data/lib/creators/thirdParty'
+import type { ThirdParty } from '@/data/lib/creators/thirdParty'
 import { isWalletRejection, isWalletStateError } from '@/data/lib/creators/walletErrors'
 
 type Props = {

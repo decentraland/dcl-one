@@ -3,8 +3,8 @@ import './test/setup'
 import { describe, expect, it } from 'vitest'
 import { ContractName, getContract, getCouponManager, type MarketplaceName } from './chain/contracts'
 import { discountedCredits, discountedManaWei, runningDiscountPpm, takesDiscount } from './collectionDiscount'
-import { type CollectionDiscount } from './coupons'
-import { type ItemListing } from './listings'
+import type { CollectionDiscount } from './coupons'
+import type { ItemListing } from './listings'
 
 const CHAIN_ID = 80002
 const V3 = getContract(ContractName.OffChainMarketplaceV3, CHAIN_ID).address.toLowerCase()

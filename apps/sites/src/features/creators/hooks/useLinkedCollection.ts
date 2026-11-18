@@ -7,8 +7,8 @@ import {
   fetchThirdParty,
   type LinkedItemsPage
 } from '@/data/lib/creators/builder'
-import { type Collection } from '@/data/lib/creators/collections'
-import { type Item } from '@/data/lib/creators/items'
+import type { Collection } from '@/data/lib/creators/collections'
+import type { Item } from '@/data/lib/creators/items'
 import {
   LinkedItemFilter,
   hasLinkedWork,

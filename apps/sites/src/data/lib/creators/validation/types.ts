@@ -1,5 +1,5 @@
-import { type BodyShape } from '@dcl/schemas'
-import { type Item, type ItemType } from '../items'
+import type { BodyShape } from '@dcl/schemas'
+import type { Item, ItemType } from '../items'
 
 export enum ValidationSeverity {
   ERROR = 'error',

@@ -1,7 +1,7 @@
 // Single entry point for item validation (see README.md). The backend is swappable: today the local
 // rule book, tomorrow a remote service behind the same interface.
 import { localValidator } from './localValidator'
-import { type ItemValidator } from './types'
+import type { ItemValidator } from './types'
 
 export type {
   ItemCheck,

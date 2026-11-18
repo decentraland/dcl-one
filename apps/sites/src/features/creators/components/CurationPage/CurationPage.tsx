@@ -15,7 +15,7 @@ import { useCurationCollections, useCurationsByCollection, useCuratorOptions } f
 import { useFeatureFlag } from '../../hooks/useFeatureFlag'
 import { shortenAddress } from '@/data/lib/creators/address'
 import { track } from '@/data/lib/creators/analytics'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { Collection } from '@/data/lib/creators/collections'
 import { FeatureFlag } from '@/data/lib/creators/featureFlags'
 import {
   CURATION_PAGE_SIZE,

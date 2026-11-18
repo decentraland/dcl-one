@@ -2,7 +2,7 @@
 // item/utils isAllowedToPushChanges, ItemStatusBadge). Linked items are curated one by one: their latest
 // item curation, not the collection, says where they stand.
 import { CurationStatus } from './collections'
-import { type Item } from './items'
+import type { Item } from './items'
 
 export type ItemCuration = {
   id: string

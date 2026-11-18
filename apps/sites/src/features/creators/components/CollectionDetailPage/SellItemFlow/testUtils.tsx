@@ -1,9 +1,9 @@
-import { type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ProviderType } from '@dcl/schemas'
 import { TranslationProvider } from '@/data/lib/creators/intl'
-import { type Session } from '@/data/lib/creators/auth'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { Session } from '@/data/lib/creators/auth'
+import type { Collection } from '@/data/lib/creators/collections'
 import { ItemType, type Item } from '@/data/lib/creators/items'
 
 export const ADDRESS = '0x00000000000000000000000000000000000000aa'

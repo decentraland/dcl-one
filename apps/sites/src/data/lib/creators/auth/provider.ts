@@ -2,7 +2,7 @@
 // viem so that it stays out of the overview's bundle. Everything that encodes, signs or sends lives in ./transactions.
 import { config } from '../config'
 import { WrongAccountError } from '../walletErrors'
-import { type Session } from './auth'
+import type { Session } from './auth'
 
 const toHex = (value: number) => `0x${value.toString(16)}`
 

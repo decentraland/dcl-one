@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import './test/setup'
 import { describe, it, expect, vi } from 'vitest'
-import { type ContractNetwork } from '@dcl/schemas'
+import type { ContractNetwork } from '@dcl/schemas'
 import {
   ERC1155_INTERFACE_ID,
   ERC721_INTERFACE_ID,

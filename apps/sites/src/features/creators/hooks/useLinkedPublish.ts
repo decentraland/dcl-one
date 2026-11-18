@@ -19,8 +19,8 @@ import {
   updateItemCuration,
   type SlotsCheque
 } from '@/data/lib/creators/builder'
-import { type Collection } from '@/data/lib/creators/collections'
-import { type Item } from '@/data/lib/creators/items'
+import type { Collection } from '@/data/lib/creators/collections'
+import type { Item } from '@/data/lib/creators/items'
 import { canPushLinkedItem, type ItemCuration } from '@/data/lib/creators/linkedItemStatus'
 import { fetchManaAllowance } from '@/data/lib/creators/mana'
 import { captureError } from '@/data/lib/creators/monitoring'

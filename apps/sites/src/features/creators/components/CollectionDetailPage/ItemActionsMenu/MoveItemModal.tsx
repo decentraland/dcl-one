@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { isCollectionLocked, type Collection } from '@/data/lib/creators/collections'
-import { type Item } from '@/data/lib/creators/items'
+import type { Item } from '@/data/lib/creators/items'
 import { Button } from '../../Button'
 import { Modal } from '../../Modal'
 import { Select } from '../../Select'

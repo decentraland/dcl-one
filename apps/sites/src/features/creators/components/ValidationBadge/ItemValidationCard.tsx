@@ -7,7 +7,7 @@ import {
 } from '../Icons'
 import { Tooltip } from '../Tooltip'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { type ItemType } from '@/data/lib/creators/items'
+import type { ItemType } from '@/data/lib/creators/items'
 import { ValidationSeverity, type ValidationIssue } from '@/data/lib/creators/validation'
 import { ItemThumbnail } from '../ItemThumbnail'
 import styles from './ItemValidationCard.module.css'

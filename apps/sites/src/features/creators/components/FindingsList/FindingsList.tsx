@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { getContentsStorageUrl } from '@/data/lib/creators/builder'
 import { mergeBodyShapeFindings, type ValidationFinding, type ValidationItemResult } from '@/data/lib/creators/events'
-import { type Item } from '@/data/lib/creators/items'
+import type { Item } from '@/data/lib/creators/items'
 import { isWebUrl, openExternal } from '@/data/lib/creators/navigation'
 import styles from './FindingsList.module.css'
 

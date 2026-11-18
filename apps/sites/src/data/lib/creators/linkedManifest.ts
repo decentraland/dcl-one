@@ -1,5 +1,5 @@
 // How a zip's wearable.json lands in a linked collection: which item it is (its URN) and which tokens unlock it.
-import { type Item } from './items'
+import type { Item } from './items'
 import { ItemFileError } from './itemFiles'
 import { DEFAULT_MAPPING, getItemMapping, mappingsFromManifest, type Mapping, type Mappings } from './mappings'
 import { decodeLinkedUrn, isValidUrnSuffix, type LinkedContract } from './thirdParty'

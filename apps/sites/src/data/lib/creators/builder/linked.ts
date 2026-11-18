@@ -1,7 +1,7 @@
 import { CurationStatus, type Collection, type PaginatedResource } from '../collections'
-import { type Item } from '../items'
-import { type ItemCuration, type LinkedItemsQuery } from '../linkedItemStatus'
-import { type ThirdParty } from '../thirdParty'
+import type { Item } from '../items'
+import type { ItemCuration, LinkedItemsQuery } from '../linkedItemStatus'
+import type { ThirdParty } from '../thirdParty'
 import {
   fromRemoteCollection,
   fromRemoteItem,

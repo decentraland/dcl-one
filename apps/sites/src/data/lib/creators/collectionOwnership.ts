@@ -1,6 +1,6 @@
 import { getCollectionContract } from './chain/contracts'
-import { type ContractCall } from './auth'
-import { type Collection } from './collections'
+import type { ContractCall } from './auth'
+import type { Collection } from './collections'
 import { isRefusedRequest } from './builder'
 import { getSystemMinters, isCollectionOwner } from './collectionRoles'
 import { SellItemError } from './sales'

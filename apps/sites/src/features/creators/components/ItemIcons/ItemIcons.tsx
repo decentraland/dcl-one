@@ -1,4 +1,4 @@
-import { type CSSProperties } from 'react'
+import type { CSSProperties } from 'react'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { BodyShapeType } from '@/data/lib/creators/items'
 import { EmotePlayMode } from '@/data/lib/creators/itemFactory'

@@ -6,7 +6,7 @@ import {
   CloseIcon as ClearIcon
 } from '../../../Icons'
 import { useListbox } from '../../../Select/useListbox'
-import { type BoneNode, type BoneTreeNode } from '@/data/lib/creators/springBones'
+import type { BoneNode, BoneTreeNode } from '@/data/lib/creators/springBones'
 import styles from './BoneTreePicker.module.css'
 
 /** The picker needs a value for "no bone"; the schema's own value for it is `undefined`. */

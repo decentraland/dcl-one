@@ -2,7 +2,7 @@
 // `vi.mock('../featureFlags', ...)` and then declares the flags its subject runs with; anything
 // it does not name reads off, exactly as an unreachable service would.
 import { afterEach } from 'vitest'
-import { type FeatureFlag } from '../featureFlags'
+import type { FeatureFlag } from '../featureFlags'
 
 const enabled = new Set<FeatureFlag>()
 

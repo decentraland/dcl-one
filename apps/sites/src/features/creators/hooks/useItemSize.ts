@@ -14,7 +14,7 @@ import {
   type MeasurableItem,
   type MeasureDeps
 } from '@/data/lib/creators/itemSize'
-import { type Item } from '@/data/lib/creators/items'
+import type { Item } from '@/data/lib/creators/items'
 import { createLimiter } from '@/data/lib/creators/limiter'
 import { captureError } from '@/data/lib/creators/monitoring'
 

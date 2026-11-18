@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import { BodyShape, PreviewEmote, PreviewEmoteEventType, PreviewMessageType, PreviewRenderer } from '@dcl/schemas'
 import mitt from 'mitt'
-import { type AvatarAttributes } from '@/data/lib/creators/avatar'
+import type { AvatarAttributes } from '@/data/lib/creators/avatar'
 import { useAvatarPreview } from '../../store/avatarPreview'
 
 type PreviewProps = Record<string, unknown> & { id: string; onLoad?: () => void }

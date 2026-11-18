@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 import '@/data/lib/creators/test/setup'
 import { describe, it, expect, vi } from 'vitest'
-import { type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { TranslationProvider } from '@/data/lib/creators/intl'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { Collection } from '@/data/lib/creators/collections'
 import { CollectionCard } from './CollectionCard'
 
 vi.mock('@/data/lib/creators/builder', () => ({

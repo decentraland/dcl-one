@@ -1,8 +1,8 @@
 // Sends already-reviewed linked items' changes for review again, one item curation per item, the way the legacy
 // builder's pushChangesToThirdPartyItems did: a few requests at a time, and one failure never stops the rest.
 import { CurationStatus } from './collections'
-import { type Item } from './items'
-import { type ItemCuration } from './linkedItemStatus'
+import type { Item } from './items'
+import type { ItemCuration } from './linkedItemStatus'
 
 export type PushLinkedFailure = { item: Item; message: string }
 

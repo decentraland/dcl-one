@@ -5,7 +5,7 @@ import { useTranslation } from '@/data/lib/creators/intl'
 import { useBeforeUnloadGuard } from '../../../hooks/useBeforeUnloadGuard'
 import { lastCreatedDiscount, useCreateDiscount, useDiscountInFlight } from '../../../hooks/useCollectionDiscounts'
 import { isSocialLogin, type Session } from '@/data/lib/creators/auth'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { Collection } from '@/data/lib/creators/collections'
 import {
   DiscountError,
   discountPct,
@@ -14,7 +14,7 @@ import {
   type DiscountFailureReason
 } from '@/data/lib/creators/coupons'
 import { acknowledgeUnconfirmedCreate, unconfirmedCreateOf } from '@/data/lib/creators/discountAttempts'
-import { type SaleableCollection } from '@/data/lib/creators/saleableCollection'
+import type { SaleableCollection } from '@/data/lib/creators/saleableCollection'
 import { ConfirmModal } from '../../ConfirmModal'
 import { PendingModal } from '../../PendingModal'
 import { SuccessModal } from '../../SuccessModal'

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '@/data/lib/creators/test/setup'
 import { describe, expect, it } from 'vitest'
-import { type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { render, screen } from '@testing-library/react'
 import { TranslationProvider } from '@/data/lib/creators/intl'
 import { BodyShapeType } from '@/data/lib/creators/items'

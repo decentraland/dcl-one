@@ -2,7 +2,7 @@
 import './test/setup'
 import { describe, expect, it } from 'vitest'
 import { CollectionSort, type Collection } from './collections'
-import { type CollectionEvent } from './events'
+import type { CollectionEvent } from './events'
 import {
   CurationState,
   CurationStatusFilter,

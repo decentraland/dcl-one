@@ -3,7 +3,7 @@
 import { decodeFunctionData, hashTypedData, recoverTypedDataAddress, type Hex, type TypedDataDefinition } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { encodeContractCall, type ContractCall } from '../chain/contracts'
-import { type TypedDataDomain, type TypedDataTypes } from '../auth'
+import type { TypedDataDomain, TypedDataTypes } from '../auth'
 
 /** A throwaway key, so pinned signatures come out the same on every run. */
 export const TEST_PRIVATE_KEY = '0x1111111111111111111111111111111111111111111111111111111111111111'

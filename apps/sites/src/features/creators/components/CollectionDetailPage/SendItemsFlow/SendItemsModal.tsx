@@ -3,10 +3,10 @@ import { AddIcon, ChevronLeftIcon, ChevronRightIcon, ExpandMoreIcon as ExpandIco
 import { useTranslation } from '@/data/lib/creators/intl'
 import { useFriends } from '../../../hooks/useSales'
 import { useProfile } from '../../../hooks/useProfile'
-import { type Session } from '@/data/lib/creators/auth'
+import type { Session } from '@/data/lib/creators/auth'
 import { getContentsStorageUrl } from '@/data/lib/creators/builder'
-import { type Friend } from '@/data/lib/creators/friends'
-import { type Item } from '@/data/lib/creators/items'
+import type { Friend } from '@/data/lib/creators/friends'
+import type { Item } from '@/data/lib/creators/items'
 import {
   MAX_ITEMS_PER_SEND,
   copiesPerRecipient,

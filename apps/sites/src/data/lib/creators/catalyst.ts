@@ -1,6 +1,6 @@
 // Read-only client for the Catalyst content server: the deployed entity of a published item is the
 // version the world and the marketplace show, which the builder copy is compared against.
-import { type BodyShape, type Entity, type WearableCategory } from '@dcl/schemas'
+import type { BodyShape, Entity, WearableCategory } from '@dcl/schemas'
 import { config } from './config'
 import { getBaseWearableName, type BaseWearable } from './avatar'
 

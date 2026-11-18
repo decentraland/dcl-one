@@ -12,7 +12,7 @@ import { ItemValidationCard, toValidationSubject } from '../../ValidationBadge'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { NOTE_MAX_LENGTH, VALIDATION_ATTEMPTS_PER_DAY, getValidationResetIn } from '@/data/lib/creators/events'
 import issues from '../PublishCollectionModal/ValidationIssuesView.module.css'
-import { type ItemCheck } from '@/data/lib/creators/validation'
+import type { ItemCheck } from '@/data/lib/creators/validation'
 import styles from './ReviewFlow.module.css'
 
 type AttemptsProps = { used: number; testId: string }

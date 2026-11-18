@@ -5,7 +5,7 @@ import { useTransferCollectionOwnership } from '../../../hooks/useTransferCollec
 import { useFriends } from '../../../hooks/useSales'
 import { shortenAddress } from '@/data/lib/creators/address'
 import { isSocialLogin, type Session } from '@/data/lib/creators/auth'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { Collection } from '@/data/lib/creators/collections'
 import { matchesCollectionName } from '@/data/lib/creators/collectionOwnership'
 import { toSellItemError, type SellFailureReason } from '@/data/lib/creators/sales'
 import { PendingModal } from '../../PendingModal'

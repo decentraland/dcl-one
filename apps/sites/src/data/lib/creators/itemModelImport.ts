@@ -1,6 +1,6 @@
 // "Change file" and "Add representation" for a saved item: the add-items import pipeline (load, analyze)
 // applied to one file, then the item to save plus the files to upload for the body shape the creator picked.
-import { type WearableCategory } from '@dcl/schemas'
+import type { WearableCategory } from '@dcl/schemas'
 import {
   addRepresentationToItem,
   getKeptRepresentationPaths,
@@ -31,7 +31,7 @@ import {
   type ItemMetrics
 } from './items'
 import { analyzeModel } from './models'
-import { type ValidationIssue } from './validation'
+import type { ValidationIssue } from './validation'
 import { getWearableCategoryOptions, isImageWearableContents } from './wearableCategories'
 
 /** A file loaded and analyzed against the item it is meant to update. */

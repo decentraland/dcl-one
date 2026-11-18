@@ -37,7 +37,7 @@ import { fetchStoredThumbnail, useSaveItem, type SaveItemVariables } from '../..
 import { captureError } from '@/data/lib/creators/monitoring'
 import { springBonesFetcher } from '../../hooks/useSpringBones'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { type AvatarAttributes } from '@/data/lib/creators/avatar'
+import type { AvatarAttributes } from '@/data/lib/creators/avatar'
 import { BuilderServerError, COLLECTION_LOCKED_STATUS, getContentsStorageUrl } from '@/data/lib/creators/builder'
 import {
   canManageCollectionItems,
@@ -67,7 +67,7 @@ import {
 import { useItemCurations, useThirdParty } from '../../hooks/useLinkedCollection'
 import { usePendingLinkedItems } from '../../hooks/useLinkedReview'
 import { useNotifications } from '@/data/lib/creators/notifications'
-import { type AvatarPreviewSource } from '@/data/lib/creators/preview'
+import type { AvatarPreviewSource } from '@/data/lib/creators/preview'
 import {
   carrySpringBonesForSave,
   getShapesMissingSpringBones,
@@ -92,7 +92,7 @@ import { getValidationStatus, itemValidationContext, type ValidationSource } fro
 import { useEditorLayout } from './useEditorLayout'
 import { useItemForm } from './useItemForm'
 import styles from './ItemEditorPage.module.css'
-import { type WearablePreviewController } from '../WearablePreview'
+import type { WearablePreviewController } from '../WearablePreview'
 
 const PREVIEW_ID = 'item-editor-preview'
 const NOT_FOUND_STATUSES = [401, 403, 404]

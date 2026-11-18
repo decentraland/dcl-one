@@ -2,7 +2,7 @@
 // CreateSingleItemModal's createItem/addItemRepresentation + utils (sortContent,
 // buildRepresentations) and modules/deployment/contentUtils (computeHashes).
 import { hashV1 } from '@dcl/hashing'
-import { type Mappings } from '@dcl/schemas'
+import type { Mappings } from '@dcl/schemas'
 import { maxUint256 } from 'viem'
 import {
   BODY_SHAPE_FEMALE,

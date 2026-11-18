@@ -8,7 +8,7 @@ import { ItemType, hasEmptyModelMetrics, type ItemMetrics } from '@/data/lib/cre
 import { isPreviewEmpty, retryWhilePreviewReloads, toEmoteWithBlobs, toWearableWithBlobs } from '@/data/lib/creators/preview'
 import { renderPosedThumbnail } from '@/data/lib/creators/renderPosedThumbnail'
 import { getThumbnailPose, isAutoThumbnailStale } from '@/data/lib/creators/thumbnailPose'
-import { type PreviewDraft, type PreviewResult } from '@/data/lib/creators/draftPreview'
+import type { PreviewDraft, PreviewResult } from '@/data/lib/creators/draftPreview'
 import styles from './ItemDraftModal.module.css'
 
 const PREVIEW_ID = 'draft-processor'

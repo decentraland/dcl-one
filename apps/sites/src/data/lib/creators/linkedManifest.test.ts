@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import './test/setup'
 import { describe, it, expect } from 'vitest'
-import { type ContractNetwork } from '@dcl/schemas'
-import { type Item } from './items'
+import type { ContractNetwork } from '@dcl/schemas'
+import type { Item } from './items'
 import { ItemFileError } from './itemFiles'
 import { MappingType } from './mappings'
 import { resolveLinkedManifest } from './linkedManifest'

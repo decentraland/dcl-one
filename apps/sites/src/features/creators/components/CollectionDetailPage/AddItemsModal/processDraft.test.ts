@@ -2,7 +2,7 @@
 import '@/data/lib/creators/test/setup'
 import { describe, expect, it, vi } from 'vitest'
 import JSZip from 'jszip'
-import { type ContractNetwork } from '@dcl/schemas'
+import type { ContractNetwork } from '@dcl/schemas'
 import { ItemType, type Item } from '@/data/lib/creators/items'
 import { ItemFileError } from '@/data/lib/creators/itemFiles'
 import { createDraft, type ItemDraft } from './AddItemsModal.state'

@@ -2,7 +2,7 @@
 // already paid for or signed: a cancellation that was broadcast but not seen mined, or a coupon that was signed
 // but whose POST got no readable answer. Offering the action again before reconciling it would pay for a second
 // cancellation or put a second, independently redeemable coupon on sale.
-import { type CouponCreation } from './coupons'
+import type { CouponCreation } from './coupons'
 
 export type PendingEnd = {
   discountId: string

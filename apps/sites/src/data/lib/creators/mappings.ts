@@ -1,7 +1,7 @@
 // Token mappings of linked items: which tokens of the collection's linked contract unlock the item, ported from the
 // legacy builder's MappingEditor + modules/item/utils (getMapping / buildItemMappings / areMappingsValid).
 import { MappingType, Mappings, type ContractNetwork, type Mapping } from '@dcl/schemas'
-import { type LinkedContract } from './thirdParty'
+import type { LinkedContract } from './thirdParty'
 
 export { MappingType }
 export type { Mapping, Mappings }

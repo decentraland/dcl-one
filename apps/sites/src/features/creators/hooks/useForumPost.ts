@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { createCollectionForumPost, createCurationForumReply, fetchCollection } from '@/data/lib/creators/builder'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { Collection } from '@/data/lib/creators/collections'
 import {
   markForumPostRecovered,
   postAssigneeToForum,
@@ -9,7 +9,7 @@ import {
   shouldRecoverForumPost,
   type ForumPostSource
 } from '@/data/lib/creators/forumPost'
-import { type Item } from '@/data/lib/creators/items'
+import type { Item } from '@/data/lib/creators/items'
 import { profileQuery } from './useProfile'
 
 /** Opens the collection's topic, writing its link into the cached collection. */

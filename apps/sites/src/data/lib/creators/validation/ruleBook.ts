@@ -1,6 +1,6 @@
 // The rule book call itself, shared by the worker and the inline fallback. Its input and output are plain,
 // structured-clonable data so a run can cross the worker boundary.
-import { type Finding, type Group } from '@dcl-regenesislabs/wearable-validator'
+import type { Finding, Group } from '@dcl-regenesislabs/wearable-validator'
 
 export type RuleBookJob =
   | { kind: 'model'; files: Map<string, Uint8Array>; metadata: unknown; category?: string }

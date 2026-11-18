@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import './test/setup'
 import { describe, expect, it, vi } from 'vitest'
-import { type ContractNetwork } from '@dcl/schemas'
-import { type Collection } from './collections'
-import { type Item } from './items'
+import type { ContractNetwork } from '@dcl/schemas'
+import type { Collection } from './collections'
+import type { Item } from './items'
 import { MappingType, buildItemMappings } from './mappings'
 import {
   RelinkCancelledError,
@@ -12,7 +12,7 @@ import {
   storeRelinkFrom,
   type RelinkDeps
 } from './relinkCollection'
-import { type ThirdParty } from './thirdParty'
+import type { ThirdParty } from './thirdParty'
 
 const CHAIN_ID = 80002
 const OLD = { network: 'mainnet' as ContractNetwork, address: '0x' + 'a'.repeat(40) }

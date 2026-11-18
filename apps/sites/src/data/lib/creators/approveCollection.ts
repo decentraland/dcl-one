@@ -1,9 +1,9 @@
 // The committee's approval flow for a standard collection, ported from the legacy builder's
 // handleInitiateApprovalFlow: token ids → rescue content hashes on chain → deploy entities → approve.
 // Every step is idempotent, so running the flow again resumes where a closed or failed run stopped.
-import { type Entity } from '@dcl/schemas'
-import { type ContractCall } from './auth'
-import { type Collection } from './collections'
+import type { Entity } from '@dcl/schemas'
+import type { ContractCall } from './auth'
+import type { Collection } from './collections'
 import { RESCUE_CHUNK_SIZE, buildRescueItemsCalls, buildSetApprovedCall } from './collectionApproval'
 import {
   buildDeploymentForm,

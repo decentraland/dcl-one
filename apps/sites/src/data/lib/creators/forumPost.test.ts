@@ -14,7 +14,7 @@ import {
   shouldRecoverForumPost,
   type PostCollectionDeps
 } from './forumPost'
-import { type Item } from './items'
+import type { Item } from './items'
 
 const analytics = vi.hoisted(() => ({ track: vi.fn() }))
 vi.mock('./analytics', () => ({ track: analytics.track, errorCode: () => 'unknown' }))

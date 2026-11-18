@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import '@/data/lib/creators/test/setup'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { type ReactNode } from 'react'
-import { type ContractNetwork } from '@dcl/schemas'
+import type { ReactNode } from 'react'
+import type { ContractNetwork } from '@dcl/schemas'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { TranslationProvider } from '@/data/lib/creators/intl'

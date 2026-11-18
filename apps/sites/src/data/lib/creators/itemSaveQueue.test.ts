@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import './test/setup'
 import { describe, expect, it, vi } from 'vitest'
-import { type Item } from './items'
+import type { Item } from './items'
 import { createItemSaveQueue } from './itemSaveQueue'
 
 const item = { id: 'i1', name: 'Cap', urn: 'urn:old', mappings: null, updatedAt: 1 } as unknown as Item

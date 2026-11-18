@@ -14,12 +14,12 @@ import {
   pushCollectionCuration,
   updateCollectionCuration
 } from '@/data/lib/creators/builder'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { Collection } from '@/data/lib/creators/collections'
 import { buildSetApprovedCall } from '@/data/lib/creators/collectionApproval'
 import { APPROVAL_INDEX_TIMEOUT_MS, waitForIndexer } from '@/data/lib/creators/approveCollection'
 import { orderCurators, type CollectionCuration, type CurationFilters } from '@/data/lib/creators/curation'
 import { shortenAddress } from '@/data/lib/creators/address'
-import { type RejectReasonCode } from '@/data/lib/creators/events'
+import type { RejectReasonCode } from '@/data/lib/creators/events'
 import { captureError } from '@/data/lib/creators/monitoring'
 import { postAssignee } from './useForumPost'
 import { useCommittee } from './useCommittee'

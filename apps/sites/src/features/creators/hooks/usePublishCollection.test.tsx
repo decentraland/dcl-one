@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import '@/data/lib/creators/test/setup'
-import { type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { type Item } from '@/data/lib/creators/items'
-import { type Collection } from '@/data/lib/creators/collections'
-import { type CollectionCuration } from '@/data/lib/creators/curation'
+import type { Item } from '@/data/lib/creators/items'
+import type { Collection } from '@/data/lib/creators/collections'
+import type { CollectionCuration } from '@/data/lib/creators/curation'
 import { collectionCurationKey, collectionEventsKey } from './useCuration'
 
 const api = vi.hoisted(() => ({

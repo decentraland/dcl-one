@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { toTransaction } from './test/chain'
 import { ContractName, getContract } from './chain/contracts'
 import { BuilderServerError } from './builder'
-import { type Collection } from './collections'
+import type { Collection } from './collections'
 import {
   buildTransferOwnershipCall,
   getNewOwnerError,

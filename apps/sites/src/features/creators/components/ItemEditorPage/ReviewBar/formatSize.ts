@@ -1,5 +1,5 @@
-import { type Translate } from '@/data/lib/creators/intl'
-import { type ItemSizes } from '../../../hooks/useItemSize'
+import type { Translate } from '@/data/lib/creators/intl'
+import type { ItemSizes } from '../../../hooks/useItemSize'
 
 const MB = 1024 * 1024
 

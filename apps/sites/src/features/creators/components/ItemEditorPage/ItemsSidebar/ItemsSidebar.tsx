@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { type BodyShape } from '@dcl/schemas'
+import type { BodyShape } from '@dcl/schemas'
 import { Button } from '../../Button'
 import { CollectionStatusPill } from '../../CollectionStatusPill'
 import {

@@ -3,8 +3,8 @@ import { AddIcon, CloseIcon, RemoveIcon } from '../../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { track } from '@/data/lib/creators/analytics'
 import { getContentsStorageUrl } from '@/data/lib/creators/builder'
-import { type Friend } from '@/data/lib/creators/friends'
-import { type Item } from '@/data/lib/creators/items'
+import type { Friend } from '@/data/lib/creators/friends'
+import type { Item } from '@/data/lib/creators/items'
 import {
   MAX_ITEMS_PER_SEND,
   allocatedElsewhere,

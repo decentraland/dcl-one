@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { errorCode, track } from '@/data/lib/creators/analytics'
 import { sendContractTransaction, waitForTransaction, type Session } from '@/data/lib/creators/auth'
-import { type Collection } from '@/data/lib/creators/collections'
+import type { Collection } from '@/data/lib/creators/collections'
 import { syncCollectionOwner } from '@/data/lib/creators/builder'
 import { buildTransferOwnershipCall, waitForOwnerSync } from '@/data/lib/creators/collectionOwnership'
 import { captureError } from '@/data/lib/creators/monitoring'

@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import './test/setup'
 import { describe, expect, it, vi } from 'vitest'
-import { type ContractNetwork } from '@dcl/schemas'
+import type { ContractNetwork } from '@dcl/schemas'
 import { ContractName, getContract } from './chain/contracts'
 import { zeroHash, parseSignature, serializeCompactSignature, signatureToCompactSignature } from 'viem'
 import { readContract } from './auth'
 import { decodeCall, toTransaction } from './test/chain'
-import { type ThirdParty } from './thirdParty'
+import type { ThirdParty } from './thirdParty'
 import {
   buildAddThirdPartyCall,
   buildBuyItemSlotsCall,

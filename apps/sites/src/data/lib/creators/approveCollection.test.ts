@@ -1,8 +1,8 @@
 // @vitest-environment node
 import './test/setup'
 import { describe, expect, it, vi } from 'vitest'
-import { type Entity } from '@dcl/schemas'
-import { type Collection } from './collections'
+import type { Entity } from '@dcl/schemas'
+import type { Collection } from './collections'
 import {
   ApprovalError,
   approveOnChain,

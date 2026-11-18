@@ -3,7 +3,7 @@ import {
   HelpOutlineIcon as UnsupportedIcon,
   ReportProblemOutlinedIcon as IssuesIcon
 } from '../Icons'
-import { type CuratorVerdictOutcome } from '@/data/lib/creators/events'
+import type { CuratorVerdictOutcome } from '@/data/lib/creators/events'
 import styles from './AutomatedReviewIcon.module.css'
 
 export type AutomatedReviewStatus = CuratorVerdictOutcome | 'running'

@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BodyShapeType, ItemType } from './items'
 import { EmotePlayMode, buildItem, type ItemDraftPayload } from './itemFactory'
 import { BuilderServerError } from './builder'
-import { type Item } from './items'
+import type { Item } from './items'
 import { executeUpload, findDuplicateUrns, planDraftUpload, planUpload, type UploadDraft } from './uploadItems'
 
 vi.mock('./builder', async importOriginal => {
