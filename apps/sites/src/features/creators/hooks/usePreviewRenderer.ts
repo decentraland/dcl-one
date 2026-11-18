@@ -4,7 +4,6 @@ import { previewRendererOverride } from '@/data/lib/creators/config'
 import { track } from '@/data/lib/creators/analytics'
 import { measureDownlinkMbps } from '@/data/lib/creators/connectionSpeed'
 import { FeatureFlag, getIsFeatureEnabled } from '@/data/lib/creators/featureFlags'
-import { setMonitoringTags } from '@/data/lib/creators/monitoring'
 import { pickRenderer, type RendererDecision } from '@/data/lib/creators/pickRenderer'
 
 async function decide(): Promise<RendererDecision> {
@@ -27,7 +26,6 @@ async function decide(): Promise<RendererDecision> {
       reason: decision.reason,
       measured_mbps: measuredMbps === null ? null : Math.round(measuredMbps * 10) / 10
     })
-    setMonitoringTags({ preview_renderer: decision.renderer, preview_renderer_reason: decision.reason })
   } catch {
     // Reporting never holds the preview back.
   }

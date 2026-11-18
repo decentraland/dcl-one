@@ -2,16 +2,7 @@
 import '@/data/lib/creators/test/setup'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TransactionExecutionError, UnknownRpcError } from 'viem'
-import {
-  captureError,
-  isLocalhost,
-  redact,
-  rpcFactsFrom,
-  scrubEvent,
-  setErrorForwarder,
-  tagsFrom,
-  toReportable
-} from './monitoring'
+import { captureError, clientErrorForwarder, redact, rpcFactsFrom, setErrorForwarder, toReportable } from './monitoring'
 
 const SIGNATURE = `0x${'a'.repeat(130)}`
 const HEX32 = `0x${'b'.repeat(64)}`
@@ -97,62 +88,7 @@ describe('rpcFactsFrom', () => {
   })
 })
 
-describe('scrubEvent', () => {
-  it('never lets a signature, an identity key or a token-shaped field reach the reporter', () => {
-    const event = scrubEvent({
-      message: `signed with ${SIGNATURE}`,
-      exception: { values: [{ value: `key ${HEX32}` }] },
-      breadcrumbs: [{ message: `secret-value` }],
-      request: { url: `https://x.test/?sig=${SIGNATURE}`, cookies: { session: 'x' }, headers: { auth: 'x' } },
-      tags: { authorization: 'bearer x', flow: 'publish-collection' },
-      extra: { identity: 'private key', collectionId: 'col-1' }
-    })
 
-    expect(event.message).toBe('signed with <signature>')
-    expect(event.exception?.values?.[0].value).toBe('key <hex32>')
-    expect(event.breadcrumbs?.[0].message).toBe('<secret>')
-    expect(event.request?.url).not.toContain(SIGNATURE)
-    expect(event.request?.cookies).toBeUndefined()
-    expect(event.request?.headers).toBeUndefined()
-    expect(event.tags).toEqual({ flow: 'publish-collection' })
-    expect(event.extra).toEqual({ collectionId: 'col-1' })
-  })
-
-  it('scrubs the urls a request carries in its own data, not only the ones in a message', () => {
-    const event = scrubEvent({
-      breadcrumbs: [{ category: 'fetch', data: { url: `https://x.test/items?sig=${SIGNATURE}`, token: 'abc' } }],
-      spans: [
-        {
-          span_id: 'span-1',
-          trace_id: 'trace-1',
-          start_timestamp: 0,
-          status: 'ok',
-          description: `GET ${HEX32}`,
-          data: { 'http.url': `https://x.test/?k=${HEX32}` }
-        }
-      ]
-    })
-
-    expect(event.breadcrumbs?.[0].data?.url).toBe('https://x.test/items?sig=<signature>')
-    expect(event.breadcrumbs?.[0].data?.token).toBeUndefined()
-    expect(event.spans?.[0].description).toBe('GET <hex32>')
-    expect(event.spans?.[0].data?.['http.url']).toBe('https://x.test/?k=<hex32>')
-  })
-})
-
-describe('tagsFrom', () => {
-  it('promotes only the fields worth searching by, as strings', () => {
-    expect(tagsFrom({ flow: 'publish-collection', step: 'pay', rpc_code: -32603, collectionId: 'col-1' })).toEqual({
-      flow: 'publish-collection',
-      step: 'pay',
-      rpc_code: '-32603'
-    })
-  })
-
-  it('drops values a tag cannot be made of', () => {
-    expect(tagsFrom({ flow: '', step: { nested: true }, http_status: 401 })).toEqual({ http_status: '401' })
-  })
-})
 
 describe('redact', () => {
   it('leaves ordinary copy alone', () => {
@@ -166,11 +102,39 @@ describe('redact', () => {
   })
 })
 
-describe('isLocalhost', () => {
-  it('recognises the hosts a creator runs the app on locally', () => {
-    expect(isLocalhost('localhost')).toBe(true)
-    expect(isLocalhost('127.0.0.1')).toBe(true)
-    expect(isLocalhost('my-mac.local')).toBe(true)
-    expect(isLocalhost('decentraland.org')).toBe(false)
+describe('clientErrorForwarder', () => {
+  const posted = () => vi.mocked(fetch).mock.calls.map(([, init]) => JSON.parse(String(init?.body)))
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response()))
+  })
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('reports the error with the flow that produced it and the plain facts of its context', () => {
+    clientErrorForwarder(new TypeError('upload failed'), { flow: 'add-items', http_status: 500, item: { id: 'x' } })
+
+    expect(fetch).toHaveBeenCalledWith('/internal/client-error', expect.objectContaining({ method: 'POST' }))
+    expect(posted()[0]).toMatchObject({
+      name: 'TypeError',
+      message: 'upload failed [http_status=500]',
+      source: 'creators:add-items'
+    })
+  })
+
+  it('never sends a signature or a sensitive context value', () => {
+    clientErrorForwarder(new Error(`bad signature ${SIGNATURE}`), { flow: 'publish', auth_token: 'abc', note: HEX32 })
+
+    const report = JSON.stringify(posted()[0])
+    expect(report).not.toContain(SIGNATURE)
+    expect(report).not.toContain('abc')
+    expect(report).not.toContain(HEX32)
+  })
+
+  it('reports the same error once within a minute', () => {
+    clientErrorForwarder(new Error('same failure twice'), { flow: 'save-item' })
+    clientErrorForwarder(new Error('same failure twice'), { flow: 'save-item' })
+
+    expect(fetch).toHaveBeenCalledTimes(1)
   })
 })
