@@ -213,6 +213,9 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       photo opened there covers the whole screen, its Jump In closing the photo and the modal. The
       profile menu's Settings opens there too: the full page's tabs and fields under its own header,
       on the tab last picked in either.
+      A place card opens its detail: Set as Home presses at once and the landing card follows; a
+      Genesis City place offers start navigation, which turns to exit navigation, and the route
+      shows on the map once in the world; a World offers no navigation.
 - [ ] **Sign-in stage** (`avatarPreview.tsx`, signin region): a new account's look and name screens
       show its avatar on the golden podium at the right, over the sign-in background (vignette and
       drifting logo pattern) drawn by the engine across the whole screen. The page's background fades
@@ -483,8 +486,8 @@ Expectations:
   (`engine/requestIds.ts`), so each takes only the answers to its own requests.
 - **Nothing draws per frame:** the camera writes custom properties on the viewport; the sea is one
   image (`assets/map/sea.webp`) placed in the world layer like a satellite tile.
-- **Home:** the map reads the session's home and sets it with `setHomeScene`; Set as Home does not
-  clear it.
+- **Home:** the map and the place detail read the session's home and set it with `setHomeScene`
+  (`placeHomeTarget` in `features/map/home.ts` picks what each saves); Set as Home does not clear it.
 - Tests: `library/explorer-core/test/{navmap,mapCore}.test.ts`, `library/ui/apps/hud/test/hosted/map.page.test.tsx`,
   `hosted/home.session.test.tsx`, `mapEventInfo.test.tsx`; here, `src/test/bridgePlaces.test.ts` and
   `bridgeEvents.test.ts`. Visual baseline: `panel-map`.

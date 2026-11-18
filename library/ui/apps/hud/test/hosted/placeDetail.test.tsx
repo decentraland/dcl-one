@@ -1,7 +1,9 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PopupHost, ToastHost, resetPopups } from '../../design'
+import { DEFAULT_REALM } from '@hud-host'
 import { setPlaceFavorite, setPlaceLike } from '@explorer-core/features/map/mapApi'
+import { navigation } from '@explorer-core/features/map/navigation'
 import { openPlaceDetail, type DetailPlace } from '../../features/places/PlaceDetail'
 import { SessionProvider } from '../../features/session/SessionContext'
 import type { EngineSession } from '../../features/session/useEngineSession'
@@ -44,6 +46,7 @@ function show(session: EngineSession, place: DetailPlace, onJumpIn = vi.fn(() =>
 
 afterEach(() => {
   resetPopups()
+  navigation.stop()
   vi.clearAllMocks()
 })
 
@@ -115,10 +118,60 @@ describe('place detail', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('leaves out Set as home and Start navigation until they can act', () => {
+  it("makes the place home by its base parcel", () => {
+    const session = fakeSession()
+    show(session, PLAZA)
+    const home = screen.getByRole('button', { name: 'Set as Home' })
+    expect(home).toHaveAttribute('aria-pressed', 'false')
+    fireEvent.click(home)
+    expect(session.map.setHome).toHaveBeenCalledWith(DEFAULT_REALM, { x: 0, y: 0 })
+  })
+
+  it('shows home pressed when any parcel of the place is home, and sets nothing then', () => {
+    const session = fakeSession()
+    session.map.home = { realm: null, parcel: '1,0' }
+    show(session, PLAZA)
+    const home = screen.getByRole('button', { name: 'Set as Home' })
+    expect(home).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(home)
+    expect(session.map.setHome).not.toHaveBeenCalled()
+  })
+
+  it('makes a world home by its name, and offers it no navigation', () => {
+    const session = fakeSession()
+    show(session, WORLD)
+    fireEvent.click(screen.getByRole('button', { name: 'Set as Home' }))
+    expect(session.map.setHome).toHaveBeenCalledWith('party.dcl.eth', { x: 0, y: 0 })
+    expect(screen.queryByRole('button', { name: /navigation/i })).toBeNull()
+  })
+
+  it('starts a route to the place and exits it', () => {
     show(fakeSession(), PLAZA)
-    expect(screen.queryByRole('button', { name: 'Set as home' })).toBeNull()
-    expect(screen.queryByRole('button', { name: /start navigation/i })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /start navigation/i }))
+    expect(navigation.getSnapshot()?.parcel).toEqual({ x: 0, y: 0 })
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /exit navigation/i }))
+    expect(navigation.getSnapshot()).toBeNull()
+    expect(screen.getByRole('button', { name: /start navigation/i })).toBeInTheDocument()
+  })
+
+  it('ends the route to the place when a jump to it goes ahead, and keeps it otherwise', () => {
+    const onJumpIn = vi.fn(() => false)
+    show(fakeSession(), PLAZA, onJumpIn)
+    fireEvent.click(screen.getByRole('button', { name: /start navigation/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Jump in to Genesis Plaza' }))
+    expect(navigation.getSnapshot()).not.toBeNull()
+    onJumpIn.mockReturnValue(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Jump in to Genesis Plaza' }))
+    expect(navigation.getSnapshot()).toBeNull()
+  })
+
+  it('keeps a route to another place when jumping in here', () => {
+    act(() => navigation.start({ ...PLAZA, id: 'far', positions: ['40,40'], base_position: '40,40' }))
+    show(fakeSession(), PLAZA)
+    expect(screen.getByRole('button', { name: /start navigation/i })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Jump in to Genesis Plaza' }))
+    expect(navigation.getSnapshot()?.parcel).toEqual({ x: 40, y: 40 })
   })
 
   it('keeps a vote sent before the signed read lands', async () => {

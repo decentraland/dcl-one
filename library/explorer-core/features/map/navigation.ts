@@ -2,6 +2,7 @@
 // arrive, stop it, or jump in to it.
 
 import type { DiscoverPlace } from '../places/placesApi'
+import { isWorldPlace } from './mapApi'
 import { parcelCenter, parseParcel, type Vec2 } from './mapCoords'
 
 export interface Destination {
@@ -28,6 +29,12 @@ export interface NavigationStore {
 
 export function destinationParcel(place: DiscoverPlace | null): Vec2 {
   return (place == null ? null : place.positions.length === 1 ? parseParcel(place.positions[0]) : parseParcel(place.base_position)) ?? { x: 0, y: 0 }
+}
+
+export function isRouteTo(destination: Destination | null, place: DiscoverPlace): boolean {
+  if (destination == null || isWorldPlace(place)) return false
+  const end = destinationParcel(place)
+  return destination.parcel.x === end.x && destination.parcel.y === end.y
 }
 
 export function createNavigationStore(): NavigationStore {

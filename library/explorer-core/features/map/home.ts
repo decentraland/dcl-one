@@ -47,6 +47,13 @@ export function isPlacePanelHome(home: Home, place: DiscoverPlace, origin: Vec2 
   return isHomePlace(home, place) || (isRoad(place.title) && isHomeParcel(home, origin))
 }
 
+/** `realm` is null for the default realm; a road saves the parcel it was picked at. */
+export function placeHomeTarget(place: DiscoverPlace, origin: Vec2 | null): { realm: string | null; parcel: Vec2 } | null {
+  if (isWorldPlace(place)) return place.world_name != null ? { realm: place.world_name, parcel: { x: 0, y: 0 } } : null
+  const parcel = isRoad(place.title) && origin != null ? origin : parseParcel(place.base_position)
+  return parcel != null ? { realm: null, parcel } : null
+}
+
 /** See `isPlacePanelHome`. `world` is the World the player is in, or null in Genesis City. */
 export function isStandingInHome(home: Home, world: string | null, parcel: Vec2, place: DiscoverPlace | null): boolean {
   if (world != null) return home.world != null && home.world.toLowerCase() === world.toLowerCase()
