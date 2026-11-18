@@ -658,6 +658,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Native HUD preferences are persisted by the engine** (`hud-prefs.json`), because CEF's
   `localStorage` does not survive.
 - **Web is Chrome only.**
+- **HLS plays natively on the web.** A media source is assigned to the element's `src` whatever
+  its format; there is no hls.js. Desktop Chrome plays TS and fMP4 HLS, live streams included,
+  through a plain `src` with `crossOrigin = "anonymous"`, and its frames copy into a
+  `VideoFrame`. HEVC in HLS and Chromium builds without proprietary codecs do not play; neither
+  is a target.
 - **The end-to-end tests use no Playwright.** They drive the client through its console on both
   shells, so one spec runs on the web and the standalone, and what they need from a browser (real
   input, pages outside the client such as sign-in, screenshots) the in-repo web driver does

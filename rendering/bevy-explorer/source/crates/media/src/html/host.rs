@@ -12,7 +12,7 @@ use dcl_component::proto_components::sdk::components::VideoState;
 use futures_channel::mpsc::{UnboundedSender, unbounded};
 use futures_lite::StreamExt;
 use js_sys::{Function, Reflect};
-use wasm_bindgen::{JsCast, JsValue, closure::Closure, prelude::wasm_bindgen};
+use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{HtmlMediaElement, HtmlVideoElement, VideoFrame, Worker};
 
@@ -20,13 +20,6 @@ use super::{HOST, HostCommand, HostHandle, MediaEvent, MediaId};
 use crate::AVCommand;
 
 type RcClosure = Rc<RefCell<Option<Closure<dyn FnMut(f64, JsValue)>>>>;
-
-// Defined by engine.js on the page (HLS-aware source assignment).
-#[wasm_bindgen(js_namespace = window)]
-extern "C" {
-    #[wasm_bindgen(js_name = setVideoSource)]
-    fn set_video_source(elt: &HtmlVideoElement, src: &str);
-}
 
 thread_local! {
     /// The page's media elements by id; other page code may add to it ([`adopt_video_element`]).
@@ -214,8 +207,9 @@ impl HostMedia {
             frame_callback_handle: Default::default(),
         };
 
+        // the browser plays HLS natively
         if let Some(url) = &url {
-            set_video_source(&video, url);
+            media.set_src(url);
         }
         // only a video's frames are read, which needs a CORS load: an audio stream from a server
         // without CORS headers still plays
