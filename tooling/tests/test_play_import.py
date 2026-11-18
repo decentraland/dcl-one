@@ -145,7 +145,9 @@ class GitHubReadTests(unittest.TestCase):
                    'error reading response body: unexpected EOF\n',
                    'read tcp 10.0.0.1:1->10.0.0.2:443: read: connection reset by peer\n',
                    'http2: server sent GOAWAY and closed the connection\n',
-                   'net/http: TLS handshake timeout\n']
+                   'net/http: TLS handshake timeout\n',
+                   'Get "https://api.github.com/repos/o/r/actions/runs/42/jobs": EOF\n',
+                   'http2: client connection lost\n']
         for text in dropped:
             failure = subprocess.CalledProcessError(1, ['gh', 'api'], stderr=text)
             with self.subTest(stderr=text), \

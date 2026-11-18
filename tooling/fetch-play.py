@@ -49,7 +49,8 @@ def dropped_connection(stderr):
     # A connection lost mid-request has no HTTP status, e.g. "stream error: stream ID 1; CANCEL; received from peer".
     # Auth, usage and offline (DNS, refused) errors match none of these and stay final.
     return not re.search(r'\bHTTP \d{3}\b', stderr) and re.search(
-        r'stream error: stream ID \d+|unexpected EOF|connection reset by peer|server sent GOAWAY|TLS handshake timeout',
+        r'stream error: stream ID \d+|unexpected EOF|": EOF$|connection reset by peer|server sent GOAWAY|'
+        r'http2: client connection lost|TLS handshake timeout',
         stderr)
 
 

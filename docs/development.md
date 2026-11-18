@@ -52,7 +52,9 @@ and shows no other avatars:
 ```
 
 `/about` answers 503 while Pulse is down. Pulse exits when it loses its generation lease (a PostgreSQL
-restart ends it), and the supervisor starts it again with a fresh generation.
+restart, or a keepalive slower than the lease after sleep or under load), and the supervisor starts it
+again with a fresh generation, without limit. A stack started before this policy keeps the old one until
+`foundation-dev down` and `up`.
 
 ## Data profiles
 

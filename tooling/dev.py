@@ -775,9 +775,10 @@ def project(config, postgres_only=False):
     pulse = process('pulse', {'api': 'process_healthy', 'nats': 'process_healthy'})
     pulse['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': pulse_ports(config)[2], 'path': '/metrics'},
                                 'period_seconds': 1, 'failure_threshold': 60}
-    # Pulse exits when it loses its generation lease, as a PostgreSQL restart does; a new start takes a fresh
-    # generation. The budget covers PostgreSQL coming back and is spent over the supervisor's lifetime.
-    pulse['availability'] = {'restart': 'on_failure', 'backoff_seconds': 2, 'max_restarts': 10}
+    # Pulse exits when it loses its generation lease (a PostgreSQL restart, a keepalive slower than its lease
+    # after sleep or under load); a new start takes a fresh generation. Restarts are unlimited (0) because the
+    # supervisor never resets the count; a Pulse that keeps failing still times out the wait, which names it.
+    pulse['availability'] = {'restart': 'on_failure', 'backoff_seconds': 2, 'max_restarts': 0}
     valkey = process('valkey')
     valkey['readiness_probe'] = {'exec': {'command': command('valkey-ready')},
                                  'period_seconds': 1, 'timeout_seconds': 15, 'failure_threshold': 60}
@@ -1318,6 +1319,7 @@ def wait_ready(timeout, postgres_only=False):
     log_positions = {name: log_position(STATE / f'{name}.log') for name in ('web-install', 'api-build')}
     print(f"Waiting up to {timeout}s for {'PostgreSQL' if postgres_only else 'the API and Sites'}.", flush=True)
     delays = backoff_delays(deadline)
+    restarting = []
     while True:
         processes = pc('process', 'list', '--output', 'json', capture_output=True, text=True)
         if processes.returncode:
@@ -1342,7 +1344,8 @@ def wait_ready(timeout, postgres_only=False):
                     ensure_collation(config, 'template1')
                 print('PostgreSQL is ready for scratch test databases.')
                 return 0
-            if any(process.get('status') == 'Restarting' for process in listing):
+            restarting = [process['name'] for process in listing if process.get('status') == 'Restarting']
+            if restarting:
                 raise RuntimeError('A process is restarting')
             for url in urls:
                 with urllib.request.urlopen(url, timeout=3) as response:
@@ -1355,6 +1358,9 @@ def wait_ready(timeout, postgres_only=False):
             if delay is None:
                 break
             time.sleep(min(delay, max(0, deadline - time.monotonic())))
+    if restarting:
+        names = ', '.join(restarting)
+        raise RuntimeError(f'Startup timed out while {names} kept restarting. Inspect foundation-dev logs {restarting[0]}.')
     raise RuntimeError('Startup timed out. Check foundation-dev status and foundation-dev logs api/sites.')
 
 

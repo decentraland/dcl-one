@@ -1126,9 +1126,9 @@ class DevTest(unittest.TestCase):
         processes = dev.project(self.config)['processes']
         policy = processes['pulse']['availability']
         self.assertEqual(policy['restart'], 'on_failure')
-        # Bounded, so a Pulse that cannot start still fails the wait, and long enough for PostgreSQL to return.
-        self.assertGreater(policy['max_restarts'], 0)
-        self.assertGreaterEqual(policy['max_restarts'] * policy['backoff_seconds'], 10)
+        # Unlimited: the supervisor never resets the count, and a lease can be lost many times over a stack's life.
+        self.assertEqual(policy['max_restarts'], 0)
+        self.assertGreaterEqual(policy['backoff_seconds'], 1)
         # The other tasks keep failing the wait on their first non-zero exit.
         self.assertEqual([name for name, process in processes.items() if 'availability' in process], ['pulse'])
 
@@ -1162,6 +1162,15 @@ class DevTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'pulse failed'):
                 dev.wait_ready(10)
         sleep.assert_not_called()
+
+    def test_a_wait_that_times_out_on_a_restarting_process_names_it(self):
+        restarting = subprocess.CompletedProcess([], 0, json.dumps(
+            [{'name': 'pulse', 'status': 'Restarting', 'exit_code': 1, 'is_running': False}]))
+        with patch.object(dev, 'pc', return_value=restarting), \
+                patch.object(dev, 'backoff_delays', return_value=iter([0, 0])), \
+                patch.object(dev.time, 'sleep'), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError, 'while pulse kept restarting. Inspect foundation-dev logs pulse'):
+                dev.wait_ready(10)
 
     def test_wait_narrates_progress_with_the_building_task_output(self):
         listing = subprocess.CompletedProcess([], 0, json.dumps([
