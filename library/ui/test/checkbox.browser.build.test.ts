@@ -451,6 +451,32 @@ describe('when the help opens near a viewport edge', () => {
 })
 
 describe('when the help is inside a modal dialog', () => {
+  it.each([320, 1440])('should show the label and the full help text at %ipx', async (width) => {
+    await browser.session.send('Emulation.setDeviceMetricsOverride', {
+      width,
+      height: 700,
+      deviceScaleFactor: 1,
+      mobile: false
+    })
+    await browser.evaluate(`document.getElementById('open-dialog').click()`)
+    await pressHelp('label-dialog')
+    const result = await browser.evaluate(`(()=>{
+      const dialog = document.getElementById('help-dialog')
+      const button = dialog.querySelector('button')
+      const bubble = document.getElementById(button.getAttribute('aria-controls'))
+      const range = document.createRange()
+      range.selectNodeContents(bubble)
+      const lines = Array.from(range.getClientRects())
+      return {
+        background: getComputedStyle(dialog).backgroundColor,
+        label: getComputedStyle(dialog.querySelector('label')).color,
+        readable: lines.length > 0 && lines.every(line => [line.left + 1, line.right - 1].every(x =>
+          bubble.contains(document.elementFromPoint(x, (line.top + line.bottom) / 2))))
+      }
+    })()`)
+    expect(result).toEqual({ background: 'rgb(45, 42, 51)', label: snow, readable: true })
+  })
+
   it('should close only the help on the first Escape and the dialog on the second', async () => {
     await browser.evaluate(`document.getElementById('open-dialog').click()`)
     const state = () =>

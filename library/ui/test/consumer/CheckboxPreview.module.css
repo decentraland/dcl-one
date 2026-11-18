@@ -1,0 +1,8 @@
+.dialog {
+  padding: var(--dcl-space-24);
+  border: 1px solid var(--dcl-border-default);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-bg-surface-raised);
+  color: var(--dcl-text-primary);
+  overflow: visible;
+}

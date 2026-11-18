@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import { Checkbox, CheckboxLabel, type CheckboxSize, type CheckboxVariant } from '@dcl/one-ui'
 import '@dcl/one-ui/foundations.css'
+import styles from './CheckboxPreview.module.css'
 
 export type CheckboxMetrics = {
   x: number
@@ -174,7 +175,7 @@ function Fixture() {
       >
         Open dialog
       </button>
-      <dialog id="help-dialog" aria-label="Settings">
+      <dialog className={styles.dialog} id="help-dialog" aria-label="Settings">
         <CheckboxLabel id="label-dialog" label="In a dialog" help="Help inside a modal dialog." />
       </dialog>
     </main>
