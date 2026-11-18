@@ -17,7 +17,7 @@ tests build and that `common`'s tests read.
                         the checkout's time, so Cargo rebuilds what depends on it
 
 A tracked file's blob id comes from the index. The Bevy tree that `tooling/patched-sources.py` writes for
-the Bevy crate tests is not tracked, so its blob ids are those of the bytes on disk, stamp included.
+the Bevy crate tests and `common`'s tests is not tracked, so its blob ids are those of the bytes on disk, stamp included.
 
 To Cargo this is a checkout that never moved. Times are kept to the nanosecond: for a package
 whose build script names no input, Cargo stores the time of the newest file as it reads it, so a
