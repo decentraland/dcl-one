@@ -2012,7 +2012,7 @@ pub struct Clips {
     pub named: HashMap<String, (AnimationNodeIndex, f32)>,
 }
 
-/// A remote player's avatar; comms spawns it beside `ForeignPlayer`. Avatar systems that
+/// A remote player's avatar; comms' `ForeignPlayer` requires it. Avatar systems that
 /// treat remote and local emotes differently read this instead of the comms type.
 #[derive(Component, Default, Debug, Clone, Copy)]
 pub struct ForeignAvatar;
