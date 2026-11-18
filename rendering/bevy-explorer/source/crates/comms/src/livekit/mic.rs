@@ -84,11 +84,11 @@ impl Plugin for MicPlugin {
                 poll_microphone_permission,
                 verify_availability.run_if(in_state(MicrophoneAvailability::Unavailable)),
                 verify_microphone_device_health.run_if(in_state(MicrophoneAvailability::Available)),
-                verify_enabled.run_if(
+                enable_microphone_state_system.run_if(
                     in_state(MicrophoneAvailability::Available)
                         .and(in_state(MicrophoneState::Disabled)),
                 ),
-                verify_disabled.run_if(in_state(MicrophoneState::Enabled)),
+                disable_microphone_state_system.run_if(in_state(MicrophoneState::Enabled)),
                 // Revocation runs even when permission or device availability was lost.
                 reconcile_publications,
             )
@@ -478,22 +478,27 @@ fn tear_down_microphone(mut commands: Commands) {
 }
 
 /// A call holds the nearby mic off without changing the user's setting.
-fn nearby_mic_on(mic_state: &MicState, call_mic: &CallMic) -> bool {
+const fn nearby_mic_on(mic_state: &MicState, call_mic: &CallMic) -> bool {
     mic_state.enabled && !mic_state.scene_blocked() && !call_mic.suppress_nearby
 }
 
 /// The mic captures for the nearby or the call route only while the client window has focus.
-fn microphone_captures(mic_state: &MicState, call_mic: &CallMic, focus: ClientWindowFocus) -> bool {
-    focus == ClientWindowFocus::Focused && (nearby_mic_on(mic_state, call_mic) || call_mic.enabled)
+const fn can_capture_microphone(
+    mic_state: &MicState,
+    call_mic: &CallMic,
+    focus: ClientWindowFocus,
+) -> bool {
+    matches!(focus, ClientWindowFocus::Focused)
+        && (nearby_mic_on(mic_state, call_mic) || call_mic.enabled)
 }
 
-fn verify_enabled(
+fn enable_microphone_state_system(
     mut commands: Commands,
     mic_state: Res<MicState>,
     call_mic: Res<CallMic>,
     focus: Res<ClientWindowFocus>,
 ) {
-    if microphone_captures(&mic_state, &call_mic, *focus) {
+    if can_capture_microphone(&mic_state, &call_mic, *focus) {
         debug!("Microphone is now enabled.");
         commands.set_state(MicrophoneState::Enabled);
     }
@@ -569,13 +574,13 @@ fn drop_cpal_stream(mut commands: Commands, mut mic_stream: NonSendMut<MicStream
     commands.set_state(MicrophoneState::Disabled);
 }
 
-fn verify_disabled(
+fn disable_microphone_state_system(
     mut commands: Commands,
     mic_state: Res<MicState>,
     call_mic: Res<CallMic>,
     focus: Res<ClientWindowFocus>,
 ) {
-    if !microphone_captures(&mic_state, &call_mic, *focus) {
+    if !can_capture_microphone(&mic_state, &call_mic, *focus) {
         debug!("Microphone is now disabled.");
         commands.set_state(MicrophoneState::Disabled);
     }
@@ -1340,12 +1345,12 @@ mod routing_tests {
     fn the_nearby_mic_captures_only_while_the_window_has_focus() {
         let mic = mic_state(true, true);
         let call_mic = CallMic::default();
-        assert!(microphone_captures(
+        assert!(can_capture_microphone(
             &mic,
             &call_mic,
             ClientWindowFocus::Focused
         ));
-        assert!(!microphone_captures(
+        assert!(!can_capture_microphone(
             &mic,
             &call_mic,
             ClientWindowFocus::NoFocus
@@ -1360,12 +1365,12 @@ mod routing_tests {
             in_call: true,
             suppress_nearby: true,
         };
-        assert!(microphone_captures(
+        assert!(can_capture_microphone(
             &mic,
             &call_mic,
             ClientWindowFocus::Focused
         ));
-        assert!(!microphone_captures(
+        assert!(!can_capture_microphone(
             &mic,
             &call_mic,
             ClientWindowFocus::NoFocus
@@ -1376,7 +1381,7 @@ mod routing_tests {
     fn regaining_focus_leaves_a_closed_mic_closed() {
         let mic = mic_state(true, false);
         let call_mic = CallMic::default();
-        assert!(!microphone_captures(
+        assert!(!can_capture_microphone(
             &mic,
             &call_mic,
             ClientWindowFocus::Focused
@@ -1388,7 +1393,7 @@ mod routing_tests {
         let mut mic = mic_state(true, true);
         mic.set_scene_disabled(true);
         let call_mic = CallMic::default();
-        assert!(!microphone_captures(
+        assert!(!can_capture_microphone(
             &mic,
             &call_mic,
             ClientWindowFocus::Focused

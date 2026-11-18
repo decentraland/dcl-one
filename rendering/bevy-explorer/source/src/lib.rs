@@ -45,14 +45,15 @@ use bevy::{
 use build_time::build_time_utc;
 use camera_reel::CameraReelPlugin;
 use collectibles::CollectiblesPlugin;
+#[cfg(not(target_arch = "wasm32"))]
+use common::structs::ClientWindowFocus;
 use common::{
     inputs::InputMap,
     sets::SetupSets,
     structs::{
-        AppConfig, AvatarDynamicState, ClientWindowFocus, HeadSync, IVec2Arg, LandscapeDistance,
-        PointAtSync, PrimaryCamera, PrimaryCameraRes, PrimaryPlayerRes, SceneImposterBake,
-        SceneLoadDistance, ShowOutOfBounds, StartupScene, StartupScenes, Version,
-        GROUND_RENDERLAYER,
+        AppConfig, AvatarDynamicState, HeadSync, IVec2Arg, LandscapeDistance, PointAtSync,
+        PrimaryCamera, PrimaryCameraRes, PrimaryPlayerRes, SceneImposterBake, SceneLoadDistance,
+        ShowOutOfBounds, StartupScene, StartupScenes, Version, GROUND_RENDERLAYER,
     },
     util::UtilsPlugin,
 };
@@ -798,7 +799,11 @@ impl DecentralandApp {
         app.add_systems(Startup, setup.in_set(SetupSets::Init));
         app.add_systems(Startup, save_fresh_user_id);
         #[cfg(not(target_arch = "wasm32"))]
-        app.add_systems(First, update_window_focus_system);
+        app.add_systems(
+            First,
+            update_client_window_focus_system
+                .before(perf::frame_inputs::collect_frame_inputs_system),
+        );
 
         // Commands
         app.add_console_command::<ChangeLocationCommand, _>(change_location);
@@ -816,16 +821,12 @@ impl DecentralandApp {
 
 /// Copies the primary window's focus into [`ClientWindowFocus`].
 #[cfg(not(target_arch = "wasm32"))]
-fn update_window_focus_system(
+fn update_client_window_focus_system(
     window: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut focus: ResMut<ClientWindowFocus>,
 ) {
     if let Ok(window) = window.single() {
-        focus.set_if_neq(if window.focused {
-            ClientWindowFocus::Focused
-        } else {
-            ClientWindowFocus::NoFocus
-        });
+        focus.set_if_neq(ClientWindowFocus::from_window(window));
     }
 }
 

@@ -1902,11 +1902,34 @@ pub enum AppError {
     NetworkFailure(anyhow::Error),
 }
 
-/// Whether the Explorer has focus.
+/// Whether the Explorer has focus: the one representation of the native primary window's focus
+/// and the browser page's focus.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientWindowFocus {
     Focused,
     NoFocus,
+}
+
+impl ClientWindowFocus {
+    /// The native primary window's focus.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn from_window(window: &Window) -> Self {
+        Self::from_has_focus(window.focused)
+    }
+
+    /// The browser page's `document.hasFocus()`, not the canvas's DOM focus (`Window::focused`).
+    #[cfg(target_arch = "wasm32")]
+    pub fn from_page_focus(page_has_focus: bool) -> Self {
+        Self::from_has_focus(page_has_focus)
+    }
+
+    fn from_has_focus(has_focus: bool) -> Self {
+        if has_focus {
+            Self::Focused
+        } else {
+            Self::NoFocus
+        }
+    }
 }
 
 #[derive(Resource, Default, Serialize, Deserialize, Clone)]
@@ -1930,7 +1953,7 @@ pub struct MicState {
 }
 
 impl MicState {
-    pub fn scene_blocked(&self) -> bool {
+    pub const fn scene_blocked(&self) -> bool {
         self.scene_blocked
     }
 
