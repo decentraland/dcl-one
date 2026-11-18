@@ -20,7 +20,12 @@ import { getScene, getRowsAndCols, parseCoords, pathToPosix, updateSceneThumbnai
 import { resolveOutdated } from './outdated';
 import { getDefaultScenesPath, getScenesPath } from './settings';
 
-import { DEFAULT_THUMBNAIL, NEW_SCENE_NAME, EMPTY_SCENE_TEMPLATE_REPO } from './constants';
+import {
+  DEFAULT_THUMBNAIL,
+  EMPTY_SCENE_TEMPLATE_DESCRIPTION,
+  EMPTY_SCENE_TEMPLATE_REPO,
+  NEW_SCENE_NAME,
+} from './constants';
 import { getProjectId } from './analytics';
 
 export function initializeWorkspace(services: Services) {
@@ -337,12 +342,14 @@ export function initializeWorkspace(services: Services) {
       const scene = await getScene(fullName);
       scene.display!.title = name;
 
-      if (templateRepo === EMPTY_SCENE_TEMPLATE_REPO) {
-        // The template describes itself ("Empty Scene Template"), which a publish would show
-        // players as the scene's description.
-        scene.display!.description = '';
-      } else {
-        // Remove worldConfiguration for non-empty templates
+      // The empty template describes itself, which a publish would show players as the scene's
+      // description.
+      if (scene.display?.description === EMPTY_SCENE_TEMPLATE_DESCRIPTION) {
+        scene.display.description = '';
+      }
+
+      // Remove worldConfiguration for non-empty templates
+      if (templateRepo !== EMPTY_SCENE_TEMPLATE_REPO) {
         delete scene.worldConfiguration;
       }
 

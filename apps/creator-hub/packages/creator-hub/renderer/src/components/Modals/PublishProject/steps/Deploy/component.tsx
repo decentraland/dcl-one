@@ -31,6 +31,7 @@ import {
 
 import { t } from '/@/modules/store/translation/utils';
 import { HELP_FAQ_URL, getSceneJumpInDeeplink, getSceneJumpInUrl } from '/@/modules/utils';
+import { getProjectWorldName } from '/@/lib/project-world';
 import { formatSize } from '/@/modules/file';
 
 import { PublishModal } from '/@/components/Modals/PublishProject/PublishModal';
@@ -78,7 +79,7 @@ export function Deploy(props: Props) {
   const [reportOpen, setReportOpen] = useState(false);
   const deployment = getDeployment(project.path);
   const isWorld = previousStep === 'publish-to-world' || !!deployment?.info.isWorld;
-  const worldName = deploymentMetadata?.worldName || project.worldConfiguration?.name;
+  const worldName = deploymentMetadata?.worldName || getProjectWorldName(project);
   const ownsWorld =
     !!wallet &&
     !!worldName &&
@@ -134,9 +135,7 @@ export function Deploy(props: Props) {
           }),
         ).unwrap();
         setUndeployStatus('complete');
-        await dispatch(
-          managementActions.fetchWorldScenes({ worldName }),
-        );
+        await dispatch(managementActions.fetchWorldScenes({ worldName }));
       } catch {
         setUndeployStatus('failed');
         return; // Stop here if undeploy fails
@@ -144,7 +143,15 @@ export function Deploy(props: Props) {
     }
 
     executeDeployment(project.path);
-  }, [skipWarning, project, willEmptyWorld, worldName, wallet, executeDeployment, updateProjectInfo]);
+  }, [
+    skipWarning,
+    project,
+    willEmptyWorld,
+    worldName,
+    wallet,
+    executeDeployment,
+    updateProjectInfo,
+  ]);
 
   const handleBack = useCallback(() => {
     setShowWarning(false);
