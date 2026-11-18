@@ -185,17 +185,17 @@ adapter reported as a scene ban.
 ## Scenario map
 
 explorer-automation's 89 Explorer tests outside the sign-in flows, by fixture; the class of each
-test is in the spec file's header. Port 47, Partial 35, Gap 5, Drop 2.
+test is in the spec file's header. Port 48, Partial 35, Gap 4, Drop 2.
 
 | Fixture (tests) | Spec | Port | Partial | Gap | Drop | What changed |
 | --- | --- | --- | --- | --- | --- | --- |
 | ExplorePanel (7) | `explore-panel` | 6 | 1 | | | Pages instead of one panel, each opened by a row of the rail's Discover, Me or System panel; the top bar's Shop tab is not driven |
 | Shortcuts (7) | `shortcuts` | 6 | 1 | | | Gallery is `G`, not `K` |
 | Navbar (4) | `navbar` | | 3 | 1 | | A fixed rail set, no flags, the other entries rows of the Me, Discover and System panels; the help rows are in the System panel, which has no controls row |
-| Minimap (5) | `minimap` | 3 | 1 | 1 | | The rail's Map button shows the minimap; no favourite heart; the dots menu adds the minimap's own settings; name and compass are unreadable text |
+| Minimap (5) | `minimap` | 4 | 1 | | | The rail's Map button shows the minimap; the dots menu adds the minimap's own settings; name and compass are unreadable text |
 | Navmap (1) | `navmap` | 1 | | | | `Sports`, not `Sport` |
 | Events (3) | `events` | 2 | 1 | | | The detail opens for the first event the service lists, when there is one |
-| Places (5) | `places` | | 4 | 1 | | Tabs, category chips and Filter & Sort, without counters; a card opens the destination card, which no scenario opens yet |
+| Places (5) | `places` | | 4 | 1 | | Tabs, category chips and Filter & Sort, without counters; a card opens the place's detail, which no scenario opens yet |
 | Communities (4) | `communities` | | 4 | | | No titles or counts; the invites view's titles only with something pending; the detail is a modal |
 | Chat (6) | `chat` | 2 | 4 | | | Escape leaves the input but keeps the panel; history checked through `/chat_history` |
 | EmoteWheel (3) | `emote-wheel` | 2 | 1 | | | The emote playing is asserted through `/avatar_state` |
@@ -366,6 +366,7 @@ change on the left updates what is on the right in the same change, then runs th
 | A list region's `aria-busy` or what sets it (the Backpack's `Catalog` and `Saved outfits`, `Places results`), or a HUD control animated other than by CSS (which `hudAutomation.ts` cannot see moving) | `CATALOG` and `SAVED_OUTFITS` in `specs/backpack.ts`, `RESULTS` in `specs/places.test.ts`; the HUD tests that pin the state (`backpackStates`, `placesBrowser`, `hudAutomation`) | the HUD's tests; the scenarios in CI |
 | What `/world_state`'s `keyboardClaimed` reads (`InputPriorities`), or how the HUD relays a field's focus (`uiFocus`) | `keyboardTaken` and `keyboardReleased` in `driver/explorer.ts`, `closePage` in `specs/pages.ts`, `closeToRest` in `driver/harness.ts` and their tests | `cargo test world_state`; `pnpm test` |
 | A key binding | The keys in `specs/pages.ts`; the shortcuts spec's header | the same |
+| The lobby's default layout or its Landing card (`library/explorer-core/features/lobby/layout.ts`, `LobbyCards.tsx`), or the layout editor's controls (`LobbyEditor.tsx`: `Customize lobby layout`, `Reset to Default`, `SAVE`) | `enterWorld` in `driver/session.ts`, which presses the first button named exactly `Jump In`: only the Landing card carries that name. The web driver starts each run on a fresh browser profile, so the default layout is shown. A native run reads the layout the client stored; when the lobby shows no `Jump In` for `NO_LANDING_POLLS` polls, `enterWorld` resets it to the shipped layout through the editor and saves it, then jumps in | `pnpm test`; the scenarios in CI |
 | A console command's name, arguments or reply, in the engine or in `hudAutomation.ts`; what `/hud_login` and `/hud_logout` do with the session (`useEngineSession.ts`: the stored sign-in, the welcome page, the lobby's pick, the sign-out) | `driver/explorer.ts`, `driver/session.ts` and their tests; the Explorer readme's "Agents and tests" and `docs/guidelines/running.md` "Test commands" | `pnpm test`; the HUD's tests (`react-web`: `pnpm test`) |
 | `/hover_entity`, `/click_entity`, `/raycast_stats`, `/raycast_budget`, `/scene_logs` or the `pointer-targets` and `raycast-storm` scenes | `driver/explorer.ts`, `test/explorer.test.ts`, `specs/visual/pointer.test.ts`, `specs/visual/raycast-budget.test.ts`, `rendering/bevy-explorer/docs/guidelines/interaction.md`; `scenes/README.md` for a scene | `pnpm test`; the two scenarios, e.g. `pnpm run e2e --visual --filter 'the box behind the wall'` and `--filter 'a zero budget holds'` (the scenarios of `pointer.test.ts` and `raycast-budget.test.ts` have their own names; a pattern on a file name selects nothing). On the web these commands reach the engine through `engine_console_command` and write Bevy input events, not the page's trusted input |
 | `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `pnpm test`; the web driver's tests |

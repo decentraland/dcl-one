@@ -35,7 +35,7 @@ use common::{
     sets::SetupSets,
     structs::{
         sun_cascades, AppConfig, DofConfig, FogSetting, PrimaryCamera, PrimaryCameraRes,
-        PrimaryUser, SceneGlobalLight, TimeOfDay, AMBIENT_BRIGHTNESS_DEFAULT,
+        PrimaryUser, SceneGlobalLight, StageLight, TimeOfDay, AMBIENT_BRIGHTNESS_DEFAULT,
         PRIMARY_AVATAR_LIGHT_LAYER,
     },
 };
@@ -465,7 +465,8 @@ struct ShadowConsoleCommand {
 
 fn shadow_console_command(
     mut input: ConsoleCommand<ShadowConsoleCommand>,
-    mut lights: Query<&mut DirectionalLight>,
+    // the lobby stage light follows the Shadows setting, not this switch
+    mut lights: Query<&mut DirectionalLight, Without<StageLight>>,
 ) {
     if let Some(Ok(command)) = input.take() {
         for mut light in lights.iter_mut() {

@@ -290,7 +290,7 @@ export function Showcase(): React.JSX.Element {
 
       <Section title="Button (bare: a translucent fill, sized by the caller)">
         <div style={row}>
-          {(['scrim', 'faint', 'veil', 'glass', 'shade', 'primary', 'clear'] as const).map((variant) => (
+          {(['scrim', 'faint', 'veil', 'glass', 'shade', 'primary', 'clear', 'navigate', 'navigateExit'] as const).map((variant) => (
             <Button key={variant} size="bare" variant={variant} style={{ height: 46, padding: '0 20px' }}>
               {variant}
             </Button>

@@ -3,14 +3,13 @@
 // Shared by the in-world PlacesPage and the post-jump-in PlacesPicker; the host supplies an
 // `onPick(place)` action.
 
-import { useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { BrowseLoading, Button, CheckBold, ChevronDown, EmptyState, Heart, Pin, Search } from '../../design'
 import { PlaceCard } from './PlaceCard'
 import { usePlaces, type PlacesSection, type PlacesSort } from './usePlaces'
 import { isHiddenPlace, type DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import { CAT_ICONS } from '../map/mapArt'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
-import { MenuPresentationContext } from '../menu/MenuPresentation'
 import styles from './PlacesPage.module.css'
 
 type Pill = 'explore' | 'recent' | 'favourites' | 'my'
@@ -70,15 +69,17 @@ function FilterGlyph(): React.JSX.Element {
 export function PlacesBrowser({
   account,
   headExtra,
+  columns,
   onPick
 }: {
   account?: string | null
   /** Slot rendered at the far right of the header (e.g. the picker's "Skip" button). */
   headExtra?: React.ReactNode
+  /** The results grid's column count; unset, the page's five. */
+  columns?: number
   onPick: (place: DiscoverPlace) => void
 }): React.JSX.Element {
   const { places: list, loading, loadingMore, hasMore, loadMore, retry, error, search, setSearch, category, setCategory, sort, setSort, section, setSection } = usePlaces(account)
-  const inCard = useContext(MenuPresentationContext) === 'lobbyCard'
   // Local input value, debounced into the hook's `search` so we don't refetch on every keystroke.
   const [draft, setDraft] = useState(search)
   const [sortOpen, setSortOpen] = useState(false)
@@ -192,7 +193,7 @@ export function PlacesBrowser({
             }
           />
         ) : (
-          <div className={`${styles.grid} ${inCard ? styles.gridCard : ''}`.trim()}>
+          <div className={styles.grid} style={columns != null ? { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` } : undefined}>
             {mainList.map((place) => (
               <PlaceCard key={place.id} place={place} onClick={() => onPick(place)} />
             ))}

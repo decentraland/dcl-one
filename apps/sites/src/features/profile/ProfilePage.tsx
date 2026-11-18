@@ -3,8 +3,6 @@ import { useNavigate } from "react-router";
 
 import { ProfileNavigationContext } from "@ui/web/frames/ProfileNavigation";
 import StProfileCommunitiesTab from "@ui/web/pages/StProfileCommunitiesTab";
-import StProfileCreationsTab from "@ui/web/pages/StProfileCreationsTab";
-import StProfileMyAssetsTab from "@ui/web/pages/StProfileMyAssetsTab";
 import StProfileOverviewTab from "@ui/web/pages/StProfileOverviewTab";
 import StProfilePhotosTab from "@ui/web/pages/StProfilePhotosTab";
 
@@ -15,15 +13,11 @@ import { emptyProfile, normalizeAddress, type ProfileVM } from "@/data/lib/catal
 import { canReadProfile } from "@/data/lib/profile/queries";
 
 import { ProfileRouteError } from "./errors";
+import { ProfileAssetsScreen } from "./ProfileAssetsScreen";
+import { ProfileCreationsScreen } from "./ProfileCreationsScreen";
 import { ProfileOverviewScreen } from "./ProfileOverviewScreen";
 import { ProfilePlacesScreen } from "./ProfilePlacesScreen";
-import {
-  useMyCommunities,
-  useProfileAssets,
-  useProfileCreations,
-  useProfilePhotos,
-  useRequiredProfile,
-} from "./hooks";
+import { useMyCommunities, useProfilePhotos, useRequiredProfile } from "./hooks";
 import { isOwnProfile, profileHref, profileTabs, readProfileTab, type ProfileTab } from "./tabs";
 
 const STORY: StoryId = "landings/profile";
@@ -74,9 +68,9 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
     onTab,
   };
 
-  // Overview and Places have the profile site's layout: its own tab bar (scrollable on narrow
-  // screens) and no section side panel, so they stay outside the context the Sites chrome turns
-  // into that panel.
+  // Overview, Creations, Places and Assets have the profile site's layout: its own tab bar
+  // (scrollable on narrow screens) and no section side panel, so they stay outside the context the
+  // Sites chrome turns into that panel.
   if (activeTab === "overview") {
     return (
       <ProfileOverviewScreen
@@ -87,6 +81,14 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
         onTab={onTab}
       />
     );
+  }
+
+  if (activeTab === "creations") {
+    return <ProfileCreationsScreen profile={profile} own={own} tabs={navigation.tabs} onTab={onTab} />;
+  }
+
+  if (activeTab === "assets") {
+    return <ProfileAssetsScreen profile={profile} own={own} tabs={navigation.tabs} onTab={onTab} />;
   }
 
   if (activeTab === "places") {
@@ -115,31 +117,14 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
 /** Each tab reads only its own data, so opening one tab does not fetch the others. */
 function ActiveTab({ tab, ...props }: TabProps & { tab: ProfileTab }) {
   switch (tab) {
-    case "creations":
-      return <CreationsTab {...props} />;
     case "photos":
       return <PhotosTab {...props} />;
     case "communities":
       return <CommunitiesTab {...props} />;
-    case "assets":
-      return <AssetsTab {...props} />;
     case "referral-rewards":
     default:
       return <StProfileOverviewTab profile={props.profile as never} activeTab="overview" isOwnProfile={props.own} />;
   }
-}
-
-function CreationsTab({ address, profile, own, tabs }: TabProps) {
-  const { data } = useProfileCreations(address, profile.name);
-  return (
-    <StProfileCreationsTab
-      profile={profile as never}
-      tabs={tabs}
-      isOwnProfile={own}
-      wearables={data?.wearables ?? []}
-      emotes={data?.emotes ?? []}
-    />
-  );
 }
 
 function PhotosTab({ address, profile, own }: TabProps) {
@@ -149,18 +134,6 @@ function PhotosTab({ address, profile, own }: TabProps) {
       profile={profile as never}
       isOwnProfile={own}
       photos={(data ?? []) as ComponentProps<typeof StProfilePhotosTab>["photos"]}
-    />
-  );
-}
-
-function AssetsTab({ address, profile, tabs }: TabProps) {
-  const { data } = useProfileAssets(address);
-  return (
-    <StProfileMyAssetsTab
-      profile={profile as never}
-      tabs={tabs}
-      wearables={data.wearables as ComponentProps<typeof StProfileMyAssetsTab>["wearables"]}
-      names={data.names as ComponentProps<typeof StProfileMyAssetsTab>["names"]}
     />
   );
 }

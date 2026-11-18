@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { DEFAULT_REALM } from '@hud-host'
 import { isGenesisSatelliteView } from '@explorer-core/features/map/atlas'
-import { homeOf, isPlacePanelHome } from '@explorer-core/features/map/home'
+import { homeOf, isPlacePanelHome, placeHomeTarget } from '@explorer-core/features/map/home'
 import { isRoad, isWorldPlace, type PlacePhoto } from '@explorer-core/features/map/mapApi'
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import type { EventData } from '@explorer-core/engine/protocol'
@@ -12,7 +12,7 @@ import { parseParcel, playerMarkerPosition, worldToGrid, type Vec2 } from '@expl
 import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
 import type { EventMarker, PlaceMarker } from '@explorer-core/features/map/mapMarkers'
 import { CAMERA_CENTER_SECONDS, CAMERA_MOVE_SECONDS } from '@explorer-core/features/map/mapZoom'
-import { destinationParcel, navigation } from '@explorer-core/features/map/navigation'
+import { isRouteTo, navigation } from '@explorer-core/features/map/navigation'
 import { Navmap } from '@explorer-core/features/map/navmap'
 import { showToast } from '../../design'
 import { PhotoDetail } from '../gallery/PhotoDetail'
@@ -45,15 +45,18 @@ export function MapPage({
   minimap,
   profile,
   gallery,
+  compact,
   onNavigate
 }: {
   map: MapState
   minimap: MinimapState
   profile: ProfileState
   gallery: GalleryState
+  /** Shown in the lobby's section modal; `onTravel` closes it once a jump goes ahead. */
+  compact?: { onTravel: () => void }
   onNavigate: (page: string) => void
 }): React.JSX.Element | null {
-  const open = map.open
+  const open = map.open || compact != null
   const camera = useMapCamera()
   const layers = useSyncExternalStore(mapLayers.subscribe, mapLayers.getSnapshot)
   const nav = useMemo(() => new Navmap(), [])
@@ -91,19 +94,24 @@ export function MapPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
-  // the route is followed whether or not the map is open
+  // the route is followed whether or not the map is open, and only in Genesis City: a World's
+  // parcels share the numbers but not the place
   useEffect(() => {
-    if (destination == null) return
+    if (destination == null || !genesis) return
     const timer = setInterval(() => {
       if (navigation.playerMoved(playerMarkerPosition(pose.current.x, pose.current.z))) showToast('You have arrived to your destination')
     }, ARRIVAL_CHECK_MS)
     return () => clearInterval(timer)
-  }, [destination, pose])
+  }, [destination, pose, genesis])
 
-  const close = map.toggle
-  // Over the startup lobby the lobby takes the pick and closes the page itself; a refused pick keeps it open.
-  const closeAfter = (outcome: TravelOutcome): void => {
-    if (outcome === 'sent') close()
+  // A refused pick leaves the page as it is; the startup lobby's pick closes the page itself, so a
+  // toggle after it would reopen the map.
+  const go = (travel: () => TravelOutcome, travelled: () => void): void => {
+    const outcome = travel()
+    if (outcome === 'refused') return
+    travelled()
+    if (compact != null) compact.onTravel()
+    else if (outcome === 'sent') map.toggle()
   }
 
   const onParcel = useCallback(
@@ -146,48 +154,40 @@ export function MapPage({
     const { place, origin, landOnOrigin } = view
     const base = parseParcel(place.base_position)
     const target = (landOnOrigin || isRoad(place.title)) && origin != null ? origin : base
-    let outcome: TravelOutcome
     if (isWorldPlace(place)) {
       if (place.world_name == null) return
-      nav.clearInput()
-      outcome = map.changeRealm(place.world_name)
+      const realm = place.world_name
+      go(() => map.changeRealm(realm), () => nav.clearInput())
     } else {
       if (target == null) return
-      if (destination != null && base != null && destination.parcel.x === base.x && destination.parcel.y === base.y) navigation.stop()
-      nav.clearInput()
-      outcome = map.teleportToPlace(target.x, target.y)
+      const routeEnds = isRouteTo(destination, place)
+      go(
+        () => map.teleportToPlace(target.x, target.y),
+        () => {
+          if (routeEnds) navigation.stop()
+          nav.clearInput()
+        }
+      )
     }
-    closeAfter(outcome)
   }
   const jumpInEvent = (): void => {
     const view = snap.event
     if (view == null) return
-    nav.clearInput()
-    closeAfter(map.teleportToPlace(view.event.x, view.event.y))
+    go(() => map.teleportToPlace(view.event.x, view.event.y), () => nav.clearInput())
   }
   // Home can be set, not cleared: the engine keeps one home, the default until one is set.
   const setHome = (place: DiscoverPlace, origin: Vec2 | null): void => {
-    if (isWorldPlace(place)) {
-      if (place.world_name != null) map.setHome(place.world_name, { x: 0, y: 0 })
-      return
-    }
-    const parcel = isRoad(place.title) && origin != null ? origin : parseParcel(place.base_position)
-    if (parcel != null) map.setHome(DEFAULT_REALM, parcel)
+    const target = placeHomeTarget(place, origin)
+    if (target != null) map.setHome(target.realm ?? DEFAULT_REALM, target.parcel)
   }
 
   const placeIsHome = (place: DiscoverPlace, origin: Vec2 | null): boolean => isPlacePanelHome(home, place, origin)
 
-  const navigatingTo = (place: DiscoverPlace): boolean => {
-    if (destination == null || isWorldPlace(place)) return false
-    const end = destinationParcel(place)
-    return destination.parcel.x === end.x && destination.parcel.y === end.y
-  }
-
   const p = profile.data
   const openPhoto = photo != null ? photo.photos[photo.index] : undefined
-  return (
-    <MainMenuShell active="map" profileName={p?.name} profilePicture={p?.picture} profileAddress={p?.address} profileClaimed={p?.hasClaimedName} onNavigate={onNavigate} onClose={close}>
-      <div className={styles.wrap}>
+  const body = (
+    <>
+      <div className={compact != null ? `${styles.wrap} ${styles.compact}` : styles.wrap}>
         <MapCanvas
           camera={camera}
           open={open}
@@ -236,6 +236,7 @@ export function MapPage({
 
         <RightPanel
           snapshot={snap}
+          compact={compact != null}
           onExpand={() => nav.expand()}
           onCollapse={() => nav.collapse()}
           searchBar={
@@ -264,7 +265,7 @@ export function MapPage({
               view={snap.place}
               referrer={address}
               isHome={placeIsHome(snap.place.place, snap.place.origin)}
-              navigating={navigatingTo(snap.place.place)}
+              navigating={isRouteTo(destination, snap.place.place)}
               onPlaceChange={(place) => nav.updatePlace(place)}
               onHome={() => snap.place != null && setHome(snap.place.place, snap.place.origin)}
               onStartNavigation={() => navigation.start(snap.place?.place ?? null)}
@@ -289,13 +290,23 @@ export function MapPage({
           onIndex={(index) => setPhoto({ photos: photo.photos, index })}
           onLoadMeta={gallery.loadPhoto}
           onClose={() => setPhoto(null)}
-          onTeleport={(x, y) => {
-            setPhoto(null)
-            nav.clearInput()
-            closeAfter(map.teleportToPlace(x, y))
-          }}
+          onTeleport={(x, y) =>
+            go(
+              () => map.teleportToPlace(x, y),
+              () => {
+                setPhoto(null)
+                nav.clearInput()
+              }
+            )
+          }
         />
       )}
+    </>
+  )
+  if (compact != null) return body
+  return (
+    <MainMenuShell active="map" profileName={p?.name} profilePicture={p?.picture} profileAddress={p?.address} profileClaimed={p?.hasClaimedName} onNavigate={onNavigate} onClose={map.toggle}>
+      {body}
     </MainMenuShell>
   )
 }
