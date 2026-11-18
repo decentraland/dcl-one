@@ -301,6 +301,31 @@ describe('cli preview start', () => {
 
         expect(spawnedArgs()).toEqual(['start', '--bevy-web', '--no-server']);
       });
+
+      it('should pass it to a mobile-QR preview too', async () => {
+        const fake = createFakeChild();
+        mocks.run.mockReturnValue(fake.child);
+
+        const promise = start(path, { ...BASE_OPTS, mobile: true });
+        fake.printDeeplink('open?preview=http://192.168.0.10:8000&position=0,0');
+        await promise;
+
+        expect(spawnedArgs()).toEqual(['start', '--mobile', '--no-server']);
+      });
+    });
+
+    describe('and the scene sdk-commands only mentions --no-server outside its arg spec', () => {
+      it('should not pass the flag (arg would reject it)', async () => {
+        setStartCommand("'--no-client': Boolean,\n// TODO: add --no-server\n");
+        const fake = createFakeChild();
+        mocks.run.mockReturnValue(fake.child);
+
+        const promise = start(path, BASE_OPTS);
+        fake.printDeeplink('realm=http://127.0.0.1:8000&position=0,0');
+        await promise;
+
+        expect(spawnedArgs()).not.toContain('--no-server');
+      });
     });
 
     describe('and the scene sdk-commands does not declare --no-server', () => {

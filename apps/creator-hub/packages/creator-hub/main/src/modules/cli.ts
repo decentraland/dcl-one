@@ -23,6 +23,7 @@ import { startMobileDebugServer } from './mobile-debug-server';
 import { qrCodeDataUrl } from './qr-code';
 import { getLanIp } from './network';
 import { getRealm } from './bevy-realm';
+import { NO_SERVER_FLAG } from './realm-server-logs';
 
 // `mobile` marks a preview that was started for the mobile-QR flow (`--mobile`): the
 // SDK runs the preview server but does NOT open the desktop client. It is tracked so a
@@ -42,8 +43,9 @@ const RAW_GLTF_PARAM = 'lsd-raw-gltf';
 // the mobile start settles (with no url) shortly after instead of hanging indefinitely.
 const MOBILE_DEEPLINK_GRACE_MS = 5000;
 
-// Tells `sdk-commands start` not to spawn its own Multiplayer Server.
-const NO_SERVER_FLAG = '--no-server';
+// The flag as the start command's `arg` spec declares it. A bare mention of the flag in a
+// comment or a help string would match a substring check while `arg` still rejects it.
+const NO_SERVER_SPEC = /['"]--no-server['"]\s*:\s*Boolean/;
 
 const previewCache: Map<string, Preview> = new Map();
 export let deployServer: { stop: () => Promise<void> } | null = null;
@@ -341,7 +343,7 @@ export async function start(path: string, opts: StartOptions): Promise<string> {
  * on an SDK with the authoritative server it already runs one. A second server loses the
  * scene room to it and exits, and the preview console then reports that no server is
  * running while the realm's keeps serving. The preview reuses the realm's server instead;
- * inspector.ts relays that server's logs into the preview console.
+ * realm-server-logs.ts relays that server's logs into the preview console.
  *
  * `arg` rejects unknown flags, so the flag is only passed when the scene's sdk-commands
  * declares it. Only versions that spawn a server do.
@@ -351,12 +353,7 @@ async function getServerArgs(path: string): Promise<string[]> {
   const startCommand = await fs
     .readFile(join(path, 'node_modules', '@dcl/sdk-commands/dist/commands/start/index.js'), 'utf-8')
     .catch(() => '');
-  return startCommand.includes(NO_SERVER_FLAG) ? [NO_SERVER_FLAG] : [];
-}
-
-/** Whether a preview was told to leave the Multiplayer Server to the editor realm. */
-export function usesRealmServer(preview: Preview): boolean {
-  return preview.child.args.includes(NO_SERVER_FLAG);
+  return NO_SERVER_SPEC.test(startCommand) ? [NO_SERVER_FLAG] : [];
 }
 
 async function doStart(path: string, opts: StartOptions, generation: number): Promise<string> {

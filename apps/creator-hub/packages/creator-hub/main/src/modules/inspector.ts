@@ -6,10 +6,12 @@ import log from 'electron-log';
 
 import type { Child } from './bin';
 import * as cache from './cache';
-import { getRealm } from './bevy-realm';
-import { createLineBuffer } from './bevy-realm-build-events';
-import { usesRealmServer } from './cli';
 import { getAvailablePort } from './port';
+import {
+  getRealmServerBacklog,
+  subscribeRealmServerLogs,
+  usesRealmServer,
+} from './realm-server-logs';
 import { createStaticHandler } from './static-server';
 
 // One debugger per preview (keyed by scene path), fanning its output out to every window
@@ -18,8 +20,8 @@ import { createStaticHandler } from './static-server';
 type DebuggerState = {
   preview: Child;
   listener: number;
-  /** Set when the preview reuses the editor realm's Multiplayer Server; see {@link relayRealmServerLogs}. */
-  realmServer?: { child: Child; listener: number };
+  /** Set when the preview reuses the editor realm's Multiplayer Server (realm-server-logs.ts). */
+  unsubscribeRealmServer?: () => void;
   exitHandler: () => void;
   targets: Set<WebContents>;
 };
@@ -154,39 +156,8 @@ function getDebuggerChannel(path: string) {
   return `debugger://${path}`;
 }
 
-// What `sdk-commands start` prints about its Multiplayer Server: the server's own output,
-// which it tags `[Server]`, and its warnings about the server process.
-const SERVER_LINE = /\[Server\]|Multiplayer Server/;
-
-function serverLines(lines: string[]): string {
-  return lines
-    .filter(line => SERVER_LINE.test(line))
-    .map(line => `${line}\n`)
-    .join('');
-}
-
-/**
- * A preview started with `--no-server` (cli.ts) shares the Multiplayer Server the editor
- * realm spawned, so that server's logs land in the realm's output, not the preview's.
- * Forward them, and only them (the realm's build output is not the preview's), so the
- * preview console still shows what the scene's server code logs.
- */
-function relayRealmServerLogs(state: DebuggerState, eventName: string, realm: Child) {
-  // split into lines ourselves: a chunk can hold several lines and end mid-line
-  const lines = createLineBuffer();
-  const listener = realm.on(
-    /(.*)/,
-    (data?: string) => {
-      const out = data ? serverLines(lines.push(data)) : '';
-      if (out) sendToTargets(state, eventName, out);
-    },
-    { sanitize: false },
-  );
-  state.realmServer = { child: realm, listener };
-}
-
 function teardownDebugger(state: DebuggerState) {
-  state.realmServer?.child.off(state.realmServer.listener);
+  state.unsubscribeRealmServer?.();
   state.preview.off(state.listener);
   state.preview.process.off('exit', state.exitHandler);
 }
@@ -236,8 +207,13 @@ export async function attachSceneDebugger(
       debuggers.delete(path);
     };
     child.process.once('exit', created.exitHandler);
-    const realm = usesRealmServer(preview) ? getRealm(path) : undefined;
-    if (realm) relayRealmServerLogs(created, eventName, realm.child);
+    // The preview's own output never shows the shared server's logs, so they are forwarded
+    // from the editor realm, whichever realm process is serving the scene at the time.
+    if (usesRealmServer(child)) {
+      created.unsubscribeRealmServer = subscribeRealmServerLogs(path, text =>
+        sendToTargets(created, eventName, text),
+      );
+    }
     debuggers.set(path, created);
     state = created;
   }
@@ -255,9 +231,7 @@ export async function attachSceneDebugger(
   // the console of a still-running preview. Returning it lets the renderer replay it after it
   // has registered, with no race.
   // The shared server started before this preview, so its logs so far go first.
-  const serverBacklog = state.realmServer
-    ? serverLines(state.realmServer.child.stdall({ sanitize: false }).join('').split(/\r?\n/))
-    : '';
+  const serverBacklog = state.unsubscribeRealmServer ? getRealmServerBacklog(path) : '';
   const backlog = [...(serverBacklog ? [serverBacklog] : []), ...child.stdall({ sanitize: false })];
 
   return { eventName, backlog };
