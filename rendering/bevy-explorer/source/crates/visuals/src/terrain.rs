@@ -429,6 +429,18 @@ impl TerrainSurface {
     }
 }
 
+#[cfg(test)]
+impl TerrainSurface {
+    /// A surface already at `targets`, with nothing left to report as changed, for other
+    /// modules' tests.
+    pub(crate) fn settled(targets: &TerrainTargets) -> Self {
+        let mut surface = Self::default();
+        surface.apply(targets, None, true);
+        surface.changes = SurfaceChanges::default();
+        surface
+    }
+}
+
 fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>, surface: Res<TerrainSurface>) {
     images.insert(TERRAIN_TEXTURE.id(), surface.image());
     commands.spawn((

@@ -592,8 +592,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **A new referral tier opens the site's Referral Rewards tab.** unity-explorer opens
   `profile/accounts/<address>/referral`, which this site does not serve; its profile names the
   same page `/profile/<address>/referral-rewards`.
-- **The hills follow the Landscape Distance.** The distance is the config's `landscape_distance`
-  (default 1000 m), read at startup and held to 500 to 7000 m.
+- **The hills follow the Landscape Distance.** The distance is the Graphics setting
+  Landscape Distance (the config's `landscape_distance`, default 1000 m), held to 500 to 7000 m.
   Unity displaces its whole terrain and its Landscape Distance setting does not drive it. Here the
   ground's rings are displaced out to the Landscape Distance from the player, never less than the
   832 m the parcel-sized rings cover, and the hills flatten over a further tenth of it, so
@@ -611,6 +611,34 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **No satellite floor.** unity-explorer lays the minimap's satellite images flat at 0.205 m under the
   terrain in Genesis City; here the ground covers that plane everywhere, so the floor would never be
   seen and is not shipped.
+- **Graphics presets leave the Landscape Distance alone.** Unity's Low, Medium and High set it to
+  500, 1000 and 7000 m. The Graphics Preset setting
+  (`source/react-web/bridge-scene/src/domains/settings.ts`) assumes the engine defaults are its Low
+  preset, and the default here is Unity's 1000 m, so mapping it would show every fresh install as
+  Custom.
+- **The baked trees, bushes and stones** keep unity-explorer's layouts (Genesis City's and the
+  Worlds'), prototypes, scale ranges, footprints, first level of detail, collider shapes and
+  material values, and differ in these ways.
+  - They stand only on parcels whose pointers have resolved empty near the player; unknown and
+    occupied parcels and parcels outside the terrain count as occupied. Unity reads a static
+    occupancy map of the whole city, so inside the city, beyond the resolved parcels, it has trees
+    where bevy has none.
+  - Each instance is an entity, spawned when it is within the Landscape Distance of the player
+    (horizontally) and checked again when the player changes parcel; bevy batches the shared
+    meshes. Unity hands the whole layout to a GPU instancing package that culls by distance.
+  - Bevy's lit material replaces the trees' and bushes' simple Blinn-Phong one. Colour, texture,
+    cut-off, culling and normal maps carry over; the trunk takes a roughness of one minus its
+    smoothness. The leaves are fully rough: their Unity smoothness of 1 is a pin-point
+    highlight there, and a mirror of the sky under bevy's image-based light.
+  - The ground colour texture the stones take their foot's colour from is 512x512 (2048x2048 in
+    Unity). Otherwise they keep Unity's ground colour at their foot and moss on their upward faces,
+    on bevy's lit material as in Unity, with a roughness of one minus their smoothness.
+  - The wind moves the leaves in the depth and shadow passes too. Unity's moves the colour pass
+    only; here the depth prepass has to match it.
+  - The textures are 512x512 (1024x1024 in Unity), uncompressed RGBA8 with their mips built when
+    they load.
+  - Their colliders are built over the ground collider's 64 m patch around the player, like the
+    ground's, rather than parcel by parcel around each character.
 
 ## Deliberate choices that look like mistakes
 

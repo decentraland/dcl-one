@@ -3,15 +3,14 @@ mod coast;
 mod day_night;
 mod debug_panel;
 mod environment;
+mod landscape_trees;
 mod nishita_cloud;
-mod props;
 pub mod shell_texturing;
 mod sky_envmap;
 pub use common::sky_preset;
 mod solids;
 mod stars;
 pub mod terrain;
-mod trees;
 pub mod upscale;
 
 use bevy::{
@@ -45,13 +44,12 @@ use scene_runner::update_world::lights::{moon_direction, SUN_COLOR_NOON};
 use crate::{
     coast::CoastPlugin,
     day_night::{day_fraction, DayNightPlugin},
-    props::PropsPlugin,
+    landscape_trees::LandscapeTreesPlugin,
     shell_texturing::ShellTexturingPlugin,
     sky_envmap::{SkyAmbient, SkyEnvmapPlugin, SkyEnvmapSettings},
     sky_preset::{ambient_trilight, fog_color, fog_falloff_density, FOG_DENSITY_PER_METRE},
     solids::SolidsPlugin,
     terrain::TerrainPlugin,
-    trees::TreesPlugin,
 };
 
 pub struct VisualsPlugin {
@@ -80,7 +78,7 @@ impl Plugin for VisualsPlugin {
             .add_plugins(ShellTexturingPlugin)
             .add_plugins(TerrainPlugin)
             .add_plugins(CoastPlugin)
-            .add_plugins((TreesPlugin, PropsPlugin, SolidsPlugin))
+            .add_plugins((LandscapeTreesPlugin, SolidsPlugin))
             .add_systems(
                 Update,
                 apply_global_light
