@@ -174,6 +174,8 @@ pub(crate) struct MockBroker {
     pub claims: Option<(PgPool, &'static str)>,
     pub resumes: Arc<parking_lot::Mutex<Vec<String>>>,
     pub resume_answer: Arc<parking_lot::Mutex<Result<(), BrokerError>>>,
+    /// What [`Broker::released_buy_mined`] answers.
+    pub released_mined: Arc<parking_lot::Mutex<Result<bool, String>>>,
     pub verifications: HashMap<String, ManaPaymentVerification>,
 }
 
@@ -186,6 +188,7 @@ impl MockBroker {
             claims: None,
             resumes: Arc::new(parking_lot::Mutex::new(Vec::new())),
             resume_answer: Arc::new(parking_lot::Mutex::new(Ok(()))),
+            released_mined: Arc::new(parking_lot::Mutex::new(Ok(false))),
             verifications: HashMap::new(),
         }
     }
@@ -228,6 +231,13 @@ impl Broker for MockBroker {
             .map(|_| format!("0x{}", idempotency_key.replace(':', "")))
     }
 
+    async fn released_buy_mined(&self, _idempotency_key: &str) -> Result<bool, ApiError> {
+        self.released_mined
+            .lock()
+            .clone()
+            .map_err(ApiError::BadGateway)
+    }
+
     async fn reclaim(
         &self,
         _collection: &str,
@@ -259,14 +269,14 @@ impl Broker for MockBroker {
 }
 
 /// Records a broker buy claimed under `key` in `status`, as the broker's
-/// claim and broadcast leave it.
+/// claim and broadcast leave it (`write_ahead`, as every claim it makes is).
 async fn claim_broker_buy(pool: &PgPool, key: &str, status: &str, forward_tx_hash: Option<&str>) {
     sqlx::query(
         "INSERT INTO shop.broker_purchases \
          (idempotency_key, tx_hash, forward_tx_hash, collection, buyer_address, escrow_address, \
-          price_wei, chain_id, mode, status) \
+          price_wei, chain_id, mode, status, write_ahead) \
          VALUES ($1, '0xbuy', $2, $3, $3, '0x0000000000000000000000000000000000000001', 1, 137, \
-                 'primary', $4) \
+                 'primary', $4, true) \
          ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL \
          DO UPDATE SET status = EXCLUDED.status, forward_tx_hash = EXCLUDED.forward_tx_hash",
     )
@@ -6225,6 +6235,7 @@ async fn compensation_refunds_only_lines_whose_buy_spent_no_mana() {
     seed_wallet(&pool, &addr, "0", "10").await;
     let broker = MockBroker::configured();
     let resumes = broker.resumes.clone();
+    let released_mined = broker.released_mined.clone();
     *broker.resume_answer.lock() = Err(BrokerError::Retryable(
         "broker status 504: broker buy tx not yet mined".into(),
     ));
@@ -6300,6 +6311,300 @@ async fn compensation_refunds_only_lines_whose_buy_spent_no_mana() {
     assert_eq!(checkout_status(&pool, checkout).await, "reversed");
     assert_eq!(available(&pool, &addr).await, "7");
     assert_reconciles(&pool, &addr, "after refunding the buy-leg revert").await;
+
+    // A claim that failed under a binary sending before it recorded may have
+    // broadcast: it is held out of the refund, not refunded.
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    let line = outbox_lines(&pool, checkout).await[0].0;
+    let legacy_key = format!("checkout:{checkout}:{line}");
+    claim_broker_buy(&pool, &legacy_key, "error", None).await;
+    sqlx::query("UPDATE shop.broker_purchases SET write_ahead = false WHERE idempotency_key = $1")
+        .bind(&legacy_key)
+        .execute(&pool)
+        .await
+        .unwrap();
+    freeze(checkout, line).await;
+    assert_eq!(available(&pool, &addr).await, "4");
+    worker.run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "failed");
+    assert_eq!(
+        available(&pool, &addr).await,
+        "4",
+        "the legacy claim is held"
+    );
+    assert_reconciles(&pool, &addr, "after holding the legacy claim").await;
+
+    // A claim that released a buy as dead is refunded only once a later look
+    // finds none of its released buys mined; a failed look waits.
+    let released_line = |checkout: i64| {
+        let pool = pool.clone();
+        async move {
+            let line = outbox_lines(&pool, checkout).await[0].0;
+            let key = format!("checkout:{checkout}:{line}");
+            claim_broker_buy(&pool, &key, "error", None).await;
+            sqlx::query(
+                "UPDATE shop.broker_purchases SET tx_hash = NULL, \
+                 released_tx_hashes = ARRAY['0xdead'] WHERE idempotency_key = $1",
+            )
+            .bind(&key)
+            .execute(&pool)
+            .await
+            .unwrap();
+            line
+        }
+    };
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    let line = released_line(checkout).await;
+    freeze(checkout, line).await;
+    assert_eq!(available(&pool, &addr).await, "1");
+    *released_mined.lock() = Err("rpc down".into());
+    worker.run_once().await.unwrap();
+    assert_eq!(
+        checkout_status(&pool, checkout).await,
+        "reversing",
+        "a failed look waits"
+    );
+    assert_eq!(available(&pool, &addr).await, "1");
+    *released_mined.lock() = Ok(false);
+    worker.run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "reversed");
+    assert_eq!(
+        available(&pool, &addr).await,
+        "4",
+        "no released buy mined: refunded"
+    );
+
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    let line = released_line(checkout).await;
+    freeze(checkout, line).await;
+    *released_mined.lock() = Ok(true);
+    worker.run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "failed");
+    assert_eq!(
+        available(&pool, &addr).await,
+        "1",
+        "a released buy mined: held"
+    );
+    assert_reconciles(&pool, &addr, "after holding the mined released buy").await;
+
+    cleanup(&pool, &addr).await;
+}
+
+/// Claims `key` through the broker's own claim statement.
+async fn claim_through_broker(pool: &PgPool, key: &str) -> crate::checkout::claims::Claim {
+    claim_through_broker_at(pool, key, crate::evm::now()).await
+}
+
+async fn claim_through_broker_at(
+    pool: &PgPool,
+    key: &str,
+    now: chrono::NaiveDateTime,
+) -> crate::checkout::claims::Claim {
+    crate::checkout::claims::claim_broker_purchase(
+        pool,
+        &crate::checkout::claims::BrokerPurchaseClaim {
+            key,
+            collection: COLLECTION,
+            item_id: Some("1"),
+            token_id: None,
+            buyer_address: COLLECTION,
+            escrow_address: "0x0000000000000000000000000000000000000001",
+            price_wei: "1",
+            chain_id: 137,
+            mode: "primary",
+            trade_hashed_signature: None,
+            usd_amount_wei: None,
+            mana_usd_rate_wei: None,
+        },
+        now,
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn compensation_fences_unrecorded_claims_and_the_claim_refuses_a_frozen_checkout() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    seed_wallet(&pool, &addr, "0", "10").await;
+    let state = state_with(
+        pool.clone(),
+        StateCfg {
+            fulfillment_mode: "auto",
+            ..StateCfg::default()
+        },
+        market_for_checkout(),
+        MockBroker::configured(),
+    );
+
+    // One line failed unclaimed; its sibling's claim is still being signed.
+    let checkout = debited_checkout(&state, &addr, &["1", "4"]).await;
+    let lines = outbox_lines(&pool, checkout).await;
+    let (failed, signing) = (lines[0].0, lines[1].0);
+    let (failed_key, signing_key) = (
+        format!("checkout:{checkout}:{failed}"),
+        format!("checkout:{checkout}:{signing}"),
+    );
+    // A fresh claim: its caller may still record and broadcast it.
+    let claimed_at = crate::evm::now();
+    assert!(
+        claim_through_broker_at(&pool, &signing_key, claimed_at)
+            .await
+            .claimed
+    );
+    sqlx::query("UPDATE credits.fulfillment_outbox SET status = 'failed' WHERE id = $1")
+        .bind(failed)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE credits.checkouts SET status = 'reversing' WHERE id = $1")
+        .bind(checkout)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    state.outbox_worker().run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "reversed");
+    assert_eq!(available(&pool, &addr).await, "10", "both lines refunded");
+    let (status, updated_at): (String, chrono::NaiveDateTime) = sqlx::query_as(
+        "SELECT status, updated_at FROM shop.broker_purchases WHERE idempotency_key = $1",
+    )
+    .bind(&signing_key)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(status, "error", "the unrecorded claim is fenced");
+    assert_ne!(
+        updated_at, claimed_at,
+        "a late record (fenced on 'pending' and the claim's clock) matches no row"
+    );
+
+    // The frozen checkout's lines are neither re-armed nor claimed afresh.
+    let rearm = claim_through_broker(&pool, &signing_key).await;
+    assert!(!rearm.claimed && !rearm.rearmed);
+    assert_eq!(rearm.status.as_deref(), Some("error"));
+    let fresh = claim_through_broker(&pool, &failed_key).await;
+    assert!(!fresh.claimed && !fresh.rearmed);
+    assert_eq!(fresh.status, None);
+
+    // A checkout still fulfilling claims as before.
+    let live = debited_checkout(&state, &addr, &["1"]).await;
+    let line = outbox_lines(&pool, live).await[0].0;
+    assert!(
+        claim_through_broker(&pool, &format!("checkout:{live}:{line}"))
+            .await
+            .claimed
+    );
+    assert_reconciles(&pool, &addr, "after fencing the unrecorded claim").await;
+
+    cleanup(&pool, &addr).await;
+}
+
+#[tokio::test]
+async fn a_manual_refund_refuses_a_checkout_compensation_is_reversing() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    seed_wallet(&pool, &addr, "20", "15").await;
+    let credits = Credits::new(pool.clone());
+    let checkout_id: i64 = sqlx::query_scalar(
+        "INSERT INTO credits.checkouts (idempotency_key, address, total_credits, status) VALUES ($1, $2, 25, 'fulfilling') RETURNING id",
+    )
+    .bind(unique("test-reversing"))
+    .bind(&addr)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    credits
+        .spend(&addr, "25", &format!("checkout:{checkout_id}"), None)
+        .await
+        .unwrap();
+    // the worker froze it after the handler read 'fulfilling'
+    sqlx::query("UPDATE credits.checkouts SET status = 'reversing' WHERE id = $1")
+        .bind(checkout_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let before = balances(&pool, &addr).await;
+
+    let plain = credits
+        .refund_checkout_manual(checkout_id, &addr, "25")
+        .await;
+    assert_eq!(plain.unwrap_err().status().as_u16(), 409);
+    let audited = credits
+        .refund_checkout_manual_audited(checkout_id, &addr, "25", "token:qc-admin", |_| json!({}))
+        .await;
+    assert_eq!(audited.unwrap_err().status().as_u16(), 409);
+
+    assert_eq!(checkout_status(&pool, checkout_id).await, "reversing");
+    assert_eq!(balances(&pool, &addr).await, before, "nothing refunded");
+    let entries: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM credits.idempotency WHERE scope = 'refund' AND idempotency_key = $1",
+    )
+    .bind(format!("admin:refund:{checkout_id}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(entries, 0, "no admin:refund entry");
+    let audits: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM ops.admin_audit WHERE domain = 'credits' AND action = 'checkout.refund' AND target = $1",
+    )
+    .bind(checkout_id.to_string())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(audits, 0);
+
+    cleanup(&pool, &addr).await;
+}
+
+#[tokio::test]
+async fn a_manual_refund_fences_its_checkout_lines_unrecorded_claims() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    seed_wallet(&pool, &addr, "0", "10").await;
+    let state = state_with(
+        pool.clone(),
+        StateCfg {
+            fulfillment_mode: "auto",
+            ..StateCfg::default()
+        },
+        market_for_checkout(),
+        MockBroker::configured(),
+    );
+
+    // One line's claim is still being signed; its sibling is unclaimed.
+    let checkout = debited_checkout(&state, &addr, &["1", "4"]).await;
+    let lines = outbox_lines(&pool, checkout).await;
+    let (signing_key, unclaimed_key) = (
+        format!("checkout:{checkout}:{}", lines[0].0),
+        format!("checkout:{checkout}:{}", lines[1].0),
+    );
+    assert!(claim_through_broker(&pool, &signing_key).await.claimed);
+
+    let (_, closed) = state
+        .credits
+        .refund_checkout_manual(checkout, &addr, "6")
+        .await
+        .unwrap();
+    assert!(closed);
+    assert_eq!(checkout_status(&pool, checkout).await, "failed");
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM shop.broker_purchases WHERE idempotency_key = $1")
+            .bind(&signing_key)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        status, "error",
+        "the record fenced on 'pending' matches no row"
+    );
+    for key in [&signing_key, &unclaimed_key] {
+        let claim = claim_through_broker(&pool, key).await;
+        assert!(!claim.claimed && !claim.rearmed, "{key}");
+    }
 
     cleanup(&pool, &addr).await;
 }

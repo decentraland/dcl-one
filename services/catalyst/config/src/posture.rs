@@ -902,6 +902,7 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("CAMERA_REEL_BUCKET_URL", LINK),
     ("BFF_URL", LINK),
     ("BUILDER_URL", LINK),
+    ("CAST2_URL", LINK),
 ];
 const DATABASE: &str = "this node's own database";
 const LINK: &str = "a link clients follow; the node never dials it";

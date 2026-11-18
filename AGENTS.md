@@ -39,7 +39,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 2. What's On and discovery (places, events, map);
 3. `/play`: Explorer (`rendering/bevy-explorer`), HUD (`apps/ui3/src/play`), desktop packaging (`apps/bevy-explorer`);
 4. `/shop`: Marketplace and Store merged;
-5. `/create`: Creator Hub, web and the desktop workspace `apps/creator-hub` (Electron app, `@dcl/inspector`, `@dcl/asset-packs`);
+5. `/create`: creators landing; `/create/home`, `/create/*`: Creator Hub, web and the desktop workspace `apps/creator-hub` (Electron app, `@dcl/inspector`, `@dcl/asset-packs`);
 6. `apps/dcl-scene-cli`: the `@dcl/sdk-commands` rewrite;
 7. `/docs`: the docs.decentraland.org rewrite;
 8. page-coherence scripts (`apps/sites/scripts`);
@@ -68,7 +68,6 @@ Code that serves none of these deliverables is removed, not kept for reference:
 - Reach other files through `env!("DCL_ONE_ROOT")`, never `../` chains.
 - Domain crates follow `docs/module-layers.toml`; no upward dependency.
 - Keep the fresh-schema bootstrap single.
-- Put helpers other crates' tests use behind a `test-support` feature.
 - ops, presence, serve and main stay in the root crate.
 
 ## Ownership
@@ -117,6 +116,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 
 - Never add a dependency on a sibling checkout.
 - `rendering/bevy-explorer/source` is its own workspace; integration lives in `apps/bevy-explorer`.
+- `rendering/avatar-preview` is its own workspace that links named Explorer crates by path and repeats the Explorer's patch table; it builds single-threaded wasm and never copies Explorer code ([ADR](docs/adr/2026-11-05-avatar-preview-renderer.md)).
 - Keep component licenses and pins (`upstream.lock.json`, `abgen-release.lock`, `livekit-release.lock`, `tooling/uuav/uuav-binaries.lock.json`).
 - Regenerate `.github/CODEOWNERS` from `ownership.json` with `tooling/owners.py`.
 - No machine names, private addresses, home paths, personal emails or the operator's domain; deployments supply them via gitignored config.

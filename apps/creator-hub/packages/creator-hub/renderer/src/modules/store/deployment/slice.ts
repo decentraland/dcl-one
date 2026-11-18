@@ -5,10 +5,10 @@ import {
   miniSerializeError,
 } from '@reduxjs/toolkit';
 import { captureException } from '@sentry/electron/renderer';
-import { Authenticator, type AuthIdentity } from '@dcl/crypto';
 import type { ChainId } from '@dcl/schemas';
 import { localStorageGetIdentity } from '@dcl/single-sign-on-client';
 import { AuthServerProvider } from '/@/lib/auth';
+import { type AuthIdentity, signPayload } from '/@/lib/identity';
 
 import { editor } from '#preload';
 import { delay } from '/shared/utils';
@@ -212,7 +212,7 @@ export const deploy = createAsyncThunk(
     let currentInfo = info;
     while (retries > 0) {
       try {
-        const authChain = Authenticator.signPayload(identity, currentInfo.rootCID);
+        const authChain = await signPayload(identity, currentInfo.rootCID);
         const payload = { address: wallet, authChain, chainId };
         // Each retry runs a new CLI, so read its support from the state. The static check can
         // be wrong (a hand-patched CLI), so the resource is also probed before using it.

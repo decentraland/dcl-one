@@ -14,6 +14,11 @@ type SliderProps = {
   label?: string;
   ariaLabel?: string;
   disabled?: boolean;
+  ariaLabelledBy?: string;
+  // The text a screen reader says for the value, for example `format` with a unit.
+  ariaValueText?: (value: number) => string;
+  showValue?: boolean;
+  id?: string;
 };
 
 export default function Slider({
@@ -28,6 +33,10 @@ export default function Slider({
   label,
   ariaLabel,
   disabled = false,
+  ariaLabelledBy,
+  ariaValueText,
+  showValue = true,
+  id,
 }: SliderProps) {
   const [internal, setInternal] = useState(defaultValue);
   const [drag, setDrag] = useState<number | null>(null);
@@ -55,11 +64,12 @@ export default function Slider({
       <input
         type="range" className="slider__input"
         aria-label={ariaLabel ?? label} disabled={disabled}
+        id={id} aria-labelledby={ariaLabelledBy} aria-valuetext={ariaValueText?.(v)}
         min={min} max={max} step={step} value={v} onChange={set}
         onPointerUp={commit} onKeyUp={commit} onBlur={commit}
         style={style}
       />
-      <span className="slider__value">{format(v)}</span>
+      {showValue && <span className="slider__value">{format(v)}</span>}
     </div>
   );
 }

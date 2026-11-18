@@ -6,6 +6,7 @@
 # (sockets_*) keep wall-clock budgets: they run after the others, sharing one test thread per core.
 # An explicit RUST_TEST_THREADS caps every binary, groups included.
 # CATALYST_TEST_SHARD=i/n runs every n-th binary from the i-th; without it every binary runs.
+# CATALYST_TEST_DOC_SHARD=j runs the doc-tests in shard j only; without it every shard runs them.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root/services/catalyst"
@@ -46,6 +47,9 @@ phase="selecting the test binaries"
 shard="${CATALYST_TEST_SHARD:-1/1}"
 index="${shard%/*}" total="${shard#*/}"
 [[ "$shard" =~ ^[1-9][0-9]*/[1-9][0-9]*$ ]] && [ "$index" -le "$total" ] || { echo "catalyst-test: CATALYST_TEST_SHARD must be i/n with i from 1 to n" >&2; exit 1; }
+# A value outside 1 to n fails every shard, so no setting makes all shards skip the doc-tests.
+doc="${CATALYST_TEST_DOC_SHARD:-$index}"
+[[ "$doc" =~ ^[1-9][0-9]*$ ]] && [ "$doc" -le "$total" ] || { echo "catalyst-test: CATALYST_TEST_DOC_SHARD must name one shard from 1 to $total" >&2; exit 1; }
 # Every shard must cut the same list. The path of a binary holds a build hash and the order of plain
 # sort follows the locale, so the list is in byte order of the source file and kind of each target.
 same=$(cut -f1,2 "$logs/binaries" | LC_ALL=C sort | LC_ALL=C uniq -d)
@@ -98,4 +102,6 @@ run "$jobs" < "$logs/others"
 phase="running the socket test binaries"
 run "$socket_jobs" < "$logs/sockets"
 phase="running the doc-tests"
-cargo test --locked "$@" --doc
+if [ "$doc" -eq "$index" ]; then
+  cargo test --locked "$@" --doc
+fi

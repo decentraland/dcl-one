@@ -36,8 +36,9 @@
 //! (`admission::relay_authority`, `POST /internal/pulse/room-authority/v1`)
 //! answers over the same permission core with the frames and the claim and
 //! proof types of `protocol::room_authority`. `/scene-stream-access`
-//! mints a place's RTMP ingress credential (`streaming`); `/cast/*` answers
-//! the old service's 501.
+//! mints a place's RTMP ingress credential (`streaming`); the Cast 2.0
+//! routes (`/cast/*`, `streaming::cast`) hand out stream links and the
+//! streamer, watcher and presentation-bot tokens over the same credential.
 //!
 //! The island feed (`admission::cluster`: Pulse's cluster changes turned
 //! into island credentials, the realm-lane fence of configured legacy owners) backs
@@ -74,9 +75,9 @@ mod tests;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
+use crate::shared::routing::{delete, erase, get, patch, post, put};
 use anyhow::{Context, anyhow};
 use axum::Router;
-use axum::routing::{delete, get, patch, post};
 use sqlx::PgPool;
 
 use crate::Address;
@@ -139,6 +140,9 @@ pub struct RawSettings {
     /// `REPORT_EVIDENCE_DAILY_MIB` (default 2048): the node-wide bound of
     /// the player report intake.
     pub report_evidence_daily_mib: u32,
+    /// `CAST2_URL`: the Cast 2.0 web app the stream and watcher links name;
+    /// empty uses upstream's default.
+    pub cast2_url: String,
     /// `COMMIT_HASH` for `/status`.
     pub commit_hash: Option<String>,
 }
@@ -180,6 +184,8 @@ pub struct Settings {
     /// from all wallets and addresses ([`reports`]). The value is the
     /// operator's policy, not a measurement.
     pub report_evidence_daily_bytes: i64,
+    /// The Cast 2.0 web app base of the stream links, no trailing slash.
+    pub cast2_url: String,
     pub commit_hash: Option<String>,
 }
 
@@ -210,6 +216,7 @@ impl std::fmt::Debug for Settings {
                 "report_evidence_daily_bytes",
                 &self.report_evidence_daily_bytes,
             )
+            .field("cast2_url", &self.cast2_url)
             .field("commit_hash", &self.commit_hash)
             .finish()
     }
@@ -336,6 +343,10 @@ impl Settings {
                 expired_batch_size: raw.voice_expired_batch_size,
             },
             report_evidence_daily_bytes: i64::from(raw.report_evidence_daily_mib) * 1024 * 1024,
+            cast2_url: match raw.cast2_url.trim().trim_end_matches('/') {
+                "" => streaming::cast::DEFAULT_CAST2_URL.to_string(),
+                url => url.to_string(),
+            },
             commit_hash: raw.commit_hash,
         })
     }
@@ -363,6 +374,7 @@ impl Settings {
                 RawSettings::defaults().report_evidence_daily_mib,
             ) * 1024
                 * 1024,
+            cast2_url: streaming::cast::DEFAULT_CAST2_URL.to_string(),
             commit_hash: None,
         }
     }
@@ -842,14 +854,14 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/scene-admin",
             get(moderation::handlers::list_admins)
-                .post(moderation::handlers::add_admin)
-                .delete(moderation::handlers::remove_admin),
+                .post(erase(moderation::handlers::add_admin))
+                .delete(erase(moderation::handlers::remove_admin)),
         )
         .route(
             "/scene-bans",
             get(moderation::handlers::list_bans)
-                .post(moderation::handlers::ban_user)
-                .delete(moderation::handlers::unban_user),
+                .post(erase(moderation::handlers::ban_user))
+                .delete(erase(moderation::handlers::unban_user)),
         )
         .route(
             "/scene-bans/addresses",
@@ -862,13 +874,13 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/users/{address}/bans",
             get(moderation::handlers::get_user_ban_status)
-                .post(moderation::handlers::post_user_ban)
-                .delete(moderation::handlers::delete_user_ban),
+                .post(erase(moderation::handlers::post_user_ban))
+                .delete(erase(moderation::handlers::delete_user_ban)),
         )
         .route(
             "/users/{address}/warnings",
             get(moderation::handlers::get_user_warnings)
-                .post(moderation::handlers::post_user_warning),
+                .post(erase(moderation::handlers::post_user_warning)),
         )
         .route("/bans", get(moderation::handlers::list_all_bans))
         .route("/livekit-webhook", post(webhook::livekit_webhook))
@@ -918,11 +930,12 @@ pub fn router(state: SharedState) -> Router {
         )
         .route(
             "/community-voice-chat/{id}/users/{address}/speak-request",
-            post(voice::community_request_to_speak).delete(voice::community_reject_speak_request),
+            post(voice::community_request_to_speak)
+                .delete(erase(voice::community_reject_speak_request)),
         )
         .route(
             "/community-voice-chat/{id}/users/{address}/speaker",
-            post(voice::community_promote_speaker).delete(voice::community_demote_speaker),
+            post(voice::community_promote_speaker).delete(erase(voice::community_demote_speaker)),
         )
         .route(
             "/community-voice-chat/{id}/users/{address}/mute",
@@ -935,11 +948,33 @@ pub fn router(state: SharedState) -> Router {
         .route(
             streaming::PATH,
             get(streaming::scene_stream_access)
-                .post(streaming::scene_stream_access)
-                .put(streaming::scene_stream_access)
-                .delete(streaming::scene_stream_access),
+                .post(erase(streaming::scene_stream_access))
+                .put(erase(streaming::scene_stream_access))
+                .delete(erase(streaming::scene_stream_access)),
         )
-        .route("/cast/{*rest}", axum::routing::any(streaming::cast_any))
+        .route(
+            "/cast/streamer-token",
+            post(streaming::cast::streamer_token),
+        )
+        .route("/cast/watcher-token", post(streaming::cast::watcher_token))
+        .route(
+            "/cast/generate-stream-link",
+            get(streaming::cast::generate_stream_link),
+        )
+        .route(
+            "/cast/stream-info/{streaming_key}",
+            get(streaming::cast::stream_info),
+        )
+        .route(
+            "/cast/presentation-bot-token",
+            post(streaming::cast::presentation_bot_token),
+        )
+        .route("/cast/presenters", get(streaming::cast::list_presenters))
+        .route(
+            "/cast/presenters/{participant_identity}",
+            put(streaming::cast::promote_presenter)
+                .delete(erase(streaming::cast::demote_presenter)),
+        )
         .route(
             admission::island_refresh::ISLAND_REFRESH_PATH,
             post(admission::island_refresh::refresh).layer(axum::extract::DefaultBodyLimit::max(0)),

@@ -7,6 +7,7 @@ import { itemAsset } from "@shop/model/asset";
 import type { ChainId } from "@shop/model/chain";
 import { formatMana as formatExactMana, parseManaWei } from "@shop/model/money";
 import { SIGNED_OUT } from "@shop/model/settlement";
+import { isSoldOutPrimary } from "@shop/discovery/cardPrice";
 import { ruleFor } from "@shop/payment/rule";
 
 import { formatMana } from "./money";
@@ -206,7 +207,8 @@ function safeRarity(r: string | null | undefined): string {
  * What a card may show, under the Shop's payment rule (library/shop payment/rule, read for a signed-out
  * visitor): an eligible primary wearable or emote shows its credit price, or says the credit price is
  * unavailable when the quote failed (never a MANA fallback); anything MANA only (a resale, an item that
- * mints on Ethereum, a non-wearable) shows its MANA in exact units.
+ * mints on Ethereum, a non-wearable) shows its MANA in exact units. A sold-out primary (library/shop
+ * discovery/cardPrice `isSoldOutPrimary`) has no mint price; its cheapest resale, if any, is still shown.
  */
 export type CardPayment =
   | { kind: "credits"; credits: string }
@@ -235,11 +237,13 @@ function exactMana(wei: string | null | undefined): string | null {
 /** The facts `cardPayment` reads, so a caller with a narrower row than `CatalogItem` can use it. */
 export type CardSaleFacts = Pick<
   CatalogItem,
-  "isOnSale" | "price" | "minListingPrice" | "contractAddress" | "chainId" | "network" | "category" | "itemId"
+  "isOnSale" | "price" | "minListingPrice" | "contractAddress" | "chainId" | "network" | "category" | "itemId" | "available"
 >;
 
 export function cardPayment(item: CardSaleFacts, credits: string | null): CardPayment {
-  if (item.isOnSale && weiGtZero(item.price)) {
+  // A catalogue row's own sale is the primary mint. A sold-out mint (the Shop's rule) has no mint price, but
+  // its resales are separate listings and keep theirs, as the Shop's discovery rows do.
+  if (!isSoldOutPrimary(item) && item.isOnSale && weiGtZero(item.price)) {
     const contract = parseEvmAddress(item.contractAddress);
     const chainId = item.chainId ?? (item.network === "ETHEREUM" ? 1 : 137);
     const kind = item.category === "wearable" || item.category === "emote" ? item.category : "other";

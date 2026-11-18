@@ -229,6 +229,7 @@
       "paths": [
         "/apps/ui3/src/shop/",
         "/library/shop/",
+        "/library/ui/apps/shop/",
         "/apps/sites/src/routes/shop/",
         "/tooling/shop-parity/",
         "/tooling/shop-trade-journey/"
@@ -312,6 +313,17 @@
         "/tooling/native-lock/",
         "/.github/workflows/uuav-native.yml",
         "/.github/workflows/uuav-verify.yml"
+      ]
+    },
+    {
+      "id": "avatar-preview",
+      "description": "Avatar preview renderer: the standalone wasm build of the Explorer's avatar look that the shop and the creator hub embed, its page, build and release workflow",
+      "owners": [
+        "@decentraland/client"
+      ],
+      "paths": [
+        "/rendering/avatar-preview/",
+        "/.github/workflows/avatar-preview*.yml"
       ]
     },
     {

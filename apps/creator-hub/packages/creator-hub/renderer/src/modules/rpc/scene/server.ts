@@ -1,10 +1,11 @@
 import type { Transport } from '@dcl/mini-rpc';
 import { RPC } from '@dcl/mini-rpc';
 
-import { fs, editor, consoleWindow, misc } from '#preload';
+import { fs, editor, consoleWindow, misc, pkg } from '#preload';
 
 import { type Project } from '/shared/types/projects';
 import type { AiAssetMention } from '/shared/types/ai';
+import { PACKAGES } from '/shared/types/pkg';
 import { getPath } from '../';
 import type { Severity } from '../../store/snackbar/types';
 import { store } from '../../store';
@@ -13,7 +14,6 @@ import { actions as snackbarActions } from '../../store/snackbar';
 import { createGenericNotification } from '../../store/snackbar/utils';
 import { actions as workspaceActions } from '../../store/workspace';
 import { actions as optimizerActions } from '../../store/optimizer';
-import { resolveProfiles, sanitizeProfileAddresses, type ProfileSummary } from './profiles';
 
 type NotificationRequest = {
   severity: Severity;
@@ -31,10 +31,8 @@ export enum Method {
   BROADCAST_MOBILE_DEBUG_COMMAND = 'broadcast_mobile_debug_command',
   GET_FEATURE_FLAGS = 'get_feature_flags',
   UPDATE_SDK = 'update_sdk',
+  GET_SDK_VERSION = 'get_sdk_version',
   SET_UI_DESIGNER_MODE = 'set_ui_designer_mode',
-  INSTALL_MULTIPLAYER = 'install_multiplayer',
-  UNINSTALL_MULTIPLAYER = 'uninstall_multiplayer',
-  GET_PROFILES = 'get_profiles',
   OPTIMIZE_SCENE = 'optimize_scene',
   PROMPT_ASSISTANT = 'prompt_assistant',
   MENTION_ASSET = 'mention_asset',
@@ -51,10 +49,8 @@ export type Params = {
   [Method.BROADCAST_MOBILE_DEBUG_COMMAND]: { cmd: string; args: Record<string, unknown> };
   [Method.GET_FEATURE_FLAGS]: Record<string, never>;
   [Method.UPDATE_SDK]: Record<string, never>;
+  [Method.GET_SDK_VERSION]: Record<string, never>;
   [Method.SET_UI_DESIGNER_MODE]: { open: boolean };
-  [Method.INSTALL_MULTIPLAYER]: Record<string, never>;
-  [Method.UNINSTALL_MULTIPLAYER]: Record<string, never>;
-  [Method.GET_PROFILES]: { addresses: string[] };
   [Method.OPTIMIZE_SCENE]: Record<string, never>;
   [Method.PROMPT_ASSISTANT]: { text: string };
   [Method.MENTION_ASSET]: AiAssetMention;
@@ -74,10 +70,8 @@ export type Result = {
   };
   [Method.GET_FEATURE_FLAGS]: { flags: Record<string, boolean> };
   [Method.UPDATE_SDK]: { ok: boolean };
+  [Method.GET_SDK_VERSION]: { version: string | null };
   [Method.SET_UI_DESIGNER_MODE]: void;
-  [Method.INSTALL_MULTIPLAYER]: { ok: boolean };
-  [Method.UNINSTALL_MULTIPLAYER]: { ok: boolean };
-  [Method.GET_PROFILES]: { profiles: ProfileSummary[] };
   [Method.OPTIMIZE_SCENE]: void;
   [Method.PROMPT_ASSISTANT]: void;
   [Method.MENTION_ASSET]: void;
@@ -185,45 +179,16 @@ export class SceneRpcServer extends RPC<Method, Params, Result> {
       }
     });
 
-    const swapSdk = async (
-      thunk:
-        | typeof workspaceActions.installMultiplayerSdk
-        | typeof workspaceActions.uninstallMultiplayerSdk,
-      failure: string,
-    ) => {
-      const state = store.getState();
-      if (state.editor.isInstallingProject) {
-        return { ok: false };
-      }
-      const currentProject = state.editor.project ?? project;
+    // Read from disk on every call: the version changes under an open editor whenever the
+    // scene's packages are updated.
+    this.handle('get_sdk_version', async () => {
+      const currentProject = store.getState().editor.project ?? project;
       try {
-        await store.dispatch(thunk(currentProject)).unwrap();
-        await store
-          .dispatch(workspaceActions.fetchSdkCommandsVersion(currentProject.path))
-          .unwrap();
-        return { ok: true };
+        const version = await pkg.getPackageVersion(currentProject.path, PACKAGES.SDK_PACKAGE);
+        return { version: version ?? null };
       } catch (error) {
-        console.error(`[SceneRpc] ${failure}`, error);
-        return { ok: false };
-      }
-    };
-
-    this.handle('install_multiplayer', () =>
-      swapSdk(workspaceActions.installMultiplayerSdk, 'Failed to install the multiplayer SDK'),
-    );
-
-    this.handle('uninstall_multiplayer', () =>
-      swapSdk(workspaceActions.uninstallMultiplayerSdk, 'Failed to restore the latest SDK release'),
-    );
-
-    this.handle('get_profiles', async ({ addresses }) => {
-      const requested = sanitizeProfileAddresses(addresses);
-      if (requested.length === 0) return { profiles: [] };
-      try {
-        return { profiles: await resolveProfiles(store, requested) };
-      } catch (error) {
-        console.error('[SceneRpc] Failed to resolve profiles', error);
-        return { profiles: requested.map(address => ({ address })) };
+        console.error('[SceneRpc] Failed to read the scene SDK version', error);
+        return { version: null };
       }
     });
 

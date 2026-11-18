@@ -47,6 +47,12 @@ describe('profile passport', () => {
     expect(screen.getByRole('link', { name: /x account/i })).toHaveAttribute('href', 'https://x.com/kurd')
   })
 
+  it("draws the user's picture with no online dot, as unity-explorer's passport does", () => {
+    render(<ProfilePassport profile={profile} onClose={vi.fn()} />)
+    const picture = screen.getAllByRole('img', { name: 'kurd' })[0]
+    expect(picture.parentElement?.querySelector('[class*="dot"]')).toBeNull()
+  })
+
   it.each([
     ['none', 'ADD FRIEND', 'onAddFriend'],
     ['friend', 'FRIEND', 'onUnfriend'],

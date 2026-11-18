@@ -1,14 +1,14 @@
 import { Provider } from 'react-redux';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 import * as api from '/@/lib/creatorFundApi';
 
 import { tracked, trackedAnyOf } from '../../../tests/utils/analytics';
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { createTestStore } from '../../../tests/utils/testStore';
 import { JoinFlow } from './JoinFlow';
 
@@ -16,18 +16,6 @@ vi.mock('/@/lib/creatorFundApi', () => ({
   getTerms: vi.fn(),
   getEligibility: vi.fn(),
   putEnrollment: vi.fn(),
-}));
-vi.mock('../Modals', async importOriginal => ({
-  ...((await importOriginal()) as object),
-  Modal: ({
-    open,
-    children,
-    className,
-  }: {
-    open: boolean;
-    children: React.ReactNode;
-    className?: string;
-  }) => (open ? <div className={className}>{children}</div> : null),
 }));
 
 const TERMS = {
@@ -60,9 +48,9 @@ const renderFlow = () => {
   const store = createTestStore();
   render(
     <Provider store={store}>
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <JoinFlow onExit={onExit} />
-      </ThemeProvider>
+      </TestProviders>
     </Provider>,
   );
   return { onExit, store };
@@ -162,6 +150,15 @@ describe('JoinFlow', () => {
       expect(api.getEligibility).toHaveBeenCalledTimes(2);
     });
 
+    it('should be one alert dialog, named by its title, with no other dialog around it', async () => {
+      renderFlow();
+      const dialog = await screen.findByRole('alertdialog', { name: CHECK_FAILED });
+
+      expect(screen.getAllByRole('alertdialog')).toEqual([dialog]);
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(dialog.getAttribute('aria-modal')).toBe('true');
+    });
+
     it('should open the terms when the retried check passes', async () => {
       renderFlow();
       await screen.findByRole('alertdialog', { name: CHECK_FAILED });
@@ -176,6 +173,7 @@ describe('JoinFlow', () => {
       ['CLOSE', () => fireEvent.click(screen.getByText('Close'))],
       ['the X', () => fireEvent.click(screen.getByLabelText('Close'))],
       ['Escape', () => fireEvent.keyDown(screen.getByRole('alertdialog'), { key: 'Escape' })],
+      ['Escape before focus moves in', () => fireEvent.keyDown(document.body, { key: 'Escape' })],
     ])('should exit as cancelled from %s', async (_, dismiss) => {
       const { onExit } = renderFlow();
       await screen.findByRole('alertdialog', { name: CHECK_FAILED });
@@ -262,6 +260,29 @@ describe('JoinFlow', () => {
         last_name: 'Doe',
         email: 'jane.doe@example.com',
       });
+    });
+
+    it('should show one dialog, named by the welcome title', async () => {
+      renderFlow();
+      await acceptTerms();
+      fillContact();
+      await screen.findByRole('heading', { name: 'Welcome to the Creator Fund' });
+
+      const dialogs = screen.getAllByRole('dialog');
+      expect(dialogs).toHaveLength(1);
+      expect(screen.getByRole('dialog', { name: 'Welcome to the Creator Fund' })).toBe(dialogs[0]);
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+
+    it('should land on My Places from Escape', async () => {
+      const { onExit } = renderFlow();
+      await acceptTerms();
+      fillContact();
+      await screen.findByRole('heading', { name: 'Welcome to the Creator Fund' });
+
+      fireEvent.keyDown(screen.getByText("Let's go"), { key: 'Escape' });
+
+      expect(onExit).toHaveBeenCalledWith('joined');
     });
 
     it.each([["Let's go"], ['Close']])('should land on My Places from %s', async name => {

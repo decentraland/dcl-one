@@ -1,8 +1,8 @@
 import { Provider } from 'react-redux';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
@@ -32,7 +32,7 @@ function renderModal(target: UnpublishTarget, notice?: string) {
   const handlers = { onClose: vi.fn(), onUnpublished: vi.fn() };
   render(
     <Provider store={createTestStore() as never}>
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <UnpublishSceneModal
           open
           target={target}
@@ -41,7 +41,7 @@ function renderModal(target: UnpublishTarget, notice?: string) {
           notice={notice}
           {...handlers}
         />
-      </ThemeProvider>
+      </TestProviders>
     </Provider>,
   );
   return handlers;

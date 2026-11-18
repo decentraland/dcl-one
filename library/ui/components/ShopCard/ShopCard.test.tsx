@@ -259,4 +259,12 @@ describe('ShopCard motion', () => {
     expect(actions).toContain('pointer-events: auto')
     expect(actions).toContain('transform: none')
   })
+
+  it('keeps the touch actions above the full-card link, so a tap reaches them', () => {
+    const zIndex = (block: string) => Number(/z-index: (\d+)/.exec(block)?.[1])
+    const actions = blockOf(mediaOf('hover: none'), '.catalogue .actions')
+    expect(actions).toContain('position: relative')
+    expect(actions).not.toContain('position: static')
+    expect(zIndex(actions)).toBeGreaterThan(zIndex(blockOf(css, '.hit')))
+  })
 })

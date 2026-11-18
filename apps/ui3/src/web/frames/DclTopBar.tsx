@@ -1,11 +1,12 @@
 import {
-  sitesNavigationLinks,
-  sitesNavigationOrder,
-  type SitesNavigationId,
-  type SitesNavigationLink,
-} from "../../../../../library/ui/apps/sites/chrome/navigation";
+  decentralandNavigation,
+  decentralandNavigationSection,
+  type DecentralandNavigationArea,
+  type DecentralandNavigationEntry,
+} from "@dcl/one-ui";
 import type { ReactNode } from "react";
 import { useEffect, useId, useRef, useState } from "react";
+import { NavMenuItem, NavMenuTab, NavNotificationsButton, NavProfileButton } from "@dcl/one-ui";
 import logo from "../../atoms/assets/decentraland-logo.svg?url";
 import { catalystBase, getJSON } from "../../data/catalyst/client";
 import { sameOriginContentUrl } from "../../data/catalyst/profile";
@@ -21,16 +22,15 @@ import { useChromeAuth } from "./chrome-auth";
 import { useChromeNav, type ChromeNavigate } from "./chrome-nav";
 import ChromeLink from "./ChromeLink";
 import AccountMenu from "./AccountMenu";
-import { docsUrl } from "../../data/docs";
 import "../../atoms/maskicon.css";
 import "./dcltopbar.css";
 import { useSiteLayout } from "./SiteLayout";
+import { getAvatarBackgroundColor, getDisplayName } from "../../shop/discovery/lib/avatarColor";
 
 type DclTopBarVariant = "default" | "sites";
 
-type NavLink = SitesNavigationLink;
-const LINK_DEFS = sitesNavigationLinks(docsUrl());
-export type DclTopBarNavId = SitesNavigationId;
+type NavLink = DecentralandNavigationEntry;
+export type DclTopBarNavId = DecentralandNavigationArea;
 
 // from: decentraland-ui2@3.23.8:dist/components/Navbar/icons.js (BellIcon): the filled bell of DCL's navbar.
 const BellMark = ({ size = 24 }: { size?: number }) => (
@@ -41,9 +41,6 @@ const BellMark = ({ size = 24 }: { size?: number }) => (
     />
   </svg>
 );
-
-const DCL_LINKS: NavLink[] = sitesNavigationOrder
-  .map((id) => LINK_DEFS[id]);
 
 type NotifState =
   | { phase: "idle" | "loading" }
@@ -73,6 +70,7 @@ const accountLinks = (account: string) => [
 ];
 
 function LegacyDclTopBar({
+  variant = "default",
   active = "shop",
   signedIn = undefined,
   account = undefined,
@@ -102,8 +100,8 @@ function LegacyDclTopBar({
         }
       : undefined);
   const fetchNotifs = fetchNotifications ?? auth.fetchNotifications;
-  const links = DCL_LINKS;
-  const activeId = active === "explore" || active === "events" ? "whatson" : active;
+  const links = decentralandNavigation;
+  const activeId = decentralandNavigationSection(active);
   const [menuOpen, setMenuOpen] = useState(false);
   const mobileMenuId = useId();
   const burgerRef = useRef<HTMLButtonElement>(null);
@@ -122,10 +120,14 @@ function LegacyDclTopBar({
   const ddEscRef = useRef(false);
 
   const [faceUrl, setFaceUrl] = useState("");
+  const [fetchedColor, setFetchedColor] = useState("");
   const sharedProfile = isIn && auth.signedIn && acct.toLowerCase() === auth.account.toLowerCase();
   const sharedFaceUrl = sharedProfile ? auth.avatarUrl : undefined;
+  // As the reference's LandingNavbar: the disc takes the display name's colour once the profile loads.
+  const avatarColor = sharedProfile ? auth.avatarColor : fetchedColor || undefined;
   useEffect(() => {
     setFaceUrl("");
+    setFetchedColor("");
     if (!isIn || !acct) return;
     if (sharedProfile) {
       setFaceUrl(sharedFaceUrl ?? "");
@@ -136,8 +138,10 @@ function LegacyDclTopBar({
       try {
         const addr = acct.trim().toLowerCase();
         const raw = await getJSON(`/lambdas/profile/${encodeURIComponent(addr)}`);
-        const face = (raw as { avatars?: Array<{ avatar?: { snapshots?: { face256?: unknown } } }> })
-          ?.avatars?.[0]?.avatar?.snapshots?.face256;
+        const profile = (raw as { avatars?: Array<{ name?: string; hasClaimedName?: boolean; ethAddress?: string; avatar?: { snapshots?: { face256?: unknown } } }> })
+          ?.avatars?.[0];
+        if (!cancelled && profile) setFetchedColor(getAvatarBackgroundColor(getDisplayName(profile.name, Boolean(profile.hasClaimedName), profile.ethAddress ?? addr)));
+        const face = profile?.avatar?.snapshots?.face256;
         if (cancelled || typeof face !== "string" || !face) return;
         const url =
           /^https?:\/\//i.test(face)
@@ -202,20 +206,37 @@ function LegacyDclTopBar({
   };
 
   const now = Date.now();
+  // The sites bar draws its tab, menu item, bell and avatar with the shared library; the shop and account bars keep
+  // their own look. `dtb__link` stays on the sites tab as the hook the parity harness and the Escape handler use.
+  const sites = variant === "sites";
 
-  const renderNavLink = (link: NavLink) => {
-    if (!link.menu?.length) {
+  const renderTab = (link: NavLink, menu?: { open: boolean }) => {
+    const isActive = link.id === activeId;
+    const className = "dtb__link" + (isActive ? " is-active" : "");
+    if (sites) {
       return (
-        <ChromeLink
-          key={link.id}
-          href={link.href} onNavigate={onNavigate}
-          className={"dtb__link" + (link.id === activeId ? " is-active" : "")}
-          aria-current={link.id === activeId ? "page" : undefined}
-        >
-          {link.label}
-        </ChromeLink>
+        <NavMenuTab
+          as={ChromeLink} key={link.id} href={link.href} onNavigate={onNavigate} className={className}
+          label={link.label} active={isActive} hasMenu={Boolean(menu)} expanded={menu?.open}
+        />
       );
     }
+    return (
+      <ChromeLink
+        key={link.id}
+        href={link.href} onNavigate={onNavigate}
+        className={className}
+        aria-current={isActive ? "page" : undefined}
+        aria-haspopup={menu ? "menu" : undefined}
+        aria-expanded={menu ? menu.open : undefined}
+      >
+        {link.label}
+      </ChromeLink>
+    );
+  };
+
+  const renderNavLink = (link: NavLink) => {
+    if (!link.items?.length) return renderTab(link);
     const open = openDropdown === link.id;
     return (
       <div
@@ -239,18 +260,12 @@ function LegacyDclTopBar({
           ddEscRef.current = false;
         }}
       >
-        <ChromeLink
-          href={link.href} onNavigate={onNavigate}
-          className={"dtb__link" + (link.id === activeId ? " is-active" : "")}
-          aria-current={link.id === activeId ? "page" : undefined}
-          aria-haspopup="menu"
-          aria-expanded={open}
-        >
-          {link.label}
-        </ChromeLink>
+        {renderTab(link, { open })}
         {open ? (
           <div className="dtb__ddmenu is-open" role="menu" aria-label={`${link.label} menu`}>
-            {link.menu.map((item) => (
+            {link.items.map((item) => sites ? (
+              <NavMenuItem as={ChromeLink} key={item.label} href={item.href} onNavigate={onNavigate} label={item.label} />
+            ) : (
               <ChromeLink key={item.label} href={item.href} onNavigate={onNavigate} className="dtb__dditem" role="menuitem">
                 {item.label}
               </ChromeLink>
@@ -262,7 +277,10 @@ function LegacyDclTopBar({
   };
 
   return (
-    <header className={"dtb" + (transparent && !layout ? " dtb--transparent" : "")} role="banner" aria-label="Decentraland">
+    <header
+      className={"dtb" + (sites ? " dtb--sites" : "") + (transparent && !layout ? " dtb--transparent" : "")}
+      role="banner" aria-label="Decentraland"
+    >
       <ChromeLink className="dtb__brand" href="/" onNavigate={onNavigate} aria-label="Decentraland home">
         <img src={logo} width={40} height={40} alt="" />
       </ChromeLink>
@@ -285,16 +303,18 @@ function LegacyDclTopBar({
         {isIn ? balances : null}
         {isIn ? (
           <div className="dtb__bellwrap" ref={bellRef}>
-            <button
-              type="button"
-              className="dtb__bell"
-              aria-label="Notifications"
-              aria-haspopup="dialog"
-              aria-expanded={bellOpen}
-              onClick={openBell}
-            >
-              <BellMark />
-            </button>
+            {sites ? <NavNotificationsButton state={bellOpen ? "open" : "closed"} onClick={openBell} /> : (
+              <button
+                type="button"
+                className="dtb__bell"
+                aria-label="Notifications"
+                aria-haspopup="dialog"
+                aria-expanded={bellOpen}
+                onClick={openBell}
+              >
+                <BellMark />
+              </button>
+            )}
             {bellOpen && (
               <div className="dtb__notif" role="dialog" aria-label="Notifications">
                 <div className="dtb__notifhead">Notifications</div>
@@ -351,7 +371,11 @@ function LegacyDclTopBar({
             onNavigate={onNavigate}
             align="right"
           >
-            <span className="dtb__avatar u-avatar">
+            {sites ? (
+              <NavProfileButton
+                imageUrl={faceUrl || undefined} color={avatarColor} fallbackSrc={logo} onImageError={() => setFaceUrl("")}
+              />
+            ) : <span className="dtb__avatar u-avatar" style={avatarColor ? { backgroundColor: avatarColor } : undefined}>
               {faceUrl ? (
                 <img
                   className="u-avatar__img"
@@ -366,7 +390,7 @@ function LegacyDclTopBar({
                 // As ui2's navbar: an account without a face picture shows the Decentraland mark on its disc.
                 <img className="dtb__avatar-logo" src={logo} alt="" width="40" height="40" data-testid="topbar-avatar-logo" />
               )}
-            </span>
+            </span>}
           </AccountMenu>
         ) : doSignIn ? (
           <button type="button" className="dtb__signin" onClick={() => doSignIn()}>Sign in</button>
@@ -384,17 +408,17 @@ function LegacyDclTopBar({
                   <ChromeLink
                     key={link.id}
                     href={link.href} onNavigate={onNavigate}
-                    className={"dtb__menulink" + (link.id === activeId ? " is-active" : "") + (link.caret ? " dtb__menulink--caret" : "")}
+                    className={"dtb__menulink" + (link.id === activeId ? " is-active" : "") + (link.items?.length ? " dtb__menulink--caret" : "")}
                     aria-current={link.id === activeId ? "page" : undefined}
                     onClick={() => setMenuOpen(false)}
                   >
                     {link.label}
                   </ChromeLink>
                 );
-                return link.menu?.length ? (
+                return link.items?.length ? (
                   <span key={link.id} className="dtb__menugroup">
                     {top}
-                    {link.menu.map((item) => (
+                    {link.items.map((item) => (
                       <ChromeLink
                         key={item.label}
                         href={item.href} onNavigate={onNavigate}

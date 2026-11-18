@@ -45,7 +45,7 @@ function keepQuery(path: string, url: URL): string {
  */
 export const OPTIONAL_READS_BUDGET_MS = 1500;
 
-function withinBudget(work: Promise<unknown> | undefined, ms: number): Promise<void> {
+export function withinBudget(work: Promise<unknown> | undefined, ms: number): Promise<void> {
   if (!work) return Promise.resolve();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const budget = new Promise<void>((resolve) => {

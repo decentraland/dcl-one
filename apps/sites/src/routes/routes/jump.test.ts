@@ -119,13 +119,13 @@ describe("/jump/places loader", () => {
     },
   );
 
-  it("should keep the parcel the link asked for, not the scene's base parcel", async () => {
+  it("should show the scene's base parcel whichever parcel the link named, as decentraland.org does", async () => {
     server.loadJumpPlace.mockResolvedValue({ ...placeRow, base_position: "-3,-2" });
     const data = await placesLoader(args("/jump?position=0,0"));
-    expect(data.card.location.parcel).toBe("0, 0");
-    expect(data.card.jumpInHref).toContain("position=0%2C0");
+    expect(data.card.location.parcel).toBe("-3, -2");
+    expect(data.card.jumpInHref).toContain("position=-3%2C-2");
     const ios = await placesLoader(args("/jump?position=0,0", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)"));
-    expect(ios.launch?.href).toBe("decentraland://open");
+    expect(ios.launch?.href).toBe("decentraland://open?position=-3%2C-2");
   });
 
   it("should read an empty position as Genesis City origin", async () => {

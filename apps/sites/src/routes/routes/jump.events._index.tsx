@@ -1,4 +1,3 @@
-import "@dcl/one-ui/foundations/foundations.css";
 import { JumpCard } from "@dcl/one-ui/apps/sites/jump/JumpCard";
 import { JumpEventActions } from "@dcl/one-ui/apps/sites/jump/JumpEventActions";
 import { JumpPage } from "@dcl/one-ui/apps/sites/jump/JumpPage";
@@ -109,7 +108,7 @@ export default function JumpEvents({ loaderData }: Route.ComponentProps) {
     );
 
   return (
-    <SitesChrome active="play">
+    <SitesChrome active="play" overlayNav>
       <JumpPage>
         <JumpCard {...card} {...jumpInFor(card.jumpInHref, launch)} when={when} actions={actions} />
       </JumpPage>

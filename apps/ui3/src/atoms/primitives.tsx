@@ -115,14 +115,6 @@ export function fmt(n: number): string {
   return String(n);
 }
 
-export function ProgressBar({ value = 0, danger = false }: { value?: number; danger?: boolean }) {
-  return (
-    <span className="u-progress">
-      <span className={danger ? "is-danger" : ""} style={{ width: Math.min(100, Math.max(0, value)) + "%" }} />
-    </span>
-  );
-}
-
 export function Skeleton({ lines = 2, width = 200 }: { lines?: number; width?: number | string }) {
   return (
     <span className="u-skel" style={{ width }}>

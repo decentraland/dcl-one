@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
-import { OutlinedInput, Typography, FormGroup, CircularProgress as Loader } from 'decentraland-ui2';
+import Spinner from '@ui/atoms/Spinner';
+import Text from '@ui/atoms/Text';
+import TextField from '@ui/atoms/TextField';
 
 import { t } from '/@/modules/store/translation/utils';
 import { getBaseName, isValidFolderName } from '/shared/utils';
 
 import { Modal } from '..';
-import { Button } from '../../Button';
+import Button from '@ui/atoms/Button';
 
 import type { Props } from './types';
 
@@ -66,45 +68,58 @@ export function RenameFolder({ open, project, onClose, onSubmit }: Props) {
       actions={
         <>
           <Button
-            color="secondary"
+            variant="text"
+            className="hub-button hub-button--secondary"
             onClick={onClose}
           >
             {t('modal.cancel')}
           </Button>
           <Button
+            variant="text"
+            className="hub-button hub-button--primary"
             onClick={handleSubmit}
             disabled={loading || isEmpty || isUnchanged || isInvalid}
           >
-            {loading ? <Loader size={20} /> : t('modal.confirm')}
+            {loading ? (
+              <Spinner
+                size={20}
+                color="primary"
+                role="progressbar"
+              />
+            ) : (
+              t('modal.confirm')
+            )}
           </Button>
         </>
       }
     >
-      <FormGroup className="RenameFolderFormControl">
-        <Typography variant="body1">{t('modal.rename_folder.field_label')}</Typography>
-        <OutlinedInput
-          color="secondary"
+      <div className="RenameFolderFormControl">
+        <Text variant="body1">{t('modal.rename_folder.field_label')}</Text>
+        <TextField
+          className="RenameFolderField"
+          tone="neutral"
+          fullWidth
           value={name}
           onChange={handleChange}
           autoFocus
         />
         {isInvalid && (
-          <Typography
+          <Text
             variant="body1"
             className="error"
           >
             {t('modal.rename_folder.errors.invalid_name')}
-          </Typography>
+          </Text>
         )}
         {error && (
-          <Typography
+          <Text
             variant="body1"
             className="error"
           >
             {error}
-          </Typography>
+          </Text>
         )}
-      </FormGroup>
+      </div>
     </Modal>
   );
 }

@@ -281,9 +281,9 @@ pub async fn verify_signed_fetch(
     .await
 }
 
-/// A wallet's own signed fetch (the player-report routes): any `signer`
-/// but the scene's (a re-spelled key refused too, 400), so a scene-signed
-/// chain is never filed as the wallet that signed it.
+/// A wallet's own signed fetch (player reports, scene adapter, island
+/// refresh): any `signer` but the scene's (a re-spelled key refused too,
+/// 400), so a scene-signed chain never acts as the wallet that signed it.
 pub async fn verify_wallet_signed_fetch(
     headers: &HeaderMap,
     method: &str,
@@ -297,6 +297,29 @@ pub async fn verify_wallet_signed_fetch(
         &[],
         &[SCENE_SIGNER],
         CANONICAL_METADATA_KEYS,
+        DEFAULT_EXPIRATION_SECS,
+        validator,
+    )
+    .await
+}
+
+/// Upstream's `authWatcher` (`/cast/watcher-token`): a wallet's own signed
+/// fetch, any `signer` but the scene's, and deliberately strict: no
+/// `canonicalMetadataKeys`, so the pre-6.0.0 payload is refused (the cast web
+/// app signs all-lowercase metadata, for which both payloads are the same).
+pub async fn verify_viewer_signed_fetch(
+    headers: &HeaderMap,
+    method: &str,
+    path: &SignedPath,
+    validator: Option<&dyn Eip1654Validator>,
+) -> Result<SignedFetch, SignedFetchError> {
+    verify_with_keys(
+        headers,
+        method,
+        path,
+        &[],
+        &[SCENE_SIGNER],
+        &[],
         DEFAULT_EXPIRATION_SECS,
         validator,
     )

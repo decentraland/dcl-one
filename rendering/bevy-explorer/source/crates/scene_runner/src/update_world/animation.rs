@@ -28,11 +28,7 @@ impl Plugin for AnimatorPlugin {
     }
 }
 
-#[derive(Component, Default)]
-pub struct Clips {
-    pub default: Option<AnimationNodeIndex>,
-    pub named: HashMap<String, (AnimationNodeIndex, f32)>,
-}
+pub use common::structs::Clips;
 
 #[derive(Component)]
 pub struct Animator {

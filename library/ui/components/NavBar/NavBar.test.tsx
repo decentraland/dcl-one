@@ -1216,8 +1216,43 @@ describe('when the mobile menu trigger renders its navigation glyph', () => {
     const glyphs = trigger.querySelectorAll(':scope > svg')
     expect(glyphs).toHaveLength(2)
     expect(glyphs[0]).toBe(svg)
+    expect(glyphs[1]).toHaveAttribute('width', '30')
+    expect(glyphs[1]).toHaveAttribute('height', '30')
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('dialog', { name: 'Menu' })).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
+  })
+})
+
+describe('when the mobile menu lists sections with and without items', () => {
+  let panel: HTMLElement
+  beforeEach(async () => {
+    render(<NavBar sections={sections} signIn={{ onSelect: vi.fn() }} />)
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Open menu' }))
+    expect(screen.getByRole('dialog', { name: 'Menu' })).toBeInTheDocument()
+    panel = screen.getByTestId('navbar-panel')
+  })
+
+  it('should give every section one top-level row', () => {
+    const rows = panel.querySelectorAll(':scope > ul > li')
+    expect([...rows].map((row) => row.firstElementChild?.textContent)).toEqual([
+      'Discover',
+      'Shop',
+      'Create',
+      'Learn'
+    ])
+  })
+
+  it('should keep a section without items as a link row', () => {
+    const shop = within(panel).getByRole('link', { name: 'Shop' })
+    expect(shop).toHaveAttribute('href', '/shop')
+    expect(shop.parentElement?.tagName).toBe('LI')
+  })
+
+  it('should list a section with items under its label and mark only the active item', () => {
+    const discover = within(panel).getByText('Discover').parentElement as HTMLElement
+    const links = within(discover).getAllByRole('link')
+    expect(links.map((link) => link.textContent)).toEqual(['Jump in', "What's on"])
+    expect(links.map((link) => link.getAttribute('aria-current'))).toEqual([null, 'page'])
   })
 })

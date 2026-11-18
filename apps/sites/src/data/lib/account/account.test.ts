@@ -124,6 +124,16 @@ describe("subscription helpers", () => {
     expect(isTypeEmailEnabled(details, "tip_received")).toBe(false);
   });
 
+  it("keeps muted email muted when a type is turned off or on", () => {
+    const muted = setAllEmail(
+      { ...details, message_type: { item_sold: { email: true, in_app: true }, bid_received: { email: true, in_app: true } } },
+      false,
+    );
+
+    expect(setTypeEmail(muted, "item_sold", false).ignore_all_email).toBe(true);
+    expect(setTypeEmail(muted, "tip_received", true).ignore_all_email).toBe(true);
+  });
+
   it("moves only the master switch", () => {
     const muted = setAllEmail(details, false);
 
@@ -216,6 +226,18 @@ describe("optOutOfCredits", () => {
     signer.fetch.mockResolvedValue(json({ error: "not found" }, 404));
 
     await expect(optOutOfCredits(identity)).resolves.toBeUndefined();
+  });
+
+  it("succeeds for a wallet that already left the program", async () => {
+    signer.fetch.mockResolvedValue(json({ ok: false, message: "User already unregistered" }, 400));
+
+    await expect(optOutOfCredits(identity)).resolves.toBeUndefined();
+  });
+
+  it("fails on another 400, such as credits claimed this week", async () => {
+    signer.fetch.mockResolvedValue(json({ ok: false, message: "Cannot unregister with credits claimed this week" }, 400));
+
+    await expect(optOutOfCredits(identity)).rejects.toMatchObject({ status: 400 });
   });
 
   it("fails on any other refusal", async () => {

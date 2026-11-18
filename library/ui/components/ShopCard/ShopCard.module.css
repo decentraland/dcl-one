@@ -400,8 +400,10 @@
   }
 
   @media (hover: none) {
+    /* In the flow under the info, and above the full-card .hit link, so a tap reaches the action. */
     .catalogue .actions {
-      position: static;
+      position: relative;
+      z-index: 2;
       opacity: 1;
       pointer-events: auto;
       transform: none;

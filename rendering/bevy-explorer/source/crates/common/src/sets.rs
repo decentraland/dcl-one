@@ -55,4 +55,7 @@ pub enum PostUpdateSets {
     Nametag,
     AttachSync,
     Billboard,
+    /// Geometry fitted to a camera's final projection: after bevy's `CameraUpdateSystem`, which
+    /// resets a projection's aspect ratio when its target is resized.
+    CameraFit,
 }
