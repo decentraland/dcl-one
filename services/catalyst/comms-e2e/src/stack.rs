@@ -56,6 +56,10 @@ pub struct LiveKitTarget {
     /// Environment variables that hold the API key and secret.
     pub key_env: String,
     pub secret_env: String,
+    /// The LiveKit client binary (the explorer workspace's `harness-util`), run as a child
+    /// process to join rooms.
+    #[serde(default)]
+    pub client: Option<PathBuf>,
 }
 
 /// The headless explorer and the addresses it is told to dial. Those are the fault link's fronts:

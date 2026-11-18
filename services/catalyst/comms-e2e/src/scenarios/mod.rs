@@ -2,6 +2,7 @@
 
 pub mod connections;
 pub mod explorer;
+pub mod livekit;
 pub mod pulse;
 pub mod webtransport;
 
@@ -12,6 +13,7 @@ pub fn registry() -> Vec<&'static Scenario> {
     let mut all = pulse::all();
     all.extend(webtransport::all());
     all.extend(connections::all());
+    all.extend(livekit::all());
     all.extend(explorer::all());
     all
 }
