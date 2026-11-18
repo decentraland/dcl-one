@@ -43,17 +43,6 @@
   min-width: 50px;
 }
 
-.ActionInspector .content .RemoveButton {
-  height: 100%;
-  background-color: transparent;
-  border-color: transparent;
-  color: white;
-}
-
-.ActionInspector .content .RemoveButton:hover:not(:disabled) {
-  background-color: transparent;
-}
-
 .ActionInspector .content .Block .content .MoreOptionsMenu {
   position: absolute;
   top: 5px;
