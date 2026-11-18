@@ -48,8 +48,12 @@ describe("a website Shop card's price", () => {
     expect(collectiblePriceText(toCollectibleCard(item({ isOnSale: false, price: "0" }), "12"))).toBe("1.23456789 MANA");
   });
 
-  it("a sold-out primary shows nothing, even when the catalogue marks it on sale with resales", () => {
-    const card = toCollectibleCard(item({ available: 0 }), "12");
+  it("a sold-out primary shows its cheapest resale, never its mint price", () => {
+    expect(collectiblePriceText(toCollectibleCard(item({ available: 0 }), "12"))).toBe("1.23456789 MANA");
+  });
+
+  it("a sold-out primary with no resale shows nothing, though the catalogue marks it on sale", () => {
+    const card = toCollectibleCard(item({ available: 0, minListingPrice: null }), "12");
     expect(card.payment).toEqual({ kind: "none" });
     expect(collectiblePriceText(card)).toBeNull();
   });

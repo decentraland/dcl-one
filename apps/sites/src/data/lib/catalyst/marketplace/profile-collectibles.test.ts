@@ -147,12 +147,29 @@ describe("fetchProfileCreations", () => {
     expect(items[0]?.payment).toEqual({ kind: "mana", mana: "1,500" });
   });
 
-  it("gives a sold-out primary item no price, though the catalogue still marks it on sale", async () => {
+  it("prices a sold-out primary item by its cheapest resale, never its mint price", async () => {
     json.mockResolvedValue({ data: [item({ available: 0, minListingPrice: MANA(80) })], total: 1 });
 
     const { items } = await fetchProfileCreations(CREATOR, { category: "wearable", first: 24 });
 
+    expect(items[0]?.payment).toEqual({ kind: "mana", mana: "80" });
+  });
+
+  it("gives a sold-out primary item with no resale no price, though the catalogue still marks it on sale", async () => {
+    json.mockResolvedValue({ data: [item({ available: 0 })], total: 1 });
+
+    const { items } = await fetchProfileCreations(CREATOR, { category: "wearable", first: 24 });
+
     expect(items[0]?.payment).toEqual({ kind: "none" });
+  });
+
+  it.each([null, undefined])("keeps a row whose supply is %s and prices it as on sale", async (available) => {
+    json.mockResolvedValue({ data: [item({ available })], total: 1 });
+
+    const { items } = await fetchProfileCreations(CREATOR, { category: "wearable", first: 24 });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.payment).toEqual({ kind: "credits", credits: "12" });
   });
 
   it("gives a delisted item with no listing no price, though the catalogue keeps its old one", async () => {

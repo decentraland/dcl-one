@@ -88,8 +88,11 @@ const CreationRowSchema = CatalogItemSchema.pick({
   isOnSale: true,
   chainId: true,
   category: true,
-  available: true,
-}).extend({ data: z.record(z.string(), z.unknown()).nullish() });
+}).extend({
+  data: z.record(z.string(), z.unknown()).nullish(),
+  // Optional, like every field the card does not show: an unknown supply is not sold out.
+  available: z.number().nullish().transform((v) => v ?? null),
+});
 
 const AssetRowSchema = z.object({
   nft: NftSchema.pick({

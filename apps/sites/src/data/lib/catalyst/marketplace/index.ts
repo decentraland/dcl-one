@@ -208,7 +208,7 @@ function safeRarity(r: string | null | undefined): string {
  * visitor): an eligible primary wearable or emote shows its credit price, or says the credit price is
  * unavailable when the quote failed (never a MANA fallback); anything MANA only (a resale, an item that
  * mints on Ethereum, a non-wearable) shows its MANA in exact units. A sold-out primary (library/shop
- * discovery/cardPrice `isSoldOutPrimary`) has no price, as the Shop's discovery card.
+ * discovery/cardPrice `isSoldOutPrimary`) has no mint price; its cheapest resale, if any, is still shown.
  */
 export type CardPayment =
   | { kind: "credits"; credits: string }
@@ -241,9 +241,9 @@ export type CardSaleFacts = Pick<
 >;
 
 export function cardPayment(item: CardSaleFacts, credits: string | null): CardPayment {
-  // A catalogue row is an item, so its own sale is the primary mint: the Shop's sold-out rule applies.
-  if (isSoldOutPrimary(item)) return { kind: "none" };
-  if (item.isOnSale && weiGtZero(item.price)) {
+  // A catalogue row's own sale is the primary mint. A sold-out mint (the Shop's rule) has no mint price, but
+  // its resales are separate listings and keep theirs, as the Shop's discovery rows do.
+  if (!isSoldOutPrimary(item) && item.isOnSale && weiGtZero(item.price)) {
     const contract = parseEvmAddress(item.contractAddress);
     const chainId = item.chainId ?? (item.network === "ETHEREUM" ? 1 : 137);
     const kind = item.category === "wearable" || item.category === "emote" ? item.category : "other";
