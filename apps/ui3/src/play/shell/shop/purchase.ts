@@ -27,7 +27,7 @@ import type { RailContext } from '../../../shop/checkout/purchase/rail'
 import { createSpendGuard } from '@shop/checkout/purchase/spend-guard'
 import { fetchUserPurchases, getUsdBalance, type UsdBalance } from '@shop/credits/credits'
 import type { OfferSource } from '../../../shop/detail/offers'
-import { fetchShopListingForItem } from '@shop/detail/api'
+import { fetchPrimaryListingForItem } from '@shop/detail/api'
 import { ethereumChainId, settlementChainId } from '../../../shop/checkout/chain/config'
 import { rpcReader } from '../../../shop/land/evm'
 import { readBannedNames } from '../../../shop/names/reads'
@@ -243,10 +243,19 @@ function defaultStorage(): Storage | null {
   }
 }
 
+/**
+ * The listing BUY settles an item through: its creator's sale, read from the unified feed as the web Shop's item page
+ * reads it (detail/api fetchPrimaryListingForItem, ItemDetail), never a resale. The in-world grid lists that feed, so a
+ * creator's MANA-priced (legacy) trade it shows is one the shell can buy; the listings feed alone holds none of those.
+ */
+export function fetchBuyListing(contract: string, itemId: string, client: ShopClient, creatorSales: () => boolean): Promise<CatalogItem | null> {
+  return fetchPrimaryListingForItem(contract, itemId, { client, creatorSales })
+}
+
 const LIVE: ShellShopServices = {
   client: (signer) => createShopClient(hostApiOptions({ signer })),
   // The creator-sales switch as this document holds it, asked when the listing is mapped, as the read did itself.
-  fetchItem: (contract, itemId, client) => fetchShopListingForItem(contract, itemId, { client, creatorSales: () => shopFlags().creatorSales }),
+  fetchItem: (contract, itemId, client) => fetchBuyListing(contract, itemId, client, () => shopFlags().creatorSales),
   offers: (client) => purchaseOfferSource(client),
   balance: (account, client) => getUsdBalance(account, client),
   resolvers: (client) => liveResolvers(client),
