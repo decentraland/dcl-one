@@ -861,22 +861,38 @@ impl AppConfig {
         }
         if self.inputs_generation < 2 {
             let t = InputIdentifier::Key(KeyCode::KeyT);
+            let v = InputIdentifier::Key(KeyCode::KeyV);
             let is = |action: &Action, system: SystemAction| *action == Action::System(system);
-            for (action, bindings) in self.inputs.0.iter_mut() {
-                if is(action, SystemAction::ChatPanel) && *bindings == [t] {
-                    bindings.clear();
-                }
-            }
-            // a T the user gave another action keeps the microphone on V, or one press would
-            // fire both
-            let t_taken = self.inputs.0.iter().any(|(action, bindings)| {
-                !is(action, SystemAction::Microphone) && bindings.contains(&t)
-            });
-            if !t_taken {
+            let bindings_of = |system: SystemAction| {
+                self.inputs
+                    .0
+                    .iter()
+                    .find(|(action, _)| is(action, system))
+                    .map(|(_, bindings)| bindings.as_slice())
+            };
+            // the microphone takes T when it is still on its old default (or has no row yet, so
+            // the default merges in below) and no action other than the chat panel's old default
+            // holds T; otherwise one press would fire both
+            let chat_panel_on_t = bindings_of(SystemAction::ChatPanel) == Some(&[t][..]);
+            let mic_on_old_default = bindings_of(SystemAction::Microphone).is_none_or(|b| b == [v]);
+            // the rows that may hold T after the move: the microphone's, and the chat panel's old
+            // default, which gives it up
+            let gives_way = |action: &Action| {
+                is(action, SystemAction::Microphone)
+                    || (is(action, SystemAction::ChatPanel) && chat_panel_on_t)
+            };
+            let t_taken = self
+                .inputs
+                .0
+                .iter()
+                .any(|(action, bindings)| !gives_way(action) && bindings.contains(&t));
+            // the chat panel gives up T only for the microphone: a player who moved the
+            // microphone elsewhere keeps T on the chat panel
+            if mic_on_old_default && !t_taken {
                 for (action, bindings) in self.inputs.0.iter_mut() {
-                    if is(action, SystemAction::Microphone)
-                        && *bindings == [InputIdentifier::Key(KeyCode::KeyV)]
-                    {
+                    if is(action, SystemAction::ChatPanel) && *bindings == [t] {
+                        bindings.clear();
+                    } else if is(action, SystemAction::Microphone) {
                         *bindings = vec![t];
                     }
                 }
@@ -2684,7 +2700,25 @@ mod tests {
             vec![InputIdentifier::Key(KeyCode::KeyY)]
         );
 
-        // T given to another action: the microphone stays on V
+        // the microphone moved elsewhere by the player: the chat panel keeps T
+        let mut config = table(&[
+            (SystemAction::Microphone, Some(KeyCode::KeyB)),
+            (SystemAction::ChatPanel, Some(KeyCode::KeyT)),
+        ]);
+        config.migrate_inputs();
+        assert_eq!(
+            get(&config, SystemAction::Microphone),
+            vec![InputIdentifier::Key(KeyCode::KeyB)]
+        );
+        assert_eq!(get(&config, SystemAction::ChatPanel), vec![t]);
+
+        // no microphone row yet: the chat panel gives up T and the default merges in on T
+        let mut config = table(&[(SystemAction::ChatPanel, Some(KeyCode::KeyT))]);
+        config.migrate_inputs();
+        assert_eq!(get(&config, SystemAction::Microphone), vec![t]);
+        assert_eq!(get(&config, SystemAction::ChatPanel), vec![]);
+
+        // T given to another action: the microphone stays on V, the chat panel keeps T
         let mut config = table(&[
             (SystemAction::Microphone, Some(KeyCode::KeyV)),
             (SystemAction::ChatPanel, Some(KeyCode::KeyY)),

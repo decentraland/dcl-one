@@ -109,7 +109,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   3 × 2000 ms re-dial budget, the 1 s hang-up-before-join delay and the server's 60 s ring.
   - The `Microphone` key is `T`, Unity's `Talk` key. The chat opens with `Enter`; the chat panel
     has no default key. A saved key table still on the old defaults (mic `V`, chat panel `T`)
-    moves to these unless the player gave `T` to another action. The `Microphone` key drives the
+    moves to these unless the player gave `T` to another action; a player who moved the mic off `V`
+    keeps `T` on the chat panel. The `Microphone` key drives the
     call mic while a call is connected and the nearby mic otherwise, as Unity's `T` does. Nearby,
     a press opens the mic and its release closes it. In a call, a press shorter than 0.5 s leaves
     the mic open and a longer one is push-to-talk. A press while the mic is open closes it on
