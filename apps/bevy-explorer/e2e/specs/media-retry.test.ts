@@ -1,19 +1,20 @@
 // Media retry: a scene's VideoPlayer whose source fails is reopened 2, 4, 8, 16 and 32 s after each
 // failure, reports `VsLoading` meanwhile, and reports `VsError` once the fifth reopen fails too
 // (`rendering/bevy-explorer/docs/guidelines/decisions.md`, "Media reopens on the web").
-// explorer-automation has no such fixture, so nothing here is a port and no Unity test is mapped.
 //
 // | Scenario                                                        | Session                      | Needs                      |
 // | a video whose source fails twice plays after two reopens        | guest, on the loopback realm | the scene built; web       |
 // | a video whose source always fails gives up after five reopens   | guest, on the loopback realm | the scene built; web       |
+// | a paused video whose source fails reports VS_ERROR and plays after play | guest, on the loopback realm | the scene built; web |
 //
 // Each scenario boots a guest on a loopback realm of its own (`driver/realm.ts`) that serves
 // `scenes/video` and answers 503 to the first GETs of its media files: `recover.webm` twice,
-// `broken.webm` every time. It sets `/media_retry_delay 100`, points the scene commands at the
+// `broken.webm` every time, `paused.webm` once. It sets `/media_retry_delay 100`, points the scene commands at the
 // scene with `/set_scene`, and reads the scene's `video <name> state=<VideoState>` lines through
 // `/scene_logs` and each player's reopen state through `/media_state`; the failure checks use
 // `retryFailures`, which does not depend on when the delay was set. The second scenario walks to
-// `broken` first. Each scenario closes its client. Web only: on the standalone both are todos.
+// `broken` first, the third to `paused`, which the scene sets playing 1 s after it reports
+// `VS_ERROR`. Each scenario closes its client. Web only: on the standalone both are todos.
 // Build the scene first: `pnpm run build-scenes video`.
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
@@ -27,6 +28,7 @@ const scenario = spec(import.meta.url)
 const SCENE_DIR = path.join(SCENES_DIR, 'video')
 const SCENE_TITLE = 'video'
 const RECOVER_FAILURES = 2
+const PAUSED_FAILURES = 1
 const MAX_REOPENS = 5
 const FIRST_DELAY_MS = 100
 /** The longest wait: a first failure before the delay is shortened (2 s), the shortened rest
@@ -52,6 +54,7 @@ try {
 
 const recoverHash = contentHash(await readFile(path.join(SCENE_DIR, 'assets', 'recover.webm')))
 const brokenHash = contentHash(await readFile(path.join(SCENE_DIR, 'assets', 'broken.webm')))
+const pausedHash = contentHash(await readFile(path.join(SCENE_DIR, 'assets', 'paused.webm')))
 
 /** A realm, with failure counts of its own, and a guest session on it for one scenario, on an
  *  ephemeral port. */
@@ -62,7 +65,8 @@ async function realmFor(name: string): Promise<{ server: RealmServer; session: S
     realmName: `e2e-media-retry-${name}`,
     contentFailures: new Map([
       [recoverHash, RECOVER_FAILURES],
-      [brokenHash, Infinity]
+      [brokenHash, Infinity],
+      [pausedHash, PAUSED_FAILURES]
     ])
   })
   after(() => server.close())
@@ -71,13 +75,14 @@ async function realmFor(name: string): Promise<{ server: RealmServer; session: S
 
 const RECOVER = await realmFor('recover')
 const BROKEN = await realmFor('broken')
+const PAUSED = await realmFor('paused')
 /** A scenario's budget: `prepare` (the scene's boot), its main wait and the rest. */
 const SCENARIO_TIMEOUT_MS = 2 * GIVE_UP_TIMEOUT_MS + RESTART_TIMEOUT_MS + 30_000
 
 async function prepare(explorer: Explorer): Promise<void> {
   if (sceneError) throw sceneError
   const published = new Set(scene!.entity.content.map((entry) => entry.hash))
-  assert.ok(published.has(recoverHash) && published.has(brokenHash), 'the realm does not publish the scene\'s media files')
+  assert.ok(published.has(recoverHash) && published.has(brokenHash) && published.has(pausedHash), 'the realm does not publish the scene\'s media files')
   await explorer.mediaRetryDelay(FIRST_DELAY_MS)
   await until(() => explorer.liveScenes(), (live) => live.some((live) => live.title === SCENE_TITLE), {
     timeoutMs: GIVE_UP_TIMEOUT_MS,
@@ -143,4 +148,28 @@ scenario(
     assert.equal(row.lastPlaybackState, 'VS_ERROR')
   },
   { ...webOnly, session: BROKEN.session, closeSession: true, timeoutMs: SCENARIO_TIMEOUT_MS }
+)
+
+scenario(
+  'a paused video whose source fails reports VS_ERROR and plays after play',
+  async ({ explorer, restore }) => {
+    restore(() => explorer.setScene())
+    await prepare(explorer)
+    await explorer.walkTo(BASE.x + 2, 0, BASE.z + 12)
+    const logs = await until(() => explorer.sceneLogs(200), (lines) => stateLines(lines, 'paused').some((line) => line.endsWith('state=VS_PLAYING')), {
+      timeoutMs: GIVE_UP_TIMEOUT_MS,
+      what: 'the paused screen to log VS_PLAYING'
+    })
+    const states = stateLines(logs, 'paused')
+    const errorAt = states.findIndex((line) => line.endsWith('state=VS_ERROR'))
+    const playingAt = states.findIndex((line) => line.endsWith('state=VS_PLAYING'))
+    assert.ok(errorAt >= 0 && errorAt < playingAt, `the paused screen did not report VS_ERROR before VS_PLAYING:\n${states.join('\n')}`)
+    assert.ok(logs.some((line) => line.includes('video paused play')), 'the scene never set the paused screen playing')
+    const row = await player(explorer, 'assets/paused.webm')
+    assert.equal(row.retryFailures, PAUSED_FAILURES, `the paused screen failed ${row.retryFailures} times`)
+    assert.equal(row.retryGaveUp, false)
+    const gets = PAUSED.server.contentGets.get(pausedHash) ?? 0
+    assert.ok(gets > PAUSED_FAILURES, `paused.webm was requested ${gets} times, not reopened after its failure`)
+  },
+  { ...webOnly, session: PAUSED.session, closeSession: true, timeoutMs: SCENARIO_TIMEOUT_MS }
 )

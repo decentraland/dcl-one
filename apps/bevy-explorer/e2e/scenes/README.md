@@ -57,13 +57,16 @@ reference:
 
 `video`, parcel `0,26`, spawn at `(8, 0, 4)` facing the screens: the scene of
 `specs/media-retry.test.ts`, in the workspace but not in `SCENES`, so without a reference, and
-left out of the visual specs' realm, so its two looping decoders run only beside its own spec. Two
-planes each play one looped file of `assets/` into a basic material: `recover`
-(`assets/recover.webm`, at `(5, 2, 8)`) and `broken` (`assets/broken.webm`, at `(11, 2, 15)`),
-2 s, 64 by 64 VP8 of one colour each, so their bytes and content hashes differ. One video plays at
-a time, the nearest: `recover` from the spawn, `broken` from `(11, 0, 12)`, where the spec walks.
-It logs `video ready` once both exist and `video <name> state=<VideoState>` (`VS_PLAYING`,
-`VS_ERROR`, ...) on every state the engine reports. The spec's realm fails the files' first GETs.
+left out of the visual specs' realm, so its looping decoders run only beside its own spec. Three
+planes each show one looped file of `assets/` in a basic material: `recover`
+(`assets/recover.webm`, at `(5, 2, 8)`), `broken` (`assets/broken.webm`, at `(11, 2, 15)`) and
+`paused` (`assets/paused.webm`, at `(2, 2, 15)`), 2 s, 64 by 64 VP8 of one colour each, so their
+bytes and content hashes differ. `recover` and `broken` play from the start; `paused` starts
+paused and is set playing 1 s after it first reports `VS_ERROR`, logging `video paused play`. One
+video plays at a time, the nearest: `recover` from the spawn, `broken` from `(11, 0, 12)` and
+`paused` from `(2, 0, 12)`, where the spec walks. It logs `video ready` once all exist and
+`video <name> state=<VideoState>` (`VS_PLAYING`, `VS_ERROR`, ...) on every state the engine
+reports. The spec's realm fails the files' first GETs.
 
 `bin/`, `node_modules/` and the other build outputs are ignored. The `.glb`, `.png`, `.jpg` and
 `.webm` assets are in Git LFS.

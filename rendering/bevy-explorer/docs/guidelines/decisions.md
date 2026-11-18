@@ -546,17 +546,16 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   - *Count restart.* unity-explorer clears the count as soon as a reopen opens; here it restarts
     only after 5 s of playback since the last failure, so a source that keeps failing at the same
     point gives up.
-  - *Pause.* unity-explorer reopens a failed source whether or not it plays; here a pause cancels a
-    scheduled reopen and detaches a loading one; a failure while paused counts and schedules
-    none. The next play reports `VsLoading` and reopens once the current delay has passed since
-    the last failure or reopen, so toggling playback never reopens faster than the schedule, and
-    a pause keeps the count. A pause during a loading reopen is not a failure: a source that
-    fails more slowly than playback toggles never gives up, but is requested at most once per
-    delay, and a slow but healthy source is never given up for being paused. A live stream
-    resumes at its live edge, not at a saved position.
+  - *Pause.* unity-explorer reopens a failed source whether or not it plays; here a failed source
+    is reopened only while the scene plays it. A failure while paused, or before the scene first
+    plays the source, counts and reports `VsError`. The next play reports `VsLoading` and reopens
+    once the current delay has passed since the failure, so toggling playback never reopens
+    faster than the schedule, and a pause keeps the count. A pause during a loading reopen lets it
+    load, as a paused first open does. A live stream resumes at its live edge, not at a saved
+    position.
   - *The screen.* unity-explorer renders black whenever a player is in `VsError` or `VsNone`; here
     the image turns black when the source gives up or a non-looping source ends, and keeps the
-    last frame while a reopen is pending.
+    last frame while a reopen is pending; the failed source is detached meanwhile.
 
   Native (FFmpeg) has no reopen: its first error ends playback.
 - **The map's markers are HUD elements, not a rendered scene.** unity-explorer draws its map and

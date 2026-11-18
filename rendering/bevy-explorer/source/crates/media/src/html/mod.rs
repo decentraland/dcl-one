@@ -21,9 +21,7 @@ use dcl_component::proto_components::sdk::components::VideoState;
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use once_cell::sync::OnceCell;
 
-use crate::{AVCommand, MediaRetryStatus, VideoData, VideoInfo};
-
-pub type MediaId = u32;
+use crate::{AVCommand, MediaId, MediaRetryStatus, VideoData, VideoInfo};
 
 /// Engine → page.
 #[derive(Debug)]

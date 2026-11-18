@@ -1,18 +1,16 @@
 //! The page side: owns the media elements and serves [`HostCommand`]s. Runs as a task on the
-//! page's event loop; nothing here may block.
+//! page's event loop; nothing here may block. Each element's playback and reopen state is a
+//! [`MediaSourceState`]: the scene's commands, the element's events and the reopen timer become
+//! [`MediaSourceMsg`]s for [`update`], [`execute`] carries out the [`MediaSourceCmd`] it returns,
+//! and changes to its [`view`] are reported to the engine.
 
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-    time::Duration,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use bevy::{
     log::{debug, warn},
     platform::collections::HashMap,
 };
 use common::util::ReportErr;
-use dcl_component::proto_components::sdk::components::VideoState;
 use futures_channel::mpsc::{UnboundedSender, unbounded};
 use futures_lite::StreamExt;
 use js_sys::{Function, Reflect};
@@ -21,7 +19,11 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{HtmlMediaElement, HtmlVideoElement, VideoFrame, Worker};
 
 use super::{HOST, HostCommand, HostHandle, MediaEvent, MediaId};
-use crate::{AVCommand, MediaRetry, MediaRetryStatus, RetryStep, first_reopen_delay, reopen_delay};
+use crate::{
+    AVCommand, ElementObservation, ElementSnapshot, MediaFailureKind, MediaReopenPolicy,
+    MediaSourceCmd, MediaSourceMsg, MediaSourceState, MediaSourceView, first_reopen_delay, init,
+    update, view,
+};
 
 type RcClosure = Rc<RefCell<Option<Closure<dyn FnMut(f64, JsValue)>>>>;
 
@@ -51,16 +53,19 @@ pub fn media_host_main(render_worker: Worker) {
     // A `play()` the browser refused (no user gesture yet) is retried on the next gesture.
     let document = web_sys::window().unwrap().document().unwrap();
     let on_gesture = Closure::<dyn FnMut()>::new(|| {
-        MEDIA.with(|media| {
-            for m in media.borrow().values() {
-                if m.source.wants_play.get()
-                    && m.source.play_refused.get()
-                    && !m.source.retry.get().gave_up()
-                {
-                    try_play(&m.media, &m.source.play_refused);
-                }
-            }
+        let refused: Vec<_> = MEDIA.with(|media| {
+            media
+                .borrow()
+                .iter()
+                .filter(|(_, m)| {
+                    m.play_refusal == PlayRefusal::Refused && m.state.wants_element_playback()
+                })
+                .map(|(id, m)| (*id, m.media.clone()))
+                .collect()
         });
+        for (id, media) in refused {
+            try_play(id, &media);
+        }
     });
     for event in ["pointerdown", "keydown"] {
         document
@@ -71,31 +76,39 @@ pub fn media_host_main(render_worker: Worker) {
 
     wasm_bindgen_futures::spawn_local(async move {
         while let Some(command) = commands_rx.next().await {
-            MEDIA.with(|media| {
-                let mut media = media.borrow_mut();
-                match command {
-                    HostCommand::Create { id, url, has_video } => {
-                        media.insert(
-                            id,
-                            HostMedia::new(
-                                id,
-                                url,
-                                has_video,
-                                events_tx.clone(),
-                                render_worker.clone(),
-                            ),
-                        );
-                    }
-                    HostCommand::Command(id, command) => {
-                        if let Some(m) = media.get(&id) {
-                            m.command(command);
-                        }
-                    }
-                    HostCommand::Drop(id) => {
-                        media.remove(&id);
-                    }
+            match command {
+                HostCommand::Create { id, url, has_video } => {
+                    let media = HostMedia::new(
+                        id,
+                        url,
+                        has_video,
+                        events_tx.clone(),
+                        render_worker.clone(),
+                    );
+                    insert(id, media);
                 }
-            });
+                HostCommand::Command(id, command) => {
+                    let msg = match command {
+                        AVCommand::Play => MediaSourceMsg::ScenePlayRequested,
+                        AVCommand::Pause => MediaSourceMsg::ScenePauseRequested,
+                        AVCommand::Repeat(looping) => {
+                            MediaSourceMsg::SceneLoopingChanged { looping }
+                        }
+                        AVCommand::Seek(position_seconds) => {
+                            MediaSourceMsg::SceneSeekRequested { position_seconds }
+                        }
+                        AVCommand::Volume(volume) => MediaSourceMsg::SceneVolumeChanged { volume },
+                        // dispose arrives as `HostCommand::Drop`
+                        AVCommand::Dispose => continue,
+                    };
+                    dispatch(id, msg);
+                }
+                HostCommand::Drop(id) => {
+                    // dropped outside the borrow: the element's teardown may run page code
+                    let removed = MEDIA.with(|media| media.borrow_mut().remove(&id));
+                    drop(removed);
+                }
+            }
         }
     });
 }
@@ -108,287 +121,190 @@ pub fn adopt_video_element(id: MediaId, element: HtmlVideoElement) {
         debug!("no media host: cannot adopt video element {id}");
         return;
     };
-    let media = HostMedia::from_element(id, element, None, true, events, render_worker);
-    MEDIA.with(|m| m.borrow_mut().insert(id, media));
+    insert(
+        id,
+        HostMedia::from_element(id, element, None, true, events, render_worker),
+    );
 }
 
-/// Calls `play()`, noting a refusal (autoplay policy) for the gesture retry.
-fn try_play(media: &HtmlMediaElement, refused: &Rc<Cell<bool>>) {
-    let Ok(promise) = media.play() else {
+/// Adds `media` to [`MEDIA`] and carries out its first command.
+fn insert(id: MediaId, (media, cmd): (HostMedia, MediaSourceCmd)) {
+    MEDIA.with(|m| m.borrow_mut().insert(id, media));
+    execute(cmd);
+}
+
+/// Updates media `id`'s state with `msg`, reports its changed view and carries out the result.
+fn dispatch(id: MediaId, msg: MediaSourceMsg) {
+    let cmd = MEDIA.with(|media| {
+        let Ok(mut media) = media.try_borrow_mut() else {
+            warn!("media {id}: {msg:?} arrived during another update; dropped");
+            return None;
+        };
+        let m = media.get_mut(&id)?;
+        let cmd = update(&mut m.state, msg);
+        m.report();
+        Some(cmd)
+    });
+    if let Some(cmd) = cmd {
+        execute(cmd);
+    }
+}
+
+/// Carries out `cmd` on the element of its media id; one no longer on the page is skipped.
+fn execute(cmd: MediaSourceCmd) {
+    let media_id = match cmd {
+        MediaSourceCmd::None => return,
+        MediaSourceCmd::Multi(cmds) => {
+            for cmd in cmds {
+                execute(cmd);
+            }
+            return;
+        }
+        MediaSourceCmd::AttachSource { media_id }
+        | MediaSourceCmd::DetachSource { media_id }
+        | MediaSourceCmd::StartPlayback { media_id }
+        | MediaSourceCmd::PausePlayback { media_id }
+        | MediaSourceCmd::SeekTo { media_id, .. }
+        | MediaSourceCmd::SetLooping { media_id, .. }
+        | MediaSourceCmd::SetVolume { media_id, .. }
+        | MediaSourceCmd::ClearScreen { media_id }
+        | MediaSourceCmd::ScheduleReopen { media_id, .. } => media_id,
+    };
+    let Some((media, url)) = MEDIA.with(|m| {
+        m.borrow()
+            .get(&media_id)
+            .map(|m| (m.media.clone(), m.url.clone()))
+    }) else {
         return;
     };
-    let refused = refused.clone();
-    wasm_bindgen_futures::spawn_local(async move {
-        if let Err(e) = JsFuture::from(promise).await {
-            debug!("play refused: {e:?}");
-            refused.set(true);
+    match cmd {
+        MediaSourceCmd::AttachSource { .. } => {
+            debug!("media {media_id}: attaching the source");
+            if let Some(url) = url {
+                media.set_src(&url);
+            }
+        }
+        MediaSourceCmd::DetachSource { .. } => detach(&media),
+        MediaSourceCmd::StartPlayback { .. } => try_play(media_id, &media),
+        MediaSourceCmd::PausePlayback { .. } => {
+            set_play_refusal(media_id, PlayRefusal::NotRefused);
+            media.pause().report();
+        }
+        MediaSourceCmd::SeekTo {
+            position_seconds, ..
+        } => media.set_current_time(position_seconds),
+        MediaSourceCmd::SetLooping { looping, .. } => media.set_loop(looping),
+        MediaSourceCmd::SetVolume { volume, .. } => media.set_volume(volume.clamp(0.0, 1.0) as f64),
+        MediaSourceCmd::ClearScreen { .. } => clear_screen(media_id),
+        MediaSourceCmd::ScheduleReopen {
+            delay,
+            failure_count,
+            ..
+        } => {
+            debug!("media {media_id}: reopen in {delay:?}");
+            // a timer of a removed element finds nothing to dispatch to
+            let callback = Closure::once_into_js(move || {
+                dispatch(media_id, MediaSourceMsg::ReopenTimerFired { failure_count })
+            });
+            if let Some(window) = web_sys::window() {
+                window
+                    .set_timeout_with_callback_and_timeout_and_arguments_0(
+                        callback.unchecked_ref(),
+                        delay.as_millis().min(i32::MAX as u128) as i32,
+                    )
+                    .report();
+            }
+        }
+        MediaSourceCmd::None | MediaSourceCmd::Multi(_) => (),
+    }
+}
+
+/// Removes the element's source; it raises no further events for it.
+fn detach(media: &HtmlMediaElement) {
+    let _ = media.remove_attribute("src");
+    media.load();
+}
+
+/// Shows the cleared frame in place of the last one.
+fn clear_screen(id: MediaId) {
+    let Some(render_worker) = PAGE.with(|page| page.borrow().as_ref().map(|(_, w)| w.clone()))
+    else {
+        return;
+    };
+    let message = js_sys::Object::new();
+    Reflect::set(&message, &"type".into(), &"VIDEO_CLEAR".into()).unwrap();
+    Reflect::set(&message, &"id".into(), &JsValue::from(id)).unwrap();
+    render_worker.post_message(&message).report();
+}
+
+/// Whether the browser refused the last `play()` (autoplay policy) since the last pause.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlayRefusal {
+    Refused,
+    NotRefused,
+}
+
+fn set_play_refusal(id: MediaId, play_refusal: PlayRefusal) {
+    MEDIA.with(|media| {
+        if let Ok(mut media) = media.try_borrow_mut()
+            && let Some(m) = media.get_mut(&id)
+        {
+            m.play_refusal = play_refusal;
         }
     });
 }
 
-/// The kind of the element's current error.
-fn media_error_label(media: &HtmlMediaElement) -> &'static str {
-    match media.error().map(|error| error.code()) {
-        Some(1) => "aborted",
-        Some(2) => "network error",
-        Some(3) => "decode error",
-        Some(4) => "source not supported",
-        _ => "media error",
+/// Calls `play()`, noting a refusal for the gesture retry.
+fn try_play(id: MediaId, media: &HtmlMediaElement) {
+    let Ok(promise) = media.play() else {
+        return;
+    };
+    wasm_bindgen_futures::spawn_local(async move {
+        if let Err(e) = JsFuture::from(promise).await {
+            debug!("play refused: {e:?}");
+            set_play_refusal(id, PlayRefusal::Refused);
+        }
+    });
+}
+
+fn snapshot(media: &HtmlMediaElement) -> ElementSnapshot {
+    ElementSnapshot {
+        position_seconds: media.current_time(),
+        duration_seconds: media.duration(),
+        first_reopen_delay: first_reopen_delay(),
     }
 }
 
-/// A media element's source: `url` assigned to the element's `src`, reopened after a failure on
-/// [`MediaRetry`]'s schedule. Without a url (a placeholder, an adopted element) a failure is
-/// final.
-struct Source {
-    id: MediaId,
-    media: HtmlMediaElement,
-    url: Option<String>,
-    events: UnboundedSender<MediaEvent>,
-    render_worker: Worker,
-    /// The engine's last word was play (cleared when the media ends).
-    wants_play: Cell<bool>,
-    /// The engine's last word was pause; before its first word the source is not paused.
-    paused: Cell<bool>,
-    /// The last `play()` was refused.
-    play_refused: Rc<Cell<bool>>,
-    /// `url` is the element's `src`.
-    attached: Cell<bool>,
-    retry: Cell<MediaRetry>,
-    /// Failures counted since the source was created.
-    failures: Cell<u32>,
-    /// The source has played as a live stream; stays set after a detach and after its duration
-    /// turns finite.
-    was_live: Cell<bool>,
-    last_error: Cell<Option<&'static str>>,
-    /// Failed and not playable since: the element's own states are not reported.
-    failed: Cell<bool>,
-    /// A reopen a pause cancelled or a failure while paused: the next play schedules it after
-    /// the rest of the current delay, and the flag stays set until that reopen runs.
-    reopen_on_play: Cell<bool>,
-    /// The last counted failure or reopen (`Date.now()`, ms): the next reopen waits the current
-    /// delay from it.
-    last_attempt_at: Cell<f64>,
-    /// Where a reopened source that is not live resumes.
-    resume_at: Cell<Option<f64>>,
-    /// The position at the last `timeupdate`.
-    last_time: Cell<f64>,
-    /// The scheduled reopen's timeout handle.
-    timeout: Cell<Option<i32>>,
-    /// The last scheduled reopen's callback, kept until the next one or the drop.
-    timer: RefCell<Option<Closure<dyn FnMut()>>>,
-}
-
-impl Source {
-    fn send_state(&self, state: VideoState) {
-        debug!("media {} state -> {state:?}", self.id);
-        let _ = self.events.unbounded_send(MediaEvent::State {
-            id: self.id,
-            state,
-            duration: self.media.duration(),
-        });
-    }
-
-    fn send_retry(&self, next_delay: Option<Duration>) {
-        let retry = self.retry.get();
-        let _ = self.events.unbounded_send(MediaEvent::Retry {
-            id: self.id,
-            status: MediaRetryStatus {
-                attempt: retry.attempts(),
-                failures: self.failures.get(),
-                next_delay,
-                gave_up: retry.gave_up(),
-                last_error: self.last_error.get(),
-            },
-        });
-    }
-
-    /// Attaches `url` to the element.
-    fn open(self: &Rc<Self>) {
-        let Some(url) = &self.url else {
-            return;
-        };
-        self.media.set_src(url);
-        self.attached.set(true);
-    }
-
-    /// Detaches the attached source.
-    fn detach(&self) {
-        if self.attached.replace(false) {
-            let _ = self.media.remove_attribute("src");
-            self.media.load();
-        }
-    }
-
-    fn is_live(&self) -> bool {
-        self.attached.get() && self.media.duration() == f64::INFINITY
-    }
-
-    /// The source is or was a live stream: it has no position to resume.
-    fn live_stream(&self) -> bool {
-        self.was_live.get() || self.is_live()
-    }
-
-    /// A failure of the attached source: schedules its reopen, or gives up. Failures while a
-    /// reopen is scheduled (by a failure or by a play) or waits for play, or after giving up, are
-    /// ignored; one while paused counts, reports `VsError` and leaves the reopen to the next play.
-    fn fail(self: &Rc<Self>, error: &'static str) {
-        if self.url.is_none() {
-            self.send_state(VideoState::VsError);
-            return;
-        }
-        let mut retry = self.retry.get();
-        if retry.gave_up() || self.timeout.get().is_some() || self.reopen_on_play.get() {
-            return;
-        }
-        if self.is_live() {
-            self.was_live.set(true);
-        }
-        self.failed.set(true);
-        self.last_error.set(Some(error));
-        self.failures.set(self.failures.get() + 1);
-        self.last_attempt_at.set(js_sys::Date::now());
-        let step = retry.fail(first_reopen_delay());
-        self.retry.set(retry);
-        match step {
-            RetryStep::Reopen { attempt, .. } if self.paused.get() => {
-                debug!(
-                    "media {}: {error} while paused; reopen {attempt} on play",
-                    self.id
-                );
-                self.reopen_on_play.set(true);
-                // detached: the failed source raises no further events
-                self.suspend();
-                self.send_state(VideoState::VsError);
-                self.send_retry(None);
-            }
-            RetryStep::Reopen { attempt, delay } => {
-                debug!("media {}: {error}; reopen {attempt} in {delay:?}", self.id);
-                self.send_state(VideoState::VsLoading);
-                self.schedule_reopen(delay);
-                self.send_retry(Some(delay));
-            }
-            RetryStep::GiveUp => {
-                warn!("media {}: {error}; giving up", self.id);
-                // stops the buffered media before the screen is cleared
-                self.media.pause().report();
-                self.detach();
-                self.send_state(VideoState::VsError);
-                self.send_retry(None);
-                self.clear_screen();
-            }
-        }
-    }
-
-    /// The source can play: cancels a scheduled reopen and seeks to the pending position. The
-    /// count restarts only once it has played long enough ([`Self::played`]).
-    fn opened(&self) {
-        if self.is_live() {
-            self.was_live.set(true);
-        }
-        self.failed.set(false);
-        self.reopen_on_play.set(false);
-        if self.cancel_reopen() {
-            self.send_retry(None);
-        }
-        if let Some(time) = self.resume_at.take() {
-            self.media.set_current_time(time);
-        }
-    }
-
-    /// The position moved: a step forward of under a second counts as playback.
-    fn played(&self) {
-        if self.is_live() {
-            self.was_live.set(true);
-        }
-        let time = self.media.current_time();
-        let step = time - self.last_time.replace(time);
-        // a seek or a loop is no playback
-        if self.failed.get() || !(0.0..1.0).contains(&step) {
-            return;
-        }
-        let mut retry = self.retry.get();
-        let restarted = retry.played(Duration::from_secs_f64(step));
-        self.retry.set(retry);
-        if restarted {
-            self.send_retry(None);
-        }
-    }
-
-    fn schedule_reopen(self: &Rc<Self>, delay: Duration) {
-        let source = Rc::downgrade(self);
-        let callback = Closure::<dyn FnMut()>::new(move || {
-            if let Some(source) = source.upgrade() {
-                source.timeout.set(None);
-                source.send_retry(None);
-                source.reopen();
-            }
-        });
-        let Some(window) = web_sys::window() else {
-            return;
-        };
-        match window.set_timeout_with_callback_and_timeout_and_arguments_0(
-            callback.as_ref().unchecked_ref(),
-            delay.as_millis().min(i32::MAX as u128) as i32,
-        ) {
-            Ok(handle) => {
-                self.timeout.set(Some(handle));
-                *self.timer.borrow_mut() = Some(callback);
-            }
-            Err(e) => warn!("media {}: cannot schedule a reopen: {e:?}", self.id),
-        }
-    }
-
-    /// Cancels the scheduled reopen; true if one was scheduled.
-    fn cancel_reopen(&self) -> bool {
-        let Some(handle) = self.timeout.take() else {
-            return false;
-        };
-        if let Some(window) = web_sys::window() {
-            window.clear_timeout_with_handle(handle);
-        }
-        true
-    }
-
-    fn reopen(self: &Rc<Self>) {
-        debug!("media {}: reopening", self.id);
-        self.reopen_on_play.set(false);
-        self.last_attempt_at.set(js_sys::Date::now());
-        self.suspend();
-        self.open();
-    }
-
-    /// Detaches the source; one that is not live resumes where it was on the next open.
-    fn suspend(&self) {
-        let time = self.media.current_time();
-        // a pending position (a seek while failed) is not yet played past
-        if !self.live_stream() && time > 0.0 && self.resume_at.get().is_none() {
-            self.resume_at.set(Some(time));
-        }
-        self.detach();
-    }
-
-    /// Shows the cleared frame in place of the last one.
-    fn clear_screen(&self) {
-        let message = js_sys::Object::new();
-        Reflect::set(&message, &"type".into(), &"VIDEO_CLEAR".into()).unwrap();
-        Reflect::set(&message, &"id".into(), &JsValue::from(self.id)).unwrap();
-        self.render_worker.post_message(&message).report();
-    }
-
-    /// Cancels the scheduled reopen and detaches the source.
-    fn shutdown(&self) {
-        self.cancel_reopen();
-        self.timer.borrow_mut().take();
-        self.detach();
-    }
+/// The observation a DOM event of `media` is, if any.
+fn observation(event: &str, media: &HtmlMediaElement) -> Option<ElementObservation> {
+    Some(match event {
+        "canplay" => ElementObservation::BecamePlayable,
+        "playing" => ElementObservation::StartedPlaying,
+        "waiting" => ElementObservation::Stalled,
+        "seeking" => ElementObservation::StartedSeeking,
+        // the end is observed by `ended`
+        "pause" if media.ended() => return None,
+        "pause" => ElementObservation::Paused,
+        "timeupdate" => ElementObservation::PositionAdvanced,
+        "ended" => ElementObservation::ReachedEnd,
+        "error" => ElementObservation::Failed(MediaFailureKind::from_media_error_code(
+            media.error().map(|error| error.code()),
+        )),
+        _ => return None,
+    })
 }
 
 struct HostMedia {
     media: HtmlMediaElement,
     video: HtmlVideoElement,
-    source: Rc<Source>,
-    _closures: Vec<Closure<dyn FnMut()>>,
+    url: Option<String>,
+    state: MediaSourceState,
+    /// The view last sent to the engine.
+    reported: MediaSourceView,
+    play_refusal: PlayRefusal,
+    events: UnboundedSender<MediaEvent>,
+    /// The element's event listeners, removed on drop.
+    listeners: Vec<(&'static str, Closure<dyn FnMut()>)>,
     frame_closure: RcClosure,
     frame_callback_handle: Rc<RefCell<Option<u32>>>,
 }
@@ -400,7 +316,7 @@ impl HostMedia {
         has_video: bool,
         events: UnboundedSender<MediaEvent>,
         render_worker: Worker,
-    ) -> Self {
+    ) -> (Self, MediaSourceCmd) {
         let document = web_sys::window().unwrap().document().unwrap();
         let video = document
             .create_element("video")
@@ -410,6 +326,7 @@ impl HostMedia {
         Self::from_element(id, video, url, has_video, events, render_worker)
     }
 
+    /// The element `video` as media `id`, and the command that opens it.
     fn from_element(
         id: MediaId,
         video: HtmlVideoElement,
@@ -417,102 +334,55 @@ impl HostMedia {
         has_video: bool,
         events: UnboundedSender<MediaEvent>,
         render_worker: Worker,
-    ) -> Self {
+    ) -> (Self, MediaSourceCmd) {
         let media = video.clone().dyn_into::<HtmlMediaElement>().unwrap();
-        let source = Rc::new(Source {
-            id,
-            media: media.clone(),
-            url,
-            events: events.clone(),
-            render_worker: render_worker.clone(),
-            wants_play: Cell::new(false),
-            paused: Cell::new(false),
-            play_refused: Rc::new(Cell::new(false)),
-            attached: Cell::new(false),
-            retry: Cell::new(MediaRetry::default()),
-            failures: Cell::new(0),
-            was_live: Cell::new(false),
-            last_error: Cell::new(None),
-            failed: Cell::new(false),
-            reopen_on_play: Cell::new(false),
-            last_attempt_at: Cell::new(0.0),
-            resume_at: Cell::new(None),
-            last_time: Cell::new(0.0),
-            timeout: Cell::new(None),
-            timer: RefCell::new(None),
-        });
+        let reopen_policy = match url {
+            Some(_) => MediaReopenPolicy::Reopen,
+            None => MediaReopenPolicy::Never,
+        };
+        let (state, cmd) = init(id, reopen_policy);
 
-        let mut closures = Vec::default();
-        let mut register = |handler: Box<dyn FnMut()>| -> Function {
-            let closure = Closure::wrap(handler);
-            let function = closure.as_ref().unchecked_ref::<Function>().clone();
-            closures.push(closure);
-            function
-        };
-        let state = |new_state: VideoState| -> Box<dyn FnMut()> {
-            let source = source.clone();
-            Box::new(move || {
-                // a reopen's own states stay hidden until it can play; the failed source's are
-                // ignored while its reopen is scheduled
-                if source.failed.get()
-                    && (new_state != VideoState::VsReady || source.timeout.get().is_some())
-                {
-                    return;
+        let mut listeners = Vec::default();
+        for event in [
+            "canplay",
+            "playing",
+            "waiting",
+            "seeking",
+            "pause",
+            "timeupdate",
+            "ended",
+            "error",
+        ] {
+            let element = media.clone();
+            let closure = Closure::<dyn FnMut()>::new(move || {
+                if event == "playing" {
+                    set_play_refusal(id, PlayRefusal::NotRefused);
                 }
-                // the end's own handler reports it
-                if new_state == VideoState::VsPaused && source.media.ended() {
-                    return;
+                if let Some(observation) = observation(event, &element) {
+                    dispatch(
+                        id,
+                        MediaSourceMsg::ElementObserved {
+                            observation,
+                            snapshot: snapshot(&element),
+                        },
+                    );
                 }
-                if new_state == VideoState::VsReady {
-                    source.opened();
-                }
-                source.send_state(new_state);
-                match new_state {
-                    // a `play()` issued before the source could play takes effect now
-                    VideoState::VsReady if source.wants_play.get() && source.media.paused() => {
-                        try_play(&source.media, &source.play_refused);
-                    }
-                    VideoState::VsPlaying => source.play_refused.set(false),
-                    _ => (),
-                }
-            })
-        };
-        media.set_oncanplay(Some(&register(state(VideoState::VsReady))));
-        media.set_onwaiting(Some(&register(state(VideoState::VsBuffering))));
-        media.set_onseeking(Some(&register(state(VideoState::VsSeeking))));
-        media.set_onplaying(Some(&register(state(VideoState::VsPlaying))));
-        media.set_onpause(Some(&register(state(VideoState::VsPaused))));
-        media.set_ontimeupdate(Some(&register({
-            let source = source.clone();
-            Box::new(move || source.played())
-        })));
-        media.set_onerror(Some(&register({
-            let source = source.clone();
-            Box::new(move || source.fail(media_error_label(&source.media)))
-        })));
-        media.set_onended(Some(&register({
-            let source = source.clone();
-            Box::new(move || {
-                if source.failed.get() {
-                    return;
-                }
-                // the end of a source that was ever live counts as a failure
-                if source.live_stream() {
-                    source.fail("live stream ended");
-                    return;
-                }
-                source.send_state(VideoState::VsPaused);
-                // cleared so a gesture does not restart the ended element
-                source.wants_play.set(false);
-                source.clear_screen();
-            })
-        })));
+            });
+            media
+                .add_event_listener_with_callback(event, closure.as_ref().unchecked_ref())
+                .report();
+            listeners.push((event, closure));
+        }
 
         let mut slf = Self {
             media,
             video: video.clone(),
-            source,
-            _closures: closures,
+            url,
+            reported: view(&state),
+            state,
+            play_refusal: PlayRefusal::NotRefused,
+            events: events.clone(),
+            listeners,
             frame_closure: Default::default(),
             frame_callback_handle: Default::default(),
         };
@@ -522,56 +392,31 @@ impl HostMedia {
         if has_video {
             slf.video_init(id, video, events, render_worker);
         }
-        slf.source.open();
 
-        slf
+        (slf, cmd)
     }
 
-    fn command(&self, command: AVCommand) {
-        match command {
-            AVCommand::Play => {
-                self.source.wants_play.set(true);
-                self.source.paused.set(false);
-                if self.source.reopen_on_play.get() && self.source.timeout.get().is_none() {
-                    // reports VsLoading and reopens once the current delay has passed since the
-                    // last failure or reopen
-                    let elapsed = js_sys::Date::now() - self.source.last_attempt_at.get();
-                    let delay =
-                        reopen_delay(first_reopen_delay(), self.source.retry.get().attempts())
-                            .saturating_sub(Duration::from_secs_f64(elapsed.max(0.0) / 1000.0));
-                    self.source.send_state(VideoState::VsLoading);
-                    self.source.schedule_reopen(delay);
-                    self.source.send_retry(Some(delay));
-                } else if !self.source.reopen_on_play.get() {
-                    try_play(&self.media, &self.source.play_refused);
-                }
-            }
-            AVCommand::Pause => {
-                self.source.wants_play.set(false);
-                self.source.paused.set(true);
-                self.media.pause().report();
-                // a pause cancels a scheduled or loading reopen, keeping the count; the next play
-                // reopens after the current delay
-                self.source.cancel_reopen();
-                if self.source.failed.get() && !self.source.retry.get().gave_up() {
-                    self.source.suspend();
-                    self.source.reopen_on_play.set(true);
-                    self.source.send_state(VideoState::VsError);
-                    self.source.send_retry(None);
-                }
-            }
-            AVCommand::Repeat(looping) => self.media.set_loop(looping),
-            // a failed source is detached or reopening: the seek applies once it can play
-            AVCommand::Seek(time) if self.source.failed.get() => {
-                if !self.source.live_stream() {
-                    self.source.resume_at.set(Some(time));
-                }
-            }
-            AVCommand::Seek(time) => self.media.set_current_time(time),
-            AVCommand::Volume(volume) => self.media.set_volume(volume.clamp(0.0, 1.0) as f64),
-            // dispose arrives as `HostCommand::Drop`
-            AVCommand::Dispose => (),
+    /// Sends the parts of the view that changed since the last report.
+    fn report(&mut self) {
+        let id = self.state.media_id();
+        let current = view(&self.state);
+        let same_duration = current.duration_seconds == self.reported.duration_seconds
+            || (current.duration_seconds.is_nan() && self.reported.duration_seconds.is_nan());
+        if current.video_state != self.reported.video_state || !same_duration {
+            debug!("media {id} state -> {:?}", current.video_state);
+            let _ = self.events.unbounded_send(MediaEvent::State {
+                id,
+                state: current.video_state,
+                duration: current.duration_seconds,
+            });
         }
+        if current.retry_status != self.reported.retry_status {
+            let _ = self.events.unbounded_send(MediaEvent::Retry {
+                id,
+                status: current.retry_status,
+            });
+        }
+        self.reported = current;
     }
 
     fn video_init(
@@ -664,16 +509,15 @@ impl Drop for HostMedia {
                 .unwrap();
         }
         self.frame_closure.take();
-        self.source.shutdown();
-        self.media.set_oncanplay(None);
-        self.media.set_onerror(None);
-        self.media.set_onwaiting(None);
-        self.media.set_onseeking(None);
-        self.media.set_onplaying(None);
-        self.media.set_onpause(None);
-        self.media.set_onended(None);
-        self.media.set_ontimeupdate(None);
+        for (event, listener) in &self.listeners {
+            self.media
+                .remove_event_listener_with_callback(event, listener.as_ref().unchecked_ref())
+                .report();
+        }
         let _ = self.media.pause();
+        if self.url.is_some() {
+            detach(&self.media);
+        }
         self.media.remove();
     }
 }

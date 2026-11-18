@@ -5,6 +5,7 @@ mod ffmpeg;
 pub mod html;
 pub mod plugin;
 mod retry;
+mod source_state;
 
 pub use av::*;
 #[cfg(all(not(target_arch = "wasm32"), feature = "ffmpeg"))]
@@ -12,3 +13,4 @@ pub use ffmpeg::*;
 #[cfg(all(target_arch = "wasm32", feature = "html"))]
 pub use html::*;
 pub use retry::*;
+pub use source_state::*;
