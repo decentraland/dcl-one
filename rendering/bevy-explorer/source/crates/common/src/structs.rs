@@ -2230,6 +2230,62 @@ impl CameraSmoothing {
 #[derive(Event)]
 pub struct PointAtMarkerVisibilityChanged;
 
+/// The local player's language as a BCP-47 tag: the chosen one, else the system's. `None` where
+/// no player is present (headless).
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
+pub struct PlayerLanguage(pub Option<String>);
+
+/// Who may DM a user.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DmPrivacy {
+    #[default]
+    All,
+    OnlyFriends,
+}
+
+impl From<PrivateMessagePrivacySetting> for DmPrivacy {
+    fn from(value: PrivateMessagePrivacySetting) -> Self {
+        match value {
+            PrivateMessagePrivacySetting::All => DmPrivacy::All,
+            PrivateMessagePrivacySetting::OnlyFriends => DmPrivacy::OnlyFriends,
+        }
+    }
+}
+
+impl From<DmPrivacy> for PrivateMessagePrivacySetting {
+    fn from(value: DmPrivacy) -> Self {
+        match value {
+            DmPrivacy::All => PrivateMessagePrivacySetting::All,
+            DmPrivacy::OnlyFriends => PrivateMessagePrivacySetting::OnlyFriends,
+        }
+    }
+}
+
+/// Another user's DM privacy, as returned by `GetPrivateMessagesSettings`.
+#[derive(Clone, Debug)]
+pub struct DmPrivacyOf {
+    pub address: String,
+    pub privacy: DmPrivacy,
+}
+
+/// A scene's javascript, as loaded from its content
+#[derive(Asset, Debug, Clone, TypePath)]
+pub struct SceneJsFile(pub Arc<String>);
+
+/// A world password the HUD must ask for (see `ipfs::world_access`); answered with the password,
+/// or `None` when the player gives up. Dropped unanswered when the realm change no longer needs it.
+pub struct WorldPasswordPrompt {
+    pub world: String,
+    /// Why the previous answer was refused; `None` on the first ask
+    pub error: Option<String>,
+    pub answer: tokio::sync::oneshot::Sender<Option<String>>,
+}
+
+/// Where world password prompts go, installed by whatever shows them (the system bridge). Without
+/// it a password-protected world can't be entered.
+#[derive(Resource, Clone)]
+pub struct WorldPasswordPrompter(pub tokio::sync::mpsc::UnboundedSender<WorldPasswordPrompt>);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2657,59 +2713,3 @@ mod tests {
         }
     }
 }
-
-/// The local player's language as a BCP-47 tag: the chosen one, else the system's. `None` where
-/// no player is present (headless).
-#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
-pub struct PlayerLanguage(pub Option<String>);
-
-/// Who may DM a user.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum DmPrivacy {
-    #[default]
-    All,
-    OnlyFriends,
-}
-
-impl From<PrivateMessagePrivacySetting> for DmPrivacy {
-    fn from(value: PrivateMessagePrivacySetting) -> Self {
-        match value {
-            PrivateMessagePrivacySetting::All => DmPrivacy::All,
-            PrivateMessagePrivacySetting::OnlyFriends => DmPrivacy::OnlyFriends,
-        }
-    }
-}
-
-impl From<DmPrivacy> for PrivateMessagePrivacySetting {
-    fn from(value: DmPrivacy) -> Self {
-        match value {
-            DmPrivacy::All => PrivateMessagePrivacySetting::All,
-            DmPrivacy::OnlyFriends => PrivateMessagePrivacySetting::OnlyFriends,
-        }
-    }
-}
-
-/// Another user's DM privacy, as returned by `GetPrivateMessagesSettings`.
-#[derive(Clone, Debug)]
-pub struct DmPrivacyOf {
-    pub address: String,
-    pub privacy: DmPrivacy,
-}
-
-/// A scene's javascript, as loaded from its content
-#[derive(Asset, Debug, Clone, TypePath)]
-pub struct SceneJsFile(pub Arc<String>);
-
-/// A world password the HUD must ask for (see `ipfs::world_access`); answered with the password,
-/// or `None` when the player gives up. Dropped unanswered when the realm change no longer needs it.
-pub struct WorldPasswordPrompt {
-    pub world: String,
-    /// Why the previous answer was refused; `None` on the first ask
-    pub error: Option<String>,
-    pub answer: tokio::sync::oneshot::Sender<Option<String>>,
-}
-
-/// Where world password prompts go, installed by whatever shows them (the system bridge). Without
-/// it a password-protected world can't be entered.
-#[derive(Resource, Clone)]
-pub struct WorldPasswordPrompter(pub tokio::sync::mpsc::UnboundedSender<WorldPasswordPrompt>);

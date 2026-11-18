@@ -438,8 +438,11 @@ struct SettingsTest;
 #[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 struct Level(u32);
 
+/// The bytes and settings of one load.
+type Load = (Vec<u8>, Level);
+
 /// Records the bytes and settings of every load; bytes other than `good` fail.
-struct RecordingLoader(Arc<std::sync::Mutex<Vec<(Vec<u8>, Level)>>>);
+struct RecordingLoader(Arc<std::sync::Mutex<Vec<Load>>>);
 
 impl AssetLoader for RecordingLoader {
     type Asset = SettingsTest;
