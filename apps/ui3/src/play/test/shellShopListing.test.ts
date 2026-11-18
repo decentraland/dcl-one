@@ -6,9 +6,13 @@ import { fetchBuyListing } from '../shell/shop/purchase'
 const OFF = (): boolean => false
 
 /** A creator's sale of item 7 signed in MANA (1 MANA): the unified feed's `legacy` source, which the listings feed lacks. */
-const LEGACY_PRIMARY = { ...PRIMARY_WEARABLE, source: 'legacy' as const, tradeId: 'trade-legacy-7', manaWei: '1000000000000000000', priceCredits: 3 }
+const LEGACY_PRIMARY = { ...PRIMARY_WEARABLE, source: 'legacy' as const, tradeId: 'trade-legacy-7', manaWei: '1000000000000000000', priceCredits: 3, listingCount: 1 }
+/** The same item's USD-pegged sale on a creator discount: the row the server's per-item pick (native first) gives the card. */
+const DISCOUNTED_NATIVE = { ...PRIMARY_WEARABLE, tradeId: 'trade-native-7', priceCredits: 10, compareAtCredits: 12, listingCount: 2 }
 
-function shop(unified: (url: URL) => unknown) {
+type Answer = (url: URL) => unknown
+
+function shop(unified: Answer) {
   const transport = catalogTransport('ok', {
     '/v3/catalog/unified': unified,
     // The listings feed has no MANA-priced trade: a read of it would find nothing to buy.
@@ -17,31 +21,38 @@ function shop(unified: (url: URL) => unknown) {
   return { transport, client: createShopClient({ base: 'http://shop.test', mode: 'canonical', transport, signer: null }) }
 }
 
-const asked = (transport: ReturnType<typeof catalogTransport>) => transport.calls.map((c) => new URL(c.url, 'http://shop.test'))
+/** The card's read (one grouped row per item) answers `grouped`; an ungrouped read answers its listings, newest first. */
+const feed = (grouped: unknown[], listings: unknown[] = grouped): Answer => (url) => {
+  const rows = url.searchParams.get('groupBy') === 'item' ? grouped : listings
+  return { data: rows, total: rows.length }
+}
+
+const unifiedReads = (transport: ReturnType<typeof catalogTransport>) =>
+  transport.calls.map((c) => new URL(c.url, 'http://shop.test')).filter((u) => u.pathname.endsWith('/v3/catalog/unified'))
 
 describe("the in-world shell's BUY listing", () => {
-  it('finds a creator\'s MANA-priced trade the grid shows, reading the unified feed as the web Shop\'s item page does', async () => {
-    const { transport, client } = shop((url) => ({ data: url.searchParams.get('listingType') === 'primary' ? [LEGACY_PRIMARY] : [], total: 1 }))
-    const listing = await fetchBuyListing(COLLECTION, ITEM_ID, client, OFF)
-    expect(listing).toMatchObject({ tradeId: 'trade-legacy-7', itemId: ITEM_ID, contractAddress: COLLECTION })
-    const urls = asked(transport)
-    expect(urls.some((u) => u.pathname.endsWith('/v3/catalog/shop'))).toBe(false)
-    const unified = urls.filter((u) => u.pathname.endsWith('/v3/catalog/unified'))
-    expect(unified.length).toBeGreaterThan(0)
-    for (const u of unified) {
-      expect(u.searchParams.get('listingType')).toBe('primary')
-      expect(u.searchParams.get('contractAddress')).toBe(COLLECTION)
-      expect(u.searchParams.get('itemId')).toBe(ITEM_ID)
-    }
+  it("is the listing the card shows: the item's grouped row, not the newest of its listings", async () => {
+    const { transport, client } = shop(feed([DISCOUNTED_NATIVE], [LEGACY_PRIMARY, DISCOUNTED_NATIVE]))
+    expect(await fetchBuyListing(COLLECTION, ITEM_ID, client, OFF)).toMatchObject({ tradeId: 'trade-native-7' })
+    const reads = unifiedReads(transport)
+    expect(reads).toHaveLength(1)
+    expect(Object.fromEntries(reads[0].searchParams)).toMatchObject({ groupBy: 'item', listingType: 'primary', first: '1', contractAddress: COLLECTION, itemId: ITEM_ID })
+    expect(transport.calls.some((c) => new URL(c.url, 'http://shop.test').pathname.endsWith('/v3/catalog/shop'))).toBe(false)
   })
 
-  it('still finds a creator\'s USD-pegged trade', async () => {
-    const { client } = shop(() => ({ data: [PRIMARY_WEARABLE], total: 1 }))
-    expect(await fetchBuyListing(COLLECTION, ITEM_ID, client, OFF)).toMatchObject({ tradeId: 'trade-primary-7' })
+  it("finds a creator's MANA-priced (legacy) trade when that is the card's row", async () => {
+    const { client } = shop(feed([LEGACY_PRIMARY]))
+    expect(await fetchBuyListing(COLLECTION, ITEM_ID, client, OFF)).toMatchObject({ tradeId: 'trade-legacy-7', itemId: ITEM_ID, contractAddress: COLLECTION })
   })
 
   it('never takes a resale for the item, even when a primary read returns one', async () => {
-    const { client } = shop(() => ({ data: [RESALE_WEARABLE], total: 1 }))
+    const { client } = shop(feed([RESALE_WEARABLE]))
     expect(await fetchBuyListing(COLLECTION, ITEM_ID, client, OFF)).toBeNull()
+  })
+
+  it('rejects when the feed cannot answer (no current MANA/USD rate), rather than saying the item is not on sale', async () => {
+    const transport = catalogTransport('outage')
+    const client = createShopClient({ base: 'http://shop.test', mode: 'canonical', transport, signer: null })
+    await expect(fetchBuyListing(COLLECTION, ITEM_ID, client, OFF)).rejects.toBeTruthy()
   })
 })

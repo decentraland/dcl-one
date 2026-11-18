@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { catalogClient, catalogTransport, COLLECTION, ITEM_ID, RESALE_WEARABLE } from "../../discovery/fixtures";
+import { catalogClient, catalogTransport, COLLECTION, ITEM_ID, PRIMARY_WEARABLE, RESALE_WEARABLE, STORE_EMOTE } from "../../discovery/fixtures";
 import { createShopClient } from "@shop/api/shop";
-import { fetchTradeForItem } from "./api";
+import { fetchStoreMintState, fetchTradeForItem } from "./api";
 
 describe("an item line's live trade", () => {
   it("is the creator's primary sale only: an item whose only listing is a resale has none, and no trade is read", async () => {
@@ -22,5 +22,23 @@ describe("an item line's live trade", () => {
   it("never takes a row naming a token, even if a primary read returned one", async () => {
     const client = catalogClient("ok", { "/v3/catalog/unified": { data: [RESALE_WEARABLE], total: 1 } });
     expect(await fetchTradeForItem(COLLECTION, ITEM_ID, client)).toBeNull();
+  });
+});
+
+describe("a store mint's live state", () => {
+  /** The same item's creator trade in MANA, listed after the mint was created: newest first, it comes before the mint. */
+  const LEGACY_TRADE = { ...PRIMARY_WEARABLE, source: "legacy" as const, tradeId: "trade-legacy-mint-item", itemId: STORE_EMOTE.itemId, manaWei: "1000000000000000000" };
+
+  it("is found among the item's legacy rows, even when its creator's MANA trade comes first", async () => {
+    const transport = catalogTransport("ok", {
+      "/v3/catalog/unified": (url: URL) => ({ data: url.searchParams.get("source") === "legacy" ? [LEGACY_TRADE, STORE_EMOTE] : [LEGACY_TRADE], total: 2 }),
+    });
+    const client = createShopClient({ base: "http://shop.test", mode: "canonical", transport, signer: null });
+    expect(await fetchStoreMintState(COLLECTION, STORE_EMOTE.itemId!, client)).toEqual({ priceWei: STORE_EMOTE.manaWei, available: STORE_EMOTE.available });
+  });
+
+  it("is null when the item has no store mint any more", async () => {
+    const client = catalogClient("ok", { "/v3/catalog/unified": { data: [LEGACY_TRADE], total: 1 } });
+    expect(await fetchStoreMintState(COLLECTION, STORE_EMOTE.itemId!, client)).toBeNull();
   });
 });

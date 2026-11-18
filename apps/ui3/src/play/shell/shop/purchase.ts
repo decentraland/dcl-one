@@ -27,7 +27,8 @@ import type { RailContext } from '../../../shop/checkout/purchase/rail'
 import { createSpendGuard } from '@shop/checkout/purchase/spend-guard'
 import { fetchUserPurchases, getUsdBalance, type UsdBalance } from '@shop/credits/credits'
 import type { OfferSource } from '../../../shop/detail/offers'
-import { fetchPrimaryListingForItem } from '@shop/detail/api'
+import { fetchShopItems } from '@shop/discovery/api'
+import { isResale } from '@shop/market/access-rule'
 import { ethereumChainId, settlementChainId } from '../../../shop/checkout/chain/config'
 import { rpcReader } from '../../../shop/land/evm'
 import { readBannedNames } from '../../../shop/names/reads'
@@ -244,12 +245,15 @@ function defaultStorage(): Storage | null {
 }
 
 /**
- * The listing BUY settles an item through: its creator's sale, read from the unified feed as the web Shop's item page
- * reads it (detail/api fetchPrimaryListingForItem, ItemDetail), never a resale. The in-world grid lists that feed, so a
- * creator's MANA-priced (legacy) trade it shows is one the shell can buy; the listings feed alone holds none of those.
+ * The listing BUY settles an item through, read as the in-world grid reads its card: the unified feed grouped by item,
+ * whose one row is the server's pick (a native trade first, then the lowest price, a trade before a store mint). So BUY
+ * settles the listing the card shows, a creator's MANA-priced (legacy) trade included, which the listings feed alone
+ * lacks. Never a resale. A failed read (the feed needs a current MANA/USD rate) rejects: it is not "not on sale".
  */
-export function fetchBuyListing(contract: string, itemId: string, client: ShopClient, creatorSales: () => boolean): Promise<CatalogItem | null> {
-  return fetchPrimaryListingForItem(contract, itemId, { client, creatorSales })
+export async function fetchBuyListing(contract: string, itemId: string, client: ShopClient, creatorSales: () => boolean): Promise<CatalogItem | null> {
+  const { items } = await fetchShopItems({ contractAddress: contract, itemId, listingType: 'primary', first: 1 }, { client, creatorSales })
+  const row = items[0]
+  return row && !isResale(row) ? row : null
 }
 
 const LIVE: ShellShopServices = {

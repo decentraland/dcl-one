@@ -107,10 +107,11 @@ export async function resolveLiveCoupon(
   }
 }
 
-/** A mint's LIVE price and remaining supply, or null when it is no longer a store mint. */
+/** A mint's LIVE price and remaining supply, or null when it is no longer a store mint. A store mint is a `legacy`
+ * row, and an item's legacy primaries are few: its creator's MANA trade can come first, so the mint is found among them. */
 export async function fetchStoreMintState(contractAddress: string, itemId: string, client: ShopClient): Promise<{ priceWei: string; available: number } | null> {
-  const body = await client.catalog.unified<{ data?: UnifiedListing[] }>({ contractAddress, itemId, first: 1 });
-  const row = body?.data?.[0];
+  const body = await client.catalog.unified<{ data?: UnifiedListing[] }>({ contractAddress, itemId, source: "legacy", first: 20 });
+  const row = body?.data?.find((r) => r.acquisition === "store");
   if (!row || row.acquisition !== "store" || !row.manaWei) return null;
   return { priceWei: row.manaWei, available: typeof row.available === "number" ? row.available : 0 };
 }
