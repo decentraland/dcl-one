@@ -281,7 +281,10 @@ fn update_profile_for_realm(
 
     if let Some(mut t) = task.take() {
         match t.complete() {
-            Some(Ok(Some(profile))) => current_profile.adopt_server_profile(profile),
+            Some(Ok(Some(mut profile))) => {
+                mark_account(&mut profile, wallet.is_guest_account());
+                current_profile.adopt_server_profile(profile)
+            }
             Some(Ok(None)) | Some(Err(_)) => {
                 // keep existing profile
             }
@@ -396,6 +399,13 @@ async fn login_profile(
             new_account_profile(root_address, ipfs, pick).await,
         )),
     }
+}
+
+/// Records in the profile whether the account is a guest's, whatever an earlier deploy said: a
+/// guest account has not connected web3. The profile carries it to every client, scenes and the
+/// HUD included, and the next deploy saves it.
+fn mark_account(profile: &mut UserProfile, guest_account: bool) {
+    profile.content.has_connected_web3 = Some(!guest_account);
 }
 
 fn new_profile(address: Address, ipfs: &IpfsIo) -> UserProfile {
@@ -901,9 +911,7 @@ fn process_login_bridge(
                     LoginProfile::Deployed(profile) => (profile, true),
                     LoginProfile::New(profile) => (profile, false),
                 };
-                // The account decides, whatever an earlier deploy recorded: a guest account has
-                // not connected web3, so the HUD and scenes read it as a guest.
-                profile.content.has_connected_web3 = Some(!guest_account);
+                mark_account(&mut profile, guest_account);
                 current_profile.profile = Some(profile);
                 current_profile.is_deployed = deployed;
                 // held, the host shows its welcome page, which deploys the new profile

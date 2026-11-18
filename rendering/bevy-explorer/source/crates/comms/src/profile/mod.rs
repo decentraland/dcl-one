@@ -641,9 +641,7 @@ pub fn setup_primary_profile(
                     SceneEntityId::PLAYER,
                     &PbPlayerIdentityData {
                         address: profile.content.eth_address.clone(),
-                        // a guest account is a guest even when an older deploy says it connected web3
-                        is_guest: wallet.is_guest_account()
-                            || !(profile.content.has_connected_web3.unwrap_or(false)),
+                        is_guest: !(profile.content.has_connected_web3.unwrap_or(false)),
                     },
                 );
             }
@@ -1835,6 +1833,7 @@ fn process_profile(
     mut processing: Local<Option<ProcessProfileState>>,
     mut deployed: EventReader<ProfileDeployedEvent>,
     config: Res<AppConfig>,
+    wallet: Res<Wallet>,
 ) {
     if let Some(SystemApi::SetAvatar(set_avatar, sender)) = e
         .read()
@@ -1846,12 +1845,11 @@ fn process_profile(
             current_profile.deploy_held = false;
         }
 
-        // an edit that will deploy keeps the profile from before it until the deploy settles
-        if current_profile
-            .profile
-            .as_ref()
-            .is_some_and(|profile| profile.content.has_connected_web3.unwrap_or_default())
-        {
+        // A signed-in account deploys its edits, a guest account's included; a throwaway guest
+        // (no sign-in) keeps them local. An edit that will deploy keeps the profile from before
+        // it until the deploy settles.
+        let deploys = !wallet.is_guest();
+        if deploys && current_profile.profile.is_some() {
             current_profile.snapshot_for_revert();
         }
 
@@ -1936,7 +1934,6 @@ fn process_profile(
         debug!("{:#?}", profile.content);
         let address = profile.content.eth_address.as_h160();
         let version = profile.version;
-        let deploys = profile.content.has_connected_web3.unwrap_or_default();
 
         // The deploy this edit replaces hears its own result if that has already come in, else
         // "cancelled": the new deploy carries its change too. Every result queued now settled
@@ -2619,13 +2616,35 @@ mod tests {
     /// `process_profile` alone: edits go in as `SetAvatar`s, deploys settle as events.
     struct Saves(App);
 
+    /// A signed-in account (a sign-in chain), a guest account's when `guest_account`.
+    fn signed_in(guest_account: bool) -> Wallet {
+        let mut wallet = Wallet::default();
+        let link = common::structs::ChainLink {
+            ty: "SIGNER".to_owned(),
+            payload: format!("{:#x}", Address::repeat_byte(7)),
+            signature: String::new(),
+        };
+        wallet.finalize(
+            Address::repeat_byte(7),
+            alloy_signer_local::PrivateKeySigner::random(),
+            vec![link],
+            guest_account,
+        );
+        wallet
+    }
+
     impl Saves {
         fn new(profile: UserProfile) -> Self {
+            Self::with_wallet(profile, signed_in(false))
+        }
+
+        fn with_wallet(profile: UserProfile, wallet: Wallet) -> Self {
             let mut app = App::new();
             app.add_event::<SystemApi>()
                 .add_event::<ProfileDeployedEvent>()
                 .insert_resource(AppConfig::default())
                 .insert_resource(deployed(profile))
+                .insert_resource(wallet)
                 .add_systems(Update, process_profile);
             Self(app)
         }
@@ -2656,6 +2675,29 @@ mod tests {
         fn current(&mut self) -> Mut<'_, CurrentUserProfile> {
             self.0.world_mut().resource_mut::<CurrentUserProfile>()
         }
+    }
+
+    #[test]
+    fn a_guest_accounts_edit_deploys() {
+        let mut guest = own(5, "guest");
+        guest.content.has_connected_web3 = Some(false);
+        let mut saves = Saves::with_wallet(guest, signed_in(true));
+        let mut edit = saves.edit();
+        saves.0.update();
+        assert_eq!(edit.poll_once(), Ok(None));
+        saves.settle(6, true);
+        saves.0.update();
+        assert_eq!(edit.poll_once(), Ok(Some(Ok(6))));
+    }
+
+    #[test]
+    fn a_throwaway_guests_edit_stays_local() {
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest();
+        let mut saves = Saves::with_wallet(own(5, "guest"), wallet);
+        let mut edit = saves.edit();
+        saves.0.update();
+        assert_eq!(edit.poll_once(), Ok(Some(Ok(u32::MAX))));
     }
 
     #[test]
