@@ -69,6 +69,10 @@ export class StateManager {
   private pendingTransaction: Transaction | null = null;
   private transactionQueue: Transaction[] = [];
   private processing = false;
+  // Resolved when `processing` goes back to false, so an explicit transaction can wait its turn.
+  private idleWaiters: Array<() => void> = [];
+  // Tail of the explicit-transaction chain: each executeTransaction runs after the previous one.
+  private explicitTail: Promise<unknown> = Promise.resolve();
   // Engine changes are ignored only while an explicit transaction (undo/redo/import) mutates
   // the engine itself: those are persisted by their caller and must not be re-captured. They
   // are NOT ignored while the queue is being persisted — persisting awaits disk writes, and
@@ -225,7 +229,20 @@ export class StateManager {
     } catch (error) {
       console.error('Error processing transaction queue:', error);
     } finally {
-      this.processing = false;
+      this.setIdle();
+    }
+  }
+
+  private setIdle(): void {
+    this.processing = false;
+    const waiters = this.idleWaiters;
+    this.idleWaiters = [];
+    for (const resolve of waiters) resolve();
+  }
+
+  private async waitUntilIdle(): Promise<void> {
+    while (this.processing) {
+      await new Promise<void>(resolve => this.idleWaiters.push(resolve));
     }
   }
 
@@ -264,25 +281,31 @@ export class StateManager {
     }
   }
 
-  async executeTransaction<T>(
-    source: Transaction['source'],
-    operations: () => Promise<T>,
-  ): Promise<T> {
-    if (this.processing) {
-      throw new Error('Cannot execute transaction while processing');
-    }
+  /**
+   * Runs `operations` (an undo/redo or a file import/removal) with engine capture suspended.
+   *
+   * Explicit transactions run one at a time and wait for the queue to finish persisting: two
+   * catalog drops in quick succession each import their files here, and the second must wait
+   * for the first (and for the scene write the first drop started) instead of failing.
+   */
+  executeTransaction<T>(source: Transaction['source'], operations: () => Promise<T>): Promise<T> {
+    const run = async (): Promise<T> => {
+      await this.waitUntilIdle();
+      this.processing = true;
+      this.captureSuspended = true;
 
-    const wasProcessing = this.processing;
-    this.processing = true;
-    this.captureSuspended = true;
+      try {
+        return await operations();
+      } finally {
+        this.captureSuspended = false;
+        this.setIdle();
+        await this.processTransactionQueue();
+      }
+    };
 
-    try {
-      return await operations();
-    } finally {
-      this.captureSuspended = false;
-      this.processing = wasProcessing;
-      await this.processTransactionQueue();
-    }
+    const result = this.explicitTail.then(run, run);
+    this.explicitTail = result.catch(() => undefined);
+    return result;
   }
 
   getComposite(): CompositeDefinition | null {
