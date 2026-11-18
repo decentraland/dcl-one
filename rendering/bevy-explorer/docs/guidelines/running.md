@@ -191,9 +191,10 @@ World and Scene Loading show where the player is and which load stage is active.
 Deployment shows the Sites build serving `/play` and the commit the page's `catalyst` service reports, which is
 this deployment's APIs only behind its own gateway; it reads once each time it is expanded. The Explorer's own build
 is Performance's client version.
-Performance, Render, Profiler and Memory and limits expose the engine's measurements and
-budgets: the sampled frame-time snapshots and the frame-time breakdown, Bevy's per-pass render
-timings, the scope profiler and the memory tiers ([profiling](profiling.md)).
+Performance and Memory and limits expose the engine's measurements and budgets: the sampled
+frame-time snapshots, the frame-time breakdown and the memory tiers; a `performance-profiler`
+build adds Render and Profiler, Bevy's per-pass render timings and the scope profiler
+([profiling](profiling.md)).
 The room, voice, rendering, media and avatar sections appear with the plugins that
 supply them. When several readings need the same scene, peer or sample, the panel
 shows the cause once. Expand the reading count to see which fields it affects.

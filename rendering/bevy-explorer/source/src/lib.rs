@@ -778,10 +778,10 @@ impl DecentralandApp {
         // (the first render frame warns, under `gpu_time`, about any node they do not)
         app.add_plugins(GpuTimePlugin);
 
-        // what the explorer measures about itself: the sampler, the frame-time breakdown, the scope
-        // profiler; with the `performance-profiler` feature, Bevy's per-pass render timings (not in a `tracy`
-        // build, whose GPU context they would double) and its system information on Windows and
-        // Linux
+        // what the explorer measures about itself: the sampler, the frame-time breakdown and their
+        // debug panel section; with the `performance-profiler` feature, the scope profiler, Bevy's
+        // per-pass render timings (not in a `tracy` build, whose GPU context they would double)
+        // and its system information on Windows and Linux
         app.add_plugins(perf::PerformanceMonitoringPlugin);
         #[cfg(all(
             feature = "performance-profiler",

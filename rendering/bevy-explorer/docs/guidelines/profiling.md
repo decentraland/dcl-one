@@ -2,8 +2,8 @@
 
 What the explorer measures about itself, where to read it and how to go deeper. The code is
 `source/src/perf/` (the sampler, the frame-time breakdown, the scope profiler, the issue log, the
-benchmark summary), the shared types `source/crates/common/src/perf.rs`, the debug panel sections
-`source/src/debug_panel.rs`. The benchmark (`benchmark.md`) is the A/B measurement of pull
+benchmark summary, the Performance, Render and Profiler debug panel sections), the shared types
+`source/crates/common/src/perf.rs`, the Memory and limits section `source/src/debug_panel.rs`. The benchmark (`benchmark.md`) is the A/B measurement of pull
 requests; this page is the live measurement of one running client.
 
 ## Readings in the debug panel
@@ -27,10 +27,8 @@ numbers.
   frames over the hiccup threshold with their time sum and their excess over the threshold.
   `inProgressSample.sampledSeconds` counts up to the next one. The GPU readings of the first four
   sampled frames after a resume are dropped too: a frame's GPU time is read back frames later,
-  so those can still be the pause's. The snapshot also carries the
-  engine memory and its peak during the sample, the scenes' JavaScript heaps summed, the nearby
-  player count, the entity count and, with the profiler on, the top 30 scopes of the sample (its
-  sampled frames only; the Profiler section's table is untouched).
+  so those can still be the pause's. The snapshot also carries the scenes' JavaScript heaps
+  summed and the entity count.
 - **HUD main thread (web).** The React HUD's cost on the page's main thread over the page's
   last window, one second, or several summed when the engine's frame spanned them: the HUD
   root's React commits (count and their time) and, where the browser has
@@ -75,12 +73,12 @@ numbers.
   blocked until the render worker takes the frame) and the render world's CPU time; a CPU-bound
   frame is `render_thread_cpu` when the render world's CPU time is the longer, by the margin, of
   it and the main world's schedules. Null until a GPU time exists.
-- **System.** On Linux and Windows, Bevy's system information: system and process CPU usage, the OS, the CPU,
-  its cores and the RAM.
+- **System.** On Linux and Windows in a `performance-profiler` build, Bevy's system information:
+  system and process CPU usage, the OS, the CPU, its cores and the RAM.
 
 ### Render (`/render_state`)
 
-On native, Bevy's render diagnostics: every render pass's CPU time, and on Vulkan and DX12 its
+In a native `performance-profiler` build without `tracy`, Bevy's render diagnostics: every render pass's CPU time, and on Vulkan and DX12 its
 GPU time too (Metal and WebGPU record CPU time only for pass spans), plus the adapter's name,
 backend and driver, and the pipeline statistics (vertex and fragment shader invocations) where the
 adapter supports them. The GPU frame time of the whole frame is the explorer's own measurement
@@ -88,22 +86,23 @@ adapter supports them. The GPU frame time of the whole frame is the explorer's o
 
 ### Profiler (`/profile_top [count] [--sort <metric>]`, `/profile_enable on|off|reset`)
 
-The in-app scope profiler. A `performance-profiler` build carries Bevy's tracing spans (Bevy's
-`trace` feature): one
+The in-app scope profiler, in a `performance-profiler` build only: this section, its commands
+and its `tracing` layer. The feature carries Bevy's tracing spans (Bevy's `trace` feature): one
 per system run (named after the system, e.g. `scene_runner::run_scene_loop`), per schedule run
-and per render-graph node, plus the explorer's own in-process spans (`av-thread`), which every
-build has. Scene JavaScript runs in its own process on native (`dcl_deno_ipc`), so its
-`js startup` and `js update` spans are not recorded here. A `tracing` layer in every build times
-the spans there are, but records nothing until the table is enabled: **Enable profiler** in the
+and per render-graph node, plus the explorer's own in-process spans (`av-thread`). Scene
+JavaScript runs in its own process on native (`dcl_deno_ipc`), so its `js startup` and
+`js update` spans are not recorded here. The layer times the spans, but records nothing until
+the table is enabled: **Enable profiler** in the
 section, `/profile_enable on` in the console, or the benchmark autopilot for its measured phase.
 Enabled, it costs two clock reads per span and an update of the thread's own map per exit (the
 fold merges the threads' maps once a frame, so no exit waits on another thread), tens of
 microseconds a frame on native. A span that lives across frames is one call, recorded when it
 ends.
 
-The cargo feature is off in `default` and in the web build, so release builds leave it out: the
-spans pass through every tracing layer on each enter and exit, and the counting allocator adds
-atomics to every allocation, even while the table records nothing. In native release builds on
+The cargo feature is off in `default` and in the web build, so release builds leave it out, with
+the Render and Profiler sections: the spans pass through every tracing layer on each enter and
+exit, and the counting allocator adds atomics to every allocation, even while the table records
+nothing. In native release builds on
 an Apple M4 Max (macOS, benchmark autopilot, frame limiter off, five interleaved rounds), process
 CPU per frame rose from 39.75 ms without the feature to 40.57 ms with it and recording off
 (+2.1%, every run above every run without it) and 43.65 ms with recording on (+9.8%); at a 60 FPS
@@ -111,9 +110,7 @@ cap frame time did not change. With the feature on, macOS rendering is broken wh
 table records, as it is in a `tracy` build. Turn it on with
 `--features performance-profiler` natively (`tracy` turns it on too), `python3
 apps/bevy-explorer/build-web.py --performance-profiler` or
-`WASM_FEATURES=livekit,social,performance-profiler just wasm` on the web. `/profile_top` reports
-`profilerBuild`; a build without the feature says so in its empty table, and its rows are the
-explorer's own spans and Bevy's unconditional ones (`present_frames`, `entity_sync`). On the web
+`WASM_FEATURES=livekit,social,performance-profiler just wasm` on the web. On the web
 Bevy's `tracing-wasm` layer, which writes the engine's log to the browser console, also marks and
 measures every span on the page's performance timeline, entries nothing clears: in a web build
 with the feature, the page's memory and main-thread time grow over the session, and the table's
@@ -122,18 +119,17 @@ logged inside a system carries its spans (`schedule{name=Update}:system{name=...
 
 A row is one scope since the last reset: its kind (`ecs_system`, `schedule`, `render_graph_node`,
 `bevy_internal`, `explorer_span`), call count, self time, inclusive time, longest call and the
-smoothed self time per frame (an exponential moving average over 60 frames). A snapshot's top
-scopes are kept apart from this table, so neither a snapshot nor the sampler's pauses touch it.
-Self time excludes
+smoothed self time per frame (an exponential moving average over 60 frames). The sampler's
+pauses do not touch the table. Self time excludes
 the child scopes entered on the same thread: a schedule run on the main thread whose systems run
 on the task pool keeps their time, since the systems are not its children on that thread. Sort by
 `self-time` (default), `inclusive-time`, `max-single-call` or `call-count`.
 
-The section also shows the allocations per frame, count and bytes, from the counting allocator a
-`performance-profiler` build wraps its allocator in (`perf/allocation_count_per_frame`,
+The section also shows the allocations per frame, count and bytes, from the counting allocator
+the feature wraps the allocator in (`perf/allocation_count_per_frame`,
 `perf/allocated_bytes_per_frame`; a reallocation counts once, with the bytes it grew by): the
 first place to look for per-frame churn. The wrapper costs two shared atomic adds per
-allocation on every thread, which a build without the feature does not pay.
+allocation on every thread.
 
 ### Memory and limits (`/debug_memory`)
 
@@ -173,7 +169,8 @@ Bevy's `trace_chrome` and set `TRACE_CHROME=<file>`; open it in `chrome://tracin
 The autopilot's CSV holds every frame's CPU and GPU time (`benchmark.md`, *Files*). When the
 measured phase ends the engine logs two `perf_summary` lines: the CPU and GPU p99 and hiccup
 counts over the whole phase with the threshold in effect, the peak engine memory, the JavaScript
-heap sum, the entity count and the sample count; then the top 30 scopes by self time over every
-frame of the phase, focused or not (the profiler's table, reset when the phase starts). The report
+heap sum, the entity count and the sample count; then, in a `performance-profiler` build, the
+top 30 scopes by self time over every frame of the phase, focused or not (the profiler's table,
+reset when the phase starts; the line is empty without the feature). The report
 shows them as *Hiccups per run*, *Peak memory* and *Top scopes* (`benchmark.md`, *Reading the
 results*).

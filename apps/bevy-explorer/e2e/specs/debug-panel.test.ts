@@ -31,6 +31,10 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     await explorer.hud.click(button(title))
   }
   const before = await explorer.json<{ overrideFps: number | null }>('/performance_state')
+  // the Profiler section and its commands exist only in a `performance-profiler` build, which
+  // release builds (CI's among them) leave out
+  const profilerBuild = (await explorer.json<{ title: string }[]>('/debug_panel'))
+    .some((section) => section.title === 'Profiler')
   const developmentBuild = await explorer.json<boolean>('/debug_panel --dev-build')
   const sidebarSettings = button('Sidebar settings')
   const nativeHud = explorer.console.kind === 'native'
@@ -79,31 +83,25 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     await explorer.hud.click(button('Use configured FPS'))
     await explorer.hud.wait(button('Limit to 30 FPS'))
     assert.equal((await explorer.json<{ overrideFps: number | null }>('/performance_state')).overrideFps, null)
-    await expand('Profiler')
-    await explorer.hud.click(button('Enable profiler'))
-    await until(() => explorer.hud.get(panel), (read) => read.text.includes('Disable profiler'), {
-      timeoutMs: 10_000, what: 'the profiler to report itself enabled'
-    })
-    const enabled = await until(() => explorer.json<ProfileTop>('/profile_top 5'), (reading) => reading.enabled,
-      { timeoutMs: 10_000, what: 'the profiler to report itself enabled' })
-    // Bevy's spans exist only in a `performance-profiler` build, which release builds (CI's
-    // among them) leave out
-    if (enabled.profilerBuild) {
+    if (profilerBuild) {
+      await expand('Profiler')
+      await explorer.hud.click(button('Enable profiler'))
+      await until(() => explorer.hud.get(panel), (read) => read.text.includes('Disable profiler'), {
+        timeoutMs: 10_000, what: 'the profiler to report itself enabled'
+      })
       const top = await until(() => explorer.json<ProfileTop>('/profile_top 5'),
-        (reading) => reading.scopeSummaries.length === 5,
+        (reading) => reading.enabled && reading.scopeSummaries.length === 5,
         { timeoutMs: 10_000, what: 'five profiled scopes' })
       for (const row of top.scopeSummaries) {
         assert.ok(['ecs_system', 'schedule', 'render_graph_node', 'bevy_internal', 'explorer_span'].includes(row.scopeKind), row.scopeKind)
         assert.ok(row.callCount > 0 && row.selfTimeMs >= 0 && row.inclusiveTimeMs >= row.selfTimeMs, JSON.stringify(row))
       }
-    } else {
-      assert.match(String(enabled.unavailable.allocations), /performance-profiler/)
+      await explorer.hud.click(button('Disable profiler'))
+      await explorer.hud.wait(button('Enable profiler'))
+      const off = await explorer.json<ProfileTop>('/profile_top')
+      assert.equal(off.enabled, false)
+      assert.match(String(off.unavailable.scopeSummary), /disabled/)
     }
-    await explorer.hud.click(button('Disable profiler'))
-    await explorer.hud.wait(button('Enable profiler'))
-    const off = await explorer.json<ProfileTop>('/profile_top')
-    assert.equal(off.enabled, false)
-    assert.match(String(off.unavailable.scopeSummary), /disabled/)
     // walk, click the world and use Sidebar settings with the panel open
     const start = await explorer.position()
     await explorer.key('KeyW', 'down')
@@ -130,7 +128,7 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
       emote?.source === 'triggeredEmote' && !emote.finished && /(?:^|:)wave$/i.test(emote.urn),
       { timeoutMs: 20_000, intervalMs: 100, what: 'the debug action to play the wave emote' })
   } finally {
-    await explorer.run('/profile_enable off')
+    if (profilerBuild) await explorer.run('/profile_enable off')
     await explorer.run(before.overrideFps == null ? '/session_graphics fps' : '/session_graphics fps ' + before.overrideFps)
     // The panel's own Close button, not Escape: with the filter field focused the HUD leaves Cancel
     // to the field, and a panel left open would stay over every later scenario. The panel comes
@@ -146,8 +144,6 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
 
 type ProfileTop = {
   enabled: boolean
-  /** The build has Bevy's spans and the allocation counter (the `performance-profiler` cargo feature). */
-  profilerBuild: boolean
   scopeSummaries: { scopeName: string; scopeKind: string; callCount: number; selfTimeMs: number; inclusiveTimeMs: number }[]
   unavailable: Record<string, string>
 }
@@ -195,7 +191,6 @@ scenario('the performance sampler samples in world and scales the hiccup thresho
     assert.ok(capped.cpuFrameTimes!.sampleCount > 0)
     assert.ok(capped.cpuFrameTimes!.p99Ms > 0)
   } finally {
-    await explorer.run('/profile_enable off')
     await explorer.run(before.overrideFps == null ? '/session_graphics fps' : '/session_graphics fps ' + before.overrideFps)
   }
 }, { session: { signIn: 'guest' } })

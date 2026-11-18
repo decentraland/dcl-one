@@ -2,10 +2,10 @@
 //! ends.
 //!
 //! While `Measuring`, every frame's `Time<Real>` delta and every new GPU frame time are kept, so
-//! the lines summarise the whole measured phase, not one sample. The profiler records for the
-//! phase, its table reset at the start, so the top scopes are the table's rows at the end: every
-//! frame of the phase, focused or not, where a snapshot's rows are its sampled frames only. The
-//! lines are logged in `Last` of the frame the phase turns `Ending`.
+//! the lines summarise the whole measured phase, not one sample. In a `performance-profiler`
+//! build the profiler records for the phase, its table reset at the start, so the top scopes are
+//! the table's rows at the end: every frame of the phase, focused or not. The lines are logged in
+//! `Last` of the frame the phase turns `Ending`.
 //!
 //! Line 1, `key=value` pairs in this order:
 //! `cpu_p99_ms cpu_frames_over_hiccup_threshold_count cpu_hiccup_threshold_ms gpu_p99_ms
@@ -13,24 +13,24 @@
 //! sample_count snapshot_duration_seconds`; a GPU value is `n/a` without timestamp queries, the
 //! peak `n/a` without a memory reading during the phase, the heap `n/a` without a reporting
 //! scene, the entity count `n/a` without its diagnostic.
-//! Line 2: `top_scopes=<name>:<self ms>,...`, up to 30, highest self time first; a name has its
-//! commas, colons and equals signs replaced by spaces.
+//! Line 2: `top_scopes=<name>:<self ms>,...`, up to 30, highest self time first, empty without
+//! the `performance-profiler` feature; a name has its commas, colons and equals signs replaced by
+//! spaces.
 
 use bevy::prelude::*;
 use common::{
     autopilot::AutopilotPhase,
-    perf::{
-        hiccup_threshold_ms, FrameTimeSampleSummary, ProfiledScopeSummary,
-        SNAPSHOT_TOP_PROFILED_SCOPE_COUNT,
-    },
+    perf::{hiccup_threshold_ms, FrameTimeSampleSummary, ProfiledScopeSummary},
 };
 
-use super::{
-    frame_inputs::FrameInputs,
-    profiled_scopes::{ProfiledScopeSortMetric, ProfiledScopesTable},
-};
+use super::frame_inputs::FrameInputs;
+#[cfg(feature = "performance-profiler")]
+use super::profiled_scopes::{ProfiledScopeSortMetric, ProfiledScopesTable};
 
 pub const PERF_SUMMARY_LOG_TARGET: &str = "perf_summary";
+
+/// Top scopes line 2 carries.
+const PERF_SUMMARY_TOP_SCOPE_COUNT: usize = 30;
 
 #[derive(Default)]
 pub struct BenchmarkMeasuredPhaseAccumulator {
@@ -48,7 +48,7 @@ pub struct BenchmarkMeasuredPhaseAccumulator {
 pub fn accumulate_benchmark_measured_phase_system(
     phase: Option<Res<AutopilotPhase>>,
     inputs: Res<FrameInputs>,
-    mut profiled_scopes: ResMut<ProfiledScopesTable>,
+    #[cfg(feature = "performance-profiler")] mut profiled_scopes: ResMut<ProfiledScopesTable>,
     mut run: Local<BenchmarkMeasuredPhaseAccumulator>,
 ) {
     let Some(phase) = phase else {
@@ -59,9 +59,12 @@ pub fn accumulate_benchmark_measured_phase_system(
         AutopilotPhase::Measuring => {
             if !run.measured_phase_started {
                 run.measured_phase_started = true;
-                profiled_scopes.set_recording_enabled(true);
-                // the table covers the phase only
-                profiled_scopes.reset();
+                #[cfg(feature = "performance-profiler")]
+                {
+                    profiled_scopes.set_recording_enabled(true);
+                    // the table covers the phase only
+                    profiled_scopes.reset();
+                }
                 // the frame the phase changed spans the arrival
                 return;
             }
@@ -84,11 +87,17 @@ pub fn accumulate_benchmark_measured_phase_system(
             }
             run.perf_summary_logged = true;
             let run = &mut *run;
-            let top_scopes = profiled_scopes.top_scope_summaries(
-                SNAPSHOT_TOP_PROFILED_SCOPE_COUNT,
-                ProfiledScopeSortMetric::SelfTime,
-            );
-            profiled_scopes.set_recording_enabled(false);
+            #[cfg(feature = "performance-profiler")]
+            let top_scopes = {
+                let top_scopes = profiled_scopes.top_scope_summaries(
+                    PERF_SUMMARY_TOP_SCOPE_COUNT,
+                    ProfiledScopeSortMetric::SelfTime,
+                );
+                profiled_scopes.set_recording_enabled(false);
+                top_scopes
+            };
+            #[cfg(not(feature = "performance-profiler"))]
+            let top_scopes: Vec<ProfiledScopeSummary> = Vec::new();
             if exit_code != 0 {
                 return;
             }
@@ -148,7 +157,7 @@ pub fn perf_summary_log_lines(
         "top_scopes={}",
         top_scopes
             .iter()
-            .take(SNAPSHOT_TOP_PROFILED_SCOPE_COUNT)
+            .take(PERF_SUMMARY_TOP_SCOPE_COUNT)
             .map(|row| {
                 format!(
                     "{}:{:.2}",
@@ -238,7 +247,7 @@ mod log_order_tests {
     use wallet::Wallet;
 
     use super::*;
-    use crate::{autopilot::RunControlPlugin, perf::PerformanceMonitoringPlugin};
+    use crate::{autopilot::RunControlPlugin, perf::PerformanceMeasurementPlugin};
 
     thread_local! {
         /// The target and message of every event logged on this thread while capturing.
@@ -290,6 +299,7 @@ mod log_order_tests {
     #[test]
     fn the_summary_lines_precede_the_exit_marker() {
         // this app records into the process-wide profiler state
+        #[cfg(feature = "performance-profiler")]
         let _shared = crate::perf::profiled_scopes::SHARED_PROFILER_TEST_LOCK
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
@@ -300,7 +310,7 @@ mod log_order_tests {
             DiagnosticsPlugin,
             crate::world_state::ArrivalsPlugin,
             RunControlPlugin,
-            PerformanceMonitoringPlugin,
+            PerformanceMeasurementPlugin,
         ))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1)))
         .insert_resource(Autopilot { measure: true })

@@ -127,16 +127,6 @@ pub fn hiccup_threshold_ms(target_fps: Option<f32>) -> f32 {
     }
 }
 
-/// The client's memory at one moment: resident size on native, the wasm allocator's live bytes
-/// on the web.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-pub struct ClientMemoryDataPoint {
-    pub used_bytes: u64,
-    /// Highest `used_bytes` seen during the sample.
-    pub used_peak_bytes_in_sample: u64,
-    pub effective_cap_mib: u64,
-}
-
 /// Every running scene's JavaScript heap, summed, at one moment. Native: the Deno runtime's heap
 /// statistics. Web: `performance.measureUserAgentSpecificMemory()` per scene worker where the
 /// browser has it.
@@ -207,9 +197,6 @@ impl HudMainThreadCostDataPoint {
     }
 }
 
-/// Top scopes a snapshot carries.
-pub const SNAPSHOT_TOP_PROFILED_SCOPE_COUNT: usize = 30;
-
 /// One completed sample: its frame times summarised and the state of the client when it ended.
 #[derive(Resource, Event, Clone, Debug, PartialEq, Serialize)]
 pub struct PerformanceSnapshot {
@@ -219,16 +206,10 @@ pub struct PerformanceSnapshot {
     pub cpu_frame_times: FrameTimeSampleSummary,
     /// `None` when the renderer has no timestamp queries.
     pub gpu_frame_times: Option<FrameTimeSampleSummary>,
-    /// `None` when the platform gives no memory sample.
-    pub client_memory: Option<ClientMemoryDataPoint>,
     /// `None` when no heap was reported.
     pub js_heap: Option<JsHeapDataPoint>,
-    pub nearby_player_count: u32,
     pub entity_count: u32,
     pub target_fps: Option<f32>,
-    /// Top [`SNAPSHOT_TOP_PROFILED_SCOPE_COUNT`] scopes by self time over the sample; `None` without a
-    /// recorded profiler table.
-    pub top_profiled_scope_summaries: Option<Vec<ProfiledScopeSummary>>,
     /// The web HUD's main-thread cost windows that arrived while sampling, summed; `None` on
     /// native or when none arrived.
     pub hud_main_thread_cost: Option<HudMainThreadCostDataPoint>,

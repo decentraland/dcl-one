@@ -23,8 +23,7 @@ use perf_output::{
 };
 use system_ui::crash_report;
 use webgpu_build::{
-    perf::profiled_scopes, serialized_app_config, DecentralandApp, DecentralandAppConfig,
-    DecentralandArguments,
+    serialized_app_config, DecentralandApp, DecentralandAppConfig, DecentralandArguments,
 };
 
 // mimalloc; with the profiler, wrapped to count every allocation and its bytes
@@ -69,13 +68,14 @@ fn main() {
                     .unwrap(),
             );
             Box::leak(guard.into());
-            Some(Box::new(
-                bevy::log::tracing_subscriber::fmt::layer()
-                    .with_writer(non_blocking)
-                    .with_ansi(false)
-                    .and_then(PerfLogLayer::new(&BENCHMARK_LOG))
-                    .and_then(profiled_scopes::profiled_scopes_layer()),
-            ))
+            let layer = bevy::log::tracing_subscriber::fmt::layer()
+                .with_writer(non_blocking)
+                .with_ansi(false)
+                .and_then(PerfLogLayer::new(&BENCHMARK_LOG));
+            #[cfg(feature = "performance-profiler")]
+            let layer =
+                layer.and_then(webgpu_build::perf::profiled_scopes::profiled_scopes_layer());
+            Some(Box::new(layer))
         },
         ..default()
     });

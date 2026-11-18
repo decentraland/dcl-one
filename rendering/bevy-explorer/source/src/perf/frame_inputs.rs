@@ -17,7 +17,6 @@ use common::{
     perf::{HudMainThreadCostDataPoint, JsHeapDataPoint, SamplingPausedReason},
     structs::{AppConfig, CurrentRealm, OutOfWorld, PrimaryUser, SessionGraphics, WorldHold},
 };
-use comms::global_crdt::ForeignPlayer;
 use scene_runner::renderer_context::RendererSceneContext;
 use wallet::Wallet;
 
@@ -37,7 +36,6 @@ pub struct FrameInputs {
     pub js_heap: Option<JsHeapDataPoint>,
     /// The latest entity count; `None` before the first.
     pub entity_count: Option<u32>,
-    pub nearby_player_count: u32,
     /// The effective frame-rate target: the session override, else the configured target;
     /// `None` with vsync on or uncapped.
     pub target_fps: Option<f32>,
@@ -61,7 +59,6 @@ impl FrameInputs {
             memory_reading: None,
             js_heap: None,
             entity_count: None,
-            nearby_player_count: 0,
             target_fps: None,
             session: SessionSignals {
                 signed_in: false,
@@ -102,7 +99,6 @@ pub(crate) fn collect_frame_inputs_system(
     mut last_gpu_frame_time_measured_at: Local<Option<Instant>>,
     memory: Res<MemoryStatus>,
     scenes: Query<&RendererSceneContext>,
-    nearby_players: Query<(), With<ForeignPlayer>>,
     config: Res<AppConfig>,
     session_graphics: Option<Res<SessionGraphics>>,
     wallet: Option<Res<Wallet>>,
@@ -131,7 +127,6 @@ pub(crate) fn collect_frame_inputs_system(
     inputs.memory_reading = memory.reading();
     inputs.js_heap = sum_scene_js_heaps(scenes.iter());
     inputs.entity_count = latest_entity_count(&diagnostics);
-    inputs.nearby_player_count = nearby_players.iter().count() as u32;
     inputs.target_fps = effective_target_fps(&config, session_graphics.as_deref());
     inputs.session = SessionSignals {
         signed_in: wallet

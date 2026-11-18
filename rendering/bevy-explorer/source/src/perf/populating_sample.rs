@@ -10,16 +10,12 @@
 
 use bevy::prelude::*;
 use common::perf::{
-    hiccup_threshold_ms, ClientMemoryDataPoint, FrameTimeSampleSummary, HudMainThreadCostDataPoint,
-    PerformanceSnapshot, SamplingPausedReason, SamplingStatus, SAMPLE_DURATION_SECONDS,
-    SNAPSHOT_TOP_PROFILED_SCOPE_COUNT,
+    hiccup_threshold_ms, FrameTimeSampleSummary, HudMainThreadCostDataPoint, PerformanceSnapshot,
+    SamplingPausedReason, SamplingStatus, SAMPLE_DURATION_SECONDS,
 };
 use perf_output::gpu::RING as GPU_FRAME_TIME_RING;
 
-use super::{
-    frame_inputs::{FrameInputs, SessionSignals},
-    profiled_scopes::{ProfiledScopeSortMetric, ProfiledScopesTable},
-};
+use super::frame_inputs::{FrameInputs, SessionSignals};
 
 /// Sampled frames after a resume whose GPU readings are left out: a frame's GPU time is read
 /// back up to [`GPU_FRAME_TIME_RING`] frames later, so a reading in these frames can belong to
@@ -79,8 +75,8 @@ impl PerformancePopulatingSample {
     }
 
     /// Advances by one frame: sets the status from the session signals, counts the frame when
-    /// sampled, and returns the snapshot when the sample is complete, without its top scopes,
-    /// having started the next sample.
+    /// sampled, and returns the snapshot when the sample is complete, having started the next
+    /// sample.
     pub fn advance(&mut self, inputs: &FrameInputs) -> Option<PerformanceSnapshot> {
         let next = sampling_status(inputs.session);
         let resumed = next.is_sampling() && !self.status.is_sampling();
@@ -126,18 +122,9 @@ impl PerformancePopulatingSample {
             snapshot_duration_seconds: self.sampled_seconds,
             cpu_frame_times,
             gpu_frame_times,
-            client_memory: inputs.memory_reading.map(|reading| ClientMemoryDataPoint {
-                used_bytes: reading.used_bytes,
-                used_peak_bytes_in_sample: self
-                    .used_peak_bytes
-                    .map_or(reading.used_bytes, |peak| peak.max(reading.used_bytes)),
-                effective_cap_mib: reading.cap_mib,
-            }),
             js_heap: inputs.js_heap,
-            nearby_player_count: inputs.nearby_player_count,
             entity_count: inputs.entity_count.unwrap_or(0),
             target_fps: inputs.target_fps,
-            top_profiled_scope_summaries: None,
             hud_main_thread_cost: self.hud_main_thread_cost_sum,
             taken_at_real_seconds: inputs.elapsed_real_seconds,
         };
@@ -177,24 +164,17 @@ pub fn sampling_status(signals: SessionSignals) -> SamplingStatus {
     }
 }
 
-/// Advances the sample with the frame's inputs; a completed sample's snapshot takes the
-/// profiler's sample rows, is inserted as the resource and sent as an event.
+/// Advances the sample with the frame's inputs; a completed sample's snapshot is inserted as the
+/// resource and sent as an event.
 pub(crate) fn advance_populating_sample_system(
     inputs: Res<FrameInputs>,
     mut sample: ResMut<PerformancePopulatingSample>,
-    mut profiled_scopes: ResMut<ProfiledScopesTable>,
     mut snapshots: EventWriter<PerformanceSnapshot>,
     mut commands: Commands,
 ) {
-    let Some(mut snapshot) = sample.advance(&inputs) else {
+    let Some(snapshot) = sample.advance(&inputs) else {
         return;
     };
-    snapshot.top_profiled_scope_summaries = profiled_scopes.recording_enabled().then(|| {
-        profiled_scopes.take_sample_top_scope_summaries(
-            SNAPSHOT_TOP_PROFILED_SCOPE_COUNT,
-            ProfiledScopeSortMetric::SelfTime,
-        )
-    });
     snapshots.write(snapshot.clone());
     commands.insert_resource(snapshot);
 }
@@ -292,7 +272,6 @@ mod tests {
             snapshot.gpu_frame_times.unwrap().sample_count,
             sampled_frames - GPU_READINGS_SKIPPED_AFTER_RESUME
         );
-        assert!(snapshot.top_profiled_scope_summaries.is_none());
         // the next sample starts empty
         assert_eq!(sample.sampled_seconds(), 0.0);
         assert!(sample.advance(&frame(in_world(), delta, None)).is_none());

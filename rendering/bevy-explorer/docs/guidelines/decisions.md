@@ -608,9 +608,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the frame also counts the render world's CPU time up to the submission, which on a CPU-bound
   frame is most of the sample (measurements (evidence supplied for the task)).
   See [GPU time](benchmark.md#gpu-time).
-- **The profiler's inputs are opt-in.** The
-  `performance-profiler` cargo feature (Bevy's `trace` spans, the counting allocator, Bevy's render
-  and system-information diagnostics) is out of `default` and of the web build's features: those
+- **The profiler is opt-in.** The
+  `performance-profiler` cargo feature (Bevy's `trace` spans, the scope profiler's layer, its
+  console commands and the Render and Profiler debug panel sections, the counting allocator,
+  Bevy's render and system-information diagnostics) is out of `default` and of the web build's features: those
   inputs cost every frame even while nothing records (process CPU per frame +2.1% with recording
   off, +9.8% with it on, native release on an Apple M4 Max), and a macOS build with the feature
   renders incorrectly, recording or not ([profiling](profiling.md)). Tracy covers native
