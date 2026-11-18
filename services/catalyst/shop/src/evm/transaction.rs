@@ -244,6 +244,12 @@ pub enum ReservationDisposition {
     Keep,
 }
 
+/// Whether a failed send leaves the buyer's quota slot consumed. Only an error that proves
+/// nothing went out releases it, and only those are answered with `"not_sent": true`, the
+/// evidence a client takes to sign again: `RelayReverted` (gas estimation reverted, or a relayer
+/// that created no transaction), `RelayerFailed` (a lookup before signing), `HighCongestion`,
+/// `RelayerUnavailable`, and validation. Anything that can follow a send attempt is
+/// `RelayerTimeout`, answered without it.
 pub fn reservation_disposition(err: &ApiError) -> ReservationDisposition {
     if is_post_broadcast(err) {
         return ReservationDisposition::Keep;
@@ -256,10 +262,7 @@ pub fn reservation_disposition(err: &ApiError) -> ReservationDisposition {
 }
 
 fn is_post_broadcast(err: &ApiError) -> bool {
-    matches!(
-        err,
-        ApiError::RelayReverted(_) | ApiError::RelayerTimeout(_)
-    )
+    matches!(err, ApiError::RelayerTimeout(_))
 }
 
 fn is_pre_broadcast(err: &ApiError) -> bool {
@@ -269,6 +272,7 @@ fn is_pre_broadcast(err: &ApiError) -> bool {
             | ApiError::InvalidSalePrice(_)
             | ApiError::InvalidContractAddress(_)
             | ApiError::InvalidTransaction(_)
+            | ApiError::RelayReverted(_)
             | ApiError::HighCongestion(_)
             | ApiError::RelayerFailed(_)
             | ApiError::RelayerUnavailable(_)
@@ -1097,6 +1101,7 @@ mod tests {
             ApiError::InvalidSchema("bad".into()),
             ApiError::InvalidContractAddress("bad".into()),
             ApiError::InvalidSalePrice("bad".into()),
+            ApiError::RelayReverted("gas estimation reverted".into()),
             ApiError::HighCongestion("busy".into()),
             ApiError::RelayerFailed("network".into()),
             ApiError::RelayerUnavailable("off".into()),
@@ -1111,16 +1116,40 @@ mod tests {
 
     #[test]
     fn post_broadcast_errors_keep_the_slot() {
+        let err = ApiError::RelayerTimeout("too slow".into());
+        assert_eq!(
+            reservation_disposition(&err),
+            ReservationDisposition::Keep,
+            "{err:?} is post-broadcast/indeterminate and must keep the slot consumed"
+        );
+    }
+
+    /// The send errors that prove nothing went out release the slot, and are the ones the relay
+    /// answers as `not_sent`: a client may sign again. An error that can follow a send keeps the
+    /// slot and is answered without it.
+    #[test]
+    fn only_a_send_error_that_proves_nothing_went_out_frees_the_slot() {
         for err in [
-            ApiError::RelayReverted("reverted".into()),
-            ApiError::RelayerTimeout("too slow".into()),
+            ApiError::InvalidTransaction("bad".into()),
+            ApiError::InvalidSchema("bad".into()),
+            ApiError::InvalidContractAddress("bad".into()),
+            ApiError::InvalidSalePrice("bad".into()),
+            ApiError::RelayReverted("gas estimation reverted".into()),
+            ApiError::RelayerFailed("eth_getTransactionCount failed".into()),
+            ApiError::HighCongestion("fee above the cap".into()),
+            ApiError::RelayerUnavailable("paused".into()),
         ] {
             assert_eq!(
                 reservation_disposition(&err),
-                ReservationDisposition::Keep,
-                "{err:?} is post-broadcast/indeterminate and must keep the slot consumed"
+                ReservationDisposition::Release,
+                "{err:?}"
             );
         }
+        let after_a_send = ApiError::RelayerTimeout("may have been broadcast".into());
+        assert_eq!(
+            reservation_disposition(&after_a_send),
+            ReservationDisposition::Keep
+        );
     }
 
     #[test]

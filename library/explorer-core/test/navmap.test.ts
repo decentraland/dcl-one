@@ -597,6 +597,20 @@ describe('navigation', () => {
     expect(isRouteTo(store.getSnapshot(), unreadable)).toBe(false)
   })
 
+  it('ends on the spot however the player came at it, and while they stand there', () => {
+    const store = createNavigationStore()
+    store.start(CLUB)
+    const destination = parcelCenter({ x: -20, y: 60 })
+    const r = Math.hypot(destination.x, destination.y)
+    // a point as far from the map's origin as the destination, two parcels to the side of it
+    const angle = Math.atan2(destination.y, destination.x) + 40 / r
+    expect(store.playerMoved({ x: Math.cos(angle) * r, y: Math.sin(angle) * r })).toBe(false)
+    // then onto the spot, still as far from the origin: the old throttle never checked here
+    const onSpot = Math.atan2(destination.y, destination.x) + 3 / r
+    expect(store.playerMoved({ x: Math.cos(onSpot) * r, y: Math.sin(onSpot) * r })).toBe(true)
+    expect(store.getSnapshot()).toBeNull()
+  })
+
   it('ends when stopped', () => {
     const store = createNavigationStore()
     store.start(CLUB)

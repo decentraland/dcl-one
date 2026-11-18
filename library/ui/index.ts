@@ -45,6 +45,15 @@ export * from './components/Tabs/Tabs'
 export * from './components/TabsBar/TabsBar'
 export { textClasses } from './text-styles'
 
+export { Checkbox } from './components/Checkbox/Checkbox'
+export type { CheckboxProps, CheckboxSize, CheckboxVariant } from './components/Checkbox/Checkbox'
+
+export { CheckboxLabel } from './components/CheckboxLabel/CheckboxLabel'
+export type {
+  CheckboxLabelPosition,
+  CheckboxLabelProps
+} from './components/CheckboxLabel/CheckboxLabel'
+
 export { InputExplorerNames } from './components/InputExplorerNames/InputExplorerNames'
 export type { InputExplorerNamesProps } from './components/InputExplorerNames/InputExplorerNames'
 
