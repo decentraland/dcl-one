@@ -35,7 +35,14 @@ default = ["livekit", "ffmpeg", "inspect", "social", "react-hud-cef", "remote"]
 console = []
 dcl-assert = ["common/dcl-assert"]
 gen-tests = []
-tracy = ["bevy/trace_tracy"]
+# The in-app profiler's inputs: Bevy's `trace` spans around every system, schedule and
+# render-graph node (`src/perf/profiled_scopes.rs`), the counting allocator
+# (`src/perf/allocation_counter.rs`) and, on native, Bevy's render and system-information
+# diagnostics. They cost every frame even while the profiler records nothing, so release builds
+# leave the feature out: `--features performance-profiler` natively, `build-web.py
+# --performance-profiler` or `WASM_FEATURES=livekit,social,performance-profiler just wasm` on the web.
+performance-profiler = ["bevy/trace"]
+tracy = ["performance-profiler", "bevy/trace_tracy"]
 inspect = ["dcl_deno/inspect", "system_ui/inspect"]
 hot_reload = ["bevy/file_watcher", "bevy/embedded_watcher", "ipfs/hot_reload"]
 livekit = ["comms/livekit", "system_ui/livekit", "ban_block/livekit"]
@@ -483,6 +490,9 @@ opener = { workspace = true }
 cef_offscreen = { workspace = true, optional = true }
 
 [target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+# Bevy's system-information diagnostics. Not on macOS: there the feature turns on sysinfo's
+# `apple-app-store`, which removes the process memory reading `src/memory.rs` samples.
+bevy = { workspace = true, features = ["sysinfo_plugin"] }
 ash = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
@@ -549,12 +559,12 @@ draco-oxide-core = { git = "https://github.com/decentraland/dcl-one", rev = "ffb
 # patch series there (rendering/bevy-explorer/docs/guidelines/bevy-fork.md). The workspace and the
 # ecosystem crates name these six crates by crates.io version; the other subcrates follow from
 # the same checkout as Bevy's path dependencies.
-bevy = { git = "https://github.com/decentraland/dcl-one", rev = "d948143897e0bdfab1e5d74ca3211a0f1000769c" }
-bevy_ecs = { git = "https://github.com/decentraland/dcl-one", rev = "d948143897e0bdfab1e5d74ca3211a0f1000769c" }
-bevy_math = { git = "https://github.com/decentraland/dcl-one", rev = "d948143897e0bdfab1e5d74ca3211a0f1000769c" }
-bevy_color = { git = "https://github.com/decentraland/dcl-one", rev = "d948143897e0bdfab1e5d74ca3211a0f1000769c" }
-bevy_transform = { git = "https://github.com/decentraland/dcl-one", rev = "d948143897e0bdfab1e5d74ca3211a0f1000769c" }
-bevy_platform = { git = "https://github.com/decentraland/dcl-one", rev = "d948143897e0bdfab1e5d74ca3211a0f1000769c" }
+bevy = { git = "https://github.com/decentraland/dcl-one", rev = "0e9b70d58b880d671bfe831f2cc26caa5bd3a305" }
+bevy_ecs = { git = "https://github.com/decentraland/dcl-one", rev = "0e9b70d58b880d671bfe831f2cc26caa5bd3a305" }
+bevy_math = { git = "https://github.com/decentraland/dcl-one", rev = "0e9b70d58b880d671bfe831f2cc26caa5bd3a305" }
+bevy_color = { git = "https://github.com/decentraland/dcl-one", rev = "0e9b70d58b880d671bfe831f2cc26caa5bd3a305" }
+bevy_transform = { git = "https://github.com/decentraland/dcl-one", rev = "0e9b70d58b880d671bfe831f2cc26caa5bd3a305" }
+bevy_platform = { git = "https://github.com/decentraland/dcl-one", rev = "0e9b70d58b880d671bfe831f2cc26caa5bd3a305" }
 
 ffmpeg-next = { git = "https://github.com/decentraland/dcl-one", rev = "0a8f3cf998262fc4749fb7c86eea93b48f0b8254" }
 parry3d-f64 = { git = "https://github.com/decentraland/dcl-one", rev = "2943100ea8674045ee96e67e3805578aea31fed4" }
@@ -576,9 +586,11 @@ deno_webstorage = { git = "https://github.com/decentraland/dcl-one", rev = "21ad
 # gltf 1.4.1 (latest release, 2024-05) predates gltf-rs/gltf#449 "allow empty accessors"
 # (robtfm, merged 2025-05): dense accessors with no bufferView (zero-filled per spec,
 # blender emits them for morph targets) get NO reader, so MorphTargetImage comes up
-# short and texture upload panics. Pin the #449 merge commit until a release ships it.
-gltf = { git = "https://github.com/gltf-rs/gltf", rev = "12fc1b7c" }
-gltf-json = { git = "https://github.com/gltf-rs/gltf", rev = "12fc1b7c" }
+# short and texture upload panics. Also gltf-rs/gltf#468 (merged 2026-05): parses
+# KHR_animation_pointer channels, which have no target node; without it bevy_gltf panics on
+# them. Pin main until a release ships both.
+gltf = { git = "https://github.com/gltf-rs/gltf", rev = "50d65229" }
+gltf-json = { git = "https://github.com/gltf-rs/gltf", rev = "50d65229" }
 
 winit = { git = "https://github.com/decentraland/dcl-one", rev = "ee0414e120eb9837c1f5892a325791dddb586cc2" }
 wgpu = { git = "https://github.com/decentraland/dcl-one", rev = "189227bff6dafe7e2cdb720ae028a12072dd642f" }
@@ -599,7 +611,7 @@ opener = { git = "https://github.com/decentraland/dcl-one", rev = "9fec930b69093
 # by git. These entries point them at the same commits. With Cargo.lock present Cargo does not
 # read those repositories; a resolve without Cargo.lock reads each branch once.
 [patch."https://github.com/robtfm/bevy"]
-bevy = { git = "https://github.com/decentraland/dcl-one", rev = "d948143897e0bdfab1e5d74ca3211a0f1000769c" }
+bevy = { git = "https://github.com/decentraland/dcl-one", rev = "0e9b70d58b880d671bfe831f2cc26caa5bd3a305" }
 
 [patch."https://github.com/robtfm/bevy_ecss"]
 bevy_ecss = { git = "https://github.com/decentraland/dcl-one", rev = "da37b8fbfd7d2561257254f4ae9370ca33a71acb" }

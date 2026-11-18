@@ -10,6 +10,7 @@ pub mod memory;
 #[cfg(test)]
 mod memory_tests;
 pub mod partition;
+pub mod perf;
 pub mod profile;
 pub mod rpc;
 pub mod sets;

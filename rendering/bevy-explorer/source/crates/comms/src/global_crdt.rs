@@ -531,7 +531,10 @@ impl GlobalCrdtState {
     }
 }
 
+/// Requires `ForeignAvatar`: the avatar crate tells remote avatars apart by that marker, as it
+/// does not depend on comms.
 #[derive(Component, Debug)]
+#[require(common::structs::ForeignAvatar)]
 pub struct ForeignPlayer {
     pub address: Address,
     /// the crdt context (player-presence view) this player entity belongs to; the same
@@ -968,7 +971,6 @@ pub fn process_transport_updates(
                                         profile_version: 0,
                                         audio_sender: audio_sender.clone(),
                                     },
-                                    common::structs::ForeignAvatar,
                                     ForeignAudioSource {
                                         audio_available_receiver: audio_receiver,
                                         audio_receiver: None,

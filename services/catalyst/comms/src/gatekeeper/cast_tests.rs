@@ -2086,6 +2086,7 @@ async fn the_scene_adapter_adds_a_joining_admin_to_the_presenters() {
     .await;
     let metadata = json!({
         "signer": "dcl:explorer",
+        "realmName": "main",
         "sceneId": scene.id,
         "parcel": scene.parcel,
         "realm": { "serverName": "main", "hostname": "peer.example", "protocol": "v3" },

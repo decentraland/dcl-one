@@ -394,6 +394,127 @@ async fn terminal_skips_do_not_replay_after_policy_or_season_changes() {
     db.drop().await;
 }
 
+/// A credits trial: the photo owner is one of its buyers, the season and flags are open, and the
+/// wallet is enrolled and subscribed, so outside a trial this photo completes the goal.
+fn trial_state(pool: sqlx::PgPool) -> SharedState {
+    let settings = Settings::parse(RawSettings {
+        trial_mode: true,
+        writes_enabled: true,
+        credits_onchain_authorize_enabled: true,
+        credits_signer_key: Some("11".repeat(32)),
+        credits_manager_contract: Some(MANAGER.into()),
+        usage_index_enabled: true,
+        usage_rpc_url: Some("https://polygon-rpc.example.org".into()),
+        credits_revoker_key: Some("22".repeat(32)),
+        trial_buyers: Some(OWNER.into()),
+        ..RawSettings::default()
+    })
+    .unwrap();
+    let state = Arc::new(State::with_sources(
+        pool,
+        crate::http::Outbound::for_tests(),
+        settings,
+        Arc::new(crate::credits::tests::FakeMarket::default()),
+        Arc::new(crate::credits::tests::MockBroker::configured()),
+        None,
+    ));
+    state.goal_flags.set_documents(
+        Some(json!({"flags":{"dapps-credits-server":true},"variants":{}})),
+        Some(json!({"flags":{},"variants":{}})),
+    );
+    state
+}
+
+#[tokio::test]
+async fn a_credits_trial_signs_no_goal_credit_even_for_its_buyers() {
+    let Some(db) = OwnDatabase::create("photo_goal_trial").await else {
+        return;
+    };
+    seed(&db.pool, 1, "1000000000000000000", "1000000000000000000000").await;
+    let control = fixture_state(db.pool.clone(), true);
+    assert!(
+        gate(&control, &mut db.pool.acquire().await.unwrap())
+            .await
+            .unwrap()
+            .refusal(OWNER)
+            .is_none(),
+        "outside a trial the program is open to this wallet"
+    );
+
+    let state = trial_state(db.pool.clone());
+    assert!(state.settings.trial.as_ref().unwrap().admits(OWNER));
+    assert!(
+        gate(&state, &mut db.pool.acquire().await.unwrap())
+            .await
+            .unwrap()
+            .disabled,
+        "reminders read the same gate and send nothing"
+    );
+    let event = photo(&db.pool, OWNER).await;
+    process_event(&state, event, super::super::store::now())
+        .await
+        .unwrap();
+    let outcome: String =
+        sqlx::query_scalar("SELECT outcome FROM credits.photo_goal_receipts WHERE event_id=$1")
+            .bind(event)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(outcome, "disabled");
+    assert_eq!(
+        count(&db.pool, "SELECT count(*) FROM credits.goal_grants").await,
+        0
+    );
+    assert_eq!(
+        count(&db.pool, "SELECT count(*) FROM credits.goal_progress").await,
+        0
+    );
+    db.drop().await;
+}
+
+/// A grant signed before the trial reaches its wallet only when claimed: a wallet outside the
+/// trial's buyers completed the goal before the trial, and claims during it.
+#[tokio::test]
+async fn a_credits_trial_refuses_to_claim_a_goal_grant_signed_before_it() {
+    let Some(db) = OwnDatabase::create("photo_goal_trial_claim").await else {
+        return;
+    };
+    seed(&db.pool, 1, "1000000000000000000", "1000000000000000000000").await;
+    let before = fixture_state(db.pool.clone(), true);
+    let event = photo(&db.pool, OTHER).await;
+    process_event(&before, event, super::super::store::now())
+        .await
+        .unwrap();
+    let unclaimed = "SELECT count(*) FROM credits.goal_grants WHERE claimed_at IS NULL";
+    assert_eq!(count(&db.pool, unclaimed).await, 1);
+    claim_preflight(&before, OTHER)
+        .await
+        .expect("outside a trial the grant is claimable");
+
+    let state = trial_state(db.pool.clone());
+    assert!(!state.settings.trial.as_ref().unwrap().admits(OTHER));
+    for refused in [
+        claim_preflight(&state, OTHER).await.unwrap_err(),
+        claim(&state, OTHER).await.unwrap_err(),
+    ] {
+        assert_eq!(
+            refused.status(),
+            axum::http::StatusCode::BAD_REQUEST,
+            "{refused}"
+        );
+    }
+    assert_eq!(count(&db.pool, unclaimed).await, 1);
+    assert!(
+        user_credits(&state, OTHER, None)
+            .await
+            .unwrap()
+            .0
+            .is_empty(),
+        "no signature reaches the wallet"
+    );
+    db.drop().await;
+}
+
 #[tokio::test]
 async fn notification_failure_rolls_back_completion_and_concurrent_photos_count_once() {
     let Some(db) = OwnDatabase::create("photo_goal_atomic").await else {
