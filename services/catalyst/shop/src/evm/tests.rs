@@ -1651,6 +1651,50 @@ async fn upstream_429_passes_through_verbatim_and_refunds_the_slot() {
     );
 }
 
+/// An upstream's 500 or 503 can follow its send. It reaches the client as a 502, the body
+/// byte-for-byte, so the client never reads it as the relay's own refusal, and the slot is kept.
+#[tokio::test]
+async fn an_upstream_500_or_503_reaches_the_client_as_a_502_and_keeps_the_slot() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    const UPSTREAM_BODY: &str = r#"{"ok":false,"message":"The relayer service is temporarily unavailable.","code":"unknown"}"#;
+    for upstream_status in [500u16, 503] {
+        let seen: Seen = Arc::new(Mutex::new(None));
+        let mock = spawn_mock_upstream(
+            MockBehaviour {
+                status: upstream_status,
+                body: UPSTREAM_BODY,
+                stall: None,
+            },
+            seen.clone(),
+        )
+        .await;
+        let app = upstream_app(&pool, &mock, Duration::from_secs(5));
+        let buyer = unique_address();
+        let (status, text) = post_with_auth(
+            &app,
+            &tx_body(&buyer, COLLECTION, &split_sig_calldata(&buyer)),
+        )
+        .await;
+        let rows = row_count(&pool, &buyer).await;
+        cleanup_user(&pool, &buyer).await;
+        assert_eq!(status, 502, "upstream {upstream_status}: {text}");
+        assert_eq!(
+            text, UPSTREAM_BODY,
+            "the body reaches the client byte-for-byte"
+        );
+        assert_eq!(
+            rows, 1,
+            "upstream {upstream_status} is indeterminate: the slot stays consumed"
+        );
+    }
+}
+
 #[tokio::test]
 async fn upstream_524_keeps_the_slot_as_indeterminate() {
     let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK

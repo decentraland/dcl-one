@@ -241,7 +241,7 @@ type Harness = {
 };
 
 async function harness(
-  opts: { method?: "credits" | "mana"; handlers?: FakeHandlers; session?: Session; relay?: "ok" | "refuse" | "down" | "fail-after-send"; failStatus?: number; confirm?: "success" | "reverted" | "none" } = {},
+  opts: { method?: "credits" | "mana"; handlers?: FakeHandlers; session?: Session; relay?: "ok" | "refuse" | "down" | "fail-after-send"; refuseStatus?: number; failStatus?: number; confirm?: "success" | "reverted" | "none" } = {},
 ): Promise<Harness> {
   const session = opts.session ?? web3();
   const offer = opts.method === "mana" ? wearableResale(session) : creatorOrder(session);
@@ -250,6 +250,7 @@ async function harness(
   const chain = createFakeChain();
   const relay = createFakeRelay({
     mode: opts.relay ?? "ok",
+    refuseStatus: opts.refuseStatus,
     failStatus: opts.failStatus,
     onRelay: (hash) => {
       if ((opts.confirm ?? "success") !== "none") chain.receipts.set(hash.toLowerCase(), opts.confirm === "reverted" ? "reverted" : "success");
@@ -364,9 +365,9 @@ describe("running a credits group through the state machine", () => {
     expect(await watchGroup(h.deps, statusOf(h))).toMatchObject({ status: "confirmed", txHash: `0x${"b".repeat(64)}` });
   });
 
-  // 500: the relay failed after the send (it could not record the hash). 504: the node took the
-  // transaction but the relay never got its answer.
-  it.each([500, 504])("a relay %i after it broadcast keeps the credit until the server reconciles it, and signs nothing again", async (failStatus) => {
+  // 502: an upstream relay's 5xx, as the relay serves it. 504: the relay's own answer when the send
+  // was attempted and its outcome is unknown.
+  it.each([502, 504])("a relay %i after it broadcast keeps the credit until the server reconciles it, and signs nothing again", async (failStatus) => {
     const settled = {
       userPurchases: () => ({ purchases: [{ id: `0x${"a1".repeat(32)}`, status: "SETTLED", usdCents: 100, createdAt: 1, txHash: `0x${"b".repeat(64)}` }] }),
     };
@@ -416,6 +417,34 @@ describe("process death between boundaries, then resume", () => {
     const results = await resumeCheckout(h.deps, state, [h.group], h.resolved);
     expect(results[h.group.keyId]).toMatchObject({ status: "pending" });
     expect(h.relay.posts).toHaveLength(before);
+  });
+});
+
+describe("a relayed MANA group the relay answers", () => {
+  const approved = (h: Harness) => h.chain.allowances.set(`137:${BOOK.buyer}:${BOOK.marketplace.contract}`, 10n ** 20n);
+
+  // A MANA group has no credit to expire and no server record: a refusal read as "maybe sent"
+  // would leave it pending for good.
+  it("a refusal before any send (fees above the relay's cap): an in-app wallet fails it, a web3 wallet sends it itself", async () => {
+    const inApp = await harness({ method: "mana", session: web2(), relay: "refuse", refuseStatus: 503 });
+    approved(inApp);
+    expect(await runGroup(inApp.deps, inApp.group, inApp.resolved)).toMatchObject({ status: "failed" });
+    expect(statusOf(inApp).status).toBe("failed");
+
+    const web3Wallet = await harness({ method: "mana", relay: "refuse", refuseStatus: 503 });
+    approved(web3Wallet);
+    web3Wallet.chain.receipts.set(`0x${"1".padStart(64, "0")}`, "success");
+    expect(await runGroup(web3Wallet.deps, web3Wallet.group, web3Wallet.resolved)).toMatchObject({ status: "confirmed" });
+    expect(web3Wallet.relay.posts).toHaveLength(1);
+    expect(web3Wallet.wallet.sent).toHaveLength(1);
+  });
+
+  it("an answer after a send attempt (504): it stays pending, and nothing is sent from the wallet", async () => {
+    const h = await harness({ method: "mana", relay: "fail-after-send", failStatus: 504, confirm: "none" });
+    approved(h);
+    expect(await runGroup(h.deps, h.group, h.resolved)).toMatchObject({ status: "pending", txHash: null });
+    expect(h.relay.posts).toHaveLength(1);
+    expect(h.wallet.sent).toHaveLength(0);
   });
 });
 

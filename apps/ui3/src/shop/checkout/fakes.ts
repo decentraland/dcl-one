@@ -262,21 +262,26 @@ export function relayedApproval(body: unknown): { owner: string; spender: string
 /**
  * A relay endpoint (POST {base}/transactions): hashes in order, or the refusal/outage asked for. With a
  * `chain`, a relayed MANA approve raises that allowance and every relayed hash gets the receipt `confirm`.
- * `fail-after-send` broadcasts (the hash goes to `onRelay` and the chain as on `ok`) and then answers
- * `failStatus` with no hash: 500 by default, as an error after the send; 504 is the relay's answer when
- * the node took the transaction but its own answer was lost.
+ * `refuse` answers the relay's own refusal before any send, as `refuseStatus`: 400 by default (a
+ * reverted gas estimate), 503 for fees above its cap. `fail-after-send` broadcasts (the hash goes to
+ * `onRelay` and the chain as on `ok`) and then answers `failStatus` with no hash: 504 by default, the
+ * relay's answer to a send whose outcome it does not know; 502 is an upstream relay's 5xx as the relay
+ * serves it.
  */
 export function createFakeRelay(
-  opts: { mode?: "ok" | "refuse" | "down" | "fail-after-send"; failStatus?: number; onRelay?: (hash: Hex, body: unknown) => void; chain?: FakeChain; confirm?: TxReceipt["status"] | "none"; chainId?: number } = {},
+  opts: { mode?: "ok" | "refuse" | "down" | "fail-after-send"; refuseStatus?: number; failStatus?: number; onRelay?: (hash: Hex, body: unknown) => void; chain?: FakeChain; confirm?: TxReceipt["status"] | "none"; chainId?: number } = {},
 ) {
   let n = 0;
   const posts: unknown[] = [];
-  const state = { mode: opts.mode ?? "ok", confirm: opts.confirm ?? "success", failStatus: opts.failStatus ?? 500 };
+  const state = { mode: opts.mode ?? "ok", confirm: opts.confirm ?? "success", refuseStatus: opts.refuseStatus ?? 400, failStatus: opts.failStatus ?? 504 };
   const fetchImpl = (async (_url: string, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body ?? "null")) as unknown;
     posts.push(body);
     if (state.mode === "down") throw new TypeError("Failed to fetch");
-    if (state.mode === "refuse") return new Response(JSON.stringify({ ok: false, message: "execution reverted" }), { status: 400 });
+    if (state.mode === "refuse") {
+      const error = state.refuseStatus === 503 ? "high_congestion" : "invalid_transaction";
+      return new Response(JSON.stringify({ ok: false, error, message: "execution reverted" }), { status: state.refuseStatus });
+    }
     const hash = `0x${"f".repeat(56)}${(++n).toString(16).padStart(8, "0")}` as Hex;
     if (opts.chain) {
       const approval = relayedApproval(body);

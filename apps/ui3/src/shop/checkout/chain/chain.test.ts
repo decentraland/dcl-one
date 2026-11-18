@@ -277,33 +277,40 @@ describe("relaying a meta-transaction", () => {
     ).rejects.toBeInstanceOf(GaslessUnavailableError);
   });
 
-  it("only a 4xx refusal proves nothing was sent", async () => {
+  it("only a refusal the relay answers before sending proves nothing was sent", async () => {
     const provider = { request: async () => `0x${"22".repeat(65)}` };
     const answering = (status: number, body: unknown) =>
-      (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
+      (async () => new Response(typeof body === "string" ? body : JSON.stringify(body), { status })) as unknown as typeof fetch;
     const relay = (fetchImpl: typeof fetch) => relayMetaTransaction({ provider, reader: fakeReader(), target, from, functionData: "0x12", fetchImpl });
+    // The relay's own refusals: validation, quota, a lookup before signing, fees above its cap.
     for (const [status, error] of [
       [400, "invalid_transaction"],
       [429, "quota_reached"],
+      [500, "unknown"],
+      [503, "high_congestion"],
     ] as const) {
       await expect(relay(answering(status, { ok: false, error, message: error })), `${status}`).rejects.toMatchObject({ reason: "relayer-rejected" });
     }
-    // A failure after the send (500), a gateway in between (502), an upstream relay's 503 passed
-    // through, no answer from the node (504): the transaction may have been broadcast, so the
-    // credit must not be released.
-    for (const status of [500, 501, 502, 503, 504]) {
+    // An upstream relay's 500/503 served as 502, no answer from the node (504), anything else:
+    // the transaction may have been broadcast, so the credit must not be released.
+    for (const status of [501, 502, 504, 520, 524]) {
       await expect(relay(answering(status, { ok: false, error: "unknown", message: "Unknown error" })), `${status}`).rejects.toMatchObject({
         reason: "relayer-unreachable",
       });
     }
+    // A gateway's own 500 or 503 page is not the relay's refusal.
+    for (const status of [500, 503]) {
+      await expect(relay(answering(status, "<html>Service Unavailable</html>")), `${status} html`).rejects.toMatchObject({ reason: "relayer-unreachable" });
+    }
     await expect(relay(answering(200, { ok: true }))).rejects.toMatchObject({ reason: "relayer-unreachable" });
-    expect([400, 404, 409, 429, 499].every(refusedBeforeBroadcast)).toBe(true);
-    expect([500, 501, 502, 503, 504, 520, 524].some(refusedBeforeBroadcast)).toBe(false);
+    expect([400, 404, 409, 429, 499, 500, 503].every(refusedBeforeBroadcast)).toBe(true);
+    expect([501, 502, 504, 520, 524].some(refusedBeforeBroadcast)).toBe(false);
   });
 
   it("reads the relay's own answers by when they were produced", async () => {
-    // The bodies services/catalyst/shop answers (evm/tests.rs): an error the node answered to the
-    // send is a 504, a refusal proven before any send (the relayer's gas estimate reverted) a 400.
+    // The bodies services/catalyst/shop answers (evm/tests.rs, signer.rs): an error the node answered
+    // to the send is a 504; refusals proven before any send are a 400 (the relayer's gas estimate
+    // reverted) or a 503 (fees above the cap).
     const provider = { request: async () => `0x${"22".repeat(65)}` };
     const answering = (status: number, body: unknown) =>
       (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
@@ -316,6 +323,11 @@ describe("relaying a meta-transaction", () => {
     await expect(relay(answering(504, afterTheSend))).rejects.toMatchObject({ reason: "relayer-unreachable" });
     const beforeAnySend = { ok: false, error: "invalid_transaction", message: "gas estimation reverted: execution reverted" };
     await expect(relay(answering(400, beforeAnySend))).rejects.toMatchObject({ reason: "relayer-rejected" });
+    const aboveTheFeeCap = { ok: false, error: "high_congestion", message: "the fee per gas 2000 wei exceeds RELAYER_MAX_FEE_PER_GAS_WEI 1000: not sent" };
+    await expect(relay(answering(503, aboveTheFeeCap))).rejects.toMatchObject({ reason: "relayer-rejected" });
+    // An upstream relay's 503, as the relay serves it (evm/tests.rs): a 502, its body unchanged.
+    const upstream = { ok: false, message: "The relayer service is temporarily unavailable.", code: "unknown" };
+    await expect(relay(answering(502, upstream))).rejects.toMatchObject({ reason: "relayer-unreachable" });
   });
 });
 

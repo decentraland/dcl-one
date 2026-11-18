@@ -551,11 +551,13 @@ mod tests {
                 "0x12".into(),
             ],
         };
-        for (code, body, refused) in [
-            (422u16, "simulation reverted", true),
-            (400, "bad request", true),
-            (500, "internal", false),
-            (200, "not json", false),
+        // 'r' RelayReverted, 'f' RelayerFailed: no transaction created. 't' RelayerTimeout.
+        for (code, body, expected) in [
+            (422u16, "simulation reverted", 'r'),
+            (400, "bad request", 'r'),
+            (401, "unauthorized", 'f'),
+            (500, "internal", 't'),
+            (200, "not json", 't'),
         ] {
             let app = axum::Router::new().route(
                 "/api/v1/relayers/rid/transactions",
@@ -565,19 +567,55 @@ mod tests {
             );
             let (url, server) = serve(app).await;
             let result = relayer(&url).send_meta_transaction(&tx).await;
-            if refused {
-                assert!(
-                    matches!(result, Err(ApiError::RelayReverted(_))),
-                    "{code}: {result:?}"
-                );
-            } else {
-                assert!(
-                    matches!(result, Err(ApiError::RelayerTimeout(_))),
-                    "{code}: {result:?}"
-                );
-            }
+            let matched = match expected {
+                'r' => matches!(result, Err(ApiError::RelayReverted(_))),
+                'f' => matches!(result, Err(ApiError::RelayerFailed(_))),
+                _ => matches!(result, Err(ApiError::RelayerTimeout(_))),
+            };
+            assert!(matched, "{code}: {result:?}");
             server.abort();
         }
+    }
+
+    /// A submission whose connection never opened sent nothing (`RelayerUnavailable`, 503, the
+    /// slot released). One cut after the request went out may have reached the relayer
+    /// (`RelayerTimeout`, 504, the slot kept).
+    #[tokio::test]
+    async fn a_submission_cut_after_it_was_sent_is_in_flight() {
+        use crate::evm::transaction::{ReservationDisposition, reservation_disposition};
+        let tx = TransactionData {
+            from: "0x0000000000000000000000000000000000000001".into(),
+            params: vec![
+                "0x0000000000000000000000000000000000000002".into(),
+                "0x12".into(),
+            ],
+        };
+        let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", closed.local_addr().unwrap());
+        drop(closed);
+        let never_opened = relayer(&url).send_meta_transaction(&tx).await.unwrap_err();
+        assert!(
+            matches!(never_opened, ApiError::RelayerUnavailable(_)),
+            "{never_opened:?}"
+        );
+        assert_eq!(
+            reservation_disposition(&never_opened),
+            ReservationDisposition::Release
+        );
+
+        let cutting = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", cutting.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let (mut socket, _) = cutting.accept().await.unwrap();
+            let mut request = [0u8; 4096];
+            let _ = socket.read(&mut request).await;
+            drop(socket);
+        });
+        let cut = relayer(&url).send_meta_transaction(&tx).await.unwrap_err();
+        assert!(matches!(cut, ApiError::RelayerTimeout(_)), "{cut:?}");
+        assert_eq!(reservation_disposition(&cut), ReservationDisposition::Keep);
+        server.abort();
     }
 
     #[test]

@@ -152,7 +152,20 @@ async fn forward_upstream(
         release_quota_slot(state, session_id, sender).await;
     }
 
-    Ok(forwarded.into_response())
+    let status = forwarded.status();
+    let mut response = forwarded.into_response();
+    if upstream_status_is_served_as_502(status) {
+        *response.status_mut() = axum::http::StatusCode::BAD_GATEWAY;
+    }
+    Ok(response)
+}
+
+/// The relay answers a 500 or a 503 of its own only before it sends anything (a failed lookup
+/// before signing, the fee cap, a paused or missing route), and a client reads them as refusals.
+/// An upstream's 500 or 503 can follow its send, so it reaches the client as a 502, its body
+/// unchanged: never mistaken for the relay's own refusal.
+fn upstream_status_is_served_as_502(status: u16) -> bool {
+    matches!(status, 500 | 503)
 }
 
 /// Whether a non-2xx upstream status proves the transaction was never
@@ -201,6 +214,16 @@ pub async fn get_user_transactions(
 #[cfg(test)]
 mod tests {
     use super::refunds_quota_slot;
+
+    #[test]
+    fn an_upstream_500_or_503_never_reaches_the_client_as_the_relays_own() {
+        use super::upstream_status_is_served_as_502;
+        assert!(upstream_status_is_served_as_502(500));
+        assert!(upstream_status_is_served_as_502(503));
+        for status in [400u16, 429, 501, 502, 504, 524] {
+            assert!(!upstream_status_is_served_as_502(status), "{status}");
+        }
+    }
 
     #[test]
     fn only_4xx_upstream_statuses_refund_the_quota_slot() {

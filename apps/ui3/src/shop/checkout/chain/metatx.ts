@@ -172,14 +172,14 @@ export async function relayMetaTransaction(opts: RelayOptions): Promise<Relayed>
 }
 
 /**
- * Whether a relay refusal with this status proves nothing was broadcast: only a 4xx (validation,
- * quota, a reverted simulation), as the relay itself decides when it refunds a buyer's quota slot.
- * A 5xx can come after the send (no answer from the node, a failure to record a transaction already
- * out, an upstream relay's own 5xx passed through), so it is never read as a refusal, even a 503 the
- * relay answers before sending: the client cannot tell the two apart.
+ * Whether a relay refusal (`{"ok":false}`) with this status proves nothing was broadcast. The relay
+ * answers a 4xx (validation, quota, a reverted gas estimate), a 500 (a lookup that failed before
+ * signing) or a 503 (fees above its cap, a paused or missing route) only before it sends anything,
+ * and serves an upstream relay's 500 or 503 as a 502. Anything that can follow a send is another 5xx
+ * (a 504 from the relay, a 502, a gateway's own), so it is never read as a refusal.
  */
 export function refusedBeforeBroadcast(status: number): boolean {
-  return status >= 400 && status < 500;
+  return (status >= 400 && status < 500) || status === 500 || status === 503;
 }
 
 export function isGaslessUnavailable(e: unknown): e is GaslessUnavailableError {
