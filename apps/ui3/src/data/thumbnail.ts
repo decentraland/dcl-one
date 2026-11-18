@@ -35,6 +35,8 @@ export function publicThumbnail(source: string | null | undefined, width: Thumbn
     const nodePosterPath = url.origin === catalyst
       ? /^\/events-assets-099ac00(\/poster(?:-vertical)?\/[^/]+)$/.exec(url.pathname)?.[1]
       : undefined;
+    const uploadedPosterPath = /^\/[^/]+\/[0-9a-f]{64}\.[a-z]+$/i;
+    if (nodePosterPath && uploadedPosterPath.test(nodePosterPath)) return source;
     const known = /^(peer(?:-[a-z]+\d)?|worlds-content-server|events-assets-099ac00|assets-cdn)\.decentraland\.org$/.test(url.hostname);
     if (/^peer(?:-[a-z]+\d)?\.decentraland\.org$/.test(url.hostname) && /^\/lambdas\/collections\/contents\/[^/]+\/thumbnail$/.test(url.pathname)) {
       return `${mediaBase()}${url.pathname}?width=${width}`;
@@ -42,7 +44,7 @@ export function publicThumbnail(source: string | null | undefined, width: Thumbn
     const eventMirror = url.hostname === "events-assets-099ac00.interconnected.online"
       && /^\/poster(?:-vertical)?\/[^/]+$/.test(url.pathname);
     const posterCopy = !known && !eventMirror && url.hostname.startsWith("events-assets-099ac00.")
-      && /^\/poster(?:-vertical)?\/[^/]+$/.test(url.pathname) && !/^\/[^/]+\/[0-9a-f]{64}\.[a-z]+$/i.test(url.pathname);
+      && /^\/poster(?:-vertical)?\/[^/]+$/.test(url.pathname) && !uploadedPosterPath.test(url.pathname);
     if (nodePosterPath || posterCopy) source = `https://events-assets-099ac00.decentraland.org${nodePosterPath ?? url.pathname}`;
     else if (!known && !eventMirror) return source;
     return `${mediaBase()}/media/convert?width=${width}&url=${encodeURIComponent(source)}`;

@@ -120,12 +120,13 @@ test("resizes posters served from paths on the node", () => {
   }
 });
 
-test("leaves unrecognized node poster paths, other origins, signed and animated posters alone", () => {
+test("leaves unrecognized node poster paths, other origins, local uploads, signed and animated posters alone", () => {
   vi.stubEnv("VITE_CATALYST_URL", "");
   vi.stubGlobal("__CATALYST_BASE__", "https://node.example");
   for (const url of [
     "https://node.example/events-assets-099ac00/private/a.webp",
     "https://node.example/events-assets-099ac00/poster/a.gif",
+    `https://node.example/events-assets-099ac00/poster/${"ab".repeat(32)}.webp`,
     "https://other.example/events-assets-099ac00/poster/a.webp",
     "https://node.example/events-assets-099ac00/poster/a.webp?signature=secret",
   ]) {
