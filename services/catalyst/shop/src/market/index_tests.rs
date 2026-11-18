@@ -1356,6 +1356,126 @@ async fn a_rewind_leaves_land_data_as_a_rebuild_of_the_remaining_log() {
     db.drop().await;
 }
 
+/// A fold past `since` leaves `land_data` exactly as a truncate-and-rebuild would.
+#[tokio::test]
+async fn a_land_data_fold_past_since_equals_a_rebuild() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let land = crate::land_authz::LAND_REGISTRY_MAINNET;
+    let estate = crate::land_authz::ESTATE_REGISTRY_MAINNET;
+    let far = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+    let update = |block: i64, log: i32, contract: &str, token: &str, name: &str| {
+        format!(
+            "('ethereum', {block}, {log}, {block}, 'land_data', '{contract}', '{contract}', {token}, NULL, NULL, NULL, NULL, '0,\"{name}\",\"\"')"
+        )
+    };
+    let insert = |rows: Vec<String>| {
+        let pool = db.pool.clone();
+        async move {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address, amount, expires_at, detail) VALUES {}",
+                rows.join(", ")
+            )))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    let rows = || {
+        let pool = db.pool.clone();
+        async move {
+            sqlx::query_as::<_, (String, String, Option<String>, i64, i32)>(
+                "SELECT token_address, token_id::text, name, updated_block, updated_log FROM shop.land_data ORDER BY token_address, land_data.token_id",
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    insert(vec![
+        update(100, 0, land, "1", "A-old"),
+        update(150, 0, estate, "1", "E-old"),
+        update(120, 0, land, "7", "G-old"),
+        update(150, 0, land, "9", "Edge"),
+    ])
+    .await;
+    nft_index::fold(&db.pool, ChainNet::Ethereum, None)
+        .await
+        .unwrap();
+
+    insert(vec![
+        update(200, 0, land, "1", "A-first"),
+        update(200, 3, land, "1", "A-last"),
+        update(151, 0, estate, "1", "E-new"),
+        update(202, 0, land, far, "Far"),
+        format!(
+            "('ethereum', 203, 0, 203, 'transfer', '{land}', '{land}', 7, '{ALICE}', '{BOB}', NULL, NULL, NULL)"
+        ),
+    ])
+    .await;
+    let counts = nft_index::fold(&db.pool, ChainNet::Ethereum, Some(150))
+        .await
+        .unwrap();
+    assert_eq!(counts.land_data, 3, "LAND 1, Estate 1 and the far token");
+    let incremental = rows().await;
+    assert_eq!(
+        incremental,
+        vec![
+            (estate.into(), "1".into(), Some("E-new".into()), 151, 0),
+            (land.into(), "1".into(), Some("A-last".into()), 200, 3),
+            (land.into(), "7".into(), Some("G-old".into()), 120, 0),
+            (land.into(), "9".into(), Some("Edge".into()), 150, 0),
+            (land.into(), far.into(), Some("Far".into()), 202, 0),
+        ]
+    );
+
+    sqlx::query("TRUNCATE shop.land_data")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    nft_index::fold(&db.pool, ChainNet::Ethereum, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        rows().await,
+        incremental,
+        "the incremental fold's result is the rebuild's"
+    );
+    db.drop().await;
+}
+
+/// The land_data read scans `nft_event` once, bounded by the window on the primary key.
+#[tokio::test]
+async fn the_land_data_read_scans_the_window_on_the_primary_key() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let mut conn = db.pool.acquire().await.unwrap();
+    sqlx::query("SET enable_seqscan = off")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    let lines: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "EXPLAIN {}",
+        nft_index::LAND_DATA_SQL
+    )))
+    .bind(23_900_000_i64)
+    .fetch_all(&mut *conn)
+    .await
+    .unwrap();
+    let plan = lines.join("\n");
+    assert!(
+        plan.contains("nft_event_pkey")
+            && plan.contains("block_number > ")
+            && plan.matches("on nft_event ").count() == 1,
+        "{plan}"
+    );
+    drop(conn);
+    db.drop().await;
+}
+
 #[tokio::test]
 async fn a_reindexed_order_only_gains_its_missing_transaction_hash() {
     let Some(db) = ScratchDb::create().await else {
