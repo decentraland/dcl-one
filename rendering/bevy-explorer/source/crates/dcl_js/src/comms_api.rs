@@ -328,9 +328,10 @@ mod tests {
         ))
     }
 
-    fn take_calls(
-        state: &Rc<RefCell<TestState>>,
-    ) -> (Vec<Vec<u8>>, Option<RpcStreamSender<(String, Vec<u8>)>>) {
+    /// Receives the scene's subscribed topic messages.
+    type TopicInbox = RpcStreamSender<(String, Vec<u8>)>;
+
+    fn take_calls(state: &Rc<RefCell<TestState>>) -> (Vec<Vec<u8>>, Option<TopicInbox>) {
         let calls = std::mem::take(&mut **state.borrow_mut().borrow_mut::<RpcCalls>());
         let mut published = Vec::new();
         let mut inbox = None;
