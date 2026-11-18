@@ -22,6 +22,11 @@ pub const SCENE_SPAWNER: DiagnosticPath = DiagnosticPath::const_new("instantiati
 pub const GLTF_PROCESSING: DiagnosticPath =
     DiagnosticPath::const_new("instantiation/gltf_processing");
 
+/// Milliseconds a frame spends processing avatars whose parts are written (the avatar crate's
+/// `process_avatar`, which measures it).
+pub const AVATAR_PROCESSING: DiagnosticPath =
+    DiagnosticPath::const_new("instantiation/avatar_processing");
+
 /// The slowest model is logged from this long.
 const LOGGED_FROM: Duration = Duration::from_millis(1);
 
@@ -60,6 +65,7 @@ impl Plugin for SpawnTimingPlugin {
             .init_resource::<SlowestProcessing>()
             .register_diagnostic(Diagnostic::new(SCENE_SPAWNER).with_suffix("ms"))
             .register_diagnostic(Diagnostic::new(GLTF_PROCESSING).with_suffix("ms"))
+            .register_diagnostic(Diagnostic::new(AVATAR_PROCESSING).with_suffix("ms"))
             .add_systems(
                 SpawnScene,
                 (
