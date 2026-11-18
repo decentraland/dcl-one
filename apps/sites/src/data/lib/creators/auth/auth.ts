@@ -1,149 +1,84 @@
-// lib/auth is the ONLY place allowed to import decentraland-connect, @dcl/single-sign-on-client or @dcl/crypto,
-// or to hold an EIP-1193 provider (see CONVENTIONS.md, host-portability seams). Everything else uses
-// the wallet store plus the helpers exported from its index.
-import { type ChainId } from '@dcl/schemas/dist/dapps/chain-id'
-import { ProviderType } from '@dcl/schemas/dist/dapps/provider-type'
-import { type AuthChain, type AuthIdentity } from '@dcl/crypto'
-import {
-  localStorageClearIdentity,
-  localStorageGetIdentity,
-  localStorageStoreIdentity
-} from '@dcl/single-sign-on-client'
-import { config } from '@/data/lib/creators/config'
+// The creators code's session, on Sites' sign-in: the signed identity Sites keeps, and the wallet that signs
+// for it (a browser wallet, or the in-app signer of an email or social account).
+import { getIdentity, subscribe } from '@/data/lib/auth/session'
+import { isIdentityExpired } from '@/data/lib/auth/expiry'
+import { browserProvider, currentWalletKind, managedShopProvider } from '@/data/lib/auth/shop-wallet'
+import type { AuthIdentity, AuthLink } from '@/data/lib/auth/types'
+import { WalletError, type Eip1193Provider } from '@/data/lib/auth/wallet'
+import { signAuthChain } from '@ui/data/auth/signerCore'
 import { resyncServerClock, serverClockOffset, serverNow } from './serverClock'
 
-// ~31 days, same as the legacy builder and marketplace webapps.
-const IDENTITY_EXPIRATION_MINUTES = 31 * 24 * 60
-
-const AUTH_CHAIN_HEADER_PREFIX = 'x-identity-auth-chain-'
-
-// decentraland-connect drags in the whole wallet-modal stack (@reown/appkit, coinbase, magic, ...).
-// Load it on demand so none of that lands in the initial bundle — it's only needed to (re)connect,
-// sign in, or sign out, all of which are already async.
-async function getConnection() {
-  return (await import('decentraland-connect')).connection
-}
-
-/** A wallet's raw EIP-1193 provider; providers without events (Magic) leave `on` out. */
-export type Eip1193Provider = {
-  request: (args: { method: string; params?: readonly unknown[] | object }) => Promise<unknown>
-  on?: (event: string, listener: (...args: unknown[]) => void) => void
-  removeListener?: (event: string, listener: (...args: unknown[]) => void) => void
-}
+export type { Eip1193Provider }
+export type AuthChain = AuthLink[]
 
 export type Session = {
   address: string
-  chainId: number
+  /** How the account signs: `web3` with a browser wallet, `managed` through the in-app signer (email and social accounts). */
+  kind: 'web3' | 'managed'
   provider: Eip1193Provider
-  identity: AuthIdentity
-  providerType: ProviderType
-  /** The wallet behind the provider ("Trust Wallet" over WalletConnect, …), when it names itself. */
-  walletName?: string
 }
 
-async function toSession(res: {
-  account: string | null
-  provider: unknown
-  chainId: ChainId
-  providerType: ProviderType
-}): Promise<Session> {
-  if (!res.account) throw new Error('No account returned by the wallet')
-  const address = res.account.toLowerCase()
-  const provider = res.provider as Eip1193Provider
-
-  // Reuse a valid stored identity, otherwise create one (a single wallet signature).
-  let identity = localStorageGetIdentity(address)
-  if (!identity) {
-    const { createIdentity } = await import('./signer')
-    identity = await createIdentity(provider, address, IDENTITY_EXPIRATION_MINUTES)
-    localStorageStoreIdentity(address, identity)
-  }
-
-  return { address, chainId: res.chainId, provider, identity, providerType: res.providerType }
-}
-
-/**
- * Social login (Google, Discord, Apple, email) runs through Magic, whose custodial key signs without any
- * wallet prompt. Use it to decide whether the UI must explain a pending wallet confirmation.
- */
-export function isSocialLogin(session: Pick<Session, 'providerType'>): boolean {
-  return session.providerType === ProviderType.MAGIC || session.providerType === ProviderType.MAGIC_TEST
-}
-
-// Redirects to the auth app (method chooser). On return, restoreSession() rebuilds the session.
-export function signInRedirect(): void {
-  const redirectTo = encodeURIComponent(window.location.href)
-  window.location.replace(`${config.get('AUTH_URL')}/login?redirectTo=${redirectTo}`)
-}
-
-// Silent: never asks the wallet to sign, so a visitor without a stored identity stays signed out.
-export async function restoreSession(): Promise<Session | null> {
-  try {
-    const connection = await getConnection()
-    const res = await connection.tryPreviousConnection()
-    if (!res.account || !localStorageGetIdentity(res.account.toLowerCase())) return null
-    const session = await toSession(res)
-    return { ...session, walletName: connection.getWalletName() }
-  } catch {
-    return null
+// A web3 identity whose wallet is not in this browser (signed in on another device, or through WalletConnect).
+const absentWallet: Eip1193Provider = {
+  request: async () => {
+    throw new WalletError('No browser wallet found for this account.')
   }
 }
 
-export async function logout(address?: string): Promise<void> {
-  try {
-    const connection = await getConnection()
-    await connection.disconnect()
-  } catch {
-    // ignore
-  }
-  // The ephemeral signing identity must not outlive an explicit sign-out.
-  if (address) localStorageClearIdentity(address.toLowerCase())
+function activeIdentity(address?: string): AuthIdentity | null {
+  const identity = getIdentity()
+  if (!identity || isIdentityExpired(identity)) return null
+  return address === undefined || identity.signer.toLowerCase() === address.toLowerCase() ? identity : null
 }
 
-export function getIdentity(address: string): AuthIdentity | null {
-  return localStorageGetIdentity(address.toLowerCase())
+/** The identity `address` is signed in with, as Sites keeps it; null when it is another account's or expired. */
+export function identityOf(address: string): AuthIdentity | null {
+  return activeIdentity(address)
 }
 
-// The curve code behind it is only needed once there is an identity to sign with, never on a visitor's first load.
-async function signPayload(identity: AuthIdentity, payload: string): Promise<AuthChain> {
-  const { Authenticator } = await import('@dcl/crypto')
-  return Authenticator.signPayload(identity, payload)
+/** The signed-in account and its wallet, or null for a visitor. */
+export function currentSession(): Session | null {
+  const identity = activeIdentity()
+  if (!identity) return null
+  const address = identity.signer.toLowerCase()
+  const kind = currentWalletKind(identity) === 'web3' ? 'web3' : 'managed'
+  const provider = kind === 'web3' ? (browserProvider() ?? absentWallet) : managedShopProvider(address)
+  return { address, kind, provider }
 }
 
-/** Signs `payload` (a Catalyst entity id) with the wallet's ephemeral identity; null when the session has none. */
+/** Calls `listener` whenever the visitor signs in, out, or as another account (in this tab or another). */
+export const subscribeSession = subscribe
+
+export function isSocialLogin(session: Pick<Session, 'kind'>): boolean {
+  return session.kind === 'managed'
+}
+
+/** Signs `payload` (an entity id) with the account's identity, as the content servers expect a deployment signed. */
 export async function signWithIdentity(address: string, payload: string): Promise<AuthChain | null> {
-  const identity = getIdentity(address)
-  return identity ? signPayload(identity, payload) : null
+  const identity = activeIdentity(address)
+  if (!identity) return null
+  const { privateKeyToAccount } = await import('viem/accounts')
+  const signature = await privateKeyToAccount(identity.ephemeral.privateKey).signMessage({ message: payload })
+  return [...identity.authChain, { type: 'ECDSA_SIGNED_ENTITY', payload, signature }]
 }
 
-const AUTH_TIMESTAMP_HEADER = 'x-identity-timestamp'
-const AUTH_METADATA_HEADER = 'x-identity-metadata'
-
-/**
- * ADR-44 signed-request headers: the auth chain signs `{method}:{path}:{timestamp}:{metadata}`
- * lowercased, and the timestamp/metadata travel as headers so the server can rebuild the payload.
- * `path` is the full URL pathname (API base included), without the query string.
- */
 export async function createAuthHeaders(
   address: string,
   method: string,
   path: string,
   metadata: Record<string, string> = {}
 ): Promise<Record<string, string>> {
-  const headers: Record<string, string> = {}
-  const identity = getIdentity(address)
-  if (!identity) return headers
-  // Corrected by the measured server clock offset: see serverClock.
-  const timestamp = String(serverNow())
-  const metadataJson = JSON.stringify(metadata)
-  const payload = `${method}:${path}:${timestamp}:${metadataJson}`.toLowerCase()
-  const authChain = await signPayload(identity, payload)
-  for (let i = 0; i < authChain.length; i++) {
-    headers[`${AUTH_CHAIN_HEADER_PREFIX}${i}`] = JSON.stringify(authChain[i])
-  }
-  headers[AUTH_TIMESTAMP_HEADER] = timestamp
-  headers[AUTH_METADATA_HEADER] = metadataJson
-  return headers
+  const identity = activeIdentity(address)
+  if (!identity) return {}
+  const signed = await signAuthChain(
+    identity.ephemeral.privateKey,
+    identity.authChain,
+    method,
+    path,
+    String(serverNow()),
+    JSON.stringify(metadata)
+  )
+  return signed.headers
 }
 
 /**
@@ -171,7 +106,7 @@ export async function signedFetch(
     })
   }
 
-  const signed = Boolean(address && getIdentity(address))
+  const signed = Boolean(address && activeIdentity(address))
   const signedWithOffset = serverClockOffset()
   const response = await send()
   if (response.status !== 401 || !signed) return response

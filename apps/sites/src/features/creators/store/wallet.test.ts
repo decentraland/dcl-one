@@ -1,114 +1,69 @@
 // @vitest-environment jsdom
 import '@/data/lib/creators/test/setup'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ProviderType } from '@dcl/schemas'
-import { type Session } from '@/data/lib/creators/auth'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { generatePrivateKey } from 'viem/accounts'
+import { createIdentityFromPrivateKey } from '@/data/lib/auth/identity'
+import { clearIdentity, setIdentity } from '@/data/lib/auth/session'
+import { currentAddress } from '@/data/lib/creators/currentAddress'
+import { useWallet } from './wallet'
 
-const analytics = vi.hoisted(() => ({ track: vi.fn(), identify: vi.fn(), reset: vi.fn() }))
-vi.mock('@/data/lib/creators/analytics', () => analytics)
+const signin = vi.hoisted(() => ({ openSignIn: vi.fn() }))
+vi.mock('@/features/components/auth/signin-store', () => signin)
 
-const auth = vi.hoisted(() => ({
-  restoreSession: vi.fn(),
-  logout: vi.fn().mockResolvedValue(undefined),
-  signInRedirect: vi.fn()
-}))
-vi.mock('@/data/lib/creators/auth', () => auth)
-
-const monitoring = vi.hoisted(() => ({ setMonitoringUser: vi.fn() }))
-vi.mock('@/data/lib/creators/monitoring', () => monitoring)
-
-const session = {
-  address: '0xcreator',
-  chainId: 137,
-  providerType: ProviderType.INJECTED,
-  walletName: 'Trust Wallet'
-} as unknown as Session
-
-/** The store dedupes restores in module state, so each case needs its own copy. */
-async function loadStore() {
-  vi.resetModules()
-  return (await import('./wallet')).useWallet
+async function signIn(): Promise<string> {
+  const identity = await createIdentityFromPrivateKey(generatePrivateKey())
+  setIdentity(identity)
+  return identity.signer
 }
 
-beforeEach(() => {
-  vi.clearAllMocks()
-  auth.restoreSession.mockResolvedValue(session)
+afterEach(() => {
+  clearIdentity()
+  useWallet.setState({ session: null, restored: false })
 })
 
-describe('restore', () => {
-  it('identifies the creator and reports the connection the way the legacy builder does', async () => {
-    const useWallet = await loadStore()
-
-    await useWallet.getState().restore()
-
-    expect(analytics.identify).toHaveBeenCalledWith('0xcreator', {
-      ethAddress: '0xcreator',
-      chainId: 137,
-      provider_type: ProviderType.INJECTED
-    })
-    expect(analytics.track).toHaveBeenCalledWith('Connect Wallet', {
-      address: '0xcreator',
-      chainId: 137,
-      providerType: ProviderType.INJECTED,
-      walletName: 'Trust Wallet'
-    })
-    expect(monitoring.setMonitoringUser).toHaveBeenCalledWith('0xcreator')
+describe('wallet store', () => {
+  it('does not know the visitor until the session has been read', () => {
+    expect(useWallet.getState()).toMatchObject({ session: null, restored: false })
   })
 
-  it('reports nothing for a visitor with no session to restore', async () => {
-    auth.restoreSession.mockResolvedValue(null)
-    const useWallet = await loadStore()
+  it('reports a visitor as restored and signed out', () => {
+    useWallet.getState().restore()
 
-    await useWallet.getState().restore()
-
-    expect(analytics.identify).not.toHaveBeenCalled()
-    expect(analytics.track).not.toHaveBeenCalled()
+    expect(useWallet.getState()).toMatchObject({ session: null, restored: true })
   })
 
-  it('bounds and sanitises the name the wallet reports about itself', async () => {
-    auth.restoreSession.mockResolvedValue({ ...session, walletName: `Trust\u0000\u202eWallet${'!'.repeat(80)}` })
-    const useWallet = await loadStore()
+  it('holds the account Sites is signed in with and names it to the rest of the code', async () => {
+    const address = await signIn()
 
-    await useWallet.getState().restore()
+    useWallet.getState().restore()
 
-    const props = analytics.track.mock.calls.find(([event]) => event === 'Connect Wallet')?.[1] as {
-      walletName: string
-    }
-    expect(props.walletName).toBe(`TrustWallet${'!'.repeat(53)}`)
-    expect(props.walletName).toHaveLength(64)
+    expect(useWallet.getState().session).toMatchObject({ address })
+    expect(currentAddress()).toBe(address)
   })
 
-  it('exposes the signed-in address to analytics and Sentry', async () => {
-    const useWallet = await loadStore()
-    const { currentAddress } = await import('@/data/lib/creators/currentAddress')
+  it('follows a sign-in and a sign-out that happen after it was restored', async () => {
+    useWallet.getState().restore()
 
-    expect(currentAddress()).toBeUndefined()
-    await useWallet.getState().restore()
+    const address = await signIn()
+    expect(useWallet.getState().session).toMatchObject({ address })
 
-    expect(currentAddress()).toBe('0xcreator')
+    clearIdentity()
+    expect(useWallet.getState().session).toBeNull()
   })
-})
 
-describe('disconnect', () => {
-  it('drops the analytics identity so the next account is not attributed to this one', async () => {
-    const useWallet = await loadStore()
-    await useWallet.getState().restore()
+  it('keeps the same session object while the account does not change', async () => {
+    await signIn()
+    useWallet.getState().restore()
+    const session = useWallet.getState().session
 
-    await useWallet.getState().disconnect()
+    useWallet.getState().restore()
 
-    expect(analytics.track).toHaveBeenCalledWith('Logout')
-    expect(analytics.reset).toHaveBeenCalled()
-    expect(monitoring.setMonitoringUser).toHaveBeenLastCalledWith(null)
+    expect(useWallet.getState().session).toBe(session)
   })
-})
 
-describe('signIn', () => {
-  it('records the attempt before leaving for the auth app', async () => {
-    const useWallet = await loadStore()
-
+  it("opens Sites' sign-in", () => {
     useWallet.getState().signIn()
 
-    expect(analytics.track).toHaveBeenCalledWith('Login')
-    expect(auth.signInRedirect).toHaveBeenCalled()
+    expect(signin.openSignIn).toHaveBeenCalled()
   })
 })

@@ -1,36 +1,28 @@
 // @vitest-environment jsdom
 import '@/data/lib/creators/test/setup'
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
-import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
-import { Authenticator, type AuthIdentity, type AuthLink } from '@dcl/crypto'
-import { localStorageStoreIdentity, localStorageClearIdentity } from '@dcl/single-sign-on-client'
-import { ProviderType } from '@dcl/schemas'
-import { TEST_PRIVATE_KEY, TEST_SIGNER } from '@/data/lib/creators/test/chain'
-import { createAuthHeaders, getIdentity, isSocialLogin, logout, signedFetch } from './auth'
+import { generatePrivateKey } from 'viem/accounts'
+import { createIdentityFromPrivateKey } from '@/data/lib/auth/identity'
+import { clearIdentity, setIdentity } from '@/data/lib/auth/session'
+import { forgetSignIn, recordSignIn } from '@/data/lib/auth/signin-kind'
+import type { AuthLink } from '@/data/lib/auth/types'
+import {
+  createAuthHeaders,
+  currentSession,
+  identityOf,
+  isSocialLogin,
+  signedFetch,
+  signWithIdentity
+} from './auth'
 import { resetServerClock } from './serverClock'
-import { createEphemeralIdentity } from './signer'
 
-vi.mock('decentraland-connect', () => ({
-  connection: { disconnect: vi.fn().mockResolvedValue(undefined) }
-}))
+const OTHER = '0x0000000000000000000000000000000000000000'
 
-async function makeStoredIdentity(): Promise<{ address: string; identity: AuthIdentity }> {
-  const owner = privateKeyToAccount(generatePrivateKey())
-  const ephemeralKey = generatePrivateKey()
-  const ephemeral = privateKeyToAccount(ephemeralKey)
-  const identity = await Authenticator.initializeAuthChain(
-    owner.address,
-    {
-      address: ephemeral.address,
-      publicKey: ephemeral.publicKey,
-      privateKey: ephemeralKey
-    },
-    600,
-    message => owner.signMessage({ message })
-  )
-  const address = owner.address.toLowerCase()
-  localStorageStoreIdentity(address, identity)
-  return { address, identity }
+/** Signs the visitor in as a fresh account, the way Sites keeps a session. */
+async function signIn(opts?: { expirationMs?: number }): Promise<string> {
+  const identity = await createIdentityFromPrivateKey(generatePrivateKey(), opts)
+  setIdentity(identity)
+  return identity.signer
 }
 
 function parseAuthChain(headers: Record<string, string>): AuthLink[] {
@@ -44,17 +36,17 @@ describe('auth', () => {
   let address: string
 
   beforeAll(async () => {
-    ;({ address } = await makeStoredIdentity())
+    address = await signIn()
   })
 
   afterAll(() => {
-    localStorageClearIdentity(address)
+    clearIdentity()
   })
 
-  it('getIdentity returns the stored identity regardless of address casing', () => {
-    expect(getIdentity(address)).not.toBeNull()
-    expect(getIdentity(address.toUpperCase().replace('0X', '0x'))).not.toBeNull()
-    expect(getIdentity('0x0000000000000000000000000000000000000000')).toBeNull()
+  it('identityOf answers the signed-in identity regardless of address casing, and nothing for another account', () => {
+    expect(identityOf(address)).not.toBeNull()
+    expect(identityOf(address.toUpperCase().replace('0X', '0x'))).not.toBeNull()
+    expect(identityOf(OTHER)).toBeNull()
   })
 
   it('createAuthHeaders signs the ADR-44 payload and sends the timestamp and metadata it used', async () => {
@@ -69,8 +61,8 @@ describe('auth', () => {
     expect(JSON.parse(headers['x-identity-metadata'])).toEqual({})
   })
 
-  it('createAuthHeaders returns no headers without a stored identity', async () => {
-    await expect(createAuthHeaders('0x0000000000000000000000000000000000000000', 'GET', '/x')).resolves.toEqual({})
+  it('createAuthHeaders returns no headers for an account that is not signed in', async () => {
+    await expect(createAuthHeaders(OTHER, 'GET', '/x')).resolves.toEqual({})
   })
 
   it('signedFetch signs the full pathname without its query string and fetches the full URL', async () => {
@@ -106,15 +98,6 @@ describe('auth', () => {
     expect(chain[chain.length - 1].payload).toBe(
       `post:/v1/trades:${headers['x-identity-timestamp']}:${headers['x-identity-metadata']}`.toLowerCase()
     )
-  })
-
-  it('logout clears the stored identity so it cannot outlive a sign-out', async () => {
-    const { address: other } = await makeStoredIdentity()
-    expect(getIdentity(other)).not.toBeNull()
-
-    await logout(other)
-
-    expect(getIdentity(other)).toBeNull()
   })
 
   it('signedFetch sends no auth headers when there is no address', async () => {
@@ -259,23 +242,63 @@ describe('auth', () => {
   })
 
   // The auth chain stores these strings as they are: their format is what servers and other dapps parse.
-  it('createEphemeralIdentity answers the checksummed address and the uncompressed public key of its key', () => {
-    expect(createEphemeralIdentity(TEST_PRIVATE_KEY)).toEqual({
-      address: TEST_SIGNER,
-      publicKey:
-        '0x044f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1',
-      privateKey: TEST_PRIVATE_KEY
-    })
-    const fresh = createEphemeralIdentity()
-    expect(fresh.privateKey).toMatch(/^0x[0-9a-f]{64}$/)
-    expect(fresh.publicKey).toMatch(/^0x04[0-9a-f]{128}$/)
-    expect(fresh.address).toMatch(/^0x[0-9a-fA-F]{40}$/)
+  it('signWithIdentity signs an entity id as the last link of the account\'s chain', async () => {
+    const chain = await signWithIdentity(address, 'bafkreientity')
+
+    expect(chain?.[chain.length - 1]).toMatchObject({ type: 'ECDSA_SIGNED_ENTITY', payload: 'bafkreientity' })
+    expect(chain?.[0]).toMatchObject({ type: 'SIGNER', payload: address })
+    await expect(signWithIdentity(OTHER, 'bafkreientity')).resolves.toBeNull()
   })
 
-  it('isSocialLogin is true only for Magic-backed sessions', () => {
-    expect(isSocialLogin({ providerType: ProviderType.MAGIC })).toBe(true)
-    expect(isSocialLogin({ providerType: ProviderType.MAGIC_TEST })).toBe(true)
-    expect(isSocialLogin({ providerType: ProviderType.INJECTED })).toBe(false)
-    expect(isSocialLogin({ providerType: ProviderType.WALLET_CONNECT_V2 })).toBe(false)
+  it('isSocialLogin is true only for an account that signs through the in-app signer', () => {
+    expect(isSocialLogin({ kind: 'managed' })).toBe(true)
+    expect(isSocialLogin({ kind: 'web3' })).toBe(false)
+  })
+})
+
+describe('currentSession', () => {
+  const wallet = { request: vi.fn() }
+
+  afterEach(() => {
+    clearIdentity()
+    forgetSignIn()
+    delete (window as { ethereum?: unknown }).ethereum
+  })
+
+  it('is null for a visitor', () => {
+    expect(currentSession()).toBeNull()
+  })
+
+  it('is null once the identity has expired', async () => {
+    await signIn({ expirationMs: -1000 })
+
+    expect(currentSession()).toBeNull()
+  })
+
+  it('gives a wallet sign-in the browser wallet to sign with', async () => {
+    ;(window as { ethereum?: unknown }).ethereum = wallet
+    const address = await signIn()
+    recordSignIn(address, 'web3')
+
+    expect(currentSession()).toEqual({ address, kind: 'web3', provider: wallet })
+  })
+
+  it('gives an email or social sign-in a wallet that only signs typed data for its own account', async () => {
+    const address = await signIn()
+    recordSignIn(address, 'managed')
+
+    const session = currentSession()
+    expect(session).toMatchObject({ address, kind: 'managed' })
+    await expect(session?.provider.request({ method: 'eth_accounts' })).resolves.toEqual([address])
+    await expect(session?.provider.request({ method: 'eth_sendTransaction' })).rejects.toThrow()
+  })
+
+  it('answers a wallet sign-in whose wallet is not in this browser with a wallet that refuses every request', async () => {
+    const address = await signIn()
+    recordSignIn(address, 'web3')
+
+    const session = currentSession()
+    expect(session).toMatchObject({ address, kind: 'web3' })
+    await expect(session?.provider.request({ method: 'eth_chainId' })).rejects.toThrow()
   })
 })

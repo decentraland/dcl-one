@@ -14,7 +14,6 @@ import {
   type PublicClient
 } from 'viem'
 import { estimateGas, getTransaction } from 'viem/actions'
-import { ProviderType } from '@dcl/schemas'
 import { config } from '@/data/lib/creators/config'
 import { encodeContractCall, type ContractCall, type ContractData } from '@/data/lib/creators/chain/contracts'
 import { sendMetaTransaction, type MetaTransactionWallet } from '@/data/lib/creators/chain/metaTransaction'
@@ -36,13 +35,16 @@ export type TypedDataDomain = {
 
 export type TypedDataTypes = Record<string, { name: string; type: string }[]>
 
+// The networks of Decentraland's RPC service, by chain id.
+const RPC_NETWORKS: Record<number, string> = { 1: 'mainnet', 11155111: 'sepolia', 137: 'polygon', 80002: 'amoy' }
+
 const readClients = new Map<number, PublicClient>()
 
 async function getReadClient(chainId: number): Promise<PublicClient> {
   const cached = readClients.get(chainId)
   if (cached) return cached
-  const { getRpcUrls } = await import('decentraland-connect')
-  const url = getRpcUrls(ProviderType.INJECTED)[chainId]
+  const network = RPC_NETWORKS[chainId]
+  const url = network && `${config.get('RPC_URL')}/${network}`
   if (!url) throw new Error(`No RPC url configured for chain ${chainId}`)
   const client = createPublicClient({ transport: http(url) })
   readClients.set(chainId, client)

@@ -294,7 +294,7 @@ export function useManaUsdRate(enabled: boolean) {
 export function useFriends(session: Session | null, enabled: boolean) {
   return useQuery({
     queryKey: ['friends', session?.address],
-    queryFn: () => fetchFriends(session!.identity),
+    queryFn: () => fetchFriends(session!.address),
     enabled: !!session && enabled,
     staleTime: 5 * 60_000
   })

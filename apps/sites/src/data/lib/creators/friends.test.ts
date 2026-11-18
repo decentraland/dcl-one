@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import '@/data/lib/creators/test/setup'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { type AuthIdentity } from '@dcl/crypto'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { generatePrivateKey } from 'viem/accounts'
+import { createIdentityFromPrivateKey } from '@/data/lib/auth/identity'
+import { clearIdentity, setIdentity } from '@/data/lib/auth/session'
 
 const client = { connect: vi.fn(), disconnect: vi.fn(), getFriends: vi.fn() }
 vi.mock('@dcl/social-rpc-client', () => ({ createSocialClientV2: vi.fn(() => client) }))
@@ -9,7 +11,16 @@ vi.mock('@dcl/social-rpc-client', () => ({ createSocialClientV2: vi.fn(() => cli
 import { createSocialClientV2 } from '@dcl/social-rpc-client'
 import { fetchFriends } from './friends'
 
-const identity = { authChain: [] } as unknown as AuthIdentity
+let address: string
+
+beforeAll(async () => {
+  const identity = await createIdentityFromPrivateKey(generatePrivateKey())
+  setIdentity(identity)
+  address = identity.signer
+})
+
+afterAll(() => clearIdentity())
+
 const friend = (address: string, name: string) => ({
   address,
   name,
@@ -32,10 +43,12 @@ describe('fetchFriends', () => {
       .mockResolvedValueOnce({ friends: page1 })
       .mockResolvedValueOnce({ friends: [friend('0xABC', 'Amy')] })
 
-    const friends = await fetchFriends(identity)
+    const friends = await fetchFriends(address)
 
     expect(createSocialClientV2).toHaveBeenCalledWith('wss://rpc-social-service-ea.decentraland.zone')
-    expect(client.connect).toHaveBeenCalledWith(identity)
+    expect(client.connect).toHaveBeenCalledWith(
+      expect.objectContaining({ authChain: expect.arrayContaining([expect.objectContaining({ type: 'SIGNER', payload: address })]) })
+    )
     expect(client.getFriends).toHaveBeenNthCalledWith(1, { limit: 200, offset: 0 })
     expect(client.getFriends).toHaveBeenNthCalledWith(2, { limit: 200, offset: 200 })
     expect(friends).toHaveLength(201)
@@ -45,7 +58,12 @@ describe('fetchFriends', () => {
 
   it('disconnects even when the read fails', async () => {
     client.getFriends.mockRejectedValue(new Error('offline'))
-    await expect(fetchFriends(identity)).rejects.toThrow('offline')
+    await expect(fetchFriends(address)).rejects.toThrow('offline')
     expect(client.disconnect).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses to read the friends of an account that is not signed in', async () => {
+    await expect(fetchFriends('0x0000000000000000000000000000000000000000')).rejects.toThrow('Not signed in')
+    expect(client.connect).not.toHaveBeenCalled()
   })
 })
