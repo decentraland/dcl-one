@@ -196,11 +196,26 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       (profile menu, Hush) is talking, their tag shows the red hushed icon in place of the bars, and
       nothing when they are quiet; Hear brings the bars back. The same player talking in a private call
       or community stream with you, which the mute leaves audible, shows the green bars.
-- [ ] **Lobby stage** (`bridge-scene/src/domains/avatarPreview.tsx`, lobby region): after sign-in the
-      page's stand-in (backdrop + snapshot) crossfades to the engine stage with the live avatar centred;
+- [ ] **Lobby stage** (`crates/system_ui/src/lobby_stage`, `bridge-scene/src/domains/avatarPreview.tsx`,
+      lobby region): after sign-in the page's stand-in (the chosen look's backdrop + snapshot)
+      crossfades to the engine's 3D stage: backdrop, floor dissolving into it, podium, props, mist,
+      dust and vignette around the live avatar, which waves, plays an idle emote every 8–20 s and
+      turns when dragged. Settings → Lobby, in the full page or the lobby's compact Settings, switches
+      the look at once (Halloween 2026, Game World).
       Customize opens the Backpack modal with the avatar through its hole and hands the stage back on
       close; Jump In loads the world (the hold is released) and a failed trip returns to the lobby.
-      The `lobby` baseline only shows the stand-in (mock has no engine).
+- [ ] **Lobby page** (`features/lobby`): the widgets sit on the four corner grids as the stored layout
+      says; edit mode (the pencil) frames them, drags them with the others making room, lists the
+      ones off the grids in Customize Lobby, and Save keeps the layout across a reload while Cancel,
+      Back and Escape drop the changes. From the startup lobby, Map, Places, Events and Go to pick
+      where the world starts. VIEW ALL opens Places, Events, Communities and Gallery compact in the
+      lobby's section modal: Communities four cards a row, Gallery five columns of 292x219, and a
+      photo opened there covers the whole screen, its Jump In closing the photo and the modal. The
+      profile menu's Settings opens there too: the full page's tabs and fields under its own header,
+      on the tab last picked in either.
+      A place card opens its detail: Set as Home presses at once and the landing card follows; a
+      Genesis City place offers start navigation, which turns to exit navigation, and the route
+      shows on the map once in the world; a World offers no navigation.
 - [ ] **Sign-in stage** (`avatarPreview.tsx`, signin region): a new account's look and name screens
       show its avatar on the golden podium at the right, over the sign-in background (vignette and
       drifting logo pattern) drawn by the engine across the whole screen. The page's background fades
@@ -346,7 +361,13 @@ back as `analyticsSession`). Expectations:
   site asks for a new sign-in; a run already going keeps its sign-in until it expires.
 - **Welcome / lobby**: WELCOME or AVATAR_NAMING, AUTH_DEPLOY_SUCCESS; click LETS_GO (JUMP IN on the
   name screen); LOBBY, PLACES_PICKER; clicks JUMP_IN {kind, place_id|event_id}, CUSTOMIZE,
-  NOTIFICATIONS, CLOSE (`LobbyHome.tsx`).
+  NOTIFICATIONS, CLOSE (`LobbyHome.tsx`). The lobby's own events, named as the Unity explorer
+  reports them so both clients' lobby data reads alike (`features/lobby/lobbyAnalytics.ts`):
+  `lobby_opened` and `lobby_closed` {source,
+  is_startup, duration_sec}; `place_card_clicked` and `place_jumped_in` {place_id, place_name,
+  place_coords, highlighted, from_section}; `event_card_clicked` and `event_jumped_in` {event_id,
+  event_name, event_coords, highlighted, from_section}; `jump_to_friend_clicked` {receiver_id,
+  friend_position}; `places_section_opened`, `events_section_opened`.
 - **Loading**: the engine's, not the page's. LOADING_START {position, realm, when}, LOADING_END
   {position, status} and LOADING_TIMEOUT after 90 s follow its own loading screen
   (`crates/analytics/src/loading.rs`), the one `sceneLoading` mirrors here.
@@ -465,11 +486,14 @@ Expectations:
   (`engine/requestIds.ts`), so each takes only the answers to its own requests.
 - **Nothing draws per frame:** the camera writes custom properties on the viewport; the sea is one
   image (`assets/map/sea.webp`) placed in the world layer like a satellite tile.
-- **Home:** the map reads the session's home and sets it with `setHomeScene`; Set as Home does not
-  clear it.
+- **Home:** the map and the place detail read the session's home and set it with `setHomeScene`
+  (`placeHomeTarget` in `features/map/home.ts` picks what each saves); Set as Home does not clear it.
+  Until the engine answers, the home is the web build's boot copy, its default realm read as
+  Genesis City, so the startup lobby agrees with the world.
+- **Arrival** ends a route only in Genesis City: a World's parcels share the numbers, not the place.
 - Tests: `library/explorer-core/test/{navmap,mapCore}.test.ts`, `library/ui/apps/hud/test/hosted/map.page.test.tsx`,
-  `hosted/home.session.test.tsx`, `mapEventInfo.test.tsx`; here, `src/test/bridgePlaces.test.ts` and
-  `bridgeEvents.test.ts`. Visual baseline: `panel-map`.
+  `hosted/home.session.test.tsx`, `hosted/placeDetail.test.tsx`, `mapEventInfo.test.tsx`; here,
+  `src/test/bridgePlaces.test.ts` and `bridgeEvents.test.ts`. Visual baseline: `panel-map`.
 
 ## Donate
 

@@ -2,8 +2,8 @@
 // prev/next navigation, an info sidebar (date · place · owner · people in the shot),
 // and the reel actions (jump in · download · copy link · share to X · delete).
 //
-// The Gallery renders it in MainMenuShell's scaled reference-canvas body, and a passport
-// renders it in its panel, so it is DPI-correct without --ui-scale work. While mounted it
+// The Gallery renders it in MainMenuShell's scaled reference-canvas body, the lobby in a popup
+// and a passport in its panel, so it is DPI-correct without --ui-scale work. While mounted it
 // registers as a cancel layer, so the engine's Cancel action closes the lightbox first (key
 // or gamepad), leaving the next press to close its host.
 

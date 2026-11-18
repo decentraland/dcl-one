@@ -1,0 +1,11 @@
+/* The field fills the 40px box that styles.css gives the root; the icon keeps the 14px of space at the end. */
+.search > div {
+  flex: 1;
+  min-height: 0;
+  padding: 0 14px 0 0;
+  gap: 0;
+}
+
+.search > div > span {
+  color: inherit;
+}

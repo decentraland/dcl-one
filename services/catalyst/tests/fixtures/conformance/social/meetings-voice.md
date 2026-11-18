@@ -22,7 +22,7 @@ stream from OBS, and talk over voice (nearby, private calls, community voice).
 | Nearby (proximity) voice in scenes and islands | Server and Bevy client present. No multi-client run against a real LiveKit. |
 | Private 1:1 calls | Server routes and RPCs at parity; client flow in the Bevy engine and the shared HUD. |
 | Community voice (stage, raise hand, promote, kick, end) | Server at parity. Client lacks moderator mute (MV-6, MV-7). |
-| OBS/RTMP stream onto a scene screen | Served: `/scene-stream-access` and LiveKit Ingress into the scene room. Not run end to end. |
+| OBS/RTMP stream onto a scene screen | Served: `/scene-stream-access` and LiveKit Ingress into the scene room. The local stack runs the ingress (`tooling/dev.py`); an RTMP push to a key created with the request the API makes reaches the room as H264 and Opus. Not run end to end through the API and a client. |
 | Share a screen or camera from a browser (Decentraland Cast) | Served: every `/cast/*` route, and the `apps/sites` streamer and watcher pages. Run headless against a local LiveKit; no multi-client run in the explorer. |
 | Presentations (slides) and presenters | Presenters routes and the presentation-bot token served; no presenter service (`cast-presenter-service`) is hosted. |
 
@@ -126,15 +126,18 @@ the mic, hanging up, raising a hand, promoting, demoting, kicking and ending a s
   (`apps/sites/src/features/social/cast-live`), which join the room with `livekit-client` through
   `GET /cast/stream-info/{streamingKey}`, `POST /cast/streamer-token` and the signed
   `POST /cast/watcher-token` (`apps/sites/src/data/lib/catalyst/cast.ts`).
-- The Creator Hub Admin Toolkit Cast UI points at upstream production
-  (`apps/creator-hub/packages/asset-packs/src/admin-toolkit-ui/VideoControl/api.ts:11-16`).
+- The Creator Hub Admin Toolkit (Cast, live stream, scene admins and bans) calls the realm's own
+  deployment: under a non-Decentraland realm's origin, `<origin>/comms-gatekeeper/...` and
+  `<origin>/cast-presenter-service/presentations`; on a `decentraland.org`, `.zone` or `.today`
+  realm, upstream's per-service hosts (`serviceUrl` in
+  `apps/creator-hub/packages/asset-packs/src/admin-toolkit-ui/fetch-utils.ts`).
 
 ## Backlog
 
 Ordered by what a meeting with screen sharing needs. Sizes: S small, M medium, L large.
 
-MV-1 to MV-4 (Cast routes, watcher token, the `apps/sites` streamer and watcher, presenters) are done;
-see the Cast table above.
+MV-1 to MV-4 (Cast routes, watcher token, the `apps/sites` streamer and watcher, presenters) and MV-11
+(the Admin Toolkit's base URLs) are done; see the Cast table and the client notes above.
 
 5. **MV-5: Presenter service.** P1 for slides, M–L. The presentation-bot token is served; host or port
    `cast-presenter-service`, which publishes the slides.
@@ -150,5 +153,4 @@ see the Cast table above.
    `expiration_time`; PUT maps 409/404 instead of 500.
 10. **MV-10: Kick and end report success when LiveKit fails.** P2, S. Return an error or retry the
     removal; today the user may stay connected.
-11. **MV-11: Admin Toolkit base URLs.** P1, S. Make the gatekeeper and presenter bases configurable.
 12. **MV-12: HTTP-level tests for the bearer voice routes.** P2, M. Only the 401 shapes are captured.

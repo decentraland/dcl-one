@@ -1,6 +1,17 @@
-import type { SemanticSIZES } from 'decentraland-ui';
+export type SpinnerSize =
+  | 'mini'
+  | 'tiny'
+  | 'small'
+  | 'medium'
+  | 'large'
+  | 'big'
+  | 'huge'
+  | 'massive';
 
-export interface Props {
+export interface SpinnerProps {
+  size?: SpinnerSize;
+}
+
+export interface Props extends SpinnerProps {
   dimmer?: boolean;
-  size?: SemanticSIZES;
 }

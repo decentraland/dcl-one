@@ -27,3 +27,6 @@ never a peer).
   ([shared UI library ADR](2026-10-30-shared-ui-library.md)).
 - Exception: `library/uuav/` keeps its `uuav-*` crate names and its own
   toolchain pin ([UUAV ADR](2026-11-03-uuav-native-video.md)).
+- Exception: `rendering/avatar-preview/` is a second workspace next to the
+  Explorer's that links its crates by path
+  ([avatar preview ADR](2026-11-05-avatar-preview-renderer.md)).

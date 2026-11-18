@@ -1,6 +1,7 @@
 // DOMAIN: travel asked from a menu page over the startup lobby — through the Map page, the Places
 // page and the events' jump-in, each closes its page exactly once and leaves the lobby; a pick the
-// lobby refuses (sign-in still running) leaves the page open and says why.
+// lobby refuses (sign-in still running) leaves the page open and says why; a place's detail holds
+// its Jump In until the sign-in ends.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -109,9 +110,9 @@ async function jumpInFromMap(): Promise<void> {
   await userEvent.click(within(panel).getByRole('button', { name: 'JUMP IN' }))
 }
 
-async function jumpInFromPlaces(): Promise<void> {
+async function placeJumpIn(): Promise<HTMLElement> {
   await userEvent.click(screen.getByRole('button', { name: 'Plaza card' }))
-  await userEvent.click(await screen.findByRole('button', { name: /^jump in$/i }))
+  return screen.findByRole('button', { name: 'Jump in to Plaza' })
 }
 
 const REFUSED = 'Still signing in. Try again in a moment.'
@@ -144,7 +145,7 @@ describe('travel from a page over the startup lobby', () => {
     const hud = renderHud()
     await inLobby(hud)
     act(() => hud.session().places.toggle())
-    await jumpInFromPlaces()
+    await userEvent.click(await placeJumpIn())
     expect(hud.driver.last('teleport')).toMatchObject({ x: 10, y: -5 })
     expect(hud.session().phase).toBe('entering')
     expect(hud.session().places.open).toBe(false)
@@ -177,10 +178,10 @@ describe('travel from a page over the startup lobby', () => {
     expect(screen.getByText(REFUSED)).toBeInTheDocument()
   })
 
-  it('a refused pick keeps the Places page open, and an event\'s jump in reports that nothing happened', async () => {
+  it('a place\'s jump in waits for the sign-in, and an event\'s jump in reports that nothing happened', async () => {
     const hud = await inBusyLobby()
     act(() => hud.session().places.toggle())
-    await jumpInFromPlaces()
+    expect(await placeJumpIn()).toBeDisabled()
     expect(hud.session().places.open).toBe(true)
     expect(hud.flips.places).toBe(1)
     act(() => hud.session().events.toggle('sidebar'))

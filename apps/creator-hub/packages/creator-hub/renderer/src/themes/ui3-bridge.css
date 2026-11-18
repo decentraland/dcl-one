@@ -1,0 +1,122 @@
+/*
+ * Tokens that the shared ui3 components read and theme.css does not define.
+ * A name that theme.css defines is not repeated here, so the renderer value of that name applies.
+ */
+:root {
+  --brand-cta: #d80029;
+  --accent: #ff7439;
+  --gold: #ffc95b;
+
+  --fill-2: rgba(255, 255, 255, 0.06);
+  --fill-3: rgba(255, 255, 255, 0.08);
+  --fill-4: rgba(255, 255, 255, 0.1);
+  --fill-5: rgba(255, 255, 255, 0.12);
+  --line: rgba(255, 255, 255, 0.08);
+  --ink-85: rgba(255, 255, 255, 0.85);
+  --ink-7: rgba(255, 255, 255, 0.7);
+  --ink-6: rgba(255, 255, 255, 0.6);
+  --ink-45: rgba(255, 255, 255, 0.5);
+  --shadow-panel: 0 8px 24px rgba(0, 0, 0, 0.35);
+
+  --fs-12: 12px;
+  --fs-13: 13px;
+  --fs-15: 15px;
+
+  --focus-ring-color: var(--brand);
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
+  --r-control: 6px;
+  --ctl-radius: 6px;
+  --ctl-weight: 600;
+  --ctl-tracking: 0.46px;
+  --ctl-pad-sm: 4px 10px;
+  --ctl-pad-md: 6px 16px;
+  --ctl-pad-lg: 8px 22px;
+  --modal-radius: 12px;
+  --surface-radius: 6px;
+
+  /* The layer order of the renderer: a menu or a tooltip opens above a toast, and a toast above a modal. */
+  --z-modal: 1300;
+  --z-overlay: 1500;
+}
+
+/* The ui3 spinner turns with this animation; ui3 defines it in its own base stylesheet. */
+@keyframes u-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Values that give the ui3 controls the look that the renderer has today (the dark scheme of its theme). */
+:root {
+  /* Button: the label size of each size, upper-case labels on a 24px line, the white tone. */
+  --ctl-fs-sm: 13px;
+  --ctl-fs-md: 14px;
+  --ctl-fs-lg: 15px;
+  --ctl-caps: 1;
+  --btn-neutral: #ffffff;
+  --btn-neutral-ink: #5e5b67;
+  --btn-neutral-hover: #cfcdd4;
+
+  /* Text, TextField, Radio, Chip, Address. */
+  --text-font: Inter, Helvetica, Arial, sans-serif;
+  --text-tone-primary: rgba(240, 240, 240, 1);
+  --text-tone-secondary: rgba(240, 240, 240, 0.7);
+  --text-tone-disabled: rgba(240, 240, 240, 0.38);
+  --field-border: rgba(255, 255, 255, 0.23);
+  --info: #2196f3;
+  --chip-fill: rgba(255, 255, 255, 0.16);
+  --chip-border: #616161;
+
+  /* IconButton, icons, disabled controls. */
+  --icon-btn-ink: rgba(255, 255, 255, 0.56);
+  --icon-secondary: #ffffff;
+  --ctl-disabled-ink: rgba(255, 255, 255, 0.38);
+  --toggle-disabled-opacity: 0.5;
+  --toggle-disabled-cursor: default;
+
+  /* AvatarFace: the disc behind a missing face. */
+  --avatar-face-bg: #cfcdd4;
+  --avatar-face-ink: #161518;
+}
+
+/* Overlays (Popover, Menu, Select, Dialog, Tabs, Alert, Toast, Tooltip): the values the renderer
+   draws today. */
+:root {
+  --overlay-surface: #38373b;
+  --overlay-radius: 6px;
+  --overlay-shadow:
+    0px 5px 5px -3px rgba(0, 0, 0, 0.2), 0px 8px 10px 1px rgba(0, 0, 0, 0.14),
+    0px 3px 14px 2px rgba(0, 0, 0, 0.12);
+  --overlay-text: rgba(240, 240, 240, 1);
+  --overlay-text-dim: rgba(240, 240, 240, 0.7);
+  --overlay-field-line: rgba(255, 255, 255, 0.23);
+  --dialog-surface: #1d1c20;
+  --dialog-scrim: rgba(0, 0, 0, 0.5);
+  --dialog-shadow:
+    0px 11px 15px -7px rgba(0, 0, 0, 0.2), 0px 24px 38px 3px rgba(0, 0, 0, 0.14),
+    0px 9px 46px 8px rgba(0, 0, 0, 0.12);
+  --tabs-line: rgba(255, 255, 255, 0.12);
+  --alert-info: #2196f3;
+  --alert-info-light: #63b4f6;
+  --alert-success-light: #65d890;
+  --alert-warning-light: #ffb95b;
+  --alert-error-light: #e97177;
+  --toast-shadow:
+    0px 3px 5px -1px rgba(0, 0, 0, 0.2), 0px 6px 10px 0px rgba(0, 0, 0, 0.14),
+    0px 1px 18px 0px rgba(0, 0, 0, 0.12);
+  --z-toast: 1400;
+  --tooltip-bg: rgba(97, 97, 97, 0.92);
+  --tooltip-text: #fff;
+  --tooltip-shadow: none;
+  --tooltip-radius: 6px;
+  --tooltip-pad: 4px 8px;
+  --tooltip-size: 11px;
+  --tooltip-weight: 500;
+}
+
+/* U08 editor and settings: the filled box of a checked checkbox with the mark cut out, as a mask. */
+:root {
+  --checkbox-checked-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='3 3 18 18'%3E%3Cpath d='M19 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.11 0 2-.9 2-2V5c0-1.1-.89-2-2-2zm-9 14l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z'/%3E%3C/svg%3E");
+}

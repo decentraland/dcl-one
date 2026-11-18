@@ -383,7 +383,7 @@ fn pipe_events(
                     ProcessingAssetType::Gltf => {
                         if let Some(h) = asset_server.get_handle::<Gltf>(&req.base_path) {
                             // on wasm the cache path is the source url (the processed bytes
-                            // overwrite the service-worker cache entry for that url), so wrap
+                            // overwrite the web cache entry for that url), so wrap
                             // it in a url-form IpfsPath to make it loadable
                             #[cfg(target_arch = "wasm32")]
                             let cache_path = {

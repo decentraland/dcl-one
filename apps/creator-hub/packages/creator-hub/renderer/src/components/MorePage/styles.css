@@ -1,17 +1,94 @@
+.MorePage .MoreContainer {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+@media (min-width: 991px) {
+  .MorePage .MoreContainer {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+}
+
+@media (min-width: 1280px) {
+  .MorePage .MoreContainer {
+    max-width: 1280px;
+  }
+}
+
+.MorePage .PageTitle {
+  margin-bottom: 48px;
+}
+
 .MorePage .CardsSection {
+  margin-bottom: 16px;
   color: var(--dcl-silver);
   text-transform: uppercase;
 }
 
-.MorePage .HorizontalCardWithImage.MuiCard-root {
+.MorePage .CardsGrid {
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  width: calc(100% + 24px);
+  margin-top: -24px;
+  margin-left: -24px;
+}
+
+.MorePage .CardsGridSpaced {
+  margin-bottom: 48px;
+}
+
+.MorePage .CardsGridItem {
+  box-sizing: border-box;
+  margin: 0;
+  padding-top: 24px;
+  padding-left: 24px;
+}
+
+@media (min-width: 768px) {
+  .MorePage .CardsGridItem {
+    flex-basis: 100%;
+    flex-grow: 0;
+    max-width: 100%;
+  }
+}
+
+@media (min-width: 991px) {
+  .MorePage .CardsGridItem {
+    flex-basis: 50%;
+    max-width: 50%;
+  }
+}
+
+@media (min-width: 1280px) {
+  .MorePage .CardsGridItem {
+    flex-basis: 33.333333%;
+    max-width: 33.333333%;
+  }
+}
+
+.MorePage .HorizontalCardWithImage {
   display: flex;
   height: 180px;
   min-width: 368px;
+  overflow: hidden;
+  border-radius: 6px;
   background: var(--secondary);
+  box-shadow:
+    0 2px 1px -1px rgba(0, 0, 0, 0.2),
+    0 1px 1px 0 rgba(0, 0, 0, 0.14),
+    0 1px 3px 0 rgba(0, 0, 0, 0.12);
+  color: var(--text-tone-primary);
   cursor: default;
 }
 
-.MorePage .HorizontalCardWithImage.MuiCard-root:hover {
+.MorePage .HorizontalCardWithImage:hover {
   outline: 2px solid var(--white);
   outline-offset: -2px;
 }
@@ -51,8 +128,14 @@
   justify-content: flex-end;
 }
 
+.MorePage .HorizontalCardWithImage .CardActions .CardAction {
+  min-width: 64px;
+  padding: 6px 8px;
+  letter-spacing: 0.4px;
+}
+
 @media (max-width: 819px) {
-  .MorePage .MuiGrid-item:has(.HorizontalCardWithImage) {
+  .MorePage .CardsGridItem:has(.HorizontalCardWithImage) {
     min-width: 100%;
   }
 }

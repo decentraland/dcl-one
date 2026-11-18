@@ -3,13 +3,19 @@ import { IoAlertCircleOutline as AlertIcon } from 'react-icons/io5';
 import { VscQuestion as QuestionIcon } from 'react-icons/vsc';
 import { AiOutlineInfoCircle as InfoIcon } from 'react-icons/ai';
 import { FiAlertTriangle as WarningIcon } from 'react-icons/fi';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import { type Props, MessageType } from './types';
 
 import './Message.css';
 
-const Message: React.FC<Props> = ({ className, text, type = MessageType.INFO, icon = true }) => {
+const Message: React.FC<Props> = ({
+  className,
+  text,
+  type = MessageType.INFO,
+  icon = true,
+  id,
+}) => {
   if (!text || typeof text === 'boolean') {
     return null;
   }
@@ -49,7 +55,10 @@ const Message: React.FC<Props> = ({ className, text, type = MessageType.INFO, ic
   }, [type]);
 
   return (
-    <p className={cx('Message', className, type)}>
+    <p
+      id={id}
+      className={cx('Message', className, type)}
+    >
       {icon && renderIcon()}
       <span>{text}</span>
     </p>

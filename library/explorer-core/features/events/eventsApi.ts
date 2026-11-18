@@ -50,17 +50,3 @@ export function eventDestination(e: Pick<DclEvent, 'world' | 'server' | 'x' | 'y
   if (e.world) return e.server != null && /^[a-z0-9-]+(\.dcl)?\.eth$/i.test(e.server) ? { kind: 'world', realm: e.server } : null
   return Number.isFinite(e.x) && Number.isFinite(e.y) ? { kind: 'parcel', x: e.x, y: e.y } : null
 }
-
-export function eventLocation(e: DclEvent): string {
-  return e.world ? (e.server ?? '') : `${e.x},${e.y}`
-}
-
-/** When the event starts next. `start_at` is the first date of a series; the lists select and order on the next one. */
-export function eventStartAt(e: Pick<DclEvent, 'start_at' | 'next_start_at'>): string {
-  return e.next_start_at ?? e.start_at
-}
-
-export function eventWhen(e: DclEvent): string {
-  if (e.live) return 'Happening now'
-  return new Date(eventStartAt(e)).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-}

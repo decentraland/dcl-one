@@ -14,13 +14,22 @@ nix develop --command make check   # non-interactive: never starts services
 proposes the current tip on the first of each month; `python3
 tooling/nixpkgs-update.py` does the same locally.
 
-`nix develop` starts a per-checkout PostgreSQL 18, API, Sites, LiveKit, NATS and
-Pulse that outlive the shell and reload on edits.
+`nix develop` starts a per-checkout PostgreSQL 18, API, Sites, LiveKit with its
+RTMP Ingress and Valkey, NATS and Pulse that outlive the shell and reload on edits.
 
 Ports, from base 5210 (`FOUNDATION_DEV_PORT` on first use; saved in
 `.cache/dev/settings.json`): API and `/ws` +0, its metrics +1, Sites and Pulse WebTransport +2,
 PostgreSQL +3, LiveKit +4..+6, Pulse ENet and `/metrics` +7, NATS +8, its
-monitor +9. An occupied saved port fails startup.
+monitor +9. The ingress takes the first free block 10000 above the base (`ingress_port`):
+Valkey +0, RTMP +1 (every interface), the ingress relay +2 and health +3. An occupied
+saved port fails startup.
+
+A stream key from `/scene-stream-access` streams to the `rtmp://…/x` URL it comes with
+(`foundation-dev status` prints it). Behind a public origin that URL names the origin's
+host, so its RTMP port must be reachable there directly: a TLS front or an HTTP tunnel
+does not carry RTMP. The ingress needs a minute or two on its first start while
+GStreamer scans its plugins. A stack started before the ingress existed needs
+`foundation-dev down`, then `up`.
 
 | `foundation-dev …` | Action |
 | --- | --- |
@@ -170,11 +179,13 @@ the test executables; on PRs they run on Linux (`CATALYST_TEST_SHARD=i/n` for
 `tooling/catalyst-test.sh`). The provisioned Archipelago tests take a fixed
 time, so only the shard that `CATALYST_TEST_PROVISIONED_SHARD` names runs them;
 the other shards check that the tests are present. A run that sets neither
-variable runs them. When the dependency cache restores anything, from its exact
-key or a partial match, the jobs compile through a compiler cache (`sccache` on
-the GitHub cache) that holds what that entry does not: the results of the
-workspace crates, of dependencies the entry lacks and of the separate
-`rusty_enet` workspace. Without a restore, without the tool, or when its server
+variable runs them. The doc-tests run only in the shard that
+`CATALYST_TEST_DOC_SHARD` names, or in every shard without it. When the
+dependency cache restores anything, from its exact key or a partial match, the
+jobs compile through a compiler cache (`sccache` on the GitHub cache) that
+holds what that entry does not: the results of the workspace crates, of
+dependencies the entry lacks and of the separate `rusty_enet` workspace.
+Without a restore, without the tool, or when its server
 does not start, they compile as before. A PR that changes a build or dev-stack input gets a
 notice to add the `ci:macos` label: Cargo manifests and lockfiles, build
 scripts, toolchain files, `.cargo`, `library/vendor/rusty_enet`, Nix,

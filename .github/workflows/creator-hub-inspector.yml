@@ -64,7 +64,9 @@ jobs:
           bump_each_commit_patch_pattern: "/^(patch|fix).+/"
           search_commit_body: true
           user_format_type: "json"
-          change_path: "apps/creator-hub/packages/inspector"
+          # The bundle also holds apps/ui3/src/atoms (the `@ui` alias in build.js), built with the ui3
+          # package (sideEffects) and compiler settings (jsx, paths).
+          change_path: "apps/creator-hub/packages/inspector apps/ui3/package.json apps/ui3/tsconfig.json apps/ui3/src/atoms"
 
       # With no `@dcl/inspector@X.Y.Z` tag, semantic-version counts from 0.0.0, and a release on main
       # would publish 0.1.0 as the npm `latest`. Tag the last released version first (cut-over runbook).
@@ -293,8 +295,9 @@ jobs:
         with:
           previous_version: ${{ needs.version.outputs.previous_version }}
           current_version: ${{ needs.version.outputs.version }}
-          paths: 'apps/creator-hub/packages/inspector'
-          section_names: 'Inspector Changes'
+          # The same paths as change_path in the version job: each one that bumps the version has a section here.
+          paths: 'apps/creator-hub/packages/inspector,apps/ui3/src/atoms,apps/ui3/package.json,apps/ui3/tsconfig.json'
+          section_names: 'Inspector Changes,Shared UI Changes,Shared UI Package Changes,Shared UI Compiler Settings Changes'
           release_title: '@dcl/inspector'
           github_token: ${{ secrets.GITHUB_TOKEN }}
           tag_prefix: '@dcl/inspector@'

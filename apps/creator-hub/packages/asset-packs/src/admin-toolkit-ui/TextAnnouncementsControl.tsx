@@ -1,5 +1,4 @@
 import { type IEngine } from '@dcl/ecs';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import ReactEcs, { Label, UiEntity, Input } from '@dcl/react-ecs';
 import { type GetPlayerDataRes } from '../types';
 import { type State } from './types';

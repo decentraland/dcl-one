@@ -1,6 +1,6 @@
 import { configureStore } from '@reduxjs/toolkit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AuthIdentity } from '@dcl/crypto';
+import type { AuthIdentity } from '/@/lib/identity';
 
 import type { Project, ProjectInfo } from '/shared/types/projects';
 

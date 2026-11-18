@@ -33,33 +33,36 @@
   font-weight: 600 !important;
 }
 
-.MuiTooltip-popper[data-popper-placement*="bottom"] .MainMenuTooltip {
-  margin-top: 10px !important;
+/* This tip uses a font list that does not start with Inter, and its own line height. */
+.MainMenuTooltip.tt__tip {
+  font-family: Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
 }
 
-.LogoMenu .MuiPaper-root {
-  background-color: var(--card);
-  background-image: none;
-  border-radius: 8px;
-  min-width: 200px;
-  margin-top: 4px;
+/* The ui3 tip opens 12px below its anchor; this tip is 10px below. */
+.MainMenuTooltip.tt__tip--bottom {
+  margin-top: -2px;
 }
 
-.LogoMenu .MuiMenuItem-root {
+/* The surface of the ui3 Menu. */
+.LogoMenu {
+  --overlay-surface: var(--card);
+  --overlay-radius: 8px;
+  --popover-min-width: 200px;
+}
+
+/* The list takes the opacity of the surface, so a reader sees when the surface is fully shown. */
+.LogoMenu [role="menu"] {
+  opacity: inherit;
+}
+
+.LogoMenu [role="menuitem"] {
   font-size: 14px;
+  letter-spacing: 0.00938em;
   padding: 8px 16px;
   gap: 8px;
 }
 
 .LogoMenu .LogoMenuSubmenuItem {
   justify-content: space-between;
-}
-
-.LogoSubmenu {
-  pointer-events: none;
-}
-
-.LogoSubmenu .MuiPaper-root {
-  pointer-events: auto;
-  margin-left: 4px;
 }
