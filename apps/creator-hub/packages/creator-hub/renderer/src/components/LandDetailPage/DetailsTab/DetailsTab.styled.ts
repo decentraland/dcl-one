@@ -1,49 +1,23 @@
-import { dclColors, Select, styled } from 'decentraland-ui2';
-import type { Theme } from 'decentraland-ui2';
+import { createElement } from 'react';
+import type { ComponentProps } from 'react';
+import { cx } from '/@/lib/cx';
 
 import { ExternalLink } from '../../ExternalLink';
 import { FormTextInput } from '../../TextInput';
+import { classed } from '../classed';
+import { DomainSelect } from './DomainSelect';
 
-const { neutral, whiteTransparent } = dclColors;
+import styles from './DetailsTab.module.css';
 
-const DescriptionInput = styled(FormTextInput)({
-  '&&': { minHeight: 168 },
-});
+type InputProps = ComponentProps<typeof FormTextInput>;
 
-const DomainSelect = styled(Select)(({ theme }) => ({
-  '&&': {
-    width: '100%',
-    height: 46,
-    borderRadius: 12,
-    color: neutral.softWhite,
-  },
-  '&& .MuiOutlinedInput-notchedOutline': {
-    border: `1px solid ${whiteTransparent.blurry}`,
-  },
-  '&&:hover .MuiOutlinedInput-notchedOutline': {
-    borderColor: whiteTransparent.backdrop,
-  },
-  '&&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-    border: `1px solid ${neutral.softWhite}`,
-  },
-  '&&& .MuiSelect-select': {
-    minHeight: 0,
-    padding: theme.spacing(1.75, 5, 1.75, 2),
-    fontSize: theme.typography.pxToRem(16),
-    lineHeight: theme.typography.pxToRem(18),
-  },
-  '&& .MuiSelect-icon': {
-    top: 'calc(50% - 3.5px)',
-    right: theme.spacing(2),
-    color: neutral.softWhite,
-  },
-}));
+// A component outside this folder builds its link from these values.
+type LinkTheme = {
+  palette: { primary: { main: string }; info: { light: string } };
+  typography: { pxToRem: (size: number) => string };
+};
 
-const EmptyValue = styled('span')({
-  color: neutral.gray3,
-});
-
-const primaryLinkStyles = ({ theme }: { theme: Theme }) => ({
+const primaryLinkStyles = ({ theme }: { theme: LinkTheme }) => ({
   alignSelf: 'flex-start',
   color: theme.palette.primary.main,
   fontSize: theme.typography.pxToRem(14),
@@ -58,91 +32,48 @@ const primaryLinkStyles = ({ theme }: { theme: Theme }) => ({
   },
 });
 
-const ClaimLink = styled(ExternalLink)(primaryLinkStyles);
+function ClaimLink(props: ComponentProps<typeof ExternalLink>) {
+  return createElement(ExternalLink, {
+    ...props,
+    className: cx(styles.primaryLink, props.className),
+  });
+}
 
-const InputSlot = styled('div')({
-  position: 'relative',
-  display: 'flex',
-  flexDirection: 'column',
-});
+function Counter({
+  over,
+  className,
+  ...rest
+}: ComponentProps<'span'> & { over: 'over' | 'within' }) {
+  return createElement('span', {
+    ...rest,
+    className: cx(styles.counter, className),
+    'data-over': over === 'over' || undefined,
+  });
+}
 
-const Help = styled('span')(({ theme }) => ({
-  position: 'absolute',
-  top: `calc(100% + ${theme.spacing(0.5)})`,
-  left: 0,
-  right: 0,
-  display: 'flex',
-  justifyContent: 'space-between',
-  gap: theme.spacing(2),
-  lineHeight: 'normal',
-}));
+function DescriptionInput(props: InputProps) {
+  return createElement(FormTextInput, {
+    ...props,
+    className: cx(styles.descriptionInput, props.className),
+  });
+}
 
-const Counter = styled('span')<{ over: 'over' | 'within' }>(({ theme, over }) => ({
-  marginLeft: 'auto',
-  color: over === 'over' ? theme.palette.error.main : neutral.gray3,
-  fontSize: theme.typography.pxToRem(12),
-}));
+function SetName(props: InputProps) {
+  return createElement(FormTextInput, {
+    ...props,
+    className: cx(styles.setName, props.className),
+  });
+}
 
-const ErrorText = styled('span')(({ theme }) => ({
-  color: theme.palette.error.main,
-  fontSize: theme.typography.pxToRem(14),
-  lineHeight: 'normal',
-}));
-
-const Field = styled('div')(({ theme }) => ({
-  display: 'flex',
-  flexDirection: 'column',
-  gap: theme.spacing(1.25),
-  width: '100%',
-  maxWidth: 1044,
-}));
-
-const FieldTitle = styled('label')(({ theme }) => ({
-  color: neutral.white,
-  fontSize: theme.typography.pxToRem(18),
-  fontWeight: 600,
-  lineHeight: 'normal',
-}));
-
-const DomainHelp = styled('p')(({ theme }) => ({
-  margin: 0,
-  color: neutral.softWhite,
-  fontSize: theme.typography.pxToRem(14),
-  lineHeight: 'normal',
-}));
-
-const ReadOnly = styled('dl')(({ theme }) => ({
-  display: 'flex',
-  flexDirection: 'column',
-  gap: theme.spacing(1),
-  margin: 0,
-  '& dt': {
-    color: neutral.white,
-    fontSize: theme.typography.pxToRem(16),
-    fontWeight: 600,
-  },
-  '& dd': {
-    margin: theme.spacing(0, 0, 2),
-    color: neutral.softWhite,
-    fontSize: theme.typography.pxToRem(16),
-  },
-}));
-
-const Root = styled('div')(({ theme }) => ({
-  display: 'flex',
-  flexDirection: 'column',
-  gap: theme.spacing(5),
-  paddingTop: theme.spacing(1.125),
-}));
-
-const SetName = styled(FormTextInput)(({ theme }) => ({
-  '&&': { gap: theme.spacing(1.25) },
-  '& .MuiIconButton-root': {
-    padding: theme.spacing(0.625),
-    margin: theme.spacing(-0.625),
-    color: neutral.white,
-  },
-}));
+const DomainHelp = classed('p', styles.domainHelp);
+const EmptyValue = classed('span', styles.emptyValue);
+const ErrorText = classed('span', styles.errorText);
+const Field = classed('div', styles.field);
+const FieldTitle = classed('label', styles.fieldTitle);
+const Help = classed('span', styles.help);
+const InputSlot = classed('div', styles.inputSlot);
+const ReadOnly = classed('dl', styles.readOnly);
+const Root = classed('div', styles.root);
 
 export {
   ClaimLink,

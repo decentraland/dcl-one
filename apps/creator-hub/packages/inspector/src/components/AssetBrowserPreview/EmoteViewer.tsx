@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MdPause, MdPlayArrow, MdRepeat } from 'react-icons/md';
 import { PreviewEmoteEventType } from '@dcl/schemas';
 import type { PreviewEmote } from '@dcl/schemas';
-import { WearablePreview } from 'decentraland-ui';
 import { toEmoteWithBlobs } from '../AssetPreview/utils';
+import { WearablePreview, isPreviewMessage } from '../WearablePreview';
+import type { PreviewController } from '../WearablePreview';
 
 type Props = {
   /** An emote file to play on the avatar... */
@@ -52,7 +53,7 @@ export function EmoteViewer({ file, previewEmote, onDuration }: Props) {
     return { ...emote, emoteDataADR74: { ...emote.emoteDataADR74, loop } };
   }, [file, loop]);
 
-  const controller = useRef<ReturnType<typeof WearablePreview.createController>>();
+  const controller = useRef<PreviewController>();
   const loopRef = useRef(loop);
   loopRef.current = loop;
   const lengthRef = useRef(0);
@@ -122,7 +123,7 @@ export function EmoteViewer({ file, previewEmote, onDuration }: Props) {
     };
 
     const onMessage = (event: MessageEvent) => {
-      if (event.source !== iframe?.contentWindow || event.data?.type !== 'emote_event') return;
+      if (!isPreviewMessage(event, iframe) || event.data?.type !== 'emote_event') return;
       const { type, payload } = event.data.payload ?? {};
       switch (type) {
         case PreviewEmoteEventType.ANIMATION_PLAYING:

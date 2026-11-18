@@ -35,7 +35,9 @@ pnpm run gpu-probe                     # the GPU the browser gives, started as t
 pnpm run gpu-probe --adapter nvidia    # and once more on that adapter when the browser runs on another (Windows)
 ```
 
-The suite serves the web app on loopback (`driver/serve.ts`, with the isolation headers the app's
+The suite serves the web app on loopback at `http://localhost:<port>` (`driver/serve.ts`; the
+events and places services answer a signed read's CORS preflight for a `localhost` origin and not
+for `127.0.0.1`), with the isolation headers the app's
 own dev server sets per path: the shell plain, the app frame isolated on its own; and the bundled
 bridge scene's realm document with this origin's absolute content url, as Sites serves it, since
 the build's root-relative one is no url to the engine and the bridge scene would never load), starts Chrome
@@ -183,14 +185,14 @@ adapter reported as a scene ban.
 ## Scenario map
 
 explorer-automation's 89 Explorer tests outside the sign-in flows, by fixture; the class of each
-test is in the spec file's header. Port 46, Partial 35, Gap 6, Drop 2.
+test is in the spec file's header. Port 47, Partial 35, Gap 5, Drop 2.
 
 | Fixture (tests) | Spec | Port | Partial | Gap | Drop | What changed |
 | --- | --- | --- | --- | --- | --- | --- |
 | ExplorePanel (7) | `explore-panel` | 6 | 1 | | | Pages instead of one panel, each opened by a row of the rail's Discover, Me or System panel; the top bar's Shop tab is not driven |
 | Shortcuts (7) | `shortcuts` | 6 | 1 | | | Gallery is `G`, not `K` |
 | Navbar (4) | `navbar` | | 3 | 1 | | A fixed rail set, no flags, the other entries rows of the Me, Discover and System panels; the help rows are in the System panel, which has no controls row |
-| Minimap (5) | `minimap` | 2 | 1 | 2 | | The rail's Map button shows the minimap; no favourite heart or kebab menu; name and compass are unreadable text |
+| Minimap (5) | `minimap` | 3 | 1 | 1 | | The rail's Map button shows the minimap; no favourite heart; the dots menu adds the minimap's own settings; name and compass are unreadable text |
 | Navmap (1) | `navmap` | 1 | | | | `Sports`, not `Sport` |
 | Events (3) | `events` | 2 | 1 | | | The detail opens for the first event the service lists, when there is one |
 | Places (5) | `places` | | 4 | 1 | | Tabs, category chips and Filter & Sort, without counters; a card opens the place's detail, which no scenario opens yet |

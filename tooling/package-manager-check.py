@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail on an npm or yarn lockfile, a project or workflow off the pinned pnpm, a setting pnpm ignores in .npmrc, or npm or yarn in a workflow."""
+"""Fail on an npm or yarn lockfile, a project or workflow off the pinned pnpm, a setting pnpm ignores in .npmrc, or npm or yarn in a workflow or a project's scripts."""
 import argparse
 import json
 import os
@@ -13,6 +13,11 @@ SKIP_DIRS = {'.git', 'node_modules', 'target', 'dist', '.cache', '.agent-work'}
 LOCKFILES = {'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock'}
 # Test scenes that install as a creator's project does, with npm.
 CREATOR_SCENES = ('library/js-sdk-toolchain/test/snapshots/package-lock.json',)
+# Scenes that stand in for a creator's project, whose scripts run npm as a creator's do.
+CREATOR_PROJECTS = ('library/dcl-scene-build/testdata/', 'library/js-sdk-toolchain/test/snapshots/',
+                    'library/js-sdk-toolchain/test/build-ecs/fixtures/')
+# Scripts that start another project's script under a pnpm that corepack keeps off their PATH.
+NPM_SCRIPTS = {('rendering/bevy-explorer/source/react-web/package.json', 'bundle:native')}
 # pnpm 11 and 12 read only registry, auth and network keys from .npmrc; every other setting lives in pnpm-workspace.yaml.
 NPMRC_READ = {'ca', 'cafile', 'cert', 'key', 'registry', '_auth', '_authToken', '_password', 'email', 'username',
               'https-proxy', 'proxy', 'no-proxy', 'http-proxy', 'local-address', 'strict-ssl'}
@@ -64,6 +69,11 @@ def offenders(root):
             elif integrity not in ('', f'sha512.{PNPM_SHA512}'):
                 found.append(f'{manifest.relative_to(root).as_posix()}: pins pnpm {PNPM_VERSION} with another integrity; '
                              f'use sha512.{PNPM_SHA512}')
+        elif name == 'package.json' and not rel.startswith(CREATOR_PROJECTS):
+            scripts = json.loads((root / rel).read_text(encoding='utf-8')).get('scripts') or {}
+            for script, command in sorted(scripts.items()):
+                if NPM_USE.search(str(command)) and (rel, script) not in NPM_SCRIPTS:
+                    found.append(f'{rel}: script `{script}` runs npm or yarn; use pnpm')
         elif name == '.npmrc':
             for match in NPMRC_KEY.finditer((root / rel).read_text(encoding='utf-8', errors='replace')):
                 key = match.group(1)

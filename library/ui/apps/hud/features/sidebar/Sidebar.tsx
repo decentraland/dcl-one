@@ -23,6 +23,7 @@ import { hudInsetRef } from '../../lib/hudInset'
 import styles from './Sidebar.module.css'
 import { boltArt } from './railIcons'
 import { MePanel } from './panels/MePanel'
+import { inviteLink } from './inviteLink'
 import { MapPanel } from './panels/MapPanel'
 import { DiscoverPanel } from './panels/DiscoverPanel'
 import { ShopPanel } from './panels/ShopPanel'
@@ -384,13 +385,14 @@ export function Sidebar({
           />
         </div>
       </nav>
-      {mapVisible && <MapPanel minimap={session.minimap} map={session.map} setEngineViewport={session.setEngineViewport} />}
+      {mapVisible && <MapPanel minimap={session.minimap} map={session.map} referrer={profile?.address} setEngineViewport={session.setEngineViewport} />}
       {panel != null && (
         <PanelHost key={panel.id} anchor={panel.anchor} rise={PANEL_RISE[panel.id]} onClose={closePanel}>
           {panel.id === 'me' && (
             <MePanel
               profile={profile}
               backpackKey={keyHintFor(snap, 'Backpack')}
+              inviteLink={inviteLink(profile)}
               onBackpack={session.backpack.toggle}
               onProfile={onViewProfile != null ? () => onViewProfile() : session.profile.toggle}
               onBadges={onViewProfile != null ? () => onViewProfile('badges') : undefined}

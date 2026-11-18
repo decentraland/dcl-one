@@ -1,5 +1,6 @@
 import { type MouseEvent, useCallback } from 'react';
-import { CircularProgress as Loader, Typography, Badge } from 'decentraland-ui2';
+import Spinner from '@ui/atoms/Spinner';
+import Text from '@ui/atoms/Text';
 
 import { t } from '/@/modules/store/translation/utils';
 import { isTimeAgo, minutes } from '/shared/time';
@@ -70,11 +71,11 @@ export function ProjectCard({
         />
       )}
       {isTimeAgo(publishedAt, minutes(10)) && (
-        <Badge className="badge">{t('scene_list.badges.published')}</Badge>
+        <span className="badge">{t('scene_list.badges.published')}</span>
       )}
       <div className="info">
         <div className="title">
-          <Typography variant="h6">{title}</Typography>
+          <Text variant="h6">{title}</Text>
           {!!dropdownOptions?.length && (
             <Dropdown
               label={t('menu.options_for', { name: title })}
@@ -111,7 +112,12 @@ function Overlay({
       style={{ width, height }}
       onClick={handleClick}
     >
-      <Loader />
+      <Spinner
+        ring="wide"
+        role="progressbar"
+        size={40}
+        color="primary"
+      />
       {t('scene_list.saving')}
     </div>
   );

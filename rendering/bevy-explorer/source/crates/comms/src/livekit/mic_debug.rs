@@ -180,7 +180,7 @@ fn nearby_voice(
                 speakers.insert(participant.identity().to_string());
             }
         }
-        input.reply_ok(json!({"connected": islands.iter().any(|connected| connected), "sceneBlocked": mic.scene_blocked, "refusals": mic.refusals, "speaking": speaking, "participants": remotes,
+        input.reply_ok(json!({"connected": islands.iter().any(|connected| connected), "sceneBlocked": mic.scene_blocked(), "refusals": mic.refusals, "speaking": speaking, "participants": remotes,
             "speakerCount": speakers.len(), "speakers": speakers.into_iter().take(32).collect::<Vec<_>>(), "tracks": tracks.iter().count(),
             "sources": sources.iter().count(), "assigned": sources.iter().filter(|s| s.current_transport.is_some()).count(),
             "spatialize": settings.spatialize, "smooth": settings.smooth, "strength": settings.strength}).to_string());

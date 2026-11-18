@@ -2456,74 +2456,6 @@
         }
       }
     },
-    "landings_subscription_edited": {
-      "loose": false,
-      "props": {
-        "enabled": {
-          "kind": "boolean",
-          "optional": false
-        },
-        "notification_type": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "landings_subscription_error": {
-      "loose": false,
-      "props": {
-        "kind": {
-          "kind": "enum-string",
-          "values": [
-            "subscribe",
-            "unsubscribe"
-          ],
-          "optional": false
-        },
-        "message": {
-          "kind": "string",
-          "optional": true
-        }
-      }
-    },
-    "landings_subscription_signed_in": {
-      "loose": false,
-      "props": {}
-    },
-    "landings_subscription_signin_required": {
-      "loose": false,
-      "props": {}
-    },
-    "landings_subscription_started": {
-      "loose": false,
-      "props": {}
-    },
-    "landings_subscription_submitting": {
-      "loose": false,
-      "props": {
-        "enabled_count": {
-          "kind": "number",
-          "optional": false
-        }
-      }
-    },
-    "landings_subscription_subscribed": {
-      "loose": false,
-      "props": {
-        "enabled_count": {
-          "kind": "number",
-          "optional": false
-        }
-      }
-    },
-    "landings_subscription_unsubscribed": {
-      "loose": false,
-      "props": {}
-    },
-    "landings_subscription_unsubscribing": {
-      "loose": false,
-      "props": {}
-    },
     "lp_blog_post_clicked": {
       "loose": false,
       "props": {
@@ -2567,15 +2499,6 @@
     "lp_community_gate_viewed": {
       "loose": false,
       "props": {}
-    },
-    "lp_community_private_gated": {
-      "loose": false,
-      "props": {
-        "community_id": {
-          "kind": "string",
-          "optional": false
-        }
-      }
     },
     "lp_community_review_reached": {
       "loose": false,
@@ -2633,35 +2556,6 @@
         "error": {
           "kind": "string",
           "optional": true
-        }
-      }
-    },
-    "lp_community_viewed": {
-      "loose": false,
-      "props": {
-        "community_id": {
-          "kind": "string",
-          "optional": false
-        },
-        "members_count": {
-          "kind": "unknown",
-          "optional": false
-        },
-        "privacy": {
-          "kind": "enum-string",
-          "values": [
-            "private",
-            "public"
-          ],
-          "optional": false
-        },
-        "source": {
-          "kind": "enum-string",
-          "values": [
-            "fixture",
-            "live"
-          ],
-          "optional": false
         }
       }
     },

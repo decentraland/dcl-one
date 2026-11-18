@@ -99,6 +99,7 @@ describe('Updater Module', () => {
       const result: UpdateCheckResult = {
         updateInfo,
         versionInfo: updateInfo,
+        isUpdateAvailable: true,
       };
       vi.mocked(autoUpdater.checkForUpdates).mockResolvedValueOnce(result);
 
@@ -121,6 +122,7 @@ describe('Updater Module', () => {
       const result: UpdateCheckResult = {
         updateInfo,
         versionInfo: updateInfo,
+        isUpdateAvailable: false,
       };
       vi.mocked(autoUpdater.checkForUpdates).mockResolvedValueOnce(result);
 
@@ -144,6 +146,7 @@ describe('Updater Module', () => {
       const result: UpdateCheckResult = {
         updateInfo,
         versionInfo: updateInfo,
+        isUpdateAvailable: false,
       };
 
       vi.mocked(autoUpdater.checkForUpdates).mockResolvedValueOnce(result);
@@ -153,6 +156,31 @@ describe('Updater Module', () => {
       expect(response).toEqual({
         updateAvailable: false,
         version: '2.0.0',
+      });
+    });
+
+    test('should return updateAvailable false when electron-updater refuses a newer version', async () => {
+      // For example, latest-mac.yml asks for a newer system than this one (scripts/after-pack.js).
+      const updateInfo: UpdateInfo = {
+        version: '5.0.0',
+        files: [],
+        path: '',
+        sha512: '',
+        releaseDate: new Date().toISOString(),
+        minimumSystemVersion: '22.0.0',
+      };
+      const result: UpdateCheckResult = {
+        updateInfo,
+        versionInfo: updateInfo,
+        isUpdateAvailable: false,
+      };
+      vi.mocked(autoUpdater.checkForUpdates).mockResolvedValueOnce(result);
+
+      const response = await checkForUpdates({ autoDownload: false });
+
+      expect(response).toEqual({
+        updateAvailable: false,
+        version: '5.0.0',
       });
     });
 
@@ -174,6 +202,7 @@ describe('Updater Module', () => {
       const result: UpdateCheckResult = {
         updateInfo,
         versionInfo: updateInfo,
+        isUpdateAvailable: false,
       };
 
       vi.mocked(autoUpdater.checkForUpdates).mockResolvedValueOnce(result);

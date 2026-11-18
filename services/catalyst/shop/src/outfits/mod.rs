@@ -27,12 +27,12 @@ mod tests;
 
 use std::sync::Arc;
 
+use crate::shared::routing::{erase, get, post};
 use axum::Json;
 use axum::body::{Body, Bytes};
 use axum::extract::{OriginalUri, Path, Query, State as Extract};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
 use axum::{Router, extract::Request};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -117,11 +117,14 @@ impl State {
 pub fn shop_router(state: SharedState) -> Router {
     let enabled = state.settings.writes_enabled;
     let api = Router::new()
-        .route("/v1/outfits", get(list_published).post(create))
+        .route("/v1/outfits", get(list_published).post(erase(create)))
         .route("/v1/outfits/all", get(list_all))
         .route("/v1/outfits/thumbnails", post(upload_thumbnail))
         .route("/v1/outfits/thumbnails/{hash}", get(thumbnail))
-        .route("/v1/outfits/{id}", get(one).put(replace).delete(remove))
+        .route(
+            "/v1/outfits/{id}",
+            get(one).put(erase(replace)).delete(erase(remove)),
+        )
         .with_state(state);
     DataWrites::guard(api, enabled)
 }

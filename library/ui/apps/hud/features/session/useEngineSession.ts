@@ -503,6 +503,8 @@ export interface MinimapState {
   /** Relay the current style/rotation/zoom to the scene. Only the Camera style needs the
    *  engine; on the DOM styles the scene disposes its TextureCamera. */
   setConfig: (config: { style: MinimapStyle; rotation: MinimapRotation; visibleMeters: number }) => void
+  /** Reload the scene the player stands in, as the `/reload` chat command does. */
+  reloadScene: () => void
 }
 
 // Places browses the places API over HTTP (no bridge data) — it only needs open/close.
@@ -945,6 +947,10 @@ const REVEAL_DEBOUNCE_MS = 600
 // how long, back from the auth site, the stored sign-in waits for the catalyst to have the profile
 // How long Verifying waits for a sign-in before giving up.
 const VERIFY_TIMEOUT_MS = 15_000
+// The longest Verifying waits for the bridge scene to answer before its own clock starts anyway:
+// the bridge's ready timeout (30 s) plus VERIFY_TIMEOUT_MS. A bridge that never answers and is never
+// reported unreachable (an engine run that ended on its own) still ends the wait.
+const VERIFY_BRIDGE_WAIT_MS = 45_000
 // how long a checked email code's Success shows before its sign-in starts
 const EMAIL_SUCCESS_MS = 600
 /** The sign-in error a Verifying that gave up leaves: no reason to show the player. */
@@ -1253,6 +1259,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [error, setError] = useState<string | null>(null)
   // Engine boots (autostart) while the login screen is up; this flips true once it can take commands.
   const [engineReady, setEngineReady] = useState(false)
+  // The bridge scene has answered the page (or was reported unreachable): Verifying's clock waits
+  // for it, since the welcome answer comes from that scene and a busy cold boot can start it well
+  // after the sign-in is submitted.
+  const [bridgeAnswered, setBridgeAnswered] = useState(false)
   const [avatarLoaded, setAvatarLoaded] = useState(false)
   // Real WASM-download/boot progress surfaced from the engine (0–100) + the active step id,
   // for the login footer bar. The engine's own loader is hidden (hideLoader=1).
@@ -2033,7 +2043,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'systemAction':
           systemActionRef.current(msg.action, msg.pressed)
           break
+        case 'bridgeReady':
+          setBridgeAnswered(true)
+          break
         case 'bridgeUnavailable':
+          // no answer is coming: Verifying's clock runs, so a sign-in waiting on it gives up
+          setBridgeAnswered(true)
           // Every panel behind the bridge would stay empty with nothing to explain why. Not a crash:
           // the engine and the world itself are fine, so it opens as an ordinary dialog (issue #1233).
           // With the HUD hidden (?hud=0, or a substituted ui scene) there are no panels to explain.
@@ -2620,6 +2635,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         }
       }
     })
+    // a bridge that answered before this subscription (or a driver with no bridge to wait for)
+    if (typeof driver.bridgeReady !== 'function' || driver.bridgeReady()) setBridgeAnswered(true)
 
     // Same-domain SSO: an identity in this origin's localStorage (written by the auth site)
     // means the user is already signed in — no engine query, no polling. Returning from the
@@ -2790,6 +2807,18 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const changeRealm = useCallback((realm: string) => travel({ kind: 'changeRealm', realm }), [travel])
   const dismissTravelError = useCallback(() => setTravelError(null), [])
 
+  // Reload the scene under the player: the `/reload` chat command and the minimap menu's Reload Scene.
+  const reloadScene = useCallback(() => {
+    driverRef.current?.send({ kind: 'reloadScene' })
+    // the reloaded scene starts afresh, so this visit's answers and uses go too
+    answeredPermissions.current.clear()
+    setVisitAnswers([])
+    setTriggeredPermissions([])
+    setRefusedTypes([])
+    setSeenDenied([])
+    skipRefusal.current.clear()
+  }, [])
+
   // Chat send doubles as the slash-command interceptor (parity with bevy-ui-scene's `sendChatMessage`):
   // a recognized `/command` never reaches other players — it teleports, reloads, runs an engine console
   // command, or echoes a system message. Anything else is sent as a normal Nearby message.
@@ -2810,14 +2839,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           changeRealm(cmd.realm)
           break
         case 'reload':
-          driverRef.current?.send({ kind: 'reloadScene' })
-          // the reloaded scene starts afresh, so this visit's answers and uses go too
-          answeredPermissions.current.clear()
-          setVisitAnswers([])
-          setTriggeredPermissions([])
-          setRefusedTypes([])
-          setSeenDenied([])
-          skipRefusal.current.clear()
+          reloadScene()
           break
         case 'debug':
           requestDebugPanel(cmd.target, pushSystemMessage)
@@ -2833,7 +2855,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
       }
     },
-    [pushSystemMessage, changeRealm]
+    [pushSystemMessage, changeRealm, reloadScene]
   )
 
   // Toggle one exclusive panel (closing chat + all others); optionally run onOpen.
@@ -4656,13 +4678,17 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
 
   // Verifying your account: signed in to the lobby's held world, waiting for the sign-in and the
   // account's welcome answer (and an existing account's terms, answered for it). It gives up after
-  // VERIFY_TIMEOUT_MS, back to the first screen with Connection Error, the stored sign-in kept.
+  // VERIFY_TIMEOUT_MS, back to the first screen with Connection Error, the stored sign-in kept. The
+  // welcome answer is the bridge scene's, so the clock starts once that scene has answered the page
+  // (or is reported unreachable): on a cold, busy boot it can start long after the sign-in. A bridge
+  // that does neither still gives up after VERIFY_BRIDGE_WAIT_MS.
   const verifying = phase === 'welcome' && welcome == null
   useEffect(() => {
     if (!verifying) return
-    const id = setTimeout(() => cancelSignIn(VERIFY_TIMED_OUT), VERIFY_TIMEOUT_MS)
+    const wait = bridgeAnswered ? VERIFY_TIMEOUT_MS : VERIFY_BRIDGE_WAIT_MS
+    const id = setTimeout(() => cancelSignIn(VERIFY_TIMED_OUT), wait)
     return () => clearTimeout(id)
-  }, [verifying, cancelSignIn])
+  }, [verifying, bridgeAnswered, cancelSignIn])
 
   const connectivity = useConnectivity(driverRef.current, phase === 'world' || phase === 'entering')
   // A /hud_login is answered once the engine took the sign-in and the HUD is past the welcome page
@@ -4991,9 +5017,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       restrictions: mic.sceneBlocked ? [NEARBY_VOICE_RESTRICTION] : [],
       donatePlace: donatePlaceKey ? (JSON.parse(donatePlaceKey) as DonatePlace) : null,
       linkRealm,
-      setConfig: setMinimapConfig
+      setConfig: setMinimapConfig,
+      reloadScene
     }),
-    [satelliteView, sceneTitle, mic.sceneBlocked, donatePlaceKey, linkRealm, setMinimapConfig]
+    [satelliteView, sceneTitle, mic.sceneBlocked, donatePlaceKey, linkRealm, setMinimapConfig, reloadScene]
   )
 
   return {

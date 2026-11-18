@@ -1,1 +1,1 @@
-export { DialogButton } from './DialogButton.styled';
+export { DialogButton } from './DialogButton';

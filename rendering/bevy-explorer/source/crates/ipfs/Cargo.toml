@@ -8,6 +8,7 @@ edition = "2021"
 [features]
 default = ["ipfs_debug"]
 hot_reload = []
+web-worker = ["bevy/web-worker"]
 ipfs_debug = ["bevy/bevy_ui_picking_backend"]
 
 [dependencies]

@@ -1,4 +1,4 @@
-import { ListItemButton, ListItemText } from 'decentraland-ui2';
+import Text from '@ui/atoms/Text';
 
 import type { PublishOptionsProps } from './types';
 
@@ -6,12 +6,19 @@ export function PublishOptions({ options }: PublishOptionsProps) {
   return (
     <div className="PublishOptions">
       {options.map(option => (
-        <ListItemButton
+        <button
           key={option.id}
+          type="button"
+          className="option"
           onClick={option.action}
         >
-          <ListItemText primary={option.label} />
-        </ListItemButton>
+          <Text
+            as="span"
+            variant="body1"
+          >
+            {option.label}
+          </Text>
+        </button>
       ))}
     </div>
   );

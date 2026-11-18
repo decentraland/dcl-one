@@ -19,10 +19,28 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   `c78b1f0c59545b0d3b1ff43e109fa63997267850` clamps negative speed to zero. Missing overrides
   retain this renderer's time-of-day atmosphere, lighting and quality settings; component
   compatibility does not imply identical default pixels across renderers. A sky image changes
-  the visible sky while the authored color bands continue to drive procedural ambient lighting.
+  the visible sky while the authored color bands continue to drive ambient lighting: an
+  authored zenith, horizon or nadir replaces the sky, equator or ground colour of the Trilight
+  ambient, and the sky preset keeps the bands a scene leaves out. A scene's fog density is in the
+  sky preset's units, so it goes through the same conversion to bevy's falloff, and it takes the
+  place of the `/fog` density while the scene is active.
+- **A root light source replaces what it sets.** Point and spot light intensities are scaled to
+  the sky preset's light unit (the default 16000 is 8 units). A `LightSource` on a scene's root
+  entity replaces the sun's colour and, when it gives an intensity, the sun's intensity as lux,
+  unscaled: the Unity client creates no light for a light source without a type, so there is no
+  unit to match, and scenes already set it in lux here. Without an intensity the sky preset's
+  light stays: the lamps' default of 16000 is not applied to the sun, where it is over four
+  times the preset's noon.
+- **The light sets with the sun.** From sunset until the swing to the moon, and from the swing
+  back until sunrise, the directional light stays on the sun's arc below the horizon while the
+  intensity curve fades it, as in Unity. It grazes walls from under the horizon and floors get
+  no direct light; at most a tenth of a light unit points upward. It is not clamped to the
+  horizon.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
   it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
   the extension is not the fix; the long-term answer is still open.
+- **Sky preset curves are linear.** The fog colour, light colour, light intensity and Trilight
+  ambient keys are interpolated linearly; Unity's curve tangents are not carried.
 - **Render scale compositor.** At scale 1 the world camera draws to the window and carries the
   UI, at no extra cost. Below it, the world renders to an image that a 2D camera composites onto
   the window with FSR EASU; bevy's CAS at 0.92 stands in for RCAS; the UI rides the compositor
@@ -39,10 +57,6 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   cascade spreads that over the whole shadow distance, and the bias is in texels, so past about
   75 m on 1024 the avatar's shadow disappeared, and on 2048 it was a smudge at the feet. 4096
   keeps it.
-- **Sun shadows block 0.65 of the sun.** Unity's sun shadow strength is 1, and its Trilight
-  ambient fills the shadow in. Our ambient is darker, so a full-strength shadow comes out far
-  darker than Unity's. `SHADOW_OPACITY` in `shadow_softening.wgsl` stays at 0.65 until Unity's
-  ambient lands, and the two get tuned together after that.
 - **Sun shadows hold a floor past the shadow distance.** URP fades the shadow out completely at
   the shadow distance. We fade over the same squared-distance curve, but towards a partial
   shadow (`CASCADE_FAR_SHADOW` in `shadow_softening.wgsl`) that holds past the distance, so the
@@ -147,7 +161,20 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     unaffected.
   - Don't offer Speak there: the nearby voice popover still opens, with Speak disabled and the same
     hint, so hearing and volume stay adjustable; the minimap header lists "Nearby voice disabled".
-  - A player the gatekeeper refuses from a scene room is not handled here; that is next work.
+  - A scene room that refuses the player as banned (a platform, world or scene ban, as
+    `SceneAdmission` reads the refusal) turns nearby voice off the same way. The room asks again
+    every 15 s, since an unban reaches only the players inside it; an admission, or a new scene,
+    realm or wallet, lifts it without reopening the mic. A recheck with no answer (a network
+    error, a 503) keeps the refusal. The interval bounds both the gatekeeper requests from a
+    player who stays banned and the wait before an unban is noticed. Platform bans recheck here
+    too: the platform ban-status poll (every 300 s) reads the ban but never admits the room
+    again. unity-explorer suppresses on any 401 or 403 from the scene room and lifts it on the
+    room's next connect or disconnect; its scene room asks again every 5 s while refused.
+- **Blocked and scene-banned players are not heard nearby.** A player blocked in either
+  direction, or banned by the connected scene room, carries `BlockedOrBanned`, and their nearby
+  voice track is unsubscribed while it lasts; unity-explorer keeps the track and creates no audio
+  source. Calls and community streams still carry them. Scene bans apply without the
+  `alfa-banned-users-from-scene` flag unity-explorer reads, as in Nearby chat.
 - **Saved mutes for nearby voice** follow unity-explorer's: the profile menu's Hush and Hear, the
   list kept by the social service (`/v1/mutes`), a mute that holds for the session when saving it
   fails, a saved list that only adds to what the user did before it arrived, and a muted player
@@ -485,10 +512,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   The sea around the city is one image, rendered once from unity-explorer's sea shader and placed
   under the satellite map like its tiles; its water stands still, where unity-explorer animates
   it every frame. Nothing on the map is drawn per frame.
-- **The map's layers are on the full map only.** unity-explorer draws live events, points of
-  interest, players, scene pins and the home pin on the minimap too, and the Layers panel switches
-  both. Here the minimap keeps its own place markers and settings, so the Layers panel changes the
-  full map alone, and a route shows no pin on the minimap's edge.
+- **The map's layers are on the full map only, except the home pin.** unity-explorer draws live
+  events, points of interest, players, scene pins and the home pin on the minimap too, and the
+  Layers panel switches both. Here the minimap draws the home pin and keeps its own place markers
+  and settings, so the Layers panel changes the full map alone, and a route shows no pin on the
+  minimap's edge. The minimap has no favourite button for the place the player stands in.
 - **The map draws no scene map pins.** unity-explorer shows the `MapPin`s of every portable
   experience, among them the quests' global one (`globalpx.dcl.eth`, loaded at startup from
   `alfa-global-portable-experiences`), and of any scene under `alfa-map-pins`, with a Quest
@@ -496,10 +524,16 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   reads no `MapPin` and has no such layer.
 - **Home can be set, not cleared, and is one for the install.** unity-explorer's Set as Home also
   takes the home back, and it keeps one home per wallet. Here the engine keeps one home in its
-  config, parcel 0,0 of the default realm until one is set, and the place panel's button only
-  sets it.
-- **Home is set from the map's place panel only.** unity-explorer also sets it from the minimap's
-  menu and from Places cards; neither has that control here.
+  config, parcel 0,0 of the default realm until one is set, and the place panel's button and the
+  minimap's switch only set it: the switch reads on where the player stands in their home, and
+  can't be turned off.
+- **Home is set from the map's place panel and the minimap's menu.** unity-explorer also sets it
+  from Places cards, which have no such control here. The minimap's menu is unity-explorer's: Set
+  as Home, Copy Link and Reload Scene, then this HUD's own Minimap settings. As unity-explorer's,
+  the minimap saves the parcel the player stands on, where the place panel saves the place's base
+  parcel (a road's, the picked one), and it compares a World's name without case where the place
+  panel compares it exactly. A World's copied link names the World and the parcel and carries the
+  sharer's address, as unity-explorer's.
 - **The map fixes what the upstream panel leaves broken.** Search results carry their LIVE badge
   (upstream keys the lookup by a malformed parcel, so none shows); "remind me" on an event row
   starts from the player's saved interest and keeps working after the list is rebuilt; a like or
@@ -551,6 +585,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   known, as it already does for a photo's teleport. A friend found nowhere leaves it open, and
   nothing is shown, as there. The profile card offers the jump after View Profile, since its rows
   already follow a different order from unity-explorer's user menu.
+- **INVITE FRIENDS is for a signed-in player only.** unity-explorer's copy runs for any
+  identity it holds. Here a guest gets no button, since a guest's address is never kept and a referral
+  to it could not be credited. As there, it copies the deployment site's `/invite/<address>`
+  and says "Link copied!"; the panel stays open.
+- **A new referral tier opens the site's Referral Rewards tab.** unity-explorer opens
+  `profile/accounts/<address>/referral`, which this site does not serve; its profile names the
+  same page `/profile/<address>/referral-rewards`.
 - **The hills follow the Landscape Distance.** The distance is the config's `landscape_distance`
   (default 1000 m), read at startup and held to 500 to 7000 m.
   Unity displaces its whole terrain and its Landscape Distance setting does not drive it. Here the
@@ -570,6 +611,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 
 ## Deliberate choices that look like mistakes
 
+- **Fog does not hide the loading edge.** The fog is the sky preset's: one exponential density
+  (0.0005 per metre) and a colour by time of day, as the Unity client renders it. It does not
+  thicken with a shorter scene load distance, so the edge of the loaded scenes shows through it,
+  and a scene's global light does not tint it. A scene sets fog colour and density with its fog
+  component. The Off setting is no fog at all.
+- **glTF occlusion textures are ignored.** Scene materials drop a glTF's occlusion texture, so
+  baked ambient occlusion does not darken the ambient light. The Unity client's scene shader
+  does not sample it either, and content is authored against that look.
 - **The map carries over upstream's marker rules as they are**, so the two clients' maps match.
   A place of several parcels is marked on the parcel a walk over them stops at, which depends on
   their order and is not always the middle one; a cluster stands half a parcel south-west of the

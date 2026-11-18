@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { DEFAULT_REALM } from '@hud-host'
 import { isGenesisSatelliteView } from '@explorer-core/features/map/atlas'
-import { homeOf, isHomePlace } from '@explorer-core/features/map/home'
+import { homeOf, isPlacePanelHome } from '@explorer-core/features/map/home'
 import { isRoad, isWorldPlace, type PlacePhoto } from '@explorer-core/features/map/mapApi'
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import type { EventData } from '@explorer-core/engine/protocol'
@@ -184,8 +184,7 @@ export function MapPage({
     if (parcel != null) map.setHome(DEFAULT_REALM, parcel)
   }
 
-  const placeIsHome = (place: DiscoverPlace, origin: Vec2 | null): boolean =>
-    isHomePlace(home, place) || (isRoad(place.title) && origin != null && home.world == null && home.parcel?.x === origin.x && home.parcel.y === origin.y)
+  const placeIsHome = (place: DiscoverPlace, origin: Vec2 | null): boolean => isPlacePanelHome(home, place, origin)
 
   const navigatingTo = (place: DiscoverPlace): boolean => {
     if (destination == null || isWorldPlace(place)) return false

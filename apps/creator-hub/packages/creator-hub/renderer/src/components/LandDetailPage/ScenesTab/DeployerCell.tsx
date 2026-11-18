@@ -1,8 +1,10 @@
-import { Address, AvatarFace, type AvatarFaceProps } from 'decentraland-ui2';
+import Address from '@ui/atoms/Address';
+import AvatarFace, { type AvatarFaceProps } from '@ui/atoms/AvatarFace';
 
 import { useProfile } from '/@/hooks/useProfile';
 
 import { Deployer, Meta } from './ScenesTab.styled';
+import styles from './ScenesTab.module.css';
 
 /** The account that deployed a scene: avatar and profile name or shortened address, or a dash while unknown. */
 export function DeployerCell({ address }: { address?: string }) {
@@ -21,6 +23,7 @@ export function DeployerCell({ address }: { address?: string }) {
         <Address
           value={address}
           shorten
+          className={styles.address}
         />
       )}
     </Deployer>

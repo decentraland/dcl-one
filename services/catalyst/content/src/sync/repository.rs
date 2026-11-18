@@ -8,13 +8,17 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use futures::TryStreamExt;
 use sqlx::PgPool;
 
 use super::{SyncError, SyncStatus, Timestamp};
 use crate::bloom_filter::BloomFilter;
 
-const DEPLOYED_ENTITY_IDS_SQL: &str = "SELECT entity_id FROM content.deployments";
+/// One page of deployed entity ids after a key, on the `deployments_entity_id_key` unique index.
+const DEPLOYED_ENTITY_IDS_PAGE_SQL: &str = "SELECT entity_id FROM content.deployments \
+     WHERE entity_id > $1 ORDER BY entity_id LIMIT $2";
+/// Ids per seeding statement: each page is its own statement, so the pool's statement timeout
+/// bounds a page, never the whole table.
+const SEED_PAGE: i64 = 20_000;
 
 pub struct LiveDeploymentRepository {
     pool: PgPool,
@@ -27,25 +31,45 @@ impl LiveDeploymentRepository {
     }
 
     /// Seeds the batch deployer's bloom filter at startup: every deployed
-    /// entity id, streamed into `bloom` row by row over one connection (the
-    /// socket is the backpressure) instead of a `Vec` of all ids first. A
-    /// bloom hit still verifies against the table (`is_entity_deployed`).
-    /// Returns the number of ids seeded.
+    /// entity id, read in keyset pages of [`SEED_PAGE`] ids on the unique
+    /// `entity_id` index. One statement over the whole table outlives the
+    /// pool's statement timeout once the table holds a full sync (a million
+    /// rows on a slow volume), and the sync worker then never starts. A bloom
+    /// hit still verifies against the table (`is_entity_deployed`). Returns the
+    /// number of ids seeded.
     pub async fn seed_deployed_entity_ids(
         &self,
         bloom: &mut BloomFilter,
     ) -> Result<u64, SyncError> {
-        let mut ids = sqlx::query_scalar::<_, String>(DEPLOYED_ENTITY_IDS_SQL).fetch(&self.pool);
+        self.seed_in_pages(bloom, SEED_PAGE).await
+    }
+
+    async fn seed_in_pages(
+        &self,
+        bloom: &mut BloomFilter,
+        page_size: i64,
+    ) -> Result<u64, SyncError> {
         let mut count = 0u64;
-        while let Some(id) = ids
-            .try_next()
-            .await
-            .map_err(|e| SyncError::Storage(e.to_string()))?
-        {
-            bloom.add(&id);
-            count += 1;
+        let mut after = String::new();
+        loop {
+            let page: Vec<String> = sqlx::query_scalar(DEPLOYED_ENTITY_IDS_PAGE_SQL)
+                .bind(&after)
+                .bind(page_size)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| SyncError::Storage(e.to_string()))?;
+            let Some(last) = page.last() else {
+                return Ok(count);
+            };
+            after = last.clone();
+            for id in &page {
+                bloom.add(id);
+            }
+            count += page.len() as u64;
+            if (page.len() as i64) < page_size {
+                return Ok(count);
+            }
         }
-        Ok(count)
     }
 
     pub async fn is_entity_deployed(
@@ -875,6 +899,14 @@ mod tests {
             .await
             .unwrap();
         }
+
+        // Pages of two cross a page boundary and end on a short page.
+        let mut paged = BloomFilter::with_capacity(100_000);
+        assert_eq!(
+            repo.seed_in_pages(&mut paged, 2).await.unwrap(),
+            ids.len() as u64
+        );
+        assert!(ids.iter().all(|id| paged.maybe_contains(id)));
 
         let mut bloom = BloomFilter::with_capacity(100_000);
         let seeded = repo.seed_deployed_entity_ids(&mut bloom).await.unwrap();

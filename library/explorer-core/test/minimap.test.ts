@@ -18,6 +18,10 @@ import {
   saveZoom
 } from '../features/minimap/minimapPrefs'
 import { placesNear, type MinimapPlace } from '../features/minimap/minimapPlaces'
+import { minimapHomeTarget } from '../features/minimap/minimapHome'
+import { isPlacePanelHome, isStandingInHome } from '../features/map/home'
+import { jumpInLink } from '../features/map/shareLinks'
+import { DEFAULT_REALM } from '@hud-host'
 
 vi.mock('../features/places/placesApi', () => ({ fetchPlaces: vi.fn() }))
 
@@ -198,5 +202,49 @@ describe('loadMinimapPlaces', () => {
     expect(places).toHaveLength(101)
     const api = await import('../features/places/placesApi')
     expect(vi.mocked(api.fetchPlaces)).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('minimap Set as Home', () => {
+  const plaza = { id: 'p', title: 'Plaza', positions: ['10,20', '11,20'], base_position: '10,20' } as DiscoverPlace
+  const road = { id: 'r', title: 'Long Road', positions: ['10,20', '11,20'], base_position: '10,20' } as DiscoverPlace
+
+  it('makes home the parcel in Genesis City, the World by name elsewhere', () => {
+    expect(minimapHomeTarget(DEFAULT_REALM, { x: 3, y: 4 })).toEqual({ realm: DEFAULT_REALM, parcel: { x: 3, y: 4 } })
+    expect(minimapHomeTarget('boedo.dcl.eth', { x: 3, y: 4 })).toEqual({ realm: 'boedo.dcl.eth', parcel: { x: 0, y: 0 } })
+  })
+
+  it('counts any parcel of the home place as home', () => {
+    expect(isStandingInHome({ parcel: { x: 10, y: 20 }, world: null }, null, { x: 11, y: 20 }, plaza)).toBe(true)
+  })
+
+  it('on a road or with no place, counts only the home parcel itself', () => {
+    const home = { parcel: { x: 10, y: 20 }, world: null }
+    expect(isStandingInHome(home, null, { x: 11, y: 20 }, road)).toBe(false)
+    expect(isStandingInHome(home, null, { x: 10, y: 20 }, road)).toBe(true)
+    expect(isStandingInHome(home, null, { x: 10, y: 20 }, null)).toBe(true)
+  })
+
+  it("differs from the place panel's rule on roads and on World names, on purpose", () => {
+    const home = { parcel: { x: 11, y: 20 }, world: null }
+    // the panel counts a road home when any of its parcels is; the minimap only at the home parcel
+    expect(isPlacePanelHome(home, road, { x: 10, y: 20 })).toBe(true)
+    expect(isStandingInHome(home, null, { x: 10, y: 20 }, road)).toBe(false)
+    const world = { parcel: null, world: 'Boedo.dcl.eth' }
+    const boedo = { id: 'w', title: 'Boedo', world_name: 'boedo.dcl.eth', positions: [], base_position: '0,0' } as unknown as DiscoverPlace
+    expect(isPlacePanelHome(world, boedo, null)).toBe(false)
+    expect(isStandingInHome(world, 'boedo.dcl.eth', { x: 0, y: 0 }, null)).toBe(true)
+  })
+
+  it('in a World, compares its name without case', () => {
+    expect(isStandingInHome({ parcel: null, world: 'Boedo.dcl.eth' }, 'boedo.dcl.eth', { x: 0, y: 0 }, null)).toBe(true)
+    expect(isStandingInHome({ parcel: { x: 0, y: 0 }, world: null }, 'boedo.dcl.eth', { x: 0, y: 0 }, null)).toBe(false)
+  })
+})
+
+describe('minimap jump link', () => {
+  it("names a Genesis City parcel, or a World and its parcel, with the sharer's address", () => {
+    expect(jumpInLink(3, 4, '0xabc', DEFAULT_REALM)).toMatch(/\/jump\/\?position=3,4&referrer=0xabc$/)
+    expect(jumpInLink(3, 4, undefined, 'boedo.dcl.eth')).toMatch(/\/jump\/\?realm=boedo\.dcl\.eth&position=3,4$/)
   })
 })
