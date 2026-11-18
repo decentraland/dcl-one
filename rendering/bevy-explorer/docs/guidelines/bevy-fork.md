@@ -164,6 +164,10 @@ across workers:
   primitive's bounds follow its position accessor's normalization. Tangents are read only through
   the attribute conversion, so a quantized tangent accessor is never read as floats. The meshes
   hold floats on the GPU; upstream #26030 keeps them quantized there.
+- Morph target reads stop at the mesh's vertex count (patch 0118, on top of the backport above),
+  so a target accessor's declared `count` never sizes an allocation: a zero-filled or sparse
+  target holds at most one displacement per vertex. Upstream reads the full `count`; keep this
+  patch on migration until upstream bounds it too.
 - Texture decode is skipped when `load_materials` is empty, with a 1x1 placeholder under the
   normal label: headless servers keep geometry without pixels.
 - `Rgba16Unorm` textures are converted to 8-bit, preserving sampler and sRGB (the web can't
