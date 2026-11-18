@@ -52,7 +52,7 @@ describe("when editing a hangout through its route", () => {
     router = createMemoryRouter([
       { id: "hangout", path: "/events/edit-event/:id", Component: SubmitHangoutRoute as never, loader: () => loaderData },
       { path: "/events", element: <h1>What's On</h1> },
-    ], { initialEntries: ["/events/edit-event/existing-event?step=details"], hydrationData: { loaderData: { hangout: loaderData } } });
+    ], { initialEntries: ["/events/edit-event/existing-event"], hydrationData: { loaderData: { hangout: loaderData } } });
     render(<RouterProvider router={router} />);
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.resetAllMocks(); router.dispose(); });
@@ -115,6 +115,13 @@ describe("when editing a hangout through its route", () => {
   });
   describe("and the event has loaded", () => {
     beforeEach(async () => { await act(async () => { resolveOptions(options); resolveLoad(event); }); });
+    it("should keep the prefilled cover, details, location and schedule in one editor", () => {
+      expect(screen.getByRole("textbox", { name: "Hangout Name" })).toHaveProperty("value", "Monthly series");
+      expect(screen.getByLabelText("Upload cover image")).toBeTruthy();
+      expect(screen.getByLabelText("World")).toHaveProperty("value", "music.dcl.eth");
+      expect(screen.getByLabelText("Date")).toHaveProperty("value", "2099-06-01");
+    });
+
     it("should allow the owner to clear a community absent from the management list", async () => {
       await user.selectOptions(screen.getByRole("combobox", { name: "Community" }), "");
       expect((screen.getByRole("combobox", { name: "Community" }) as HTMLSelectElement).value).toBe("");

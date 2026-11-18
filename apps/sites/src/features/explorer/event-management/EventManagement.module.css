@@ -12,3 +12,21 @@
 .details { flex: 1; min-width: min(300px, 100%); }
 .editor { border: 1px solid var(--ink-45); border-radius: 12px; padding: 20px; margin-top: 24px; }
 .button:focus-visible, .input:focus-visible, .link:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+
+.review {
+  padding: var(--dcl-space-24);
+  overflow-wrap: anywhere;
+}
+
+.reviewCover {
+  width: 100%;
+  max-height: 320px;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--dcl-radius-md);
+}
+
+.reviewActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}

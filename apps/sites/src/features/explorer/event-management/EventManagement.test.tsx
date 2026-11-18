@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -52,9 +52,21 @@ describe("when managing hangouts", () => {
   it("should approve the selected event and report confirmed success", async () => {
     renderPage();
     await user.click(await screen.findByRole("button", { name: "Approve Moon concert" }));
+    const review = screen.getByRole("dialog", { name: "Moon concert" });
+    expect(within(review).getByText("A concert")).toBeTruthy();
+    expect(moderateEvent).not.toHaveBeenCalled();
+    await user.click(within(review).getByRole("button", { name: "Approve event" }));
     await screen.findByText("Hangout approved.");
     expect(moderateEvent).toHaveBeenCalledWith(identity, "pending-one", "approve", undefined);
     expect(loadEventProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it("should leave the queue unchanged if review is cancelled", async () => {
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Approve Moon concert" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    expect(moderateEvent).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   describe("and moderation was superseded", () => {
@@ -62,8 +74,13 @@ describe("when managing hangouts", () => {
     it("should show the failure without claiming success", async () => {
       renderPage();
       await user.click(await screen.findByRole("button", { name: "Approve Moon concert" }));
-      await screen.findByText("The hangout changed. Refresh.");
+      const review = screen.getByRole("dialog", { name: "Moon concert" });
+      await user.click(within(review).getByRole("button", { name: "Approve event" }));
+      expect((await within(review).findByRole("alert")).textContent).toBe("The hangout changed. Refresh.");
       expect(screen.queryByText("Hangout approved.")).toBeNull();
+      await user.click(within(review).getByRole("button", { name: "Approve event" }));
+      await screen.findByText("Hangout approved.");
+      expect(moderateEvent).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -150,6 +167,7 @@ describe("when managing hangouts", () => {
     it("should provide own-event approval from My Hangouts", async () => {
       renderPage("mine");
       await user.click(await screen.findByRole("button", { name: "Approve Moon concert" }));
+      await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Approve event" }));
       await screen.findByText("Hangout approved.");
     });
   });

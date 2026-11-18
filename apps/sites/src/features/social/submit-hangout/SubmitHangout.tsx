@@ -11,6 +11,7 @@ import styles from "./SubmitHangout.module.css";
 import HangoutAssociations from "./HangoutAssociations";
 import {
   hangoutMachine,
+  HANGOUT_EVENTS,
   emitStepCompleted,
   resolveHangoutSnapshot,
   slugToState,
@@ -40,6 +41,8 @@ type SubmitHangoutProps = {
   canEditAny?: boolean;
   privateFieldsEditable?: boolean;
   canChangeCommunity?: boolean;
+  editor?: boolean;
+  reviewNotice?: string;
 };
 
 export default function SubmitHangout({
@@ -58,15 +61,20 @@ export default function SubmitHangout({
   canEditAny = false,
   privateFieldsEditable = mode === "create",
   canChangeCommunity = mode === "create",
+  editor = false,
+  reviewNotice,
 }: SubmitHangoutProps) {
   const [searchParams] = useSearchParams();
 
   const urlStep = (searchParams.get("step")?.trim() || initialStep) ?? undefined;
-  const stateId = slugToState(urlStep);
+  const inline = editor && !urlStep;
+  const stateId = inline && signedIn ? "review" : slugToState(urlStep);
 
   return (
     <SubmitHangoutInner
       stateId={stateId}
+      inline={inline}
+      reviewNotice={reviewNotice}
       trackCtx={trackCtx}
       categories={categories}
       categoriesError={categoriesError}
@@ -87,6 +95,8 @@ export default function SubmitHangout({
 
 type InnerProps = {
   stateId: HangoutStateId;
+  inline: boolean;
+  reviewNotice?: string;
   trackCtx: TrackContext;
   categories: CategoryOption[];
   categoriesError: boolean;
@@ -111,6 +121,8 @@ function uiStateFor(value: HangoutStateId): "signin" | "success" | "form" {
 
 function SubmitHangoutInner({
   stateId,
+  inline,
+  reviewNotice,
   trackCtx,
   categories,
   categoriesError,
@@ -143,6 +155,12 @@ function SubmitHangoutInner({
   const d = state.context.draft;
   const emitTrack: TrackFn = track ?? state.context.track;
   const needsSignIn = Boolean(onSignIn) && !signedIn;
+  const startedEditor = useRef(false);
+  useEffect(() => {
+    if (!inline || !signedIn || startedEditor.current) return;
+    startedEditor.current = true;
+    emitTrack(HANGOUT_EVENTS.started, {}, trackCtx);
+  }, [inline, signedIn, emitTrack, trackCtx]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const uploadController = useRef<AbortController | null>(null);
@@ -169,7 +187,7 @@ function SubmitHangoutInner({
 
   const lastStep = useRef<string | null>(null);
   useEffect(() => {
-    if (lastStep.current === step) return;
+    if (inline || lastStep.current === step) return;
     lastStep.current = step;
     setSearchParams(
       (prev) => {
@@ -180,21 +198,48 @@ function SubmitHangoutInner({
       },
       { replace: true, preventScrollReset: true },
     );
-  }, [step, setSearchParams]);
+  }, [inline, step, setSearchParams]);
 
   const isForm = !needsSignIn && uiStateFor(value) === "form";
   const formStepIndex = FORM_ORDER.indexOf(value);
   const communityAllowed = !options || Boolean(options.communitiesError) || !d.communityId || (mode === "edit" && d.communityId === draft?.communityId) || Boolean(options?.communities.some((community) => community.id === d.communityId));
   const canAdvanceForm = !uploading && (value === "cover" || (isStepValid(value, d) && (value !== "details" || communityAllowed)));
 
+  const editingInline = inline && value === "review";
+  const canSubmit = !uploading && communityAllowed &&
+    FORM_ORDER.every((section) => isStepValid(section, d));
+  const onEdit = (patch: Partial<HangoutDraft>) => send({ type: "EDIT", patch });
+
+  function fields(section: HangoutStateId) {
+    return (
+      <>
+        <StepFields
+          step={section}
+          draft={d}
+          categories={categories}
+          categoriesError={categoriesError}
+          onEdit={onEdit}
+          onUpload={upload ? (file, vertical) => { void uploadImage(file, vertical); } : undefined}
+          uploading={uploading}
+          privateFieldsEditable={privateFieldsEditable}
+          options={options}
+        />
+        {section === "details" && (
+          <HangoutAssociations draft={d} options={options} canEditAny={canEditAny} canChangeCommunity={canChangeCommunity} onEdit={onEdit} />
+        )}
+        {section === "details" && !communityAllowed && <p role="alert">{text("Choose a community you manage, or select None.")}</p>}
+      </>
+    );
+  }
+
   return (
-    <div className="submit-hangout" data-step={step} data-state={value}>
-      <header className="submit-hangout__header">
+    <div className="submit-hangout" data-editor={inline || undefined} data-step={inline ? undefined : step} data-state={value}>
+      <header className={`submit-hangout__header ${inline ? styles.editorHeader : ""}`}>
         <Link to="/events">{text("Back to Events")}</Link>
         <h1>{mode === "edit" ? text("Edit Hangout") : text("Submit a Hangout")}</h1>
       </header>
 
-      <div className="submit-hangout__controls" role="group" aria-label={text("Hangout wizard")}>
+      <div className={`submit-hangout__controls ${inline ? styles.editorControls : ""}`} role="group" aria-label={text(inline ? "Event editor" : "Hangout wizard")}>
         {(value === "signinGate" || needsSignIn) && (
           <button
             type="button"
@@ -207,23 +252,33 @@ function SubmitHangoutInner({
 
         {isForm && (
           <>
-            <StepFields
-              step={value}
-              draft={d}
-              categories={categories}
-              categoriesError={categoriesError}
-              onEdit={(patch) => send({ type: "EDIT", patch })}
-              onUpload={upload ? (file, vertical) => { void uploadImage(file, vertical); } : undefined}
-              uploading={uploading}
-              privateFieldsEditable={privateFieldsEditable}
-              options={options}
-            />
-            {value === "details" && <HangoutAssociations draft={d} options={options} canEditAny={canEditAny} canChangeCommunity={canChangeCommunity} onEdit={(patch) => send({ type: "EDIT", patch })} />}
-            {value === "details" && !communityAllowed && <p role="alert">{text("Choose a community you manage, or select None.")}</p>}
+            {reviewNotice && <p className={styles.reviewNotice}>{reviewNotice}</p>}
+            {editingInline ? (
+              <div className={styles.editorColumns}>
+                <div>
+                  <fieldset className={styles.editorSection}><legend>{text("Cover")}</legend>{fields("cover")}</fieldset>
+                  <fieldset className={styles.editorSection}><legend>{text("Event details")}</legend>{fields("details")}</fieldset>
+                </div>
+                <div>
+                  <fieldset className={styles.editorSection}><legend>{text("Location")}</legend>{fields("location")}</fieldset>
+                  <fieldset className={styles.editorSection}><legend>{text("Schedule")}</legend>{fields("schedule")}</fieldset>
+                </div>
+              </div>
+            ) : (
+              <>
+                {inline && value === "preview" && d.imagePreviewUrl && (
+                  <img className={styles.previewCover} src={d.imagePreviewUrl} alt={text("Hangout cover")} />
+                )}
+                {fields(value)}
+                {inline && value === "preview" && d.description && <p>{d.description}</p>}
+              </>
+            )}
             {uploadError && <p role="alert">{errorText(uploadError)}</p>}
             {uploading && <p role="status">{text("Uploading image…")}</p>}
+            {editingInline && !canSubmit && !uploading && <p className="submit-hangout__hint">{text("Complete the hangout details, location and schedule before submitting.")}</p>}
             <div className="submit-hangout__nav">
-              {value === "cover" ? <Link className="submit-hangout__btn" to="/events">{text("Back")}</Link> : <button
+              {editingInline ? <Link className="submit-hangout__btn" to={mode === "edit" ? "/events?tab=my" : "/events"}>{text("Cancel")}</Link>
+                : value === "cover" ? <Link className="submit-hangout__btn" to="/events">{text("Back")}</Link> : <button
                 type="button"
                 className="submit-hangout__btn"
                 onClick={() => send({ type: "BACK" })}
@@ -236,6 +291,7 @@ function SubmitHangoutInner({
                   <button
                     type="button"
                     className="submit-hangout__btn"
+                    disabled={editingInline && !canSubmit}
                     onClick={() => send({ type: "PREVIEW" })}
                   >
                     {text("Preview")}
@@ -243,9 +299,10 @@ function SubmitHangoutInner({
                   <button
                     type="button"
                     className="submit-hangout__btn submit-hangout__btn--primary"
+                    disabled={editingInline && !canSubmit}
                     onClick={() => send({ type: "SUBMIT" })}
                   >
-                    {text("Submit Hangout")}
+                    {text(mode === "edit" && inline ? "Save changes" : "Submit Hangout")}
                   </button>
                 </>
               ) : value === "preview" ? (
@@ -350,12 +407,22 @@ function StepFields({
     return (
       <div className="submit-hangout__fields">
         <p className="submit-hangout__hint">{text("Cover images are optional.")}</p>
-        {onUpload && <>
-          <label className="submit-hangout__fieldlabel">{text("Upload cover image")}<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" disabled={uploading} onChange={(event) => { const file = event.target.files?.[0]; if (file) onUpload(file, false); }} /></label>
-          <label className="submit-hangout__fieldlabel">{text("Upload vertical cover")}<input type="file" accept="image/jpeg,image/png,image/webp" disabled={uploading} onChange={(event) => { const file = event.target.files?.[0]; if (file) onUpload(file, true); }} /></label>
-        </>}
-        {draft.imagePreviewUrl && <figure className={styles.cover}><img className={styles.coverImage} src={draft.imagePreviewUrl} alt={text("Hangout cover")} width={240} height={120} /><button type="button" className="submit-hangout__btn" onClick={() => onEdit({ imagePreviewUrl: null })}>{text("Remove cover image")}</button></figure>}
-        {draft.verticalImagePreviewUrl && <figure className={styles.cover}><img className={styles.coverImage} src={draft.verticalImagePreviewUrl} alt={text("Vertical hangout cover")} width={120} height={180} /><button type="button" className="submit-hangout__btn" onClick={() => onEdit({ verticalImagePreviewUrl: null })}>{text("Remove vertical cover")}</button></figure>}
+        <CoverField
+          image={draft.imagePreviewUrl}
+          uploading={uploading}
+          onUpload={onUpload}
+          onRemove={() => onEdit({ imagePreviewUrl: null })}
+        />
+        <details className={styles.verticalCover} open={Boolean(draft.verticalImagePreviewUrl)}>
+          <summary>{text("Optional vertical cover")}</summary>
+          <CoverField
+            vertical
+            image={draft.verticalImagePreviewUrl}
+            uploading={uploading}
+            onUpload={onUpload}
+            onRemove={() => onEdit({ verticalImagePreviewUrl: null })}
+          />
+        </details>
       </div>
     );
   }
@@ -547,6 +614,60 @@ function StepFields({
           </>
         )}
       </dl>
+    </div>
+  );
+}
+
+function CoverField({
+  vertical = false,
+  image,
+  uploading,
+  onUpload,
+  onRemove,
+}: {
+  vertical?: boolean;
+  image: string | null;
+  uploading: boolean;
+  onUpload?: (file: File, vertical: boolean) => void;
+  onRemove: () => void;
+}) {
+  const { text } = useEventsCopy();
+  const uploadLabel = text(vertical ? "Upload vertical cover" : "Upload cover image");
+  return (
+    <div className={styles.coverField}>
+      {image && (
+        <figure className={styles.cover}>
+          <img className={styles.coverImage} src={image} alt={text(vertical ? "Vertical hangout cover" : "Hangout cover")} width={vertical ? 120 : 240} height={vertical ? 180 : 120} />
+          <button type="button" className="submit-hangout__btn" disabled={uploading} onClick={onRemove}>
+            {text(vertical ? "Remove vertical cover" : "Remove cover image")}
+          </button>
+        </figure>
+      )}
+      {onUpload && (
+        <label
+          className={styles.dropZone}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => {
+            event.preventDefault();
+            const file = event.dataTransfer.files[0];
+            if (!uploading && file) onUpload(file, vertical);
+          }}
+        >
+          <strong>{uploadLabel}</strong>
+          <span>{text("Drop an image here or choose a file, up to 500 KiB.")}</span>
+          <input
+            type="file"
+            aria-label={uploadLabel}
+            accept={vertical ? "image/jpeg,image/png,image/webp" : "image/jpeg,image/png,image/webp,image/gif"}
+            disabled={uploading}
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = "";
+              if (file) onUpload(file, vertical);
+            }}
+          />
+        </label>
+      )}
     </div>
   );
 }

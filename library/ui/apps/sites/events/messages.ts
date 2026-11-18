@@ -986,6 +986,70 @@ const messages = {
     '从 {schedule} 开始',
     '{schedule} 부터 시작',
     '{schedule} から'
+  ],
+  'Approve event': [
+    'Aprobar evento',
+    'Approuver l’événement',
+    '批准活动',
+    '이벤트 승인',
+    'イベントを承認'
+  ],
+  'Event editor': [
+    'Editor de eventos',
+    'Éditeur d’événements',
+    '活动编辑器',
+    '이벤트 편집기',
+    'イベントエディター'
+  ],
+  Cover: ['Portada', 'Couverture', '封面', '커버', 'カバー'],
+  'Event details': [
+    'Detalles del evento',
+    'Détails de l’événement',
+    '活动详情',
+    '이벤트 세부 정보',
+    'イベントの詳細'
+  ],
+  'Save changes': [
+    'Guardar cambios',
+    'Enregistrer les modifications',
+    '保存更改',
+    '변경 사항 저장',
+    '変更を保存'
+  ],
+  'This event was rejected: {reason}': [
+    'Este evento fue rechazado: {reason}',
+    'Cet événement a été refusé : {reason}',
+    '此活动未通过审核：{reason}',
+    '이벤트가 거부되었습니다: {reason}',
+    'イベントが却下されました：{reason}'
+  ],
+  'This event was rejected.': [
+    'Este evento fue rechazado.',
+    'Cet événement a été refusé.',
+    '此活动未通过审核。',
+    '이벤트가 거부되었습니다.',
+    'イベントが却下されました。'
+  ],
+  'Changes to approved events may require another review.': [
+    'Los cambios a eventos aprobados podrían requerir otra revisión.',
+    'Modifier un événement approuvé peut nécessiter une nouvelle validation.',
+    '修改已通过审核的活动可能需要重新审核。',
+    '승인된 이벤트를 변경하면 다시 검토가 필요할 수 있습니다.',
+    '承認済みイベントへの変更は再審査が必要な場合があります。'
+  ],
+  'Optional vertical cover': [
+    'Portada vertical opcional',
+    'Couverture verticale facultative',
+    '可选竖版封面',
+    '세로 커버(선택 사항)',
+    '縦長カバー（任意）'
+  ],
+  'Drop an image here or choose a file, up to 500 KiB.': [
+    'Soltá una imagen acá o elegí un archivo de hasta 500 KiB.',
+    'Déposez une image ici ou choisissez un fichier de 500 Kio maximum.',
+    '将图片拖到这里，或选择不超过 500 KiB 的文件。',
+    '이미지를 여기로 끌어오거나 500 KiB 이하의 파일을 선택하세요.',
+    '画像をここにドロップするか、500 KiB 以下のファイルを選択してください。'
   ]
 } as const
 

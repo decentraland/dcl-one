@@ -1,11 +1,15 @@
+import { Dialog } from "@dcl/one-ui/apps/sites/events/Dialog";
+import { CardImage } from "@dcl/one-ui/components/CardImage/CardImage";
+import { QueryClientContext } from "@tanstack/react-query";
 import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router";
 import SitesChrome from "@ui/web/frames/SitesChrome";
 import { useAuth } from "@/data/lib/auth/context";
 import { getIdentity } from "@/data/lib/auth/session";
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { CatalystError } from "@/data/lib/catalyst/client";
+import { eventsPageKeys } from "@/data/lib/catalyst/places/events-page";
 import { openSignIn } from "../../components/auth/signin-store";
 import {
   EVENT_PERMISSIONS, loadEventProfile, loadEventProfiles, loadManagedEvents,
@@ -77,6 +81,9 @@ export default function EventManagement({ mode }: { mode: Mode }) {
 type Read = { key: string; events: ManagedEvent[]; hasMore: boolean; error?: string };
 function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdentity | null }) {
   const { locale, text, errorText } = useEventsCopy();
+  const client = useContext(QueryClientContext);
+  const reviewTitle = useId();
+  const [review, setReview] = useState<ManagedEvent | null>(null);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
@@ -127,17 +134,25 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
-  function resetSelection() { setRejection(null); setFeedback(null); setEditingProfile(false); }
+  function resetSelection() { setReview(null); setRejection(null); setFeedback(null); setEditingProfile(false); }
   function changePage(next: number) { resetSelection(); setPage(next); }
+
+  function closeReview() {
+    if (busy) return;
+    setReview(null);
+    setFeedback(null);
+  }
 
   async function applyModeration(id: string, action: "approve" | "reject", reason?: string) {
     const signer = getIdentity();
     if (!signer || signer.signer.toLowerCase() !== identity?.signer.toLowerCase()) { openSignIn(); return; }
+    if (busy) return;
     setBusy(true); setFeedback(null);
     try {
       await moderateEvent(signer, id, action, reason);
+      void client?.invalidateQueries({ queryKey: eventsPageKeys.all });
       if (!mounted.current) return;
-      setRejection(null); setVersion((previous) => previous + 1);
+      setReview(null); setRejection(null); setVersion((previous) => previous + 1);
       setFeedback(action === "approve" ? "Hangout approved." : "Hangout rejected.");
     } catch (error) { if (mounted.current) setFeedback(message(error)); }
     finally { if (mounted.current) setBusy(false); }
@@ -186,7 +201,7 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
                 <input className={styles.input} type="search" value={search} disabled={busy} onChange={(event) => { resetSelection(); setSearch(event.target.value); }} />
               </label>
               {search.trim().length > 0 && search.trim().length < 3 && <p>{text("Enter at least three characters to search.")}</p>}
-              {feedback && <p role="status">{errorText(feedback)}</p>}
+              {feedback && !review && <p role="status">{errorText(feedback)}</p>}
               {loading ? <p role="status">{text("Loading…")}</p> : current?.error && mode !== "users" ? (
                 <div>
                   <p role="alert">{errorText(current.error)}</p>
@@ -224,7 +239,7 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
                             {event.approved && <Link className={styles.link} to={`/events?id=${encodeURIComponent(event.id)}`}>{text("View hangout")}</Link>}
                             {mayApprove && (
                               <div>
-                                <button className={styles.button} disabled={busy} onClick={() => { void applyModeration(event.id, "approve"); }}>{text("Approve {name}", { name: event.name })}</button>
+                                <button className={styles.button} disabled={busy} onClick={() => { setFeedback(null); setReview(event); }}>{text("Approve {name}", { name: event.name })}</button>
                                 <button className={styles.button} disabled={busy} onClick={() => setRejection({ id: event.id, name: event.name, reason: "" })}>{text("Reject {name}", { name: event.name })}</button>
                               </div>
                             )}
@@ -241,6 +256,26 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
                 <span>{text("Page {page}", { page: page + 1 })}</span>
                 <button className={styles.button} disabled={!more || loading || busy} onClick={() => changePage(page + 1)}>{text("Next page")}</button>
               </nav>
+              {review && (
+                <Dialog labelledBy={reviewTitle} onClose={closeReview}>
+                  <div className={styles.review}>
+                    <h2 id={reviewTitle}>{review.name}</h2>
+                    {review.image && <CardImage className={styles.reviewCover} src={review.image} alt="" />}
+                    {review.description && <p>{review.description}</p>}
+                    <dl>
+                      <dt>{text("When")}</dt>
+                      <dd>{review.start_at ? new Date(review.start_at).toLocaleString(locale) : text("Date not published")}</dd>
+                      <dt>{text("Where")}</dt>
+                      <dd>{review.world ? review.server || text("World location not published") : `${review.x},${review.y}`}</dd>
+                    </dl>
+                    {feedback && <p role="alert">{errorText(feedback)}</p>}
+                    <div className={styles.reviewActions}>
+                      <button className={styles.button} disabled={busy} onClick={closeReview}>{text("Cancel")}</button>
+                      <button className={styles.button} disabled={busy} onClick={() => { void applyModeration(review.id, "approve"); }}>{text("Approve event")}</button>
+                    </div>
+                  </div>
+                </Dialog>
+              )}
               {rejection && (
                 <section className={styles.editor} aria-label={text("Reject {name}", { name: rejection.name })}>
                   <h2>{text("Reject {name}", { name: rejection.name })}</h2>
