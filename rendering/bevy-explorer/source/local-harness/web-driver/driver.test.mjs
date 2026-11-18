@@ -19,7 +19,7 @@ import * as nodeModule from 'node:module';
 import path from 'node:path';
 import { after, before, beforeEach, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { acceptsBinding, findChrome, launch, redact, secretsOf } from './driver.mjs';
+import { APP_GONE, acceptsBinding, findChrome, launch, redact, secretsOf } from './driver.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(HERE, 'fixture');
@@ -497,6 +497,22 @@ describe('the command line', () => {
     });
   });
 });
+
+for (const isolated of [true, false]) {
+  const kind = isolated ? 'app frame out of process (Document-Isolation-Policy)' : 'app frame in process';
+
+  describe(`a command whose document is replaced, ${kind}`, { skip: noChrome }, () => {
+    const page = openPage({ isolated, mode: 'protocol' });
+
+    test('fails at once with APP_GONE, and the next command runs in the new document', async () => {
+      const started = Date.now();
+      await assert.rejects(page.driver.console('/fixture_reload', { timeout: 30_000 }), { message: APP_GONE });
+      assert.ok(Date.now() - started < 15_000, `it waited ${Date.now() - started} ms`);
+      const state = await json(page.driver, '/fixture_state');
+      assert.equal(state.crossOriginIsolated, isolated);
+    });
+  });
+}
 
 describe('console and screenshot', { skip: noChrome }, () => {
   const page = openPage({ isolated: true, mode: 'hud' });

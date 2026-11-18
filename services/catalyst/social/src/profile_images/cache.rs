@@ -193,7 +193,7 @@ impl ImageCache {
         self.written_since_sweep.store(0, Ordering::Relaxed);
         let pool = self.pool.clone();
         let sweeping = self.sweeping.clone();
-        tokio::spawn(async move {
+        crate::shared::task::spawn(async move {
             match sweep_to_budget(&pool, max).await {
                 Ok(dropped) if dropped > 0 => {
                     tracing::info!(dropped, budget = max, "profile images evicted")

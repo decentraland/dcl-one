@@ -512,23 +512,36 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   The sea around the city is one image, rendered once from unity-explorer's sea shader and placed
   under the satellite map like its tiles; its water stands still, where unity-explorer animates
   it every frame. Nothing on the map is drawn per frame.
-- **The map's layers are on the full map only, except the home pin.** unity-explorer draws live
-  events, points of interest, players, scene pins and the home pin on the minimap too, and the
-  Layers panel switches both. Here the minimap draws the home pin and keeps its own place markers
-  and settings, so the Layers panel changes the full map alone, and a route shows no pin on the
-  minimap's edge. The minimap has no favourite button for the place the player stands in.
+- **The minimap draws the full map's layers.** As unity-explorer's, it shows live events,
+  points of interest, other players, the home pin and the route, and the full map's Layers panel
+  switches them on both, from one read the two maps share; the minimap has no category pins or
+  markers setting of its own. A destination's pin stands on the minimap's edge in its direction,
+  as unity-explorer's. unity-explorer's minimap doesn't zoom and moves the pin to the edge past a
+  fixed distance (about eight parcels); this one zooms, so the pin moves to the edge exactly when
+  the destination leaves the visible map. It is the full map's destination pin, and the minimap
+  being square, it runs along the square's edge rather than a circle. Scene map pins are
+  on neither (below). The header's heart marks the place the player stands in as a favourite; in
+  a World, the World's scene there.
 - **The map draws no scene map pins.** unity-explorer shows the `MapPin`s of every portable
   experience, among them the quests' global one (`globalpx.dcl.eth`, loaded at startup from
   `alfa-global-portable-experiences`), and of any scene under `alfa-map-pins`, with a Quest
   Mini-Games layer to hide them. This explorer loads no global portable experience, so the map
   reads no `MapPin` and has no such layer.
+- **Arrival is checked on every position report.** unity-explorer checks the route only after
+  the player's squared distance from the map's origin has changed by 300 map units, which can
+  skip the arrival spot when the player stops on it or reaches it sideways, so the route never
+  ends. The arrival rule itself is the same: within about 5.6 m of the destination parcel's
+  centre, then "You have arrived to your destination" and the pin goes.
 - **Home can be set, not cleared, and is one for the install.** unity-explorer's Set as Home also
   takes the home back, and it keeps one home per wallet. Here the engine keeps one home in its
-  config, parcel 0,0 of the default realm until one is set, and the place panel's button and the
-  minimap's switch only set it: the switch reads on where the player stands in their home, and
-  can't be turned off.
-- **Home is set from the map's place panel and the minimap's menu.** unity-explorer also sets it
-  from Places cards, which have no such control here. The minimap's menu is unity-explorer's: Set
+  config, parcel 0,0 of the default realm until one is set, and the place panel's and the place
+  detail's buttons and the minimap's switch only set it: the switch reads on where the player
+  stands in their home, and can't be turned off.
+- **Home is set from the map's place panel, the place detail and the minimap's menu.** The place
+  detail, opened from the lobby's cards and the Places page, saves the place's base parcel (a
+  World, its name) and offers start and exit navigation for a Genesis City place; a Jump in there
+  that goes ahead ends a route to that place, as the map's does. unity-explorer also sets home from
+  Places cards, which have no such control here. The minimap's menu is unity-explorer's: Set
   as Home, Copy Link and Reload Scene, then this HUD's own Minimap settings. As unity-explorer's,
   the minimap saves the parcel the player stands on, where the place panel saves the place's base
   parcel (a road's, the picked one), and it compares a World's name without case where the place
@@ -572,6 +585,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Events page: analytics.** unity-explorer reports `event_card_clicked` from calendar cards
   only and nothing for an open from the sidebar; here a day view's cards report it too, and the
   sidebar reports `events_section_opened` with `source: sidebar`.
+- **Place detail: no analytics for home or navigation.** unity-explorer reports
+  `place_set_as_home` and `place_navigation_started` from its place detail, and
+  `home_position_set` whenever home changes; this explorer reports none of them, from the place
+  detail or the map.
 - **Events page: no "error loading friends" or "My Communities" toast.** The friends list and
   the member-of list reach the HUD as snapshots with no failure signal, so there is nothing to
   report; cards show friends and community marks once the lists are there.
@@ -611,6 +628,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **No satellite floor.** unity-explorer lays the minimap's satellite images flat at 0.205 m under the
   terrain in Genesis City; here the ground covers that plane everywhere, so the floor would never be
   seen and is not shipped.
+- **Spring bones skip avatars the avatar limit hides.** Unity ranks every avatar in front of the
+  camera for its ten simulated places. Here an avatar hidden for being beyond the `max_avatars`
+  nearest to the player takes no place: its bones stay at rest and the place goes to the next
+  visible avatar, since a swing nobody sees would cost a place and its transform walks. Do not
+  rank hidden avatars to match.
 
 ## Deliberate choices that look like mistakes
 

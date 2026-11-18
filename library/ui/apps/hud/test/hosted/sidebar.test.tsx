@@ -13,10 +13,13 @@ vi.mock('@hud-host', async (original) => ({ ...(await original<object>()), isNat
 // the confirmed sign-out loads the page again, which jsdom cannot do
 vi.mock('../../features/gate/signOutOfWorld', async (original) => ({ ...(await original<object>()), signOutOfWorld }))
 
-// the Map button shows the minimap, which reads the places around the player
-vi.mock('@explorer-core/features/minimap/minimapPlaces', async (original) => ({
-  ...await original<typeof import('@explorer-core/features/minimap/minimapPlaces')>(),
-  loadMinimapPlaces: vi.fn(async () => [])
+// the Map button shows the minimap, which reads the map's layers and the place under the player
+vi.mock('@explorer-core/features/map/mapApi', async (original) => ({
+  ...await original<typeof import('@explorer-core/features/map/mapApi')>(),
+  fetchLiveEvents: vi.fn(async () => []),
+  fetchPoiParcels: vi.fn(async () => []),
+  fetchPeers: vi.fn(async () => []),
+  fetchPlaceAt: vi.fn(async () => null)
 }))
 
 const bar = (): ReturnType<typeof within> => within(screen.getByRole('navigation', { name: 'Main navigation' }))
