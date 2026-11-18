@@ -20,9 +20,11 @@ use web_sys::{HtmlMediaElement, HtmlVideoElement, VideoFrame, Worker};
 
 use super::{HOST, HostCommand, HostHandle, MediaEvent, MediaId};
 use crate::{
-    AVCommand, ElementObservation, ElementSnapshot, MediaFailureKind, MediaReopenPolicy,
-    MediaSourceCmd, MediaSourceMsg, MediaSourceState, MediaSourceView, first_reopen_delay, init,
-    update, view,
+    AVCommand, first_reopen_delay,
+    source_state::{
+        ElementObservation, ElementSnapshot, MediaFailureKind, MediaReopenPolicy, MediaSourceCmd,
+        MediaSourceMsg, MediaSourceState, MediaSourceView, init, update, view,
+    },
 };
 
 type RcClosure = Rc<RefCell<Option<Closure<dyn FnMut(f64, JsValue)>>>>;

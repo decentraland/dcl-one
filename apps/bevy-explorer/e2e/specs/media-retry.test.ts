@@ -14,7 +14,7 @@
 // `/scene_logs` and each player's reopen state through `/media_state`; the failure checks use
 // `retryFailures`, which does not depend on when the delay was set. The second scenario walks to
 // `broken` first, the third to `paused`, which the scene sets playing 1 s after it reports
-// `VS_ERROR`. Each scenario closes its client. Web only: on the standalone both are todos.
+// `VS_ERROR`. Each scenario closes its client. Web only: on the standalone all three are todos.
 // Build the scene first: `pnpm run build-scenes video`.
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
@@ -32,7 +32,7 @@ const PAUSED_FAILURES = 1
 const MAX_REOPENS = 5
 const FIRST_DELAY_MS = 100
 /** The longest wait: a first failure before the delay is shortened (2 s), the shortened rest
- *  (3.1 s), the scene's boot and each load, with room for a slow runner. */
+ *  (3.0 s), the scene's boot and each load, with room for a slow runner. */
 const GIVE_UP_TIMEOUT_MS = 60_000
 /** The wait for the reopen count to restart once the recover screen plays. */
 const RESTART_TIMEOUT_MS = 20_000
@@ -136,13 +136,14 @@ scenario(
     assert.equal(row.retryFailures, 1 + MAX_REOPENS, `the broken screen failed ${row.retryFailures} times, not one open and five reopens`)
     const gets = BROKEN.server.contentGets.get(brokenHash) ?? 0
     assert.ok(gets >= 1 + MAX_REOPENS, `broken.webm was requested ${gets} times, fewer than one open and five reopens`)
-    // waits for the logged give-up, then checks that VS_LOADING was logged before it
+    // waits for the logged give-up, then checks for a VS_LOADING after the first VS_ERROR
     const logs = await until(() => explorer.sceneLogs(200), (lines) => stateLines(lines, 'broken').at(-1)?.endsWith('state=VS_ERROR') ?? false, {
       timeoutMs: 10_000,
       what: 'the broken screen to log its give-up'
     })
     const states = stateLines(logs, 'broken')
-    assert.ok(states.some((line) => line.endsWith('state=VS_LOADING')), `the broken screen did not report VS_LOADING before giving up:\n${states.join('\n')}`)
+    const firstErrorAt = states.findIndex((line) => line.endsWith('state=VS_ERROR'))
+    assert.ok(states.slice(firstErrorAt + 1).some((line) => line.endsWith('state=VS_LOADING')), `the broken screen did not report VS_LOADING after a VS_ERROR before giving up:\n${states.join('\n')}`)
     assert.equal(row.retryAttempt, MAX_REOPENS)
     assert.equal(row.retryDelaySeconds, null, 'a reopen is still scheduled after giving up')
     assert.equal(row.lastPlaybackState, 'VS_ERROR')

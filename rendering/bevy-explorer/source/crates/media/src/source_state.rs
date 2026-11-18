@@ -6,10 +6,10 @@ use std::time::Duration;
 
 use dcl_component::proto_components::sdk::components::VideoState;
 
-use crate::{MediaRetry, MediaRetryStatus, RetryStep};
-
-/// Page-wide media element id.
-pub type MediaId = u32;
+use crate::{
+    MediaId, MediaRetryStatus,
+    retry::{MediaRetry, RetryStep},
+};
 
 /// A fact about the source.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -226,10 +226,6 @@ impl MediaSourceState {
         self.media_id
     }
 
-    pub fn phase(&self) -> MediaSourcePhase {
-        self.phase
-    }
-
     /// The scene wants play and the element can take a `play()`.
     pub fn wants_element_playback(&self) -> bool {
         self.scene_playback_intent == ScenePlaybackIntent::Play
@@ -365,9 +361,17 @@ fn element_observed(
         state.stream_kind = MediaStreamKind::Live;
     }
     let live = state.stream_kind == MediaStreamKind::Live;
+    let reopens = state.reopen_policy == MediaReopenPolicy::Reopen;
     match (observation, state.phase) {
-        (ElementObservation::Failed(kind), _) => fail(state, kind, snapshot),
-        (ElementObservation::ReachedEnd, _) if live => {
+        (ElementObservation::Failed(kind), _) if reopens => fail(state, kind, snapshot),
+        // a source without a url reports its failure as the element's state
+        (ElementObservation::Failed(kind), _) => {
+            state.failure_count += 1;
+            state.last_failure = Some(kind);
+            set_element_state(state, VideoState::VsError);
+            MediaSourceCmd::None
+        }
+        (ElementObservation::ReachedEnd, _) if live && reopens => {
             fail(state, MediaFailureKind::LiveStreamEnded, snapshot)
         }
         (
@@ -451,10 +455,6 @@ fn fail(
     let media_id = state.media_id;
     state.failure_count += 1;
     state.last_failure = Some(kind);
-    if state.reopen_policy == MediaReopenPolicy::Never {
-        state.phase = MediaSourcePhase::GaveUp;
-        return MediaSourceCmd::None;
-    }
     let pending_resume = match state.phase {
         MediaSourcePhase::Opening {
             resume_position_seconds,
@@ -467,7 +467,7 @@ fn fail(
             .or((snapshot.position_seconds > 0.0).then_some(snapshot.position_seconds)),
     };
     match state.retry.fail(snapshot.first_reopen_delay) {
-        RetryStep::Reopen { delay, .. } => {
+        RetryStep::Reopen { delay } => {
             state.phase = MediaSourcePhase::Failed {
                 reopen_delay: delay,
                 reopen_timer: ReopenTimer::Pending,
@@ -529,7 +529,7 @@ pub fn view(state: &MediaSourceState) -> MediaSourceView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{HEALTHY_PLAYBACK, MAX_REOPENS};
+    use crate::retry::{HEALTHY_PLAYBACK, MAX_REOPENS};
 
     const ID: MediaId = 7;
     const FIRST: Duration = Duration::from_secs(2);
@@ -613,6 +613,7 @@ mod tests {
     #[test]
     fn init_attaches_a_url_source_and_reports_loading() {
         let (state, cmd) = init(ID, MediaReopenPolicy::Reopen);
+        assert_eq!(state.media_id(), ID);
         assert_eq!(cmd, attach());
         assert_eq!(video_state(&state), VideoState::VsLoading);
     }
@@ -770,7 +771,7 @@ mod tests {
             update(&mut state, MediaSourceMsg::ScenePauseRequested),
             MediaSourceCmd::PausePlayback { media_id: ID }
         );
-        assert!(matches!(state.phase(), MediaSourcePhase::Opening { .. }));
+        assert!(matches!(state.phase, MediaSourcePhase::Opening { .. }));
         assert_eq!(
             update(
                 &mut state,
@@ -950,7 +951,7 @@ mod tests {
     }
 
     #[test]
-    fn a_source_without_a_url_gives_up_on_its_first_failure() {
+    fn a_source_without_a_url_reports_a_failure_as_its_state() {
         let (mut state, cmd) = init(ID, MediaReopenPolicy::Never);
         assert_eq!(cmd, MediaSourceCmd::None);
         update(
@@ -959,8 +960,54 @@ mod tests {
         );
         assert_eq!(video_state(&state), VideoState::VsPlaying);
         assert_eq!(update(&mut state, failed(0.0)), MediaSourceCmd::None);
-        assert_eq!(video_state(&state), VideoState::VsError);
-        assert!(view(&state).retry_status.gave_up);
+        let shown = view(&state);
+        assert_eq!(shown.video_state, VideoState::VsError);
+        assert!(!shown.retry_status.gave_up);
+        assert_eq!(shown.retry_status.failures, 1);
+        update(
+            &mut state,
+            observed(ElementObservation::StartedPlaying, snapshot(0.0)),
+        );
+        assert_eq!(video_state(&state), VideoState::VsPlaying);
+    }
+
+    #[test]
+    fn a_live_source_without_a_url_ends_and_clears_the_screen() {
+        let (mut state, _) = init(ID, MediaReopenPolicy::Never);
+        update(
+            &mut state,
+            observed(ElementObservation::StartedPlaying, live_snapshot()),
+        );
+        assert_eq!(
+            update(
+                &mut state,
+                observed(ElementObservation::ReachedEnd, live_snapshot())
+            ),
+            MediaSourceCmd::ClearScreen { media_id: ID }
+        );
+        let shown = view(&state);
+        assert_eq!(shown.video_state, VideoState::VsNone);
+        assert_eq!(shown.retry_status.failures, 0);
+        assert_eq!(shown.duration_seconds, f64::INFINITY);
+    }
+
+    #[test]
+    fn a_media_error_code_maps_to_its_failure_kind() {
+        let kinds: Vec<_> = [Some(1), Some(2), Some(3), Some(4), Some(9), None]
+            .into_iter()
+            .map(MediaFailureKind::from_media_error_code)
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                MediaFailureKind::Aborted,
+                MediaFailureKind::Network,
+                MediaFailureKind::Decode,
+                MediaFailureKind::SourceNotSupported,
+                MediaFailureKind::Unspecified,
+                MediaFailureKind::Unspecified,
+            ]
+        );
     }
 
     #[test]

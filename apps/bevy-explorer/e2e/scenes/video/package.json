@@ -2,7 +2,7 @@
   "name": "bevy-explorer-e2e-scene-video",
   "version": "0.0.0",
   "private": true,
-  "description": "Media retry scene: two VideoPlayers whose sources the loopback realm fails",
+  "description": "Media retry scene: three VideoPlayers whose sources the loopback realm fails",
   "scripts": {
     "build": "dcl-scene-cli build --built-in"
   }

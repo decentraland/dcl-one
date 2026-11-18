@@ -3,7 +3,7 @@
   "runtimeVersion": "7",
   "display": {
     "title": "video",
-    "description": "Media retry: a video whose source recovers after failures and one that never loads"
+    "description": "Media retry: a video whose source recovers after failures, one that never loads and a paused one that fails once"
   },
   "owner": "",
   "contact": {
