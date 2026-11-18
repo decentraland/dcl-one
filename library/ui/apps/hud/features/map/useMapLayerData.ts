@@ -15,7 +15,6 @@ export interface MapLayerData {
   pois: PlaceMarker[]
   /** The connected players, as map positions. */
   people: Vec2[]
-  /** The engine sends them whether or not a map is shown. */
   pins: readonly PinMarker[]
 }
 

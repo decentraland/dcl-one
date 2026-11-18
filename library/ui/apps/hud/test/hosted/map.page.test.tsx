@@ -195,9 +195,11 @@ describe('map layers', () => {
     act(() =>
       mapPins.receive([
         { id: 'bafypx:512', x: 10, y: -5, title: 'Memory Grid', icon: null },
-        { id: 'bafypx:513', x: 3, y: 2, title: 'Tile Tally', icon: 'https://content.test/tile_tally.png' }
+        { id: 'bafypx:513', x: 3, y: 2, title: 'Tile Tally', icon: 'https://content.test/tile_tally.png' },
+        { id: 'bafypx:514', x: 4, y: 2, title: '   ', icon: null }
       ])
     )
+    expect(marker('Pin at 4, 2')).toHaveAttribute('data-marker', 'pins')
     const memory = marker('Memory Grid')
     expect(memory).toHaveAttribute('data-marker', 'pins')
     expect(within(view()).queryByText('Memory Grid')).not.toBeInTheDocument()

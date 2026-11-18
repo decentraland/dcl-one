@@ -225,7 +225,7 @@ const QuestPin = memo(function QuestPin({ pin, onPick }: { pin: PinMarker; onPic
       className={`${styles.marker} ${styles.quest}`}
       style={at(pin.position)}
       data-marker="pins"
-      aria-label={pin.title !== '' ? pin.title : `Pin at ${pin.key.x}, ${pin.key.y}`}
+      aria-label={pin.title.trim() !== '' ? pin.title : `Pin at ${pin.key.x}, ${pin.key.y}`}
       onClick={(e) => {
         e.stopPropagation()
         onPick(pin.key)

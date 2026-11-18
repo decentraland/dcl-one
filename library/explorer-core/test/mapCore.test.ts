@@ -191,6 +191,14 @@ describe('quest pins', () => {
     expect(calls).toBe(2)
     off()
   })
+
+  it('drop a pin outside the city, where there is no parcel to pick', () => {
+    const pin = (id: string, x: number, y: number) => ({ id, x, y, title: id, icon: null })
+    expect(pinMarkers([pin('far', 5000, 5000), pin('west', -151, 0), pin('plaza', 0, 0), pin('north strip', 100, 155)]).map((p) => p.id)).toEqual([
+      'plaza',
+      'north strip'
+    ])
+  })
 })
 
 describe('map layers store', () => {

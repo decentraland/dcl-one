@@ -6454,7 +6454,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockMap.ts",
-      "sha256": "d3b6b8df90d0cc72d10ba491f0aa4372819fa1d6074b1fcba0b9613f7adb49a5"
+      "sha256": "cd1df709918b5b250275168845cbc86ea45254109f33c239d48ac0ba659eb2a1"
     },
     {
       "path": "library/explorer-core/engine/mockSwitches.ts",
@@ -6690,11 +6690,11 @@
     },
     {
       "path": "library/explorer-core/features/map/mapPeople.ts",
-      "sha256": "c108a3fdcfa1632a79391c9c66b8d740d11a67068ad320edf3730ab0831a4a81"
+      "sha256": "3c01e4922142605aead8a0e42a1e68c95898ef0a6a58d3f20b804590343bc9a1"
     },
     {
       "path": "library/explorer-core/features/map/mapPins.ts",
-      "sha256": "0ba7830c90d5763e88f4a6d593bdb20c7e5f6ed5b60dd66e4755460e9e46c2e0"
+      "sha256": "9509bafed11fe5b15c348f67933642875dc46c97b3c2229968fa9ab2196cf538"
     },
     {
       "path": "library/explorer-core/features/map/mapZoom.ts",
@@ -7002,7 +7002,7 @@
     },
     {
       "path": "library/explorer-core/test/mapCore.test.ts",
-      "sha256": "f0c53056ab969a69570708517afa6e34054cb9d1b35edf5b8b115178037d9494"
+      "sha256": "604b9a2bb05df7d5753dd2a433ba5700419c3fd7579de4d6cdb51a7c94d69e40"
     },
     {
       "path": "library/explorer-core/test/mapFixtures.ts",
@@ -9670,7 +9670,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapCanvas.tsx",
-      "sha256": "2e2b35dea7fe8b9268905c014ebad988f2e6998227eb8c216524a9c5c75c47eb"
+      "sha256": "ed40ae02dd753fce00e2590f3dd62e54a07848d519f6227b2b5f9e3d59889bc7"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapChrome.module.css",
@@ -9750,7 +9750,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/useMapLayerData.ts",
-      "sha256": "f26f9e46536e3b44d786724a0ccdfa10fa1a1d2e122ef429fd2d4060660bad72"
+      "sha256": "73c0a8b078e6a94b072d224e82d6219258590fcd3926c5b1bca613eefbde5e1b"
     },
     {
       "path": "library/ui/apps/hud/features/menu/MainMenuShell.module.css",
@@ -10586,7 +10586,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
-      "sha256": "065ae8088a9d2dd146027584cd70dc8227fb1b159266268fc0d199a3872908b5"
+      "sha256": "217f5fc674d5ec641c73cc13672b45b45992fc159ac46fea9a0231840e98202d"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/mapPanel.test.tsx",
@@ -11985,6 +11985,21 @@
     {
       "from": "library/explorer-core/features/map/mapPins.ts",
       "to": "library/explorer-core/features/map/mapCoords.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/mapPins.ts",
+      "to": "library/explorer-core/features/map/mapPeople.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/mapPins.ts",
+      "to": "library/explorer-core/features/map/mapPeople.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/mapPins.ts",
+      "to": "library/explorer-core/features/map/mapPeople.ts",
       "kind": "test:runtime"
     },
     {

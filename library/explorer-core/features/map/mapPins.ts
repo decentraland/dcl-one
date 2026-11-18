@@ -1,7 +1,8 @@
 // The map pins of portable experiences, as the engine last sent them.
 
 import type { MapPinInfo } from '../../engine/generated'
-import { parcelCenter, type Vec2 } from './mapCoords'
+import { parcelCenter, parcelWithinBounds, type Vec2 } from './mapCoords'
+import { store } from './mapPeople'
 
 export interface PinMarker {
   id: string
@@ -11,29 +12,25 @@ export interface PinMarker {
   icon: string | null
 }
 
-let pins: PinMarker[] = []
-const listeners = new Set<() => void>()
+const pins = store<PinMarker[]>([])
 
+/** A pin outside the city is dropped: there is no parcel there to pick. */
 export function pinMarkers(list: readonly MapPinInfo[]): PinMarker[] {
-  return list.map((pin) => {
+  return list.flatMap((pin) => {
     const key = { x: pin.x, y: pin.y }
-    return { id: pin.id, key, position: parcelCenter(key), title: pin.title, icon: pin.icon }
+    const position = parcelCenter(key)
+    if (parcelWithinBounds(position) == null) return []
+    return [{ id: pin.id, key, position, title: pin.title, icon: pin.icon }]
   })
 }
 
 export const mapPins = {
-  subscribe: (listener: () => void): (() => void) => {
-    listeners.add(listener)
-    return () => listeners.delete(listener)
-  },
-  getSnapshot: (): readonly PinMarker[] => pins,
+  subscribe: pins.subscribe,
+  getSnapshot: (): readonly PinMarker[] => pins.getSnapshot(),
   receive(list: readonly MapPinInfo[]): void {
-    pins = pinMarkers(list)
-    listeners.forEach((l) => l())
+    pins.set(pinMarkers(list))
   },
   clear(): void {
-    if (pins.length === 0) return
-    pins = []
-    listeners.forEach((l) => l())
+    if (pins.getSnapshot().length > 0) pins.set([])
   }
 }

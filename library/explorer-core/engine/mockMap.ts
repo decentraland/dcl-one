@@ -116,7 +116,6 @@ export const MOCK_PEERS: Peer[] = [
   { address: '0x77a0b1c2d3e4f5061728394a5b6c7d8e9f001122', x: 1600, z: 1600 }
 ]
 
-/** One pin without an icon, one whose icon fails to load. */
 export const MOCK_MAP_PINS: MapPinInfo[] = [
   { id: 'bafymockpx:512', x: 3, y: 2, title: 'Memory Grid', icon: null },
   { id: 'bafymockpx:513', x: -4, y: 5, title: 'Tile Tally', icon: 'https://content.invalid/images/icons/tile_tally.png' }

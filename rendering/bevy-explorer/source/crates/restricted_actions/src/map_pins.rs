@@ -23,7 +23,6 @@ use system_bridge::{MapPinInfo, SystemApi};
 
 mod diagnostics;
 
-/// The title is the pin's accessible name.
 const MAX_TITLE_CHARS: usize = 100;
 
 pub(crate) struct MapPinsPlugin;
@@ -97,7 +96,7 @@ struct MapPinStreams {
 }
 
 /// The loader fetches a content-map miss that parses as a url (after dropping any leading `/`),
-/// so such a src is refused: a scene must not make the HUD request a host of its choosing.
+/// so such a src is refused; a hit resolves against the scene's own content base.
 async fn icon_url(ipfs: IpfsResource, scene_hash: String, src: String) -> Option<String> {
     if super::filename_looks_like_url(&content_file_path(&src)) {
         return None;
@@ -136,7 +135,7 @@ fn resolve_map_pin_icons(
             superseded.insert(entity);
         }
         if icon.is_some_and(|icon| icon.src == pin.icon_src) {
-            commands.remove::<ResolvingMapPinIcon>();
+            commands.try_remove::<ResolvingMapPinIcon>();
             continue;
         }
         match pin.icon_src.clone() {
@@ -146,13 +145,15 @@ fn resolve_map_pin_icons(
                     context.hash.to_string(),
                     src.clone(),
                 ));
-                commands.insert(ResolvingMapPinIcon { src, task });
+                commands.try_insert(ResolvingMapPinIcon { src, task });
             }
             None => {
-                commands.remove::<ResolvingMapPinIcon>().insert(MapPinIcon {
-                    src: None,
-                    url: None,
-                });
+                commands
+                    .try_remove::<ResolvingMapPinIcon>()
+                    .try_insert(MapPinIcon {
+                        src: None,
+                        url: None,
+                    });
             }
         }
     }
@@ -163,8 +164,8 @@ fn resolve_map_pin_icons(
         if let Some(url) = resolving.task.complete() {
             commands
                 .entity(entity)
-                .remove::<ResolvingMapPinIcon>()
-                .insert(MapPinIcon {
+                .try_remove::<ResolvingMapPinIcon>()
+                .try_insert(MapPinIcon {
                     src: Some(resolving.src.clone()),
                     url,
                 });
@@ -287,7 +288,6 @@ mod tests {
         assert_eq!(MapPin::from(pb(0.0, 0.0, None)).title, "Memory Grid");
     }
 
-    /// `bafypx` holds two files, served from [`CONTENT`].
     fn app() -> App {
         let ipfs = ipfs::IpfsIo::new(
             false,
