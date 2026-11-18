@@ -1,5 +1,5 @@
 use super::*;
-use common::bounds_calc::scene_regions;
+use common::{bounds_calc::scene_regions, structs::ShowOutOfBounds};
 use dcl_types::SceneId;
 use scene_material::{BoundRegion, SceneBounds};
 
@@ -15,7 +15,7 @@ fn regions(parcels: &[(i32, i32)]) -> Vec<BoundRegion> {
 /// Collider data of a scene on `parcels`. Parcel (x, y) spans world x from 16x to 16x + 16 and
 /// world z from -16y - 16 to -16y.
 fn scene(parcels: &[(i32, i32)]) -> SceneColliderData {
-    SceneColliderData::for_regions(&regions(parcels))
+    SceneColliderData::for_regions(&regions(parcels), parcels.len())
 }
 
 fn entity_id(index: u32) -> SceneEntityId {
@@ -271,7 +271,7 @@ fn a_height_limit_set_on_the_regions_replaces_the_parcel_count_limit() {
             ..region
         })
         .collect::<Vec<_>>();
-    let mut colliders = SceneColliderData::for_regions(&regions);
+    let mut colliders = SceneColliderData::for_regions(&regions, 1);
     let id = add_box(&mut colliders, 0);
     let size = Vec3::splat(2.0);
 
@@ -556,10 +556,12 @@ fn the_colliders_off_for_bounds_are_counted() {
     assert_eq!(colliders.out_of_bounds_count(), 0);
 }
 
-#[test]
-fn a_scenes_collider_data_carries_the_scenes_bounds() {
+/// A scene on parcel (0, 0) that `update_scene_collider_data` gave its collider data, in a run
+/// that shows what is out of bounds or in one that does not.
+fn scene_in_a_run(show_out_of_bounds: bool) -> (App, Entity) {
     let mut app = App::new();
-    app.add_systems(Update, update_scene_collider_data);
+    app.insert_resource(ShowOutOfBounds(show_out_of_bounds))
+        .add_systems(Update, update_scene_collider_data);
     let scene = app
         .world_mut()
         .spawn(RendererSceneContext::new(
@@ -583,7 +585,12 @@ fn a_scenes_collider_data_carries_the_scenes_bounds() {
         ))
         .id();
     app.update();
+    (app, scene)
+}
 
+#[test]
+fn a_scenes_collider_data_carries_the_scenes_bounds() {
+    let (mut app, scene) = scene_in_a_run(false);
     let mut colliders = app.world_mut().get_mut::<SceneColliderData>(scene).unwrap();
     let id = add_box(&mut colliders, 0);
     place(
@@ -593,4 +600,20 @@ fn a_scenes_collider_data_carries_the_scenes_bounds() {
         Vec3::splat(2.0),
     );
     assert!(!hit_at(&mut colliders, 24.0, -8.0));
+}
+
+#[test]
+fn a_run_that_shows_what_is_out_of_bounds_keeps_its_colliders_on() {
+    let (mut app, scene) = scene_in_a_run(true);
+    let mut colliders = app.world_mut().get_mut::<SceneColliderData>(scene).unwrap();
+    let id = add_box(&mut colliders, 0);
+    let size = Vec3::splat(2.0);
+
+    // past the scene's edge
+    place(&mut colliders, &id, Vec3::new(24.0, 1.0, -8.0), size);
+    assert!(hit_at(&mut colliders, 24.0, -8.0));
+    // above its height limit
+    place(&mut colliders, &id, Vec3::new(8.0, 40.0, -8.0), size);
+    assert!(hit_at(&mut colliders, 8.0, -8.0));
+    assert_eq!(colliders.out_of_bounds_count(), 0);
 }

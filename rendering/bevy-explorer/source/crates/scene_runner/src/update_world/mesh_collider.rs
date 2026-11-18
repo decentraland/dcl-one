@@ -29,6 +29,7 @@ use crate::{
 use common::{
     dynamics::{PLAYER_COLLIDER_HEIGHT, PLAYER_COLLIDER_OVERLAP, PLAYER_COLLIDER_RADIUS},
     sets::PostUpdateSets,
+    structs::ShowOutOfBounds,
 };
 use console::DoAddConsoleCommand;
 use dcl_component::{
@@ -173,6 +174,7 @@ impl Plugin for MeshColliderPlugin {
             propagate_disabled::<CtCollider>.in_set(SceneSets::Init),
         );
 
+        app.init_resource::<ShowOutOfBounds>();
         app.add_systems(
             Update,
             update_scene_collider_data.in_set(SceneSets::PostInit),
@@ -242,14 +244,19 @@ impl SceneColliderData {
         self.collider_set.len()
     }
 
-    /// Collider data of a scene that occupies `regions`. A collider placed with
+    /// Collider data of a scene of `parcels` parcels in `regions`. A collider placed with
     /// [`Self::update_collider_transform`] is on only while it lies within the rectangle around
     /// them and under their height limit; triggers are exempt. No regions: no limit.
-    pub fn for_regions(regions: &[BoundRegion]) -> Self {
+    pub(crate) fn for_regions(regions: &[BoundRegion], parcels: usize) -> Self {
         Self {
-            bounds: ColliderBounds::new(regions),
+            bounds: ColliderBounds::new(regions, parcels),
             ..Default::default()
         }
+    }
+
+    /// The height above which the scene's colliders are off; none when they have no limit.
+    pub(crate) fn height_limit(&self) -> Option<f64> {
+        self.bounds.height()
     }
 
     /// Colliders that are off because they reach outside the scene's bounds.
@@ -1230,9 +1237,15 @@ pub struct GlobalGroundCollider;
 fn update_scene_collider_data(
     mut commands: Commands,
     scenes: Query<(Entity, &RendererSceneContext), Without<SceneColliderData>>,
+    show_out_of_bounds: Res<ShowOutOfBounds>,
 ) {
     for (scene_ent, ctx) in scenes.iter() {
-        let mut scene_data = SceneColliderData::for_regions(&ctx.bounds);
+        // a run that draws what reaches out of bounds keeps it solid and selectable too
+        let mut scene_data = if show_out_of_bounds.0 {
+            SceneColliderData::default()
+        } else {
+            SceneColliderData::for_regions(&ctx.bounds, ctx.parcels.len())
+        };
         for (index, parcel) in ctx.parcels.iter().enumerate() {
             let floor_panel = ColliderBuilder::cuboid(8.0, 8.0, 8.0)
                 .translation(

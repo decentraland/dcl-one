@@ -40,6 +40,7 @@ impl Plugin for SceneDebugPanelPlugin {
                     ("SDK", "sdk"),
                     ("Parcels", "parcels"),
                     ("Height (m)", "height"),
+                    ("Collider height limit (m)", "colliderHeight"),
                     ("Global position (m) (X / Y / Z)", "world"),
                     ("Scene position (m) (X / Y / Z)", "relative"),
                     ("Tick", "tick"),
@@ -296,6 +297,7 @@ fn scene_state(
     scenes: Query<(&RendererSceneContext, Has<SuperUserScene>)>,
     bounds: Res<ShowBounds>,
     histories: Query<&SceneTraffic>,
+    colliders: Query<&SceneColliderData>,
 ) {
     if input.take().is_none() {
         return;
@@ -348,11 +350,13 @@ fn scene_state(
     unavailable["history"] = "Waiting for a complete tick in the current parcel scene.".into();
     unavailable["bytesPerSecond"] = "Waiting for two consecutive worker samples.".into();
     unavailable["height"] = "The scene has no parcel bounds.".into();
+    unavailable["colliderHeight"] = "The scene's colliders have no bounds in this run.".into();
     unavailable[""] = "The parcel scene worker has not reported a sample.".into();
     let report = json!({
         "unavailable": unavailable,
         "bounds": bounds.0, "name": scene.title, "sdk": scene.sdk_version, "parcels": scene.parcels.len(),
         "height": scene.bounds.iter().map(|r| r.height).reduce(f32::max),
+        "colliderHeight": colliders.get(root).ok().and_then(SceneColliderData::height_limit),
         "world": position.map(|p| p.to_array()), "relative": position.map(|p| (p-base).to_array()), "tick": scene.tick_number,
         "history": history, "engines": engines,
         "bytesPerSecond": scene.crdt_bytes_per_second.map(f64::round),

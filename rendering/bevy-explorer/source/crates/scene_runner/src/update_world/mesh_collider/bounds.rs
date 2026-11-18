@@ -25,26 +25,24 @@ struct Limits {
 }
 
 impl ColliderBounds {
-    pub(super) fn new(regions: &[BoundRegion]) -> Self {
+    /// The limits of a scene of `parcels` parcels in `regions`.
+    pub(super) fn new(regions: &[BoundRegion], parcels: usize) -> Self {
         if regions.is_empty() {
             return Self(None);
         }
 
         let mut min = IVec2::MAX;
         let mut max = IVec2::MIN;
-        let mut parcels = 0;
         let mut height = 0.0f32;
         for region in regions {
             let (region_min, region_max) = region.cells();
             min = min.min(region_min);
             max = max.max(region_max);
-            let size = (region_max - region_min + IVec2::ONE).as_uvec2();
-            parcels += size.x * size.y;
             height = height.max(region.height);
         }
         // one limit for the whole scene: that of its parcel count, or a higher one its regions
         // carry
-        let height = height.max(BoundRegion::height_for_parcels(parcels));
+        let height = height.max(BoundRegion::height_for_parcels(parcels as u32));
 
         let parcel_size = f64::from(PARCEL_SIZE);
         Self(Some(Limits {
@@ -52,6 +50,10 @@ impl ColliderBounds {
             max: (max + IVec2::ONE).as_dvec2() * parcel_size + EDGE_ALLOWANCE,
             height: f64::from(height),
         }))
+    }
+
+    pub(super) fn height(&self) -> Option<f64> {
+        self.0.as_ref().map(|limits| limits.height)
     }
 
     /// Whether a collider lies inside the scene: its world-space box within the rectangle and
