@@ -11,7 +11,7 @@ const LEGACY_NODE_LINK = path.join(app.getAppPath(), '../app.asar.unpacked', 'no
 
 /**
  * Removes the `node` link an earlier release left inside the bundle, so the installed app passes
- * its signature check again. Only a link to an executable is removed; failing to is harmless.
+ * its signature check again. Only a symlink is removed; failing to is harmless.
  */
 function removeLegacyNodeLink() {
   if (platform() === 'win32') return;
@@ -44,13 +44,13 @@ export function getInjectedPathEntries(): string[] {
 /**
  * True when the shim folder can't be written (a locked-down home folder, say).
  */
-function isReadOnlyInstall(error: unknown): boolean {
+function isReadOnlyFolder(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException).code;
   return code === 'EROFS' || code === 'EACCES' || code === 'EPERM';
 }
 
 /**
- * Makes `nodeCmdPath` start `nodeBinPath`, replacing any other file there. False when the app
+ * Makes `nodeCmdPath` start `nodeBinPath`, replacing any other file there. False when the shim
  * folder is read-only: child processes then run on the bundled Node (node-runtime.ts), which
  * needs no link. `lstat`, because `stat` follows the link and never reports one.
  */
@@ -80,7 +80,7 @@ function linkNode(nodeCmdPath: string, nodeBinPath: string): boolean {
     }
     return true;
   } catch (error) {
-    if (!isReadOnlyInstall(error)) throw error;
+    if (!isReadOnlyFolder(error)) throw error;
     log.warn(`[Install] The node shim folder is read-only, no node link: ${nodeCmdPath}`);
     return false;
   }
