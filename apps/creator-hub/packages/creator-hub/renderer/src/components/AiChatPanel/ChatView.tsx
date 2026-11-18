@@ -28,22 +28,37 @@ import Spinner from '@ui/atoms/Spinner';
 import TextField from '@ui/atoms/TextField';
 import Tooltip from '@ui/atoms/Tooltip';
 
-import type { AiAssetMention, AiAttachment, AiAttachmentKind, AiProvider } from '/shared/types/ai';
+import type {
+  AiAssetMention,
+  AiAttachment,
+  AiAttachmentKind,
+  AiPendingRecording,
+  AiProvider,
+  AiRecorderState,
+} from '/shared/types/ai';
 import {
   MIN_CLAUDE_CLI_VERSION,
   assetMentionKey,
   cliSetup,
   isCliVersionOutdated,
 } from '/shared/types/ai';
+import { formatRecordingDuration } from '/shared/types/recording';
 
 import { ai as aiPreload, misc } from '#preload';
 import { t } from '/@/modules/store/translation/utils';
 import { useCliSignIn } from '/@/hooks/useCliSignIn';
 
-import type { AiMessage, AiPromptData, AiSessionMeta } from '/@/modules/store/ai/types';
-import { WarningCircleIcon } from '../Icons';
+import type {
+  AiMessage,
+  AiPromptData,
+  AiSessionMeta,
+  DraftPromptMode,
+} from '/@/modules/store/ai/types';
+import { MicrophoneIcon, WarningCircleIcon } from '../Icons';
+import { RecordButton, RecordingCard, TranscribingStrip } from '../SessionRecorder';
 import { SignInCodeField } from '../SignInCodeField';
 import { toolChipLabel } from './labels';
+import recordRowStyles from './RecordRow.module.css';
 import styles from './component.module.css';
 
 // Render assistant replies as markdown. Raw HTML is disabled so nothing the model emits
@@ -268,6 +283,15 @@ export interface ChatViewProps {
   selection: { id: number; name: string }[];
   // Local asset paths mentioned for the next prompt (double-clicked in the Local Assets panel).
   assetMentions: AiAssetMention[];
+  /** A finished session recording that goes out with the next message. */
+  recording: AiPendingRecording | null;
+  /** The Record button's state; with `onToggleRecording` it is shown in the composer. */
+  recorder?: AiRecorderState;
+  onToggleRecording?: () => void;
+  /** Discard the running recording; the card asks for confirmation first. */
+  onCancelRecording?: () => void;
+  /** Send the recording without waiting for its transcript; shown while it transcribes. */
+  onSkipTranscription?: () => void;
   // The user dismissed the billing hint for this scene (#1505) — hide it.
   billingDismissed: boolean;
   // The scene's saved conversations (newest first) and which one is active, for the history menu.
@@ -297,13 +321,15 @@ export interface ChatViewProps {
   onClearSelection: () => void;
   // Drop one mentioned asset from the next prompt.
   onRemoveAssetMention: (mention: AiAssetMention) => void;
+  /** Discard the pending recording instead of sending it. */
+  onRemoveRecording: () => void;
   // Open the detached window (inline only — omitted/no-op in the detached window).
   onPopOut?: () => void;
   // Inline: hide the panel. Detached: dock the chat back inline (close the window).
   onClose: () => void;
   // A prompt seeded from the inspector (Trigger Area "describe a reaction"). When its nonce
   // changes the composer copies `text` into its input and calls onDraftConsumed. Inline only.
-  draftPrompt?: { text: string; nonce: number } | null;
+  draftPrompt?: { text: string; nonce: number; mode: DraftPromptMode } | null;
   onDraftConsumed?: () => void;
 }
 
@@ -336,6 +362,11 @@ export function ChatView(props: ChatViewProps) {
     detecting,
     selection,
     assetMentions,
+    recording,
+    recorder,
+    onToggleRecording,
+    onCancelRecording,
+    onSkipTranscription,
     billingDismissed,
     sessions,
     currentSessionId,
@@ -354,6 +385,7 @@ export function ChatView(props: ChatViewProps) {
     onDeleteSession,
     onClearSelection,
     onRemoveAssetMention,
+    onRemoveRecording,
     onPopOut,
     onClose,
     draftPrompt,
@@ -361,18 +393,29 @@ export function ChatView(props: ChatViewProps) {
   } = props;
 
   const [input, setInput] = useState('');
+  const appliedDraftNonce = useRef(0);
+  const wasRecording = useRef(recorder?.status === 'recording');
+  const recordingJustStarted = recorder?.status === 'recording' && !wasRecording.current;
+  useEffect(() => {
+    wasRecording.current = recorder?.status === 'recording';
+  }, [recorder?.status]);
   const [attachments, setAttachments] = useState<AiAttachment[]>([]);
   const [dragging, setDragging] = useState(false);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Seed the composer from an inspector-supplied prompt (Trigger Area). Replaces the current
-  // draft and focuses so the user can finish typing; consumes it so it fires once per click.
   useEffect(() => {
-    if (!draftPrompt) return;
-    setInput(draftPrompt.text);
+    if (!draftPrompt || draftPrompt.nonce === appliedDraftNonce.current) return;
+    appliedDraftNonce.current = draftPrompt.nonce;
+    const append = draftPrompt.mode === 'append';
+    const wasInChat = panelRef.current?.contains(document.activeElement) ?? false;
+    setInput(current =>
+      append && current !== '' ? `${current} ${draftPrompt.text}` : draftPrompt.text,
+    );
     onDraftConsumed?.();
+    if (append && !wasInChat) return;
     requestAnimationFrame(() => {
       const el = composerRef.current;
       if (el === null) return;
@@ -511,11 +554,11 @@ export function ChatView(props: ChatViewProps) {
   const handleSend = useCallback(() => {
     if (busy) return;
     const text = input.trim();
-    if (text === '' && attachments.length === 0) return;
+    if (text === '' && attachments.length === 0 && recording === null) return;
     onSend(text, attachments.length > 0 ? attachments : undefined);
     setInput('');
     setAttachments([]);
-  }, [busy, input, attachments, onSend]);
+  }, [busy, input, attachments, recording, onSend]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -843,10 +886,12 @@ export function ChatView(props: ChatViewProps) {
 
   return (
     <div
+      ref={panelRef}
       className={styles.panel}
       data-fill={detached || undefined}
       style={panelStyle}
       aria-label="ai-chat-panel"
+      data-recording-area="AI assistant panel"
     >
       <div className={styles.panelHeader}>
         <div className={styles.headerTitle}>
@@ -1135,6 +1180,20 @@ export function ChatView(props: ChatViewProps) {
             </div>
           ))}
 
+        {recorder?.status === 'recording' && onToggleRecording !== undefined && (
+          <div className={recordRowStyles.recordRow}>
+            <RecordingCard
+              startedAt={recorder.startedAt}
+              micLabel={recorder.micLabel}
+              actionCount={recorder.actionCount}
+              onStop={onToggleRecording}
+              onDiscard={onCancelRecording}
+              focusStopOnMount={recordingJustStarted}
+              onFocusRelease={() => composerRef.current?.focus()}
+            />
+          </div>
+        )}
+
         <div
           className={styles.composer}
           data-dragging={dragging || undefined}
@@ -1180,6 +1239,44 @@ export function ChatView(props: ChatViewProps) {
               ))}
             </div>
           )}
+          {available && recording !== null && (
+            <div className={styles.attachmentBar}>
+              <div
+                className={cx(styles.attachmentChip, styles.recordingChip)}
+                data-testid="ai-recording-chip"
+              >
+                <MicrophoneIcon size={16} />
+                <span
+                  className={styles.ellipsis}
+                  title={recording.dir}
+                >
+                  {recording.transcriptionError
+                    ? t('editor.ai.recording.chip_no_speech', {
+                        duration: formatRecordingDuration(recording.durationMs),
+                        actions: recording.actionCount,
+                      })
+                    : t('editor.ai.recording.chip', {
+                        duration: formatRecordingDuration(recording.durationMs),
+                        actions: recording.actionCount,
+                      })}
+                </span>
+                <Tooltip
+                  label={t('editor.ai.recording.remove')}
+                  side="bottom"
+                  portal
+                  keepInViewport
+                >
+                  <IconButton
+                    className={styles.attachmentRemove}
+                    aria-label={t('editor.ai.recording.remove')}
+                    onClick={onRemoveRecording}
+                  >
+                    <CloseIcon />
+                  </IconButton>
+                </Tooltip>
+              </div>
+            </div>
+          )}
           <input
             ref={fileInputRef}
             type="file"
@@ -1187,6 +1284,14 @@ export function ChatView(props: ChatViewProps) {
             hidden
             onChange={handleFilePick}
           />
+          {recorder?.status === 'stopping' && (
+            <TranscribingStrip
+              status={recorder.status}
+              startedAt={recorder.startedAt}
+              tools={recorder.tools}
+              onSkip={onSkipTranscription}
+            />
+          )}
           <TextField
             fullWidth
             multiline
@@ -1203,21 +1308,35 @@ export function ChatView(props: ChatViewProps) {
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             startAdornment={
-              <Tooltip
-                label={t('editor.ai.attach.button')}
-                side="bottom"
-                portal
-                keepInViewport
-              >
-                <IconButton
-                  className={styles.attachButton}
-                  aria-label={t('editor.ai.attach.button')}
-                  disabled={!available || attachments.length >= MAX_ATTACHMENTS}
-                  onClick={() => fileInputRef.current?.click()}
+              <>
+                <Tooltip
+                  label={t('editor.ai.attach.button')}
+                  side="bottom"
+                  portal
+                  keepInViewport
                 >
-                  <AttachFileIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
+                  <IconButton
+                    className={styles.attachButton}
+                    aria-label={t('editor.ai.attach.button')}
+                    disabled={!available || attachments.length >= MAX_ATTACHMENTS}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <AttachFileIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+                {recorder !== undefined &&
+                  onToggleRecording !== undefined &&
+                  (recorder.status === 'idle' || recorder.status === 'starting') && (
+                    <RecordButton
+                      status={recorder.status}
+                      startedAt={recorder.startedAt}
+                      micLabel={recorder.micLabel}
+                      tools={recorder.tools}
+                      disabled={!available}
+                      onClick={onToggleRecording}
+                    />
+                  )}
+              </>
             }
             endAdornment={
               busy ? (
@@ -1245,7 +1364,10 @@ export function ChatView(props: ChatViewProps) {
                   <IconButton
                     className={styles.sendButton}
                     aria-label={t('editor.ai.send')}
-                    disabled={!available || (input.trim() === '' && attachments.length === 0)}
+                    disabled={
+                      !available ||
+                      (input.trim() === '' && attachments.length === 0 && recording === null)
+                    }
                     onClick={handleSend}
                   >
                     <ArrowUpwardIcon fontSize="small" />

@@ -1,13 +1,14 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import type { AiMirrorState } from '/shared/types/ai';
 
 import { ai as aiPreload } from '#preload';
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
+
+import { TestProviders } from '../../../tests/utils/TestProviders';
 
 vi.mock('#store', () => ({ useDispatch: () => vi.fn() }));
 
@@ -43,9 +44,9 @@ describe('the popped-out chat window', () => {
       return { cleanup: vi.fn() };
     });
     render(
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <AiChatWindow />
-      </ThemeProvider>,
+      </TestProviders>,
     );
   });
 

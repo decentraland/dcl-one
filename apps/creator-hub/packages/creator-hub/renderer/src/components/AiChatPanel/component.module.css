@@ -397,6 +397,10 @@
   font-size: 0.9375rem;
 }
 
+.recordingChip {
+  max-width: 100%;
+}
+
 .attachmentRemove.attachmentRemove {
   flex-shrink: 0;
   padding: 0;

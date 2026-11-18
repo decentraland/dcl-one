@@ -1,5 +1,5 @@
 import { useLayoutEffect, useEffect, useRef, useState } from 'react';
-import { Tooltip } from 'decentraland-ui2';
+import Tooltip from '@ui/atoms/Tooltip';
 
 import { MAX_RECORDING_MS } from '/shared/types/recording';
 
@@ -52,8 +52,7 @@ type Props = {
   onFocusRelease?: () => void;
 };
 
-// The running recording, shown above the composer: timer, waveform, what was captured so far,
-// and the two ways to end it.
+/** The running recording: timer, waveform, what was captured so far, and the two ways to end it. */
 export function RecordingCard({
   startedAt,
   micLabel,
@@ -88,10 +87,14 @@ export function RecordingCard({
       <div className={styles.header}>
         <span className={styles.dot} />
         <Tooltip
-          title={t('editor.recording.tooltip_live', {
+          label={t('editor.recording.tooltip_live', {
             mic: micLabel || t('editor.recording.default_mic'),
             minutes: MAX_RECORDING_MS / 60_000,
           })}
+          side="top"
+          portal
+          keepInViewport
+          maxWidth={320}
         >
           <span className={styles.title}>{t('editor.recording.live')}</span>
         </Tooltip>

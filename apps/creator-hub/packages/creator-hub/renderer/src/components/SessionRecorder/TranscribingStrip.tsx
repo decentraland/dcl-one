@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CircularProgress } from 'decentraland-ui2';
+import Spinner from '@ui/atoms/Spinner';
 
 import type { RecorderStatus } from '/shared/types/ai';
 import type { RecordingToolsStatus } from '/shared/types/recording';
@@ -25,9 +25,11 @@ export function TranscribingStrip({ status, startedAt, tools, onSkip }: Props) {
       role="status"
       data-testid="recording-transcribing"
     >
-      <CircularProgress
+      <Spinner
+        ring="wide"
         size={16}
         color="inherit"
+        role="progressbar"
       />
       <span className={styles.label}>{busyLabel(status, tools)}</span>
       {recorded !== null && (

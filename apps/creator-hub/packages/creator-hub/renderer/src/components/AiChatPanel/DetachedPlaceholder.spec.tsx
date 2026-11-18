@@ -1,11 +1,12 @@
 import { Provider } from 'react-redux';
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
+
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { actions as aiActions, fetchProviders } from '/@/modules/store/ai';
 import { createTestStore } from '../../../tests/utils/testStore';
 
@@ -32,14 +33,14 @@ function renderPlaceholder(available: boolean, recording = false) {
   const onCancelRecording = vi.fn();
   render(
     <Provider store={store}>
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <DetachedPlaceholder
           onDock={() => {}}
           width={320}
           onToggleRecording={onToggleRecording}
           onCancelRecording={onCancelRecording}
         />
-      </ThemeProvider>
+      </TestProviders>
     </Provider>,
   );
   return { onToggleRecording, onCancelRecording };
