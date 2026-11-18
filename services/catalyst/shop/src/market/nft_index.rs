@@ -604,9 +604,8 @@ FROM w ORDER BY w.contract_address, w.token_id, w.block_number DESC, w.log_index
 /// The latest Update per touched LAND/estate token, parsed in Rust (the CSV
 /// has quoting SQL would re-implement badly) and upserted.
 async fn fold_land_data(conn: &mut PgConnection, since: i64) -> anyhow::Result<u64> {
-    // The `NESTED_LOOP_TOUCHED_MAX` misestimate makes a custom plan scan the whole table.
-    let window = since >= 0;
-    if window {
+    // The cross-chain `block_number` misestimate (see `NESTED_LOOP_TOUCHED_MAX`) makes custom plans scan the table.
+    if since >= 0 {
         sqlx::query("SET LOCAL enable_seqscan = off")
             .execute(&mut *conn)
             .await?;
@@ -615,11 +614,6 @@ async fn fold_land_data(conn: &mut PgConnection, since: i64) -> anyhow::Result<u
         .bind(since)
         .fetch_all(&mut *conn)
         .await?;
-    if window {
-        sqlx::query("SET LOCAL enable_seqscan = on")
-            .execute(&mut *conn)
-            .await?;
-    }
     type Columns = (
         Vec<String>,
         Vec<String>,
@@ -1353,6 +1347,18 @@ pub(crate) mod tests {
             parse_land_data(ev.detail.as_deref().unwrap()),
             Some((Some("1x2 Estate".to_string()), None))
         );
+    }
+
+    /// The window-only `land_data` fold needs backfill never to write Updates below the fold marker.
+    #[test]
+    fn backfill_topics_leave_out_land_updates() {
+        for net in [ChainNet::Ethereum, ChainNet::Matic] {
+            assert!(
+                !collection_topics(net)
+                    .to_string()
+                    .contains(TOPIC_LAND_UPDATE)
+            );
+        }
     }
 
     #[test]

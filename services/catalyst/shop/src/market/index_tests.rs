@@ -1446,7 +1446,7 @@ async fn a_land_data_fold_past_since_equals_a_rebuild() {
     db.drop().await;
 }
 
-/// With sequential scans off, as the fold reads a window, it scans `nft_event` once, bounded by an index.
+/// `LAND_DATA_SQL` with sequential scans off is one bounded index scan (the fold's own `SET LOCAL` is not covered).
 #[tokio::test]
 async fn the_land_data_read_is_one_bounded_index_scan() {
     let Some(db) = ScratchDb::create().await else {
