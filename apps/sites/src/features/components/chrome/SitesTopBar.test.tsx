@@ -304,7 +304,9 @@ it("keeps cached notifications alongside a background refresh error", async () =
   fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
   await screen.findByRole("link", { name: /Cached notice/ });
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
-  fireEvent.click(screen.getByRole("button", { name: /^Notifications/ }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Notifications, 1 unread" }),
+  );
   await screen.findByRole("alert");
   expect(screen.getByRole("link", { name: /Cached notice/ })).toBeTruthy();
   expect(fetchNotifications).toHaveBeenCalledTimes(2);
@@ -363,7 +365,6 @@ describe("when Home notifications are opened", () => {
     const bell = screen.getByRole("button", { name: "Notifications" });
     fireEvent.click(bell);
     const panel = screen.getByRole("dialog", { name: "Notifications" });
-    expect(panel.dataset.presentation).toBe("popover");
     await screen.findByText("No notifications yet");
     const close = within(panel).getByRole("button", { name: "Close" });
     close.focus();

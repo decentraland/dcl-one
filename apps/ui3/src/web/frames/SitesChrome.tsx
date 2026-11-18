@@ -12,7 +12,7 @@ import "./siteschrome.css";
 import SiteLayout from "./SiteLayout";
 import SiteSectionNavigation from "./SiteSectionNavigation";
 import { ProfileNavigationContext } from "./ProfileNavigation";
-import { SITES_LANGUAGES, SitesLocaleContext, sitesLanguage, type SitesLocale } from "./sites-locale";
+import { SITES_LANGUAGES, SitesLocaleContext, saveSitesLocale, sitesLanguage, type SitesLocale } from "./sites-locale";
 
 export type SitesNavId =
   | "play"
@@ -259,14 +259,17 @@ export default function SitesChrome({
   }, [langOpen]);
 
   const pickLang = (locale: SitesLocale) => {
-    if (preference) preference.onSelect(locale);
-    else setStoredLocale(locale);
-    setLangOpen(false);
-    try {
-      window.localStorage.setItem(LANG_STORAGE_KEY, locale);
-    } catch {
+    if (preference) {
+      preference.onSelect(locale);
+    } else {
+      setStoredLocale(locale);
+      try {
+        window.localStorage.setItem(LANG_STORAGE_KEY, locale);
+      } catch {
+      }
     }
-    document.cookie = `lang=${locale}; path=/; max-age=31536000; samesite=lax`;
+    setLangOpen(false);
+    saveSitesLocale(locale);
   };
 
   return (

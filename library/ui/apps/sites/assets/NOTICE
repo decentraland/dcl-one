@@ -3,5 +3,3 @@ The files in this directory are copied byte for byte from decentraland/sites (ht
 genesis-plaza.webp is src/images/creator-fund/scene-genesis-plaza.jpg from decentraland/sites at revision dd905b2a98d3450d73c8f8c562881ad45ff3c83c, resized to 640px wide and re-encoded as WebP.
 
 Some files show third-party marks: the App Store badge and Apple logo (download-on-the-app-store.svg, ios-logo.svg), the Google Play badge and icon (google_play_cta.svg, google_play_icon.svg), the Epic Games icon (epic_icon.svg). Their use follows the owners' brand guidelines, not the Apache License. The Decentraland logo (dcl-logo.svg) is a Decentraland mark.
-
-The twemoji-*.svg language flags are from Twitter Twemoji v14.0.2 (https://github.com/twitter/twemoji/tree/7a3dad4a4da30497093dab22eafba135f02308e1/assets/svg). Copyright Twitter, Inc. and other contributors. The graphics are licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/).

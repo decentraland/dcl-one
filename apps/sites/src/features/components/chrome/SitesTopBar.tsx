@@ -284,7 +284,7 @@ export default function SitesTopBar({
           notifications={
             identity
               ? {
-                  count: landing ? unreadCount(rows) : undefined,
+                  count: unreadCount(rows),
                   ...(landing ? { expanded: notificationsOpen } : {}),
                   panel: landing ? panel : null,
                   onSelect: () => {
