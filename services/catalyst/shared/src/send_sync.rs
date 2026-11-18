@@ -6,9 +6,10 @@
 //! the struct, so those proofs stop at the struct.
 
 /// Defines a non-generic struct whose `Send` and `Sync` are proven from its
-/// field types at the definition. A field that is not `Send + Sync` fails to
-/// compile. Field attributes are repeated on each field's assertion, so only
-/// doc comments and `#[cfg]` are supported.
+/// field types at the definition. A field that is not both `Send` and `Sync`
+/// fails to compile, so a `Send`-only field (an mpsc `Receiver`) is refused.
+/// Field attributes are repeated on each field's assertion, so only doc
+/// comments and `#[cfg]` are supported there; the struct takes doc comments only.
 ///
 /// ```
 /// catalyst_shared::send_sync_once! {
@@ -18,20 +19,35 @@
 ///
 /// A field that is not `Send + Sync` is rejected:
 ///
-/// ```compile_fail
+/// ```compile_fail,E0277
 /// catalyst_shared::send_sync_once! {
 ///     struct Local { count: std::rc::Rc<u64> }
+/// }
+/// ```
+///
+/// So is a generic struct, and any outer attribute but a doc comment:
+///
+/// ```compile_fail
+/// catalyst_shared::send_sync_once! {
+///     struct Generic<T> { value: T }
+/// }
+/// ```
+///
+/// ```compile_fail
+/// catalyst_shared::send_sync_once! {
+///     #[derive(Default)]
+///     struct Derived { name: String }
 /// }
 /// ```
 #[macro_export]
 macro_rules! send_sync_once {
     (
-        $(#[$meta:meta])*
+        $(#[doc = $doc:expr])*
         $vis:vis struct $name:ident {
             $( $(#[$field_meta:meta])* $field_vis:vis $field:ident : $ty:ty ),* $(,)?
         }
     ) => {
-        $(#[$meta])*
+        $(#[doc = $doc])*
         $vis struct $name {
             $( $(#[$field_meta])* $field_vis $field: $ty ),*
         }
@@ -44,8 +60,10 @@ macro_rules! send_sync_once {
             }
         };
 
-        // SAFETY: every field type is asserted `Send + Sync` above, which is
-        // what the auto impls would require.
+        // SAFETY: every field type is asserted `Send + Sync` above, at least
+        // what the auto impls require (they need `Send` fields for `Send` and
+        // `Sync` fields for `Sync`). Only doc comments may precede the struct,
+        // so no attribute can gate it apart from these impls or rewrite it.
         unsafe impl Send for $name {}
         // SAFETY: as above.
         unsafe impl Sync for $name {}

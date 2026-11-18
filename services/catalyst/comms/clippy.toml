@@ -12,4 +12,5 @@ disallowed-methods = [
   # Spawns box their future so tokio's task harness compiles once in shared.
   { path = "tokio::spawn", reason = "use crate::shared::task::spawn or spawn_with" },
   { path = "tokio::task::spawn", reason = "use crate::shared::task::spawn or spawn_with" },
+  { path = "tokio::runtime::Handle::spawn", reason = "use crate::shared::task::spawn_on" },
 ]

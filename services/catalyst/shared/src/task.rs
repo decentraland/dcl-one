@@ -8,6 +8,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 
 /// A spawned future boxed to one type per output.
@@ -32,7 +33,36 @@ where
     tokio::spawn(Box::pin(future) as BoxTask<T>)
 }
 
+/// `Handle::spawn` for a task with no output, on a chosen runtime.
+#[track_caller]
+pub fn spawn_on<F>(runtime: &Handle, future: F) -> JoinHandle<()>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    runtime.spawn(Box::pin(future) as BoxTask)
+}
+
 #[track_caller]
 fn spawn_boxed(future: BoxTask) -> JoinHandle<()> {
     tokio::spawn(future)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn spawn_with_returns_the_output() {
+        assert_eq!(spawn_with(async { 7 }).await.unwrap(), 7);
+        spawn_on(&Handle::current(), async {}).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn abort_and_panic_surface_as_join_errors() {
+        let pending = spawn(std::future::pending());
+        pending.abort();
+        assert!(pending.await.unwrap_err().is_cancelled());
+        let panicked = spawn(async { panic!("task") });
+        assert!(panicked.await.unwrap_err().is_panic());
+    }
 }

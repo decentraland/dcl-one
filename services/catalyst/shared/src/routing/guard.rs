@@ -1,10 +1,10 @@
 //! The route and spawn guards each domain crate runs as unit tests: CI runs no
 //! clippy over `services/catalyst`, so these scans keep production routes on
 //! [`crate::routing`] and production spawns on [`crate::task`]. Items and
-//! out-of-line modules under a test-only `#[cfg(..)]`, test files and `tests/`
-//! folders are exempt. They
-//! read tokens, not types: chained `MethodRouter` methods (`.post(..)`) stay a
-//! review rule.
+//! top-level out-of-line modules under a test-only `#[cfg(..)]`, test files and
+//! `tests/` folders are exempt. They read tokens, not types: chained
+//! `MethodRouter` methods (`.post(..)`) and spawns through a value
+//! (`handle.spawn(..)`, `JoinSet::spawn`) stay review rules.
 
 use std::path::{Path, PathBuf};
 
@@ -77,37 +77,60 @@ fn collect(dir: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-/// The files and folders of the out-of-line modules `path` declares under a
-/// test-only `#[cfg(..)]` (`#[cfg(test)] mod name;`).
+/// The files and folders of the out-of-line modules `path` declares at its top
+/// level under a test-only `#[cfg(..)]` (`#[cfg(test)] mod name;`), at their
+/// `#[path = ".."]` when given. A declaration inside an inline module exempts
+/// nothing, so a misread path is scanned rather than skipped.
 fn test_module_paths(path: &Path, text: &str) -> Vec<PathBuf> {
     let stem = path.file_stem().unwrap().to_string_lossy();
-    let dir = path.parent().unwrap();
+    let file_dir = path.parent().unwrap();
     let dir = if ["lib", "main", "mod"].contains(&stem.as_ref()) {
-        dir.to_path_buf()
+        file_dir.to_path_buf()
     } else {
-        dir.join(stem.as_ref())
+        file_dir.join(stem.as_ref())
     };
+    let code = code_only(text);
     let mut modules = Vec::new();
-    let mut test_only = false;
-    for line in text.lines().map(str::trim) {
-        if TEST_CFGS.contains(&line) || line.starts_with("#[cfg(all(test") {
+    let (mut depth, mut test_only, mut at) = (0i64, false, None);
+    for (line, original) in code.lines().zip(text.lines()) {
+        let top = depth == 0;
+        depth += line.matches('{').count() as i64 - line.matches('}').count() as i64;
+        let original = original.trim();
+        if line.trim().is_empty() && !original.starts_with("#[") {
+            continue;
+        }
+        if top && (TEST_CFGS.contains(&original) || original.starts_with("#[cfg(all(test")) {
             test_only = true;
             continue;
         }
-        if test_only && line.starts_with("#[") {
+        if top && test_only && original.starts_with("#[") {
+            // Outside an inline module, `#[path]` is relative to the file's directory.
+            if let Some(file) = original
+                .strip_prefix("#[path = \"")
+                .and_then(|rest| rest.strip_suffix("\"]"))
+            {
+                at = Some(file_dir.join(file));
+            }
             continue;
         }
-        if test_only
-            && let Some(name) = line
+        if top
+            && test_only
+            && let Some(name) = original
                 .trim_start_matches("pub(crate) ")
                 .trim_start_matches("pub ")
                 .strip_prefix("mod ")
                 .and_then(|rest| rest.strip_suffix(';'))
         {
-            modules.push(dir.join(format!("{name}.rs")));
-            modules.push(dir.join(name));
+            match at.take() {
+                Some(file) => modules.push(file),
+                None => {
+                    modules.push(dir.join(format!("{name}.rs")));
+                    modules.push(dir.join(name));
+                }
+            }
         }
         test_only = false;
+        at = None;
     }
     modules
 }
@@ -260,26 +283,107 @@ fn production_lines(text: &str) -> Vec<(usize, String)> {
     lines
 }
 
-/// 1-based numbers of the production lines in `text` that name `tokio::spawn`
-/// or import it in a single-line `use tokio::{ .. }` group.
+const TOKIO_SPAWNS: [&str; 2] = ["tokio::spawn", "tokio::task::spawn"];
+
+/// 1-based numbers of the production lines in `text` that name `tokio::spawn`,
+/// import it (`use tokio::{..}` groups across lines included), or call
+/// `task::spawn` through an imported `tokio::task`.
 fn spawn_lines(text: &str) -> Vec<usize> {
     let ident = |c: char| c.is_alphanumeric() || c == '_';
-    production_lines(text)
-        .into_iter()
-        .filter(|(_, line)| {
-            let line: String = line.split_whitespace().collect();
-            let path = ["tokio::spawn", "tokio::task::spawn"].iter().any(|path| {
-                line.split(path)
-                    .skip(1)
-                    .any(|after| !after.starts_with(ident))
-            });
-            let grouped = line.starts_with("usetokio::")
-                && line.contains('{')
-                && line.split(|c: char| !ident(c)).any(|name| name == "spawn");
-            path || grouped
+    // `name` at a token start, not followed by more of an identifier.
+    let names = |line: &str, name: &str| {
+        line.match_indices(name).any(|(at, _)| {
+            let before = line[..at].chars().next_back();
+            !before.is_some_and(|c| ident(c) || c == ':')
+                && !line[at + name.len()..].starts_with(ident)
         })
-        .map(|(number, _)| number)
-        .collect()
+    };
+    let mut found = Vec::new();
+    // The aliases `tokio::task` is imported under, and an open `use tokio` statement.
+    let (mut task_modules, mut statement) = (Vec::<String>::new(), None::<(usize, String)>);
+    for (number, line) in production_lines(text) {
+        let trimmed = line.trim();
+        if statement.is_none() && trimmed.starts_with("use tokio::") {
+            statement = Some((number, String::new()));
+        }
+        if let Some((start, text)) = statement.as_mut() {
+            text.push_str(trimmed);
+            text.push(' ');
+            if trimmed.contains(';') {
+                let start = *start;
+                let tree = text.replace(" as ", "@").replace(char::is_whitespace, "");
+                let tree = tree.trim_start_matches("use").trim_end_matches(';');
+                let mut paths = Vec::new();
+                use_paths("", tree, &mut paths);
+                for (path, alias) in paths {
+                    if TOKIO_SPAWNS.contains(&path.as_str()) {
+                        found.push(start);
+                    } else if path == "tokio::task" {
+                        task_modules.push(alias);
+                    }
+                }
+                statement = None;
+            }
+            continue;
+        }
+        let compact: String = line.split_whitespace().collect();
+        let path = TOKIO_SPAWNS.iter().any(|path| {
+            compact
+                .split(path)
+                .skip(1)
+                .any(|after| !after.starts_with(ident))
+        });
+        let through_module = task_modules
+            .iter()
+            .any(|module| names(&compact, &format!("{module}::spawn")));
+        if path || through_module {
+            found.push(number);
+        }
+    }
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+
+/// The `(path, alias)` pairs a whitespace-free use tree imports under `prefix`;
+/// `self` names the prefix itself and `@` marks an `as` alias.
+fn use_paths(prefix: &str, tree: &str, out: &mut Vec<(String, String)>) {
+    let mut depth = 0;
+    let mut start = 0;
+    let mut items = Vec::new();
+    for (at, c) in tree.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            ',' if depth == 0 => {
+                items.push(&tree[start..at]);
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    items.push(&tree[start..]);
+    for item in items.into_iter().filter(|item| !item.is_empty()) {
+        if let Some(open) = item.find('{') {
+            let inner = item[open + 1..]
+                .strip_suffix('}')
+                .unwrap_or(&item[open + 1..]);
+            use_paths(&format!("{prefix}{}", &item[..open]), inner, out);
+            continue;
+        }
+        let (name, alias) = item.split_once('@').unwrap_or((item, ""));
+        let path = if name == "self" {
+            prefix.trim_end_matches("::").to_string()
+        } else {
+            format!("{prefix}{name}")
+        };
+        let alias = if alias.is_empty() {
+            path.rsplit("::").next().unwrap_or("").to_string()
+        } else {
+            alias.to_string()
+        };
+        out.push((path, alias));
+    }
 }
 
 /// 1-based numbers of the production lines in `text` that name an axum method
@@ -445,6 +549,24 @@ fn e() { crate::shared::task::spawn(f); }
     }
 
     #[test]
+    fn spawn_lines_follow_multi_line_groups_and_the_task_module() {
+        let text = r#"use tokio::{
+    sync::Mutex,
+    task::{JoinHandle, spawn},
+};
+use tokio::task::{self as tk, spawn_blocking};
+use crate::shared::task;
+fn a() { tk::spawn(f); }
+fn b() { task::spawn(f); }
+fn c() { tk::spawn_blocking(f); }
+fn d() { other::tk::spawn(f); }
+"#;
+        assert_eq!(super::spawn_lines(text), [1, 7]);
+        let module = "use tokio::task;\nfn a() { task::spawn(f); }\n";
+        assert_eq!(super::spawn_lines(module), [2]);
+    }
+
+    #[test]
     fn out_of_line_test_modules_are_found() {
         let text = "#[cfg(test)]\nmod load;\nmod prod;\n#[cfg(test)]\n#[path = \"x.rs\"]\npub(crate) mod other;\n";
         let found = super::test_module_paths(std::path::Path::new("src/bus/broker.rs"), text);
@@ -454,10 +576,13 @@ fn e() { crate::shared::task::spawn(f); }
             [
                 "src/bus/broker/load.rs",
                 "src/bus/broker/load",
-                "src/bus/broker/other.rs",
-                "src/bus/broker/other",
+                "src/bus/x.rs",
             ]
         );
+        // A test-only declaration inside an inline module exempts nothing.
+        let inline = "mod a {\n    #[cfg(test)]\n    mod load;\n}\n";
+        let none = super::test_module_paths(std::path::Path::new("src/bus/broker.rs"), inline);
+        assert!(none.is_empty());
         let lib = super::test_module_paths(
             std::path::Path::new("src/lib.rs"),
             "#[cfg(test)]\nmod kit;\n",

@@ -200,14 +200,19 @@ impl SafetyStore {
                     .map_err(|_| GatewayError::Unknown)?;
             }
             sqlx::query(
-            "INSERT INTO social.island_admission_fences(wallet) VALUES ($1) ON CONFLICT DO NOTHING",
-        )
-        .bind(wallet)
-        .execute(&mut *tx)
-        .await
-        .map_err(|_| GatewayError::Unknown)?;
-            let row=sqlx::query("SELECT generation,token_floor FROM social.island_admission_fences WHERE wallet=$1 FOR UPDATE")
-            .bind(wallet).fetch_one(&mut *tx).await.map_err(|_|GatewayError::Unknown)?;
+                "INSERT INTO social.island_admission_fences(wallet) VALUES ($1) ON CONFLICT DO NOTHING",
+            )
+            .bind(wallet)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| GatewayError::Unknown)?;
+            let row = sqlx::query(
+                "SELECT generation,token_floor FROM social.island_admission_fences WHERE wallet=$1 FOR UPDATE",
+            )
+            .bind(wallet)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|_| GatewayError::Unknown)?;
             let generation: i64 = row
                 .try_get("generation")
                 .map_err(|_| GatewayError::Unknown)?;
