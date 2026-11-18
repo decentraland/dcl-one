@@ -23,8 +23,8 @@ export const ROUTES: Route[] = [
   { path: "/create/home", auth: "both" },
   { path: "/create/scenes", auth: "both" },
   { path: "/create/templates", auth: "out" },
-  { path: "/create/wearables", auth: "out", allowConsole: [AUTH_PROBE] },
-  { path: "/create/curate", auth: "out", allowConsole: [AUTH_PROBE] },
+  { path: "/create/collections", auth: "out", allowConsole: [AUTH_PROBE] },
+  { path: "/create/curation", auth: "out", allowConsole: [AUTH_PROBE] },
   { path: "/create/learn", auth: "out" },
 
   // Creator Hub: every route must render clean signed-out (gates, not

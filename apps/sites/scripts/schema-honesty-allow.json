@@ -90,46 +90,10 @@
     "why": "exclude_from_ranking is an additive moderation flag; a peer whose place records omit it predates the field and so has excluded nothing from ranking -- false is the real reading of its absence, not a guess. The generated PlaceRowSchema stays strict for current peers; only this compat wrapper supplies the default, and the Rust ingest in catalyrst-places (catalog/sync.rs reads the column with unwrap_or(false)) treats the same absence the same way, so both halves agree."
   },
   {
-    "file": "src/data/lib/catalyst/builder/collection-import.ts",
-    "rule": "fabricated-default",
-    "text": "z.string().max(4096).default(\"\")",
-    "why": "Metadata parses the creator's own wearable.json / emote.json out of the import ZIP -- or `{}` when a bare model file was chosen and there is no manifest at all -- so this is user-authored input, not an upstream payload whose failure a default could hide. An omitted description becomes the empty description on the collection draft the import writes."
-  },
-  {
-    "file": "src/data/lib/catalyst/builder/collection-import.ts",
-    "rule": "fabricated-default",
-    "text": "z.enum([\"wearable\", \"emote\"]).default(\"wearable\")",
-    "why": "Metadata parses the creator's own wearable.json / emote.json out of the import ZIP -- or `{}` when a bare model file was chosen and there is no manifest at all -- so this is user-authored input, not an upstream payload whose failure a default could hide. An omitted type becomes 'wearable' on the collection draft the import writes."
-  },
-  {
-    "file": "src/data/lib/catalyst/builder/collection-import.ts",
-    "rule": "fabricated-default",
-    "text": "z.enum([\"unique\", \"mythic\", \"exotic\", \"legendary\", \"epic\", \"rare\", \"uncommon\", \"common\"]).default(\"common\")",
-    "why": "Metadata parses the creator's own wearable.json / emote.json out of the import ZIP -- or `{}` when a bare model file was chosen and there is no manifest at all -- so this is user-authored input, not an upstream payload whose failure a default could hide. An omitted rarity becomes 'common' on the collection draft the import writes."
-  },
-  {
-    "file": "src/data/lib/catalyst/builder/collection-import.ts",
-    "rule": "fabricated-default",
-    "text": "z.record(z.string(), z.unknown()).default({})",
-    "why": "Metadata parses the creator's own wearable.json / emote.json out of the import ZIP -- or `{}` when a bare model file was chosen and there is no manifest at all -- so this is user-authored input, not an upstream payload whose failure a default could hide. An omitted data block becomes an empty record on the collection draft the import writes."
-  },
-  {
     "file": "src/data/lib/catalyst/builder/drafts.ts",
     "rule": "fabricated-default",
     "text": "z.string().nullish().transform(value => value ?? \"\")",
     "why": "The builder stores a missing item description as null and the editor's text field holds it as the empty string; both mean 'no description', so nothing is invented. The schema can still fail: id, name, type, data and contents are all required, so an error body or a truncated response is rejected."
-  },
-  {
-    "file": "src/data/lib/catalyst/builder/foundation-publication.ts",
-    "rule": "fabricated-default",
-    "text": "z.string().nullish().transform(v=>v??\"\")",
-    "why": "Same reading as drafts.ts: a null description from the Foundation builder is an item with no description, and '' is how the forum post and the editor render that. Every other field of Item is required, so a broken payload still fails the parse."
-  },
-  {
-    "file": "src/data/lib/catalyst/builder/foundation-publication.ts",
-    "rule": "fabricating-catch",
-    "text": "return {forumUrl:forumURL(collection.forum_link),curationSubmitted:true as const};",
-    "why": "Measured, not defaulted: when the forum POST fails the collection is re-read, and this return only happens when that fresh read carries a forum_link -- proof the post exists (a retry after a lost response). Without one the original error is rethrown."
   },
   {
     "file": "src/data/lib/help/status.ts",

@@ -149,7 +149,7 @@ export default function MetricsDashboardView({
               title="Nothing published yet"
               subtitle={"You haven\u{2019}t published a collection or a scene, or listed an item with this wallet \u{2014} there\u{2019}s no performance data to show yet."}
               actions={[
-                { label: "Create a collection", href: "/create/wearables" },
+                { label: "Create a collection", href: "/create/collections" },
                 {
                   label: "Build a scene",
                   href: "/create/scenes",

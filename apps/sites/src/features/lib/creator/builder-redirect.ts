@@ -20,29 +20,29 @@ export type RedirectRule = {
 export const REDIRECTS = {
   "item-editor": {
     from: "item-editor",
-    to: "/create/wearables/item-editor",
-    carry: ["collection", "item", "step", "variant"],
+    to: "/create/collections/editor",
+    carry: ["collection", "item", "reviewing"],
   },
   "publish-collection": {
     from: "publish-collection",
-    to: "/create/wearables/publish",
-    carry: ["collection", "step", "variant"],
+    to: "/create/collections",
+    carry: [],
   },
   curation: {
     from: "curation",
-    to: "/create/curate",
-    carry: ["step", "id", "decision", "status", "type", "assignee", "committee", "variant"],
+    to: "/create/curation",
+    carry: ["status", "type", "assignee"],
   },
   "collection-detail": {
     from: "collection-detail",
-    to: "/create/wearables/collections/:id",
-    carry: ["address", "tab", "variant"],
+    to: "/create/collections/:id",
+    carry: [],
     param: { name: "id" },
   },
   "item-detail": {
     from: "item-detail",
-    to: "/create/wearables/item-editor",
-    carry: ["variant"],
+    to: "/create/collections/editor",
+    carry: [],
     param: { name: "id", queryKey: "item" },
   },
 } as const satisfies Record<string, RedirectRule>;
@@ -68,7 +68,7 @@ export function buildDestination(
       if (rule.param.queryKey) out.set(rule.param.queryKey, raw);
       else to = to.replace(`:${rule.param.name}`, encodeURIComponent(raw));
     } else if (!rule.param.queryKey) {
-      to = "/create/wearables";
+      to = "/create/collections";
     }
   }
 

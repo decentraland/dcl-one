@@ -89,10 +89,10 @@ const ManageArt = () => (
 type ManageLink = { title: string; href: string; icon: ReactNode; builder?: boolean; badge?: string };
 
 const MANAGE_LINKS: ManageLink[] = [
-  { title: "Collections", href: "/create/wearables", icon: <CollectionsIcon /> },
+  { title: "Collections", href: "/create/collections", icon: <CollectionsIcon /> },
   { title: "Worlds", href: "/create/worlds", icon: <WorldsIcon /> },
   { title: "Metrics", href: "/create/metrics", icon: <MetricsIcon /> },
-  { title: "Curate", href: "/create/curate", icon: <ShieldCheckIcon />, badge: "Committee" },
+  { title: "Curate", href: "/create/curation", icon: <ShieldCheckIcon />, badge: "Committee" },
   { title: "Land", href: "/create/land", icon: <LandIcon /> },
   { title: "Names", href: "/create/names", icon: <NamesIcon /> },
 ];
@@ -255,7 +255,7 @@ function ScenesCard({ scenes, scenesError, rescoping, signedIn, onSignIn, onScen
 type ManageCardProps = { committee?: boolean };
 
 function ManageCard({ committee = false }: ManageCardProps) {
-  const links = committee ? MANAGE_LINKS : MANAGE_LINKS.filter((l) => l.href !== "/create/curate");
+  const links = committee ? MANAGE_LINKS : MANAGE_LINKS.filter((l) => l.href !== "/create/curation");
   return (
     <article className="chh__card">
       <CardBanner art={<ManageArt />} title="Manage" />

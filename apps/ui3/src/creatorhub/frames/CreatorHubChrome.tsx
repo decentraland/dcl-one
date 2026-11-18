@@ -105,7 +105,7 @@ const CREATORHUB_NAV: NavItem[] = [
     id: "collections",
     group: "Create",
     label: "Collections",
-    href: "/create/wearables",
+    href: "/create/collections",
     icon: (
       <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true">
         <path d="M3 3h6l8 8-6 6-8-8V3Z" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinejoin="round" />
@@ -117,7 +117,7 @@ const CREATORHUB_NAV: NavItem[] = [
     id: "curate",
     group: "Manage",
     label: "Curate",
-    href: "/create/curate",
+    href: "/create/curation",
     secondary: true,
     hint: "Committee",
     icon: (

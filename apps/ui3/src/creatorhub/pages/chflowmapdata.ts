@@ -40,8 +40,8 @@ export const SECTIONS: FlowSection[] = [
               node("chip", "Home", { href: "/create/home" }),
               node("chip", "Scenes", { href: "/create/scenes" }),
               node("chip", "Templates", { href: "/create/templates" }),
-              node("chip", "Collections", { href: "/create/wearables" }),
-              node("chip", "Curate", { href: "/create/curate", sub: "committee" }),
+              node("chip", "Collections", { href: "/create/collections" }),
+              node("chip", "Curate", { href: "/create/curation", sub: "committee" }),
               node("chip", "Worlds", { href: "/create/worlds" }),
               node("chip", "Land", { href: "/shop" }),
               node("chip", "Names", { href: "/marketplace/names" }),
@@ -280,46 +280,20 @@ export const SECTIONS: FlowSection[] = [
     id: "wearables",
     num: "04",
     title: "Wearables & Collections",
-    machines: [
-      "wearable-create-collection",
-      "wearable-item-editor",
-      "wearable-publish-collection",
-    ],
     blurb:
-      "Collections home, the new-collection wizard, per-item editing, and the publish flow (its Pay step is a disclosed stub).",
+      "The creator's collections, a collection's items and sales, and the item editor with its preview. Publishing, selling and sending items open as dialogs over the collection.",
     tracks: [
       {
         chain: "collections",
-        items: [route("/create/wearables", { sub: "COLLECTIONS home" })],
+        items: [route("/create/collections", { sub: "the creator's collections \u{B7} ?contract= opens one by address" })],
         branches: [
           {
-            chain: "new-collection",
-            items: [
-              click("New collection"),
-              route("/create/wearables/collections/new", {
-                sub: "machine: wearable-create-collection",
-              }),
-              step(),
-              state("NAMING", { sub: "\u{23CE} submits \u{B7} \u{201C}third-party?\u{201D} \u{2192} ?type=linked" }),
-              step(),
-              state("ITEMS", { sub: "dropzone: .zip \u{B7} .glb \u{B7} .gltf \u{B7} .png \u{2014} remove" }),
-              step(),
-              state("REVIEW"),
-              step(),
-              state("SUBMITTING", { busy: true }),
-              step(),
-              state("DONE"),
-              step(),
-              outcome("detail"),
-            ],
-          },
-          {
-            chain: "collection-detail",
+            chain: "collection",
             items: [
               click("collection"),
-              route("/create/wearables/collections/:id", {
-                href: "/create/wearables",
-                sub: "tabs: items \u{21C4} activity (?tab)",
+              route("/create/collections/:collectionId", {
+                href: "/create/collections",
+                sub: "items \u{B7} add items \u{B7} publish \u{B7} sell \u{B7} send \u{B7} roles",
                 title: "parameterized \u{2014} link opens the collections list",
               }),
             ],
@@ -327,53 +301,10 @@ export const SECTIONS: FlowSection[] = [
               {
                 chain: "item-editor",
                 items: [
-                  click("item row"),
-                  route("/create/wearables/item-editor", { sub: "ITEM-EDITOR" }),
-                  step(),
-                  state("SELECT"),
-                  step(),
-                  state("MODEL"),
-                  step(),
-                  state("CATEGORY"),
-                  step(),
-                  state("RARITY"),
-                  step(),
-                  state("PRICE"),
-                  load(undefined, { label: "Save" }),
-                  outcome("done"),
+                  click("item"),
+                  route("/create/collections/editor", { sub: "?collection= &item= \u{B7} fullscreen, with the avatar preview" }),
                 ],
               },
-              {
-                chain: "publish-collection",
-                items: [
-                  click("Publish"),
-                  route("/create/wearables/publish", {
-                    sub: "machine: wearable-publish-collection",
-                  }),
-                  step(),
-                  state("SUMMARY"),
-                  step(),
-                  state("COST"),
-                  step(),
-                  state("TERMS"),
-                  load("disclosed stub", { label: "Pay" }),
-                  state("SUBMITTED"),
-                ],
-              },
-            ],
-          },
-          {
-            chain: "single-item",
-            items: [
-              click("item"),
-              route("/create/wearables/items/:id", {
-                href: "/create/wearables",
-                title: "parameterized \u{2014} link opens the collections list",
-              }),
-              click("Edit"),
-              route("/create/wearables/item-editor?step=model", {
-                href: "/create/wearables/item-editor?step=model",
-              }),
             ],
           },
         ],
@@ -528,22 +459,15 @@ export const SECTIONS: FlowSection[] = [
     id: "curate",
     num: "08",
     title: "Curation",
-    machines: ["curate-committee"],
     blurb:
-      "Committee-only review queue: pick a row, decide, back to the queue. The rail item shows only for wallets on the committee.",
+      "Committee-only review queue. A row opens the collection in the item editor in review mode, where the curator approves it or requests fixes.",
     tracks: [
       {
         chain: "curate",
         items: [
-          route("/create/curate", { sub: "committee only \u{2014} rail item is membership-gated" }),
-          step(),
-          state("QUEUE", { sub: "filters ?status ?type ?assignee=me \u{B7} search \u{B7} sort" }),
+          route("/create/curation", { sub: "committee only \u{2014} filters ?status ?type ?assignee \u{B7} search \u{B7} sort" }),
           click("row"),
-          state("REVIEW"),
-          click("approve / reject + comment"),
-          state("DECIDED"),
-          step(),
-          outcome("queue"),
+          route("/create/collections/editor", { sub: "?collection= &reviewing=true" }),
         ],
       },
     ],
@@ -647,14 +571,9 @@ machine states; \`/paths\` are routes. Regenerated against the live route tree.
 \u{251C}\u{2500}\u{2500} /create/my-scenes \u{2500}\u{2500} [Open]\u{2500}\u{2500}\u{25B6} EDITOR (?pointer=\u{2026} reopen live scene)
 \u{2502}    \u{2514}\u{2500} empty: [Start from a template]\u{2500}\u{2500}\u{25B6} /create/templates
 \u{2502}
-\u{251C}\u{2500}\u{2500} /create/wearables (COLLECTIONS)
-\u{2502}    \u{251C}\u{2500}[New collection]\u{25B6} /collections/new   (machine: wearable-create-collection)
-\u{2502}    \u{2502}   NAMING(\u{23CE} submits; "third-party?"\u{2192}?type=linked) \u{2500}\u{25B6} ITEMS(upload dropzone,
-\u{2502}    \u{2502}   .zip/.glb/.gltf/.png, remove) \u{2500}\u{25B6} REVIEW \u{2500}\u{25B6} SUBMITTING\u{23F3} \u{2500}\u{25B6} DONE \u{2500}\u{25B6} detail
-\u{2502}    \u{251C}\u{2500}[collection]\u{25B6} /collections/:id  tabs items\u{21C4}activity (?tab)
-\u{2502}    \u{2502}   \u{251C}\u{2500}[item row]\u{25B6} ITEM-EDITOR: SELECT\u{25B6}MODEL\u{25B6}CATEGORY\u{25B6}RARITY\u{25B6}PRICE\u{25B6}SAVE\u{23F3}\u{25B6} done
-\u{2502}    \u{2502}   \u{2514}\u{2500}[Publish]\u{25B6} PUBLISH: SUMMARY\u{25B6}COST\u{25B6}TERMS\u{25B6}PAY\u{23F3}(disclosed stub)\u{25B6} SUBMITTED
-\u{2502}    \u{2514}\u{2500}[item]\u{25B6} /items/:id \u{2500}[Edit]\u{25B6} item-editor?step=model
+\u{251C}\u{2500}\u{2500} /create/collections (COLLECTIONS)
+\u{2502}    \u{2514}\u{2500}[collection]\u{25B6} /collections/:collectionId  items \u{B7} add items \u{B7} publish \u{B7} sell \u{B7} send \u{B7} roles
+\u{2502}        \u{2514}\u{2500}[item]\u{25B6} /collections/editor (?collection= &item=; fullscreen, avatar preview)
 \u{2502}
 \u{251C}\u{2500}\u{2500} WORLDS
 \u{2502}    \u{251C}\u{2500} /create/worlds \u{2500}[card]\u{25B6} settings/layout \u{B7} \u{2500}[Your Storage]\u{25B6} storage panel
@@ -672,9 +591,8 @@ machine states; \`/paths\` are routes. Regenerated against the live route tree.
 \u{2502}    on-sale/sales/visits) + per-scene visits table (real rows from the places
 \u{2502}    API; per-row "Not available" on gaps)
 \u{2502}
-\u{251C}\u{2500}\u{2500} /create/curate (committee; rail item shows per-membership): QUEUE(filters
-\u{2502}    ?status ?type ?assignee=me, search, sort) \u{2500}[row]\u{25B6} REVIEW \u{2500}[approve/reject
-\u{2502}    +comment]\u{25B6} DECIDED \u{2500}\u{25B6} queue
+\u{251C}\u{2500}\u{2500} /create/curation (committee; rail item shows per-membership): QUEUE(filters
+\u{2502}    ?status ?type ?assignee, search, sort) \u{2500}[row]\u{25B6} /collections/editor?reviewing=true
 \u{2502}
 \u{251C}\u{2500}\u{2500} /create/learn \u{2500}\u{2500} Videos\u{2197} \u{B7} Creator Docs\u{2197} \u{B7} Studios\u{2197} \u{B7} Creator Hub flow map
 \u{2502}    (\u{25B6} /create/map \u{2014} this document)
