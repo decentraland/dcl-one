@@ -69,7 +69,9 @@ Each pass of the loop runs four chained sets (`SceneLoopSets`):
    stamped with the scene's origin, and the scene's in-flight slot is freed.
 3. **`Lifecycle`**: `process_scene_entity_lifecycle` spawns bevy entities for the scene's
    newborn entity ids and despawns the dead, recording the dead in `DeletedSceneEntities` for
-   this pass.
+   this pass. `send_scene_messages` then queues the scenes' outgoing comms messages and
+   `process_network_message` publishes them, so they leave in the pass that received them
+   rather than after the loop's sleep to the frame deadline.
 4. **`UpdateWorld`**: one generated system per registered SDK component converts each delta
    into a bevy component (`C: TryFrom<D>`) on the matching entity. Registration is
    `add_crdt_lww_component` or `add_crdt_go_component` in `update_world`; the registration adds
@@ -90,6 +92,10 @@ a system in this set); see the
 [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md). A scene is skipped
 while in flight, broken, or blocked (unless it is the system scene), and is not sent twice in
 one frame. A scene that has not replied for ten seconds is marked broken and its slot freed.
+
+Inbound comms reach the loop the frame they arrive: the LiveKit room systems (room events,
+then participant payloads into the transport channels) run before `process_transport_updates`,
+which runs before `RunLoop`.
 
 Everything downstream of the loop reads bevy components. A system that needs scene data never
 reads the CRDT store directly; it queries the component the `UpdateWorld` system wrote.

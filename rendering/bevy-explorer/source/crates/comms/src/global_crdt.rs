@@ -115,7 +115,9 @@ impl Plugin for GlobalCrdtPlugin {
                 process_transport_updates,
                 despawn_players,
             )
-                .chain(),
+                .chain()
+                // What arrived reaches the scenes this frame, not the next.
+                .before(common::sets::SceneSets::RunLoop),
         );
         app.init_resource::<PlayerLanguage>();
         // a server has no local player, so no language to report

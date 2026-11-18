@@ -15,6 +15,7 @@ use livekit::prelude::Participant;
 use livestream_manager::ActiveVideoCast;
 use prost::Message;
 use system_bridge::VoiceMessage;
+use tokio::sync::mpsc::error::TrySendError;
 
 use crate::livekit::room::UnannouncedParticipants;
 #[cfg(target_arch = "wasm32")]
@@ -363,18 +364,24 @@ fn participant_payload(
             room_entity,
             packet.protocol_version
         );
-        livekit_runtime.spawn(async move {
-            sender
-                .send(
-                    PlayerUpdate {
-                        transport_id: room,
-                        message: PlayerMessage::PlayerData(message),
-                        address,
-                    }
-                    .into(),
-                )
-                .await
-        })
+        // Straight into the channel when nothing is queued ahead of it: a spawned send lands
+        // after this frame's transport update, a frame late. Order is kept by falling back to
+        // the task while earlier ones are pending.
+        let update: NetworkUpdate = PlayerUpdate {
+            transport_id: room,
+            message: PlayerMessage::PlayerData(message),
+            address,
+        }
+        .into();
+        let update = if player_update_tasks.is_empty() {
+            match sender.try_send(update) {
+                Ok(()) => return,
+                Err(TrySendError::Full(u) | TrySendError::Closed(u)) => u,
+            }
+        } else {
+            update
+        };
+        livekit_runtime.spawn(async move { sender.send(update).await })
     } else {
         let address = identity.to_string();
         livekit_runtime.spawn(async move {

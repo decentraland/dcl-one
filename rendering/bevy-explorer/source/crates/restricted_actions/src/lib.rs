@@ -77,6 +77,19 @@ pub struct RestrictedActionsPlugin;
 
 impl Plugin for RestrictedActionsPlugin {
     fn build(&self, app: &mut App) {
+        // Publish the scenes' outgoing messages inside the scene loop, as soon as a scene hands
+        // them over. As an Update system this only ran after the loop's frame-deadline sleep.
+        app.world_mut()
+            .resource_mut::<scene_runner::SceneLoopSchedule>()
+            .schedule
+            .add_systems(
+                (
+                    send_scene_messages,
+                    comms::livekit::room::process_network_message,
+                )
+                    .chain()
+                    .in_set(common::sets::SceneLoopSets::Lifecycle),
+            );
         app.add_event::<RpcCallEvent>();
         app.add_event::<ReturnedToWorld>();
         app.add_systems(
@@ -101,7 +114,6 @@ impl Plugin for RestrictedActionsPlugin {
                     event_player_disconnected,
                     event_player_moved_scene,
                     event_scene_ready,
-                    send_scene_messages,
                     teleport_player.after(change_realm),
                     handle_out_of_world,
                     announce_returned_to_world.after(handle_out_of_world),

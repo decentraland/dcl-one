@@ -63,7 +63,9 @@ impl Plugin for LivekitRoomPlugin {
                 ),
                 verify_room_tasks,
             )
-                .chain(),
+                .chain()
+                // Room events first, so this frame's transport update sees what they delivered.
+                .before(crate::global_crdt::process_transport_updates),
         );
         app.add_systems(Last, close_rooms_on_app_exit.run_if(on_event::<AppExit>));
     }
@@ -446,7 +448,7 @@ fn process_channel_control(
 /// Outgoing messages are published only while the room is connected; otherwise they wait in
 /// the transport's bounded channel and go out once it is (again).
 #[allow(clippy::type_complexity)]
-fn process_network_message(
+pub fn process_network_message(
     rooms: Query<
         (&mut LivekitRoom, &mut LivekitNetworkMessage),
         (With<Connected>, Without<RoomSuspended>),

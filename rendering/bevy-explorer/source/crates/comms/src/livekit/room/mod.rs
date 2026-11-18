@@ -1,6 +1,7 @@
 mod control;
 pub(super) mod diagnostics;
 pub(super) mod plugin;
+pub use plugin::process_network_message;
 
 pub use plugin::ServerRoomTerminal;
 

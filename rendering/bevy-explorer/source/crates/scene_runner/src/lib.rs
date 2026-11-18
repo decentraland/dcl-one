@@ -261,7 +261,7 @@ pub struct SceneLoopTiming {
 
 #[derive(Resource)]
 pub struct SceneLoopSchedule {
-    schedule: Schedule,
+    pub schedule: Schedule,
     /// Absolute wall-clock deadline for the end of the next frame. Accumulating this
     /// by the frame target (rather than restarting the clock from `Instant::now()` each
     /// frame) means a frame that overruns is repaid by a correspondingly shorter sleep,
