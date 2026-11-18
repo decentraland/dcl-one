@@ -159,3 +159,37 @@ it('keeps cached notification rows visible with an inline refresh error', () => 
   )
   expect(screen.getByRole('link', { name: /Notification title/ })).toHaveAttribute('href', '/shop')
 })
+
+describe('when the notification popover has a different first button', () => {
+  beforeEach(() => {
+    function Host() {
+      const [open, setOpen] = useState(false)
+      return (
+        <div>
+          <button type="button">Unrelated action</button>
+          <button type="button" onClick={() => setOpen(true)}>
+            Open notifications
+          </button>
+          {open ? (
+            <SitesNotificationsDialog
+              {...props}
+              presentation="popover"
+              onClose={() => setOpen(false)}
+            />
+          ) : null}
+        </div>
+      )
+    }
+    render(<Host />)
+  })
+
+  it('should restore focus to the actual opener after closing', () => {
+    const opener = screen.getByRole('button', { name: 'Open notifications' })
+    opener.focus()
+    fireEvent.click(opener)
+    const dismiss = screen.getByRole('button', { name: 'Close' })
+    dismiss.focus()
+    fireEvent.click(dismiss)
+    expect(opener).toHaveFocus()
+  })
+})

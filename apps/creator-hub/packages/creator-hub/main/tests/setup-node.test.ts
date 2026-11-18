@@ -14,9 +14,12 @@ vi.mock('electron-log/main', () => ({
 }));
 vi.mock('../src/modules/path', () => ({
   getBinPath: () => '/opt/hub/resources/app.asar.unpacked/node_modules/npm/bin/npm-cli.js',
+  getNodeCmdPath: () => '/home/user/.config/creator-hub/bin/node',
 }));
 
-const LINK = '/opt/hub/resources/app.asar.unpacked/node';
+const LINK = '/home/user/.config/creator-hub/bin/node';
+const SHIM_DIR = '/home/user/.config/creator-hub/bin';
+const LEGACY_LINK = '/opt/hub/resources/app.asar.unpacked/node';
 
 function fsError(code: string): NodeJS.ErrnoException {
   return Object.assign(new Error(code), { code });
@@ -39,6 +42,7 @@ describe('setupNodeBinary in a packaged Linux app', () => {
       throw fsError('ENOENT');
     });
     symlink = vi.spyOn(fs, 'symlinkSync').mockImplementation(() => undefined);
+    vi.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -48,21 +52,21 @@ describe('setupNodeBinary in a packaged Linux app', () => {
     mocks.warn.mockClear();
   });
 
-  it('links node in the app folder and puts the folder first on PATH', async () => {
+  it('links node in the app data folder, not the app bundle, and puts it first on PATH', async () => {
     const { setupNodeBinary, getInjectedPathEntries } = await loadModule();
 
     setupNodeBinary();
 
     expect(symlink).toHaveBeenCalledWith(process.execPath, LINK);
     expect(getInjectedPathEntries()).toEqual([
-      '/opt/hub/resources/app.asar.unpacked',
+      SHIM_DIR,
       '/opt/hub/resources/app.asar.unpacked/node_modules/npm/bin',
     ]);
-    expect(process.env.PATH?.startsWith('/opt/hub/resources/app.asar.unpacked:')).toBe(true);
+    expect(process.env.PATH?.startsWith(`${SHIM_DIR}:`)).toBe(true);
   });
 
   it.each(['EROFS', 'EACCES', 'EPERM'])(
-    'does not fail when the app folder gives %s, and adds no shim folder to PATH',
+    'does not fail when the shim folder gives %s, and adds no shim folder to PATH',
     async code => {
       symlink.mockImplementation(() => {
         throw fsError(code);
@@ -85,7 +89,7 @@ describe('setupNodeBinary in a packaged Linux app', () => {
     setupNodeBinary();
 
     expect(symlink).not.toHaveBeenCalled();
-    expect(process.env.PATH?.startsWith('/opt/hub/resources/app.asar.unpacked:')).toBe(true);
+    expect(process.env.PATH?.startsWith(`${SHIM_DIR}:`)).toBe(true);
   });
 
   it('replaces a link to another app', async () => {
@@ -121,5 +125,19 @@ describe('setupNodeBinary in a packaged Linux app', () => {
     const { setupNodeBinary } = await loadModule();
 
     expect(() => setupNodeBinary()).toThrow('ENOSPC');
+  });
+
+  it('removes the node link an earlier release left inside the app bundle', async () => {
+    vi.mocked(fs.lstatSync).mockImplementation(file => {
+      if (file === LEGACY_LINK) return { isSymbolicLink: () => true } as fs.Stats;
+      throw fsError('ENOENT');
+    });
+    const rm = vi.spyOn(fs, 'rmSync').mockImplementation(() => undefined);
+    const { setupNodeBinary } = await loadModule();
+
+    setupNodeBinary();
+
+    expect(rm).toHaveBeenCalledWith(LEGACY_LINK);
+    expect(symlink).toHaveBeenCalledWith(process.execPath, LINK);
   });
 });

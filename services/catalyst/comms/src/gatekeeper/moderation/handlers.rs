@@ -689,11 +689,15 @@ pub(in crate::gatekeeper) fn moderator_creds(state: &CommsState) -> ModeratorCre
 }
 
 /// GET /users/{address}/bans: public; the device id is never on this shape.
+/// Upstream validates no address: a string that is not one cannot be
+/// banned and answers 200 `isBanned: false` (capture `user-bans-bad-address`).
 pub async fn get_user_ban_status(
     State(state): State<SharedState>,
     Path(address): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    let address = Address::parse(&address).map_err(|_| ApiError::bad_request("Invalid address"))?;
+    let Ok(address) = Address::parse(&address) else {
+        return Ok(Json(serde_json::json!({ "data": { "isBanned": false } })));
+    };
     let status = state.moderation.ban_status(&address).await?;
     let data = serde_json::to_value(status).unwrap_or(serde_json::json!({ "isBanned": false }));
     Ok(Json(serde_json::json!({ "data": data })))

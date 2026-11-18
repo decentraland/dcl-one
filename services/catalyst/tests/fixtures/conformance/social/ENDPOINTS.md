@@ -400,7 +400,7 @@ and port 5461 with the environment (bounded outfits/emote sync from
 
 | service | passed | expected failures | divergences to look at |
 | --- | --- | --- | --- |
-| gatekeeper | 10/35 | 6 signed fixtures "Expired signature"; `scene-participants` 404 (no Pulse/archipelago room state) | unauthenticated scene routes answer `{"error":"Invalid Auth Chain"}` where production answers 400 `{"ok":false,"message":"Invalid Auth Chain"}`; `get-scene-adapter-unauth` 400 vs 401; bearer routes (`voice-chat-status`, `community-voice-chat/*`, `world ban-status`, `private-messages/token`) 503 vs 401/400 (Catalyst has no social-service token configured); `/cast/*` and `/scene-stream-access` 404 (G18 gap, unimplemented at the recorded revision); `ping` body 22 B vs `pong`; `user-bans-bad-address` 400 vs 200; preflight allow-origin reflected vs `*` |
+| gatekeeper | 10/35 | 6 signed fixtures "Expired signature"; `scene-participants` 404 (no Pulse/archipelago room state) | unauthenticated scene routes answer `{"error":"Invalid Auth Chain"}` where production answers 400 `{"ok":false,"message":"Invalid Auth Chain"}`; `get-scene-adapter-unauth` 400 vs 401; bearer routes (`voice-chat-status`, `community-voice-chat/*`, `world ban-status`, `private-messages/token`) 503 vs 401/400 (Catalyst has no social-service token configured); `/cast/*` and `/scene-stream-access` 404 (G18 gap, unimplemented at the recorded revision); `ping` body 22 B vs `pong`; `user-bans-bad-address` 400 vs 200; preflight allow-origin reflected vs `*`; the current answers are recorded in "In-process replay of the gatekeeper" below |
 | notifications | 1/14 | 4 signed fixtures 401 | `/status` 404 (route unimplemented at the recorded revision); `/unsubscribe/{address}` 404 (unimplemented at the recorded revision; now served, replayed in-process by `notifications::tests::the_unsigned_unsubscribe_capture_replays`); `?limit=5&onlyUnread&from=0` 400 (valueless `onlyUnread` rejected); opt-outs unknown scope 404 vs 400; every auth error body differs ("Unauthenticated: Expired signature" / "Invalid Auth Chain" vs the ADR-44 message pair); preflight 200 with `*` vs 204 with the requested headers |
 | badges | 5/13 | user badges achieved 0 vs 3/5 (empty tables); `badge-tiers` 404 vs 200 empty | `/categories` lists 3 categories, production 5 (Explorer, Collector, Creator, Socializer, Builder); asset URLs: production `https://assets-cdn.decentraland.org/<id>/2d/normal.png`, Catalyst serves `/badges/assets/{path}` under `DEFAULT_ASSET_BASE_URL` `https://badges.decentraland.org`; preflight 200 `*` vs 204 |
 | profile-images | 1/20 | the 19 image fixtures: production is a 301 to the bucket, Catalyst renders in process and answered 404 with no profile entities synced (`SYNC_ENTITY_TYPES=outfits,emote`) | structural: an edge redirect versus a direct `image/png`; `face-bad-cid` 400 vs 301; preflight 204 with every method vs the edge's 301 |
@@ -434,3 +434,43 @@ compares the whole pinned document with the capture under those two
 additions. `GalleryImageWithPlace` remains undefined, as in the pinned
 upstream document. The companion test checks the wire fields and every
 path parameter. All three regressions passed in the 134-test Camera suite.
+
+## In-process replay of the gatekeeper
+
+`comms/src/gatekeeper/capture_replay_tests.rs`, test
+`the_gatekeeper_answers_its_stateless_captures_as_production`, sends 23 of
+the 35 captures through `comms::gatekeeper::router` with their recorded
+method, path, query and headers, and compares status, recorded headers
+(`content-type` by media type) and body with
+`catalyst_testing::conformance::compare`. The node runs with
+`COMMS_GATEKEEPER_AUTH_TOKEN` and the moderator token set, as production
+does, against an empty scratch database.
+
+Replayed, all matching the capture: `cast-stream-info-invalid-key`,
+`cast-presenters-unauth`, `bans-401-unauth`,
+`community-voice-chat-active-401-no-token`,
+`community-voice-chat-status-401-no-token`, `get-scene-adapter-unauth`,
+`get-server-scene-adapter-unauth`, `ping`, `private-messages-token-unauth`,
+`scene-admin-unauth`, `scene-bans-addresses-unauth`, `scene-bans-unauth`,
+`scene-participants-400-no-params`, `scene-participants-world`,
+`scene-stream-access-unauth`, `status-head`, `user-bans`,
+`user-bans-bad-address`, `user-bans-unknown-address`,
+`user-warnings-401-unauth`, `voice-chat-status-401-no-token`,
+`world-ban-status-no-token`. `user-bans` and `scene-participants-world`
+captured the empty state (no ban, no participant), which the scratch
+database reproduces.
+
+`preflight-get-scene-adapter` is replayed with its four recorded header
+differences. DIVERGENCE: the node's one CORS layer (`shared::cors`) reflects
+the origin (`https://decentraland.org` for `*`) and answers its own method
+order, `max-age` 86400 (production 36000) and `vary: Origin` (production
+`Access-Control-Request-Headers`).
+
+Not replayed: the eight signed captures (`get-scene-adapter-signed`,
+`-signed-no-realm-name`, `scene-admin-signed-scene`, `-signed-wrong-signer`,
+`scene-bans-signed-scene`, `-signed-wrong-signer`,
+`scene-bans-addresses-signed-scene`, `user-warnings-signed-not-moderator`),
+whose auth chains have expired; `scene-participants` and
+`scene-participants-default-realm`, which list production's live
+participants; `status`, which carries production's version and commit; and
+`unknown-path-404`, which `serve`'s fallback answers, not this router.

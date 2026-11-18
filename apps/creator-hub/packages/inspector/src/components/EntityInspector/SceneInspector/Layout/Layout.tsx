@@ -156,14 +156,16 @@ function Layout({ value, onChange }: Props) {
               onChange={handleGridChange('x')}
             />
             <Button
-              type="dark"
+              variant="ghost"
+              size="sm"
               onClick={handleModeChange(Mode.ADVANCED)}
             >
               Set Coordinates (Advanced)
             </Button>
             <Button
-              type="blue"
-              size="big"
+              variant="primary"
+              className="info"
+              size="lg"
               onClick={applyCurrentState}
               disabled={!!gridError}
             >

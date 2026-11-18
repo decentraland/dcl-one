@@ -251,7 +251,17 @@ impl Jobs {
             trace: trace.clone(),
             name: Arc::from(name.as_str()),
         };
-        let fut = body(ctx);
+        self.start(name, cancel, trace, Box::pin(body(ctx)))
+    }
+
+    /// Not generic, so the task harness and the outcome block compile once here.
+    fn start(
+        &self,
+        name: String,
+        cancel: CancellationToken,
+        trace: Arc<Mutex<Trace>>,
+        fut: JobFuture,
+    ) -> CancellationToken {
         let task_trace = trace.clone();
         let task_name = name.clone();
         let handle = tokio::spawn(async move {
@@ -302,12 +312,15 @@ impl Jobs {
     /// lease and retries after a backoff, so a fleet-wide job never stays
     /// dead while a process could run it; `Ok` finishes the job. Without
     /// leases the body runs once, as [`Jobs::spawn`] would run it.
-    pub fn spawn_leased<F, Fut>(&self, name: impl Into<String>, mut body: F) -> CancellationToken
+    pub fn spawn_leased<F, Fut>(&self, name: impl Into<String>, body: F) -> CancellationToken
     where
         F: FnMut(JobContext) -> Fut + Send + 'static,
         Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
     {
-        let name = name.into();
+        self.spawn_leased_boxed(name.into(), boxed_body(body))
+    }
+
+    fn spawn_leased_boxed(&self, name: String, mut body: JobBody) -> CancellationToken {
         let lease_name = name.clone();
         let leases = self.leases.clone();
         let fleet_jobs = self.fleet_jobs;
@@ -405,7 +418,15 @@ impl Jobs {
         F: FnMut(JobContext) -> Fut + Send + 'static,
         Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
     {
-        let name = name.into();
+        self.spawn_periodic_boxed(name.into(), cfg, boxed_body(task))
+    }
+
+    fn spawn_periodic_boxed(
+        &self,
+        name: String,
+        cfg: PeriodicCfg,
+        task: JobBody,
+    ) -> CancellationToken {
         let log_name = name.clone();
         let cfg = self.periodic_cfg(cfg);
         let task = Arc::new(tokio::sync::Mutex::new(task));
@@ -424,7 +445,16 @@ impl Jobs {
         F: FnMut(JobContext) -> Fut + Send + 'static,
         Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
     {
-        let name = name.into();
+        self.spawn_periodic_scoped_boxed(parent, name.into(), cfg, boxed_body(task))
+    }
+
+    fn spawn_periodic_scoped_boxed(
+        &self,
+        parent: &JobContext,
+        name: String,
+        cfg: PeriodicCfg,
+        task: JobBody,
+    ) -> CancellationToken {
         let log_name = name.clone();
         let cfg = self.periodic_cfg(cfg);
         let task = Arc::new(tokio::sync::Mutex::new(task));
@@ -446,13 +476,22 @@ impl Jobs {
         F: FnMut(JobContext) -> Fut + Send + 'static,
         Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
     {
-        let name = name.into();
+        self.spawn_periodic_leased_boxed(name.into(), cfg, boxed_body(task))
+    }
+
+    fn spawn_periodic_leased_boxed(
+        &self,
+        name: String,
+        cfg: PeriodicCfg,
+        task: JobBody,
+    ) -> CancellationToken {
         let log_name = name.clone();
         let cfg = self.periodic_cfg(cfg);
         let task = Arc::new(tokio::sync::Mutex::new(task));
-        self.spawn_leased(name, move |ctx| {
-            run_periodic(ctx, log_name.clone(), cfg.clone(), task.clone())
-        })
+        self.spawn_leased_boxed(
+            name,
+            boxed_body(move |ctx| run_periodic(ctx, log_name.clone(), cfg.clone(), task.clone())),
+        )
     }
 
     pub fn report(&self) -> Vec<JobReport> {
@@ -510,16 +549,24 @@ impl Jobs {
     }
 }
 
-async fn run_periodic<F, Fut>(
-    ctx: JobContext,
-    log_name: String,
-    cfg: PeriodicCfg,
-    task: Arc<tokio::sync::Mutex<F>>,
-) -> anyhow::Result<()>
+type JobFuture = std::pin::Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>;
+type JobBody = Box<dyn FnMut(JobContext) -> JobFuture + Send>;
+
+/// Erases a job body so the job machinery is compiled once, not per caller.
+fn boxed_body<F, Fut>(mut body: F) -> JobBody
 where
     F: FnMut(JobContext) -> Fut + Send + 'static,
     Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
 {
+    Box::new(move |ctx| Box::pin(body(ctx)))
+}
+
+async fn run_periodic(
+    ctx: JobContext,
+    log_name: String,
+    cfg: PeriodicCfg,
+    task: Arc<tokio::sync::Mutex<JobBody>>,
+) -> anyhow::Result<()> {
     let first_delay = if cfg.run_on_start {
         first_fire_jitter(&log_name, cfg.jitter)
     } else {

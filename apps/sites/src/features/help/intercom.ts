@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 /**
  * The Intercom chat widget, ported from decentraland/sites src/components/Intercom (IntercomWidget, Intercom). The
@@ -10,7 +10,10 @@ export type IntercomSettings = {
 };
 
 type IntercomFn = (...args: unknown[]) => void;
-type IntercomWindow = Window & { Intercom?: IntercomFn; intercomSettings?: IntercomSettings };
+type IntercomWindow = Window & {
+  Intercom?: IntercomFn;
+  intercomSettings?: IntercomSettings & { hide_default_launcher: boolean };
+};
 
 export const INTERCOM_WIDGET_URL = "https://widget.intercom.io/widget/";
 
@@ -46,7 +49,7 @@ function installStub(win: IntercomWindow): IntercomStub {
 export function loadIntercom(appId: string, settings: IntercomSettings, doc: Document = document): Promise<void> {
   const win = intercomWindow();
   if (!win) return Promise.reject(new Error("Intercom loads only in the browser"));
-  win.intercomSettings = settings;
+  win.intercomSettings = { ...settings, hide_default_launcher: true };
   let script = Array.from(doc.querySelectorAll<HTMLScriptElement>("script[data-intercom]")).find(
     (candidate) => candidate.dataset.intercom === appId,
   );
@@ -85,45 +88,35 @@ export function showIntercom(): boolean {
   return true;
 }
 
-/**
- * Whether this page has booted the messenger since the last shutdown. A shutdown ends the session, and only `boot`
- * starts a new one: `update` after a shutdown changes nothing, so returning to the page must boot again.
- */
-let booted = false;
-
-/**
- * Boots the widget for this page and shuts it down when the page unmounts or the wallet changes, so the next account
- * starts its own conversation. `wallet` rides along as the `Wallet` attribute, as on decentraland.org, so support
- * sees which account is asking. An empty `appId` loads nothing. Returns whether the chat can open: false when it is
- * switched off or its script failed to load.
- */
+/** Enable chat only after the workspace accepts this visitor's session. */
 export function useIntercom(appId: string, settings: IntercomSettings, wallet?: string | null): boolean {
   const { alignment } = settings;
-  const [failed, setFailed] = useState<string | null>(null);
+  const session = useMemo(
+    () => ({ app_id: appId, alignment, hide_default_launcher: true, ...(wallet ? { Wallet: wallet } : {}) }),
+    [appId, alignment, wallet],
+  );
+  const [readySession, setReadySession] = useState<typeof session | null>(null);
   useEffect(() => {
-    if (!appId) return;
+    if (!session.app_id) return;
     let active = true;
-    loadIntercom(appId, { alignment })
+    loadIntercom(session.app_id, { alignment: session.alignment })
       .then(() => {
         const fn = client();
         if (!active || !fn) return;
-        const attributes = { app_id: appId, alignment, ...(wallet ? { Wallet: wallet } : {}) };
-        if (booted) {
-          fn("update", attributes);
-        } else {
-          fn("boot", attributes);
-          booted = true;
-        }
+        fn("ready", () => {
+          if (!active) return;
+          fn("update", { hide_default_launcher: false });
+          setReadySession(session);
+        });
+        fn("boot", session);
       })
       .catch((error: unknown) => {
         console.error("Could not render Intercom", error instanceof Error ? error.message : error);
-        if (active) setFailed(appId);
       });
     return () => {
       active = false;
       client()?.("shutdown");
-      booted = false;
     };
-  }, [appId, alignment, wallet]);
-  return Boolean(appId) && failed !== appId;
+  }, [session]);
+  return readySession === session;
 }
