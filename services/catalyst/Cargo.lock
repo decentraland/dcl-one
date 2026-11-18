@@ -1780,6 +1780,8 @@ name = "catalyst-comms-e2e"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
+ "base64 0.23.1",
  "bytes",
  "catalyst-comms",
  "clap",

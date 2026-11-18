@@ -35,12 +35,8 @@ pub static BURSTS: Scenario = Scenario {
     guards: &["dcl-one #966"],
     summary: "Five walkers send bursts of movement while one observer follows them over WebTransport: the observer's resync requests stay under a limit",
     needs: Needs {
-        api: false,
         webtransport: true,
-        pulse_metrics: false,
-        livekit: false,
-        moderator: false,
-        explorer: false,
+        ..Needs::NONE
     },
     hostile: false,
     default_repeat: 1,

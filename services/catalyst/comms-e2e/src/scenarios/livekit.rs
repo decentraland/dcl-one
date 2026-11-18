@@ -20,12 +20,8 @@ static SAME_IDENTITY: Scenario = Scenario {
     guards: &["dcl-one #1205"],
     summary: "A second join with the same identity replaces the first: the room keeps one participant, the first client is told why, the others see one leave and one join",
     needs: Needs {
-        api: false,
-        webtransport: false,
-        pulse_metrics: false,
         livekit: true,
-        moderator: false,
-        explorer: false,
+        ..Needs::NONE
     },
     hostile: false,
     default_repeat: 1,

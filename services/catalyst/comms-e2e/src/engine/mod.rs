@@ -59,6 +59,8 @@ pub struct Needs {
     pub explorer: bool,
     /// The wallet key of a scene listener Pulse admits.
     pub scene_listener: bool,
+    /// The stack file names a command that restarts the gatekeeper's process.
+    pub restart: bool,
 }
 
 impl Needs {
@@ -72,6 +74,7 @@ impl Needs {
         moderator: false,
         explorer: false,
         scene_listener: false,
+        restart: false,
     };
 
     /// What `stack` lacks for this scenario, if anything.
@@ -97,6 +100,9 @@ impl Needs {
         }
         if self.scene_listener && stack.scene_listener_key_env.is_none() {
             missing.push("the scene listener wallet key (`scene_listener_key_env`)");
+        }
+        if self.restart && stack.restart_command.is_none() {
+            missing.push("a restart command (`restart_command`)");
         }
         (!missing.is_empty()).then(|| format!("the stack file has no {}", missing.join(", no ")))
     }

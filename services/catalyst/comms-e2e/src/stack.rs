@@ -37,6 +37,11 @@ pub struct Stack {
     /// listener (its authoritative server address). Absent: scene listener scenarios are skipped.
     #[serde(default)]
     pub scene_listener_key_env: Option<String>,
+    /// A command (program and arguments) that restarts the process running the gatekeeper and
+    /// the archipelago connector and returns once that process has been told to restart. Absent:
+    /// the scenarios that restart it are skipped.
+    #[serde(default)]
+    pub restart_command: Option<Vec<String>>,
     #[serde(default)]
     pub grid: Grid,
     #[serde(default)]
@@ -223,6 +228,7 @@ impl Stack {
             moderator_token_env: None,
             explorer: None,
             scene_listener_key_env: None,
+            restart_command: None,
             grid: Grid::default(),
             limits: Limits::default(),
         }

@@ -1,6 +1,7 @@
 //! Every scenario the utility knows, by name.
 
 pub mod connections;
+pub mod connections_support;
 pub mod explorer;
 pub mod livekit;
 pub mod pulse;
