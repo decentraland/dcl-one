@@ -36,9 +36,9 @@ import {
   abort,
   abortTranscription,
   cancel,
+  waitForPendingStops,
   appendAudio,
   appendEvents,
-  isRecording,
   skipTranscription,
   start,
   stop,
@@ -104,22 +104,26 @@ describe('when recording a session', () => {
       expect(transcriber.transcribe).not.toHaveBeenCalled();
     });
 
-    it('should no longer be recording', () => {
-      expect(isRecording()).toBe(false);
+    it('should no longer be recording', async () => {
+      await expect(stop(owner.id, sessionId)).rejects.toThrow(
+        'This recording is no longer active.',
+      );
     });
   });
 
   describe('and the window that started it goes away', () => {
-    it('should end the recording', () => {
+    it('should end the recording', async () => {
       owner.emit('destroyed');
-      expect(isRecording()).toBe(false);
+      await expect(stop(owner.id, sessionId)).rejects.toThrow(
+        'This recording is no longer active.',
+      );
     });
   });
 
   describe('and the in-app route changes', () => {
-    it('should keep recording', () => {
+    it('should keep recording', async () => {
       owner.emit('did-start-navigation', { isMainFrame: true, isSameDocument: true });
-      expect(isRecording()).toBe(true);
+      await expect(stop(owner.id, sessionId)).resolves.toMatchObject({ sessionId });
     });
   });
 
@@ -371,7 +375,7 @@ describe('when the user sends the recording without waiting for the transcript',
     it('should do nothing', async () => {
       await expect(skipTranscription(owner.id, sessionId)).resolves.toBeUndefined();
       expect(() => abortTranscription()).not.toThrow();
-      expect(isRecording()).toBe(true);
+      await expect(discard(dir)).rejects.toThrow('This recording is still running.');
     });
   });
 });
@@ -442,9 +446,9 @@ describe('when the session files cannot be written', () => {
     abort('test cleanup');
   });
 
-  it('should end the recording with what was captured instead of throwing', () => {
+  it('should end the recording with what was captured instead of throwing', async () => {
     expect(() => appendAudio(owner.id, sessionId, pcm([1, 2]), Date.now())).not.toThrow();
-    expect(isRecording()).toBe(false);
+    await expect(stop(owner.id, sessionId)).rejects.toThrow('This recording is no longer active.');
     const md = fs.readFileSync(path.join(currentSessionDir('Full-disk'), 'SESSION.md'), 'utf8');
     expect(md).toContain('the recording could not be written to disk');
   });
@@ -468,14 +472,14 @@ describe('when the user discards a running recording', () => {
   it('should end it without transcribing and delete what was captured', async () => {
     expect(fs.existsSync(dir)).toBe(true);
     await cancel(owner.id, sessionId);
-    expect(isRecording()).toBe(false);
+    await expect(stop(owner.id, sessionId)).rejects.toThrow('This recording is no longer active.');
     expect(fs.existsSync(dir)).toBe(false);
     expect(transcriber.transcribe).not.toHaveBeenCalled();
   });
 
   it('should leave it running when another window asks', async () => {
     await cancel(owner.id + 1, sessionId);
-    expect(isRecording()).toBe(true);
+    await expect(discard(dir)).rejects.toThrow('This recording is still running.');
     expect(fs.existsSync(dir)).toBe(true);
   });
 });
@@ -534,7 +538,6 @@ describe('when the user discards a finished recording', () => {
     const { sessionId } = await start(owner, '/scenes/Discard', 'Discard', 'en');
     const running = currentSessionDir('Discard', dir);
     await expect(discard(running)).rejects.toThrow('This recording is still running.');
-    expect(isRecording()).toBe(true);
     await stop(owner.id, sessionId);
   });
 });
@@ -558,5 +561,138 @@ describe('when old sessions pile up', () => {
     expect(left[left.length - 1]).toBe(path.basename(dir));
     expect(left.some(entry => entry.endsWith('-old'))).toBe(true);
     expect(left.filter(entry => entry.endsWith('-old'))).toHaveLength(18);
+  });
+});
+
+describe('when the session files cannot be written at the end', () => {
+  let owner: Electron.WebContents;
+  let sessionId: string;
+  let dir: string;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    transcriber.transcribe.mockResolvedValue([]);
+    owner = fakeWindow();
+    ({ sessionId } = await start(owner, '/scenes/Broken', 'Broken', 'en'));
+    appendAudio(owner.id, sessionId, pcm(TONE), Date.now());
+    dir = currentSessionDir('Broken');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    abort('test cleanup');
+  });
+
+  it('should still delete the audio when stop fails to write them', async () => {
+    vi.spyOn(fs, 'writeFileSync').mockImplementationOnce(() => {
+      throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
+    });
+    await expect(stop(owner.id, sessionId)).rejects.toThrow('no space left on device');
+    expect(fs.existsSync(path.join(dir, 'audio.wav'))).toBe(false);
+  });
+
+  it('should still delete the audio when the early end fails to write them', () => {
+    vi.spyOn(fs, 'writeFileSync').mockImplementationOnce(() => {
+      throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
+    });
+    abort('the app was closed');
+    expect(fs.existsSync(path.join(dir, 'audio.wav'))).toBe(false);
+  });
+
+  it('should close the events file and let go of the folder when closing the audio fails', async () => {
+    const closeSync = vi.spyOn(fs, 'closeSync').mockImplementationOnce(() => {
+      throw Object.assign(new Error('bad file descriptor'), { code: 'EBADF' });
+    });
+    abort('the app was closed');
+    expect(closeSync).toHaveBeenCalledTimes(2);
+    closeSync.mockRestore();
+    await expect(discard(dir)).resolves.toBeUndefined();
+  });
+});
+
+describe('when a second recording is stopped while the first is still transcribing', () => {
+  let owner: Electron.WebContents;
+  let first: string;
+  let second: string;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    transcriber.transcribe.mockImplementation(
+      (_wav: string, _model: string, _language: string, _prompt: string, signal?: AbortSignal) =>
+        new Promise((_resolve, reject) =>
+          signal?.addEventListener('abort', () => reject(new Error('Transcription was skipped.')), {
+            once: true,
+          }),
+        ),
+    );
+    owner = fakeWindow();
+    ({ sessionId: first } = await start(owner, '/scenes/Both', 'Both', 'en'));
+    appendAudio(owner.id, first, pcm(TONE), Date.now());
+  });
+
+  afterEach(() => abort('test cleanup'));
+
+  it('should skip the one the window names and leave the other transcribing', async () => {
+    const stoppingFirst = stop(owner.id, first);
+    await vi.waitFor(() => expect(transcriber.transcribe).toHaveBeenCalledTimes(1));
+    ({ sessionId: second } = await start(owner, '/scenes/Both', 'Both', 'en'));
+    appendAudio(owner.id, second, pcm(TONE), Date.now());
+    const stoppingSecond = stop(owner.id, second);
+    await vi.waitFor(() => expect(transcriber.transcribe).toHaveBeenCalledTimes(2));
+
+    await skipTranscription(owner.id, first);
+    expect((await stoppingFirst).transcriptionSkipped).toBe(true);
+    const signals = transcriber.transcribe.mock.calls.map(call => call[4] as AbortSignal);
+    expect(signals.map(signal => signal.aborted)).toEqual([true, false]);
+
+    await skipTranscription(owner.id, second);
+    expect((await stoppingSecond).transcriptionSkipped).toBe(true);
+  });
+});
+
+describe('when the app quits with a recording still being transcribed', () => {
+  let owner: Electron.WebContents;
+  let sessionId: string;
+  let dir: string;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    transcriber.transcribe.mockImplementation(
+      (_wav: string, _model: string, _language: string, _prompt: string, signal?: AbortSignal) =>
+        new Promise((_resolve, reject) =>
+          signal?.addEventListener('abort', () => reject(new Error('Transcription was skipped.')), {
+            once: true,
+          }),
+        ),
+    );
+    owner = fakeWindow();
+    ({ sessionId } = await start(owner, '/scenes/Quit', 'Quit', 'en'));
+    appendAudio(owner.id, sessionId, pcm(TONE), Date.now());
+    dir = currentSessionDir('Quit');
+  });
+
+  afterEach(() => abort('test cleanup'));
+
+  it('should wait out the stop it just gave up on, so the session is written', async () => {
+    const stopping = stop(owner.id, sessionId);
+    await vi.waitFor(() => expect(transcriber.transcribe).toHaveBeenCalled());
+    abortTranscription();
+    await waitForPendingStops(5000);
+    expect(fs.existsSync(path.join(dir, 'SESSION.md'))).toBe(true);
+    expect(fs.existsSync(path.join(dir, 'audio.wav'))).toBe(false);
+    await stopping;
+  });
+
+  it('should give up waiting rather than hold the quit', async () => {
+    const stopping = stop(owner.id, sessionId);
+    await vi.waitFor(() => expect(transcriber.transcribe).toHaveBeenCalled());
+    await expect(waitForPendingStops(10)).resolves.toBeUndefined();
+    expect(fs.existsSync(path.join(dir, 'SESSION.md'))).toBe(false);
+    abortTranscription();
+    await stopping;
+  });
+
+  it('should return at once when nothing is being transcribed', async () => {
+    await expect(waitForPendingStops(5000)).resolves.toBeUndefined();
   });
 });

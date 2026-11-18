@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { toWords } from '../src/modules/recording/words';
+import { toWindows, toWords } from '../src/modules/recording/words';
 
 describe('when turning a region of Whisper segments into transcript words', () => {
   const region = { start: 5000, end: 6000, segment: 2 };
@@ -25,5 +25,46 @@ describe('when turning a region of Whisper segments into transcript words', () =
 
   it('should return nothing for a region Whisper read nothing in', () => {
     expect(toWords(region, [])).toEqual([]);
+  });
+});
+
+describe('when grouping the stretches of speech into transcription windows', () => {
+  it('should put a breath-long pause in one window, since whisper pads every clip to 30 s', () => {
+    expect(
+      toWindows([
+        { start: 1000, end: 3000 },
+        { start: 3600, end: 5000 },
+      ]),
+    ).toEqual([{ start: 1000, end: 5000, segment: 0 }]);
+  });
+
+  it('should start a new window when the user was quiet for longer', () => {
+    expect(
+      toWindows([
+        { start: 1000, end: 3000 },
+        { start: 9000, end: 11_000 },
+      ]),
+    ).toEqual([
+      { start: 1000, end: 3000, segment: 0 },
+      { start: 9000, end: 11_000, segment: 1 },
+    ]);
+  });
+
+  it('should start a new window rather than let one pass 30 seconds', () => {
+    const regions = Array.from({ length: 6 }, (_, i) => ({
+      start: i * 6000,
+      end: i * 6000 + 5000,
+    }));
+    const windows = toWindows(regions);
+
+    expect(windows.map(w => [w.start, w.end])).toEqual([
+      [0, 29_000],
+      [30_000, 35_000],
+    ]);
+    expect(windows.map(w => w.segment)).toEqual([0, 1]);
+  });
+
+  it('should leave an empty recording empty', () => {
+    expect(toWindows([])).toEqual([]);
   });
 });

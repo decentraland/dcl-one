@@ -14,6 +14,7 @@ import {
   holdSession,
   pruneOldSessions,
   pruneProject,
+  sweepLeftovers,
 } from '../src/modules/recording/retention';
 
 const DAY_MS = 24 * 60 * 60_000;
@@ -141,5 +142,46 @@ describe('when a finished recording is discarded', () => {
     release();
     await discard(dir);
     expect(fs.existsSync(dir)).toBe(false);
+  });
+});
+
+describe('when the app crashed in the middle of a transcription', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    mocks.userData = fs.mkdtempSync(path.join(os.tmpdir(), 'retention-'));
+    dir = session('scene-hhh', '2026-01-01_00-00-00.000-x');
+    for (const file of ['audio.wav', 'transcribe-job.json', 'transcribe-result.json']) {
+      fs.writeFileSync(path.join(dir, file), 'left over');
+    }
+  });
+
+  afterEach(() => fs.rmSync(mocks.userData, { recursive: true, force: true }));
+
+  it('should delete what the recorder left behind and keep the session itself', async () => {
+    await sweepLeftovers();
+    expect(fs.readdirSync(dir)).toEqual(['SESSION.md']);
+  });
+
+  it('should leave a session the recorder is using right now', async () => {
+    const release = holdSession(dir, 'This recording is still being transcribed.');
+    await sweepLeftovers();
+    release();
+    expect(fs.readdirSync(dir).sort()).toEqual([
+      'SESSION.md',
+      'audio.wav',
+      'transcribe-job.json',
+      'transcribe-result.json',
+    ]);
+  });
+
+  it('should look in every project folder and leave anything else alone', async () => {
+    const other = session('scene-iii', '2026-01-01_00-00-00.000-y');
+    fs.writeFileSync(path.join(other, 'audio.wav'), 'left over');
+    fs.writeFileSync(path.join(other, 'events.jsonl'), '{}');
+    fs.writeFileSync(path.join(getRecordingsDir(), 'notes.txt'), 'keep me');
+    await sweepLeftovers();
+    expect(fs.readdirSync(other).sort()).toEqual(['SESSION.md', 'events.jsonl']);
+    expect(fs.existsSync(path.join(getRecordingsDir(), 'notes.txt'))).toBe(true);
   });
 });

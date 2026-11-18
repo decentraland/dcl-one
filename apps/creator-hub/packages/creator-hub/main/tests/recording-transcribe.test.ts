@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -39,6 +40,8 @@ vi.mock('../src/modules/recording/tools', () => ({
 import { transcribe } from '../src/modules/recording/transcribe';
 
 const { StreamError } = mocks;
+
+type EnvOf = Record<string, string>;
 
 type FakeWorker = {
   env: Record<string, string>;
@@ -129,6 +132,30 @@ describe('when the worker never answers', () => {
     await vi.advanceTimersByTimeAsync(10 * 60_000 + 100);
     await result;
     expect(order).toEqual(['kill', 'dead', 'rejected']);
+  });
+
+  it('should keep the words it had already written when it is killed for taking too long', async () => {
+    let die!: () => void;
+    mocks.run.mockImplementation((_pkg: string, _bin: string, options: { env: EnvOf }) => ({
+      on: () => 0,
+      kill: vi.fn(async () => die()),
+      wait: () =>
+        new Promise<Buffer>((_, reject) => {
+          die = () => reject(new Error('killed'));
+          const job = JSON.parse(
+            fs.readFileSync(options.env[TRANSCRIBE_JOB_FILE_ENV], 'utf8'),
+          ) as TranscribeWorkerJob;
+          fs.writeFileSync(
+            job.resultPath,
+            JSON.stringify({ words: [{ start: 0, end: 200, text: ' half' }] }),
+          );
+        }),
+    }));
+    const outcome = transcribe(path.join(sessionDir, 'audio.wav'), 'en', 'en', undefined);
+    await vi.waitFor(() => expect(mocks.run).toHaveBeenCalled());
+    await vi.advanceTimersByTimeAsync(10 * 60_000 + 100);
+
+    await expect(outcome).resolves.toEqual([{ start: 0, end: 200, text: ' half' }]);
   });
 
   it('should say that it took too long', async () => {
@@ -299,6 +326,22 @@ describe('when transcribing a recording', () => {
       await expect(transcribe(wavPath, 'en', 'en', undefined)).rejects.toThrow();
       expect(fs.existsSync(worker.env[TRANSCRIBE_JOB_FILE_ENV])).toBe(false);
       expect(fs.existsSync(worker.job!.resultPath)).toBe(false);
+    });
+  });
+
+  describe('and the job and result files cannot be deleted afterwards', () => {
+    it('should still return the words the worker found', async () => {
+      fakeWorker({ result: { words: [{ start: 0, end: 200, text: ' hi' }] } });
+      const rm = vi
+        .spyOn(fsp, 'rm')
+        .mockRejectedValue(Object.assign(new Error('EPERM'), { code: 'EPERM' }));
+      try {
+        await expect(transcribe(wavPath, 'en', 'en', undefined)).resolves.toEqual([
+          { start: 0, end: 200, text: ' hi' },
+        ]);
+      } finally {
+        rm.mockRestore();
+      }
     });
   });
 

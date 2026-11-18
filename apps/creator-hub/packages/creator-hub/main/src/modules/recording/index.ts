@@ -49,8 +49,10 @@ type Session = {
   detach: () => void;
 };
 
+type Stopping = { ownerId: number; skip: AbortController; done: Promise<unknown> };
+
 let session: Session | null = null;
-let stopping: { id: string; ownerId: number; skip: AbortController } | null = null;
+const stopping = new Map<string, Stopping>();
 
 export { discard };
 
@@ -203,6 +205,14 @@ export function appendEvents(senderId: number, sessionId: string, events: unknow
   }
 }
 
+function close(fd: number): void {
+  try {
+    fs.closeSync(fd);
+  } catch (error) {
+    log.warn('[Recording] could not close a session file:', error);
+  }
+}
+
 function finalizeFiles(s: Session): number {
   s.ended = true;
   s.detach();
@@ -210,8 +220,8 @@ function finalizeFiles(s: Session): number {
   try {
     fs.writeSync(s.audioFd, wavHeader(s.audioBytes, RECORDING_SAMPLE_RATE), 0, WAV_HEADER_BYTES, 0);
   } finally {
-    fs.closeSync(s.audioFd);
-    fs.closeSync(s.eventsFd);
+    close(s.audioFd);
+    close(s.eventsFd);
     s.release();
   }
   return endedAt;
@@ -266,10 +276,11 @@ export function abort(reason: string): void {
     writeSessionFiles(s, endedAt, [], {
       error: `skipped, the recording ended because ${reason}`,
     });
-    removeAudio(s.dir);
     log.info(`[Recording] ended early (${reason}): ${s.dir}`);
   } catch (error) {
     log.error('[Recording] failed to close the session files:', error);
+  } finally {
+    removeAudio(s.dir);
   }
 }
 
@@ -288,49 +299,70 @@ export async function cancel(senderId: number, sessionId: string): Promise<void>
 
 /** Gives up on the transcript of the session being stopped, so stop() answers right away. */
 export async function skipTranscription(senderId: number, sessionId: string): Promise<void> {
-  if (!stopping || stopping.id !== sessionId || stopping.ownerId !== senderId) return;
+  const pending = stopping.get(sessionId);
+  if (!pending || pending.ownerId !== senderId) return;
   log.info('[Recording] sending without the transcript');
-  stopping.skip.abort();
+  pending.skip.abort();
 }
 
-/** Gives up on a transcript still running at quit, before the worker is killed from outside. */
+/** Gives up on every transcript still running at quit, before the workers are killed. */
 export function abortTranscription(): void {
-  if (!stopping) return;
-  log.info('[Recording] giving up on the transcript: the app is closing');
-  stopping.skip.abort();
+  for (const pending of stopping.values()) {
+    log.info('[Recording] giving up on the transcript: the app is closing');
+    pending.skip.abort();
+  }
 }
 
-export async function stop(senderId: number, sessionId: string): Promise<RecordingResult> {
+/** Waits out the stops still writing their session files, up to `timeoutMs`. */
+export async function waitForPendingStops(timeoutMs: number): Promise<void> {
+  const pending = [...stopping.values()].map(entry => entry.done.catch(() => undefined));
+  if (pending.length === 0) return;
+  let timer: NodeJS.Timeout | undefined;
+  const bound = new Promise<void>(resolve => {
+    timer = setTimeout(resolve, timeoutMs);
+  });
+  try {
+    await Promise.race([Promise.all(pending), bound]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function stop(senderId: number, sessionId: string): Promise<RecordingResult> {
   const s = session;
   if (!s || s.id !== sessionId || s.ownerId !== senderId) {
-    throw new Error('This recording is no longer active.');
+    return Promise.reject(new Error('This recording is no longer active.'));
   }
   session = null;
   const endedAt = finalizeFiles(s);
 
   const skip = new AbortController();
-  stopping = { id: s.id, ownerId: s.ownerId, skip };
+  const entry: Stopping = { ownerId: s.ownerId, skip, done: Promise.resolve() };
+  stopping.set(s.id, entry);
+  const done = runStop(s, endedAt, skip.signal).finally(() => {
+    if (stopping.get(s.id) === entry) stopping.delete(s.id);
+  });
+  entry.done = done;
+  return done;
+}
+
+async function runStop(s: Session, endedAt: number, signal: AbortSignal): Promise<RecordingResult> {
   const release = holdSession(s.dir, TRANSCRIBING_REFUSAL);
   let words: TranscriptWord[] = [];
   let transcriptionError: string | undefined;
   let skipped = false;
   try {
-    ({ words, transcriptionError, skipped = false } = await transcribeSession(s, skip.signal));
+    ({ words, transcriptionError, skipped = false } = await transcribeSession(s, signal));
+    const result = writeSessionFiles(s, endedAt, words, { error: transcriptionError, skipped });
+    void pruneProject(path.dirname(s.dir));
+    log.info(
+      `[Recording] stopped ${s.dir} (${Math.round(result.durationMs / 1000)}s, ${result.actionCount} actions, ${words.length} words)`,
+    );
+    return result;
   } finally {
     release();
-    if (stopping?.id === s.id) stopping = null;
+    removeAudio(s.dir);
   }
-  const result = writeSessionFiles(s, endedAt, words, { error: transcriptionError, skipped });
-  removeAudio(s.dir);
-  void pruneProject(path.dirname(s.dir));
-  log.info(
-    `[Recording] stopped ${s.dir} (${Math.round(result.durationMs / 1000)}s, ${result.actionCount} actions, ${words.length} words)`,
-  );
-  return result;
-}
-
-export function isRecording(): boolean {
-  return session !== null;
 }
 
 function waitUnlessSkipped<T>(task: Promise<T>, signal: AbortSignal): Promise<T | undefined> {

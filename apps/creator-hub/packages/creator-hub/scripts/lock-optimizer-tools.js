@@ -154,19 +154,26 @@ export function releaseAgeProblems(lock, packages, minimumReleaseAge, now = Date
   return problems;
 }
 
+/** The npm binary of this platform: on Windows, the shim `execFile` can start. */
+export function npmCommand() {
+  return process.platform === 'win32' ? 'npm.cmd' : 'npm';
+}
+
 /** Writes a new lock, or throws and leaves the committed one as it is. */
 export async function writeCheckedLock(
   lockText,
   {
+    manifest,
     manifestFile = MANIFEST_FILE,
     lockFile = LOCK_FILE,
+    expectedInstallScripts = EXPECTED_INSTALL_SCRIPTS,
     minimumReleaseAge,
     fetchImpl = fetch,
     now = Date.now(),
   },
 ) {
   const lock = JSON.parse(lockText);
-  const problems = checkLock(readJson(manifestFile), lock);
+  const problems = checkLock(manifest ?? readJson(manifestFile), lock, expectedInstallScripts);
   if (problems.length === 0) {
     const names = lockEntries(lock).map(entry => entry.name);
     const packages = await fetchRegistryPackages(names, fetchImpl);
@@ -195,7 +202,7 @@ function makeLock() {
   try {
     fs.copyFileSync(MANIFEST_FILE, path.join(tmp, 'package.json'));
     execFileSync(
-      'npm',
+      npmCommand(),
       ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'],
       { cwd: tmp, stdio: 'inherit' },
     );

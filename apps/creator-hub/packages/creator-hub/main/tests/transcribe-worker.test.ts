@@ -16,6 +16,7 @@ const whisper = vi.hoisted(() => ({
     { t0: 300, t1: 600, text: ' this' },
   ],
   speech: [{ t0: 0, t1: 100 }],
+  clips: [] as number[],
 }));
 vi.mock('@fugood/whisper.node', () => ({
   initWhisperVad: async () => ({
@@ -23,7 +24,10 @@ vi.mock('@fugood/whisper.node', () => ({
     release: async () => {},
   }),
   initWhisper: async () => ({
-    transcribeData: () => ({ promise: Promise.resolve({ segments: whisper.segments }) }),
+    transcribeData: (pcm: ArrayBuffer) => {
+      whisper.clips.push(pcm.byteLength);
+      return { promise: Promise.resolve({ segments: whisper.segments }) };
+    },
     release: async () => {},
   }),
 }));
@@ -86,5 +90,55 @@ describe('when the transcription worker runs a job', () => {
 
   it('should print nothing at all on stdout, which the app log records', () => {
     expect(printed).toEqual([]);
+  });
+});
+
+describe('when the user spoke in two stretches close together', () => {
+  let dir: string;
+  let resultPath: string;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    whisper.clips = [];
+    whisper.speech = [
+      { t0: 0, t1: 100 },
+      { t0: 150, t1: 250 },
+    ];
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'transcribe-worker-'));
+    resultPath = path.join(dir, 'transcribe-result.json');
+    const wavPath = path.join(dir, 'audio.wav');
+    fs.writeFileSync(wavPath, tone(4000));
+    const job: TranscribeWorkerJob = {
+      modelPath: path.join(dir, 'model.bin'),
+      vadModelPath: path.join(dir, 'vad.bin'),
+      wavPath,
+      resultPath,
+      language: 'en',
+    };
+    fs.writeFileSync(path.join(dir, 'job.json'), JSON.stringify(job));
+    process.env[TRANSCRIBE_JOB_FILE_ENV] = path.join(dir, 'job.json');
+    await import('../src/transcribe-worker');
+    await vi.waitFor(() => expect(fs.existsSync(resultPath)).toBe(true));
+  });
+
+  afterEach(() => {
+    whisper.speech = [{ t0: 0, t1: 100 }];
+    delete process.env[TRANSCRIBE_JOB_FILE_ENV];
+    process.exitCode = 0;
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('should hand whisper one clip covering both, not one padded clip each', () => {
+    expect(whisper.clips).toEqual([2500 * (SAMPLE_RATE / 1000) * 2]);
+  });
+
+  it('should still place the words on the recording clock', () => {
+    const result = JSON.parse(fs.readFileSync(resultPath, 'utf8')) as TranscribeWorkerResult;
+    expect(result).toEqual({
+      words: [
+        { start: 0, end: 300, text: ' delete', segment: 0 },
+        { start: 300, end: 600, text: ' this', segment: 0 },
+      ],
+    });
   });
 });

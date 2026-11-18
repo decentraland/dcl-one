@@ -7,6 +7,7 @@ import { RECORDING_RETENTION_DAYS } from '/shared/types/recording';
 
 const KEEP_SESSIONS_PER_PROJECT = 20;
 const MAX_SESSION_AGE_MS = RECORDING_RETENTION_DAYS * 24 * 60 * 60_000;
+const LEFTOVER_FILES = ['audio.wav', 'transcribe-job.json', 'transcribe-result.json'];
 
 export function getRecordingsDir(): string {
   return path.join(app.getPath('userData'), 'recordings');
@@ -55,6 +56,25 @@ export async function pruneOldSessions(now = Date.now()): Promise<void> {
     }
   } catch (error) {
     log.warn('[Recording] could not prune the recordings folder:', error);
+  }
+}
+
+/** Deletes what a crash or a force quit left in a session folder, audio above all. */
+export async function sweepLeftovers(): Promise<void> {
+  try {
+    const root = getRecordingsDir();
+    for (const project of await folders(root)) {
+      const projectDir = path.join(root, project);
+      for (const entry of await folders(projectDir)) {
+        const dir = path.join(projectDir, entry);
+        if (inUse.has(path.resolve(dir))) continue;
+        for (const file of LEFTOVER_FILES) {
+          await fsp.rm(path.join(dir, file), { force: true }).catch(() => undefined);
+        }
+      }
+    }
+  } catch (error) {
+    log.warn('[Recording] could not sweep the recordings folder:', error);
   }
 }
 

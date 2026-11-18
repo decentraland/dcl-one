@@ -61,8 +61,8 @@ export async function transcribe(
   try {
     return await runWorker(toolsDir, jobFile, resultPath, signal);
   } finally {
-    await fs.rm(jobFile, { force: true });
-    await fs.rm(resultPath, { force: true });
+    await fs.rm(jobFile, { force: true }).catch(() => undefined);
+    await fs.rm(resultPath, { force: true }).catch(() => undefined);
   }
 }
 
@@ -106,6 +106,11 @@ async function runWorker(
   }
   if (killed) {
     await killed;
+    const partial = timedOut ? await readResult(resultPath) : null;
+    if (partial && 'words' in partial && partial.words.length > 0) {
+      log.warn(`[Recording] transcription timed out after ${partial.words.length} words`);
+      return partial.words;
+    }
     throw new Error(timedOut ? 'Transcription took too long.' : 'Transcription was skipped.');
   }
 

@@ -9,9 +9,9 @@ import {
   type TranscriptWord,
 } from '/shared/types/recording';
 
-import { speechRegions, type SpeechRegion } from './modules/recording/vad';
+import { speechRegions } from './modules/recording/vad';
 import { WAV_HEADER_BYTES } from './modules/recording/wav';
-import { toWords, type Region } from './modules/recording/words';
+import { toWindows, toWords, type Region } from './modules/recording/words';
 
 const BYTES_PER_MS = (RECORDING_SAMPLE_RATE * 2) / 1000;
 const VAD_CENTISECONDS_TO_MS = 10;
@@ -27,22 +27,18 @@ const WHISPER_ON_CPU = { useGpu: false, nThreads: 4 };
 
 type WhisperNode = typeof WhisperNodeModule;
 
-function numbered(regions: SpeechRegion[]): Region[] {
-  return regions.map((region, segment) => ({ ...region, segment }));
-}
-
 async function detectSpeech(
   whisper: WhisperNode,
   job: TranscribeWorkerJob,
   pcm: ArrayBuffer,
 ): Promise<Region[]> {
-  const loudness = () => numbered(speechRegions(new Int16Array(pcm), RECORDING_SAMPLE_RATE));
+  const loudness = () => toWindows(speechRegions(new Int16Array(pcm), RECORDING_SAMPLE_RATE));
   if (!job.vadModelPath) return loudness();
   try {
     const vad = await whisper.initWhisperVad({ filePath: job.vadModelPath, ...WHISPER_ON_CPU });
     try {
       const segments = await vad.detectSpeechData(pcm, VAD_OPTIONS);
-      return numbered(
+      return toWindows(
         segments.map(s => ({
           start: s.t0 * VAD_CENTISECONDS_TO_MS,
           end: s.t1 * VAD_CENTISECONDS_TO_MS,
@@ -63,6 +59,15 @@ function wholeSamples(file: Buffer): ArrayBuffer {
     file.byteOffset + WAV_HEADER_BYTES,
     file.byteOffset + WAV_HEADER_BYTES + dataBytes - (dataBytes % 2),
   ) as ArrayBuffer;
+}
+
+async function writeResult(
+  job: TranscribeWorkerJob,
+  result: TranscribeWorkerResult,
+): Promise<void> {
+  const partial = `${job.resultPath}.part`;
+  await fs.writeFile(partial, JSON.stringify(result));
+  await fs.rename(partial, job.resultPath);
 }
 
 async function transcribeJob(job: TranscribeWorkerJob): Promise<TranscriptWord[]> {
@@ -87,6 +92,7 @@ async function transcribeJob(job: TranscribeWorkerJob): Promise<TranscriptWord[]
       if (to <= from) continue;
       const { segments } = await context.transcribeData(pcm.slice(from, to), options).promise;
       words.push(...toWords(region, segments));
+      await writeResult(job, { words });
     }
     return words;
   } finally {
@@ -109,7 +115,7 @@ async function main(): Promise<void> {
     result = { error: reason(error) };
     process.exitCode = 1;
   }
-  await fs.writeFile(job.resultPath, JSON.stringify(result));
+  await writeResult(job, result);
 }
 
 main().catch(error => {
