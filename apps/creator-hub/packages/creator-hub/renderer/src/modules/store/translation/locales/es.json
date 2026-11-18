@@ -192,13 +192,13 @@
         "decline": "No, gracias",
         "not_now": "Ahora no",
         "chip": "Compartiendo",
-        "chip_excluded": "Este chat no se comparte",
-        "menu_exclude": "No compartir esta conversación",
-        "menu_include": "Compartir esta conversación",
-        "menu_stop": "Dejar de compartir todas las conversaciones",
+        "chip_excluded": "Sin compartir",
         "chip_menu": "opciones para compartir",
         "rate_up": "Buena respuesta",
-        "rate_down": "Mala respuesta"
+        "rate_down": "Mala respuesta",
+        "menu_share_chat": "Compartir este chat",
+        "menu_share_all": "Compartir todos los chats",
+        "menu_chat_erased": "Lo que este chat compartió se borró."
       }
     },
     "publish": {
@@ -699,7 +699,7 @@
           "queued_empty": "No hay nada pendiente de enviar.",
           "delete": "Borrar todo lo que compartí",
           "deleting": "Borrando…",
-          "deleted": "Se borraron {count} turnos compartidos. Ya no se comparte.",
+          "deleted": "Se borraron {count} turnos compartidos.",
           "delete_failed": "No se pudieron borrar tus conversaciones compartidas. Revisa tu conexión e inténtalo de nuevo.",
           "viewer_show": "Ver lo que compartí",
           "viewer_hide": "Ocultar lo que compartí",
@@ -707,7 +707,7 @@
           "viewer_failed": "No se pudo cargar lo que compartiste. Revisa tu conexión e inténtalo de nuevo.",
           "viewer_delete": "Borrar este turno",
           "viewer_more": "Ver más",
-          "delete_confirm": "¿Borrar todo lo que compartiste, con sus resúmenes, y dejar de compartir? No se puede deshacer.",
+          "delete_confirm": "¿Seguro que quieres borrar todo lo que compartiste? Esta acción no se puede deshacer.",
           "delete_confirm_yes": "Borrar todo",
           "delete_cancel": "Cancelar",
           "digests_show": "Ver los resúmenes hechos de tus conversaciones",
@@ -737,7 +737,8 @@
             "creator_stopped_reply": "detuviste una respuesta",
             "setup_or_sign_in": "configuración o inicio de sesión",
             "other": "otro"
-          }
+          },
+          "signin_link": "Iniciar sesión"
         }
       },
       "actions": {

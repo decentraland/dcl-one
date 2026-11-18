@@ -120,7 +120,10 @@ export function selectSharingView(state: AppState, wallet: string | null): AiSha
   const conversationExcluded = session?.shareExcluded === true;
   if (!isSharingFeatureOn(state)) return { status: 'hidden', conversationExcluded };
   const consent = selectSharingConsent(state, wallet);
-  if (hasSharingConsent(consent)) return { status: 'on', conversationExcluded };
+  if (hasSharingConsent(consent)) {
+    const conversationHasShared = state.ai.messages.some(m => m.recordId !== undefined);
+    return { status: 'on', conversationExcluded, conversationHasShared };
+  }
   const notAskedYet =
     consent === undefined ||
     (consent.consent === 'granted' && consent.version < AI_SHARING_CONSENT_VERSION);

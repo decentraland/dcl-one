@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import CloseIcon from '@mui/icons-material/Close';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ThumbDownIcon from '@mui/icons-material/ThumbDown';
 import ThumbDownOutlinedIcon from '@mui/icons-material/ThumbDownOutlined';
 import ThumbUpIcon from '@mui/icons-material/ThumbUp';
 import ThumbUpOutlinedIcon from '@mui/icons-material/ThumbUpOutlined';
-import { Button, IconButton, Menu, MenuItem, Tooltip } from 'decentraland-ui2';
+import { IconButton, Popover, Tooltip } from 'decentraland-ui2';
 
 import type { AiSharingView } from '/shared/types/ai';
 
@@ -40,6 +42,7 @@ export function SharingConsentCard({ sharing, onShareDecision, onShareNotNow }: 
         <Tooltip title={t('editor.ai.sharing.not_now')}>
           <IconButton
             size="small"
+            className={styles.close}
             aria-label={t('editor.ai.sharing.not_now')}
             onClick={onShareNotNow}
           >
@@ -52,43 +55,49 @@ export function SharingConsentCard({ sharing, onShareDecision, onShareNotNow }: 
       </BillingBody>
       {!signedOut && (
         <>
-          <button
-            className={styles.detailsToggle}
-            type="button"
-            aria-expanded={showDetails}
-            aria-controls="ai-sharing-details"
-            onClick={() => setShowDetails(open => !open)}
-          >
-            {t('editor.ai.sharing.details_toggle')}
-          </button>
-          {showDetails && (
-            <ul
-              className={styles.detailsList}
-              id="ai-sharing-details"
+          <div className={styles.details}>
+            <button
+              className={styles.detailsToggle}
+              type="button"
+              aria-expanded={showDetails}
+              aria-controls="ai-sharing-details"
+              onClick={() => setShowDetails(open => !open)}
             >
-              <li>{t('editor.ai.sharing.details_shared')}</li>
-              <li>{t('editor.ai.sharing.details_not_shared')}</li>
-              <li>{t('editor.ai.sharing.details_analysis')}</li>
-              <li>{t('editor.ai.sharing.details_publish')}</li>
-              <li>{t('editor.ai.sharing.details_control')}</li>
-            </ul>
-          )}
+              <ChevronRightIcon
+                className={styles.detailsChevron}
+                data-open={showDetails}
+                aria-hidden
+              />
+              {t('editor.ai.sharing.details_toggle')}
+            </button>
+            {showDetails && (
+              <ul
+                className={styles.detailsList}
+                id="ai-sharing-details"
+              >
+                <li>{t('editor.ai.sharing.details_shared')}</li>
+                <li>{t('editor.ai.sharing.details_not_shared')}</li>
+                <li>{t('editor.ai.sharing.details_analysis')}</li>
+                <li>{t('editor.ai.sharing.details_publish')}</li>
+                <li>{t('editor.ai.sharing.details_control')}</li>
+              </ul>
+            )}
+          </div>
           <div className={styles.cardActions}>
-            <Button
-              variant="contained"
-              size="small"
+            <button
+              type="button"
+              className={`${styles.action} ${styles.primary}`}
               onClick={() => onShareDecision?.(true)}
             >
               {t('editor.ai.sharing.accept')}
-            </Button>
-            <Button
-              variant="contained"
-              color="secondary"
-              size="small"
+            </button>
+            <button
+              type="button"
+              className={styles.action}
               onClick={() => onShareDecision?.(false)}
             >
               {t('editor.ai.sharing.decline')}
-            </Button>
+            </button>
           </div>
         </>
       )}
@@ -96,7 +105,10 @@ export function SharingConsentCard({ sharing, onShareDecision, onShareNotNow }: 
   );
 }
 
-/** Always visible while sharing is on, so it is never on without the creator seeing it. */
+/**
+ * Always visible while sharing is on, so it is never on without the creator seeing it. Opens two
+ * switches: this chat (off also erases what it already shared) and every chat (off withdraws).
+ */
 export function SharingStatusChip({
   sharing,
   onShareDecision,
@@ -106,43 +118,95 @@ export function SharingStatusChip({
   if (sharing?.status !== 'on') return null;
   const excluded = sharing.conversationExcluded;
   const close = () => setAnchor(null);
+  const label = excluded ? t('editor.ai.sharing.chip_excluded') : t('editor.ai.sharing.chip');
   return (
     <>
       <button
         className={styles.chip}
-        data-excluded={excluded}
         type="button"
-        aria-label={`${excluded ? t('editor.ai.sharing.chip_excluded') : t('editor.ai.sharing.chip')}: ${t('editor.ai.sharing.chip_menu')}`}
-        aria-haspopup="menu"
+        aria-label={`${label}: ${t('editor.ai.sharing.chip_menu')}`}
+        aria-haspopup="dialog"
         aria-expanded={anchor !== null}
         onClick={event => setAnchor(event.currentTarget)}
       >
-        {excluded ? t('editor.ai.sharing.chip_excluded') : t('editor.ai.sharing.chip')}
+        {!excluded && (
+          <span
+            className={styles.chipDot}
+            aria-hidden
+          />
+        )}
+        {label}
+        <ExpandMoreIcon
+          className={styles.chipChevron}
+          aria-hidden
+        />
       </button>
-      <Menu
+      <Popover
         anchorEl={anchor}
         open={anchor !== null}
         onClose={close}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
         disableScrollLock
+        slotProps={{ paper: { className: styles.menu } }}
       >
-        <MenuItem
-          onClick={() => {
-            onSetConversationShared?.(excluded);
-            close();
-          }}
+        <div
+          role="group"
+          aria-label={t('editor.ai.sharing.chip_menu')}
         >
-          {excluded ? t('editor.ai.sharing.menu_include') : t('editor.ai.sharing.menu_exclude')}
-        </MenuItem>
-        <MenuItem
-          onClick={() => {
-            onShareDecision?.(false);
-            close();
-          }}
-        >
-          {t('editor.ai.sharing.menu_stop')}
-        </MenuItem>
-      </Menu>
+          <div className={styles.menuRow}>
+            <MenuSwitch
+              label={t('editor.ai.sharing.menu_share_chat')}
+              checked={!excluded}
+              onChange={checked => onSetConversationShared?.(checked)}
+            />
+            {excluded && sharing.conversationHasShared === true && (
+              <p className={styles.menuNote}>{t('editor.ai.sharing.menu_chat_erased')}</p>
+            )}
+          </div>
+          <hr className={styles.menuDivider} />
+          <div className={styles.menuRow}>
+            <MenuSwitch
+              label={t('editor.ai.sharing.menu_share_all')}
+              checked
+              onChange={checked => {
+                if (checked) return;
+                onShareDecision?.(false);
+                close();
+              }}
+            />
+          </div>
+        </div>
+      </Popover>
     </>
+  );
+}
+
+/** One row of the sharing menu: its label and Figma's 34 x 20 switch, the whole row clickable. */
+function MenuSwitch({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      className={styles.menuSwitch}
+      onClick={() => onChange(!checked)}
+    >
+      <span>{label}</span>
+      <span
+        className={styles.switch}
+        data-checked={checked}
+        aria-hidden
+      />
+    </button>
   );
 }
 
@@ -195,6 +259,7 @@ export function TurnRating({
           >
             <IconButton
               size="small"
+              className={styles.rateButton}
               aria-label={label}
               aria-pressed={pressed}
               onClick={() => onRate(pressed ? null : value)}

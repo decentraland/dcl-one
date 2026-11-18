@@ -105,28 +105,65 @@ describe('when sharing is on', () => {
     expect(screen.queryByRole('button', { name: copy.accept })).toBeNull();
   });
 
-  it('should let the creator stop sharing this conversation', () => {
-    const { onSetConversationShared } = renderBoth({ status: 'on', conversationExcluded: false });
-    fireEvent.click(screen.getByRole('button', { name: `${copy.chip}: ${copy.chip_menu}` }));
-    fireEvent.click(screen.getByRole('menuitem', { name: copy.menu_exclude }));
+  const openMenu = (excluded = false) =>
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: `${excluded ? copy.chip_excluded : copy.chip}: ${copy.chip_menu}`,
+      }),
+    );
+
+  it('should show a dot and "Sharing", and both switches on', () => {
+    renderBoth({ status: 'on', conversationExcluded: false });
+    openMenu();
+
+    expect(
+      screen.getByRole('switch', { name: copy.menu_share_chat }).getAttribute('aria-checked'),
+    ).toBe('true');
+    expect(
+      screen.getByRole('switch', { name: copy.menu_share_all }).getAttribute('aria-checked'),
+    ).toBe('true');
+  });
+
+  it('should stop sharing this chat with its switch', () => {
+    const { onSetConversationShared } = renderBoth({
+      status: 'on',
+      conversationExcluded: false,
+      conversationHasShared: true,
+    });
+    openMenu();
+    fireEvent.click(screen.getByRole('switch', { name: copy.menu_share_chat }));
 
     expect(onSetConversationShared).toHaveBeenCalledWith(false);
   });
 
+  it('should say that what an unshared chat had shared was deleted', () => {
+    renderBoth({ status: 'on', conversationExcluded: true, conversationHasShared: true });
+    openMenu(true);
+
+    expect(screen.getByText(copy.menu_chat_erased)).toBeTruthy();
+  });
+
+  it('should not mention a deletion when the chat had shared nothing', () => {
+    renderBoth({ status: 'on', conversationExcluded: true, conversationHasShared: false });
+    openMenu(true);
+
+    expect(screen.queryByText(copy.menu_chat_erased)).toBeNull();
+  });
+
   it('should let the creator share an excluded conversation again', () => {
     const { onSetConversationShared } = renderBoth({ status: 'on', conversationExcluded: true });
-    fireEvent.click(
-      screen.getByRole('button', { name: `${copy.chip_excluded}: ${copy.chip_menu}` }),
-    );
-    fireEvent.click(screen.getByRole('menuitem', { name: copy.menu_include }));
+    openMenu(true);
+    const thisChat = screen.getByRole('switch', { name: copy.menu_share_chat });
 
+    expect(thisChat.getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(thisChat);
     expect(onSetConversationShared).toHaveBeenCalledWith(true);
   });
 
   it('should let the creator stop sharing altogether', () => {
     const { onShareDecision } = renderBoth({ status: 'on', conversationExcluded: false });
-    fireEvent.click(screen.getByRole('button', { name: `${copy.chip}: ${copy.chip_menu}` }));
-    fireEvent.click(screen.getByRole('menuitem', { name: copy.menu_stop }));
+    openMenu();
+    fireEvent.click(screen.getByRole('switch', { name: copy.menu_share_all }));
 
     expect(onShareDecision).toHaveBeenCalledWith(false);
   });

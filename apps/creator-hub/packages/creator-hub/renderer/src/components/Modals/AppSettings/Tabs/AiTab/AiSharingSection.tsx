@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import {
   Box,
-  Button,
   CircularProgress,
   FormControlLabel,
   IconButton,
@@ -24,6 +24,8 @@ import {
 import type { TranslationPath } from '/@/modules/store/translation/types';
 import { getCurrentLocale, t } from '/@/modules/store/translation/utils';
 
+import styles from './AiSharingSection.module.css';
+
 const PREVIEW_ROWS = 5;
 
 const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { dateStyle: 'medium' });
@@ -37,12 +39,6 @@ const translated = (key: string, fallback: string) =>
 const when = (iso: string) =>
   new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
-const buttonSx = {
-  backgroundColor: 'var(--dark-gray)',
-  '&:hover': { backgroundColor: 'var(--light-gray)' },
-  '&&&&&&&': { color: 'var(--white)' },
-};
-
 /**
  * Settings → AI: the sharing switch, what is waiting to upload, what has been shared, and
  * deleting it. Owns its state through the store (not the tab's settings props), because turning
@@ -52,7 +48,7 @@ const buttonSx = {
  */
 export function AiSharingSection() {
   const dispatch = useDispatch();
-  const { wallet } = useAuth();
+  const { wallet, signIn } = useAuth();
   const address = wallet?.toLowerCase() ?? null;
   const visible = useSelector(state => canManageSharing(state, address));
   const offered = useSelector(isSharingFeatureOn);
@@ -85,303 +81,286 @@ export function AiSharingSection() {
 
   if (!visible) return null;
   const queuedHere = queued.filter(item => item.address === address);
+  const signedOut = address === null;
+  const label = (key: string) =>
+    t(`modal.app_settings.fields.ai_sharing.${key}` as TranslationPath);
 
   return (
     <>
       <hr className="AiDivider" />
-      <Box className="AiField">
+      <Box
+        className="AiField"
+        data-signed-out={signedOut}
+      >
         <FormControlLabel
+          className={styles.toggle}
           control={
             <Switch
               checked={sharing}
-              disabled={address === null || (!sharing && !offered)}
+              disabled={signedOut || (!sharing && !offered)}
               onChange={(_event, checked) => void dispatch(aiSharingActions.decide(checked))}
             />
           }
-          label={t('modal.app_settings.fields.ai_sharing.label')}
+          label={label('label')}
         />
         <Typography
           variant="body2"
           color="text.secondary"
-          className="AiHint"
+          className={`AiHint ${styles.description}`}
         >
-          {address !== null
-            ? t('modal.app_settings.fields.ai_sharing.description')
-            : t('modal.app_settings.fields.ai_sharing.signin')}
+          {label('description')}
         </Typography>
 
-        {address !== null && (
-          <Box className="AiNestedField">
+        {signedOut ? (
+          <p className={`AiHint ${styles.signin}`}>
+            {label('signin')}
+            <button
+              type="button"
+              className="AgentSignLink primary"
+              onClick={() => void signIn()}
+            >
+              {label('signin_link')}
+            </button>
+          </p>
+        ) : (
+          <Box className={styles.body}>
             {sharing && (
-              <Box>
-                <Typography variant="body2">
+              <div className={styles.lines}>
+                <p className={styles.title}>
                   {queuedHere.length > 0
                     ? t('modal.app_settings.fields.ai_sharing.queued_title', {
                         count: queuedHere.length,
                       })
-                    : t('modal.app_settings.fields.ai_sharing.queued_empty')}
-                </Typography>
+                    : label('queued_empty')}
+                </p>
                 {queuedHere.slice(0, PREVIEW_ROWS).map(item => (
-                  <Typography
+                  <p
                     key={item.recordId}
-                    variant="caption"
-                    color="text.secondary"
-                    component="div"
-                    noWrap
+                    className={styles.line}
                   >
                     {when(item.startedAt)} · {item.promptPreview}
-                  </Typography>
+                  </p>
                 ))}
-              </Box>
+              </div>
             )}
-
-            <Box>
-              <Button
-                color="secondary"
-                variant="text"
-                size="small"
-                aria-expanded={showShared}
-                aria-controls="ai-sharing-shared-turns"
-                onClick={() => setShowShared(open => !open)}
-                sx={buttonSx}
-              >
-                {showShared
-                  ? t('modal.app_settings.fields.ai_sharing.viewer_hide')
-                  : t('modal.app_settings.fields.ai_sharing.viewer_show')}
-              </Button>
-              {showShared && (
-                <Box
-                  id="ai-sharing-shared-turns"
-                  sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.5 }}
-                >
-                  {shared.status === 'failed' && (
-                    <Typography
-                      variant="caption"
-                      color="error"
-                      role="alert"
-                    >
-                      {t('modal.app_settings.fields.ai_sharing.viewer_failed')}
-                    </Typography>
-                  )}
-                  {shared.status === 'loaded' && shared.turns.length === 0 && (
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                    >
-                      {t('modal.app_settings.fields.ai_sharing.viewer_empty')}
-                    </Typography>
-                  )}
-                  {shared.turns.map(turn => (
-                    <Box
-                      key={turn.recordId}
-                      sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}
-                    >
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        noWrap
-                        sx={{ flex: 1, minWidth: 0 }}
-                      >
-                        {when(turn.startedAt)} · {turn.prompt.text}
-                      </Typography>
-                      <Tooltip title={t('modal.app_settings.fields.ai_sharing.viewer_delete')}>
-                        <span>
-                          <IconButton
-                            size="small"
-                            aria-label={t('modal.app_settings.fields.ai_sharing.viewer_delete')}
-                            disabled={shared.erasing.includes(turn.recordId)}
-                            onClick={() =>
-                              void dispatch(aiSharingActions.eraseSharedTurn(turn.recordId))
-                            }
-                          >
-                            <DeleteOutlineIcon fontSize="small" />
-                          </IconButton>
-                        </span>
-                      </Tooltip>
-                    </Box>
-                  ))}
-                  {shared.status === 'loading' && <CircularProgress size={16} />}
-                  {shared.next !== null && shared.status === 'loaded' && (
-                    <Button
-                      color="secondary"
-                      variant="text"
-                      size="small"
-                      onClick={() =>
-                        void dispatch(aiSharingActions.loadSharedTurns({ reset: false }))
-                      }
-                      sx={{ alignSelf: 'flex-start', ...buttonSx }}
-                    >
-                      {t('modal.app_settings.fields.ai_sharing.viewer_more')}
-                    </Button>
-                  )}
-                </Box>
-              )}
-            </Box>
-
-            <Box>
-              <Button
-                color="secondary"
-                variant="text"
-                size="small"
-                aria-expanded={showDigests}
-                aria-controls="ai-sharing-digests"
-                onClick={() => setShowDigests(open => !open)}
-                sx={buttonSx}
-              >
-                {showDigests
-                  ? t('modal.app_settings.fields.ai_sharing.digests_hide')
-                  : t('modal.app_settings.fields.ai_sharing.digests_show')}
-              </Button>
-              {showDigests && (
-                <Box
-                  id="ai-sharing-digests"
-                  sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 1 }}
-                >
-                  {digests.status === 'failed' && (
-                    <Typography
-                      variant="caption"
-                      color="error"
-                      role="alert"
-                    >
-                      {t('modal.app_settings.fields.ai_sharing.digests_failed')}
-                    </Typography>
-                  )}
-                  {digests.status === 'loaded' && digests.digests.length === 0 && (
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                    >
-                      {t('modal.app_settings.fields.ai_sharing.digests_empty')}
-                    </Typography>
-                  )}
-                  {digests.digests.map(digest => {
-                    const kinds = [...new Set(digest.frictions.map(f => f.kind))];
-                    return (
-                      <Box
-                        key={digest.conversationId}
-                        sx={{ minWidth: 0 }}
-                      >
-                        <Typography
-                          variant="caption"
-                          color="text.secondary"
-                          component="div"
-                        >
-                          {day(digest.createdAt)} ·{' '}
-                          {translated(
-                            `modal.app_settings.fields.ai_sharing.digest_outcome.${digest.outcome}`,
-                            digest.outcome,
-                          )}
-                        </Typography>
-                        <Typography
-                          variant="body2"
-                          component="div"
-                        >
-                          {digest.goal}
-                        </Typography>
-                        {kinds.length > 0 && (
-                          <Typography
-                            variant="caption"
-                            color="text.secondary"
-                            component="div"
-                          >
-                            {t('modal.app_settings.fields.ai_sharing.digests_problems', {
-                              kinds: kinds
-                                .map(kind =>
-                                  translated(
-                                    `modal.app_settings.fields.ai_sharing.digest_friction.${kind}`,
-                                    kind,
-                                  ),
-                                )
-                                .join(', '),
-                            })}
-                          </Typography>
-                        )}
-                      </Box>
-                    );
-                  })}
-                  {digests.status === 'loading' && <CircularProgress size={16} />}
-                  {digests.next !== null && digests.status === 'loaded' && (
-                    <Button
-                      color="secondary"
-                      variant="text"
-                      size="small"
-                      onClick={() => void dispatch(aiSharingActions.loadDigests({ reset: false }))}
-                      sx={{ alignSelf: 'flex-start', ...buttonSx }}
-                    >
-                      {t('modal.app_settings.fields.ai_sharing.digests_more')}
-                    </Button>
-                  )}
-                </Box>
-              )}
-            </Box>
 
             {deleteStatus === 'confirming' ? (
-              <Box
+              <div
                 role="group"
-                aria-label={t('modal.app_settings.fields.ai_sharing.delete')}
-                sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}
+                aria-label={label('delete')}
+                className={styles.confirm}
               >
-                <Typography variant="body2">
-                  {t('modal.app_settings.fields.ai_sharing.delete_confirm')}
-                </Typography>
-                <Box sx={{ display: 'flex', gap: 1 }}>
-                  <Button
-                    color="error"
-                    variant="contained"
-                    size="small"
+                <p className={styles.question}>{label('delete_confirm')}</p>
+                <div className={styles.buttons}>
+                  <button
+                    type="button"
+                    className={`${styles.button} ${styles.danger}`}
                     onClick={() => void dispatch(aiSharingActions.deleteEverything())}
                   >
-                    {t('modal.app_settings.fields.ai_sharing.delete_confirm_yes')}
-                  </Button>
-                  <Button
-                    color="secondary"
-                    variant="text"
-                    size="small"
+                    {label('delete_confirm_yes')}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.button}
                     onClick={() => dispatch(aiSharingActions.resetDelete())}
-                    sx={buttonSx}
                   >
-                    {t('modal.app_settings.fields.ai_sharing.delete_cancel')}
-                  </Button>
-                </Box>
-              </Box>
-            ) : (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                <Button
-                  color="secondary"
-                  variant="text"
-                  size="small"
-                  disabled={deleteStatus === 'deleting'}
-                  onClick={() => dispatch(aiSharingActions.askDeleteConfirmation())}
-                  sx={buttonSx}
-                >
-                  {deleteStatus === 'deleting'
-                    ? t('modal.app_settings.fields.ai_sharing.deleting')
-                    : t('modal.app_settings.fields.ai_sharing.delete')}
-                </Button>
-                {deleteStatus === 'deleting' && <CircularProgress size={16} />}
-              </Box>
-            )}
-            {deleteStatus === 'deleted' && (
-              <Typography
-                variant="caption"
-                color="text.secondary"
+                    {label('delete_cancel')}
+                  </button>
+                </div>
+              </div>
+            ) : deleteStatus === 'deleted' ? (
+              <p
+                className={styles.line}
                 role="status"
               >
                 {t('modal.app_settings.fields.ai_sharing.deleted', { count: deletedCount ?? 0 })}
-              </Typography>
+              </p>
+            ) : (
+              <>
+                <div className={styles.row}>
+                  <ListToggle
+                    open={showShared}
+                    controls="ai-sharing-shared-turns"
+                    onToggle={() => setShowShared(open => !open)}
+                  >
+                    {showShared ? label('viewer_hide') : label('viewer_show')}
+                  </ListToggle>
+                  <button
+                    type="button"
+                    className={`AgentSignLink ${styles.deleteLink}`}
+                    disabled={deleteStatus === 'deleting'}
+                    onClick={() => dispatch(aiSharingActions.askDeleteConfirmation())}
+                  >
+                    {deleteStatus === 'deleting' ? label('deleting') : label('delete')}
+                  </button>
+                </div>
+                {deleteStatus === 'failed' && (
+                  <p
+                    className={styles.error}
+                    role="alert"
+                  >
+                    {label('delete_failed')}
+                  </p>
+                )}
+              </>
             )}
-            {deleteStatus === 'failed' && (
-              <Typography
-                variant="caption"
-                color="error"
-                role="alert"
+
+            {showShared && deleteStatus !== 'deleted' && (
+              <div
+                id="ai-sharing-shared-turns"
+                className={styles.list}
               >
-                {t('modal.app_settings.fields.ai_sharing.delete_failed')}
-              </Typography>
+                {shared.status === 'failed' && (
+                  <p
+                    className={styles.error}
+                    role="alert"
+                  >
+                    {label('viewer_failed')}
+                  </p>
+                )}
+                {shared.status === 'loaded' && shared.turns.length === 0 && (
+                  <p className={styles.line}>{label('viewer_empty')}</p>
+                )}
+                {shared.turns.map(turn => (
+                  <div
+                    key={turn.recordId}
+                    className={styles.entry}
+                  >
+                    <p className={`${styles.line} ${styles.gray}`}>
+                      {when(turn.startedAt)} · {turn.prompt.text}
+                    </p>
+                    <Tooltip title={label('viewer_delete')}>
+                      <span>
+                        <IconButton
+                          size="small"
+                          className={styles.iconButton}
+                          aria-label={label('viewer_delete')}
+                          disabled={shared.erasing.includes(turn.recordId)}
+                          onClick={() =>
+                            void dispatch(aiSharingActions.eraseSharedTurn(turn.recordId))
+                          }
+                        >
+                          <DeleteOutlineIcon fontSize="inherit" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  </div>
+                ))}
+                {shared.status === 'loading' && <CircularProgress size={14} />}
+                {shared.next !== null && shared.status === 'loaded' && (
+                  <button
+                    type="button"
+                    className={`AgentSignLink ${styles.more}`}
+                    onClick={() =>
+                      void dispatch(aiSharingActions.loadSharedTurns({ reset: false }))
+                    }
+                  >
+                    {label('viewer_more')}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {deleteStatus !== 'deleted' && (
+              <div className={styles.row}>
+                <ListToggle
+                  open={showDigests}
+                  controls="ai-sharing-digests"
+                  onToggle={() => setShowDigests(open => !open)}
+                >
+                  {showDigests ? label('digests_hide') : label('digests_show')}
+                </ListToggle>
+              </div>
+            )}
+            {showDigests && deleteStatus !== 'deleted' && (
+              <div
+                id="ai-sharing-digests"
+                className={styles.list}
+              >
+                {digests.status === 'failed' && (
+                  <p
+                    className={styles.error}
+                    role="alert"
+                  >
+                    {label('digests_failed')}
+                  </p>
+                )}
+                {digests.status === 'loaded' && digests.digests.length === 0 && (
+                  <p className={styles.line}>{label('digests_empty')}</p>
+                )}
+                {digests.digests.map(digest => {
+                  const kinds = [...new Set(digest.frictions.map(f => f.kind))];
+                  return (
+                    <div key={digest.conversationId}>
+                      <p className={`${styles.line} ${styles.gray}`}>
+                        {day(digest.createdAt)} · {digest.goal} ·{' '}
+                        {translated(
+                          `modal.app_settings.fields.ai_sharing.digest_outcome.${digest.outcome}`,
+                          digest.outcome,
+                        )}
+                      </p>
+                      {kinds.length > 0 && (
+                        <p className={styles.line}>
+                          {t('modal.app_settings.fields.ai_sharing.digests_problems', {
+                            kinds: kinds
+                              .map(kind =>
+                                translated(
+                                  `modal.app_settings.fields.ai_sharing.digest_friction.${kind}`,
+                                  kind,
+                                ),
+                              )
+                              .join(', '),
+                          })}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+                {digests.status === 'loading' && <CircularProgress size={14} />}
+                {digests.next !== null && digests.status === 'loaded' && (
+                  <button
+                    type="button"
+                    className={`AgentSignLink ${styles.more}`}
+                    onClick={() => void dispatch(aiSharingActions.loadDigests({ reset: false }))}
+                  >
+                    {label('digests_more')}
+                  </button>
+                )}
+              </div>
             )}
           </Box>
         )}
       </Box>
     </>
+  );
+}
+
+/** "SHOW WHAT I'VE SHARED" and its kin: a chevron and a caps label that open a list below. */
+function ListToggle({
+  open,
+  controls,
+  onToggle,
+  children,
+}: {
+  open: boolean;
+  controls: string;
+  onToggle: () => void;
+  children: string;
+}) {
+  return (
+    <button
+      type="button"
+      className={`AgentSignLink ${styles.toggleLink}`}
+      aria-expanded={open}
+      aria-controls={controls}
+      onClick={onToggle}
+    >
+      <ChevronRightIcon
+        className={styles.chevron}
+        data-open={open}
+        aria-hidden
+      />
+      {children}
+    </button>
   );
 }

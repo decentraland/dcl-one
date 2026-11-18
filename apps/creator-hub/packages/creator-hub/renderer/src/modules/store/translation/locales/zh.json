@@ -192,13 +192,13 @@
         "decline": "不用了",
         "not_now": "暂不",
         "chip": "正在分享",
-        "chip_excluded": "此对话不分享",
-        "menu_exclude": "不分享此对话",
-        "menu_include": "分享此对话",
-        "menu_stop": "停止分享所有对话",
+        "chip_excluded": "未分享",
         "chip_menu": "分享选项",
         "rate_up": "回复不错",
-        "rate_down": "回复不好"
+        "rate_down": "回复不好",
+        "menu_share_chat": "分享此对话",
+        "menu_share_all": "分享所有对话",
+        "menu_chat_erased": "此对话已分享的内容已删除。"
       }
     },
     "publish": {
@@ -699,7 +699,7 @@
           "queued_empty": "没有等待上传的内容。",
           "delete": "删除我分享的所有内容",
           "deleting": "正在删除…",
-          "deleted": "已删除 {count} 条分享的对话轮次。分享已关闭。",
+          "deleted": "已删除 {count} 条分享的对话轮次。",
           "delete_failed": "无法删除你分享的对话。请检查网络后重试。",
           "viewer_show": "查看我分享的内容",
           "viewer_hide": "隐藏我分享的内容",
@@ -707,7 +707,7 @@
           "viewer_failed": "无法加载你分享的内容。请检查网络后重试。",
           "viewer_delete": "删除这一轮",
           "viewer_more": "显示更多",
-          "delete_confirm": "删除你分享的所有内容及其摘要，并停止分享？此操作无法撤销。",
+          "delete_confirm": "确定要删除你分享的所有内容吗？此操作无法撤销。",
           "delete_confirm_yes": "全部删除",
           "delete_cancel": "取消",
           "digests_show": "显示根据你的对话生成的摘要",
@@ -737,7 +737,8 @@
             "creator_stopped_reply": "你停止了回复",
             "setup_or_sign_in": "设置或登录",
             "other": "其他"
-          }
+          },
+          "signin_link": "登录"
         }
       },
       "actions": {

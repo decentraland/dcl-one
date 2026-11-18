@@ -157,7 +157,17 @@ describe('when deciding what the chat shows', () => {
     expect(selectSharingView(store.getState(), ADDRESS)).toEqual({
       status: 'on',
       conversationExcluded: true,
+      conversationHasShared: false,
     });
+  });
+
+  it('should tell the chat when the open conversation already shared replies', () => {
+    const store = setup({
+      consent: granted,
+      messages: [{ role: 'assistant', done: true, recordId: 'r1' }],
+    });
+
+    expect(selectSharingView(store.getState(), ADDRESS).conversationHasShared).toBe(true);
   });
 });
 

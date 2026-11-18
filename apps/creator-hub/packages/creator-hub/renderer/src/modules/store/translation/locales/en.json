@@ -192,13 +192,13 @@
         "decline": "No thanks",
         "not_now": "Not now",
         "chip": "Sharing",
-        "chip_excluded": "Not sharing this chat",
-        "menu_exclude": "Don't share this conversation",
-        "menu_include": "Share this conversation",
-        "menu_stop": "Stop sharing all conversations",
+        "chip_excluded": "Not Sharing",
         "chip_menu": "sharing options",
         "rate_up": "Good reply",
-        "rate_down": "Bad reply"
+        "rate_down": "Bad reply",
+        "menu_share_chat": "Share this chat",
+        "menu_share_all": "Share all chats",
+        "menu_chat_erased": "What this chat shared was deleted."
       }
     },
     "publish": {
@@ -699,7 +699,7 @@
           "queued_empty": "Nothing is waiting to upload.",
           "delete": "Delete everything I've shared",
           "deleting": "Deleting…",
-          "deleted": "Deleted {count} shared turns. Sharing is now off.",
+          "deleted": "Deleted {count} shared turns.",
           "delete_failed": "Couldn't delete your shared conversations. Check your connection and try again.",
           "viewer_show": "Show what I've shared",
           "viewer_hide": "Hide what I've shared",
@@ -707,7 +707,7 @@
           "viewer_failed": "Couldn't load what you've shared. Check your connection and try again.",
           "viewer_delete": "Delete this turn",
           "viewer_more": "Show more",
-          "delete_confirm": "Delete everything you've shared, and its summaries, and stop sharing? This can't be undone.",
+          "delete_confirm": "Are you sure you want to delete everything you've shared? This action can't be undone.",
           "delete_confirm_yes": "Delete everything",
           "delete_cancel": "Cancel",
           "digests_show": "Show summaries made from your conversations",
@@ -737,7 +737,8 @@
             "creator_stopped_reply": "you stopped a reply",
             "setup_or_sign_in": "setup or sign-in",
             "other": "other"
-          }
+          },
+          "signin_link": "Sign in"
         }
       },
       "actions": {

@@ -285,6 +285,9 @@ export interface AiSharingView {
   status: 'hidden' | 'ask' | 'signin' | 'on';
   // The user turned sharing off for the open conversation only.
   conversationExcluded: boolean;
+  // The open conversation has replies that were shared: turning sharing off for it also erases
+  // them, so the chat asks first.
+  conversationHasShared?: boolean;
 }
 
 // A user action taken in the detached window, forwarded to the main window to run against
