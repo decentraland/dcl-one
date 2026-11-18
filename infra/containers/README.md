@@ -20,6 +20,12 @@ are external. Explorer images: pipeline.
   (`infra/packages/patched-source.nix`) and the prebuilt libwebrtc of the SDK's `WEBRTC_TAG`,
   fetched ahead by hash and passed as `LK_CUSTOM_WEBRTC`; Linux compiles the bridge with
   clang 21, as the Explorer's package does. The image smoke test runs it once.
+  That libwebrtc links Chromium's FFmpeg statically (LGPL-2.1-or-later, configured without its
+  GPL parts) and enables the H.264 and H.265 codecs, as the Explorer's own copy does. The image
+  carries the notices at `share/doc/cast-bot/libwebrtc-LICENSE.md` in the package. FFmpeg's
+  corresponding source is Chromium's `third_party/ffmpeg` at the revision the `DEPS` of WebRTC
+  commit `a545de4` pins (the archive's tag, `webrtc-a545de4-prefixed-2`). `cast-bot` itself is
+  built from this tree, so it can be relinked against a modified libwebrtc.
 - Workflows are `<component>-<task>.yml`; Quay variables `QUAY_<COMPONENT>_REPOSITORY` hold full destinations without tags.
 - Tags: `sha-<full-commit>[-<arch>]`, `main`, `v*` (not Bevy). Bevy SHA tags can change on replay: pin `repository@sha256:<digest>`.
 - `image-sites-polygon-credits` is the Sites build with `VITE_SHOP_CHAIN_ID=137` and `VITE_SHOP_CREDITS_MANAGER` set to dcl-one's Polygon manager (`infra/containers/images.nix`, `shopSettlement` in `infra/packages/sites.nix`); the plain `image-sites` is unchanged. It is published to the Sites repository under its own suffix only (`sha-<full-commit>-polygon-credits`, `main-polygon-credits`), and names its settlement in `/shop-settlement.json` and the `org.decentraland.shop.*` labels.
