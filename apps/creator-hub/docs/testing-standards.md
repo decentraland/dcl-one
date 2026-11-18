@@ -18,7 +18,7 @@ a test that has never been red is not evidence of anything:
 
 ```bash
 git stash push -- packages/creator-hub/renderer/src/lib/land.ts
-VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1 pnpm run test:renderer src/lib/land.spec.ts   # must fail here
+VITEST_MAX_WORKERS=2 pnpm run test:renderer src/lib/land.spec.ts   # must fail here
 git stash pop
 ```
 
@@ -51,18 +51,25 @@ vi.mock('./utils', async importOriginal => ({
 Note that `importOriginal` does **not** intercept same-module calls: a function
 kept real still calls its real neighbours, not their mocked versions.
 
-A module mocked this way also loses its **default** export unless the factory
-provides one. `lib/worlds` does `import fetch from 'decentraland-crypto-fetch'`,
-so a factory without a `default` leaves every worlds request calling `undefined`
-— surfacing as `Failed to fetch worlds` with zero fetch calls recorded, and
-nothing naming the mock:
+A factory without `importOriginal` gives the module only the exports it names.
+`lib/worlds` and `lib/communities` take their fetch from `lib/signedFetch`
+(`signedFetch`) and `lib/metricsApi` takes `signedHeaders` from it, so a factory
+without one of them leaves that request calling `undefined`. A worlds request
+then fails as `Failed to fetch worlds` with zero fetch calls recorded, and
+nothing names the mock:
 
 ```ts
-vi.mock('decentraland-crypto-fetch', () => ({
-  default: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
-  signedHeaderFactory: () => () => new Map(),
+vi.mock('/@/lib/signedFetch', () => ({
+  signedFetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+  signedHeaders: async () => new Headers(),
 }));
 ```
+
+`signedFetch` keeps the `fetch` that exists when its module loads. A spec that
+stubs the global `fetch` later mocks `lib/signedFetch` as above, or makes its
+own with `signedFetchFactory({ fetch })`. A spec that needs real signatures
+makes a throwaway identity with `createIdentityKeys` and `createIdentity` from
+`lib/identity`.
 
 `importOriginal<T>()` takes a namespace type import
 (`import type * as Utils from './utils'`), but only for modules that declare
@@ -70,18 +77,15 @@ their own exports. A barrel that re-exports with `export *` (`../Navbar`,
 `modules/store/land`) fails `TS2709: Cannot use namespace as a type`; there,
 drop the generic and spread `(await importOriginal()) as object`.
 
-### Rendering a page component needs a theme, and no navbar
+### Rendering a page component needs a router
 
-`decentraland-ui2` components read theme tokens through emotion, so a bare
-`render()` throws before the page under test appears. Wrap in
-`ThemeProvider theme={dark}` from `decentraland-ui2/dist/theme`, plus
-`MemoryRouter` for anything calling `useNavigate`.
+The app root has no theme provider, so a bare `render()` shows a component.
+Wrap in `MemoryRouter` for anything calling `useNavigate`. A provider that the
+app root adds later goes in `tests/utils/TestProviders.tsx`, which the specs
+already render through.
 
-That is still not enough for a page carrying the navbar: `AvatarFace` reads a
-palette slice this environment does not populate and throws
-`Cannot read properties of undefined (reading 'secondary')` from
-`AvatarFace.styled.ts` — a stack that names neither your test nor your page.
-Stub the component and keep the enum:
+A page carrying the navbar also pulls in its store slices. To leave it out,
+stub the component and keep the enum:
 
 ```ts
 vi.mock('../Navbar', async importOriginal => ({
@@ -92,7 +96,7 @@ vi.mock('../Navbar', async importOriginal => ({
 
 ### Type `importOriginal` with a namespace import, not `typeof import()`
 
-`@typescript-eslint/consistent-type-imports` rejects inline `import()` type
+`typescript/consistent-type-imports` rejects inline `import()` type
 annotations, so the obvious `importOriginal<typeof import('./utils')>()` fails
 lint with ``  `import()` type annotations are forbidden``. Import the namespace as
 a type instead — it is erased at runtime, so it is safe inside a hoisted
@@ -112,6 +116,18 @@ promise) then hangs to the 5s test timeout with no indication why.
 `debounce` and `debounceByKey` suites enable them and never restore, so anything
 added below needs its own `beforeEach(() => vi.useRealTimers())`.
 
+### The renderer tests run in UTC
+
+`packages/creator-hub/renderer/vite.config.js` sets `TZ=UTC` before Vitest
+starts a worker, so a date that code makes in local time is the same on every
+machine. `createIdentity` (`renderer/src/lib/identity.ts`) is the live case: it
+adds the minutes of an expiration to the local clock, so a span that crosses a
+clock change gives another instant in each zone. A test that needs another zone
+sets it for itself with `vi.stubEnv('TZ', …)` and restores it with
+`vi.unstubAllEnvs()`, as `renderer/src/lib/signedFetch.vectors.spec.ts` does.
+That works only where each worker is a process (`forks`, the default pool). The
+main, preload and shared suites do not set a zone.
+
 ### `getByRole` does not work inside the shared `Block` wrapper
 
 Under happy-dom the whole subtree reports "There are no accessible roles", and
@@ -120,10 +136,10 @@ Under happy-dom the whole subtree reports "There are no accessible roles", and
 `querySelector('[role="…"]')` — see `FlowField.spec.tsx`, `CallbackField.spec.tsx`.
 `getByRole` is fine on a bare control (`Pill.spec.tsx`).
 
-### Named `getByRole` queries are slow inside MUI modals
+### Named `getByRole` queries are slow inside modals
 
 `getByRole(role, { name })` computes the accessible name of every candidate in
-the tree on each call, and a ui2 `Modal` puts a lot of tree under one query. The
+the tree on each call, and a modal puts a lot of tree under one query. The
 Creator Fund join-flow specs took about 2.5 s each alone and hit the 5 s timeout
 on a loaded CI runner. A flow helper that steps through a modal finds fields with
 `getByLabelText` and buttons with `getByText`, which brought each test under
@@ -133,13 +149,12 @@ the queries are cheap.
 
 ### Run vitest capped
 
-Every vitest run takes the thread cap, and only one runs at a time on the
+Every vitest run takes the worker cap, and only one runs at a time on the
 machine, across checkouts and worktrees: several uncapped runs at once froze a
 14-core machine, since each takes every core but one. Prefix a script or `make`
-with `VITEST_MAX_THREADS=2 VITEST_MIN_THREADS=1` (vitest 1.6 reads both variables, and
-they pass through pnpm and make), and give a single spec the same cap as flags:
-`--pool=threads --poolOptions.threads.maxThreads=2 --poolOptions.threads.minThreads=1`.
-Set the minimum as well as the maximum.
+with `VITEST_MAX_WORKERS=2` (vitest 5 reads this variable, and it passes
+through pnpm and make), or give a single spec the same cap as a flag:
+`--maxWorkers=2`.
 
 `-r` is vitest's `--root`. Creator Hub's `test:*` scripts set it to the layer
 folder, so a direct spec run needs the same root and a path relative to it:
@@ -150,7 +165,7 @@ code read after a pipe (`| tail`) is the pipe's.
 
 ### happy-dom is not a browser for labels and visibility
 
-- happy-dom 14 activates a `<label>` during the bubble phase and ignores
+- happy-dom 21 activates a `<label>` during the bubble phase and ignores
   `preventDefault()`. A test can't prove "clicking this icon inside a label
   doesn't toggle the checkbox" from the checkbox state; assert the click was
   cancelled (`fireEvent.click(el)` returns `false`) and prove the toggle in a
@@ -441,7 +456,6 @@ runs ever hit this.
 
 ### Wait out the install `Backdrop` before driving the inspector iframe
 
-The app shows a MUI `<Backdrop>` over a freshly created scene while it installs. Asserting
-`toHaveCount(0)` on `.MuiBackdrop-root` never passes — MUI keeps the node mounted and only toggles
-visibility — so the backdrop silently swallows clicks routed to the in-iframe file input. Gate on
-`.MuiBackdrop-root:visible` reaching count 0 instead.
+The app shows a backdrop over a freshly created scene while it installs (`Snackbar/component.tsx`,
+test id `install-backdrop`). It swallows clicks routed to the in-iframe file input. Gate on
+`[data-testid="install-backdrop"]:visible` reaching count 0 instead.

@@ -74,8 +74,9 @@ interface IRenderer {
 ```
 
 > `events` is typed `EventSubscriber` (read-only `on`/`off`) in the contract:
-> only the renderer emits, so hold your own `mitt` `Emitter` internally and
-> expose it as `events`. `getEntityAnimations` returns `RendererAnimation[]`
+> only the renderer emits, so hold your own `Emitter` (`createEmitter` in
+> `src/lib/utils/emitter.ts`) internally and expose it as `events`.
+> `getEntityAnimations` returns `RendererAnimation[]`
 > (objects, not bare strings) so the shape can grow without a breaking change.
 
 ### Reverse-channel events (you emit these)

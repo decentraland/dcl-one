@@ -5,10 +5,10 @@
 //! directly: `healthy`/`acceptingUsers` require `Syncing` content and, when
 //! attached, a healthy comms core. Discovery counts use that same core probe.
 
+use crate::shared::routing::{erase, get};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
 
@@ -150,7 +150,7 @@ pub fn routes() -> Router<Shared> {
         .route("/about", get(main_about))
         .route("/realms", get(realms))
         .route("/status", get(status))
-        .fallback(not_found)
+        .fallback(erase(not_found))
 }
 
 async fn not_found() -> Response {

@@ -38,8 +38,7 @@ export type Template = {
 /**
  * The scene templates offered on the Templates page and the Home row.
  *
- * This list used to come from the Decentraland Studios resources API, which is being retired.
- * The template code still lives in the linked GitHub repos; only the catalog (names, blurbs,
+ * The template code lives in the linked GitHub repos; only the catalog (names, blurbs,
  * tags, artwork) is bundled here. To add a template: drop its artwork in `assets/templates/`
  * and append an entry.
  */

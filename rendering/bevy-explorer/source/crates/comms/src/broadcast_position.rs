@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 
 use common::structs::{
-    AvatarDynamicState, HeadSync, MoveKind, PointAtSync, PrimaryUser, SceneDrivenAnim,
+    AvatarDynamicState, HeadSync, LocomotionSpeeds, MoveKind, PointAtSync, PrimaryUser,
+    SceneDrivenAnim,
 };
 use dcl_component::{
     proto_components::kernel::comms::rfc4,
@@ -14,6 +15,7 @@ use crate::{
     broadcast, broadcast_to,
     global_crdt::GlobalCrdtState,
     movement_compressed::{Movement, Temporal},
+    pulse::movement_pacing::{Change, MovementPacer},
     BroadcastTarget,
 };
 
@@ -27,12 +29,10 @@ impl Plugin for BroadcastPositionPlugin {
     }
 }
 
-const STATIC_FREQ: f64 = 1.0;
-const DYNAMIC_FREQ: f64 = 0.1;
 // Re-send the anim hash pair at least this often so late joiners pick up the active clip.
 const ANIM_URN_KEEPALIVE: f64 = 1.0;
-// A head-yaw or head-pitch change beyond this threshold (in degrees) breaks the
-// STATIC_FREQ idle keepalive and gets the next packet sent at the DYNAMIC_FREQ tick.
+// A head-yaw or head-pitch change beyond this threshold (in degrees) breaks the idle
+// keepalive and gets the next packet sent at the next regular slot (see `MovementPacer`).
 // About one step of the wire: Pulse carries head yaw and pitch in 7 bits over 0..360
 // (`pulse_shared.proto`), 360 / 127 = 2.8 degrees, so a smaller drift mostly does not
 // change the value sent and is left to the 1Hz keepalive.
@@ -45,7 +45,7 @@ struct LastAnim {
     announcer: ClipAnnouncer,
     // Latched seek from the scene. The scene publishes `seek` for a single frame;
     // we hold it here until a broadcast goes out so we don't miss it between the
-    // 10Hz dynamic / 1Hz static broadcast intervals.
+    // regular (`REGULAR_SPACING_SECONDS`) and idle keepalive broadcast intervals.
     pending_seek: Option<f32>,
     // Latched sound content hashes from the scene. Accumulated across frames so
     // single-frame sound triggers still make it out on the next broadcast; drained
@@ -68,6 +68,7 @@ fn broadcast_position(
             Option<&SceneDrivenAnim>,
             Option<&HeadSync>,
             Option<&PointAtSync>,
+            Option<&LocomotionSpeeds>,
         ),
         With<PrimaryUser>,
     >,
@@ -75,7 +76,7 @@ fn broadcast_position(
     mut last_position: Local<(Vec3, Quat, Vec3)>,
     mut last_head_sync: Local<HeadSync>,
     mut last_point_at: Local<PointAtSync>,
-    mut last_sent: Local<f64>,
+    mut pacer: Local<MovementPacer>,
     mut last_index: Local<u32>,
     mut last_anim: Local<LastAnim>,
     time: Res<Time>,
@@ -91,7 +92,7 @@ fn broadcast_position(
     let Ok(global_crdt) = contexts.single() else {
         return;
     };
-    let Ok((player, dynamics, scene_anim, head_sync, point_at)) = player.single() else {
+    let Ok((player, dynamics, scene_anim, head_sync, point_at, speeds)) = player.single() else {
         return;
     };
     let head_sync = head_sync.copied().unwrap_or_default();
@@ -121,25 +122,17 @@ fn broadcast_position(
         last_anim.last_seen_sounds = current_sounds.to_vec();
     }
 
-    let elapsed = time - *last_sent;
-    // Pending seeks do NOT bypass the 10Hz gate — sending faster than that gets us
-    // shadowbanned. The latch above already holds the most recent seek; it rides out
-    // on the next scheduled broadcast.
-    if elapsed < DYNAMIC_FREQ {
-        return;
-    }
-
     let (_, rotation, translation) = player.to_scale_rotation_translation();
     // An anim change (e.g. jump → idle on landing) must go out promptly: when the
     // player comes to rest, velocity/position stop changing, and without this
-    // bypass the transition would wait on the STATIC_FREQ keepalive.
+    // bypass the transition would wait on the idle keepalive (`IDLE_KEEPALIVE_SECONDS`).
     let current_hashes = scene_anim
         .and_then(|s| s.active.as_ref())
         .map(|a| (a.scene_hash.clone(), a.content_hash.clone()));
     let anim_changed = last_anim.announcer.changed(current_hashes.as_ref());
-    // Toggling either enabled flag, or a yaw/pitch delta past the threshold, also
-    // breaks the keepalive — same shape as anim_changed. Sub-threshold drift just
-    // rides the 1Hz keepalive.
+    // Toggling either enabled flag, or a yaw/pitch delta past the threshold, breaks the
+    // keepalive and goes out at the next regular slot. Sub-threshold drift just rides the
+    // 1Hz keepalive.
     let head_changed = head_sync.yaw_enabled != last_head_sync.yaw_enabled
         || head_sync.pitch_enabled != last_head_sync.pitch_enabled
         || (head_sync.yaw_deg - last_head_sync.yaw_deg).abs() > HEAD_SYNC_EPSILON_DEG
@@ -150,16 +143,22 @@ fn broadcast_position(
     let point_at_changed = point_at.is_pointing != last_point_at.is_pointing
         || (point_at.is_pointing
             && (point_at.target_world - last_point_at.target_world).length_squared() > 0.01);
-    if elapsed < STATIC_FREQ
-        && (translation - last_position.0).length_squared() < 0.01
-        && rotation == last_position.1
-        && (dynamics.velocity - last_position.2).length_squared() < 0.01
-        && last_anim.pending_seek.is_none()
-        && !anim_changed
-        && !last_anim.announcer.repeat_pending()
-        && !head_changed
-        && !point_at_changed
-    {
+    // Pending seeks and the repeats of a clip change are ordinary movement, not edges: they ride
+    // the next regular slot. The latch above already holds the most recent seek.
+    let velocity_change = (dynamics.velocity - last_position.2).length();
+    let moved = (translation - last_position.0).length_squared() >= 0.01
+        || rotation != last_position.1
+        || velocity_change >= 0.1
+        || last_anim.pending_seek.is_some()
+        || last_anim.announcer.repeat_pending()
+        || head_changed
+        || point_at_changed;
+    // A new clip, or a velocity change no ordinary acceleration makes (a jump impulse, a landing,
+    // an abrupt start, stop or turn), goes out on the frame it happens; the rest waits for its
+    // slot. The flags a packet carries are computed for the frame that is sent, so they travel
+    // with the edge.
+    let change = Change::since_last_send(anim_changed, velocity_change, moved);
+    if !pacer.should_send(time, change) {
         return;
     }
 
@@ -171,13 +170,15 @@ fn broadcast_position(
         global_crdt.realm_bounds.0,
         global_crdt.realm_bounds.1,
     );
+    let grounded = dynamics.ground_height < 0.2;
+    let falling = crate::gait::is_falling(grounded, dynamics.velocity.y);
     let temporal = Temporal::from_parts(
         time,
-        false,
+        falling,
         rotation.to_euler(bevy::math::EulerRot::YXZ).0,
         movement.velocity_tier(),
         dynamics.move_kind,
-        dynamics.ground_height < 0.2,
+        grounded,
     );
 
     let movement_compressed = crate::movement_compressed::MovementCompressed { temporal, movement };
@@ -301,7 +302,10 @@ fn broadcast_position(
         velocity_x: dynamics.velocity.x,
         velocity_y: dynamics.velocity.y,
         velocity_z: -dynamics.velocity.z,
-        movement_blend_value: dynamics.velocity.length_squared(),
+        movement_blend_value: crate::gait::movement_blend(
+            Vec2::new(dynamics.velocity.x, dynamics.velocity.z).length(),
+            &speeds.copied().unwrap_or_default(),
+        ),
         slide_blend_value: 0.0,
         is_grounded: movement_compressed.temporal.grounded(),
         is_jumping: movement_compressed.temporal.jump(),
@@ -394,7 +398,7 @@ fn broadcast_position(
     *last_position = (translation, rotation, dynamics.velocity);
     *last_head_sync = head_sync;
     *last_point_at = point_at;
-    *last_sent = time;
+    pacer.record_send(time);
 }
 
 /// The `jump_count` a movement packet carries: 2 for a double jump or glide, 1 while airborne

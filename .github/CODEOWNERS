@@ -62,6 +62,9 @@
 # database
 /schemas/ @decentraland/apis
 /services/catalyst/db/ @decentraland/apis
+/tooling/migration/ @decentraland/apis
+/tooling/tests/migration_*.py @decentraland/apis
+/tooling/tests/test_migration.py @decentraland/apis
 
 # creator-sdk
 /apps/dcl-scene-cli/ @decentraland/client
@@ -137,6 +140,10 @@
 /tooling/native-lock/ @decentraland/client
 /.github/workflows/uuav-native.yml @decentraland/client
 /.github/workflows/uuav-verify.yml @decentraland/client
+
+# avatar-preview
+/rendering/avatar-preview/ @decentraland/client
+/.github/workflows/avatar-preview*.yml @decentraland/client
 
 # quality
 /services/catalyst/tests/ @decentraland/qa

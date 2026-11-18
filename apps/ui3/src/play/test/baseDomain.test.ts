@@ -64,3 +64,62 @@ describe('engineServiceOptions', () => {
     expect(m.engineServiceOptions()).toEqual({ baseDomain: 'decentraland.org' })
   })
 })
+
+describe('the Pulse host behind the gateway', () => {
+  const load = async (pulseServer: string | undefined, search = '/') => {
+    vi.resetModules()
+    window.__DCL_PUBLIC__ = pulseServer == null ? {} : { pulseServer }
+    window.history.replaceState(null, '', search)
+    return import('../lib/baseDomain')
+  }
+  afterEach(() => {
+    delete window.__DCL_PUBLIC__
+    window.history.replaceState(null, '', '/')
+    vi.restoreAllMocks()
+  })
+
+  it('is the host the deployment names', async () => {
+    const m = await load('Pulse.example.test:7743')
+    expect(m.engineServiceOptions().pulseServer).toBe('pulse.example.test:7743')
+  })
+
+  it.each([undefined, ''])('is the page host, silently, when the deployment names none (%j)', async (pulseServer) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const m = await load(pulseServer)
+    expect(m.engineServiceOptions().pulseServer).toBe(window.location.host)
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('is the page host, with a warning, when the deployment names an invalid one', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const m = await load('https://pulse.example.test')
+    expect(m.engineServiceOptions().pulseServer).toBe(window.location.host)
+    expect(warn).toHaveBeenCalledOnce()
+  })
+
+  it('yields to an entry-url override', async () => {
+    const m = await load('pulse.example.test', '/?pulseServer=other.example.test')
+    expect(m.engineServiceOptions().pulseServer).toBe('other.example.test')
+  })
+
+  it('ignores a page-host value the engine wrote back into the address bar', async () => {
+    const m = await load('pulse.example.test', `/?pulseServer=${window.location.host}`)
+    expect(m.engineServiceOptions().pulseServer).toBe('pulse.example.test')
+  })
+
+  it('reaches the engine launch in place of a page-host value in the address bar', async () => {
+    await load('pulse.example.test', `/?pulseServer=${window.location.host}`)
+    const { engineLaunch } = await import('../lib/engineLaunch')
+    expect(engineLaunch(new URLSearchParams(window.location.search)).options.pulseServer).toBe('pulse.example.test')
+  })
+
+  it('plays no part under ?baseDomain=, where Pulse composes from the base domain', async () => {
+    const m = await load('pulse.example.test', '/?baseDomain=decentraland.org')
+    expect(m.serviceUrl('pulseServer')).toBe('pulse-server.decentraland.org')
+  })
+
+  it('keeps a page-host override under ?baseDomain=', async () => {
+    const m = await load('pulse.example.test', `/?baseDomain=decentraland.org&pulseServer=${window.location.host}`)
+    expect(m.serviceUrl('pulseServer')).toBe(window.location.host)
+  })
+})

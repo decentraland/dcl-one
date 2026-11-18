@@ -29,8 +29,9 @@ bones after IK, the active speakers, the mute list and the filtered chat stream.
 
 ## Decision
 
-The engine draws nametags and chat bubbles for players. `NametagPlugin`
-(`crates/avatar/src/nametag/`) owns them; the bridge scene draws none.
+The engine draws nametags and chat bubbles for players, and nametags for the avatars a scene
+makes with `AvatarShape`. `NametagPlugin` (`crates/avatar/src/nametag/`) owns them; the bridge
+scene draws none.
 
 - **One mesh and one draw call per tag, in the 3D transparent pass.** Every tag uses the same
   unlit material (`NametagMaterial`, `nametag.wgsl`): alpha blended, depth tested, no depth write,
@@ -50,6 +51,15 @@ The engine draws nametags and chat bubbles for players. `NametagPlugin`
   that content. Despawning the player despawns the tag, so a disconnect needs no polling and
   there is no pool: a tag is a handful of components, and reusing one saved nothing, since its
   name was shaped and its mesh uploaded again for the next player.
+- **A scene avatar is named from its `AvatarShape`.** Once the avatar is built it carries the
+  same `NametagContent`, marked `SceneAvatarNametag`: its `name` (an unset or blank
+  name asks for no tag), `#` and the last four characters of its `id` as the suffix (`#0000` for
+  a shorter id), never the verified or official badge, and the voice bars while `talking` is
+  set. As in a player's name, what follows a `#` in the name is dropped; a name with nothing
+  before one reads `NPC`. The tag goes while the avatar is rebuilt for a new outfit, and comes
+  back once the new body is built. A scene entity that only restyles a player gets none, nor do
+  the HUD's preview avatars, which a system scene makes. Avatar modifier areas act on players,
+  so they do not hide these tags; a scene hides its avatar's tag by hiding the avatar.
 - **The anchor on the CPU, the rest in the vertex shader.** After the avatar's bones are final,
   the tag's translation is set to the player's name-tag anchor: the highest of the head, toes and
   hips, plus the height of what the avatar wears above its head bone, measured in the head bone's
@@ -58,10 +68,13 @@ The engine draws nametags and chat bubbles for players. `NametagPlugin`
   turns the tag to the camera plane, scales it by distance so that it keeps its size on screen,
   and fades it over the second half of its 2 m to 40 m range. Nothing on an idle tag changes from
   frame to frame except, when its player moves, its place in the world. Its bounds are a cube
-  around the anchor that covers the mesh at the far end of the range, where it is largest.
+  around the anchor that covers the mesh at the far end of the range, where it is largest,
+  sized against a scene's scale of its avatar. The anchor is worked out in the avatar's own
+  units, so a scaled, turned or tilted avatar keeps its tag straight over its head.
 - **A name that should not show is hidden, not removed.** Out of range, hidden by an avatar
   modifier area, beyond the avatar cap, blocked either way or banned from the scene's room, the
-  local player in first person (with a scene's camera override applied), or with nametags off:
+  local player in first person (with a scene's camera override applied), not visible (its own
+  visibility or a parent's), scaled to nothing, or with nametags off:
   the tag's `Visibility` is hidden and the tag is left as it is. A tag out of view is culled by
   the frustum like any mesh. A hidden tag is not rebuilt; it is brought up to date when it shows
   again.
@@ -172,7 +185,7 @@ them, which halves the work in the frame.
 - Fill `OfficialWallets` with the profile data the dcl-one services send: the social service
   already marks official wallets on community messages.
 - Confirm a claimed name against the catalyst before drawing the verified seal.
-- Tags for scene avatars (`AvatarShape`) and the SDK's nametag plate.
+- The SDK's nametag plate (`AvatarNametag`).
 - A fallback font for CJK names.
 - Measure a crowd of twenty or more players before and after, and on a desktop build; decide
   from it whether one draw per tag needs batching.

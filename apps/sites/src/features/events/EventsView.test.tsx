@@ -370,6 +370,19 @@ describe("when calendar occupancy is available or unknown", () => {
     else expect(within(card).queryByText(/online$/)).toBeNull();
   });
 
+  it("should give a live event in the phone list its JUMP IN instead of Remind me", async () => {
+    vi.stubGlobal("innerWidth", 390);
+    calendar = [{ ...soon("now", "Live on phone", -0.5), live: true, x: 3, y: 7 }];
+    setup("/events");
+    const list = await screen.findByRole("list", { name: /^Events for / });
+    const liveCard = within(list).getByRole("link", { name: "Live on phone" }).closest("article")!;
+    expect(within(liveCard).getByRole("link", { name: "Jump in: Live on phone" }).getAttribute("href")).toMatch(
+      /\/play\/\?position=3%2C7(&|$)/,
+    );
+    expect(within(liveCard).queryByRole("button", { name: /Remind me/ })).toBeNull();
+    expect(within(liveCard).getByRole("button", { name: "Copy link: Live on phone" })).toBeTruthy();
+  });
+
   it("should not present future event registrations as current occupancy", async () => {
     calendar = [soon("future", "Future registration count")];
     calendar[0]!.total_attendees = 26;

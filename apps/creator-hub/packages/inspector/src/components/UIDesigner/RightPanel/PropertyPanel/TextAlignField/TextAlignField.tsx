@@ -7,7 +7,7 @@ import {
   MdVerticalAlignCenter,
   MdVerticalAlignTop,
 } from 'react-icons/md';
-import cx from 'classnames';
+import { cx } from '../../../../../lib/utils/cx';
 
 import { radioGroupKeyDown, radioTabIndex } from '../radio-group';
 import { TEXT_ALIGN_MODES, splitTextAlign, textAlignMode } from '../text-align';

@@ -590,15 +590,6 @@
         }
       }
     },
-    "cast_watch_access_expired": {
-      "loose": false,
-      "props": {
-        "location": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
     "cast_watch_chat_opened": {
       "loose": false,
       "props": {}
@@ -636,28 +627,6 @@
     "cast_watch_muted": {
       "loose": false,
       "props": {}
-    },
-    "cast_watch_no_stream": {
-      "loose": false,
-      "props": {
-        "location": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "cast_watch_opened": {
-      "loose": false,
-      "props": {
-        "is_world": {
-          "kind": "boolean",
-          "optional": false
-        },
-        "location": {
-          "kind": "string",
-          "optional": false
-        }
-      }
     },
     "cast_watch_refused": {
       "loose": false,
@@ -2487,74 +2456,6 @@
         }
       }
     },
-    "landings_subscription_edited": {
-      "loose": false,
-      "props": {
-        "enabled": {
-          "kind": "boolean",
-          "optional": false
-        },
-        "notification_type": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "landings_subscription_error": {
-      "loose": false,
-      "props": {
-        "kind": {
-          "kind": "enum-string",
-          "values": [
-            "subscribe",
-            "unsubscribe"
-          ],
-          "optional": false
-        },
-        "message": {
-          "kind": "string",
-          "optional": true
-        }
-      }
-    },
-    "landings_subscription_signed_in": {
-      "loose": false,
-      "props": {}
-    },
-    "landings_subscription_signin_required": {
-      "loose": false,
-      "props": {}
-    },
-    "landings_subscription_started": {
-      "loose": false,
-      "props": {}
-    },
-    "landings_subscription_submitting": {
-      "loose": false,
-      "props": {
-        "enabled_count": {
-          "kind": "number",
-          "optional": false
-        }
-      }
-    },
-    "landings_subscription_subscribed": {
-      "loose": false,
-      "props": {
-        "enabled_count": {
-          "kind": "number",
-          "optional": false
-        }
-      }
-    },
-    "landings_subscription_unsubscribed": {
-      "loose": false,
-      "props": {}
-    },
-    "landings_subscription_unsubscribing": {
-      "loose": false,
-      "props": {}
-    },
     "lp_blog_post_clicked": {
       "loose": false,
       "props": {
@@ -2598,15 +2499,6 @@
     "lp_community_gate_viewed": {
       "loose": false,
       "props": {}
-    },
-    "lp_community_private_gated": {
-      "loose": false,
-      "props": {
-        "community_id": {
-          "kind": "string",
-          "optional": false
-        }
-      }
     },
     "lp_community_review_reached": {
       "loose": false,
@@ -2667,35 +2559,6 @@
         }
       }
     },
-    "lp_community_viewed": {
-      "loose": false,
-      "props": {
-        "community_id": {
-          "kind": "string",
-          "optional": false
-        },
-        "members_count": {
-          "kind": "unknown",
-          "optional": false
-        },
-        "privacy": {
-          "kind": "enum-string",
-          "values": [
-            "private",
-            "public"
-          ],
-          "optional": false
-        },
-        "source": {
-          "kind": "enum-string",
-          "values": [
-            "fixture",
-            "live"
-          ],
-          "optional": false
-        }
-      }
-    },
     "lp_creatorhub_download_clicked": {
       "loose": false,
       "props": {
@@ -2704,7 +2567,7 @@
           "optional": false
         },
         "file_name": {
-          "kind": "unknown",
+          "kind": "string",
           "optional": false
         },
         "kind": {
@@ -2897,54 +2760,6 @@
       "loose": false,
       "props": {}
     },
-    "lp_home_download_clicked": {
-      "loose": false,
-      "props": {
-        "placement": {
-          "kind": "string",
-          "optional": false
-        },
-        "store": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "lp_home_rail_clicked": {
-      "loose": false,
-      "props": {
-        "rail": {
-          "kind": "string",
-          "optional": false
-        },
-        "target": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "lp_home_rail_viewed": {
-      "loose": false,
-      "props": {
-        "rail": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "lp_home_viewed": {
-      "loose": false,
-      "props": {
-        "live_rail": {
-          "kind": "boolean",
-          "optional": false
-        },
-        "rails": {
-          "kind": "number",
-          "optional": false
-        }
-      }
-    },
     "lp_invite_referrer_resolved": {
       "loose": false,
       "props": {
@@ -3000,6 +2815,7 @@
           "values": [
             "brand",
             "content",
+            "creatorFund",
             "credits",
             "ethics",
             "privacy",
@@ -3024,6 +2840,7 @@
           "values": [
             "brand",
             "content",
+            "creatorFund",
             "credits",
             "ethics",
             "privacy",
@@ -3129,109 +2946,6 @@
         "event_id": {
           "kind": "string",
           "optional": false
-        }
-      }
-    },
-    "lp_schedule_created": {
-      "loose": false,
-      "props": {
-        "active": {
-          "kind": "boolean",
-          "optional": true
-        },
-        "editing": {
-          "kind": "boolean",
-          "optional": false
-        },
-        "schedule_id": {
-          "kind": "string",
-          "optional": true
-        }
-      }
-    },
-    "lp_schedule_gate_viewed": {
-      "loose": false,
-      "props": {}
-    },
-    "lp_schedule_list_viewed": {
-      "loose": false,
-      "props": {
-        "count": {
-          "kind": "number",
-          "optional": false
-        },
-        "source": {
-          "kind": "enum-string",
-          "values": [
-            "empty",
-            "error",
-            "live"
-          ],
-          "optional": false
-        }
-      }
-    },
-    "lp_schedule_review_reached": {
-      "loose": false,
-      "props": {}
-    },
-    "lp_schedule_started": {
-      "loose": false,
-      "props": {
-        "editing": {
-          "kind": "boolean",
-          "optional": false
-        }
-      }
-    },
-    "lp_schedule_step_completed": {
-      "loose": false,
-      "props": {
-        "from": {
-          "kind": "enum-string",
-          "values": [
-            "authGate",
-            "basics",
-            "created",
-            "dates",
-            "review",
-            "submitting"
-          ],
-          "optional": false
-        },
-        "to": {
-          "kind": "enum-string",
-          "values": [
-            "authGate",
-            "basics",
-            "created",
-            "dates",
-            "review",
-            "submitting"
-          ],
-          "optional": false
-        }
-      }
-    },
-    "lp_schedule_submit_attempted": {
-      "loose": false,
-      "props": {
-        "editing": {
-          "kind": "boolean",
-          "optional": false
-        },
-        "theme": {
-          "kind": "unknown",
-          "optional": false
-        }
-      }
-    },
-    "lp_schedule_submit_failed": {
-      "loose": false,
-      "props": {
-        "error": {
-          "kind": "string",
-          "optional": true
         }
       }
     },
@@ -3392,7 +3106,7 @@
         },
         "report_id": {
           "kind": "string",
-          "optional": true
+          "optional": false
         }
       }
     },
@@ -3419,7 +3133,7 @@
       "props": {
         "reason": {
           "kind": "string",
-          "optional": true
+          "optional": false
         }
       }
     },

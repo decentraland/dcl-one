@@ -1,4 +1,3 @@
-import "@dcl/one-ui/foundations/foundations.css";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 import { dehydrate, HydrationBoundary, QueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams, useRouteLoaderData } from "react-router";

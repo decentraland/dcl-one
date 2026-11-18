@@ -2,6 +2,7 @@ pub mod base_wearables;
 pub mod emotes;
 pub mod ext;
 pub mod smart_wearables;
+pub mod spring_bones;
 pub mod urn;
 pub mod wearables;
 
@@ -120,6 +121,17 @@ impl<T: CollectibleType> Collectibles<T> {
             Some(source) => source.as_str(),
             None => urn.unknown_source_name().unwrap_or(urn.as_str()),
         }
+    }
+
+    /// Resolves `urn` to an entity registered directly with the ipfs layer under `hash` (an
+    /// unpublished item a host supplies), instead of asking the realm's content server. A previous
+    /// resolution of the same urn is dropped, so a re-registered item loads afresh.
+    pub fn insert_inline(&mut self, urn: CollectibleUrn<T>, hash: String) {
+        self.cache.remove(&urn);
+        self.data_cache.remove(&urn);
+        self.aliases.remove(&urn);
+        self.pointer_request.remove(&urn);
+        self.pointers.insert(urn, PointerResult::Hash(hash));
     }
 
     pub fn retain(&mut self, frame: u32, f: impl Fn(&CollectibleUrn<T>) -> bool) {

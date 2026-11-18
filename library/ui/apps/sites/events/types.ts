@@ -2,7 +2,8 @@ import type { MouseEvent } from 'react'
 
 /**
  * The data the /events page hands its sections. `cards.tsx` maps it onto the public cards: PlaceCard
- * (live variant) for Live Now, EventCard for Upcoming and the day columns.
+ * (live variant) for Live Now, EventCard (small) for Upcoming and the phone's day list, EventCard (day)
+ * for the day columns.
  */
 type EventCardCreator = {
   name: string
@@ -54,12 +55,23 @@ type UpcomingEventCardProps = EventCardData & {
   calendarHref?: string
 }
 
-/** All Events: one event in a day column; live ones show their badges instead of a time. */
+/** The phone's day list: an Upcoming card that may be live, with its badges and JUMP IN. */
+type DayListCardProps = UpcomingEventCardProps & {
+  live?: boolean
+  jumpIn?: JumpIn
+}
+
+/**
+ * All Events: one event in a day column; live ones show their badges instead of a time. The phone's
+ * day list shows a live one's JUMP IN too.
+ */
 type ExperienceCardProps = EventCardData & {
   live: boolean
   time: EventCardTime
   remind?: RemindControl
   calendarHref?: string
+  /** Read only by the phone's day list (a small card); a day column shows no JUMP IN. */
+  jumpIn?: JumpIn
 }
 
 export type {
@@ -67,6 +79,7 @@ export type {
   EventCardData,
   EventCardTime,
   ExperienceCardProps,
+  DayListCardProps,
   JumpIn,
   LiveEventCardProps,
   RemindControl,

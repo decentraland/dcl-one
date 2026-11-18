@@ -30,7 +30,7 @@ separate from the current runtime described here.
 | `stats` | every `serve` | complete read-only Pulse statistics snapshots, HTTP projections, `CommsCore` and archive views; uncached enrichment through the existing content pool |
 | `gatekeeper::admission` | `serve` | scene, server-scene, world (`world_mint`) and island tokens; the Pulse room authority (`relay_authority`) |
 | `gatekeeper::moderation`, `removal`, `removed_places` | `serve` | bans, warnings, scene admins, durable ban kicks, disabled-place cleanup (reading Explore's removal feed by shared SQL, `DATABASE.md` "Place removal feed"), room metadata repair |
-| `gatekeeper::voice`, `streaming`, `streaming_jobs` | `serve` | private and community voice; stream access, LiveKit Ingress, streaming expiry; `/cast/*` answers 501 |
+| `gatekeeper::voice`, `streaming`, `streaming_jobs`, `streaming::cast` | `serve` | private and community voice; stream access, LiveKit Ingress, streaming expiry; Cast 2.0 (`/cast/*`): stream links, streamer, watcher and presentation-bot tokens over the same stream credential, presenters in the scene room's metadata |
 | `gatekeeper::reports` | `serve` | the player report intake at `/report-user` (`/api/reports/players/presign`, the evidence `PUT`s, `/api/reports/players`); the moderator token reads `/api/reports` |
 | `gatekeeper::webhook`, `events` | `serve` | the one LiveKit webhook; a typed nine-field `RoomEvent` to `RoomEventSink` and `RoomEventStore` |
 | `gatekeeper::bus` | `serve` | `serve`'s one NATS link |
@@ -152,9 +152,16 @@ within `HANDSHAKE_TIMEOUT` (default 60 s, as the pinned upstream ws-connector) o
 attributable through `HTTP_TRUSTED_PROXY_CIDRS`, beyond it 429; an unattributable upgrade (a gateway peer outside that
 list, or no `X-Real-IP`) is not counted, logs one warning and increments
 `comms_ws_unattributed_upgrades_total` (registered at 0, exported with the other `comms_` series on `SERVE_METRICS_BIND`); positions coalesce
-for ownership control to one per 500 ms; statistical observations retain every decoded position; a flooding socket closes with 1008; a 64-frame send queue in which a newer
-`island_changed` replaces the queued one and `kicked` is never dropped, full for 10 s closes
-with 1013; undecodable frames 1007; restart closes every socket with 1012.
+for ownership control to one per 500 ms; statistical observations retain every decoded position; a flooding socket closes with 1008; one 64-item output budget across assignment mailboxes, validation and the physical writer;
+accepted assignments retain arrival order, exhaustion rejects new mailbox assignments, and
+`kicked` has a separate terminal slot. Full for 10 s closes
+with 1013, including when accepted mailbox work cannot advance during handler stalls,
+not only when the wire is slow. Direct output waiting for credit advances accepted mailbox
+work into the writer without taking another credit. Rejected assignments remain eligible
+for the short reconciliation rounds even after older accepted assignments flush.
+`/stats/health` appends `feed_assignment_full`, counting rejected mailbox assignments;
+`feed_assignment_coalesced` remains zero for response compatibility.
+Undecodable frames close with 1007; restart closes every socket with 1012.
 
 **Deployment.**
 - One primary is a release gate. Every API replica sets `FLEET_JOBS_ENABLED=false` (default true). Only the primary serves WebSockets; every serve supplies read-only statistics, about and realms from its retained complete snapshot. Stop the primary before its successor starts.

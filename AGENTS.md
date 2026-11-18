@@ -17,6 +17,14 @@ For formal verification of LiveKit or networking decisions, or maintenance of
 their proof evidence, use
 [verify-dcl-networking](.claude/skills/verify-dcl-networking/SKILL.md).
 
+## Design feasibility
+
+- Before planning or implementing runtime features, resource policies or architecture
+  changes that depend on platform capabilities, external services or cross-subsystem
+  ownership, apply [the design feasibility gate](docs/design-feasibility.md).
+  Its outcome and platform coverage decision precedes implementation planning;
+  unresolved design blockers remain visible in PR review.
+
 ## Agentic roles documentation
 
 - README `Agentic roles` lists every agent role: name, goal, main functions, relative link to its tracked definition or workflow.
@@ -31,7 +39,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 2. What's On and discovery (places, events, map);
 3. `/play`: Explorer (`rendering/bevy-explorer`), HUD (`apps/ui3/src/play`), desktop packaging (`apps/bevy-explorer`);
 4. `/shop`: Marketplace and Store merged;
-5. `/create`: Creator Hub, web and the desktop workspace `apps/creator-hub` (Electron app, `@dcl/inspector`, `@dcl/asset-packs`);
+5. `/create`: creators landing; `/create/home`, `/create/*`: Creator Hub, web and the desktop workspace `apps/creator-hub` (Electron app, `@dcl/inspector`, `@dcl/asset-packs`);
 6. `apps/dcl-scene-cli`: the `@dcl/sdk-commands` rewrite;
 7. `/docs`: the docs.decentraland.org rewrite;
 8. page-coherence scripts (`apps/sites/scripts`);
@@ -46,6 +54,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 - Check the current readiness evidence before claiming deployment or compatibility; missing evidence means the claim remains unverified.
 - Write PR descriptions per `.github/PULL_REQUEST_TEMPLATE.md`.
 - For schema, SQL, ingestion, mirrors or caches, apply `DATABASE.md`; state workload and invariants before choosing tables or indexes.
+- A change to a `schemas/` table that a step of the TS import (`tooling/migration/`) writes or reads (its `source.toml` `targets` and load SQL) updates that step's load SQL, `MAPPING.md` and tests in the same change.
 - Record measured performance changes in the task report; follow-ups are candidates until measured.
 - Preserve wire, authorization and crash/resume contracts.
 - Never reset an existing database to fit a changed schema.
@@ -108,6 +117,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 
 - Never add a dependency on a sibling checkout.
 - `rendering/bevy-explorer/source` is its own workspace; integration lives in `apps/bevy-explorer`.
+- `rendering/avatar-preview` is its own workspace that links named Explorer crates by path and repeats the Explorer's patch table; it builds single-threaded wasm and never copies Explorer code ([ADR](docs/adr/2026-11-05-avatar-preview-renderer.md)).
 - Keep component licenses and pins (`upstream.lock.json`, `abgen-release.lock`, `livekit-release.lock`, `tooling/uuav/uuav-binaries.lock.json`).
 - Regenerate `.github/CODEOWNERS` from `ownership.json` with `tooling/owners.py`.
 - No machine names, private addresses, home paths, personal emails or the operator's domain; deployments supply them via gitignored config.

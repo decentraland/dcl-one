@@ -21,8 +21,9 @@ import { REPORT_DIR } from './paths.ts'
  *  as one, as the HUD's Continue as guest makes it (it signs, and keeps a profile); an
  *  `unsigned-guest`, the session-only guest with no signed identity, which the engine's
  *  `/login_guest` signs in (on the web under a HUD that stays on its start page, so with no world
- *  of its own; a scene preview's `?guest=1` boot signs in the same guest); or `none`. */
-export type SignIn = 'account' | 'guest' | 'unsigned-guest' | 'none'
+ *  of its own; a scene preview's `?guest=1` boot signs in the same guest); a `fresh` account, a
+ *  new key each run signed in as the automation account is, not as a guest; or `none`. */
+export type SignIn = 'account' | 'guest' | 'unsigned-guest' | 'fresh' | 'none'
 
 export interface OpenOptions {
   /** The realm to boot into; the target's by default. */
@@ -289,8 +290,8 @@ export async function signIn(
     explorer.profileDeployed()
     return explorer.waitInWorld(WORLD_TIMEOUT_MS)
   }
-  if (mode === 'account') {
-    await explorer.loginIdentity(buildAuthIdentity(accountKey(target)), pick)
+  if (mode === 'account' || mode === 'fresh') {
+    await explorer.loginIdentity(buildAuthIdentity(mode === 'account' ? accountKey(target) : newPrivateKey()), pick)
   } else if (mode === 'guest' || mode === 'unsigned-guest') {
     await explorer.loginGuest()
   }
@@ -323,20 +324,37 @@ export async function arrive(explorer: Explorer, realm: string, position: string
 }
 
 /** Wait for the world, pressing the lobby's `Jump In` when it offers one (the standalone's). */
-export async function enterWorld(explorer: Explorer, timeoutMs = WORLD_TIMEOUT_MS): Promise<WorldState> {
+export const NO_LANDING_POLLS = 3
+
+/** A native client shows the layout it stored, which may have no Landing card and so no `Jump In`:
+ *  the editor then stores the shipped layout, which has one. */
+export async function enterWorld(explorer: Explorer, timeoutMs = WORLD_TIMEOUT_MS, intervalMs = 1000): Promise<WorldState> {
+  const jumpIn = { name: 'Jump In', role: 'button', index: 0 }
   let jumped = false
+  let reset = false
+  let missing = 0
   return until(
     async () => {
       const state = await explorer.worldState()
       if (state.inWorld || jumped) return state
-      const jump = await explorer.hud.find({ name: 'Jump In', role: 'button', index: 0 }).catch(() => undefined)
+      const jump = await explorer.hud.find(jumpIn).catch(() => undefined)
       if (jump?.actionable) {
-        await explorer.hud.click({ name: 'Jump In', role: 'button', index: 0 })
+        await explorer.hud.click(jumpIn)
         jumped = true
+        return state
+      }
+      if (jump != null || reset) return state
+      const customize = await explorer.hud.find({ name: 'Customize lobby layout', role: 'button' }).catch(() => undefined)
+      missing = customize?.actionable ? missing + 1 : 0
+      if (missing >= NO_LANDING_POLLS) {
+        await explorer.hud.click({ name: 'Customize lobby layout', role: 'button' })
+        await explorer.hud.click({ name: 'Reset to Default', role: 'button' })
+        await explorer.hud.click({ name: 'SAVE', role: 'button' })
+        reset = true
       }
       return state
     },
     (state) => state.inWorld,
-    { timeoutMs, intervalMs: 1000, what: 'the world after sign-in' }
+    { timeoutMs, intervalMs, what: 'the world after sign-in' }
   )
 }

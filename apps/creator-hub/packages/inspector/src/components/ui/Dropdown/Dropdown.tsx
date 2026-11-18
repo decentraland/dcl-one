@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { VscChevronDown as DownArrowIcon } from 'react-icons/vsc';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 import { isMixedValue } from '../utils';
 import { usePopoverPosition } from '../usePopoverPosition';
 import { useContainerSize } from '../../../hooks/useContainerSize';

@@ -1098,3 +1098,161 @@ it('should focus the notification opener before a pointer activation callback', 
   fireEvent.click(bell)
   expect(opener).toBe(bell)
 })
+
+describe('when the mobile menu owns a pending upward exit', () => {
+  let complete: () => void
+  let fail: (reason: Error) => void
+  let panel: HTMLElement
+  let user: UserEvent
+  let unmount: () => void
+  let animations: ReturnType<typeof vi.fn>
+  beforeEach(async () => {
+    user = userEvent.setup()
+    const pending = new Promise<void>((resolve, reject) => {
+      complete = resolve
+      fail = reject
+    })
+    const view = render(<NavBar sections={sections} signIn={{ onSelect: () => {} }} />)
+    unmount = view.unmount
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
+    panel = screen.getByTestId('navbar-panel')
+    animations = vi.fn(() => [{ finished: pending }])
+    Object.defineProperty(panel, 'getAnimations', { configurable: true, value: animations })
+  })
+
+  it('should retain modal ownership, body lock and header focus until its own completion', async () => {
+    await user.click(screen.getByRole('button', { name: 'Close menu' }))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(panel).toHaveAttribute('inert')
+    expect(document.body.style.overflow).toBe('hidden')
+    expect(screen.getByRole('button', { name: 'Close menu' })).toHaveFocus()
+    await act(async () => complete())
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(document.body.style.overflow).not.toBe('hidden')
+    expect(screen.getByRole('button', { name: 'Open menu' })).toHaveFocus()
+  })
+
+  it('should not replace the starting clip or resubscribe completion on repeated Escape', async () => {
+    panel.style.clipPath = 'inset(0px 0px 20% 0px)'
+    await user.click(screen.getByRole('button', { name: 'Close menu' }))
+    const initial = panel.style.getPropertyValue('--drawer-exit-from')
+    panel.style.clipPath = 'inset(0px 0px 70% 0px)'
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Close menu' }), { key: 'Escape' })
+    expect(panel.style.getPropertyValue('--drawer-exit-from')).toBe(initial)
+    expect(animations).toHaveBeenCalledOnce()
+    await act(async () => complete())
+  })
+
+  it('should discard a stale completion after reopening', async () => {
+    await user.click(screen.getByRole('button', { name: 'Close menu' }))
+    await user.click(screen.getByRole('button', { name: 'Close menu' }))
+    await act(async () => complete())
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(panel).not.toHaveAttribute('inert')
+    expect(document.body.style.overflow).toBe('hidden')
+  })
+
+  it('should release the body and ignore a late completion after unmount', async () => {
+    await user.click(screen.getByRole('button', { name: 'Close menu' }))
+    unmount()
+    await act(async () => complete())
+    expect(document.body.style.overflow).not.toBe('hidden')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('should return focus to desktop navigation if CSS cancellation wins the resize event', async () => {
+    await user.click(screen.getByRole('button', { name: 'Close menu' }))
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({ matches: query.includes('min-width') }))
+    )
+    try {
+      await act(async () => fail(new Error('Desktop CSS cancelled the exit')))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'Decentraland home' })).toHaveFocus()
+      expect(document.body.style.overflow).not.toBe('hidden')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('should recover ownership after the current animation is cancelled', async () => {
+    await user.click(screen.getByRole('button', { name: 'Close menu' }))
+    await act(async () => fail(new Error('Animation cancelled')))
+    expect(document.body.style.overflow).not.toBe('hidden')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('should release immediately for navigation while discarding the pending exit', async () => {
+    await user.click(screen.getByRole('button', { name: 'Close menu' }))
+    fireEvent.click(screen.getByRole('link', { name: 'Decentraland home' }))
+    await act(async () => complete())
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(document.body.style.overflow).not.toBe('hidden')
+  })
+
+  it('should release immediately if the environment provides no active animation', async () => {
+    Object.defineProperty(panel, 'getAnimations', { value: () => [] })
+    await user.click(screen.getByRole('button', { name: 'Close menu' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(document.body.style.overflow).not.toBe('hidden')
+  })
+})
+
+describe('when the mobile menu trigger renders its navigation glyph', () => {
+  it('should use the maintained three horizontal strokes without changing its accessible name', async () => {
+    render(<NavBar sections={sections} signIn={{ onSelect: vi.fn() }} />)
+    const trigger = screen.getByRole('button', { name: 'Open menu' })
+    const svg = trigger.querySelector('svg')
+    expect(svg).toHaveAttribute('viewBox', '0 0 24 24')
+    expect(svg).toHaveAttribute('aria-hidden', 'true')
+    expect(svg?.querySelector('path')).toHaveAttribute('d', 'M3 6h18M3 12h18M3 18h18')
+    expect(svg).toHaveAttribute('focusable', 'false')
+    expect(svg?.querySelector('circle')).toBeNull()
+    const user = userEvent.setup()
+    await user.click(trigger)
+    expect(screen.getByRole('dialog', { name: 'Menu' })).toBeInTheDocument()
+    expect(trigger).toHaveAccessibleName('Close menu')
+    const glyphs = trigger.querySelectorAll(':scope > svg')
+    expect(glyphs).toHaveLength(2)
+    expect(glyphs[0]).toBe(svg)
+    expect(glyphs[1]).toHaveAttribute('width', '30')
+    expect(glyphs[1]).toHaveAttribute('height', '30')
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: 'Menu' })).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+})
+
+describe('when the mobile menu lists sections with and without items', () => {
+  let panel: HTMLElement
+  beforeEach(async () => {
+    render(<NavBar sections={sections} signIn={{ onSelect: vi.fn() }} />)
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Open menu' }))
+    expect(screen.getByRole('dialog', { name: 'Menu' })).toBeInTheDocument()
+    panel = screen.getByTestId('navbar-panel')
+  })
+
+  it('should give every section one top-level row', () => {
+    const rows = panel.querySelectorAll(':scope > ul > li')
+    expect([...rows].map((row) => row.firstElementChild?.textContent)).toEqual([
+      'Discover',
+      'Shop',
+      'Create',
+      'Learn'
+    ])
+  })
+
+  it('should keep a section without items as a link row', () => {
+    const shop = within(panel).getByRole('link', { name: 'Shop' })
+    expect(shop).toHaveAttribute('href', '/shop')
+    expect(shop.parentElement?.tagName).toBe('LI')
+  })
+
+  it('should list a section with items under its label and mark only the active item', () => {
+    const discover = within(panel).getByText('Discover').parentElement as HTMLElement
+    const links = within(discover).getAllByRole('link')
+    expect(links.map((link) => link.textContent)).toEqual(['Jump in', "What's on"])
+    expect(links.map((link) => link.getAttribute('aria-current'))).toEqual([null, 'page'])
+  })
+})

@@ -36,13 +36,15 @@ export function downloadActions(
         href: "https://store.epicgames.com/en-US/p/decentraland-b692fb",
       },
       downloads: `Total Downloads: ${downloads}`,
-      alternatives: wide.secondary
+      alternativeGroups: wide.secondary
         ? [
-            {
-              icon: wide.secondary.os,
-              label: `Download for ${name(wide.secondary.os)}`,
-              href: downloadSuccessHref(wide.secondary),
-            },
+            [
+              {
+                icon: wide.secondary.os,
+                label: `Download for ${name(wide.secondary.os)}`,
+                href: downloadSuccessHref(wide.secondary),
+              },
+            ],
           ]
         : [],
     },

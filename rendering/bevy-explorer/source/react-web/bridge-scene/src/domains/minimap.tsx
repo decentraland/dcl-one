@@ -6,9 +6,9 @@
 // a camera while it's 'imposters'. That matters: a TextureCamera is a second render pass, so
 // leaving one alive for a map nobody is looking at costs a frame budget for nothing.
 //
-// The circular mask is drawn HERE rather than in React. React is transparent around the map
-// (the world shows through), so if the engine drew a square the corners would spill over the
-// world outside the circle — there is no React pixel to cover them.
+// The map is drawn in the square the HUD reports: the inside of its map frame. The corners are
+// rounded HERE rather than in React, because the frame's rounded border is the only React pixel
+// over them.
 import ReactEcs, { UiEntity } from '@dcl/react-ecs'
 import { CameraLayer, TextureCamera, Transform, engine } from '@dcl/sdk/ecs'
 import { Color4, Quaternion, Vector3 } from '@dcl/sdk/math'
@@ -48,8 +48,8 @@ let visibleMeters = 256
 let appliedMeters = 0
 let appliedResolution = 0
 
-/** The square render target for the current rect: physical pixels, clamped. The map is a
- *  circle inside a square hole, so the larger side is what has to be covered. */
+/** The square render target for the current rect: physical pixels, clamped. The larger side is
+ *  what has to be covered. */
 function targetResolution(): number {
   if (rect == null) return MIN_RESOLUTION
   const px = Math.max(rect.width, rect.height) * dpr
@@ -196,7 +196,8 @@ export function renderMinimap(): ReactEcs.JSX.Element | null {
           position: { top: 0, left: 0 },
           width: r.width,
           height: r.height,
-          borderRadius: 9999
+          // the corners of the HUD's map frame, inside its 1 px border
+          borderRadius: 4
         }}
         uiBackground={{ videoTexture: { videoPlayerEntity: cameraEntity }, textureMode: 'stretch' }}
       />

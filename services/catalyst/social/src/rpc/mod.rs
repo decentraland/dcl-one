@@ -59,10 +59,10 @@ pub(crate) mod tests;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::{any, erase, get};
 use axum::extract::{Path, State as AxumState};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{any, get};
 use axum::{Json, Router};
 use parking_lot::Mutex;
 use serde_json::json;
@@ -382,10 +382,13 @@ fn build_rpc_server(
 /// as upstream's `wrap`), and the admin routes.
 pub fn router(state: Arc<State>) -> Router {
     Router::new()
-        .route("/social-rpc", get(ws::ws_upgrade).fallback(not_found))
+        .route(
+            "/social-rpc",
+            get(ws::ws_upgrade).fallback(erase(not_found)),
+        )
         .route(
             "/social-rpc/v1/stream",
-            get(stream::ws_upgrade).fallback(not_found),
+            get(stream::ws_upgrade).fallback(erase(not_found)),
         )
         .route("/social-rpc/info", get(info))
         .route("/social-rpc/health", get(health))
@@ -393,11 +396,15 @@ pub fn router(state: Arc<State>) -> Router {
         // upstream's `app.get` takes GET alone; HEAD falls to its `ANY /*`
         .route(
             "/social-rpc/status",
-            get(status).head(not_found).fallback(not_found),
+            get(status)
+                .head(erase(not_found))
+                .fallback(erase(not_found)),
         )
         .route(
             "/social-rpc/v1/users/{address}/privacy-settings",
-            get(privacy_settings).head(not_found).fallback(not_found),
+            get(privacy_settings)
+                .head(erase(not_found))
+                .fallback(erase(not_found)),
         )
         .route("/social-rpc/{*rest}", any(not_found))
         .layer(axum::middleware::map_response(allow_any_origin))

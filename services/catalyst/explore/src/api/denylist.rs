@@ -9,11 +9,11 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::get;
 use anyhow::Context as _;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use axum::{Json, Router};
 use parking_lot::RwLock;
 use serde::de::{SeqAccess, Visitor};

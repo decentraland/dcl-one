@@ -1,5 +1,6 @@
 import { BRAND } from "./brand";
 import { CONTENT } from "./content";
+import { CREATOR_FUND } from "./creatorFund";
 import { CREDITS } from "./credits";
 import { ETHICS } from "./ethics";
 import { PRIVACY } from "./privacy";
@@ -18,6 +19,7 @@ export const LEGAL_DOCS: Record<LegalKey, LegalDocument> = {
   content: CONTENT,
   ethics: ETHICS,
   rewards: REWARDS,
+  creatorFund: CREATOR_FUND,
   credits: CREDITS,
   security: SECURITY,
   privacy: PRIVACY,

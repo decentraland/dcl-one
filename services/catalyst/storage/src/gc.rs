@@ -154,6 +154,14 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
         "the blobs of rejected or deleted photos: garbage for this collector",
     ),
     ("camera_reel.images.image_content_type", "a MIME type"),
+    (
+        "explore_api.auth_identities.identity_id",
+        "an /auth-api identity's random id",
+    ),
+    (
+        "explore_api.auth_identity_tombstones.identity_id",
+        "an /auth-api identity's random id",
+    ),
     ("explore.place.image_url", "a URL"),
     ("explore.place_world_local.image_url", "a URL"),
     (
@@ -238,6 +246,14 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
     (
         "shop.broker_purchases.trade_hashed_signature",
         "an order digest",
+    ),
+    (
+        "shop.broker_purchases.released_tx_hashes",
+        "transaction hashes",
+    ),
+    (
+        "shop.broker_purchases.released_forward_tx_hashes",
+        "transaction hashes",
     ),
     ("shop.escrow_actions.tx_hash", "a transaction hash"),
     ("shop.name_transfers.tx_hash", "a transaction hash"),

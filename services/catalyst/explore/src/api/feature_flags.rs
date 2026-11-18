@@ -7,11 +7,11 @@
 //! so a key upstream adds reaches the client; `feature_flags_local` overrides
 //! individual flags.
 
+use crate::shared::routing::get;
 use anyhow::Context as _;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use axum::{Json, Router};
 use serde_json::{Value, json};
 use sqlx::PgPool;

@@ -6,12 +6,15 @@ nodeLinker: hoisted
 overrides:
   '@babylonjs/serializers': 8.7.0
   ws: ^8.18.0
-  yauzl: ^3.3.1
+  # One protobufjs for every package that asks for one.
+  protobufjs: 7.6.6
   # @dcl/quests-client asks for the "latest" @dcl/sdk; this keeps it on the workspace's version.
   '@dcl/quests-client>@dcl/sdk': 7.29.0
-  # decentraland-ui2 depends on React 17 outright; it and the libraries under it run on the app's React.
-  'decentraland-ui2>react': 18.3.1
-  'decentraland-ui2>react-dom': 18.3.1
+  # @dcl/sdk-commands only starts `typescript/lib/tsc` as a process. The tree must have one TypeScript.
+  '@dcl/sdk-commands>typescript': 7.0.2
+  # extract-zip 2 makes the links of an archive, and a later entry can then write outside the target folder.
+  # It has no fixed release. packages/zip-extract has the same call and makes no link.
+  extract-zip: file:packages/zip-extract
   # The versions npm installed for these dependents, which the packaged app ships; drop each with its dependent's next upgrade.
   '@dcl/single-sign-on-client>@dcl/crypto': 3.4.5
   'dcl-catalyst-client>@dcl/crypto': 3.4.5
@@ -22,20 +25,27 @@ overrides:
   'electron-updater>semver': 7.6.3
   '@types/glob>@types/node': 20.14.9
   '@types/node-fetch>@types/node': 20.14.9
+patchedDependencies:
+  # TypeScript 7 does not export `lib/tsc`. The patch finds the file from the package folder.
+  '@dcl/sdk-commands@7.29.0': patches/@dcl__sdk-commands@7.29.0.patch
 allowBuilds:
   # Writes the .env and package.json that ship in @dcl/inspector's public/bevy-engine.
   '@dcl-regenesislabs/bevy-explorer-web': true
   # Compiles on Linux, where it has no prebuilt binary.
   node-pty: true
   '@dcl/sdk-commands': false
-  '@sentry/cli': false
   electron-winstaller: false
   esbuild: false
   protobufjs: false
   sharp: false
+# Minutes. pnpm installs no release that is newer than one day. scripts/lock-optimizer-tools.js of
+# the app reads this line and holds the optimizer tools lock to the same age.
+minimumReleaseAge: 1440
 # The release publishes these two and installs them into the next package minutes later.
 minimumReleaseAgeExclude:
   - '@dcl/asset-packs'
   - '@dcl/inspector'
   # The desktop build's upload step runs whatever the SDK team last tagged "next".
   - '@dcl/cdn-uploader'
+  # Built and published from this repository's Explorer (bevy-explorer-ci.yml).
+  - '@dcl-regenesislabs/bevy-explorer-web'

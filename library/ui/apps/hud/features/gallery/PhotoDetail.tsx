@@ -2,10 +2,10 @@
 // prev/next navigation, an info sidebar (date · place · owner · people in the shot),
 // and the reel actions (jump in · download · copy link · share to X · delete).
 //
-// Rendered INSIDE MainMenuShell's scaled reference-canvas body, so it's DPI-correct
-// without any portal/--ui-scale gymnastics. While mounted it registers as a cancel layer,
-// so the engine's Cancel action closes the lightbox first (key or gamepad), leaving the
-// next press to close the gallery.
+// The Gallery renders it in MainMenuShell's scaled reference-canvas body, the lobby in a popup
+// and a passport in its panel, so it is DPI-correct without --ui-scale work. While mounted it
+// registers as a cancel layer, so the engine's Cancel action closes the lightbox first (key
+// or gamepad), leaving the next press to close its host.
 
 import { useEffect, useRef } from 'react'
 import { Avatar, Button } from '../../design'

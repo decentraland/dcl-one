@@ -40,9 +40,9 @@ pub mod wire;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::{get, post, put};
 use anyhow::{Context, Result};
 use axum::Router;
-use axum::routing::{get, post, put};
 use sqlx::PgPool;
 
 use crate::jobs::{Jobs, PeriodicCfg};

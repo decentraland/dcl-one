@@ -383,6 +383,8 @@
         "select_world": {
           "title": "Publicar en tu Mundo",
           "description": "Elige el dominio donde se publicará tu mundo.",
+          "domain_type_label": "Tipo de dominio",
+          "world_name_label": "Nombre del mundo",
           "world_name": "MUNDO (NOMBRE)",
           "placeholder": "Seleccione un Nombre",
           "claim_new_name": "Solicitar un nuevo Nombre",
@@ -616,12 +618,16 @@
         "code_editor": {
           "label": "Editor de código preferido",
           "choose_device": "Elegir desde tu dispositivo...",
+          "placeholder": "Agrega o elige un editor por defecto",
+          "list": "Editores de código agregados",
+          "remove": "Quitar {name}",
           "errors": {
             "load": "Error al cargar los editores de código",
             "set": "Error al establecer el editor por defecto",
             "invalid_app_extension": "Aplicación inválida. Por favor selecciona un archivo .app válido",
             "invalid_app_bundle": "Estructura de aplicación inválida",
             "invalid_exe_file": "Aplicación inválida. Por favor selecciona un archivo .exe válido",
+            "invalid_executable": "Aplicación inválida. Por favor selecciona un archivo que puedas ejecutar",
             "unknown": "Error al establecer el editor por defecto"
           }
         },
@@ -729,7 +735,6 @@
     },
     "install_client": {
       "title": "Para entrar, primero necesitarás instalar Decentraland",
-      "download": "Descargar",
       "download_macos": "DESCARGAR PARA MACOS",
       "download_win": "DESCARGAR PARA WINDOWS",
       "cancel": "AHORA NO"
@@ -796,8 +801,6 @@
       "delete_scene": "Borrando escena...",
       "delete_scene_failed": "Error al borrar escena",
       "dependencies_updated": "Las dependencias de la escena fueron actualizadas",
-      "multiplayer_sdk_installed": "SDK de Multiplayer Server instalado.",
-      "multiplayer_sdk_uninstalled": "SDK de Multiplayer Server quitado. Última versión del SDK instalada.",
       "updating_sdk_skills": "Instalando las últimas habilidades de IA...",
       "sdk_skills_updated": "Las habilidades de IA están al día",
       "sdk_skills_update_failed": "No se pudieron instalar las habilidades de IA",
@@ -1470,7 +1473,6 @@
         "title": "Interacción",
         "description": "Entendé cómo interactúan los usuarios con tu place.",
         "minutes": "min",
-        "delta": "{value} min",
         "vs_last_week": "{value} vs. la semana pasada",
         "daily": {
           "title": "Tiempo de Juego Diario Promedio",
@@ -1566,6 +1568,10 @@
       "day_7_retention": {
         "label": "Retención Día 7",
         "tooltip": "El porcentaje de usuarios nuevos que volvieron a tu place dentro de los 7 días posteriores a su primera visita."
+      },
+      "total_playtime": {
+        "label": "Tiempo de Juego Total",
+        "tooltip": "Todo el tiempo que los usuarios pasaron en tu place, sumando cada visita."
       },
       "median_playtime": {
         "label": "Mediana de Tiempo de Juego",
@@ -1811,9 +1817,9 @@
           "d3_retention": "Retención D3",
           "d3_retention_info_label": "Acerca de la retención D3",
           "playtime": "Tiempo de juego total",
-          "playtime_info": "Tiempo promedio que cada jugador pasó en tu lugar en los últimos 30 días.",
+          "playtime_info": "Tiempo total que los jugadores pasaron en tu lugar en los últimos 30 días.",
           "playtime_info_label": "Acerca del tiempo de juego total",
-          "minutes": "{value} min",
+          "minutes": "{value} {minutes, plural, one {minuto} other {minutos}}",
           "no_data": "Sin datos"
         },
         "empty_body": "Cuando publiques una escena, aparecerá aquí con su rendimiento en el ciclo actual.",

@@ -3,6 +3,8 @@ import { InMemoryTransport, RPC } from '@dcl/mini-rpc';
 
 import type { Project } from '/shared/types/projects';
 
+import { pkg } from '#preload';
+
 import { store } from '/@/modules/store';
 import { actions as workspaceActions } from '/@/modules/store/workspace';
 
@@ -113,6 +115,48 @@ describe('SceneRpcServer notify_scene_metadata from an editor that never took th
 
     it('should take the title', () => {
       expect(store.getState().editor.project?.title).toBe('Renamed');
+    });
+  });
+});
+
+describe('SceneRpcServer get_sdk_version', () => {
+  let inspector: RPC<string, any, any>;
+
+  beforeEach(() => {
+    const host = new InMemoryTransport();
+    const iframe = new InMemoryTransport();
+    host.connect(iframe);
+    iframe.connect(host);
+    new SceneRpcServer(host, PROJECT);
+    inspector = new RPC('SceneRpcOutbound', iframe);
+  });
+
+  describe('when the scene has the SDK installed', () => {
+    beforeEach(() => {
+      vi.mocked(pkg.getPackageVersion).mockResolvedValue('7.31.0');
+    });
+
+    it('should answer with the installed version', async () => {
+      expect(await inspector.request('get_sdk_version', {})).toEqual({ version: '7.31.0' });
+    });
+
+    it('should read the @dcl/sdk of the open scene', async () => {
+      await inspector.request('get_sdk_version', {});
+      expect(pkg.getPackageVersion).toHaveBeenCalledWith(PROJECT.path, '@dcl/sdk');
+    });
+  });
+
+  describe('when the SDK version cannot be read', () => {
+    it('should answer with no version for a scene without the SDK', async () => {
+      vi.mocked(pkg.getPackageVersion).mockResolvedValue(null);
+      expect(await inspector.request('get_sdk_version', {})).toEqual({ version: null });
+    });
+
+    it('should answer with no version when reading it fails', async () => {
+      const logError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.mocked(pkg.getPackageVersion).mockRejectedValue(new Error('unreadable'));
+      expect(await inspector.request('get_sdk_version', {})).toEqual({ version: null });
+      logError.mockRestore();
     });
   });
 });
