@@ -678,7 +678,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         if (record === 'expired') {
           op.expiredSince ??= svc.now()
           if (svc.now() - op.expiredSince >= EXPIRY_CONFIRM_MS) {
-            settled(op, 'failed', {}, 'This purchase never went through, and its Credits expired unused: nothing was bought.', 'one of its transactions never went through, and its Credits expired unused.')
+            // Expiry with no consumption indexed past it: it can no longer land, not proof it was never sent.
+            settled(op, 'failed', {}, 'This purchase expired before its Credits were spent on chain: nothing was bought.', 'one of its transactions expired before its Credits were spent on chain.')
             return true
           }
         } else op.expiredSince = undefined
@@ -1158,12 +1159,16 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       store.clear()
       store.restore(lines)
     }
-    // The relay gets the signed purchase only once its hand-off is kept; refused here, it was never sent.
+    // The relay gets the signed purchase only once its hand-off is kept; refused here, it was never sent,
+    // and the answer carries the relay's own evidence of that (`not_sent`).
     const rail = svc.rail()
     const send = rail.fetchImpl ?? ((...a: Parameters<typeof fetch>) => fetch(...a))
     const relay = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
       if ((init?.method ?? 'GET').toUpperCase() === 'POST' && !durable(op, 'handedOff')) {
-        return new Response(JSON.stringify({ ok: false, message: "This browser couldn't keep a record of the purchase, so it wasn't sent." }), { status: 409, headers: { 'content-type': 'application/json' } })
+        return new Response(JSON.stringify({ ok: false, not_sent: true, message: "This browser couldn't keep a record of the purchase, so it wasn't sent." }), {
+          status: 409,
+          headers: { 'content-type': 'application/json' }
+        })
       }
       return send(input, init)
     }) as typeof fetch

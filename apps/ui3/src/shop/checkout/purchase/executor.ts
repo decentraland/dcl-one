@@ -327,7 +327,9 @@ export async function watchGroup(deps: CheckoutDeps, progress: GroupProgress): P
     }
     const expired = mine.length > 0 && mine.every((p) => p.status === "EXPIRED" && !p.submittedTxHash);
     if (expired && progress.status === "submitted") {
-      const failure: GroupFailure = { kind: "rejected", message: "This part of your purchase never went out. Its Credits were returned." };
+      // Expired with no consumption indexed past its expiry: the signed purchase can no longer land.
+      // That is not proof it was never sent, only that it was never spent.
+      const failure: GroupFailure = { kind: "rejected", message: "This part of your purchase expired before it was spent on chain. Nothing was bought, and its Credits were returned." };
       dispatchSafe(store, progress.keyId, { type: "failed", failure });
       return { status: "failed", failure, released: [] };
     }

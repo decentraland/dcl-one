@@ -1,14 +1,13 @@
-// What the marker layers draw: live events, points of interest and the other players. Each is
-// read the first time its layer is shown; live events are then read again every five minutes.
+// What the marker layers draw, from the one read both maps share (explorer-core's mapLayerData).
+// Live events and points of interest are held from the first time the map shows them until it
+// goes; the players only while it shows them.
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { fetchLiveEvents, fetchPeers, fetchPlacesAt, fetchPoiParcels, type Peer } from '@explorer-core/features/map/mapApi'
+import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
 import { userMarkerPosition, type Vec2 } from '@explorer-core/features/map/mapCoords'
+import { mapLayerData, type MarkerLayer } from '@explorer-core/features/map/mapLayerData'
 import type { MapLayer } from '@explorer-core/features/map/mapLayersStore'
-import { liveEventMarkers, poiMarkers, type EventMarker, type PlaceMarker } from '@explorer-core/features/map/mapMarkers'
-import { nearbyPlayers, travelCount } from '@explorer-core/features/map/mapPeople'
-
-const LIVE_EVENTS_POLL_MS = 5 * 60 * 1000
+import type { EventMarker, PlaceMarker } from '@explorer-core/features/map/mapMarkers'
+import { nearbyPlayers } from '@explorer-core/features/map/mapPeople'
 
 export interface MapLayerData {
   liveEvents: EventMarker[]
@@ -17,82 +16,49 @@ export interface MapLayerData {
   people: Vec2[]
 }
 
+/** Holds `layer` while `on`. */
+function useLayer(layer: MarkerLayer, on: boolean): void {
+  useEffect(() => (on ? mapLayerData.want(layer) : undefined), [layer, on])
+}
+
+/** Holds `layer` from the first time `on` until the map goes. */
+function useLayerFromFirstShow(layer: MarkerLayer, on: boolean): void {
+  const release = useRef<(() => void) | null>(null)
+  useEffect(() => {
+    if (on && release.current == null) release.current = mapLayerData.want(layer)
+  }, [layer, on])
+  useEffect(
+    () => () => {
+      release.current?.()
+      release.current = null
+    },
+    []
+  )
+}
+
 /**
- * @param shown the map is open
+ * @param shown the map is shown
  * @param self  the local player's address, left out of the people layer
  */
 export function useMapLayerData(shown: boolean, layers: ReadonlySet<MapLayer>, self: string | undefined): MapLayerData {
-  const [liveEvents, setLiveEvents] = useState<EventMarker[]>([])
-  const [pois, setPois] = useState<PlaceMarker[]>([])
-  const [peers, setPeers] = useState<Peer[]>([])
+  const data = useSyncExternalStore(mapLayerData.subscribe, mapLayerData.getSnapshot)
   const nearby = useSyncExternalStore(nearbyPlayers.subscribe, nearbyPlayers.getSnapshot)
-  const travels = useSyncExternalStore(travelCount.subscribe, travelCount.getSnapshot)
-  const [liveStarted, setLiveStarted] = useState(false)
-  const poisStarted = useRef(false)
-
-  const liveOn = shown && layers.has('liveEvents')
-  useEffect(() => {
-    if (liveOn) setLiveStarted(true)
-  }, [liveOn])
-  // Once started the poll outlives the map being closed, so the markers are current the next
-  // time it opens; it stops with the page.
-  useEffect(() => {
-    if (!liveStarted) return
-    let gone = false
-    const read = (): void => {
-      fetchLiveEvents()
-        .then((events) => !gone && setLiveEvents(liveEventMarkers(events)))
-        .catch(() => !gone && setLiveEvents([]))
-    }
-    read()
-    const timer = setInterval(read, LIVE_EVENTS_POLL_MS)
-    return () => {
-      gone = true
-      clearInterval(timer)
-    }
-  }, [liveStarted])
-
-  const poisOn = shown && layers.has('pois')
-  useEffect(() => {
-    if (!poisOn || poisStarted.current) return
-    poisStarted.current = true
-    fetchPoiParcels()
-      .catch(() => [])
-      .then((parcels) => fetchPlacesAt(parcels))
-      .then((places) => setPois(poiMarkers(places)))
-      .catch(() => setPois([]))
-  }, [poisOn])
-
-  // The players the engine holds are followed as they move; everyone else connected is read
-  // once when the layer comes on and again after each teleport.
   const peopleOn = shown && layers.has('people')
-  useEffect(() => {
-    if (!peopleOn) {
-      setPeers([])
-      return
-    }
-    nearbyPlayers.watch(true)
-    return () => nearbyPlayers.watch(false)
-  }, [peopleOn])
-  useEffect(() => {
-    if (!peopleOn) return
-    const abort = new AbortController()
-    fetchPeers(abort.signal)
-      .then(setPeers)
-      .catch(() => undefined)
-    return () => abort.abort()
-  }, [peopleOn, travels])
+  useLayerFromFirstShow('liveEvents', shown && layers.has('liveEvents'))
+  useLayerFromFirstShow('pois', shown && layers.has('pois'))
+  useLayer('people', peopleOn)
 
   const people = useMemo(() => {
+    if (!peopleOn) return []
     const me = self?.toLowerCase()
     const held = new Set(nearby.map((p) => p.address.toLowerCase()))
     const out = nearby.map((p) => userMarkerPosition(p.x, p.z))
-    for (const peer of peers) {
+    for (const peer of data.peers) {
       const address = peer.address.toLowerCase()
       if (address !== me && !held.has(address)) out.push(userMarkerPosition(peer.x, peer.z))
     }
     return out
-  }, [nearby, peers, self])
+  }, [peopleOn, nearby, data.peers, self])
 
-  return { liveEvents, pois, people }
+  return { liveEvents: data.liveEvents, pois: data.pois, people }
 }
