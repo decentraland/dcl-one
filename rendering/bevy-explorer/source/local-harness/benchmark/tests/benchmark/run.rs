@@ -1,7 +1,7 @@
 //! A whole run in this process: the runner serves a web app, a test plays the page, and the files
 //! and the result are what `measure` would keep.
 
-mod support;
+use crate::support;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

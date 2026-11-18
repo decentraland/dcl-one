@@ -773,11 +773,6 @@ fn utf16_len(s: &str) -> u32 {
     s.encode_utf16().count() as u32
 }
 
-#[allow(dead_code)]
-fn utf16_index_from_byte(s: &str, byte_idx: usize) -> u32 {
-    s[..byte_idx].encode_utf16().count() as u32
-}
-
 #[cfg(test)]
 mod tests {
     use crate::core::prelude::modifiers_from_mouse_buttons;

@@ -749,6 +749,13 @@ jobs:
       CARGO_INCREMENTAL: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: No allow(dead_code)
+        # Dead code is deleted, used or gated with #[cfg]. Only the ShaderType derive's
+        # never-called check fns take an #[expect], which fails once they are gone.
+        run: |-
+          if grep -rnE 'allow\(dead_code\)' --include='*.rs' src crates local-harness; then
+            exit 1
+          fi
       - name: Reserve disk space on the hosted Linux runner
         # Check artifacts and the restored cache take a fraction of the runner's free space;
         # removing the SDKs takes a minute.

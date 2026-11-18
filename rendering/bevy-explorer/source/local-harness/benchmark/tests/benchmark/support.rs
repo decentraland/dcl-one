@@ -1,8 +1,6 @@
 //! A server in the test's own process, and a client that writes HTTP by hand so a test controls
 //! every byte of a request: the Host header, a missing length, a body cut short.
 
-#![allow(dead_code)]
-
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

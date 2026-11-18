@@ -1,7 +1,7 @@
 //! A web app fetched by address: downloaded, unpacked, and the download not left behind. The
 //! server of the crate serves the zip, as a bucket would.
 
-mod support;
+use crate::support;
 
 use benchmark::app_source::provision;
 use benchmark::failure::Failure;

@@ -158,13 +158,6 @@ extern "C" {
     #[wasm_bindgen(js_name = "__setEngineTextFocus")]
     fn set_engine_text_focus(focused: bool);
 
-    /// Shows or hides the page's `#shader-compiling` indicator (the HUD's `renderBusy` probe)
-    /// while gpu_cache.js compiles pipelines asynchronously on the render worker; boot.js
-    /// defines it, gpu_cache.js calls the relay directly.
-    #[allow(dead_code)]
-    #[wasm_bindgen(js_name = "__setShaderCompiling")]
-    fn set_shader_compiling(on: bool);
-
     /// The render worker's gpu cache is warm (`engine_render_setup` done): boot.js completes
     /// the loading bar's gpu step.
     #[wasm_bindgen(js_name = "__gpuCacheReady")]

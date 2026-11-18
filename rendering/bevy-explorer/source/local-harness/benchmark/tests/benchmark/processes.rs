@@ -2,7 +2,7 @@
 //! opened. A node process stands in for Chrome (the commands are the same: it has the profile as a
 //! `--user-data-dir` argument); skipped, with the reason printed, where node is not installed.
 
-mod support;
+use crate::support;
 
 use std::path::Path;
 use std::process::{Child, Command, Stdio};

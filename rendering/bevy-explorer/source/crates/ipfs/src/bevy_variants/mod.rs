@@ -86,7 +86,7 @@ pub enum Decoded {
     BcTexture,
     /// A `glb-br` model: the original `.glb`, fetched as its Brotli copy that the browser
     /// decodes, handed to the glTF loader of the original path. Web only.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    #[cfg(target_arch = "wasm32")]
     BrotliGlb,
     /// A `glb` model: a GLB with its embedded images as BC KTX2, handed to the glTF loader of
     /// the original path as it is; the loader decodes each image through the host KTX2
@@ -170,6 +170,7 @@ pub fn taken_formats() -> String {
     for row in SUPPORTED_FORMATS {
         let how = match row.decoded {
             Decoded::BcTexture => "BC1/BC5/BC7, unwrapped to DDS by the image loaders",
+            #[cfg(target_arch = "wasm32")]
             Decoded::BrotliGlb => "Brotli, decoded by the browser",
             Decoded::BcGlb => "embedded BC1/BC5/BC7, unwrapped to DDS by the glTF loader",
         };
@@ -818,6 +819,7 @@ impl IpfsIo {
         // own path is fetched and the server sends the copy to a client that accepts `br`
         let url = match decoded {
             Decoded::BcTexture | Decoded::BcGlb => format!("{base}/{}", variant.path),
+            #[cfg(target_arch = "wasm32")]
             Decoded::BrotliGlb => format!("{base}/{}.br", variant.path),
         };
         let key = CacheKey::Url(content_hash::url_cache_name(&url));
@@ -886,6 +888,7 @@ impl IpfsIo {
             // byte: checked against the original's own content hash, a truncated or corrupt
             // copy falls back here, and one that passes is the original, so a glTF loader
             // failure on it is the original's own and needs no reload
+            #[cfg(target_arch = "wasm32")]
             Decoded::BrotliGlb => {
                 (!content_hash::matches_content_hash(&original, &fetched)).then(|| {
                     format!(

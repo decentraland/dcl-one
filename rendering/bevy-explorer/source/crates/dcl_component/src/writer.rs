@@ -44,7 +44,6 @@ impl<'a> DclWriter<'a> {
         value.to_writer(self)
     }
 
-    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.buffer.clear();
     }

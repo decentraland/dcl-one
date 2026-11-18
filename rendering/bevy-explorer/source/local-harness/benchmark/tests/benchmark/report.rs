@@ -4,7 +4,7 @@
 //! display names), the header and the note and headline for missing baseline runs are this
 //! report's own.
 
-mod support;
+use crate::support;
 
 use std::path::PathBuf;
 use std::process::Command;

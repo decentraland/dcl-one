@@ -2,7 +2,7 @@
 //! (`deploy/web/engine/perf_stream.js`, unchanged) and the reset page the server serves. Skipped,
 //! with the reason printed, where node is not installed.
 
-mod support;
+use crate::support;
 
 use std::path::{Path, PathBuf};
 use std::process::Output;

@@ -104,8 +104,10 @@ impl Plugin for StarsPlugin {
 pub use settings::StarsSettings;
 
 mod settings {
-    // the ShaderType derive's layout check function is never called
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
 
     use super::*;
 

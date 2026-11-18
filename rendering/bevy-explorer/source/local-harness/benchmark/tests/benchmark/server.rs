@@ -1,6 +1,6 @@
 //! The stream protocol and the server's security rules, against the server in this process.
 
-mod support;
+use crate::support;
 
 use benchmark::limits::Limits;
 use support::{assert_isolation_headers, scratch, Request, TestServer};
