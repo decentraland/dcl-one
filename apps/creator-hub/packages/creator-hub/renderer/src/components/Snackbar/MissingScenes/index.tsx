@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert } from 'decentraland-ui2';
 
 import { t } from '/@/modules/store/translation/utils';
 import { useWorkspace } from '/@/hooks/useWorkspace';
 
-import { Button } from '../../Button';
+import { SnackbarAlert } from '../Alert';
+import Button from '@ui/atoms/Button';
 import { MissingProjects } from '../../Modals/MissingProjects';
 
 export function MissingScenes({ onClose }: { onClose: () => void }) {
@@ -29,15 +29,19 @@ export function MissingScenes({ onClose }: { onClose: () => void }) {
   const renderActions = () => (
     <>
       <Button
-        color="inherit"
-        size="small"
+        variant="text"
+        tone="neutral"
+        size="sm"
+        className="hub-button hub-button--inherit"
         onClick={handleModal(true)}
       >
         {t('snackbar.missing_projects.actions.view')}
       </Button>
       <Button
-        color="inherit"
-        size="small"
+        variant="text"
+        tone="neutral"
+        size="sm"
+        className="hub-button hub-button--inherit"
         onClick={handleDiscardAll}
       >
         {t('snackbar.missing_projects.actions.discard_all')}
@@ -47,12 +51,12 @@ export function MissingScenes({ onClose }: { onClose: () => void }) {
 
   return (
     <>
-      <Alert
+      <SnackbarAlert
         severity="error"
         action={renderActions()}
       >
         {t('snackbar.missing_projects.title', { scenes: missing.length })}
-      </Alert>
+      </SnackbarAlert>
       <MissingProjects
         open={open}
         onClose={handleModal(false)}

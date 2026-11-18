@@ -1,0 +1,41 @@
+.viewport {
+  position: fixed;
+  z-index: var(--z-toast, var(--z-overlay));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: calc(100vw - 48px);
+  font-family: var(--font-family);
+  pointer-events: none;
+}
+
+.viewport[data-placement^="bottom"] { bottom: 24px; flex-direction: column-reverse; }
+.viewport[data-placement^="top"] { top: 24px; }
+.viewport[data-placement$="left"] { left: 24px; align-items: flex-start; }
+.viewport[data-placement$="right"] { right: 24px; align-items: flex-end; }
+
+.viewport[data-placement$="center"] {
+  left: 50%;
+  align-items: center;
+  transform: translateX(-50%);
+}
+
+.toast {
+  max-width: 100%;
+  pointer-events: auto;
+  animation: toast-in 0.2s ease;
+}
+
+.alert {
+  min-width: 288px;
+  box-shadow: var(--toast-shadow, var(--shadow-panel));
+}
+
+@keyframes toast-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; }
+}

@@ -5,6 +5,10 @@ understand the change in one sitting.
 
 ## Scope
 
+- Before implementation planning, apply the repository's
+  [design feasibility gate](../../../../docs/design-feasibility.md) to runtime
+  features and resource policies. Validate the requested outcome on each supported
+  platform before choosing implementation structure.
 - One problem per PR, fixed at the sentence that names it. If the fix wants new state or
   plumbing the problem didn't mention, that is a second PR and a conversation first. Give
   independently useful diagnostics their own PR and verification.
@@ -126,8 +130,6 @@ this engine's design using its requirements and tests.
 ## Before pushing
 
 - Merge main first. CI tests the merge, not the branch.
-- `python3 ../../../tooling/patched-sources.py materialise` after the merge and before the cargo
-  commands: Cargo reads the [rebuilt trees](bevy-fork.md#changing-bevy).
 - `cargo fmt --all`, `cargo clippy --locked -- -D warnings`, `cargo test --all`. Clippy warnings
   are errors in CI.
 - The wasm build, only if the change has platform-sensitive code: `#[cfg]` branches,
@@ -152,7 +154,9 @@ this engine's design using its requirements and tests.
   `{ workspace = true }` at the call site, even for a crate used in one place. Convert existing
   inline uses of the same crate in the same change.
 - A change to bevy or to a forked crate is one more patch file under
-  `rendering/bevy-explorer/patches/<name>/series`: see [the bevy fork](bevy-fork.md#changing-bevy).
+  `rendering/bevy-explorer/patches/<name>/series` and a new `rev` in `source.toml` and both Cargo
+  files. The tool writes all of them. Push the `rev` to your fork with `publish --remote`, and CI
+  publishes it here after the merge: see [the bevy fork](bevy-fork.md#changing-bevy).
 
 ## Review
 
@@ -183,6 +187,7 @@ fails the check. For a targeted run, `--filter TEXT` selects matching tests and
 | The failure memory keeps answering after a poisoned lock | `a_poisoned_failure_memory_keeps_answering` |
 | Content reads are keyed by hash and url reads by url, so only content can be remembered for the session | `content_reads_are_keyed_by_hash_and_url_reads_by_url` |
 | A session failure answers only content reads; any other read of the url keeps the retry window, and a success clears the entry | `a_session_failure_answers_only_content_reads`, `a_successful_download_clears_a_failure_of_its_url` |
+| A content download that does not match its hash fails uncached and is asked for again after the retry window; a match is read and cached; a name the check cannot verify is read uncached | `a_download_that_does_not_match_its_hash_fails_and_is_not_cached`, `a_hash_mismatch_is_asked_for_again_after_the_retry_window`, `a_download_that_matches_its_hash_is_read_and_cached`, `a_name_the_hash_check_cannot_verify_is_read_and_not_cached` |
 
 Give each test its own gate and counters so it can run alongside other tests. Trace destructor
 paths for nested locks or file I/O under a lock. When changing diagnostics, check the units
@@ -192,7 +197,6 @@ Before adding a shared budget, identify the workload that needs it and measure t
 on unrelated callers. Give changes with independent consumers or failure modes their own
 PR and test evidence.
 
-For browser forwarding changes, run
+For service worker routing changes, run
 `pnpm exec vitest run src/test/serviceWorkerCache.test.ts src/test/previewRealm.test.ts` from
-`rendering/bevy-explorer/source/react-web`. Check abort propagation, streamed requests,
-referrer policy and disposal of unread response bodies.
+`rendering/bevy-explorer/source/react-web`.

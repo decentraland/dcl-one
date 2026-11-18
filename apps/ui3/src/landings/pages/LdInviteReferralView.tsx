@@ -6,21 +6,20 @@ type LdInviteStep = "view" | "download" | "rewards" | "faqs";
 
 type LdInviteReferralViewProps = {
   step?: LdInviteStep;
-  handle?: string;
+  /** The inviter's name; none shows the title alone, as decentraland.org does. */
+  handle?: string | null;
   referrerAddress?: string | null;
   referrerHasClaimedName?: boolean;
   invitedUsersAccepted?: number;
-  siteHost?: string;
   onStep?: (step: LdInviteStep) => void;
 };
 
 export default function LdInviteReferralView({
   step = "view",
-  handle = "A friend",
+  handle = null,
   referrerAddress = null,
   referrerHasClaimedName = false,
   invitedUsersAccepted = 0,
-  siteHost = undefined,
   onStep = undefined,
 }: LdInviteReferralViewProps) {
   if (step === "rewards") {
@@ -30,7 +29,7 @@ export default function LdInviteReferralView({
         <StProfileReferralRewardsTab
           profile={{
             address: referrerAddress ?? "0x0000000000000000000000000000000000000000",
-            name: handle,
+            name: handle ?? "A friend",
             hasClaimedName: referrerHasClaimedName,
             nameColor: "#FF8362",
           }}
@@ -48,7 +47,7 @@ export default function LdInviteReferralView({
 
   return (
     <main className="invite-referral-route">
-      <StInvite referrer={{ name: handle, ethAddress: referrerAddress ?? "" }} loading={false} siteHost={siteHost} />
+      <StInvite referrer={{ name: handle ?? "", ethAddress: referrerAddress ?? "" }} loading={false} />
     </main>
   );
 }

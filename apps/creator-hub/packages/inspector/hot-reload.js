@@ -1,5 +1,3 @@
-/* eslint-env browser */
-
 function getLink(path) {
   for (const link of document.getElementsByTagName('link')) {
     const url = new URL(link.href);

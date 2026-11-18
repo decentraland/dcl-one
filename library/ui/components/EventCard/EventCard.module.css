@@ -1,0 +1,565 @@
+/* Hand-written. The small card follows the design system's event-card `size=small` (default and hover,
+   live and not), through the foundations tokens. The day column card follows decentraland.org/events'
+   All Events column; no FDS capture of an event card exists. */
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+@layer dcl.components {
+  .card {
+    position: relative;
+    display: flex;
+    box-sizing: border-box;
+    overflow: hidden;
+    border-radius: var(--dcl-radius-lg);
+    background: var(--dcl-transparencies-black-40);
+    color: var(--dcl-neutrals-snow);
+    /* The reference card lifts and glows over 200ms. */
+    transition:
+      transform 200ms,
+      box-shadow 200ms;
+  }
+
+  .card:has(.link:focus-visible) {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+  }
+
+  /* The title link covers the card, so the whole card opens the event. */
+  .link {
+    color: inherit;
+    text-decoration: none;
+    outline: none;
+  }
+
+  .link::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+  }
+
+  .media {
+    position: relative;
+    flex: none;
+    overflow: hidden;
+    background: var(--dcl-neutrals-onix);
+  }
+
+  .cover {
+    position: absolute;
+    inset: 0;
+  }
+
+  .body {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--dcl-space-4);
+    min-width: 0;
+  }
+
+  .title {
+    composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+    flex: none;
+    margin: 0;
+    overflow: hidden;
+  }
+
+  /* size=small (an Upcoming row, the phone's day list): the text on the left, centred, beside a
+     135px square cover with its own rounded corners. Tall enough for a two-line title in every state,
+     so revealing the actions on hover never resizes the card. */
+  .small {
+    min-height: 135px;
+  }
+
+  .small .body {
+    justify-content: center;
+    gap: var(--dcl-space-0);
+    /* the design's 18px leading inset, no spacing token */
+    padding: var(--dcl-space-4) var(--dcl-space-16) var(--dcl-space-4) 18px;
+  }
+
+  /* The cover stays a 135px square: a taller card (every row shown on a touch screen) centres it. */
+  .small .media {
+    align-self: center;
+    width: 135px;
+    height: 135px;
+    border-radius: var(--dcl-radius-lg);
+    background: var(--dcl-neutrals-gray);
+  }
+
+  .smallTitle {
+    composes: text68656164696e672f34 from '../../foundations/typography/text-styles.module.css';
+    display: -webkit-box;
+    flex: none;
+    margin: 0;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  /* "by UserName", muted, with no face. Its padding is the 4px under the title and half of the 16px
+     over the time, so folding it away leaves the design's 8px between title and time. */
+  .smallBy {
+    composes: text626f64792f736d from '../../foundations/typography/text-styles.module.css';
+    margin: 0;
+    padding: var(--dcl-space-4) 0 var(--dcl-space-8);
+    overflow: hidden;
+    color: var(--dcl-transparencies-white-60);
+    line-height: 1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* The rows under the title leave the pointer to the card link (a row that moves is painted over
+     it); only the actions take it back. */
+  .small .reveal {
+    pointer-events: none;
+  }
+
+  .timeRow {
+    padding-top: var(--dcl-space-8);
+  }
+
+  .smallTime {
+    composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+    display: inline-flex;
+    box-sizing: border-box;
+    align-items: center;
+    gap: var(--dcl-space-4);
+    max-width: 100%;
+    margin: 0;
+    /* the design's 2px block padding (space/2), no foundations token */
+    padding: 2px var(--dcl-space-4);
+    overflow: hidden;
+    border-radius: var(--dcl-radius-xs);
+    background: var(--dcl-transparencies-white-10);
+    line-height: 1.25;
+    white-space: nowrap;
+  }
+
+  .smallTime svg {
+    flex: none;
+  }
+
+  .smallTime time {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .actionsRow {
+    padding-top: var(--dcl-space-8);
+  }
+
+  /* A live card's JUMP IN sits 20px under the title (12px gap and 8px row padding in the design). */
+  .small.isLive .actionsRow {
+    padding-top: calc(var(--dcl-space-12) + var(--dcl-space-8));
+  }
+
+  .small .actions {
+    position: relative;
+    z-index: 1;
+    flex-wrap: wrap;
+    gap: var(--dcl-space-8);
+    width: fit-content;
+    max-width: 100%;
+  }
+
+  .small .actions > * {
+    pointer-events: auto;
+  }
+
+  /* Icon-only square actions (the design's button-icon): 44px to tap, 32px on a device that hovers. */
+  .small .action {
+    border-radius: var(--dcl-radius-sm);
+    background: var(--dcl-transparencies-white-10);
+    color: var(--dcl-neutrals-snow);
+  }
+
+  .small .action:hover:not(:disabled) {
+    background: var(--dcl-transparencies-white-20);
+  }
+
+  .small .action[aria-pressed='true'] {
+    color: var(--dcl-brand-ruby);
+  }
+
+  /* Live: the design's Event Live surface (#680d4a) under two Event Live glows (#e00061) rising from
+     below the card, and a 5px live bar on the leading edge. Neither colour has a foundations token
+     (the HUD keeps the surface as its own --events-card-live, outside the shared foundations). */
+  .small.isLive {
+    background:
+      radial-gradient(33% 54% at 50% 150%, rgb(224 0 97 / 0.35), rgb(224 0 97 / 0.105) 60%, transparent),
+      radial-gradient(53% 78% at 50% 150%, rgb(224 0 97 / 0.5), rgb(224 0 97 / 0.125) 60%, transparent),
+      #680d4a;
+  }
+
+  .small.isLive::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 1;
+    width: 5px;
+    background: var(--dcl-system-red);
+    pointer-events: none;
+  }
+
+  /* A day column: a 16:9 cover above the text. A live event is marked on its leading edge. */
+  .day {
+    flex-direction: column;
+  }
+
+  .day .media {
+    aspect-ratio: 16 / 9;
+  }
+
+  .day .body {
+    padding: var(--dcl-space-8) var(--dcl-space-12);
+  }
+
+  .day .title {
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .day.isLive {
+    box-shadow: inset 4px 0 0 var(--dcl-system-red);
+  }
+
+  /* Badges over the cover */
+
+  .badges {
+    position: absolute;
+    top: var(--dcl-space-16);
+    left: var(--dcl-space-16);
+    display: flex;
+    gap: var(--dcl-space-8);
+  }
+
+  .badge {
+    composes: text6c6162656c2f746167 from '../../foundations/typography/text-styles.module.css';
+    display: inline-flex;
+    align-items: center;
+    gap: var(--dcl-space-4);
+    height: var(--dcl-space-24);
+    padding: 0 var(--dcl-space-8);
+    border-radius: var(--dcl-radius-sm);
+    color: var(--dcl-neutrals-white);
+  }
+
+  .live {
+    composes: badge;
+    background: var(--dcl-system-red);
+    text-transform: uppercase;
+  }
+
+  .liveIcon {
+    flex: none;
+    width: 16px;
+    height: 16px;
+  }
+
+  .players {
+    composes: badge;
+    background: var(--dcl-neutrals-shadow);
+  }
+
+  .dot {
+    width: var(--dcl-space-8);
+    height: var(--dcl-space-8);
+    border-radius: var(--dcl-radius-full);
+    background: var(--dcl-system-green);
+  }
+
+  /* A small card's badges: LIVE as a 26px glyph square (its word kept for assistive technology) and
+     the count, 10px from the cover's corner. */
+  .small .badges {
+    /* the design's 10px inset, no spacing token */
+    top: 10px;
+    left: 10px;
+  }
+
+  .small .live {
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+  }
+
+  .small .liveIcon {
+    width: 18px;
+    height: 18px;
+  }
+
+  .small .liveLabel,
+  .visuallyHidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* Host */
+
+  .creator {
+    display: flex;
+    align-items: center;
+    gap: var(--dcl-space-8);
+    min-width: 0;
+  }
+
+  .avatar {
+    composes: text626f64792f736d2d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: var(--dcl-space-24);
+    height: var(--dcl-space-24);
+    border-radius: var(--dcl-radius-full);
+    background: var(--dcl-brand-lavender);
+    color: var(--dcl-neutrals-white);
+    object-fit: cover;
+  }
+
+  .by {
+    composes: text626f64792f7873 from '../../foundations/typography/text-styles.module.css';
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .name {
+    position: relative;
+    z-index: 1;
+    color: var(--dcl-brand-ruby);
+    text-decoration: none;
+  }
+
+  a.name:hover {
+    text-decoration: underline;
+  }
+
+  a.name:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+  }
+
+  /* Start time and actions. At rest (a touch or narrow screen) the actions sit under the time. */
+
+  .footer {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--dcl-space-8);
+    margin-top: auto;
+    /* Empty footer space opens the card: only the actions themselves take the pointer. */
+    pointer-events: none;
+  }
+
+  .time {
+    composes: text626f64792f736d2d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+    display: inline-flex;
+    align-items: center;
+    gap: var(--dcl-space-8);
+    max-width: 100%;
+    margin: 0;
+    padding: var(--dcl-space-4) var(--dcl-space-8);
+    overflow: hidden;
+    border-radius: var(--dcl-radius-sm);
+    background: var(--dcl-transparencies-black-40);
+    white-space: nowrap;
+  }
+
+  .time time {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: var(--dcl-space-4);
+  }
+
+  .action {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    flex: none;
+    place-items: center;
+    box-sizing: border-box;
+    width: 44px;
+    height: 44px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--dcl-radius-sm);
+    background: var(--dcl-neutrals-snow);
+    color: var(--dcl-neutrals-charcoal);
+    text-decoration: none;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+
+  .action:hover:not(:disabled) {
+    background: var(--dcl-neutrals-pearl);
+  }
+
+  .action:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+  }
+
+  .action:disabled {
+    cursor: progress;
+    opacity: 0.6;
+  }
+
+  .action[aria-pressed='true'] {
+    color: var(--dcl-brand-ruby);
+  }
+
+  .labelled {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--dcl-space-4);
+    width: auto;
+    padding-inline: var(--dcl-space-8);
+  }
+
+  .actionLabel {
+    composes: text627574746f6e2f736d from '../../foundations/typography/text-styles.module.css';
+    white-space: nowrap;
+  }
+
+  /* A device that hovers, from tablet width: the actions wait, hidden, over the time. Hover or focus
+     inside the card lifts it (4px, with the reference's 30% white glow), fades the time out and fades
+     and slides the actions up 8px into its place, all over 200ms. Hidden by opacity only, the actions
+     stay in the accessibility tree and in reverse Tab order. */
+  @media (hover: hover) and (min-width: 768px) {
+    .card:hover,
+    .card:focus-within {
+      transform: translateY(-4px);
+      box-shadow: 0 2px 12px 12px color-mix(in srgb, var(--dcl-neutrals-white) 30%, transparent);
+    }
+
+    .day.hasActions .footer {
+      position: relative;
+      flex-direction: row;
+      align-items: center;
+      min-height: 32px;
+    }
+
+    .day.hasActions .time {
+      transition: opacity 200ms;
+    }
+
+    .day.hasActions:hover .time,
+    .day.hasActions:focus-within .time {
+      opacity: 0;
+    }
+
+    .day.hasActions .actions {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      transform: translateY(8px);
+      transition:
+        opacity 200ms,
+        transform 200ms;
+    }
+
+    .day.hasActions .action {
+      width: 32px;
+      height: 32px;
+      pointer-events: none;
+    }
+
+    .day.hasActions .labelled {
+      width: auto;
+    }
+
+    .day.hasActions:hover .actions,
+    .day.hasActions:focus-within .actions {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .day.hasActions:hover .action,
+    .day.hasActions:focus-within .action {
+      pointer-events: auto;
+    }
+
+    /* A small card folds the host away (and a live one its time) and opens the 32px actions row under
+       the time, each row's height and opacity changing together over 200ms; the actions also rise 8px.
+       A folded row clips its content. */
+    .small .action {
+      width: 32px;
+      height: 32px;
+    }
+
+    .reveal {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: 1fr;
+      transition:
+        grid-template-rows 200ms,
+        opacity 200ms,
+        transform 200ms;
+    }
+
+    .revealInner {
+      min-height: 0;
+    }
+
+    .showOnHover {
+      grid-template-rows: 0fr;
+      opacity: 0;
+      transform: translateY(8px);
+    }
+
+    .showOnHover .revealInner,
+    .hasActions:hover .hideOnHover .revealInner,
+    .hasActions:focus-within .hideOnHover .revealInner {
+      overflow: hidden;
+    }
+
+    .hasActions:hover .showOnHover,
+    .hasActions:focus-within .showOnHover {
+      grid-template-rows: 1fr;
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .hasActions:hover .showOnHover .revealInner,
+    .hasActions:focus-within .showOnHover .revealInner {
+      overflow: visible;
+    }
+
+    .hasActions:hover .hideOnHover,
+    .hasActions:focus-within .hideOnHover {
+      grid-template-rows: 0fr;
+      opacity: 0;
+    }
+  }
+
+  /* Under reduced motion every state changes at once, in place. */
+  @media (prefers-reduced-motion: reduce) {
+    .card,
+    .day.hasActions .time,
+    .day.hasActions .actions,
+    .reveal {
+      transition: none;
+    }
+
+    .card:hover,
+    .card:focus-within,
+    .day.hasActions .actions,
+    .day.hasActions:hover .actions,
+    .day.hasActions:focus-within .actions,
+    .showOnHover {
+      transform: none;
+    }
+  }
+}

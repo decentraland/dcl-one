@@ -155,7 +155,10 @@
       ],
       "paths": [
         "/schemas/",
-        "/services/catalyst/db/"
+        "/services/catalyst/db/",
+        "/tooling/migration/",
+        "/tooling/tests/migration_*.py",
+        "/tooling/tests/test_migration.py"
       ]
     },
     {
@@ -272,6 +275,8 @@
         "/tooling/patched-sources.py",
         "/tooling/vendor-provenance.py",
         "/tooling/tests/test_bevy_*.py",
+        "/infra/dev/explorer-shell-hook.sh",
+        "/infra/packages/bevy-explorer-native.nix",
         "/infra/packages/bevy-explorer.nix"
       ]
     },
@@ -307,6 +312,17 @@
         "/tooling/native-lock/",
         "/.github/workflows/uuav-native.yml",
         "/.github/workflows/uuav-verify.yml"
+      ]
+    },
+    {
+      "id": "avatar-preview",
+      "description": "Avatar preview renderer: the standalone wasm build of the Explorer's avatar look that the shop and the creator hub embed, its page, build and release workflow",
+      "owners": [
+        "@decentraland/client"
+      ],
+      "paths": [
+        "/rendering/avatar-preview/",
+        "/.github/workflows/avatar-preview*.yml"
       ]
     },
     {

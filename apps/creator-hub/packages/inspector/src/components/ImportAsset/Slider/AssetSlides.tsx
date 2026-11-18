@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { IoIosArrowBack, IoIosArrowForward } from 'react-icons/io';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import { AssetPreview } from '../../AssetPreview';
 import { Input } from '../../Input';

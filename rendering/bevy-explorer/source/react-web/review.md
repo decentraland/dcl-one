@@ -196,11 +196,23 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       (profile menu, Hush) is talking, their tag shows the red hushed icon in place of the bars, and
       nothing when they are quiet; Hear brings the bars back. The same player talking in a private call
       or community stream with you, which the mute leaves audible, shows the green bars.
-- [ ] **Lobby stage** (`bridge-scene/src/domains/avatarPreview.tsx`, lobby region): after sign-in the
-      page's stand-in (backdrop + snapshot) crossfades to the engine stage with the live avatar centred;
+- [ ] **Lobby stage** (`crates/system_ui/src/lobby_stage`, `bridge-scene/src/domains/avatarPreview.tsx`,
+      lobby region): after sign-in the page's stand-in (the chosen look's backdrop + snapshot)
+      crossfades to the engine's 3D stage: backdrop, floor dissolving into it, podium, props, mist,
+      dust and vignette around the live avatar, which waves, plays an idle emote every 8–20 s and
+      turns when dragged. Settings → Lobby, in the full page or the lobby's compact Settings, switches
+      the look at once (Halloween 2026, Game World).
       Customize opens the Backpack modal with the avatar through its hole and hands the stage back on
       close; Jump In loads the world (the hold is released) and a failed trip returns to the lobby.
-      The `lobby` baseline only shows the stand-in (mock has no engine).
+- [ ] **Lobby page** (`features/lobby`): the widgets sit on the four corner grids as the stored layout
+      says; edit mode (the pencil) frames them, drags them with the others making room, lists the
+      ones off the grids in Customize Lobby, and Save keeps the layout across a reload while Cancel,
+      Back and Escape drop the changes. From the startup lobby, Map, Places, Events and Go to pick
+      where the world starts. VIEW ALL opens Places, Events, Communities and Gallery compact in the
+      lobby's section modal: Communities four cards a row, Gallery five columns of 292x219, and a
+      photo opened there covers the whole screen, its Jump In closing the photo and the modal. The
+      profile menu's Settings opens there too: the full page's tabs and fields under its own header,
+      on the tab last picked in either.
 - [ ] **Sign-in stage** (`avatarPreview.tsx`, signin region): a new account's look and name screens
       show its avatar on the golden podium at the right, over the sign-in background (vignette and
       drifting logo pattern) drawn by the engine across the whole screen. The page's background fades
@@ -346,7 +358,13 @@ back as `analyticsSession`). Expectations:
   site asks for a new sign-in; a run already going keeps its sign-in until it expires.
 - **Welcome / lobby**: WELCOME or AVATAR_NAMING, AUTH_DEPLOY_SUCCESS; click LETS_GO (JUMP IN on the
   name screen); LOBBY, PLACES_PICKER; clicks JUMP_IN {kind, place_id|event_id}, CUSTOMIZE,
-  NOTIFICATIONS, CLOSE (`LobbyHome.tsx`).
+  NOTIFICATIONS, CLOSE (`LobbyHome.tsx`). The lobby's own events, named as the Unity explorer
+  reports them so both clients' lobby data reads alike (`features/lobby/lobbyAnalytics.ts`):
+  `lobby_opened` and `lobby_closed` {source,
+  is_startup, duration_sec}; `place_card_clicked` and `place_jumped_in` {place_id, place_name,
+  place_coords, highlighted, from_section}; `event_card_clicked` and `event_jumped_in` {event_id,
+  event_name, event_coords, highlighted, from_section}; `jump_to_friend_clicked` {receiver_id,
+  friend_position}; `places_section_opened`, `events_section_opened`.
 - **Loading**: the engine's, not the page's. LOADING_START {position, realm, when}, LOADING_END
   {position, status} and LOADING_TIMEOUT after 90 s follow its own loading screen
   (`crates/analytics/src/loading.rs`), the one `sceneLoading` mirrors here.
@@ -395,6 +413,29 @@ owns the mode as a surface. Expectations:
 - Tests: `library/ui/apps/hud/test/hosted/photoMode.test.tsx` (the session contract above), `library/ui/apps/hud/test/hosted/photoModeOverlay.test.tsx`
   (the overlay's buttons, bindings, notice and effect); the e2e camera scenarios
   (`apps/bevy-explorer/e2e/specs/camera.test.ts`) drive the real engine.
+
+## Preview texture optimization
+
+A scene preview served by `dcl-scene-cli start` reports its background texture import on the
+preview socket; the engine relays it (`textureOptimization`, from `getTextureOptimizationStream`,
+`bridge-scene/src/domains/textureOptimization.ts`) and the shared HUD's
+`library/ui/apps/hud/features/preview/textureOptimizationToast.ts` shows it as one toast per scene, under its own key. Expectations:
+
+- With the project's setting on: `running` updates one busy progress toast in place, with no
+  Dismiss (the next update would bring it back), until 60 s pass with no update (the CLI stopped,
+  the socket dropped or the player left the realm), when it goes and the scene's progress is
+  forgotten; `ready` shows
+  the size saved and **Reload** (accessible name "Reload scene to see optimized textures"), which
+  posts `reloadScene` with the status's scene id; `failed` says how many textures stay PNG, or that
+  the import failed, with Dismiss and no action. With it off, nothing shows.
+- A `ready` marked `replay` (the preview server's last status, sent again as the socket connects)
+  offers **Reload** only when the HUD showed that scene's progress, since the run ended while the
+  socket was down. Otherwise it leaves the toast as it is: the scene was loaded from those files.
+- `?mock=1&textures=1` plays a run and the Reload offer.
+- Tests: `library/ui/apps/hud/test/textureOptimization.test.tsx` (the Toast primitive's keyed, persistent and action
+  toasts; each state; the replay rule; the stale progress timeout; one toast per scene; Reload
+  through the session),
+  `src/test/bridgeTextureOptimization.test.ts` (the relay).
 
 ## Gallery (camera reel)
 
@@ -466,3 +507,25 @@ web shell; null here, so this HUD shows no Donate). The shared HUD names a place
 - Tests: `library/ui/apps/hud/test/donate.test.tsx` (gating, open, emote, notification),
   `library/explorer-core/test/donatePlace.test.ts`; the shell's side in `apps/ui3/src/play/test/donateShell.test.ts`
   and `donateGuard.test.ts`. No visual baseline: the panel is drawn by the `/play` shell, not by `?mock=1`.
+
+## Gifting
+
+Sending an owned wearable or emote to another player, where the host can sign the transfer (`@hud-host`'s
+`gifting`: the Sites `/play` web shell; null here outside `?mock=1`, whose fake host sends nothing). The shared HUD
+draws the picker and names a token and a recipient (`features/gifting`); the shell checks both, asks the player to
+confirm them in its own overlay, draws the transfer and signs (`apps/ui3/src/play/shell/gift`, [ADR](../../../../docs/adr/2026-11-16-play-shell-signs-gifts.md)).
+Expectations:
+
+- **Where it shows:** the profile card of chat names, nametags and the friend row (after View Profile), the
+  community card's member menu (after Call; greyed for a blocked member, either way), and another player's
+  passport options (before Block). Not in the voice-stream panel's menu, not on your own card, not for a guest sender or a guest recipient.
+  Whether the session may gift is asked as each of those surfaces opens, as Donate's host is asked (`useGiftingAvailable`); nothing is cached.
+- **The picker** reads 16 owned on-chain items a page through the bridge's `giftingQuery`, newest first, with the
+  search on the server. A pending gift doesn't count as a copy; an equipped single copy is covered and can't be
+  picked; SEND GIFT sends the newest-transferred copy neither worn nor pending, and refuses an item that isn't a
+  Polygon collection item with a toast.
+- **A `transfer_received` notification** opens the gift-received popup (`features/gifting/GiftReceivedPopup.tsx`),
+  on every host: the item comes from the notification's token URI.
+- Tests: `library/ui/apps/hud/test/hosted/gift*.test.tsx`, `library/explorer-core/test/gift*.test.ts`,
+  `src/test/bridgeGifting.test.ts`; the shell's side in `apps/ui3/src/play/test/giftShell.test.ts`, `giftGuard.test.ts`
+  and `giftProtocol.test.ts`. The picker shows in `?mock=1`; the transfer panels are drawn by the `/play` shell.

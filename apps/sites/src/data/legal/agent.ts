@@ -19,7 +19,7 @@ type AgentBlock = AgentLegalDoc["sections"][number]["body"][number];
 
 function block(b: LegalBlock): AgentBlock {
   const run = (nodes: readonly LegalInline[]) => nodes.map(inline);
-  if (b.type === "ul") return { type: "ul", items: b.items.map(run) };
+  if ("items" in b) return { type: b.type, items: b.items.map(run) };
   if (b.type === "p") return { content: run(b.content) };
   return { type: b.type, content: run(b.content) };
 }

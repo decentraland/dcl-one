@@ -4,7 +4,7 @@ import type { ManageTab } from '/shared/types/manage';
 
 import { MapPinIcon, PublicIcon } from '../../Icons';
 
-import { Tab, TabList } from './ManageTabs.styled';
+import styles from './ManageTabs.module.css';
 
 export const MANAGE_PANEL_ID = 'manage-panel';
 
@@ -38,14 +38,16 @@ export function ManageTabs({ value, onChange, labelledBy }: Props) {
   };
 
   return (
-    <TabList
+    <div
+      className={styles.tabList}
       role="tablist"
       aria-labelledby={labelledBy}
       onKeyDown={handleKeyDown}
     >
       {TABS.map(({ value: tab, label, Icon }) => (
-        <Tab
+        <button
           key={tab}
+          className={styles.tab}
           ref={button => {
             buttons.current[tab] = button;
           }}
@@ -59,8 +61,8 @@ export function ManageTabs({ value, onChange, labelledBy }: Props) {
         >
           <Icon />
           {t(label)}
-        </Tab>
+        </button>
       ))}
-    </TabList>
+    </div>
   );
 }

@@ -1,13 +1,18 @@
-import { useCallback } from 'react';
-import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
-import CalendarIcon from '@mui/icons-material/CalendarMonth';
-import EditIcon from '@mui/icons-material/Edit';
-import LinkIcon from '@mui/icons-material/Link';
-import LockIcon from '@mui/icons-material/Lock';
-import PlaceIcon from '@mui/icons-material/Place';
-import PublicIcon from '@mui/icons-material/Public';
-import ThumbUpIcon from '@mui/icons-material/ThumbUpAlt';
-import { Avatar, Box, Button, Tooltip, Typography } from 'decentraland-ui2';
+import { useCallback, useState } from 'react';
+import Button from '@ui/atoms/Button';
+import Text from '@ui/atoms/Text';
+import Tooltip from '@ui/atoms/Tooltip';
+
+import {
+  ArrowForwardIcon,
+  CalendarMonthIcon as CalendarIcon,
+  EditIcon,
+  LinkIcon,
+  LockIcon,
+  PlaceIcon,
+  PublicIcon,
+  ThumbUpAltIcon as ThumbUpIcon,
+} from '@ui/atoms/icons-material';
 
 import type { PlaceDetails } from '/shared/types/place-analytics';
 import { PlaceAccess } from '/shared/types/place-analytics';
@@ -28,6 +33,9 @@ type Props = {
 export function PlaceCard({ place }: Props) {
   const { pushGeneric } = useSnackbar();
   const jumpInUrl = getSceneJumpInUrl(place.location);
+  /** Holds the URL that failed, so a new URL gets a new try. */
+  const [failedAvatar, setFailedAvatar] = useState<string | null>(null);
+  const avatar = place.lastPublishedBy?.avatar;
 
   const handleCreateEvent = useCallback(() => {
     void misc.openExternal(CREATE_EVENT_URL);
@@ -44,65 +52,95 @@ export function PlaceCard({ place }: Props) {
   }, [place.location]);
 
   return (
-    <Box className="PlaceCard">
+    <div className="PlaceCard">
       <img
         className="Thumbnail"
         src={place.thumbnail}
         alt=""
       />
-      <Box className="Details">
-        <Typography variant="h5">{place.name}</Typography>
+      <div className="Details">
+        <Text
+          variant="h5"
+          className="Name"
+        >
+          {place.name}
+        </Text>
         {place.likeRate !== null && (
-          <Box className="LikeRate">
+          <div className="LikeRate">
             <ThumbUpIcon fontSize="small" />
-            <Typography variant="body1">{formatPercentage(place.likeRate)}</Typography>
-          </Box>
+            <Text variant="body1">{formatPercentage(place.likeRate)}</Text>
+          </div>
         )}
-        <Box className="Field">
-          <Typography variant="body2">{t('analytics.detail.place.access')}</Typography>
-          <Box className="FieldValue">
+        <div className="Field">
+          <Text
+            variant="body2"
+            className="FieldLabel"
+          >
+            {t('analytics.detail.place.access')}
+          </Text>
+          <div className="FieldValue">
             {place.access === PlaceAccess.PRIVATE ? (
               <LockIcon fontSize="small" />
             ) : (
               <PublicIcon fontSize="small" />
             )}
-            <Typography variant="body1">
+            <Text variant="body1">
               {place.access === PlaceAccess.PRIVATE
                 ? t('analytics.detail.place.private')
                 : t('analytics.detail.place.public')}
-            </Typography>
-          </Box>
-        </Box>
-        <Box className="Field">
-          <Typography variant="body2">{t('analytics.detail.place.published_in')}</Typography>
-          <Box className="FieldValue">
+            </Text>
+          </div>
+        </div>
+        <div className="Field">
+          <Text
+            variant="body2"
+            className="FieldLabel"
+          >
+            {t('analytics.detail.place.published_in')}
+          </Text>
+          <div className="FieldValue">
             <PlaceIcon fontSize="small" />
-            <Typography variant="body1">{place.publishedIn}</Typography>
-          </Box>
-        </Box>
+            <Text variant="body1">{place.publishedIn}</Text>
+          </div>
+        </div>
         {place.lastPublishedBy && (
-          <Box className="Field">
-            <Typography variant="body2">{t('analytics.detail.place.last_published_by')}</Typography>
-            <Box className="FieldValue">
-              <Avatar
-                className="PublisherAvatar"
-                src={place.lastPublishedBy.avatar ?? undefined}
-              >
-                {place.lastPublishedBy.name.charAt(0)}
-              </Avatar>
-              <Typography variant="body1">{place.lastPublishedBy.name}</Typography>
-            </Box>
-          </Box>
+          <div className="Field">
+            <Text
+              variant="body2"
+              className="FieldLabel"
+            >
+              {t('analytics.detail.place.last_published_by')}
+            </Text>
+            <div className="FieldValue">
+              <span className="PublisherAvatar">
+                {avatar && avatar !== failedAvatar ? (
+                  <img
+                    src={avatar}
+                    alt=""
+                    onError={() => setFailedAvatar(avatar)}
+                  />
+                ) : (
+                  place.lastPublishedBy.name.charAt(0)
+                )}
+              </span>
+              <Text variant="body1">{place.lastPublishedBy.name}</Text>
+            </div>
+          </div>
         )}
-        <Box className="Field">
-          <Typography variant="body2">{t('analytics.detail.place.last_update')}</Typography>
-          <Typography variant="body1">{formatDateTime(place.lastUpdatedAt)}</Typography>
-        </Box>
-      </Box>
-      <Box className="Actions">
+        <div className="Field">
+          <Text
+            variant="body2"
+            className="FieldLabel"
+          >
+            {t('analytics.detail.place.last_update')}
+          </Text>
+          <Text variant="body1">{formatDateTime(place.lastUpdatedAt)}</Text>
+        </div>
+      </div>
+      <div className="Actions">
         <Button
           variant="text"
-          color="secondary"
+          tone="neutral"
           className="Action"
           onClick={handleCreateEvent}
         >
@@ -110,37 +148,42 @@ export function PlaceCard({ place }: Props) {
           {t('analytics.detail.actions.create_event')}
         </Button>
         {/* Enabled once a published Place can be matched to a local scene. */}
-        <Tooltip title={t('analytics.detail.actions.edit_scene_unavailable')}>
-          <span>
-            <Button
-              variant="text"
-              color="secondary"
-              className="Action"
-              disabled
-            >
-              <EditIcon />
-              {t('analytics.detail.actions.edit_scene')}
-            </Button>
-          </span>
+        <Tooltip
+          label={t('analytics.detail.actions.edit_scene_unavailable')}
+          side="bottom"
+          portal
+          keepInViewport
+          snap
+          tipClassName="AnalyticsTip"
+        >
+          <Button
+            variant="text"
+            tone="neutral"
+            className="Action"
+            disabled
+          >
+            <EditIcon />
+            {t('analytics.detail.actions.edit_scene')}
+          </Button>
         </Tooltip>
         <Button
           variant="text"
-          color="secondary"
+          tone="neutral"
           className="Action"
           onClick={handleCopyUrl}
         >
           <LinkIcon />
           {t('analytics.detail.actions.copy_url')}
         </Button>
-      </Box>
+      </div>
       <Button
-        variant="contained"
+        variant="primary"
         className="JumpIn"
         onClick={handleJumpIn}
         endIcon={<ArrowForwardIcon />}
       >
         {t('analytics.detail.actions.jump_in')}
       </Button>
-    </Box>
+    </div>
   );
 }

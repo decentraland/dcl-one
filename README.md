@@ -16,6 +16,7 @@ conformance capture corpus and internal docs stay in the private repository.
 | `apps/creator-hub/` | Creator Hub desktop: pnpm workspace with the Electron app, `@dcl/inspector` and `@dcl/asset-packs` ([ADR](docs/adr/2026-11-09-creator-hub-in-dcl-one.md)) |
 | `rendering/bevy-explorer/` | Explorer source and Play pins |
 | `apps/bevy-explorer/` | Explorer builds and images |
+| `rendering/avatar-preview/` | Avatar preview renderer: the Explorer's avatar look as a standalone wasm module for the shop and the creator hub |
 | `library/` | Shared crates, API types, the protocol (`library/protocol`), the SDK (`library/js-sdk-toolchain`) |
 | `schemas/` | The PostgreSQL schema |
 | `infra/` | Nix packages, container images, the gateway |
@@ -73,8 +74,10 @@ make bevy-web   # or bevy-headless
 or the message bus read `CATALYST_TEST_DATABASE_URL` (a PostgreSQL the tests may
 create databases in), `PULSE_NATS_SERVER_BIN` and `ARCHIPELAGO_NATS_SERVER_BIN`,
 and skip when unset. The test binaries run `CATALYST_TEST_JOBS` at a time
-(default: the core count, at most 16); tests create their own scratch databases, and
-the socket binaries run with at most one test thread per core. The web
+(default: the core count, at most 16); tests create their own scratch databases. The
+node's integration tests link as a few grouped binaries, each file a module (filter with
+`cargo test --test <group> -- <file>::`); the socket groups (`sockets_*`) share at most
+one test thread per core. The web
 packages run `pnpm test` (`apps/ui3`, `apps/sites`, `apps/ui3/editor-scene`) and
 `pnpm test` in `rendering/bevy-explorer/source/react-web` after
 `scripts/gen-ts-bindings.sh`; the protocol runs `make -C library/protocol

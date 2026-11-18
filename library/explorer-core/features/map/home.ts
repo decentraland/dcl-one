@@ -1,7 +1,7 @@
 // The player's home as the map reads it: one parcel of Genesis City, or a world.
 
 import type { DiscoverPlace } from '../places/placesApi'
-import { isWorldPlace } from './mapApi'
+import { isRoad, isWorldPlace } from './mapApi'
 import { parseParcel, type Vec2 } from './mapCoords'
 
 export interface Home {
@@ -28,4 +28,28 @@ export function isHomePlace(home: Home, place: DiscoverPlace): boolean {
   if (place.positions.length > 0) return place.positions.some((p) => p === `${at.x},${at.y}`)
   const base = parseParcel(place.base_position)
   return base != null && base.x === at.x && base.y === at.y
+}
+
+/** Whether home is this Genesis City parcel. */
+export function isHomeParcel(home: Home, parcel: Vec2 | null): boolean {
+  return home.world == null && parcel != null && home.parcel != null && home.parcel.x === parcel.x && home.parcel.y === parcel.y
+}
+
+/**
+ * The two places that say whether something is home, side by side so they can't drift apart:
+ * - the map's place panel: the place is home when any parcel of it is, and a road also when the
+ *   parcel it was picked at is home; a World's name compares exactly;
+ * - the minimap's Set as Home: the place under the player is home when any parcel of it is, but a
+ *   road, which spans the city, or a parcel with no place, only on the home parcel itself; a
+ *   World's name compares without case.
+ */
+export function isPlacePanelHome(home: Home, place: DiscoverPlace, origin: Vec2 | null): boolean {
+  return isHomePlace(home, place) || (isRoad(place.title) && isHomeParcel(home, origin))
+}
+
+/** See `isPlacePanelHome`. `world` is the World the player is in, or null in Genesis City. */
+export function isStandingInHome(home: Home, world: string | null, parcel: Vec2, place: DiscoverPlace | null): boolean {
+  if (world != null) return home.world != null && home.world.toLowerCase() === world.toLowerCase()
+  if (place != null && !isRoad(place.title)) return isHomePlace(home, place)
+  return isHomeParcel(home, parcel)
 }

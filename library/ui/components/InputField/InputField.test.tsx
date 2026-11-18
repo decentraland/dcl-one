@@ -4,12 +4,8 @@ import userEvent from '@testing-library/user-event'
 import { renderToString } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { InputExplorerNames } from '../InputExplorerNames/InputExplorerNames'
-import { InputField, type InputFieldProps } from './InputField'
-function SharedWebField(props: InputFieldProps) {
-  return <InputField {...props} surface="web" />
-}
-
-for (const Field of [InputExplorerNames, SharedWebField]) {
+import { InputWebCreatorTools } from '../InputWebCreatorTools/InputWebCreatorTools'
+for (const Field of [InputExplorerNames, InputWebCreatorTools]) {
   describe(`when ${Field.name} receives native input data`, () => {
     it('should associate its label, description and error without removing a caller description', () => {
       render(
@@ -55,9 +51,8 @@ for (const Field of [InputExplorerNames, SharedWebField]) {
       await user.click(screen.getByRole('button', { name: 'Show password' }))
       expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'text')
       expect(screen.getByLabelText('Password')).toHaveValue('secret')
-      expect(screen.getByRole('button', { name: 'Hide password' })).toHaveAttribute(
-        'aria-pressed',
-        'true'
+      expect(screen.getByRole('button', { name: 'Hide password' })).not.toHaveAttribute(
+        'aria-pressed'
       )
       expect(submit).not.toHaveBeenCalled()
     })
@@ -93,7 +88,7 @@ for (const Field of [InputExplorerNames, SharedWebField]) {
   })
 }
 
-for (const Field of [InputExplorerNames, SharedWebField]) {
+for (const Field of [InputExplorerNames, InputWebCreatorTools]) {
   it(`should reject void-element content safely for untyped ${Field.name} callers`, () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
@@ -143,7 +138,7 @@ it('should keep captured error-vector references unique across repeated inputs',
   }
 })
 
-for (const Field of [InputExplorerNames, SharedWebField]) {
+for (const Field of [InputExplorerNames, InputWebCreatorTools]) {
   it(`should restore masked defaults when an uncontrolled ${Field.name} form resets`, async () => {
     render(
       <form>
@@ -174,7 +169,7 @@ for (const Field of [InputExplorerNames, SharedWebField]) {
   })
 }
 
-for (const Field of [InputExplorerNames, SharedWebField]) {
+for (const Field of [InputExplorerNames, InputWebCreatorTools]) {
   it(`should expose the real ${Field.name} input through its public ref and clear it on unmount`, () => {
     const ref = createRef<HTMLInputElement>()
     const { unmount } = render(<Field label="Email" ref={ref} />)
@@ -211,7 +206,7 @@ for (const Field of [InputExplorerNames, SharedWebField]) {
 it('should preserve a named hidden label, hint description and consumer-owned action', async () => {
   const action = vi.fn()
   render(
-    <SharedWebField
+    <InputWebCreatorTools
       label="Email"
       labelHidden
       hint="Private address"

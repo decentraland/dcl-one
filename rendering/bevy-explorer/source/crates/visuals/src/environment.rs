@@ -1,50 +1,44 @@
-//! Scene-root environment overrides. The active parcel owns them; leaving it restores the clock.
+//! Scene-root environment overrides. The scene the player is in owns them; leaving it restores
+//! the clock.
 
 use bevy::{
     image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
-    pbr::{ExtendedMaterial, MaterialExtension},
     prelude::*,
-    render::{
-        render_asset::RenderAssetUsages,
-        render_resource::{AsBindGroup, ShaderRef, ShaderType},
-    },
+    render::render_asset::RenderAssetUsages,
 };
-use bevy_atmosphere::skybox::SkyBoxMaterial;
+use bevy_atmosphere::skybox::{AtmosphereSkyBoxMaterial, SkyBoxMaterial};
 use bevy_console::ConsoleCommand;
 use common::{
     sets::SceneSets,
-    structs::{PrimaryUser, TimeOfDay},
+    structs::{SceneGlobalLight, TimeOfDay},
 };
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use dcl_component::{
     proto_components::{
         common::ColorGradient,
-        sdk::components::{PbEnvironmentFog, PbSkybox, PbSun},
+        sdk::components::{PbEnvironmentFog, PbSkybox},
     },
     SceneComponentId,
 };
 use dcl_types::interface::ComponentPosition;
 use ipfs::IpfsAssetServer;
 use scene_runner::{
-    renderer_context::RendererSceneContext, update_world::AddCrdtInterfaceExt, ContainingScene,
+    renderer_context::RendererSceneContext,
+    update_world::{
+        lights::{ColorRamp, Sun, MAX_SCENE_VALUE},
+        AddCrdtInterfaceExt,
+    },
 };
+
+use crate::day_night::RootComponentSource;
 
 pub struct SceneEnvironmentPlugin;
 
 impl Plugin for SceneEnvironmentPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<SceneEnvironment>()
-            .add_plugins(MaterialPlugin::<SceneSkyMaterial> {
-                prepass_enabled: false,
-                shadows_enabled: false,
-                ..default()
-            });
+        app.init_resource::<SceneEnvironment>();
         app.add_crdt_lww_component::<PbSkybox, Skybox>(
             SceneComponentId::SKYBOX,
-            ComponentPosition::RootOnly,
-        );
-        app.add_crdt_lww_component::<PbSun, Sun>(
-            SceneComponentId::SUN,
             ComponentPosition::RootOnly,
         );
         app.add_crdt_lww_component::<PbEnvironmentFog, EnvironmentFog>(
@@ -53,11 +47,11 @@ impl Plugin for SceneEnvironmentPlugin {
         );
         app.add_systems(
             Update,
-            update_environment
-                .in_set(SceneSets::PostLoop)
-                .before(crate::apply_global_light),
+            (load_sky_panoramas, update_environment)
+                .chain()
+                .in_set(SceneSets::PostLoop),
         )
-        .add_systems(Update, update_sky_material.after(crate::apply_global_light))
+        .add_systems(Update, update_sky_panorama)
         .add_console_command::<EnvironmentCommand, _>(environment_command)
         .add_debug_section(DebugSection {
             title: "Scene environment",
@@ -90,32 +84,83 @@ impl Plugin for SceneEnvironmentPlugin {
     }
 }
 
-macro_rules! component {
-    ($name:ident, $proto:ty) => {
-        #[derive(Component)]
-        struct $name($proto);
-        impl From<$proto> for $name {
-            fn from(value: $proto) -> Self {
-                Self(value)
-            }
-        }
-    };
+fn finite(value: Option<f32>, min: f32, max: f32) -> Option<f32> {
+    value.filter(|v| v.is_finite()).map(|v| v.clamp(min, max))
 }
-component!(Skybox, PbSkybox);
-component!(Sun, PbSun);
-component!(EnvironmentFog, PbEnvironmentFog);
 
+fn ramp(gradient: Option<&ColorGradient>) -> Option<ColorRamp> {
+    gradient.and_then(ColorRamp::new)
+}
+
+/// A scene's sky override, on its root.
+#[derive(Component)]
+struct Skybox {
+    texture: Option<String>,
+    zenith: Option<ColorRamp>,
+    horizon: Option<ColorRamp>,
+    nadir: Option<ColorRamp>,
+    /// follows the horizon when unset
+    rim: Option<ColorRamp>,
+    cloud_color: Option<ColorRamp>,
+    cloud_opacity: Option<f32>,
+    cloud_speed: Option<f32>,
+    star_brightness: Option<f32>,
+}
+
+impl From<PbSkybox> for Skybox {
+    fn from(value: PbSkybox) -> Self {
+        let colors = value.sky_colors.as_ref();
+        let clouds = value.clouds.as_ref();
+        let horizon = ramp(colors.and_then(|c| c.horizon.as_ref()));
+        Self {
+            texture: value.skybox_texture.filter(|s| !s.is_empty()),
+            zenith: ramp(colors.and_then(|c| c.zenith.as_ref())),
+            nadir: ramp(colors.and_then(|c| c.nadir.as_ref())),
+            rim: ramp(colors.and_then(|c| c.rim.as_ref())).or_else(|| horizon.clone()),
+            horizon,
+            cloud_color: ramp(clouds.and_then(|c| c.color.as_ref())),
+            cloud_opacity: finite(clouds.and_then(|c| c.opacity), 0.0, 1.0),
+            cloud_speed: finite(clouds.and_then(|c| c.speed), -f32::MAX, f32::MAX),
+            star_brightness: finite(
+                value.stars.as_ref().and_then(|s| s.brightness),
+                0.0,
+                MAX_SCENE_VALUE,
+            ),
+        }
+    }
+}
+
+/// The image a scene's [`Skybox`] shows instead of the sky, on the same root.
+#[derive(Component)]
+struct SkyboxPanorama(Handle<Image>);
+
+/// A scene's fog override, on its root.
+#[derive(Component)]
+struct EnvironmentFog {
+    color: Option<ColorRamp>,
+    density: Option<f32>,
+}
+
+impl From<PbEnvironmentFog> for EnvironmentFog {
+    fn from(value: PbEnvironmentFog) -> Self {
+        Self {
+            color: ramp(value.color.as_ref()),
+            density: finite(value.density, 0.0, f32::MAX),
+        }
+    }
+}
+
+/// The overrides of the scenes the player is in, at the current time of day.
 #[derive(Resource, Default, Clone, PartialEq)]
 pub(super) struct SceneEnvironment {
-    pub source: Option<Entity>,
+    /// the scene the sky comes from
+    pub skybox: Option<Entity>,
+    /// the scene the fog comes from
+    pub fog: Option<Entity>,
     pub zenith: Option<Vec3>,
     pub horizon: Option<Vec3>,
     pub nadir: Option<Vec3>,
     pub rim: Option<Vec3>,
-    pub sun_color: Option<Vec3>,
-    pub sun_direction: Option<Vec3>,
-    pub sun_intensity: Option<f32>,
-    pub sun_visible: Option<bool>,
     pub fog_color: Option<Vec3>,
     pub fog_density: Option<f32>,
     pub cloud_color: Option<Vec3>,
@@ -126,308 +171,113 @@ pub(super) struct SceneEnvironment {
     pub texture_state: &'static str,
 }
 
-#[derive(Default)]
-struct TextureSlot {
-    source: Option<(Entity, std::sync::Arc<str>, String)>,
-    handle: Option<Handle<Image>>,
-}
-
-impl TextureSlot {
-    fn select(
-        &mut self,
-        source: Option<(Entity, std::sync::Arc<str>, String)>,
-        load: impl FnOnce(&str) -> Option<Handle<Image>>,
-    ) {
-        if self.source != source {
-            // Drop the old request before exposing the new scene; late completions cannot win.
-            self.handle = source.as_ref().and_then(|(_, _, name)| load(name));
-            self.source = source;
-        }
-    }
-}
-
 fn valid_sky_image(image: &Image) -> bool {
     image.height() > 0 && image.width() == image.height().saturating_mul(2)
 }
 
-fn finite(value: Option<f32>, min: f32, max: f32) -> Option<f32> {
-    value.filter(|v| v.is_finite()).map(|v| v.clamp(min, max))
-}
-
-/// Scene input is bounded before sorting. Rendering uses eight uniformly sampled keys.
-fn sample_gradient(gradient: Option<&ColorGradient>, time: f32) -> Option<Vec3> {
-    let mut keys: Vec<(f32, Vec3)> = gradient?
-        .keys
-        .iter()
-        .take(64)
-        .filter_map(|key| {
-            let c = key.color.as_ref()?;
-            let color = Vec3::new(c.r, c.g, c.b);
-            (key.time.is_finite() && color.is_finite()).then_some((key.time.clamp(0.0, 1.0), color))
-        })
-        .collect();
-    keys.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let mut unique: Vec<(f32, Vec3)> = Vec::with_capacity(keys.len());
-    for key in keys {
-        if unique.last().is_some_and(|previous| {
-            (previous.0 - key.0).abs()
-                < (1e-6 * previous.0.abs().max(key.0.abs())).max(f32::from_bits(8))
-        }) {
-            unique.pop();
-        }
-        unique.push(key);
-    }
-    if unique.len() > 8 {
-        unique = (0..8)
-            .map(|n| {
-                let t = n as f32 / 7.0;
-                (t, sample_keys(&unique, t).unwrap())
-            })
-            .collect();
-    }
-    sample_keys(&unique, time.clamp(0.0, 1.0))
-}
-
-fn sample_keys(keys: &[(f32, Vec3)], time: f32) -> Option<Vec3> {
-    let first = keys.first()?;
-    if time <= first.0 {
-        return Some(first.1);
-    }
-    for pair in keys.windows(2) {
-        if time <= pair[1].0 {
-            return Some(
-                pair[0]
-                    .1
-                    .lerp(pair[1].1, (time - pair[0].0) / (pair[1].0 - pair[0].0)),
-            );
-        }
-    }
-    Some(keys.last().unwrap().1)
-}
-
-fn sample_components(
-    source: Entity,
-    sky: Option<&PbSkybox>,
-    sun: Option<&PbSun>,
-    fog: Option<&PbEnvironmentFog>,
-    transform: &GlobalTransform,
-    time: f32,
-) -> SceneEnvironment {
-    let colors = sky.and_then(|s| s.sky_colors.as_ref());
-    let clouds = sky.and_then(|s| s.clouds.as_ref());
-    let horizon = sample_gradient(colors.and_then(|c| c.horizon.as_ref()), time);
-    let sun_direction = sun.and_then(|s| s.direction.as_ref()).and_then(|d| {
-        let direction = transform
-            .affine()
-            .transform_vector3(Vec3::new(d.x, d.y, -d.z));
-        direction.try_normalize()
-    });
-    SceneEnvironment {
-        source: Some(source),
-        zenith: sample_gradient(colors.and_then(|c| c.zenith.as_ref()), time),
-        horizon,
-        nadir: sample_gradient(colors.and_then(|c| c.nadir.as_ref()), time),
-        rim: sample_gradient(colors.and_then(|c| c.rim.as_ref()), time).or(horizon),
-        sun_color: sample_gradient(sun.and_then(|s| s.color.as_ref()), time),
-        sun_direction,
-        sun_intensity: finite(sun.and_then(|s| s.intensity), 0.0, f32::MAX),
-        sun_visible: sun.and_then(|s| s.visible),
-        fog_color: sample_gradient(fog.and_then(|f| f.color.as_ref()), time),
-        fog_density: finite(fog.and_then(|f| f.density), 0.0, f32::MAX),
-        cloud_color: sample_gradient(clouds.and_then(|c| c.color.as_ref()), time),
-        cloud_opacity: finite(clouds.and_then(|c| c.opacity), 0.0, 1.0),
-        cloud_speed: finite(clouds.and_then(|c| c.speed), -f32::MAX, f32::MAX),
-        star_brightness: finite(
-            sky.and_then(|s| s.stars.as_ref())
-                .and_then(|s| s.brightness),
-            0.0,
-            f32::MAX,
-        ),
-        texture_state: "unset",
-        ..default()
-    }
-}
-
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn update_environment(
-    player: Query<Entity, With<PrimaryUser>>,
-    containing: ContainingScene,
-    scenes: Query<(
-        &RendererSceneContext,
-        &GlobalTransform,
-        Option<&Skybox>,
-        Option<&Sun>,
-        Option<&EnvironmentFog>,
-    )>,
-    time: Res<TimeOfDay>,
+fn load_sky_panoramas(
+    mut commands: Commands,
+    skyboxes: Query<(Entity, &Skybox, &RendererSceneContext), Changed<Skybox>>,
+    mut removed: RemovedComponents<Skybox>,
     ipfs: IpfsAssetServer,
+) {
+    for entity in removed.read() {
+        if let Ok(mut commands) = commands.get_entity(entity) {
+            commands.try_remove::<SkyboxPanorama>();
+        }
+    }
+    for (entity, skybox, context) in &skyboxes {
+        let handle = skybox.texture.as_deref().and_then(|src| {
+            ipfs.load_content_file_with_settings::<Image, ImageLoaderSettings>(
+                src,
+                &context.hash,
+                |settings| {
+                    settings.asset_usage = RenderAssetUsages::RENDER_WORLD;
+                    settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+                        address_mode_u: ImageAddressMode::Repeat,
+                        address_mode_v: ImageAddressMode::ClampToEdge,
+                        ..ImageSamplerDescriptor::linear()
+                    });
+                },
+            )
+            .ok()
+        });
+        match handle {
+            Some(handle) => commands.entity(entity).try_insert(SkyboxPanorama(handle)),
+            None => commands.entity(entity).try_remove::<SkyboxPanorama>(),
+        };
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn update_environment(
+    mut skybox_source: RootComponentSource<Skybox>,
+    mut fog_source: RootComponentSource<EnvironmentFog>,
+    skyboxes: Query<(&Skybox, Option<&SkyboxPanorama>)>,
+    fogs: Query<&EnvironmentFog>,
+    time: Res<TimeOfDay>,
     images: Res<Assets<Image>>,
     server: Res<AssetServer>,
     mut state: ResMut<SceneEnvironment>,
-    mut slot: Local<TextureSlot>,
 ) {
-    let selected = player
-        .single()
-        .ok()
-        .and_then(|p| containing.get_parcel_oow(p));
-    let Some((entity, (context, transform, sky, sun, fog))) =
-        selected.and_then(|e| scenes.get(e).ok().map(|s| (e, s)))
-    else {
-        state.set_if_neq(SceneEnvironment::default());
-        *slot = TextureSlot::default();
-        return;
+    let mut next = SceneEnvironment {
+        skybox: skybox_source.changed_pick().unwrap_or(state.skybox),
+        fog: fog_source.changed_pick().unwrap_or(state.fog),
+        texture_state: "unset",
+        ..default()
     };
-    if sky.is_none() && sun.is_none() && fog.is_none() {
-        state.set_if_neq(SceneEnvironment::default());
-        *slot = TextureSlot::default();
-        return;
-    }
-    let mut next = sample_components(
-        entity,
-        sky.map(|s| &s.0),
-        sun.map(|s| &s.0),
-        fog.map(|s| &s.0),
-        transform,
-        time.elapsed_secs().rem_euclid(86400.0) / 86400.0,
-    );
-    let source = sky
-        .and_then(|s| s.0.skybox_texture.as_ref())
-        .filter(|s| !s.is_empty())
-        .map(|s| (entity, context.hash.clone(), s.clone()));
-    slot.select(source, |name| {
-        ipfs.load_content_file_with_settings::<Image, ImageLoaderSettings>(
-            name,
-            &context.hash,
-            |settings| {
-                settings.asset_usage =
-                    RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD;
-                settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-                    address_mode_u: ImageAddressMode::Repeat,
-                    address_mode_v: ImageAddressMode::ClampToEdge,
-                    ..ImageSamplerDescriptor::linear()
-                });
-            },
-        )
-        .ok()
-    });
-    if slot.source.is_some() {
-        next.texture_state = "loading";
-        if let Some(handle) = &slot.handle {
-            if let Some(image) = images.get(handle) {
-                if valid_sky_image(image) {
-                    next.texture = Some(handle.clone());
-                    next.texture_state = "ready";
-                } else {
-                    next.texture_state = "invalid aspect ratio";
-                }
-            } else if matches!(
-                server.load_state(handle.id()),
-                bevy::asset::LoadState::Failed(_)
-            ) {
-                next.texture_state = "failed";
-            }
-        } else {
-            next.texture_state = "unresolved";
+    let day_fraction = time.elapsed_secs().rem_euclid(86400.0) / 86400.0;
+    let sample = |ramp: &Option<ColorRamp>| ramp.as_ref().map(|ramp| ramp.sample(day_fraction));
+
+    if let Some((skybox, panorama)) = next.skybox.and_then(|e| skyboxes.get(e).ok()) {
+        next.zenith = sample(&skybox.zenith);
+        next.horizon = sample(&skybox.horizon);
+        next.nadir = sample(&skybox.nadir);
+        next.rim = sample(&skybox.rim);
+        next.cloud_color = sample(&skybox.cloud_color);
+        next.cloud_opacity = skybox.cloud_opacity;
+        next.cloud_speed = skybox.cloud_speed;
+        next.star_brightness = skybox.star_brightness;
+        if skybox.texture.is_some() {
+            next.texture_state = match panorama {
+                None => "unresolved",
+                Some(SkyboxPanorama(handle)) => match images.get(handle) {
+                    Some(image) if valid_sky_image(image) => {
+                        next.texture = Some(handle.clone());
+                        "ready"
+                    }
+                    Some(_) => "invalid aspect ratio",
+                    None if matches!(
+                        server.load_state(handle.id()),
+                        bevy::asset::LoadState::Failed(_)
+                    ) =>
+                    {
+                        "failed"
+                    }
+                    None => "loading",
+                },
+            };
         }
+    }
+    if let Some(fog) = next.fog.and_then(|e| fogs.get(e).ok()) {
+        next.fog_color = sample(&fog.color);
+        next.fog_density = fog.density;
     }
     state.set_if_neq(next);
 }
 
-pub(super) type SceneSkyMaterial = ExtendedMaterial<SceneSkyExtension>;
-
-#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
-pub(super) struct SceneSkyExtension {
-    #[uniform(100)]
-    params: SceneSkyUniform,
-    #[texture(101)]
-    #[sampler(102)]
-    image: Option<Handle<Image>>,
-}
-
-mod uniform {
-    // ShaderType emits layout assertion functions which are not called from Rust.
-    #![allow(dead_code)]
-    use super::*;
-
-    #[derive(Debug, Clone, ShaderType)]
-    pub(super) struct SceneSkyUniform {
-        pub sun_direction: Vec3,
-        pub has_image: u32,
-        pub moon_direction: Vec3,
-        pub visible: u32,
-        pub sun_color: Vec3,
-        pub night: f32,
-    }
-}
-use uniform::SceneSkyUniform;
-
-impl MaterialExtension for SceneSkyExtension {
-    type Base = SkyBoxMaterial;
-    fn fragment_shader() -> ShaderRef {
-        "embedded://shaders/scene_sky.wgsl".into()
-    }
-}
-
-fn update_sky_material(
-    mut commands: Commands,
+fn update_sky_panorama(
     state: Res<SceneEnvironment>,
-    atmosphere: bevy_atmosphere::system_param::AtmosphereMut<crate::nishita_cloud::NishitaCloud>,
-    bases: Res<Assets<SkyBoxMaterial>>,
-    mut materials: ResMut<Assets<SceneSkyMaterial>>,
-    new_boxes: Query<(Entity, &MeshMaterial3d<SkyBoxMaterial>)>,
-    mut active: Local<Option<(Handle<SkyBoxMaterial>, Handle<SceneSkyMaterial>)>>,
+    material: Res<AtmosphereSkyBoxMaterial>,
+    mut materials: ResMut<Assets<SkyBoxMaterial>>,
 ) {
-    for (entity, base_handle) in &new_boxes {
-        let Some(base) = bases.get(&base_handle.0) else {
-            continue;
-        };
-        let (_, handle) = active.get_or_insert_with(|| {
-            (
-                base_handle.0.clone(),
-                materials.add(SceneSkyMaterial {
-                    base: base.clone(),
-                    extension: SceneSkyExtension {
-                        params: SceneSkyUniform {
-                            sun_direction: Vec3::Y,
-                            moon_direction: Vec3::Y,
-                            sun_color: Vec3::ONE,
-                            night: 0.0,
-                            has_image: 0,
-                            visible: 1,
-                        },
-                        image: None,
-                    },
-                }),
-            )
-        });
-        commands
-            .entity(entity)
-            .remove::<MeshMaterial3d<SkyBoxMaterial>>()
-            .insert(MeshMaterial3d(handle.clone()));
-    }
-    if let Some((base, material)) = active
-        .as_ref()
-        .and_then(|(base, material)| materials.get_mut(material).map(|m| (base, m)))
+    if materials
+        .get(&material.0)
+        .is_some_and(|sky| sky.panorama != state.texture)
     {
-        if let Some(base) = bases.get(base) {
-            material.base = base.clone();
+        if let Some(sky) = materials.get_mut(&material.0) {
+            sky.panorama = state.texture.clone();
         }
-        material.extension.image = state.texture.clone();
-        material.extension.params = SceneSkyUniform {
-            has_image: u32::from(state.texture.is_some()),
-            visible: u32::from(state.sun_visible.unwrap_or(true)),
-            sun_direction: atmosphere.sun_position,
-            moon_direction: atmosphere.moon_position,
-            sun_color: if atmosphere.dir_light_intensity > 0.0 {
-                atmosphere.sun_color
-            } else {
-                Vec3::ZERO
-            },
-            night: {
-                let t = ((-atmosphere.sun_position.normalize_or_zero().y) / 0.15).clamp(0.0, 1.0);
-                t * t * (3.0 - 2.0 * t)
-            },
-        };
     }
 }
 
@@ -438,38 +288,87 @@ struct EnvironmentCommand;
 fn environment_command(
     mut command: ConsoleCommand<EnvironmentCommand>,
     state: Res<SceneEnvironment>,
+    light: Res<SceneGlobalLight>,
+    suns: Query<&Sun>,
 ) {
     let Some(Ok(_)) = command.take() else { return };
-    command.reply_ok(
-        serde_json::json!({
-            "scene": state.source.map(|e| e.to_bits().to_string()),
-            "textureState": if state.texture_state.is_empty() { "unset" } else { state.texture_state },
-            "sunVisible": state.sun_visible.unwrap_or(true),
-            "sunIntensity": state.sun_intensity.unwrap_or(1.0),
-            "sunDirection": state.sun_direction.map(|c| c.to_array()),
-            "sunColor": state.sun_color.map(|c| c.to_array()),
-            "fogDensity": state.fog_density,
-            "zenith": state.zenith.map(|c| c.to_array()),
-            "horizon": state.horizon.map(|c| c.to_array()),
-            "nadir": state.nadir.map(|c| c.to_array()),
-            "rim": state.rim.map(|c| c.to_array()),
-            "fogColor": state.fog_color.map(|c| c.to_array()),
-            "cloudColor": state.cloud_color.map(|c| c.to_array()),
-            "cloudSpeed": state.cloud_speed,
-            "cloudOpacity": state.cloud_opacity,
-            "starsBrightness": state.star_brightness,
-        })
-        .to_string(),
-    );
+    let sun_scene = light.source.filter(|scene| suns.contains(*scene));
+    let sun = sun_scene.and_then(|scene| suns.get(scene).ok());
+    command.reply_ok(environment_reading(&state, &light, sun_scene, sun).to_string());
+}
+
+/// The scene overrides in force. A field the scenes leave unset reads null, explained by the one
+/// default entry under `unavailable`.
+fn environment_reading(
+    state: &SceneEnvironment,
+    light: &SceneGlobalLight,
+    sun_scene: Option<Entity>,
+    sun: Option<&Sun>,
+) -> serde_json::Value {
+    let scene = state.skybox.or(state.fog).or(sun_scene);
+    let reason = if scene.is_some() {
+        "No override for this field; using renderer defaults."
+    } else {
+        "No active scene environment overrides."
+    };
+    serde_json::json!({
+        "scene": scene.map(|e| e.to_bits().to_string()),
+        "textureState": if state.texture_state.is_empty() { "unset" } else { state.texture_state },
+        "sunVisible": sun.and_then(|sun| sun.visible).unwrap_or(true),
+        "sunIntensity": sun.and_then(|sun| sun.intensity).unwrap_or(1.0),
+        "sunDirection": sun.and_then(|sun| sun.direction).map(|d| d.to_array()),
+        "sunColor": sun.is_some_and(|sun| sun.color.is_some()).then(|| light.dir_color.to_linear().to_vec3().to_array()),
+        "fogDensity": state.fog_density,
+        "zenith": state.zenith.map(|c| c.to_array()),
+        "horizon": state.horizon.map(|c| c.to_array()),
+        "nadir": state.nadir.map(|c| c.to_array()),
+        "rim": state.rim.map(|c| c.to_array()),
+        "fogColor": state.fog_color.map(|c| c.to_array()),
+        "cloudColor": state.cloud_color.map(|c| c.to_array()),
+        "cloudSpeed": state.cloud_speed,
+        "cloudOpacity": state.cloud_opacity,
+        "starsBrightness": state.star_brightness,
+        "unavailable": { "": reason },
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use dcl_component::proto_components::{
-        common::{Color4, ColorKey, Vector3},
+        common::{Color4, ColorKey},
         sdk::components::pb_skybox,
     };
+
+    #[test]
+    fn environment_reading_explains_its_nulls_with_one_default_entry() {
+        let light = SceneGlobalLight::default();
+        let reading = environment_reading(&SceneEnvironment::default(), &light, None, None);
+        assert!(reading["scene"].is_null());
+        assert_eq!(reading["textureState"], "unset");
+        assert_eq!(reading["sunVisible"], true);
+        assert_eq!(
+            reading["unavailable"],
+            serde_json::json!({"": "No active scene environment overrides."})
+        );
+
+        let scene = Entity::PLACEHOLDER;
+        let state = SceneEnvironment {
+            fog: Some(scene),
+            fog_density: Some(0.0),
+            zenith: Some(Vec3::Z),
+            ..default()
+        };
+        let reading = environment_reading(&state, &light, None, None);
+        assert_eq!(reading["scene"], scene.to_bits().to_string());
+        assert_eq!(reading["fogDensity"], 0.0);
+        assert_eq!(reading["zenith"], serde_json::json!([0.0, 0.0, 1.0]));
+        assert!(reading["horizon"].is_null());
+        assert_eq!(
+            reading["unavailable"],
+            serde_json::json!({"": "No override for this field; using renderer defaults."})
+        );
+    }
 
     fn gradient(keys: &[(f32, f32)]) -> ColorGradient {
         ColorGradient {
@@ -489,36 +388,8 @@ mod tests {
     }
 
     #[test]
-    fn gradients_sort_clamp_keep_hdr_and_later_duplicates_without_midnight_wrap() {
-        let colors = gradient(&[(1.5, 5.0), (0.5, 2.0), (-1.0, 1.0), (0.5, 3.0)]);
-        assert_eq!(sample_gradient(Some(&colors), 0.0), Some(Vec3::X));
-        assert_eq!(sample_gradient(Some(&colors), 0.25), Some(Vec3::X * 2.0));
-        assert_eq!(sample_gradient(Some(&colors), 0.5), Some(Vec3::X * 3.0));
-        assert_eq!(sample_gradient(Some(&colors), 1.0), Some(Vec3::X * 5.0));
-        assert_eq!(sample_gradient(Some(&gradient(&[])), 0.5), None);
-        assert_eq!(
-            sample_gradient(
-                Some(&gradient(&[(f32::NAN, 1.0), (0.0, f32::INFINITY)])),
-                0.5
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn gradient_work_is_bounded_and_resamples_more_than_eight_keys() {
-        let mut keys: Vec<_> = (0..64).map(|n| (n as f32 / 63.0, n as f32)).collect();
-        keys.push((1.0, 999.0));
-        assert_eq!(
-            sample_gradient(Some(&gradient(&keys)), 1.0),
-            Some(Vec3::X * 63.0)
-        );
-        assert!((sample_gradient(Some(&gradient(&keys)), 0.5).unwrap().x - 31.5).abs() < 1e-4);
-    }
-
-    #[test]
-    fn optional_zero_false_negative_speed_and_scene_direction_are_not_defaults() {
-        let sky = PbSkybox {
+    fn optional_zero_and_negative_speed_are_not_defaults() {
+        let sky = Skybox::from(PbSkybox {
             clouds: Some(pb_skybox::Clouds {
                 opacity: Some(0.0),
                 speed: Some(-0.01),
@@ -528,120 +399,46 @@ mod tests {
                 brightness: Some(0.0),
             }),
             ..default()
-        };
-        let sun = PbSun {
-            intensity: Some(0.0),
-            visible: Some(false),
-            direction: Some(Vector3 {
-                x: 0.0,
-                y: 0.0,
-                z: 4.0,
-            }),
-            ..default()
-        };
-        let fog = PbEnvironmentFog {
+        });
+        assert_eq!(sky.cloud_opacity, Some(0.0));
+        assert_eq!(sky.cloud_speed, Some(-0.01));
+        assert_eq!(sky.star_brightness, Some(0.0));
+        let fog = EnvironmentFog::from(PbEnvironmentFog {
             density: Some(0.0),
             ..default()
-        };
-        let transform = GlobalTransform::from(Transform::from_rotation(Quat::from_rotation_y(
-            std::f32::consts::FRAC_PI_2,
-        )));
-        let state = sample_components(
-            Entity::PLACEHOLDER,
-            Some(&sky),
-            Some(&sun),
-            Some(&fog),
-            &transform,
-            0.5,
-        );
-        assert_eq!(state.sun_visible, Some(false));
-        assert_eq!(state.sun_intensity, Some(0.0));
-        assert_eq!(state.cloud_opacity, Some(0.0));
-        assert_eq!(state.cloud_speed, Some(-0.01));
-        assert_eq!(state.star_brightness, Some(0.0));
-        assert_eq!(state.fog_density, Some(0.0));
-        assert!(state.sun_direction.unwrap().abs_diff_eq(Vec3::NEG_X, 1e-6));
-        let empty = sample_components(Entity::PLACEHOLDER, None, None, None, &transform, 0.5);
-        assert_eq!(empty.sun_intensity, None);
+        });
+        assert_eq!(fog.density, Some(0.0));
+        let empty = Skybox::from(PbSkybox::default());
         assert_eq!(empty.cloud_opacity, None);
-        assert_eq!(empty.fog_density, None);
+        assert!(empty.texture.is_none());
+        assert_eq!(
+            EnvironmentFog::from(PbEnvironmentFog::default()).density,
+            None
+        );
     }
 
     #[test]
-    fn invalid_numbers_and_zero_direction_leave_defaults_and_rim_follows_horizon() {
-        let sky = PbSkybox {
+    fn invalid_numbers_leave_defaults_and_rim_follows_horizon() {
+        let sky = Skybox::from(PbSkybox {
+            skybox_texture: Some(String::new()),
             sky_colors: Some(pb_skybox::SkyColors {
                 horizon: Some(gradient(&[(0.0, 4.0)])),
                 ..default()
             }),
+            stars: Some(pb_skybox::Stars {
+                brightness: Some(f32::INFINITY),
+            }),
             ..default()
-        };
-        let sun = PbSun {
-            direction: Some(Vector3::default()),
-            intensity: Some(f32::INFINITY),
-            ..default()
-        };
-        let fog = PbEnvironmentFog {
+        });
+        assert!(sky.texture.is_none());
+        assert_eq!(sky.star_brightness, None);
+        assert_eq!(sky.rim, sky.horizon);
+        assert_eq!(sky.horizon.unwrap().sample(0.5), Vec3::X * 4.0);
+        let fog = EnvironmentFog::from(PbEnvironmentFog {
             density: Some(-1.0),
             ..default()
-        };
-        let state = sample_components(
-            Entity::PLACEHOLDER,
-            Some(&sky),
-            Some(&sun),
-            Some(&fog),
-            &GlobalTransform::IDENTITY,
-            0.5,
-        );
-        assert_eq!(state.sun_intensity, None);
-        assert_eq!(state.sun_direction, None);
-        assert_eq!(state.fog_density, Some(0.0));
-        assert_eq!(state.rim, state.horizon);
-        assert_eq!(state.horizon, Some(Vec3::X * 4.0));
-    }
-
-    #[test]
-    fn changing_scene_or_removing_texture_discards_pending_and_failed_requests() {
-        let mut world = World::new();
-        let scene_a = world.spawn_empty().id();
-        let scene_b = world.spawn_empty().id();
-        let mut images = Assets::<Image>::default();
-        let old = images.add(Image::default());
-        let new = images.add(Image::default());
-        let mut slot = TextureSlot::default();
-        slot.select(
-            Some((scene_a, "deployment-a".into(), "sky.png".into())),
-            |_| Some(old.clone()),
-        );
-        slot.select(
-            Some((scene_a, "deployment-a".into(), "sky.png".into())),
-            |_| panic!("same request must not restart"),
-        );
-        slot.select(
-            Some((scene_b, "deployment-b".into(), "sky.png".into())),
-            |_| Some(new.clone()),
-        );
-        assert_eq!(slot.handle, Some(new));
-        // Completing the old image cannot replace the selected scene's handle.
-        images.insert(old.id(), Image::default());
-        assert_ne!(slot.handle, Some(old));
-        // The same scene entity and file name in a new deployment is a new request.
-        let mut reloaded = false;
-        slot.select(
-            Some((scene_b, "deployment-c".into(), "sky.png".into())),
-            |_| {
-                reloaded = true;
-                None
-            },
-        );
-        assert!(reloaded && slot.handle.is_none());
-        slot.select(
-            Some((scene_b, "deployment-b".into(), "missing.png".into())),
-            |_| None,
-        );
-        assert!(slot.handle.is_none());
-        slot.select(None, |_| panic!("clearing must not load"));
-        assert!(slot.handle.is_none() && slot.source.is_none());
+        });
+        assert_eq!(fog.density, Some(0.0));
     }
 
     #[test]
@@ -662,26 +459,25 @@ mod tests {
     }
 
     #[test]
-    fn light_fog_and_shader_overrides_reset_without_compounding_or_bypassing_quality() {
+    fn fog_sky_and_ambient_overrides_reset_without_bypassing_quality() {
         use crate::{
-            nishita_cloud::NishitaCloud, sky_envmap::SkyEnvmapSettings, CloudCover,
-            ShadowBiasOverride,
+            nishita_cloud::NishitaCloud,
+            sky_envmap::{SkyAmbient, SkyEnvmapSettings},
+            sky_preset::{ambient_trilight, fog_falloff_density},
+            CloudCover, FogDensity, ShadowBiasOverride,
         };
         use bevy_atmosphere::prelude::AtmosphereModel;
-        use common::structs::{AppConfig, FogSetting, SceneGlobalLight, SceneLoadDistance};
+        use common::structs::{AppConfig, FogSetting, SceneGlobalLight};
         let mut app = App::new();
         let mut time = Time::<()>::default();
         time.advance_by(std::time::Duration::from_secs(1));
         let mut config = AppConfig::default();
-        config.graphics.fog = FogSetting::Atmospheric;
+        config.graphics.fog = FogSetting::On;
         app.insert_resource(time)
             .insert_resource(config)
             .insert_resource(TimeOfDay { time: 43200.0 })
-            .insert_resource(SceneLoadDistance {
-                load: 100.0,
-                unload: 20.0,
-                load_imposter: 0.0,
-            })
+            .init_resource::<FogDensity>()
+            .init_resource::<SkyAmbient>()
             .insert_resource(SceneGlobalLight {
                 dir_color: Color::WHITE,
                 dir_illuminance: 1000.0,
@@ -690,6 +486,7 @@ mod tests {
                 sun_direction: Vec3::NEG_Y,
                 ambient_color: Color::WHITE,
                 ambient_brightness: 1.0,
+                sun_hidden: true,
                 ..default()
             })
             .insert_resource(AtmosphereModel::new(NishitaCloud::default()))
@@ -708,9 +505,7 @@ mod tests {
             .init_resource::<SkyEnvmapSettings>()
             .init_resource::<ShadowBiasOverride>()
             .insert_resource(SceneEnvironment {
-                sun_intensity: Some(2.0),
-                sun_visible: Some(false),
-                fog_density: Some(0.0),
+                fog_density: Some(0.01),
                 zenith: Some(Vec3::X * 2.0),
                 nadir: Some(Vec3::Z),
                 cloud_opacity: Some(0.0),
@@ -725,18 +520,24 @@ mod tests {
             app.update();
         }
         let world = app.world_mut();
-        assert_eq!(
+        assert!(
             world
-                .query::<&DirectionalLight>()
-                .single(world)
-                .unwrap()
-                .illuminance,
-            2000.0
+                .resource::<SkyEnvmapSettings>()
+                .authored_lower_hemisphere
         );
+        // the scene's density is in the preset's units
+        let scene_falloff = fog_falloff_density(0.01);
         assert!(matches!(
             world.get::<DistanceFog>(camera).unwrap().falloff,
-            FogFalloff::Exponential { density: 0.0 }
+            FogFalloff::Exponential { density } if density == scene_falloff
         ));
+        // the authored zenith and nadir are the Trilight's sky and ground; the preset keeps the
+        // equator the scene leaves out
+        let preset = ambient_trilight(0.5);
+        assert_eq!(
+            world.resource::<SkyAmbient>().bands,
+            [Vec3::X * 2.0, preset[1], Vec3::Z]
+        );
         let atmosphere = world
             .resource::<AtmosphereModel>()
             .to_ref::<NishitaCloud>()
@@ -745,22 +546,24 @@ mod tests {
         assert_eq!(atmosphere.scene_sun_visible, 0.0);
         let ambient = world.resource::<AmbientLight>();
         assert!(ambient.color.to_linear().alpha * ambient.brightness < -1.5);
+        // the Off setting is no fog, whatever the scene asks for
         world.resource_mut::<AppConfig>().graphics.fog = FogSetting::Off;
         app.update();
-        assert!(!matches!(
+        assert!(matches!(
             app.world().get::<DistanceFog>(camera).unwrap().falloff,
-            FogFalloff::Exponential { .. }
+            FogFalloff::Exponential { density: 0.0 }
         ));
         *app.world_mut().resource_mut::<SceneEnvironment>() = SceneEnvironment::default();
+        app.world_mut()
+            .resource_mut::<SceneGlobalLight>()
+            .sun_hidden = false;
         app.update();
         let world = app.world_mut();
-        assert_eq!(
-            world
-                .query::<&DirectionalLight>()
-                .single(world)
-                .unwrap()
-                .illuminance,
-            1000.0
+        assert_eq!(world.resource::<SkyAmbient>().bands, preset);
+        assert!(
+            !world
+                .resource::<SkyEnvmapSettings>()
+                .authored_lower_hemisphere
         );
         let atmosphere = world
             .resource::<AtmosphereModel>()
@@ -773,7 +576,7 @@ mod tests {
         assert!(ambient.color.to_linear().alpha * ambient.brightness >= -1.0);
     }
 
-    /// Compiles both the procedural compute shader and the visible image material on a GPU.
+    /// Compiles the procedural compute shader and the panorama skybox on a GPU.
     #[test]
     #[ignore = "needs a GPU; run with --ignored"]
     fn scene_environment_pipelines_compile() {
@@ -789,8 +592,7 @@ mod tests {
             },
         };
         use pipeline_test::{
-            compile_pipelines, fragment_pipelines, headless_app_without_embedded_assets,
-            render_target,
+            compile_pipelines, headless_app_without_embedded_assets, render_target,
         };
         #[derive(Resource, Default)]
         struct Captured(Option<Image>);
@@ -899,12 +701,7 @@ mod tests {
             .insert_resource(AtmosphereModel::new(NishitaCloud::default()))
             .add_plugins(AtmospherePlugin)
             .add_plugins(crate::sky_envmap::SkyEnvmapPlugin)
-            .add_plugins(MaterialPlugin::<SceneSkyMaterial> {
-                prepass_enabled: false,
-                shadows_enabled: false,
-                ..default()
-            })
-            .add_systems(Update, (tick, update_sky_material).chain())
+            .add_systems(Update, (tick, update_sky_panorama).chain())
             .add_plugins(assets::EmbedAssetsPlugin);
         app.finish();
         app.cleanup();
@@ -920,13 +717,8 @@ mod tests {
             .world()
             .resource::<crate::sky_envmap::SkyEnvmap>()
             .clone();
-        for handle in [
-            &raw_sky,
-            &maps.diffuse,
-            &maps.specular,
-            &maps.trilight_diffuse,
-            &maps.trilight_specular,
-        ] {
+        // the ambient map is written on the CPU and takes no part in the sky's passes
+        for handle in [&raw_sky, &maps.specular, &maps.trilight_specular] {
             app.world_mut()
                 .resource_mut::<Assets<Image>>()
                 .get_mut(handle)
@@ -968,7 +760,9 @@ mod tests {
             .resource_mut::<Assets<Image>>()
             .add(sky_image);
         app.world_mut().resource_mut::<SceneEnvironment>().texture = Some(sky);
-        app.world_mut().resource_mut::<SceneEnvironment>().nadir = Some(Vec3::Z);
+        app.world_mut()
+            .resource_mut::<crate::sky_envmap::SkyEnvmapSettings>()
+            .authored_lower_hemisphere = true;
         app.world_mut()
             .resource_mut::<AtmosphereModel>()
             .to_mut::<NishitaCloud>()
@@ -1012,7 +806,6 @@ mod tests {
             }
         }
         assert!(compile_pipelines(&mut app) > 0);
-        assert!(fragment_pipelines(&app, "embedded://shaders/scene_sky.wgsl") > 0);
         let front = capture(&mut app, &target, "texture-forward");
         assert!(
             front[0] > 200 && front[1] < 30 && front[2] < 30,
@@ -1069,8 +862,9 @@ mod tests {
                     _ => (),
                 }
             }
-            app.world_mut().resource_mut::<SceneEnvironment>().nadir =
-                (band == "nadir").then_some(Vec3::X);
+            app.world_mut()
+                .resource_mut::<crate::sky_envmap::SkyEnvmapSettings>()
+                .authored_lower_hemisphere = band == "nadir";
             for quality in [
                 common::structs::SkyReflectionSetting::High,
                 common::structs::SkyReflectionSetting::Low,
@@ -1090,26 +884,22 @@ mod tests {
                     [expected_red, 0, 0, 0],
                     "{band}: exact raw -Y pole"
                 );
-                let handles = match quality {
-                    common::structs::SkyReflectionSetting::High => [&maps.diffuse, &maps.specular],
-                    common::structs::SkyReflectionSetting::Low => {
-                        [&maps.trilight_diffuse, &maps.trilight_specular]
-                    }
+                let handle = match quality {
+                    common::structs::SkyReflectionSetting::High => &maps.specular,
+                    common::structs::SkyReflectionSetting::Low => &maps.trilight_specular,
                 };
-                for handle in handles {
-                    let size = app
-                        .world()
-                        .resource::<Assets<Image>>()
-                        .get(handle)
-                        .unwrap()
-                        .width() as usize;
-                    raw_cube(
-                        &mut app,
-                        handle,
-                        size,
-                        &format!("{band} {quality:?} ambient"),
-                    );
-                }
+                let size = app
+                    .world()
+                    .resource::<Assets<Image>>()
+                    .get(handle)
+                    .unwrap()
+                    .width() as usize;
+                raw_cube(
+                    &mut app,
+                    handle,
+                    size,
+                    &format!("{band} {quality:?} reflection"),
+                );
             }
         }
     }

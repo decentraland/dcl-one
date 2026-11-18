@@ -1,10 +1,12 @@
 import { readFileSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  findBrowser,
-  openSession,
-} from "../../../../../../library/ui/figma/review/scripts/capture-browser.mjs";
+  type CaptureSession,
+  START_BUDGET_MS,
+  startCaptureBrowser,
+} from "./capture-browser.helpers";
 
 const root = new URL("../../../../../../", import.meta.url);
 const css = [
@@ -15,24 +17,42 @@ const css = [
 ]
   .map((file) => readFileSync(fileURLToPath(new URL(file, root)), "utf8"))
   .join("\n");
-let session: Awaited<ReturnType<typeof openSession>>;
-let startup: ReturnType<typeof openSession> | undefined;
+let session: CaptureSession;
+let startup: Promise<CaptureSession> | undefined;
 const startupController = new AbortController();
 // Teardown also owns a startup that outlives this fixture's integration budget.
 beforeAll(async () => {
-  startup = (async () =>
-    openSession(
-      await findBrowser([
-        process.env.BROWSER_PATH,
-        process.env.CHROME_PATH,
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        "/usr/bin/google-chrome",
-        "/usr/bin/chromium",
-      ]),
-      { signal: startupController.signal },
-    ))();
+  startup = (async () => {
+    try {
+      return await startCaptureBrowser(
+        "Header geometry",
+        startupController.signal,
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "CAPTURE_BROWSER_PORT_MISSING"
+      ) {
+        try {
+          if (process.env.GITHUB_OUTPUT) {
+            await appendFile(
+              process.env.GITHUB_OUTPUT,
+              "capture-missing-port=true\n",
+            );
+          }
+          console.error(
+            "Header geometry missing-port receipt: capture-missing-port=true",
+          );
+        } catch {
+          // A diagnostic receipt cannot replace the startup failure.
+        }
+      }
+      throw error;
+    }
+  })();
   session = await startup;
-}, 40_000);
+}, START_BUDGET_MS + 10_000);
 afterAll(async () => {
   startupController.abort(new Error("Header geometry fixture disposed"));
   const opened = await startup?.catch(() => undefined);
@@ -69,7 +89,7 @@ describe("when native and legacy chrome hosts resolve their header offsets", () 
             };
           }
         ).result.value;
-        const height = width < 1024 ? 64 : 80;
+        const height = width < 992 ? 64 : 92;
         expect(actual.root).toBe(`${height}px`);
         expect(actual.child).toBe(`${height}px`);
         if (host === "shop") expect(actual.shop).toBe(`${height}px`);

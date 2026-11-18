@@ -1,13 +1,13 @@
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { cleanup, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { createTestStore } from '../../../tests/utils/testStore';
 import { TemplatesPage } from '.';
 
@@ -32,11 +32,11 @@ describe('TemplatesPage', () => {
     it('should mark Templates as the active navbar section', () => {
       render(
         <Provider store={createTestStore()}>
-          <ThemeProvider theme={dark}>
+          <TestProviders>
             <MemoryRouter>
               <TemplatesPage />
             </MemoryRouter>
-          </ThemeProvider>
+          </TestProviders>
         </Provider>,
       );
       expect(screen.getByTestId('navbar').textContent).toBe('templates');

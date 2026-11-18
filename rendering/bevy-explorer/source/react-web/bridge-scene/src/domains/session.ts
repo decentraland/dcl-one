@@ -11,8 +11,8 @@ import { GUEST_SESSION_KEY, emailLoginComplete, emailLoginStart, guestLogin, gue
 
 // The Bevy engine injects a persistent localStorage into system scenes.
 declare const localStorage: {
+  getItem: (key: string) => string | null
   setItem: (key: string, value: string) => void
-  removeItem: (key: string) => void
 }
 
 // thirdweb only serves origins on the project's allowlist, and the native page's cef:// origin is
@@ -72,7 +72,8 @@ export function registerSession(ctx: Ctx): void {
           break
         }
         case 'guestSign': value = await guestSign(msg.params?.token ?? '', msg.params?.message ?? '', THIRDWEB_HEADERS); break
-        case 'guestDiscard': localStorage.removeItem(GUEST_SESSION_KEY); break
+        // the wallet session kept from an earlier guestLogin: Play as guest brings that guest back
+        case 'guestSession': value = localStorage.getItem(GUEST_SESSION_KEY); break
         // Email sign-in (native): the code and the wallet it opens, as for the guest; the page builds
         // the identity. A refused code or address keeps its code in the error's text.
         case 'emailStart': await emailLoginStart(msg.params?.email ?? '', THIRDWEB_HEADERS); break

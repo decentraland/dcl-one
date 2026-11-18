@@ -95,7 +95,7 @@ for (const name of readdirSync(outDir)) {
   if (!expected.has(name)) stale.push(`${name} (unexpected)`);
 }
 if (check && stale.length) {
-  console.error(`[gen:error-pages] out of date: ${stale.join(", ")}\n  run: npm run gen:error-pages`);
+  console.error(`[gen:error-pages] out of date: ${stale.join(", ")}\n  run: pnpm run gen:error-pages`);
   process.exit(1);
 }
 console.log(check ? "[gen:error-pages] up to date" : `[gen:error-pages] wrote ${expected.size} pages to public/errors/`);

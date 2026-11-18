@@ -114,12 +114,12 @@ pub(crate) mod tests;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::{any, delete, erase, get, post};
 use anyhow::Context;
 use axum::Json;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
-use axum::routing::{any, get, post};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower_http::timeout::TimeoutLayer;
@@ -492,6 +492,15 @@ impl Settings {
     }
 }
 
+/// This node's `/profile-images`, whose faces the profile responses warm;
+/// `serve` attaches social's renderer.
+pub trait ProfileFaces: Send + Sync {
+    /// Whether it serves a face the profile never uploaded: it has an origin or a renderer.
+    fn derives_faces(&self) -> bool;
+    /// Starts producing these profile entities' faces.
+    fn warm(&self, entities: Vec<String>);
+}
+
 pub struct MarketplaceState {
     pub pool: PgPool,
     pub http: crate::http::Outbound,
@@ -529,7 +538,7 @@ pub struct MarketplaceState {
     pub(crate) denylist: Arc<crate::content::Denylist>,
     /// `/profile-images`, attached once the social states exist: the faces a
     /// response points at are warmed there.
-    pub(crate) profile_images: std::sync::OnceLock<crate::social::profile_images::SharedState>,
+    pub(crate) profile_images: std::sync::OnceLock<Arc<dyn ProfileFaces>>,
     /// decentraland.org's `dapps` rollout flags as this node enforces them (`features`); every flag off until read.
     pub(crate) dapps_flags: Arc<features::DappsFlags>,
     /// Where `dapps_flags` is read from (`SHOP_FEATURE_FLAGS_*`).
@@ -608,10 +617,7 @@ impl MarketplaceState {
 
     /// Attaches this node's `/profile-images`, whose faces the profile
     /// responses warm; `false` when one is already attached.
-    pub fn attach_profile_images(
-        &self,
-        images: crate::social::profile_images::SharedState,
-    ) -> bool {
+    pub fn attach_profile_images(&self, images: Arc<dyn ProfileFaces>) -> bool {
         self.profile_images.set(images).is_ok()
     }
 
@@ -622,7 +628,7 @@ impl MarketplaceState {
             || self
                 .profile_images
                 .get()
-                .is_some_and(|images| images.origin.is_some() || images.render_queue.is_some())
+                .is_some_and(|images| images.derives_faces())
     }
 
     /// Warms the faces of these profile entities when they point at this
@@ -632,7 +638,7 @@ impl MarketplaceState {
             return;
         }
         if let Some(images) = self.profile_images.get() {
-            images.warm(entities);
+            images.warm(entities.into_iter().collect());
         }
     }
 
@@ -874,7 +880,7 @@ pub fn shop_admin_router(state: SharedState) -> Router {
         .route("/admin/moderation/flags", get(admin::list_flags))
         .route(
             "/admin/moderation/{kind}/{hash}/flag",
-            post(admin::set_flag).delete(admin::clear_flag),
+            post(admin::set_flag).delete(erase(admin::clear_flag)),
         )
         .route("/admin/disputes", get(admin::list_disputes))
         .route(
@@ -1166,7 +1172,7 @@ pub fn market_router(state: SharedState) -> Router {
         .route(
             "/v1/trades",
             get(trades::get_trades)
-                .post(listings::post_trade)
+                .post(erase(listings::post_trade))
                 .layer(DefaultBodyLimit::max(256 * 1024)),
         )
         .route("/v1/trades-mirror", get(trades::get_mirror_status))
@@ -1175,37 +1181,40 @@ pub fn market_router(state: SharedState) -> Router {
             "/v1/trades/{hashed_signature}/accept",
             get(trade_events::get_trade_accepted_event),
         )
-        .route("/v1/lists", get(lists::get_lists).post(lists::create_list))
+        .route(
+            "/v1/lists",
+            get(lists::get_lists).post(erase(lists::create_list)),
+        )
         .route(
             "/v1/lists/{id}",
             get(lists::get_list_route)
-                .put(lists::update_list_route)
-                .delete(lists::delete_list_route),
+                .put(erase(lists::update_list_route))
+                .delete(erase(lists::delete_list_route)),
         )
         .route(
             "/v1/lists/{id}/picks",
-            get(lists::get_list_picks).post(lists::add_pick_to_list_route),
+            get(lists::get_list_picks).post(erase(lists::add_pick_to_list_route)),
         )
         .route(
             "/v1/lists/{id}/picks/{item_id}",
-            axum::routing::delete(lists::delete_pick_in_list_route),
+            delete(lists::delete_pick_in_list_route),
         )
         .route(
             "/v1/lists/{id}/access",
-            post(lists::create_access_route).delete(lists::delete_access_route),
+            post(lists::create_access_route).delete(erase(lists::delete_access_route)),
         )
         .route("/v1/picks/stats", get(lists::get_picks_stats))
         .route("/v1/picks/{item_id}/stats", get(lists::get_item_pick_stats))
         .route(
             "/v1/picks/{item_id}",
             get(lists::get_picks_by_item)
-                .post(lists::pick_unpick_in_bulk)
-                .delete(lists::unpick_everywhere),
+                .post(erase(lists::pick_unpick_in_bulk))
+                .delete(erase(lists::unpick_everywhere)),
         )
         .route(
             "/v1/coupons",
             get(crate::coupons::get_coupons)
-                .post(crate::coupons::add_coupon)
+                .post(erase(crate::coupons::add_coupon))
                 .layer(DefaultBodyLimit::max(64 * 1024)),
         )
         .route("/v1/coupons/{id}", get(crate::coupons::get_coupon))
@@ -1228,7 +1237,7 @@ pub fn market_router(state: SharedState) -> Router {
         .route("/federation/market/changes", get(federation::changes))
         .route(
             "/v1/admin/moderation/{kind}/{hash}/flag",
-            post(admin::set_flag).delete(admin::clear_flag),
+            post(admin::set_flag).delete(erase(admin::clear_flag)),
         )
         .route("/v1/admin/disputes", get(admin::list_disputes))
         .route(

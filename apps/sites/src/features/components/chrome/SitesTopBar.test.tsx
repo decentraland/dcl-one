@@ -16,7 +16,6 @@ import SiteLayout from "@ui/web/frames/SiteLayout";
 import { ChromeAuthContext, type ChromeAuth } from "@ui/web/frames/chrome-auth";
 import { ChromeNavContext } from "@ui/web/frames/chrome-nav";
 import ChromeNavBridge from "./ChromeNavBridge";
-import { sitesNavSections } from "./SitesTopBar";
 
 vi.hoisted(() => {
   Object.assign(window, {
@@ -36,16 +35,18 @@ const baseAuth: ChromeAuth = {
 function Host({
   auth = baseAuth,
   children = <DclTopBar active="shop" />,
+  pathname = "/shop",
 }: {
   auth?: ChromeAuth;
   children?: React.ReactNode;
+  pathname?: string;
 }) {
   const [client] = React.useState(
     () => new QueryClient({ defaultOptions: { queries: { retry: false } } }),
   );
   return (
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/shop"]}>
+      <MemoryRouter initialEntries={[pathname]}>
         <ChromeAuthContext.Provider value={auth}>
           <ChromeNavBridge>{children}</ChromeNavBridge>
         </ChromeAuthContext.Provider>
@@ -80,16 +81,47 @@ describe("Sites native chrome integration", () => {
     expect(
       screen.getByRole("link", { name: "Shop" }).getAttribute("aria-current"),
     ).toBe("page");
-    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    fireEvent.click(screen.getByRole("button", { name: "Discover" }));
     expect(
-      screen.getByRole("link", { name: "Jump in" }).getAttribute("href"),
-    ).toBe("/play/");
+      screen.getByRole("link", { name: "Events" }).getAttribute("href"),
+    ).toBe("/events");
     expect(
-      screen.getByRole("link", { name: "What's on" }).getAttribute("href"),
-    ).toBe("/whats-on");
+      screen.getByRole("link", { name: "Places" }).getAttribute("href"),
+    ).toBe("/places");
     expect(screen.getByRole("link", { name: "Sign in" })).toBeTruthy();
     expect(screen.queryByLabelText("Credits")).toBeNull();
   });
+  it("shows the canonical Events destination as selected inside the mobile menu", () => {
+    render(
+      <Host pathname="/events" children={<DclTopBar active="events" />} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+    const menu = within(screen.getByRole("dialog", { name: "Menu" }));
+    const events = menu.getByRole("link", { name: "Events" });
+    expect(events.getAttribute("href")).toBe("/events");
+    expect(events.getAttribute("aria-current")).toBe("page");
+    expect(menu.queryByRole("link", { name: "What's on" })).toBeNull();
+  });
+  it.each([false, true])(
+    "keeps Places accessible in the mobile menu with signedIn=%s",
+    (signedIn) => {
+      render(
+        <Host
+          pathname="/places"
+          auth={{ ...baseAuth, signedIn, account: signedIn ? "0xa" : "" }}
+          children={<DclTopBar active="explore" />}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+      const menu = within(screen.getByRole("dialog", { name: "Menu" }));
+      const places = menu.getByRole("link", { name: "Places" });
+      expect(places.getAttribute("href")).toBe("/places");
+      expect(places.getAttribute("aria-current")).toBe("page");
+      expect(
+        menu.getByRole("link", { name: "Events" }).getAttribute("aria-current"),
+      ).toBeNull();
+    },
+  );
   it("forwards account and balance slots once and closes mobile callback tabs", async () => {
     const tab = vi.fn();
     render(
@@ -204,35 +236,29 @@ describe("Sites native chrome integration", () => {
   });
 });
 
-describe("when native navigation uses the shared Sites link definitions", () => {
-  it("should preserve destinations and selected Play children", () => {
-    const sections = sitesNavSections("events", "/whats-on");
-    expect(sections.map(({ label }) => label)).toEqual([
-      "Play",
-      "Shop",
-      "Create",
-      "Social",
-      "Learn",
-    ]);
-    expect(sections[0]?.items).toEqual([
-      { label: "Jump in", href: "/play/", active: false },
-      { label: "What's on", href: "/whats-on", active: true },
-    ]);
-    expect(sections[1]?.href).toBe("/shop");
-    expect(sections[2]?.href).toBe("/create");
-    expect(sections[3]?.href).toBe("/social/");
-  });
-  it("should select Docs or Blog without selecting the other Learn child", () => {
-    for (const [pathname, expected] of [
-      ["/docs/player/", [true, false]],
-      ["/blog/post", [false, true]],
-    ] as const) {
-      const learn = sitesNavSections("learn", pathname)[4];
-      expect(learn?.items?.map(({ active }) => active)).toEqual(expected);
-    }
-    expect(
-      sitesNavSections(undefined, "/").every(({ active }) => !active),
-    ).toBe(true);
+describe("when a Sites page reports its area", () => {
+  it.each([
+    ["explore", "/places", "Places"],
+    ["events", "/events", "Events"],
+    ["whatson", "/events", "Events"],
+  ] as const)(
+    "should select Discover and %s's item on %s",
+    (area, path, item) => {
+      render(<Host pathname={path} children={<DclTopBar active={area} />} />);
+      const discover = screen.getByRole("button", { name: "Discover" });
+      fireEvent.click(discover);
+      expect(
+        screen.getByRole("link", { name: item }).getAttribute("aria-current"),
+      ).toBe("page");
+      const other = item === "Places" ? "Events" : "Places";
+      expect(
+        screen.getByRole("link", { name: other }).getAttribute("aria-current"),
+      ).toBeNull();
+    },
+  );
+  it("should select no section for an area outside the navigation", () => {
+    render(<Host pathname="/social/" children={<DclTopBar active="social" />} />);
+    expect(document.querySelector('[aria-current="page"]')).toBeNull();
   });
 });
 

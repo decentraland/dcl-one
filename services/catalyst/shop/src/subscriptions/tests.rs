@@ -17,7 +17,7 @@ use sqlx::PgPool;
 use super::delivery::*;
 use super::*;
 use crate::outfits::testkit::{scratch_wallet, send, signed_headers, signed_headers_with};
-use crate::social::notifications::email::SendFailure;
+use crate::shared::notifications::SendFailure;
 
 const BASE: &str = "https://decentraland.org/shop/";
 
@@ -36,6 +36,16 @@ struct Recorder {
 impl AvailabilityMailer for Recorder {
     fn is_configured(&self) -> bool {
         self.configured
+    }
+    async fn send_html(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &serde_json::Value,
+    ) -> Result<Option<String>, SendFailure> {
+        unreachable!("the recorder overrides send_item_available")
     }
     async fn send_item_available(
         &self,

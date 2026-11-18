@@ -14,13 +14,22 @@ nix develop --command make check   # non-interactive: never starts services
 proposes the current tip on the first of each month; `python3
 tooling/nixpkgs-update.py` does the same locally.
 
-`nix develop` starts a per-checkout PostgreSQL 18, API, Sites, LiveKit, NATS and
-Pulse that outlive the shell and reload on edits.
+`nix develop` starts a per-checkout PostgreSQL 18, API, Sites, LiveKit with its
+RTMP Ingress and Valkey, NATS and Pulse that outlive the shell and reload on edits.
 
 Ports, from base 5210 (`FOUNDATION_DEV_PORT` on first use; saved in
 `.cache/dev/settings.json`): API and `/ws` +0, its metrics +1, Sites and Pulse WebTransport +2,
 PostgreSQL +3, LiveKit +4..+6, Pulse ENet and `/metrics` +7, NATS +8, its
-monitor +9. An occupied saved port fails startup.
+monitor +9. The ingress takes the first free block 10000 above the base (`ingress_port`):
+Valkey +0, RTMP +1 (every interface), the ingress relay +2 and health +3. An occupied
+saved port fails startup.
+
+A stream key from `/scene-stream-access` streams to the `rtmp://…/x` URL it comes with
+(`foundation-dev status` prints it). Behind a public origin that URL names the origin's
+host, so its RTMP port must be reachable there directly: a TLS front or an HTTP tunnel
+does not carry RTMP. The ingress needs a minute or two on its first start while
+GStreamer scans its plugins. A stack started before the ingress existed needs
+`foundation-dev down`, then `up`.
 
 | `foundation-dev …` | Action |
 | --- | --- |
@@ -76,7 +85,7 @@ Status values:
 | RPC relay upstreams `rpc` (`RPC_UPSTREAM_{MAINNET,ETHEREUM,SEPOLIA,POLYGON,MATIC,AMOY}`); the OpenSea resolver's RPC legs reuse them. Status: mirror | `src/ops/rpc/routes.rs`, `explore/src/opensea.rs` | `@decentraland/apis` | No target yet |
 | Shop checkout RPC `rpc` (`/polygon`, `/mainnet`, `/amoy`, `/sepolia`). `DEFAULT_RPC`, overridden by `window.__SHOP_CHAIN__.rpc` or `VITE_SHOP_RPC_*`; no deployment sets either. The market reader uses `rpc/amoy` only on Amoy. Status: production (browser) | `apps/ui3/src/shop/checkout/chain/config.ts`, `chain/rpc.ts`, `checkout/lib/authorizations.ts`; `apps/ui3/src/shop/market/lib/rpc.ts` | `@decentraland/web-applications` | Reads go through the node's relay (`${catalystBase()}/rpc/<network>`, as `apps/ui3/src/shop/land/evm.ts` already does), served by `services/catalyst/src/ops/rpc/` |
 | Feature flags `feature-flags` (`/dapps.json`, Referer `FEATURE_FLAGS_ORIGIN`). Sites: `FEATURE_FLAGS_URL`, default `https://feature-flags.decentraland.org`. Shop browser fallback: `FLAGS_SERVICE`. Catalyst: `FF_URL`, `SHOP_FEATURE_FLAGS_URL` (mirror). Status: production | `apps/sites/src/data/lib/feature-flags.server.ts`, `auth/sign-in-flags.server.ts`; `library/shop/discovery/lib/rolloutFlags.ts`; `services/catalyst/social/src/communities/features.rs`, `shop/src/market/features.rs` | `@decentraland/web-applications`, `@decentraland/apis` | Sites and Shop read the node's `GET /feature-flags/<app>.json` (`services/catalyst/explore/src/api/feature_flags.rs`), which mirrors the document and applies local overrides |
-| Explorer download counts `cdn-data` (`/public/current/explorer-alpha-downloads.json`). Hardcoded `COUNTS_URL`. Falls back to "+400K". Status: production | `apps/sites/src/data/lib/catalyst/landings/download-counts.server.ts` | `@decentraland/web-applications` | No target yet |
+| Explorer download counts (the `explorer-alpha-downloads.json` shape). Read only when the deployment sets `DOWNLOAD_COUNTS_URL`; a 2 s deadline, then the last total; with no total the home page shows "+400K". Status: production | `apps/sites/src/data/lib/download/counts.server.ts` | `@decentraland/web-applications` | No target yet |
 | Editor-scene realm `peer` (`/content`, `/lambdas`, `/bff`). The static realm JSON advertises them as `publicUrl`. Status: production (`/editor-scene/about`) | `apps/ui3/src/editor/editor-scene-realm.json`, `apps/sites/src/routes/routes/editor-scene.EditorScene.about.ts` | `@decentraland/web-applications` | No target yet. The node serves `/content` and `/lambdas` itself |
 | Places `places` (`/api/places`, `/api/worlds`). `PLACES_UPSTREAM_URL`, `WORLDS_UPSTREAM_URL`. Status: mirror | `services/catalyst/explore/src/places/mirror.rs` | `@decentraland/apis` | No target yet |
 | Events `events` (`/api/events`, `/api/events/{id}`). `EVENTS_UPSTREAM_URL`. Status: mirror | `explore/src/events/mirror.rs` | `@decentraland/apis` | `EVENTS_MIRROR_ADOPT` adopts the mirrored rows as local once the old service stops ([explore API parity ADR](adr/2026-11-05-explore-api-parity-contract.md)) |
@@ -155,6 +164,13 @@ nix develop --command bash tooling/dev-test.sh [rust|e2e]   # rust: PostgreSQL o
 CI runs the Rust suites in `nix develop .#ci`: the toolchain, the services the tests
 start and the build tools, without the web and media tools.
 
+The Rust job sets `FOUNDATION_DEV_DISPOSABLE_POSTGRES=1`. A cluster that
+`foundation-dev` initializes with it set runs without durability (`fsync`,
+`synchronous_commit` and `full_page_writes` off, `wal_level=minimal`), because
+every scratch database a test drops forces a checkpoint. The flag has no effect
+on a cluster created without it, so it never weakens a stack that holds data.
+Locally, set it only for a checkout whose `.cache/dev/postgres` does not exist yet.
+
 Run both in a fresh checkout. `python3 tooling/ci-local.py install` adds hooks
 that run the matching workflows' checks (images need Linux or
 `CI_LOCAL_IMAGES=1`); `ci-local.py run [REV]` runs them without pushing.
@@ -163,11 +179,12 @@ the test executables; on PRs they run on Linux (`CATALYST_TEST_SHARD=i/n` for
 `tooling/catalyst-test.sh`). The provisioned Archipelago tests take a fixed
 time, so only the shard that `CATALYST_TEST_PROVISIONED_SHARD` names runs them;
 the other shards check that the tests are present. A run that sets neither
-variable runs them. When the dependency cache is restored from its exact key,
-the jobs compile through a compiler cache (`sccache` on the GitHub cache) that
-holds what that entry does not: the results of the workspace crates and of the
-separate `rusty_enet` workspace. Without that hit, without the tool, or when its
-server does not start, they compile as before. A PR that changes a build or dev-stack input gets a
+variable runs them. When the dependency cache restores anything, from its exact
+key or a partial match, the jobs compile through a compiler cache (`sccache` on
+the GitHub cache) that holds what that entry does not: the results of the
+workspace crates, of dependencies the entry lacks and of the separate
+`rusty_enet` workspace. Without a restore, without the tool, or when its server
+does not start, they compile as before. A PR that changes a build or dev-stack input gets a
 notice to add the `ci:macos` label: Cargo manifests and lockfiles, build
 scripts, toolchain files, `.cargo`, `library/vendor/rusty_enet`, Nix,
 `infra/dev`, the Makefile, the dev tooling and
@@ -185,9 +202,10 @@ input of the Rust job goes on that list and on the path list of
 `development.yml` in the change that adds it; pushes to `main` always run the
 Rust tests. The Rust tests run in three shards. Each shard sorts the test
 binaries by source file and kind, so the three take one list on any runner
-(`tooling/catalyst-test.sh`). One more label works the same way:
-`ci:desktop` builds the Creator Hub desktop app on a PR and attaches its test
-builds. `release:creator-hub` is read after the merge: the push to
+(`tooling/catalyst-test.sh`). Two more labels work the same way:
+`ci:desktop` builds the Creator Hub desktop app for macOS and Windows on a PR
+and attaches its test builds, and `ci:linux` does the same for Linux.
+`release:creator-hub` is read after the merge: the push to
 `main` publishes the Creator Hub installers as a pre-release only when its PR
 has the label. A draft PR does not run the Explorer test suite and the headless
 smoke test; they start when the PR is marked ready for review, or on the next
@@ -254,7 +272,7 @@ policy (`library/ui/figma/test/workflows.test.ts`).
 | `RUNNER_LINUX_X86_UBUNTU_22_04` | `ubuntu-22.04` | 1 | bevy-explorer-headless-build |
 | `RUNNER_LINUX_X86_UBUNTU_22_04_16CORE` | `ubuntu-22.04-16core` | 1 | bevy-explorer-ci |
 | `RUNNER_LINUX_X86_UBUNTU_24_04` | `ubuntu-24.04` | 5 | bevy-explorer-ci, bevy-explorer-scenes, creator-hub-e2e, uuav-native, uuav-verify |
-| `RUNNER_LINUX_X86_UBUNTU_24_04_16CORE` | `ubuntu-24.04-16core` | 2 | bevy-explorer-ci (2) |
+| `RUNNER_LINUX_X86_UBUNTU_24_04_16CORE` | `ubuntu-24.04-16core` | 3 | bevy-explorer-ci (3) |
 | `RUNNER_LINUX_X86` | `ubuntu-26.04` | 47 | apis-sites-compile (2), apis-sites-images (4), bevy-explorer-benchmark (2), bevy-explorer-ci (4), bevy-explorer-ci-status (3), bevy-explorer-e2e, bevy-explorer-headless, bevy-explorer-images (2), bevy-explorer-scenes, creator-hub-asset-packs (2), creator-hub-build, creator-hub-ci (2), creator-hub-inspector, creator-hub-lint, creator-hub-tests, creator-hub-typechecking, development (5), gateway-images, protocol, sdk (2), social-captures, social-voice-release, structure (2), ui-library (2), uuav-native (2), uuav-verify |
 | `RUNNER_LINUX_ARM` | `ubuntu-26.04-arm` | 4 | apis-sites-compile, apis-sites-images, bevy-explorer-images, gateway-images |
 | `RUNNER_WINDOWS` | `windows-2025` | 3 | bevy-explorer-e2e, uuav-native, uuav-verify |

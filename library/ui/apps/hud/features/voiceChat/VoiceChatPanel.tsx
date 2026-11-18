@@ -28,6 +28,7 @@ import callErrorIcon from '../../assets/voice/call-error.png'
 import acceptRequestIcon from '../../assets/voice/accept-request.png'
 import rejectRequestIcon from '../../assets/voice/reject-request.png'
 import speakingFeedbackIcon from '../../assets/voice/speaking-feedback.png'
+import { Mark } from '../../design/Glyphs'
 import styles from './VoiceChatPanel.module.css'
 
 /** The speakers shown in the grid. */
@@ -145,7 +146,8 @@ function PrivateCall({ state }: { state: VoiceChatState }): React.JSX.Element {
   const connected = state.status === 'inCall' && state.connection === 'connected'
   const failed = state.status === 'busy' || state.status === 'genericError'
 
-  // The titlebar: the header line above the name (or the talking line in an ongoing call)
+  // The titlebar: the header line above the name. An ongoing call has the name beside the header
+  // and the talking line below, which names the speaker.
   let head = 'Voice call'
   let line: React.ReactNode = null
   if (state.status === 'receivedCall') head = 'Incoming Call from'
@@ -161,7 +163,7 @@ function PrivateCall({ state }: { state: VoiceChatState }): React.JSX.Element {
     line = state.error ?? (state.status === 'busy' ? `${base} is in another call.` : "A connection couldn't be established. Please try again.")
   }
   const nameLine = (
-    <span className={styles.barName} style={{ color: peer.color }}>
+    <span className={styles.barName} data-beside-head={connected} style={{ color: peer.color }}>
       {base}
       {peer.claimed ? <VerifiedBadge size={12} /> : tag ? <span className={styles.barTag}>{tag}</span> : null}
     </span>
@@ -178,9 +180,17 @@ function PrivateCall({ state }: { state: VoiceChatState }): React.JSX.Element {
           </span>
         )}
         {/* the live region is the call's state, not the talking line under it, which would be
-            re-announced on every speaking change; a failure is announced with its message */}
+            re-announced on every speaking change; a failure is announced with its message. */}
         <span className={styles.barText} role={failed ? 'alert' : undefined}>
-          <span className={styles.barHead} role={failed ? undefined : 'status'}>{head}</span>
+          <span className={styles.barTop}>
+            <span className={styles.barHead} role={failed ? undefined : 'status'}>{head}</span>
+            {connected ? (
+              <>
+                <span className={styles.barDot} aria-hidden="true" />
+                {nameLine}
+              </>
+            ) : null}
+          </span>
           {line == null ? nameLine : <span className={styles.barLine}>{line}</span>}
         </span>
       </div>
@@ -200,7 +210,7 @@ function PrivateCall({ state }: { state: VoiceChatState }): React.JSX.Element {
           </>
         ) : failed ? (
           <ControlButton variant="faint" size="sm" aria-label="Close" onClick={() => act({ op: 'dismissError' })}>
-            ✕
+            <Mark name="close" />
           </ControlButton>
         ) : (
           <>
@@ -254,7 +264,7 @@ function ParticipantMenu({ p, me, moderator }: { p: VoiceChatParticipant; me: bo
     }
     const viewProfile = (): void => {
       const r = ref.current?.getBoundingClientRect()
-      openProfileCard(p.address, r?.right ?? 0, r?.top ?? 0, { above: true, invite: false })
+      openProfileCard(p.address, r?.right ?? 0, r?.top ?? 0, { above: true, invite: false, gift: false })
     }
     const list: ContextMenuItem[] = [{ label: 'View profile', onClick: then(viewProfile) }]
     if (moderator && !isModerator(p.role)) {
@@ -302,7 +312,7 @@ function CommunityStream({ state, collapsed, setCollapsed, people, setPeople }: 
   }, [state.participants, query])
 
   const openProfile = (p: VoiceChatParticipant) => (e: React.MouseEvent): void => {
-    openProfileCard(p.address, e.clientX, e.clientY, { invite: false })
+    openProfileCard(p.address, e.clientX, e.clientY, { invite: false, gift: false })
   }
   const shown = (p: VoiceChatParticipant): string => (p.address.toLowerCase() === me ? 'You' : splitName(p.name || p.address).base)
 
@@ -360,7 +370,7 @@ function CommunityStream({ state, collapsed, setCollapsed, people, setPeople }: 
             </Tooltip>
           )}
           <ControlButton variant="faint" size="sm" aria-label={collapsed ? 'Expand stream panel' : 'Collapse stream panel'} aria-expanded={!collapsed} onClick={() => setCollapsed(!collapsed)}>
-            {collapsed ? '▾' : '▴'}
+            <Mark name={collapsed ? 'down' : 'up'} />
           </ControlButton>
         </div>
       </div>

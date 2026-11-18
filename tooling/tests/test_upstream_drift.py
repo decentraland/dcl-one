@@ -1,8 +1,13 @@
 """The pinned source list, the upstream check, the drift collector's parsing and version logic,
 and the site's markdown rendering. Nothing here reaches the network."""
+import base64
 import importlib.util
+import json
+import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import tempfile
 import textwrap
 import unittest
@@ -15,6 +20,9 @@ spec.loader.exec_module(drift)
 spec2 = importlib.util.spec_from_file_location('upstream_drift_site', TOOLING / 'upstream-drift-site.py')
 site = importlib.util.module_from_spec(spec2)
 spec2.loader.exec_module(site)
+spec3 = importlib.util.spec_from_file_location('patched_sources', TOOLING / 'patched-sources.py')
+patched = importlib.util.module_from_spec(spec3)
+spec3.loader.exec_module(patched)
 
 
 SOURCE_TOML = textwrap.dedent('''
@@ -148,6 +156,31 @@ class PinnedSourceTests(unittest.TestCase):
         self.assertEqual(sources[2]['reason'], 'Pin the merge commit until a release ships it.')
         self.assertIsNone(sources[1]['reason'])
 
+    def test_a_patched_source_the_lock_takes_from_this_repository_is_listed_once(self):
+        # Cargo takes a patched source from this repository by revision. That lock entry has no
+        # upstream of its own: the source.toml names the upstream to watch.
+        for url in (drift.REPOSITORY, drift.REPOSITORY + '.git', drift.REPOSITORY + '/',
+                    drift.REPOSITORY.replace('/decentraland/', '/Decentraland/')):
+            lock = LOCK + textwrap.dedent(f'''
+                [[package]]
+                name = "winit"
+                version = "0.30.12"
+                source = "git+{url}?rev=6666666666666666666666666666666666666666#6666666666666666666666666666666666666666"
+            ''')
+            (self.pin / 'source/Cargo.lock').write_text(lock, encoding='utf-8')
+            self.assertIn(url, [s['upstream'] for s in drift.lock_git_sources(lock)])
+            sources = drift.pinned_sources(self.pin)
+            self.assertEqual([s['name'] for s in sources], ['winit', 'draco-oxide', 'gltf'])
+            self.assertEqual(sources[0]['upstream'], 'https://github.com/rust-windowing/winit')
+
+    def test_this_repository_is_the_one_that_the_patch_tool_names(self):
+        self.assertEqual(drift.REPOSITORY, patched.MIRROR)
+        # The two tools read the same URLs as this repository.
+        same = (drift.REPOSITORY, drift.REPOSITORY + '.git', drift.REPOSITORY + '/', drift.REPOSITORY.upper() + '.git/')
+        for url in (*same, drift.REPOSITORY + '-fork', GLTF + '.git'):
+            self.assertEqual(drift.canonical(url), patched.canonical(url), url)
+            self.assertEqual(drift.canonical(url) == drift.canonical(drift.REPOSITORY), url in same, url)
+
     def test_the_tracked_sources_follow_the_contract(self):
         sources = drift.patched_sources(drift.PIN / 'patches')
         self.assertIn('bevy', [s['name'] for s in sources])
@@ -177,14 +210,22 @@ def tag_rows(*names):
     return [{'ref': f'refs/tags/{name}'} for name in names]
 
 
+def ref_rows(space, name, commit, kind='commit'):
+    return [{'ref': f'refs/{space}/{name}', 'object': {'sha': commit, 'type': kind}}]
+
+
+HEAD = 'f' * 40
 WINIT = 'repos/rust-windowing/winit'
 WINIT_TAGS = WINIT + '/git/matching-refs/tags/v'
+WINIT_TAG = WINIT + '/git/matching-refs/tags/v0.30.12'
+WINIT_COMPARE = WINIT + '/compare/' + 'a' * 40 + '...' + HEAD
+DRACO = 'repos/example/draco-oxide'
 
 
 class CheckTests(unittest.TestCase):
     def test_a_tag_that_stayed_reports_the_newer_tags_of_its_scheme(self):
         source = {'name': 'winit', 'upstream': 'https://github.com/rust-windowing/winit', 'commit': 'a' * 40, 'ref': 'v0.30.12'}
-        answers = {WINIT + '/compare/' + 'a' * 40 + '...v0.30.12': {'ahead_by': 0, 'behind_by': 0},
+        answers = {WINIT_COMPARE: {'ahead_by': 0, 'behind_by': 0}, WINIT_TAG: ref_rows('tags', 'v0.30.12', HEAD),
                    WINIT_TAGS: tag_rows('v0.29.0', 'v0.30.12', 'v0.30.13', 'v0.31.0-beta.2', 'v0.31.0', 'v0.30.9', 'vello-1.0')}
         result = drift.check_source(source, fake_api(answers))
         self.assertEqual(result, {'ref': 'v0.30.12', 'ahead': 0, 'behind': 0, 'named': True, 'tag': True,
@@ -206,22 +247,25 @@ class CheckTests(unittest.TestCase):
 
     def test_a_tag_that_no_longer_names_the_pin_is_off_its_ref(self):
         source = {'name': 'winit', 'upstream': 'https://github.com/rust-windowing/winit', 'commit': 'a' * 40, 'ref': 'v0.30.12'}
-        answers = {WINIT + '/compare/' + 'a' * 40 + '...v0.30.12': {'ahead_by': 2, 'behind_by': 0}, WINIT_TAGS: tag_rows('v0.30.12')}
+        answers = {WINIT_COMPARE: {'ahead_by': 2, 'behind_by': 0}, WINIT_TAG: ref_rows('tags', 'v0.30.12', HEAD),
+                   WINIT_TAGS: tag_rows('v0.30.12')}
         self.assertEqual(drift.off_ref(drift.check_source(source, fake_api(answers))),
                          'the tag moved, or never named the pin: it is 2 commit(s) past it')
 
     def test_a_branch_that_moved_counts_its_commits(self):
         source = {'name': 'draco-oxide', 'upstream': 'https://github.com/example/draco-oxide', 'commit': 'b' * 40, 'ref': 'fix/rans'}
-        answers = {'repos/example/draco-oxide/compare/' + 'b' * 40 + '...fix%2Frans': {'ahead_by': 4, 'behind_by': 0},
-                   'repos/example/draco-oxide/git/matching-refs/tags/fix/rans': []}
+        answers = {DRACO + '/compare/' + 'b' * 40 + '...' + HEAD: {'ahead_by': 4, 'behind_by': 0},
+                   DRACO + '/git/matching-refs/tags/fix/rans': [],
+                   DRACO + '/git/matching-refs/heads/fix/rans': [*ref_rows('heads', 'fix/rans', HEAD), *ref_rows('heads', 'fix/rans-2', 'e' * 40)]}
         result = drift.check_source(source, fake_api(answers))
         self.assertEqual(result, {'ref': 'fix/rans', 'ahead': 4, 'behind': 0, 'named': True, 'tag': False, 'newer_tags': []})
         self.assertIsNone(drift.off_ref(result))
 
     def test_a_pin_the_named_branch_lacks_is_off_its_ref(self):
         source = {'name': 'draco-oxide', 'upstream': 'https://github.com/example/draco-oxide', 'commit': 'b' * 40, 'ref': 'main'}
-        answers = {'repos/example/draco-oxide/compare/' + 'b' * 40 + '...main': {'ahead_by': 4, 'behind_by': 1},
-                   'repos/example/draco-oxide/git/matching-refs/tags/main': tag_rows('maintenance-1')}
+        answers = {DRACO + '/compare/' + 'b' * 40 + '...' + HEAD: {'ahead_by': 4, 'behind_by': 1},
+                   DRACO + '/git/matching-refs/tags/main': ref_rows('tags', 'maintenance-1', 'e' * 40),
+                   DRACO + '/git/matching-refs/heads/main': ref_rows('heads', 'main', HEAD)}
         self.assertEqual(drift.off_ref(drift.check_source(source, fake_api(answers))), 'the pin has 1 commit(s) main lacks')
 
     def test_a_source_pinned_by_revision_alone_watches_the_default_branch_and_claims_nothing(self):
@@ -234,9 +278,31 @@ class CheckTests(unittest.TestCase):
 
     def test_a_source_github_cannot_compare_is_not_checked(self):
         gone = {'name': 'gone', 'upstream': 'https://github.com/example/gone', 'commit': 'd' * 40, 'ref': 'v1'}
-        self.assertIsNone(drift.check_source(gone, fake_api({'repos/example/gone/compare/' + 'd' * 40 + '...v1': None})))
+        answers = {'repos/example/gone/git/matching-refs/tags/v1': ref_rows('tags', 'v1', HEAD),
+                   'repos/example/gone/compare/' + 'd' * 40 + '...' + HEAD: None}
+        self.assertIsNone(drift.check_source(gone, fake_api(answers)))
         elsewhere = {'name': 'x', 'upstream': 'https://example.org/x.git', 'commit': 'e' * 40, 'ref': 'main'}
         self.assertIsNone(drift.check_source(elsewhere, fake_api({})))
+
+    def test_a_ref_that_is_no_tag_or_branch_of_the_repository_is_not_checked(self):
+        # GitHub compare resolves each of these names, so no compare may be asked for.
+        for ref in ('pull/123/head', 'refs/pull/123/head', 'c' * 40, 'v0.30'):
+            with self.subTest(ref=ref):
+                source = {'name': 'winit', 'upstream': 'https://github.com/rust-windowing/winit', 'commit': 'a' * 40, 'ref': ref}
+                answers = {f'{WINIT}/git/matching-refs/tags/{ref}': ref_rows('tags', 'v0.30.12', HEAD) if ref == 'v0.30' else [],
+                           f'{WINIT}/git/matching-refs/heads/{ref}': []}
+                self.assertIsNone(drift.check_source(source, fake_api(answers)))
+                text, ok = drift.check_report([source], fake_api(answers))
+                self.assertFalse(ok)
+                self.assertIn(f'NOT CHECKED: GitHub cannot compare the tag or branch {ref} with aaaaaaaaaa', text)
+
+    def test_an_annotated_tag_is_compared_by_the_commit_it_names(self):
+        source = {'name': 'winit', 'upstream': 'https://github.com/rust-windowing/winit', 'commit': 'a' * 40, 'ref': 'v0.30.12'}
+        answers = {WINIT_TAG: ref_rows('tags', 'v0.30.12', 'e' * 40, 'tag'),
+                   WINIT + '/git/tags/' + 'e' * 40: {'object': {'sha': HEAD, 'type': 'commit'}},
+                   WINIT_COMPARE: {'ahead_by': 0, 'behind_by': 0}, WINIT_TAGS: tag_rows('v0.30.12')}
+        self.assertEqual(drift.check_source(source, fake_api(answers)),
+                         {'ref': 'v0.30.12', 'ahead': 0, 'behind': 0, 'named': True, 'tag': True, 'newer_tags': []})
 
     def report(self, behind=0):
         sources = [
@@ -244,7 +310,7 @@ class CheckTests(unittest.TestCase):
              'patches': [{'local': False}, {'local': True}]},
             {'name': 'gltf', 'upstream': GLTF, 'commit': 'c' * 40, 'ref': None},
         ]
-        answers = {WINIT + '/compare/' + 'a' * 40 + '...v0.30.12': {'ahead_by': 0, 'behind_by': behind},
+        answers = {WINIT_COMPARE: {'ahead_by': 0, 'behind_by': behind}, WINIT_TAG: ref_rows('tags', 'v0.30.12', HEAD),
                    WINIT_TAGS: tag_rows('v0.30.12', 'v0.30.13', 'v0.31.0'),
                    'repos/gltf-rs/gltf': {'default_branch': 'main'},
                    'repos/gltf-rs/gltf/compare/' + 'c' * 40 + '...main': {'ahead_by': 26, 'behind_by': 2}}
@@ -389,6 +455,52 @@ class VersionLogicTests(unittest.TestCase):
         self.assertEqual(advisory['unaffected'], ['< 0.1.0'])
         self.assertIsNone(drift.parse_advisory('no toml here'))
 
+    def test_advisory_files_reads_every_crate_of_the_tree(self):
+        tree = {'truncated': False, 'tree': [
+            {'path': 'crates', 'type': 'tree', 'sha': 't0'},
+            {'path': 'crates/zvariant_derive', 'type': 'tree', 'sha': 't1'},
+            {'path': 'crates/zvariant_derive/RUSTSEC-2026-0002.md', 'type': 'blob', 'sha': 'b1'},
+            {'path': 'crates/rustls/RUSTSEC-2026-0004.md', 'type': 'blob', 'sha': 'b3'},
+            {'path': 'crates/rustls/RUSTSEC-2026-0003.md', 'type': 'blob', 'sha': 'b2'},
+            {'path': 'crates/rustls/notes.txt', 'type': 'blob', 'sha': 'b4'},
+            {'path': 'rust/std/RUSTSEC-2026-0005.md', 'type': 'blob', 'sha': 'b5'},
+            {'path': 'README.md', 'type': 'blob', 'sha': 'b6'},
+        ]}
+        self.assertEqual(drift.advisory_files(tree), {
+            'zvariant_derive': ['b1'],
+            'rustls': ['b2', 'b3'],
+        })
+
+    def test_advisory_files_refuses_a_truncated_tree(self):
+        with self.assertRaises(RuntimeError):
+            drift.advisory_files({'truncated': True, 'tree': []})
+
+    def test_advisory_files_refuses_a_missing_tree(self):
+        with self.assertRaisesRegex(RuntimeError, 'could not be fetched'):
+            drift.advisory_files(None)
+
+    def test_collect_advisories_skips_withdrawn_and_reports_unreadable_entries(self):
+        def advisory(id_, extra=''):
+            text = f'```toml\n[advisory]\nid = "{id_}"\npackage = "ring"\ndate = "2025-01-01"\n{extra}\n[versions]\npatched = [">= 0.17.12"]\n```\n# {id_}\n'
+            return {'content': base64.b64encode(text.encode()).decode()}
+        tree = {'truncated': False, 'tree': [
+            {'path': f'crates/ring/RUSTSEC-2025-000{i}.md', 'type': 'blob', 'sha': f'b{i}'} for i in range(1, 5)]}
+        responses = {
+            'repos/rustsec/advisory-db/git/trees/main?recursive=1': tree,
+            'repos/rustsec/advisory-db/git/blobs/b1': advisory('RUSTSEC-2025-0001'),
+            'repos/rustsec/advisory-db/git/blobs/b2': advisory('RUSTSEC-2025-0002', 'withdrawn = "2025-02-22"'),
+            'repos/rustsec/advisory-db/git/blobs/b3': None,
+            'repos/rustsec/advisory-db/git/blobs/b4': {'content': base64.b64encode(b'no front matter').decode()},
+        }
+        with mock.patch.object(drift, 'gh', side_effect=responses.__getitem__):
+            result = drift.collect_advisories([{'name': 'ring', 'version': '0.17.8'}])
+        self.assertEqual([f['id'] for f in result['findings']], ['RUSTSEC-2025-0001'])
+        self.assertEqual(result['withdrawn'], ['RUSTSEC-2025-0002'])
+        self.assertEqual(result['unreadable'], [
+            {'crate': 'ring', 'sha': 'b3', 'reason': 'blob not found'},
+            {'crate': 'ring', 'sha': 'b4', 'reason': 'front matter does not parse'},
+        ])
+
     def test_tag_helpers(self):
         self.assertEqual(drift.version_key('v0.16.1'), (0, 16, 1, 0))
         self.assertGreater(drift.version_key('v1.46.3'), drift.version_key('v0.28.0'))
@@ -435,6 +547,59 @@ class SiteTests(unittest.TestCase):
 
     def test_slug(self):
         self.assertEqual(site.slug('https://github.com/robtfm/bevy_kira_audio'), 'robtfm-bevy-kira-audio')
+
+    # The advisories view is JavaScript inside the page, so these run its `esc`, `advisoryTable`
+    # and `advisories` under Node with a stand-in for the collected data.
+    def render_advisories(self, advisories, q=''):
+        node = shutil.which('node')
+        if not node:
+            if os.environ.get('CI'):
+                self.fail('node is needed to render the advisories view')
+            self.skipTest('node is not installed')
+        esc = re.search(r'^const esc = .*$', site.PAGE, re.M).group(0)
+        functions = [re.search(rf'^function {name}\(.*?^\}}$', site.PAGE, re.M | re.S).group(0)
+                     for name in ('advisoryTable', 'advisories')]
+        script = '\n'.join([f'const D = {{advisories: {json.dumps(advisories)}}};',
+                            f'const state = {{q: {json.dumps(q)}}};', esc, *functions,
+                            'process.stdout.write(advisories());'])
+        return subprocess.run([node, '-'], input=script, capture_output=True, text=True, check=True).stdout
+
+    FINDINGS = [
+        {'crate': 'ring', 'version': '0.17.8', 'id': 'RUSTSEC-2025-0009', 'title': 'AES panic',
+         'date': '2025-03-06', 'patched': ['>= 0.17.12'], 'affected': True, 'rustsec_url': 'https://rustsec.org/a'},
+        {'crate': 'paste', 'version': '1.0.15', 'id': 'RUSTSEC-2024-0436', 'title': 'unmaintained',
+         'date': '2024-10-07', 'patched': [], 'affected': False, 'rustsec_url': 'https://rustsec.org/b'},
+    ]
+
+    def test_advisories_view_reports_withdrawn_and_unreadable_entries(self):
+        html = self.render_advisories({
+            'crates_with_entries': ['ring', 'paste'], 'findings': self.FINDINGS,
+            'withdrawn': ['RUSTSEC-2025-0002', 'RUSTSEC-2025-0003'],
+            'unreadable': [{'crate': 'ring', 'sha': 'b3', 'reason': 'blob not found'},
+                           {'crate': '<img src=x>', 'sha': 'b4', 'reason': 'a & "b"'}],
+        })
+        self.assertIn(' 2 withdrawn entries skipped.', html)
+        self.assertIn('<span class="badge b-security">2 entries could not be read</span>: '
+                      'ring (blob not found), &lt;img src=x&gt; (a &amp; &quot;b&quot;).', html)
+        self.assertNotIn('<img', html)
+
+    def test_advisories_view_without_withdrawn_or_unreadable_entries(self):
+        # Data collected before these fields existed has neither key.
+        for extra in ({}, {'withdrawn': [], 'unreadable': []}):
+            with self.subTest(extra=extra):
+                html = self.render_advisories({'crates_with_entries': ['ring', 'paste'], 'findings': self.FINDINGS, **extra})
+                self.assertIn('2 crates in the lock have advisory-db entries; 1 entries affect the pinned versions', html)
+                self.assertNotIn('withdrawn', html)
+                self.assertNotIn('could not be read', html)
+                self.assertIn('<tr class="aff">', html)
+                self.assertLess(html.index('RUSTSEC-2025-0009'), html.index('RUSTSEC-2024-0436'))
+
+    def test_advisories_view_filters_the_table(self):
+        html = self.render_advisories({'crates_with_entries': ['ring', 'paste'], 'findings': self.FINDINGS,
+                                       'withdrawn': ['RUSTSEC-2025-0002']}, q='paste')
+        self.assertIn('RUSTSEC-2024-0436', html)
+        self.assertNotIn('RUSTSEC-2025-0009', html)
+        self.assertIn(' 1 withdrawn entries skipped.', html)
 
 
 if __name__ == '__main__':

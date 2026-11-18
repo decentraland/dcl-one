@@ -17,6 +17,7 @@ export const LEGAL_SIDEBAR: readonly {
   { key: "content", slug: "content", label: "Content Policy", icon: "park" },
   { key: "ethics", slug: "ethics", label: "Code of Ethics", icon: "balance" },
   { key: "rewards", slug: "rewards-terms", label: "Rewards Program", icon: "cardGiftcard" },
+  { key: "creatorFund", slug: "creator-fund-terms", label: "Creator Fund", icon: "paid" },
   { key: "credits", slug: "credits-terms", label: "Credits", icon: "token" },
   { key: "security", slug: "security", label: "Security", icon: "shield" },
   { key: "privacy", slug: "privacy", label: "Privacy Policy", icon: "vpnKey" },
