@@ -23,6 +23,14 @@ pub use expect::{expect_async, expect_or, expect_within, holds_for};
 pub use report::{Note, Outcome, Report, ScenarioResult};
 pub use timeline::{Entry, Timeline};
 
+/// How the Pulse bots of a scenario reach Pulse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+pub enum Transport {
+    #[default]
+    Enet,
+    WebTransport,
+}
+
 pub type ScenarioFuture = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
 
 /// One scripted situation and what must hold in it.
@@ -83,6 +91,7 @@ struct CtxInner {
     scenario: String,
     repeat: u32,
     seed: u64,
+    transport: Transport,
     timeline: Timeline,
     seeded: Mutex<Seeded>,
     notes: Mutex<Vec<Note>>,
@@ -104,6 +113,19 @@ impl Ctx {
         seed: u64,
         work_dir: PathBuf,
     ) -> Ctx {
+        Ctx::new_on(stack, run_id, scenario, repeat, seed, work_dir, Transport::Enet)
+    }
+
+    /// [`Ctx::new`] with the transport its Pulse bots use.
+    pub fn new_on(
+        stack: Arc<Stack>,
+        run_id: &str,
+        scenario: &str,
+        repeat: u32,
+        seed: u64,
+        work_dir: PathBuf,
+        transport: Transport,
+    ) -> Ctx {
         Ctx {
             inner: Arc::new(CtxInner {
                 stack,
@@ -111,6 +133,7 @@ impl Ctx {
                 scenario: scenario.to_owned(),
                 repeat,
                 seed,
+                transport,
                 timeline: Timeline::new(),
                 seeded: Mutex::new(Seeded::new(seed)),
                 notes: Mutex::new(Vec::new()),
@@ -129,6 +152,11 @@ impl Ctx {
 
     pub fn seed(&self) -> u64 {
         self.inner.seed
+    }
+
+    /// The transport the Pulse bots of this run use.
+    pub fn transport(&self) -> Transport {
+        self.inner.transport
     }
 
     pub fn repeat(&self) -> u32 {
@@ -210,6 +238,8 @@ pub struct RunOptions {
     pub work_dir: PathBuf,
     /// The longest one repeat may take.
     pub scenario_deadline: Duration,
+    /// The transport Pulse bots use.
+    pub transport: Transport,
 }
 
 impl Default for RunOptions {
@@ -221,6 +251,7 @@ impl Default for RunOptions {
             allowed_hosts: Vec::new(),
             work_dir: std::env::temp_dir().join("comms-e2e"),
             scenario_deadline: Duration::from_secs(300),
+            transport: Transport::Enet,
         }
     }
 }
@@ -263,6 +294,10 @@ pub async fn run_scenarios(
 
         if let Some(reason) = scenario.needs.missing(&stack) {
             result.outcome = Outcome::Skipped { reason };
+        } else if options.transport == Transport::WebTransport && stack.pulse_webtransport.is_none() {
+            result.outcome = Outcome::Skipped {
+                reason: "the stack file has no Pulse over WebTransport (`pulse_webtransport`)".to_owned(),
+            };
         } else if let Err(refusal) = stack.ensure_safe_for(scenario.hostile, &options.allowed_hosts) {
             result.outcome = Outcome::Failed {
                 expectation: format!("refused before the first packet: {refusal}"),
@@ -274,13 +309,14 @@ pub async fn run_scenarios(
             let repeats = options.repeat.unwrap_or(scenario.default_repeat).max(1);
             for repeat in 0..repeats {
                 let seed = first_seed.wrapping_add(repeat as u64);
-                let ctx = Ctx::new(
+                let ctx = Ctx::new_on(
                     stack.clone(),
                     &run_id,
                     scenario.name,
                     repeat,
                     seed,
                     options.work_dir.join(&run_id),
+                    options.transport,
                 );
                 ctx.record("runner", "start", serde_json::json!({ "seed": seed, "repeat": repeat }));
                 let outcome = run_once(scenario, ctx.clone(), options.scenario_deadline).await;

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use catalyst_comms_e2e::engine::{RunOptions, run_scenarios};
+use catalyst_comms_e2e::engine::{RunOptions, Transport, run_scenarios};
 use catalyst_comms_e2e::scenarios;
 use catalyst_comms_e2e::stack::Stack;
 use clap::{Parser, Subcommand};
@@ -66,6 +66,9 @@ enum Command {
         /// Timeline entries shown for a failure
         #[arg(long, value_name = "n", default_value_t = 40)]
         timeline: usize,
+        /// The transport Pulse bots use: enet or webtransport
+        #[arg(long, value_name = "transport", default_value = "enet")]
+        transport: String,
     },
     /// Check that every address in the stack file answers
     Doctor {
@@ -110,7 +113,13 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
             work_dir,
             deadline,
             timeline,
+            transport,
         } => {
+            let transport = match transport.as_str() {
+                "enet" => Transport::Enet,
+                "webtransport" => Transport::WebTransport,
+                other => bail!("unknown transport {other}: enet or webtransport"),
+            };
             let selection = scenarios::select(scenario.as_deref(), tag.as_deref(), all);
             if selection.is_empty() {
                 bail!("nothing selected: name a scenario, a --tag or --all (see `comms-e2e list`)");
@@ -122,6 +131,7 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
                 strict,
                 allowed_hosts,
                 scenario_deadline: Duration::from_secs(deadline),
+                transport,
                 ..RunOptions::default()
             };
             if let Some(work_dir) = work_dir {

@@ -117,6 +117,8 @@ pub struct ConnectOptions {
     pub record_frames: bool,
     /// How long the transport may take to connect. Absent: 10 s.
     pub deadline: Option<Duration>,
+    /// Dial this address instead of the one the stack file names: a fault link in front of Pulse.
+    pub via: Option<SocketAddr>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -181,6 +183,45 @@ impl PulseBot {
         })
         .await?;
         Ok(bot)
+    }
+
+    /// Dials Pulse on the transport of the run, at the address the stack file names or at
+    /// `options.via` (a fault link in front of it), and waits for the transport to connect.
+    /// Scenarios use this, so one scenario runs on either transport.
+    pub async fn dial(ctx: &Ctx, name: &str, options: ConnectOptions) -> Result<PulseBot> {
+        match ctx.transport() {
+            crate::engine::Transport::Enet => {
+                let target = options.via.unwrap_or(ctx.stack().pulse_enet);
+                PulseBot::connect(ctx, name, target, options).await
+            }
+            crate::engine::Transport::WebTransport => {
+                bail!("the Pulse bot does not speak WebTransport yet")
+            }
+        }
+    }
+
+    /// [`Self::dial`], then the handshake; fails unless the server accepts.
+    pub async fn enter(ctx: &Ctx, name: &str, identity: &Identity) -> Result<PulseBot> {
+        let bot = PulseBot::dial(ctx, name, ConnectOptions::default()).await?;
+        bot.accepted(ctx, identity).await?;
+        Ok(bot)
+    }
+
+    /// Handshakes and fails unless the server accepts.
+    pub async fn accepted(&self, ctx: &Ctx, identity: &Identity) -> Result<()> {
+        let name = self.name();
+        match self.handshake(ctx, identity, HandshakeOptions::default()).await? {
+            HandshakeOutcome::Accepted => Ok(()),
+            HandshakeOutcome::Refused { error } => {
+                bail!("{name}: the server refused the handshake: {error:?}")
+            }
+            HandshakeOutcome::Disconnected { code } => {
+                bail!(
+                    "{name}: the server ended the connection at the handshake with {}",
+                    messages::reason(code)
+                )
+            }
+        }
     }
 
     pub fn name(&self) -> &str {
