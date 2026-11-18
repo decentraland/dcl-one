@@ -463,6 +463,13 @@ mod tests {
             body["error"],
             "Invalid file content; expected one of image/jpeg, image/png, image/webp"
         );
+        let (status, _) = post(
+            "/api/poster",
+            "image/avif",
+            b"\0\0\0\x10ftypavif\0\0\0\0".to_vec(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
         // The size limit answers before the content check, with each route's
         // text (`Poster/routes.ts:45-66`).
         let oversized = [b"not an image".as_slice(), &vec![0u8; MAX_POSTER_BYTES][..]].concat();
