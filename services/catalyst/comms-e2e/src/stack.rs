@@ -33,6 +33,10 @@ pub struct Stack {
     pub moderator_token_env: Option<String>,
     #[serde(default)]
     pub explorer: Option<ExplorerTarget>,
+    /// The environment variable that holds the private key of the wallet Pulse admits as a scene
+    /// listener (its authoritative server address). Absent: scene listener scenarios are skipped.
+    #[serde(default)]
+    pub scene_listener_key_env: Option<String>,
     #[serde(default)]
     pub grid: Grid,
     #[serde(default)]
@@ -214,6 +218,7 @@ impl Stack {
             livekit: None,
             moderator_token_env: None,
             explorer: None,
+            scene_listener_key_env: None,
             grid: Grid::default(),
             limits: Limits::default(),
         }

@@ -3,6 +3,7 @@
 pub mod connections;
 pub mod explorer;
 pub mod pulse;
+pub mod support;
 
 use crate::engine::Scenario;
 

@@ -57,9 +57,23 @@ pub struct Needs {
     pub livekit: bool,
     pub moderator: bool,
     pub explorer: bool,
+    /// The wallet key of a scene listener Pulse admits.
+    pub scene_listener: bool,
 }
 
 impl Needs {
+    /// Nothing beyond Pulse over ENet: the value a scenario starts from (`Needs { api: true,
+    /// ..Needs::NONE }`), usable in a `static`.
+    pub const NONE: Needs = Needs {
+        api: false,
+        webtransport: false,
+        pulse_metrics: false,
+        livekit: false,
+        moderator: false,
+        explorer: false,
+        scene_listener: false,
+    };
+
     /// What `stack` lacks for this scenario, if anything.
     pub fn missing(&self, stack: &Stack) -> Option<String> {
         let mut missing = Vec::new();
@@ -80,6 +94,9 @@ impl Needs {
         }
         if self.explorer && stack.explorer.is_none() {
             missing.push("the headless explorer (`explorer`)");
+        }
+        if self.scene_listener && stack.scene_listener_key_env.is_none() {
+            missing.push("the scene listener wallet key (`scene_listener_key_env`)");
         }
         (!missing.is_empty()).then(|| format!("the stack file has no {}", missing.join(", no ")))
     }
