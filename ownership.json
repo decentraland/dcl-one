@@ -183,6 +183,7 @@
       ],
       "paths": [
         "/services/catalyst/comms/",
+        "/services/catalyst/cast-bot/",
         "/library/vendor/rusty_enet/",
         "/library/dcl-livekit-token/"
       ]
