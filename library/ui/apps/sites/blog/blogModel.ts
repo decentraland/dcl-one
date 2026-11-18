@@ -71,6 +71,7 @@ export type BlogSearchSuggestions = {
 
 /** The longest search the blog reads; the input's maxLength and the loader's trim both use it. */
 export const BLOG_QUERY_MAX = 200
+export const BLOG_QUERY_MIN = 3
 
 const segment = encodeURIComponent
 
@@ -103,14 +104,21 @@ export const blogShareLinks = (title: string, absoluteUrl: string): BlogShareLin
 
 export type BlogBadgeTone = 'ruby' | 'violet' | 'orange'
 
-const TONES: Record<string, BlogBadgeTone> = {
-  announcements: 'ruby',
-  platform: 'violet',
-  community: 'orange',
-  'community-highlights': 'orange'
+type BlogCardBadgeTone = 'updates' | 'communities' | 'about'
+
+const categoryTones: Record<string, { article: BlogBadgeTone; card: BlogCardBadgeTone }> = {
+  announcements: { article: 'ruby', card: 'updates' },
+  updates: { article: 'ruby', card: 'updates' },
+  platform: { article: 'violet', card: 'about' },
+  'about-decentraland': { article: 'ruby', card: 'about' },
+  community: { article: 'orange', card: 'communities' },
+  communities: { article: 'ruby', card: 'communities' },
+  'community-highlights': { article: 'orange', card: 'communities' }
 }
 
-export const blogBadgeTone = (slug: string): BlogBadgeTone => TONES[slug] ?? 'ruby'
+export const blogBadgeTone = (slug: string): BlogBadgeTone => categoryTones[slug]?.article ?? 'ruby'
+export const blogCardBadgeTone = (slug: string): BlogCardBadgeTone =>
+  categoryTones[slug]?.card ?? 'about'
 
 /** Up to two initials of a name, upper case; "" for a blank name. */
 export function blogInitials(name: string): string {

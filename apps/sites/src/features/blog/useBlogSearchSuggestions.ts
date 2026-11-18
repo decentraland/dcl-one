@@ -1,25 +1,13 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
-import {
-  BLOG_SEARCH_SUGGESTIONS_API,
-  type BlogSearchSuggestions,
-} from "@dcl/one-ui/apps/sites/blog/blogModel";
+import type { BlogSearchSuggestions } from "@dcl/one-ui/apps/sites/blog/blogModel";
 
 import { parseBlogQuery, SEARCH_MIN_LENGTH } from "@/data/lib/blog/normalize";
+import { blogSuggestionsQuery } from "@/data/lib/blog/search-suggestions-query";
 
 /** How long typing has to pause before the dropdown asks for suggestions. */
 export const SUGGESTIONS_DEBOUNCE_MS = 250;
-
-export const blogSuggestionKeys = {
-  query: (q: string) => ["blog", "search-suggestions", q.toLowerCase()] as const,
-};
-
-export async function fetchBlogSearchSuggestions(query: string, signal?: AbortSignal): Promise<BlogSearchSuggestions> {
-  const response = await fetch(`${BLOG_SEARCH_SUGGESTIONS_API}?q=${encodeURIComponent(query)}`, { signal });
-  if (!response.ok) throw new Error(`Blog search suggestions failed: ${response.status}`);
-  return (await response.json()) as BlogSearchSuggestions;
-}
 
 function useDebounced<T>(value: T, ms: number): T {
   const [settled, setSettled] = useState(value);
@@ -48,13 +36,7 @@ export function useBlogSearchSuggestions(input: string, debounceMs = SUGGESTIONS
   const query = useDebounced(typed, debounceMs);
   const eligible = typed.length >= SEARCH_MIN_LENGTH;
   const enabled = eligible && typed === query;
-  const result = useQuery({
-    queryKey: blogSuggestionKeys.query(query),
-    queryFn: ({ signal }) => fetchBlogSearchSuggestions(query, signal),
-    enabled,
-    staleTime: 60_000,
-    retry: false,
-  });
+  const result = useQuery({ ...blogSuggestionsQuery(query), enabled });
   if (!enabled) return { query: "", suggestions: null, loading: eligible, failed: false };
   return {
     query: result.data?.query ?? "",

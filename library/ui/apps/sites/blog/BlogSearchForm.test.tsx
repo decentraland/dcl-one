@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BlogSearchForm } from './BlogSearchForm'
@@ -18,7 +18,7 @@ describe('when the desktop Blog search provides suggestions', () => {
     onQueryChange.mockClear()
   })
 
-  function renderSearch(total = 5) {
+  async function renderSearch(total = 5) {
     render(
       <BlogSearchForm
         variant="bar"
@@ -32,13 +32,13 @@ describe('when the desktop Blog search provides suggestions', () => {
       />
     )
     const input = screen.getByRole('combobox', { name: 'Search articles' })
-    fireEvent.change(input, { target: { value: 'dece' } })
+    await userEvent.setup().type(input, 'dece')
     return input
   }
 
   it('should activate the highlighted article and dismiss the preview', async () => {
     const user = userEvent.setup()
-    const input = renderSearch()
+    const input = await renderSearch()
     input.focus()
     const article = screen.getByRole('option', { name: /Decentraland update/ })
     expect(article).toHaveAttribute('href', '/blog/news/update')
@@ -52,7 +52,7 @@ describe('when the desktop Blog search provides suggestions', () => {
 
   it('should navigate to all results with the typed query from the final option', async () => {
     const user = userEvent.setup()
-    const input = renderSearch()
+    const input = await renderSearch()
     input.focus()
     const more = screen.getByRole('option', { name: 'See more results' })
     expect(more).toHaveAttribute('href', '/blog/search?q=dece')
@@ -64,7 +64,7 @@ describe('when the desktop Blog search provides suggestions', () => {
 
   it('should close on Escape and keep the entered query and focus', async () => {
     const user = userEvent.setup()
-    const input = renderSearch()
+    const input = await renderSearch()
     input.focus()
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
@@ -72,9 +72,20 @@ describe('when the desktop Blog search provides suggestions', () => {
     expect(input).toHaveFocus()
   })
 
+  it('should reopen with Arrow Down after Escape without editing the field', async () => {
+    const user = userEvent.setup()
+    const input = await renderSearch()
+    await user.keyboard('{Escape}{ArrowDown}')
+    expect(input).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('option', { selected: true })).toHaveAccessibleName(
+      /Decentraland update/
+    )
+    expect(onQueryChange).toHaveBeenLastCalledWith('dece')
+  })
+
   it('should clear the query and return focus to the field', async () => {
     const user = userEvent.setup()
-    const input = renderSearch()
+    const input = await renderSearch()
     await user.click(screen.getByRole('button', { name: 'Clear search' }))
     expect(input).toHaveValue('')
     expect(input).toHaveFocus()
@@ -84,7 +95,7 @@ describe('when the desktop Blog search provides suggestions', () => {
 
   it('should allow Tab to leave the field and close the preview', async () => {
     const user = userEvent.setup()
-    const input = renderSearch()
+    const input = await renderSearch()
     input.focus()
     await user.tab()
     expect(screen.getByRole('button', { name: 'Clear search' })).toHaveFocus()
@@ -99,22 +110,28 @@ describe('when the desktop Blog search provides suggestions', () => {
       { loading: false, failed: false, suggestions: { query: 'dece', total: 0, posts: [] } },
       'No matching articles.'
     ]
-  ] as const)('should announce the current search status', (state, message) => {
+  ] as const)('should announce the current search status', async (state, message) => {
     render(<BlogSearchForm variant="bar" query="" preview={{ onQueryChange, ...state }} />)
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'dece' } })
-    expect(screen.getByRole('status')).toHaveTextContent(message)
+    const status = screen.getByRole('status')
+    const input = screen.getByRole('combobox')
+    expect(status).toBeEmptyDOMElement()
+    await userEvent.setup().type(input, 'dece')
+    expect(status).toHaveTextContent(message)
+    expect(input).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByRole('option')).not.toBeInTheDocument()
   })
 
-  it('should hide matches for an earlier input immediately', () => {
-    const input = renderSearch()
-    fireEvent.change(input, { target: { value: 'land' } })
+  it('should hide matches for an earlier input immediately', async () => {
+    const input = await renderSearch()
+    const user = userEvent.setup()
+    await user.clear(input)
+    await user.type(input, 'land')
     expect(screen.queryByRole('option')).not.toBeInTheDocument()
     expect(onQueryChange).toHaveBeenLastCalledWith('land')
   })
 
-  it('should omit See more results if all four matches fit in the preview', () => {
-    renderSearch(1)
+  it('should omit See more results if all four matches fit in the preview', async () => {
+    await renderSearch(1)
     expect(screen.queryByRole('option', { name: 'See more results' })).not.toBeInTheDocument()
   })
 })

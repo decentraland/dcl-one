@@ -1,9 +1,11 @@
 import type { ComponentType, ReactNode } from 'react'
 import styles from './BlogCard.module.css'
+import linkStyles from './BlogCardLink.module.css'
 
 export type BlogCardLinkProps = { className?: string; href: string; children: ReactNode }
 
 export type BlogCardProps = {
+  variant?: 'standard' | 'related'
   title: string
   href: string
   cover?: ReactNode
@@ -15,6 +17,7 @@ export type BlogCardProps = {
 }
 
 export function BlogCard({
+  variant = 'standard',
   title,
   href,
   cover,
@@ -26,14 +29,15 @@ export function BlogCard({
 }: BlogCardProps) {
   return (
     <article
-      className={[styles.card, className].filter(Boolean).join(' ')}
-      data-blog-card-layout=""
+      className={[styles.card, variant === 'related' && styles.related, className]
+        .filter(Boolean)
+        .join(' ')}
     >
       <div className={styles.cover}>{cover}</div>
       <div className={styles.body}>
         {metadata != null && <p className={styles.meta}>{metadata}</p>}
         <h3 className={styles.title}>
-          <Link className={styles.link} href={href}>
+          <Link className={`${linkStyles.link} ${styles.emphasis}`} href={href}>
             {title}
           </Link>
         </h3>

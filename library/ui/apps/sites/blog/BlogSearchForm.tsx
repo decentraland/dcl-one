@@ -1,9 +1,10 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { GeneralSearch } from '../../../foundations/icons/general'
 import { BlogForm, BlogLink } from './BlogRouting'
 import { BlogSearchResult } from './BlogSearchResult'
 import {
   BLOG_QUERY_MAX,
+  BLOG_QUERY_MIN,
   BLOG_SEARCH,
   blogSearchHref,
   type BlogSearchSuggestions
@@ -22,16 +23,28 @@ export type BlogSearchFormProps = {
   }
 }
 
+function keepInputFocus(event: MouseEvent<HTMLAnchorElement>) {
+  if (event.button === 0) event.preventDefault()
+}
+
 /** A GET form with an optional live preview supplied by the host. */
 export function BlogSearchForm({ variant, query, preview }: BlogSearchFormProps) {
   const id = useId()
   const listId = `${id}-options`
   const form = useRef<HTMLFormElement>(null)
   const input = useRef<HTMLInputElement>(null)
+  const [lastQuery, setLastQuery] = useState(query)
   const [draft, setDraft] = useState(query)
   const [showPreview, setShowPreview] = useState(false)
   const [active, setActive] = useState(-1)
   const updateQuery = preview?.onQueryChange
+
+  if (query !== lastQuery) {
+    setLastQuery(query)
+    setDraft(query)
+    setShowPreview(false)
+    setActive(-1)
+  }
 
   useEffect(() => {
     if (input.current && input.current.value !== query) input.current.value = query
@@ -64,7 +77,8 @@ export function BlogSearchForm({ variant, query, preview }: BlogSearchFormProps)
         ? 'No matching articles.'
         : ''
   const open = showPreview && !!(status || count)
-  const activeId = open && active >= 0 && active < count ? `${listId}-${active}` : undefined
+  const expanded = open && count > 0
+  const activeId = expanded && active >= 0 && active < count ? `${listId}-${active}` : undefined
 
   function close() {
     setShowPreview(false)
@@ -73,17 +87,24 @@ export function BlogSearchForm({ variant, query, preview }: BlogSearchFormProps)
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.nativeEvent.isComposing || !open) return
-    if (event.key === 'Escape') {
+    if (event.nativeEvent.isComposing) return
+    if (event.key === 'Escape' && showPreview) {
       event.preventDefault()
       close()
     } else if (event.key === 'Enter' && activeId) {
       event.preventDefault()
       document.getElementById(activeId)?.click()
-    } else if (count > 0 && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+    } else if (
+      (event.key === 'ArrowDown' || event.key === 'ArrowUp') &&
+      current.length >= BLOG_QUERY_MIN
+    ) {
       event.preventDefault()
-      if (event.key === 'ArrowDown') setActive((active + 1) % count)
-      else setActive(active <= 0 ? count - 1 : active - 1)
+      if (!showPreview) {
+        setShowPreview(true)
+        updateQuery?.(draft)
+      }
+      if (event.key === 'ArrowDown') setActive(count > 0 ? (active + 1) % count : 0)
+      else if (count > 0) setActive(active <= 0 ? count - 1 : active - 1)
     }
   }
 
@@ -120,8 +141,8 @@ export function BlogSearchForm({ variant, query, preview }: BlogSearchFormProps)
           autoComplete="off"
           role={preview ? 'combobox' : undefined}
           aria-autocomplete={preview ? 'list' : undefined}
-          aria-expanded={preview ? open : undefined}
-          aria-controls={open ? listId : undefined}
+          aria-expanded={preview ? expanded : undefined}
+          aria-controls={expanded ? listId : undefined}
           aria-activedescendant={activeId}
           onKeyDown={preview ? onKeyDown : undefined}
           onChange={
@@ -155,10 +176,17 @@ export function BlogSearchForm({ variant, query, preview }: BlogSearchFormProps)
         )}
       </span>
       {preview && (
+        <div role="status" className={styles.srOnly}>
+          {open ? status : ''}
+        </div>
+      )}
+      {preview && (
         <div className={styles.preview} hidden={!open}>
-          <div role="status" className={status ? styles.status : styles.srOnly}>
-            {open ? status : ''}
-          </div>
+          {status && (
+            <div aria-hidden="true" className={styles.status}>
+              {status}
+            </div>
+          )}
           <div id={listId} role="listbox" aria-label="Article suggestions" hidden={!count}>
             {open &&
               posts.map((post, index) => (
@@ -170,7 +198,7 @@ export function BlogSearchForm({ variant, query, preview }: BlogSearchFormProps)
                   id={`${listId}-${index}`}
                   aria-selected={active === index}
                   tabIndex={-1}
-                  data-blog-card=""
+                  onMouseDown={keepInputFocus}
                   onClick={close}
                 >
                   <BlogSearchResult post={post} query={current} />
@@ -184,6 +212,7 @@ export function BlogSearchForm({ variant, query, preview }: BlogSearchFormProps)
                 id={`${listId}-${posts.length}`}
                 aria-selected={active === posts.length}
                 tabIndex={-1}
+                onMouseDown={keepInputFocus}
                 onClick={close}
               >
                 See more results

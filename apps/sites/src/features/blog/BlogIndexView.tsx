@@ -53,7 +53,7 @@ export function BlogIndexView(data: BlogIndexData) {
               title={data.title}
               subtitle={data.subtitle}
               query={data.query}
-              desktopSearch={<DesktopBlogSearch key={location.key} query={data.query} />}
+              desktopSearch={<DesktopBlogSearch key={location.pathname} query={data.query} />}
               searched={data.kind === "search"}
               posts={data.posts}
               total={data.total}

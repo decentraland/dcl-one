@@ -1,8 +1,8 @@
 import type { BlogCardProps } from '../BlogCard/BlogCard'
-import cardStyles from '../BlogCard/BlogCard.module.css'
+import linkStyles from '../BlogCard/BlogCardLink.module.css'
 import styles from './BlogBanner.module.css'
 
-export type BlogBannerProps = Omit<BlogCardProps, 'author'> & {
+export type BlogBannerProps = Omit<BlogCardProps, 'author' | 'variant'> & {
   summary?: string
   actionLabel: string
 }
@@ -19,7 +19,7 @@ export function BlogBanner({
   Link = 'a'
 }: BlogBannerProps) {
   return (
-    <article className={[styles.banner, className].filter(Boolean).join(' ')} data-blog-banner="">
+    <article className={[styles.banner, className].filter(Boolean).join(' ')}>
       <div className={styles.panel}>
         {(category != null || metadata != null) && (
           <div className={styles.meta}>
@@ -28,7 +28,7 @@ export function BlogBanner({
           </div>
         )}
         <h2 className={styles.title}>
-          <Link className={cardStyles.link} href={href}>
+          <Link className={linkStyles.link} href={href}>
             {title}
           </Link>
         </h2>

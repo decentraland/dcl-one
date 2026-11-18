@@ -16,6 +16,7 @@ import { useBlogSearchSuggestions } from "./useBlogSearchSuggestions";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 const answer = (query: string) => ({ query, total: 1, posts: [{ slug: `${query}-post`, href: `/blog/x/${query}-post`, title: query, description: "", image: null, hue: 0 }] });
@@ -42,12 +43,16 @@ describe("useBlogSearchSuggestions", () => {
   });
 
   it("asks nothing under 3 characters and hides earlier suggestions at once", async () => {
+    vi.useFakeTimers();
     const { fetchMock, hook } = setup(ok);
     hook.rerender({ input: "ab" });
-    await new Promise((r) => setTimeout(r, 30));
+    await act(() => vi.advanceTimersByTimeAsync(10));
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(hook.result.current.loading).toBe(false);
+    vi.useRealTimers();
     hook.rerender({ input: "abc" });
     await waitFor(() => expect(hook.result.current.suggestions).not.toBeNull());
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/api/blog/search?q=abc"]);
     hook.rerender({ input: "ab" });
     expect(hook.result.current).toEqual({ query: "", suggestions: null, loading: false, failed: false });
   });
@@ -64,6 +69,7 @@ describe("useBlogSearchSuggestions", () => {
     await waitFor(() => expect(signals).toHaveLength(1));
     hook.rerender({ input: "genesis" });
     await waitFor(() => expect(hook.result.current.suggestions?.query).toBe("genesis"));
+    expect(signals[0]!.aborted).toBe(true);
     await act(async () => releaseFirst());
     expect(hook.result.current.suggestions?.query).toBe("genesis");
   });

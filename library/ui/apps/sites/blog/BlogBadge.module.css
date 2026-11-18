@@ -41,6 +41,7 @@
   }
 
   .badge[data-card-tone='communities'] {
+    /* Event Live surface, also used by EventCard. */
     background: #680d4a;
   }
 

@@ -10,7 +10,6 @@ describe('when Sites renders the shared Blog cards', () => {
       <BlogFeaturedCard post={card({ title: 'Featured article', slug: 'featured', image: null })} />
     )
     const banner = screen.getByRole('article')
-    expect(banner).toHaveAttribute('data-blog-banner')
     expect(within(banner).getAllByRole('link')).toHaveLength(1)
     expect(within(banner).getByRole('link', { name: 'Featured article' })).toHaveAttribute(
       'href',
@@ -22,7 +21,6 @@ describe('when Sites renders the shared Blog cards', () => {
     render(
       <BlogPostCard variant="related" post={card({ title: 'Related article', publishedAt: '' })} />
     )
-    expect(screen.getByRole('article')).toHaveAttribute('data-blog-card-layout')
     expect(screen.getByRole('link', { name: 'Related article' })).toBeInTheDocument()
     expect(screen.queryByRole('separator')).not.toBeInTheDocument()
   })
