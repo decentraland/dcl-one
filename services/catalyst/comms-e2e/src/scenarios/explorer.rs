@@ -487,7 +487,7 @@ async fn port_unreachable(ctx: Ctx) -> Result<()> {
         .of(&subject.wallet)
         .map(|seen| seen.subject_id)
         .ok_or_else(|| anyhow!("the observer lost the explorer before the fault"))?;
-    let (joins, leaves) = (bot.view().joins, bot.view().leaves);
+    let (joins, leaves) = (bot.view().joins_of(&subject.wallet), bot.view().leaves_of(&subject.wallet));
 
     // The port closes: this machine answers the explorer's packets "port unreachable", which its
     // socket reports as an error. Far shorter than any timeout of the transport.
@@ -499,13 +499,16 @@ async fn port_unreachable(ctx: Ctx) -> Result<()> {
     pulse_stays(&ctx, &subject.explorer, "Pulse stays authenticated", Duration::from_secs(5)).await?;
     // The same session, not a new one: the observer never saw the explorer leave and join.
     let view = bot.view();
-    ctx.note("observer joins and leaves during the fault", (view.joins - joins, view.leaves - leaves));
+    let (joined, left) = (
+        view.joins_of(&subject.wallet) - joins,
+        view.leaves_of(&subject.wallet) - leaves,
+    );
+    ctx.note("times the observer saw the explorer join and leave during the fault", (joined, left));
+    ctx.note("explorer log, Pulse failures", subject.explorer.log_lines("pulse: failed"));
     let now = view.of(&subject.wallet).map(|seen| seen.subject_id);
-    if now != Some(held) || view.leaves != leaves {
+    if now != Some(held) || joined != 0 || left != 0 {
         bail!(
-            "the explorer did not keep its session: the observer held subject {held} and now holds {now:?}, with {} leaves and {} joins during the fault",
-            view.leaves - leaves,
-            view.joins - joins
+            "the explorer did not keep its session: the observer held subject {held} and now holds {now:?}, and saw the explorer leave {left} times and join {joined} times during the fault"
         );
     }
     subject.explorer.stop().await;

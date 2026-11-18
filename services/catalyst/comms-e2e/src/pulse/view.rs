@@ -40,6 +40,10 @@ pub struct PulseView {
     pub subjects: HashMap<u32, Subject>,
     pub joins: u32,
     pub leaves: u32,
+    /// Joins and leaves per wallet: a session that was dropped and made again shows here even
+    /// when the new one gets the old subject id.
+    pub joins_by_wallet: HashMap<String, u32>,
+    pub leaves_by_wallet: HashMap<String, u32>,
     /// Joins that named this connection's own wallet.
     pub self_joins: u32,
     pub teleports: u32,
@@ -81,6 +85,16 @@ impl PulseView {
 
     pub fn accepted(&self) -> bool {
         self.handshake == Some(true)
+    }
+
+    /// How many times `wallet` was announced as joined.
+    pub fn joins_of(&self, wallet: &str) -> u32 {
+        self.joins_by_wallet.get(wallet).copied().unwrap_or(0)
+    }
+
+    /// How many times a subject of `wallet` was announced as left.
+    pub fn leaves_of(&self, wallet: &str) -> u32 {
+        self.leaves_by_wallet.get(wallet).copied().unwrap_or(0)
     }
 }
 
@@ -142,6 +156,7 @@ impl Session {
             Message::PlayerJoined(joined) => {
                 self.view.joins += 1;
                 let wallet = joined.user_id.to_lowercase();
+                *self.view.joins_by_wallet.entry(wallet.clone()).or_default() += 1;
                 if self.own_wallet.as_deref() == Some(wallet.as_str()) {
                     self.view.self_joins += 1;
                 }
@@ -165,8 +180,15 @@ impl Session {
             Message::PlayerLeft(left) => {
                 self.view.leaves += 1;
                 let known = self.view.subjects.remove(&left.subject_id);
-                if known.is_none() {
-                    self.view.unknown_subject_messages += 1;
+                match &known {
+                    Some(subject) => {
+                        *self
+                            .view
+                            .leaves_by_wallet
+                            .entry(subject.wallet.clone())
+                            .or_default() += 1;
+                    }
+                    None => self.view.unknown_subject_messages += 1,
                 }
                 (
                     "left",
@@ -401,8 +423,11 @@ mod tests {
         assert_eq!(session.view.count_of("0xabc"), 2);
         assert!(session.view.of("0xabc").is_none());
         assert_eq!(session.view.self_joins, 1);
+        assert_eq!((session.view.joins_of("0xabc"), session.view.leaves_of("0xabc")), (2, 0));
         session.on_frame(&frame(Message::PlayerLeft(PlayerLeft { subject_id: 1 })));
         assert_eq!(session.view.count_of("0xabc"), 1);
+        assert_eq!((session.view.joins_of("0xabc"), session.view.leaves_of("0xabc")), (2, 1));
+        assert_eq!(session.view.leaves_of("0xme"), 0);
         // a leave for a subject never announced is counted, not ignored
         session.on_frame(&frame(Message::PlayerLeft(PlayerLeft { subject_id: 99 })));
         assert_eq!(session.view.unknown_subject_messages, 1);
