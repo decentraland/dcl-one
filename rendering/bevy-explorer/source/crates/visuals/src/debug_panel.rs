@@ -10,13 +10,15 @@ use bevy::{
 };
 use bevy_console::ConsoleCommand;
 use common::structs::{
-    AppConfig, FogSetting, LandscapeDistance, PrimaryCamera, SceneLoadDistance, SessionGraphics,
-    StageLight, TimeOfDay,
+    AppConfig, FogSetting, LandscapeDistance, LensFlare, PrimaryCamera, SceneLoadDistance,
+    SessionGraphics, StageLight, TimeOfDay,
 };
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use serde_json::json;
 
 use crate::{
+    coast::{CoastState, SeaView},
+    lens_flare::{LensFlareSettings, DAY_FLARE},
     shell_texturing::{Ground, ParcelGrass},
     sky_envmap::{SkyAmbient, SkyEnvmapSettings},
     trees::Tree,
@@ -266,6 +268,35 @@ impl Plugin for VisualsDebugPanelPlugin {
                     1.0,
                 ),
             ],
+        })
+        .add_console_command::<LensFlareCommand, _>(lens_flare_command)
+        .add_debug_section(DebugSection {
+            title: "Lens flare",
+            query: "/lens_flare",
+            fields: &[
+                ("Flare (day / night)", "flare"),
+                ("Intensity by time of day", "intensity"),
+                ("Light elevation (degrees)", "elevation"),
+                ("Light from view direction (degrees)", "fromView"),
+            ],
+            actions: &[],
+            inputs: &[toggle(
+                "Lens flare (this session)",
+                "enabled",
+                "/lens_flare {value}",
+            )],
+        })
+        .add_console_command::<SeaState, _>(sea_state)
+        .add_debug_section(DebugSection {
+            title: "Sea",
+            query: "/sea_state",
+            fields: &[
+                ("Drawn (hidden / flat / waves)", "view"),
+                ("Distance to the sea (m)", "seaDistance"),
+                ("Landscape distance (m)", "landscapeDistance"),
+            ],
+            actions: &[],
+            inputs: &[],
         });
         if app
             .world()
@@ -312,6 +343,79 @@ impl Plugin for VisualsDebugPanelPlugin {
             actions: &[],
             inputs: if culling { &inputs } else { &[] },
         });
+    }
+}
+
+/// Read the lens flare, or turn it on or off on the player's camera for this session (the Lens
+/// Flare setting applies again to a new camera).
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/lens_flare")]
+struct LensFlareCommand {
+    enabled: Option<bool>,
+}
+
+fn lens_flare_command(
+    mut cmd: ConsoleCommand<LensFlareCommand>,
+    mut commands: Commands,
+    settings: Res<LensFlareSettings>,
+    camera: Query<(Entity, &GlobalTransform, Has<LensFlare>), With<PrimaryCamera>>,
+) {
+    let Some(Ok(command)) = cmd.take() else {
+        return;
+    };
+    let camera = camera.single().ok();
+    let mut enabled = camera.is_some_and(|(_, _, flare)| flare);
+    if let (Some(set), Some((entity, _, _))) = (command.enabled, camera) {
+        if set {
+            commands.entity(entity).try_insert(LensFlare);
+        } else {
+            commands.entity(entity).remove::<LensFlare>();
+        }
+        enabled = set;
+    }
+    let toward = settings.toward_light;
+    let elevation = toward.y.clamp(-1.0, 1.0).asin().to_degrees();
+    let from_view = camera.map(|(_, transform, _)| {
+        transform
+            .forward()
+            .dot(toward)
+            .clamp(-1.0, 1.0)
+            .acos()
+            .to_degrees()
+    });
+    let flare = if std::ptr::eq(settings.elements, DAY_FLARE.as_slice()) {
+        "day"
+    } else {
+        "night"
+    };
+    cmd.reply_ok(
+        json!({"enabled": enabled, "flare": flare, "intensity": settings.intensity,
+            "elevation": elevation, "fromView": from_view})
+        .to_string(),
+    );
+}
+
+/// Read what of the sea is drawn, and how far the camera is from it.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/sea_state")]
+struct SeaState;
+
+fn sea_state(
+    mut cmd: ConsoleCommand<SeaState>,
+    coast: Res<CoastState>,
+    landscape: Res<LandscapeDistance>,
+) {
+    if let Some(Ok(_)) = cmd.take() {
+        let view = coast.view.map(|view| match view {
+            SeaView::Hidden => "hidden",
+            SeaView::Flat => "flat",
+            SeaView::Waves => "waves",
+        });
+        cmd.reply_ok(
+            json!({"view": view, "seaDistance": coast.sea_distance,
+                "landscapeDistance": landscape.0})
+            .to_string(),
+        );
     }
 }
 

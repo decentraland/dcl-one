@@ -543,6 +543,10 @@ pub struct PrimaryPlayerRes(pub Entity);
 #[derive(Resource)]
 pub struct PrimaryCameraRes(pub Entity);
 
+/// A camera that draws the lens flare of the directional light (`visuals::lens_flare`).
+#[derive(Component, Clone, Copy, Default)]
+pub struct LensFlare;
+
 /// World-space head gaze angles, in degrees. On the local player, written each frame
 /// from the real camera (and zeroed/disabled when a scene-driven camera is active). On
 /// remote players, written from the incoming rfc4::Movement head-sync fields. The
@@ -987,6 +991,8 @@ pub struct GraphicsSettings {
     /// share of the window's device pixels the world renders at, upscaled to the window with FSR
     /// (`visuals::upscale`); the UI stays at full resolution
     pub render_scale: f32,
+    /// draw the lens flare of the sun by day and of the moon at night (`visuals::lens_flare`)
+    pub lens_flare: bool,
 }
 
 /// The ambient brightness setting at which the Trilight ambient is the sky preset's
@@ -1027,6 +1033,7 @@ impl Default for GraphicsSettings {
             spring_bones: false,
             gpu_bytes_per_frame: 10_000_000,
             render_scale: 1.0,
+            lens_flare: true,
         }
     }
 }

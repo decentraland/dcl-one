@@ -195,12 +195,141 @@ fn ripples_tile_and_are_deterministic() {
     }
     let image = ripples::image();
     let bytes = image.data.as_ref().unwrap();
-    // every mip of a 256 square RG8 texture
-    assert_eq!(bytes.len(), 174762);
+    // every mip of a 256 square RGBA8 texture
+    assert_eq!(bytes.len(), 349524);
     assert_eq!(image.texture_descriptor.mip_level_count, 9);
     assert_eq!(bytes, ripples::image().data.as_ref().unwrap());
-    let top = &bytes[..ripples::SIZE * ripples::SIZE * 2];
-    assert!(top.iter().any(|&v| v < 100) && top.iter().any(|&v| v > 155));
+    let top = &bytes[..ripples::SIZE * ripples::SIZE * 4];
+    let channel = |c: usize| top.iter().skip(c).step_by(4).copied().collect::<Vec<u8>>();
+    for slope in [channel(0), channel(1)] {
+        assert!(slope.iter().any(|&v| v < 100) && slope.iter().any(|&v| v > 155));
+    }
+    // the foam noise spans the full range, so the foam threshold is reached
+    let foam = channel(2);
+    assert_eq!(foam.iter().min(), Some(&0));
+    assert_eq!(foam.iter().max(), Some(&255));
+}
+
+#[test]
+fn foam_noise_tiles() {
+    let foam = ripples::foam_field();
+    let size = ripples::SIZE;
+    // the last texel and the first sit one texel apart across the seam, as any two neighbours
+    let seam = (0..size)
+        .map(|y| (foam[y * size] - foam[y * size + size - 1]).abs())
+        .fold(0.0, f32::max);
+    let inner = (0..size)
+        .map(|y| (foam[y * size + 1] - foam[y * size]).abs())
+        .fold(0.0, f32::max);
+    assert!(seam < inner * 2.0 + 1e-3, "seam {seam}, inner {inner}");
+}
+
+/// The sea is drawn only within the Landscape Distance of it, and its wave grid only while the
+/// grid reaches past the land.
+#[test]
+fn the_sea_is_gated_by_distance() {
+    let bounds = bounds(IVec2::splat(-150), IVec2::splat(150));
+    // in the middle of the land, 2.4 km from the nearest sides
+    let centre = Vec3::ZERO;
+    assert!((sea_distance(bounds, centre) - 2400.0).abs() < 1e-3);
+    assert_eq!(sea_view(bounds, centre, 1000.0), SeaView::Hidden);
+    assert_eq!(sea_view(bounds, centre, 7000.0), SeaView::Flat);
+    // 600 m in from the west side
+    let inland = Vec3::new(bounds.x + 600.0, 30.0, 0.0);
+    assert!((sea_distance(bounds, inland) - 600.0).abs() < 1e-3);
+    assert_eq!(sea_view(bounds, inland, 500.0), SeaView::Hidden);
+    assert_eq!(sea_view(bounds, inland, 1000.0), SeaView::Flat);
+    // near the shore, and out over the sea
+    let shore = Vec3::new(bounds.x + 100.0, 0.0, 0.0);
+    assert_eq!(sea_view(bounds, shore, 500.0), SeaView::Waves);
+    let sea = Vec3::new(bounds.x - 100.0, SEA_LEVEL + 2.0, 0.0);
+    assert_eq!(sea_distance(bounds, sea), 0.0);
+    assert_eq!(sea_view(bounds, sea, 500.0), SeaView::Waves);
+}
+
+#[test]
+fn the_flat_ocean_stays_below_the_deepest_trough() {
+    assert!(OCEAN_DROP > waves::tests::wave_bound() + 0.2);
+}
+
+/// The sea writes no depth, so the flat ocean discards itself under the wave grid: the hole stays
+/// inside the grid wherever the snapped grid centre sits, and covers every moving wave.
+#[test]
+fn the_flat_ocean_gives_way_under_the_wave_grid() {
+    const {
+        assert!(
+            OCEAN_PLANE_HOLE + waves::WAVE_GRID_SPACING_M * 0.5 <= waves::WAVE_GRID_SIZE_M * 0.5
+        );
+        assert!(OCEAN_PLANE_HOLE >= waves::WAVE_FADE.y);
+    }
+    // the shader tells the plane by height: it sits under `OCEAN_PLANE_TOP`, the deepest trough
+    // above it
+    assert!(SEA_LEVEL - waves::tests::wave_bound() > SEA_LEVEL - OCEAN_DROP + 0.1);
+}
+
+#[test]
+fn shader_wave_constants_match_the_cpu_constants() {
+    use std::collections::BTreeSet;
+
+    use bevy::render::render_resource::ShaderDefVal;
+    use waves::*;
+
+    let bits = |value: f32| value.to_bits();
+    let mut expected = vec![
+        ("WAVE_COUNT".to_string(), WAVE_COUNT),
+        ("WAVE_HEIGHT".to_string(), bits(WAVE_HEIGHT)),
+        ("WAVE_DISTANCE".to_string(), bits(WAVE_DISTANCE)),
+        ("WAVE_SPEED".to_string(), bits(WAVE_SPEED)),
+        ("WAVE_STEEPNESS".to_string(), bits(WAVE_STEEPNESS)),
+        (
+            "WATER_DEPTH_HORIZONTAL".to_string(),
+            bits(WATER_DEPTH_HORIZONTAL),
+        ),
+        (
+            "WATER_DEPTH_VERTICAL".to_string(),
+            bits(WATER_DEPTH_VERTICAL),
+        ),
+        ("WATER_DEPTH_EXP".to_string(), bits(WATER_DEPTH_EXP)),
+        ("WAVE_FADE_X".to_string(), bits(WAVE_FADE.x)),
+        ("WAVE_FADE_Y".to_string(), bits(WAVE_FADE.y)),
+        ("WAVE_DIRECTION_X".to_string(), bits(WAVE_DIRECTION.x)),
+        ("WAVE_DIRECTION_Y".to_string(), bits(WAVE_DIRECTION.y)),
+    ];
+    for (name, vector) in [
+        ("WAVE_AMP", WAVE_AMP),
+        ("WAVE_FREQ", WAVE_FREQ),
+        ("WAVE_DIR1", WAVE_DIR1),
+        ("WAVE_DIR2", WAVE_DIR2),
+    ] {
+        for (axis, value) in ["X", "Y", "Z", "W"].iter().zip(vector.to_array()) {
+            expected.push((format!("{name}_{axis}"), bits(value)));
+        }
+    }
+    let defs: Vec<_> = waves::shader_defs()
+        .into_iter()
+        .map(|def| match def {
+            ShaderDefVal::UInt(name, value) => (name, value),
+            other => panic!("unexpected def {other:?}"),
+        })
+        .collect();
+    assert_eq!(defs, expected);
+
+    // every `#{NAME}` the shaders read is one of the defs, and every def is read
+    let mut used = BTreeSet::new();
+    for shader in [
+        include_str!("../coast_waves.wgsl"),
+        include_str!("../coast_water.wgsl"),
+    ] {
+        for piece in shader.split("#{").skip(1) {
+            used.insert(piece.split('}').next().unwrap().to_string());
+        }
+    }
+    let names: BTreeSet<_> = expected
+        .into_iter()
+        .map(|(name, _)| name)
+        .chain(["OCEAN_PLANE_TOP".to_string()])
+        .collect();
+    assert_eq!(used, names);
 }
 
 /// Cliffs are built no farther than the Landscape Distance.
@@ -219,4 +348,196 @@ fn cliffs_culled_beyond_distance() {
     assert!(west(cliff_range(1000.0)) > 0);
     // the longest distance builds no farther than CLIFF_RANGE
     assert_eq!(cliff_range(LandscapeDistance::MAX), CLIFF_RANGE);
+}
+
+/// The sea's vertex and fragment pipelines compile on this machine's adapter, in a renderer with
+/// no window: `setup`'s wave grid and flat ocean, made visible, seen by a multisampled camera and
+/// an HDR one without MSAA. Needs a GPU, so `#[ignore]`d and skipped by CI:
+///
+/// ```text
+/// cargo test -p visuals water_pipelines_compile -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "needs a GPU; run with --ignored"]
+fn water_pipelines_compile() {
+    use std::path::Path;
+
+    use bevy::{asset::io::embedded::EmbeddedAssetRegistry, render::camera::RenderTarget};
+    use pipeline_test::{compile_pipelines, fragment_pipelines, headless_app, render_target};
+
+    let mut app = headless_app();
+    // the coast's shaders as `CoastPlugin` embeds them; the rest of the plugin needs the terrain
+    let registry = app.world().resource::<EmbeddedAssetRegistry>();
+    for (name, source) in [
+        ("coast_profile.wgsl", include_str!("../coast_profile.wgsl")),
+        ("coast_surf.wgsl", include_str!("../coast_surf.wgsl")),
+        ("coast_cliff.wgsl", include_str!("../coast_cliff.wgsl")),
+        ("coast_water.wgsl", include_str!("../coast_water.wgsl")),
+        ("coast_waves.wgsl", include_str!("../coast_waves.wgsl")),
+    ] {
+        let path = Path::new("visuals").join(name);
+        registry.insert_asset(path.clone(), &path, source.as_bytes());
+    }
+    app.add_plugins((
+        MaterialPlugin::<CliffMaterial>::default(),
+        MaterialPlugin::<WaterMaterial>::default(),
+    ))
+    .add_systems(Startup, setup);
+    app.finish();
+    app.cleanup();
+    app.update();
+
+    let targets = [render_target(&mut app), render_target(&mut app)];
+    let world = app.world_mut();
+    let mut oceans = world.query_filtered::<&mut Visibility, With<Ocean>>();
+    for mut visibility in oceans.iter_mut(world) {
+        *visibility = Visibility::Inherited;
+    }
+    world.spawn((
+        DirectionalLight::default(),
+        Transform::default().looking_to(Vec3::new(0.3, -1.0, -0.4), Vec3::Y),
+    ));
+    for (target, hdr, msaa) in [
+        (&targets[0], false, Msaa::Sample4),
+        (&targets[1], true, Msaa::Off),
+    ] {
+        world.spawn((
+            Camera3d::default(),
+            Camera {
+                target: RenderTarget::Image(target.clone().into()),
+                hdr,
+                ..default()
+            },
+            msaa,
+            // above the sea, looking down at it
+            Transform::from_xyz(0.0, SEA_LEVEL + 10.0, 0.0)
+                .looking_at(Vec3::new(0.0, SEA_LEVEL, -40.0), Vec3::Y),
+        ));
+    }
+
+    compile_pipelines(&mut app);
+
+    // the transparent main pass, for each camera's key and each of the two meshes' layouts
+    let compiled = fragment_pipelines(&app, "embedded://visuals/coast_water.wgsl");
+    assert!(compiled >= 4, "only {compiled} water pipelines");
+}
+
+/// The open sea, now alpha blended, still hides what lies below it: a red seabed under deep water
+/// does not show through, and the water draws. Needs a GPU, so `#[ignore]`d and skipped by CI:
+///
+/// ```text
+/// cargo test -p visuals deep_sea_hides_the_seabed -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "needs a GPU; run with --ignored"]
+fn deep_sea_hides_the_seabed() {
+    use std::path::Path;
+
+    use bevy::{
+        asset::io::embedded::EmbeddedAssetRegistry,
+        core_pipeline::tonemapping::Tonemapping,
+        render::{
+            camera::RenderTarget,
+            view::screenshot::{Screenshot, ScreenshotCaptured},
+        },
+    };
+    use pipeline_test::{compile_pipelines, headless_app, render_target};
+
+    #[derive(Resource, Default)]
+    struct Captured(Option<Image>);
+
+    let mut app = headless_app();
+    let registry = app.world().resource::<EmbeddedAssetRegistry>();
+    for (name, source) in [
+        ("coast_profile.wgsl", include_str!("../coast_profile.wgsl")),
+        ("coast_surf.wgsl", include_str!("../coast_surf.wgsl")),
+        ("coast_cliff.wgsl", include_str!("../coast_cliff.wgsl")),
+        ("coast_water.wgsl", include_str!("../coast_water.wgsl")),
+        ("coast_waves.wgsl", include_str!("../coast_waves.wgsl")),
+    ] {
+        let path = Path::new("visuals").join(name);
+        registry.insert_asset(path.clone(), &path, source.as_bytes());
+    }
+    app.add_plugins((
+        MaterialPlugin::<CliffMaterial>::default(),
+        MaterialPlugin::<WaterMaterial>::default(),
+    ))
+    .init_resource::<Captured>()
+    .add_systems(Startup, setup);
+    app.finish();
+    app.cleanup();
+    app.update();
+
+    let target = render_target(&mut app);
+    let world = app.world_mut();
+    // land 1 km away, so the sea under the camera is deep
+    let water = world.resource::<CoastAssets>().water.clone();
+    let mut materials = world.resource_mut::<Assets<WaterMaterial>>();
+    materials.get_mut(&water).unwrap().extension.bounds = Vec4::new(1000.0, 1000.0, 2000.0, 2000.0);
+    // the wave grid only
+    let mut oceans = world.query::<(&Ocean, &mut Visibility)>();
+    for (ocean, mut visibility) in oceans.iter_mut(world) {
+        if ocean.waves {
+            *visibility = Visibility::Inherited;
+        }
+    }
+    let red = world
+        .resource_mut::<Assets<StandardMaterial>>()
+        .add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.0, 0.0),
+            unlit: true,
+            ..default()
+        });
+    let seabed = world
+        .resource_mut::<Assets<Mesh>>()
+        .add(Plane3d::default().mesh().size(200.0, 200.0));
+    world.spawn((
+        Mesh3d(seabed),
+        MeshMaterial3d(red),
+        Transform::from_xyz(0.0, SEA_LEVEL - 3.0, 0.0),
+    ));
+    world.spawn((
+        DirectionalLight::default(),
+        Transform::default().looking_to(Vec3::new(0.3, -1.0, -0.4), Vec3::Y),
+    ));
+    world.spawn((
+        Camera3d::default(),
+        Camera {
+            target: RenderTarget::Image(target.clone().into()),
+            clear_color: ClearColorConfig::Custom(Color::BLACK),
+            ..default()
+        },
+        Msaa::Off,
+        Tonemapping::None,
+        // above the sea, looking straight down at it
+        Transform::from_xyz(0.0, SEA_LEVEL + 10.0, 0.0).looking_to(Vec3::NEG_Y, Vec3::NEG_Z),
+    ));
+
+    compile_pipelines(&mut app);
+    for _ in 0..5 {
+        app.update();
+    }
+    app.world_mut().spawn(Screenshot::image(target)).observe(
+        |event: Trigger<ScreenshotCaptured>, mut captured: ResMut<Captured>| {
+            captured.0 = Some(event.event().0.clone());
+        },
+    );
+    let start = std::time::Instant::now();
+    let image = loop {
+        app.update();
+        if let Some(image) = app.world_mut().resource_mut::<Captured>().0.take() {
+            break image;
+        }
+        assert!(start.elapsed().as_secs() < 30, "GPU capture timed out");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    let rgba = image.try_into_dynamic().unwrap().to_rgba8();
+    let centre = rgba.get_pixel(32, 32).0;
+    println!("sea seen from above: {centre:?}");
+    // the water draws, and it is not the red seabed
+    assert!(centre[0] < 100, "the seabed shows through: {centre:?}");
+    assert!(
+        centre[0] as u32 + centre[1] as u32 + centre[2] as u32 > 0,
+        "the sea did not draw"
+    );
 }
