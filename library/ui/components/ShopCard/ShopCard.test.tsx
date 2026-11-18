@@ -265,6 +265,8 @@ describe('ShopCard motion', () => {
     const actions = blockOf(mediaOf('hover: none'), '.catalogue .actions')
     expect(actions).toContain('position: relative')
     expect(actions).not.toContain('position: static')
+    // In the flow, the hover layout's right, bottom and left offsets would shift the row and overlap the price.
+    expect(actions).toContain('inset: auto')
     expect(zIndex(actions)).toBeGreaterThan(zIndex(blockOf(css, '.hit')))
   })
 })

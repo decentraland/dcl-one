@@ -404,6 +404,7 @@
     .catalogue .actions {
       position: relative;
       z-index: 2;
+      inset: auto;
       opacity: 1;
       pointer-events: auto;
       transform: none;
