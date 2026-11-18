@@ -2260,5 +2260,14 @@
   },
   "item_thumbnail": {
     "generating": "Generating thumbnail…"
+  },
+  "preview_controls": {
+    "play": "Play",
+    "pause": "Pause",
+    "progress": "Playback position",
+    "frame": "Second",
+    "mute": "Mute",
+    "unmute": "Unmute",
+    "move": "Move the camera up or down"
   }
 }

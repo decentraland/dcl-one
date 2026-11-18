@@ -16,6 +16,7 @@
   "DOWNLOAD_URL": "https://decentraland.org/download",
   "MATIC_CHAIN_ID": "137",
   "MATIC_CHAIN_NAME": "Polygon",
+  "WEARABLE_PREVIEW_URL": "https://wearable-preview.decentraland.org",
   "RPC_URL": "https://rpc.decentraland.org",
   "MATIC_RPC_URL": "https://rpc.decentraland.org/polygon",
   "MATIC_EXPLORER_URL": "https://polygonscan.com",

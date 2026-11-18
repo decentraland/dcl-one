@@ -23,20 +23,11 @@
     right: 16px;
   }
 
-  /* ui2's controls carry their own MUI look; recolor them to the app palette. */
   & .translationControls {
     padding-left: 8px;
 
-    & :global(.MuiSvgIcon-root) {
+    & svg {
       fill: var(--color-muted);
-    }
-    & :global(.MuiSlider-rail),
-    & :global(.MuiSlider-track) {
-      background-color: var(--color-overlay-light);
-    }
-    & :global(.MuiSlider-thumb) {
-      background-color: var(--color-text);
-      box-shadow: none;
     }
   }
 }
@@ -67,7 +58,7 @@
     gap: 12px;
   }
 
-  && :global(.MuiButtonBase-root) {
+  && [data-preview-control="button"] {
     width: 56px;
     height: 46px;
     min-width: 0;
@@ -81,7 +72,7 @@
     &:hover {
       background: var(--color-overlay-hover) !important;
     }
-    & :global(.MuiSvgIcon-root) {
+    & svg {
       margin: 0;
       fill: var(--color-white);
     }

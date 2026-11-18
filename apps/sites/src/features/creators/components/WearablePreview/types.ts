@@ -15,7 +15,7 @@ export type WearablePreviewController = {
     IPreviewController['emote'],
     'events' | 'getLength' | 'goTo' | 'play' | 'pause' | 'stop' | 'hasSound' | 'enableSound' | 'disableSound'
   >
-  scene: Pick<IPreviewController['scene'], 'getScreenshot' | 'getMetrics' | 'changeZoom'>
+  scene: Pick<IPreviewController['scene'], 'getScreenshot' | 'getMetrics' | 'changeZoom' | 'panCamera'>
   physics: Pick<IPreviewController['physics'], 'setSpringBonesParams'>
 }
 

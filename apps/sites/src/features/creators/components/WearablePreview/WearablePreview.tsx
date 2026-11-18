@@ -1,78 +1,82 @@
-import { lazy, Suspense } from 'react'
-import type { IPreviewController } from '@dcl/schemas'
-import { WearablePreview as Ui2WearablePreview } from 'decentraland-ui2'
-import type {
-  EmoteControlsProps,
-  WearablePreviewController,
-  WearablePreviewProps,
-  TranslationControlsProps
-} from './types'
+import { useEffect, useMemo, useRef } from 'react'
+import { PreviewMessageType, sendMessage } from '@dcl/schemas/dist/dapps/preview'
+import { config } from '@/data/lib/creators/config'
+import styles from './WearablePreview.module.css'
+import type { WearablePreviewProps } from './types'
 
-export function WearablePreview(props: WearablePreviewProps) {
-  return <Ui2WearablePreview {...props} />
-}
+// How long option changes are coalesced before they are pushed to the iframe.
+const UPDATE_DEBOUNCE_MS = 500
 
-export function createWearablePreviewController(id: string): WearablePreviewController {
-  return Ui2WearablePreview.createController(id)
-}
+// The option each prop travels as in the iframe's URL, where its name differs.
+const PARAM_NAMES: Record<string, string> = { urns: 'urn', unityMode: 'mode' }
 
-// Every controller in the app comes from createWearablePreviewController, which returns ui2's whole one; its controls
-// call more of it than the app's narrower type lists.
-const full = (controller: WearablePreviewController | undefined) => controller as IPreviewController | undefined
-
-// ui2's preview controls are MUI components: their styles read `theme.spacing()` and the Button
-// reads `palette.mode`, and this app mounts no MUI theme. ui2's theme is a CSS-vars theme, so it
-// has to go through CssVarsProvider, scoped to these subtrees so ui2's global resets stay out.
-const loadTheme = () =>
-  Promise.all([import('@mui/material/styles'), import('decentraland-ui2/dist/theme')]).then(
-    ([{ Experimental_CssVarsProvider }, { light }]) => ({ CssVarsProvider: Experimental_CssVarsProvider, theme: light })
-  )
-
-const EmoteControlsLazy = lazy(async () => {
-  const [{ EmoteControls }, { CssVarsProvider, theme }] = await Promise.all([
-    import('decentraland-ui2/dist/components/WearablePreview/EmoteControls'),
-    loadTheme()
-  ])
-  return {
-    default: ({ previewId, controller, ...props }: EmoteControlsProps) => (
-      <CssVarsProvider theme={theme}>
-        <EmoteControls {...props} wearablePreviewId={previewId} wearablePreviewController={full(controller)} />
-      </CssVarsProvider>
-    )
+function toUrl(baseUrl: string, options: Record<string, unknown>, dev: boolean): string {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(options)) {
+    if (key === 'blob' || value === undefined || value === null || value === '') continue
+    for (const item of Array.isArray(value) ? value : [value]) params.append(PARAM_NAMES[key] ?? key, String(item))
   }
-})
-
-const TranslationControlsLazy = lazy(async () => {
-  const [{ TranslationControls, VerticalPosition }, { CssVarsProvider, theme }] = await Promise.all([
-    import('decentraland-ui2/dist/components/WearablePreview/TranslationControls'),
-    loadTheme()
-  ])
-  return {
-    default: ({ previewId, controller, verticalPosition, ...props }: TranslationControlsProps) => (
-      <CssVarsProvider theme={theme}>
-        <TranslationControls
-          {...props}
-          wearablePreviewId={previewId}
-          wearablePreviewController={full(controller)}
-          verticalPosition={verticalPosition === 'left' ? VerticalPosition.LEFT : VerticalPosition.RIGHT}
-        />
-      </CssVarsProvider>
-    )
-  }
-})
-
-export function EmoteControls(props: EmoteControlsProps) {
-  return (
-    <Suspense fallback={null}>
-      <EmoteControlsLazy {...props} />
-    </Suspense>
-  )
+  if (dev) params.set('env', 'dev')
+  return `${baseUrl}?${params}`
 }
 
-export function TranslationControls(props: TranslationControlsProps) {
-  return (
-    <Suspense fallback={null}>
-      <TranslationControlsLazy {...props} />
-    </Suspense>
-  )
+const blobIds = new WeakMap<object, number>()
+let nextBlobId = 1
+
+function blobId(blob: object): number {
+  let id = blobIds.get(blob)
+  if (!id) blobIds.set(blob, (id = nextBlobId++))
+  return id
+}
+
+/** The wearable preview in an iframe: its options travel in the URL, and later changes (and a `blob`, always) as messages. */
+export function WearablePreview({ id, dev = false, onLoad, onError, onUpdate, ...options }: WearablePreviewProps) {
+  const baseUrl = config.get('WEARABLE_PREVIEW_URL')
+  const frame = useRef<HTMLIFrameElement>(null)
+  const callbacks = useRef({ onLoad, onError, onUpdate })
+  callbacks.current = { onLoad, onError, onUpdate }
+
+  // A blob holds files, which JSON drops: it is told apart by identity.
+  const serialized = JSON.stringify({ ...options, blob: options.blob ? blobId(options.blob) : undefined })
+  const url = useMemo(() => toUrl(baseUrl, options, dev), [baseUrl, serialized, dev])
+  // The URL the iframe was mounted with: changing `src` would reload the preview, so it never changes.
+  const src = useRef(url).current
+
+  const ready = useRef(false)
+  // What the iframe already has. The mount URL carries everything but a blob.
+  const delivered = useRef(options.blob ? null : serialized)
+
+  const push = useRef(() => undefined as void)
+  push.current = () => {
+    const target = frame.current?.contentWindow
+    if (!ready.current || !target || delivered.current === serialized) return
+    delivered.current = serialized
+    sendMessage(target, PreviewMessageType.UPDATE, { options } as never)
+    callbacks.current.onUpdate?.()
+  }
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      // Another preview on the page posts the same messages: only this iframe's count.
+      if (event.source !== frame.current?.contentWindow || event.origin !== new URL(baseUrl).origin) return
+      const { type, payload } = (event.data ?? {}) as { type?: string; payload?: { renderer?: never; message?: string } }
+      if (type === PreviewMessageType.READY) {
+        ready.current = true
+        push.current()
+      } else if (type === PreviewMessageType.LOAD) {
+        callbacks.current.onLoad?.(payload?.renderer)
+      } else if (type === PreviewMessageType.ERROR) {
+        callbacks.current.onError?.(new Error(payload?.message))
+      }
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [baseUrl])
+
+  useEffect(() => {
+    const timeout = setTimeout(() => push.current(), UPDATE_DEBOUNCE_MS)
+    return () => clearTimeout(timeout)
+  }, [serialized])
+
+  return <iframe id={id} ref={frame} className={styles.frame} src={src} allow="autoplay" title="" />
 }

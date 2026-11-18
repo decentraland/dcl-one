@@ -1,4 +1,7 @@
-export { WearablePreview, createWearablePreviewController, EmoteControls, TranslationControls } from './WearablePreview'
+export { WearablePreview } from './WearablePreview'
+export { createWearablePreviewController } from './controller'
+export { EmoteControls } from './EmoteControls'
+export { TranslationControls } from './TranslationControls'
 export type {
   EmoteControlsProps,
   WearablePreviewController,

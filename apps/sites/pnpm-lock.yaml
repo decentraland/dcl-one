@@ -258,6 +258,9 @@ importers:
       marked:
         specifier: 18.1.1
         version: 18.1.1
+      mitt:
+        specifier: 3.0.1
+        version: 3.0.1
       monaco-editor:
         specifier: 0.57.0
         version: 0.57.0

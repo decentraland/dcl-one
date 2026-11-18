@@ -63,6 +63,7 @@
     "lottie-react": "2.4.2",
     "magic-sdk": "27.0.0",
     "marked": "18.1.1",
+    "mitt": "3.0.1",
     "monaco-editor": "0.57.0",
     "pg": "8.23.1",
     "qrcode-generator": "2.0.4",

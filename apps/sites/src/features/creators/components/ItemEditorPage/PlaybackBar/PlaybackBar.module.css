@@ -66,7 +66,7 @@
   }
 }
 
-/* ui2 lays its controls out absolutely against the nearest positioned ancestor, sized to it; anchoring
+/* The emote controls lay themselves out absolutely against the nearest positioned ancestor, sized to it; anchoring
    them here and resetting that placement keeps them inside this box, in the row with the other controls. */
 .emoteControlsWrap {
   position: relative;
@@ -81,7 +81,7 @@
   border-radius: var(--radius-btn-sm);
   background: var(--editor-surface);
 
-  & > :global(.MuiBox-root) {
+  & > [data-preview-control="emote"] {
     position: static;
     flex: 1;
     width: auto;
@@ -91,8 +91,8 @@
     gap: 5px;
   }
 
-  /* ui2's controls carry their own MUI look; recolor them to the editor's controls. */
-  & :global(.MuiButtonBase-root) {
+  /* Recolor the emote controls to the editor's controls. */
+  & [data-preview-control="button"] {
     width: 50px;
     height: 36px;
     min-width: 50px;
@@ -106,7 +106,7 @@
     &:hover {
       background: var(--editor-surface-hover) !important;
     }
-    & :global(.MuiSvgIcon-root) {
+    & svg {
       margin: 0;
       fill: var(--color-white);
     }
