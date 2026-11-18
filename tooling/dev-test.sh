@@ -45,7 +45,7 @@ for suite in "${suites[@]}"; do
       # output streams with a prefix, and leaving the step early (Ctrl-C, a failure) stops them.
       python3 tooling/dev-regressions.py --archipelago-external > >(sed -u 's/^/[provisioned] /') 2>&1 &
       provisioned=$!
-      trap 'pkill -P "$provisioned" 2>/dev/null; kill "$provisioned" 2>/dev/null; foundation-dev down' EXIT
+      trap 'kill -- -"$provisioned" 2>/dev/null || kill "$provisioned" 2>/dev/null; foundation-dev down' EXIT
       broad=0
       make -C "$FOUNDATION_DEV_ROOT" catalyst-test || broad=$?
       external=0

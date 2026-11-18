@@ -22,7 +22,7 @@ RUNTIME = 'make -C "$FOUNDATION_DEV_ROOT" catalyst-test || broad=$?'
 CONCURRENT = [
     EXTERNAL_COMMAND + " > >(sed -u 's/^/[provisioned] /') 2>&1 &",
     'provisioned=$!',
-    'trap \'pkill -P "$provisioned" 2>/dev/null; kill "$provisioned" 2>/dev/null; foundation-dev down\' EXIT',
+    'trap \'kill -- -"$provisioned" 2>/dev/null || kill "$provisioned" 2>/dev/null; foundation-dev down\' EXIT',
     'broad=0',
     RUNTIME,
     'external=0',
@@ -685,6 +685,11 @@ def main():
         check_auth_stress()
         return
     if args.archipelago_external:
+        # Lead a process group so tooling/dev-test.sh can stop the test binaries and their brokers with it.
+        try:
+            os.setpgid(0, 0)
+        except OSError:
+            pass
         check_external()
         return
     manifest = json.loads((ROOT / "tooling/dev-regressions.json").read_text())
