@@ -577,51 +577,73 @@ async fn stale_socket(ctx: Ctx) -> Result<()> {
 
     // The client side of every connection through the API front closes; the server side stays
     // open. The explorer knows its socket is gone; the server still counts it as connected.
-    let flows_before = subject.fronts.api.counters().flows;
+    // The front also carries the explorer's ordinary HTTP requests, so a new connection through
+    // it proves nothing: what is asked is the explorer's own report of its realm room, which must
+    // leave `connected` and come back.
+    let orphaned = Instant::now();
     subject.fronts.api.orphan()?;
-    // the explorer must notice: its realm room leaves the connected state
-    expect_async(
+    let lost_after = expect_async(
         &ctx,
-        "the explorer notices its archipelago socket is gone",
+        "the explorer's realm room leaves the connected state after its socket is orphaned",
         Duration::from_secs(30),
-        Duration::from_millis(100),
+        Duration::from_millis(50),
         || async {
             let connectivity = subject.explorer.poll("/connectivity_state").await?;
-            let rooms = connectivity["rooms"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default();
-            let dialled = subject.fronts.api.counters().flows > flows_before;
-            (dialled || rooms.iter().any(|room| room["state"] != "connected"))
-                .then_some(())
-                .ok_or_else(|| format!("connectivity: {connectivity}"))
+            if has_identity_conflict(&connectivity) {
+                return Err(format!(
+                    "fatal: the explorer reports an identity conflict: {connectivity}"
+                ));
+            }
+            let state = realm_room_of(&connectivity)?;
+            (state != "connected")
+                .then(|| orphaned.elapsed())
+                .ok_or_else(|| format!("its realm room is still connected: {connectivity}"))
         },
     )
     .await?;
+    ctx.note(
+        "realm room left connected after, ms",
+        lost_after.as_millis() as u64,
+    );
 
     let conflict = expect_async(
         &ctx,
-        "the explorer reconnects to the archipelago and holds a transport again",
+        "the explorer reconnects to the archipelago: every room connected and a transport held again",
         Duration::from_secs(60),
-        Duration::from_millis(500),
+        Duration::from_millis(250),
         || async {
             let connectivity = subject.explorer.poll("/connectivity_state").await?;
-            let text = connectivity.to_string().to_lowercase();
-            if text.contains("identity_conflict") || text.contains("identityconflict") || text.contains("identity conflict") {
-                return Err(format!("fatal: the explorer reports an identity conflict: {connectivity}"));
+            if has_identity_conflict(&connectivity) {
+                return Err(format!(
+                    "fatal: the explorer reports an identity conflict: {connectivity}"
+                ));
             }
             let state = subject.explorer.poll("/transport_state").await?;
             let rooms = connectivity["rooms"].as_array().cloned().unwrap_or_default();
-            let all_connected = !rooms.is_empty() && rooms.iter().all(|room| room["state"] == "connected");
-            // it dialled again through the front after the orphaning, and every room is back
-            let dialled = subject.fronts.api.counters().flows > flows_before;
-            (state["total"].as_u64().unwrap_or(0) > 0 && dialled && all_connected)
+            let all_connected =
+                !rooms.is_empty() && rooms.iter().all(|room| room["state"] == "connected");
+            (state["total"].as_u64().unwrap_or(0) > 0 && all_connected)
                 .then_some(connectivity.clone())
-                .ok_or_else(|| format!("dialled again: {dialled}, transports: {state}, connectivity: {connectivity}"))
+                .ok_or_else(|| format!("transports: {state}, connectivity: {connectivity}"))
         },
     )
     .await?;
+    ctx.note(
+        "reconnected after, ms",
+        orphaned.elapsed().as_millis() as u64,
+    );
     ctx.note("connectivity after", &conflict);
+    let mut archipelago_log = subject.explorer.log_lines("comms::archipelago");
+    let skip = archipelago_log.len().saturating_sub(6);
+    ctx.note(
+        "explorer log, archipelago (last lines)",
+        archipelago_log.split_off(skip),
+    );
+    // a new island assignment through the new socket restarts the room: the log says so
+    ctx.note(
+        "explorer log, times the livekit protocol started",
+        subject.explorer.log_count("starting livekit protocol"),
+    );
     expect_pulse(
         &ctx,
         &subject.explorer,
@@ -690,18 +712,26 @@ async fn port_unreachable(ctx: Ctx) -> Result<()> {
     Ok(())
 }
 
-/// The state of the explorer's realm room, from its connectivity report.
-async fn realm_room(explorer: &Explorer) -> Result<String, String> {
-    let connectivity = explorer.poll("/connectivity_state").await?;
-    let rooms = connectivity["rooms"]
+/// The state of the realm room in a connectivity report.
+fn realm_room_of(connectivity: &Value) -> Result<String, String> {
+    connectivity["rooms"]
         .as_array()
-        .cloned()
-        .unwrap_or_default();
-    rooms
-        .iter()
-        .find(|room| room["scope"] == "realm")
+        .and_then(|rooms| rooms.iter().find(|room| room["scope"] == "realm"))
         .and_then(|room| room["state"].as_str().map(str::to_owned))
         .ok_or_else(|| format!("no realm room in {connectivity}"))
+}
+
+/// The state of the explorer's realm room, from its connectivity report.
+async fn realm_room(explorer: &Explorer) -> Result<String, String> {
+    realm_room_of(&explorer.poll("/connectivity_state").await?)
+}
+
+/// Whether a connectivity report says another device replaced this one.
+fn has_identity_conflict(connectivity: &Value) -> bool {
+    let text = connectivity.to_string().to_lowercase();
+    text.contains("identity_conflict")
+        || text.contains("identityconflict")
+        || text.contains("identity conflict")
 }
 
 async fn two_devices(ctx: Ctx) -> Result<()> {
