@@ -62,14 +62,26 @@ export type SceneBuildEvent = { kind: 'rebuild'; file: string } | { kind: 'bundl
 
 export type BevyRealmBuildEvent = SceneBuildEvent & { path: string };
 
-export const BEVY_REALM_EXIT_EVENT = 'bevyRealm.exit';
+// What main does about the Bevy realm of a project after an unexpected stop (bevy-realm.ts).
+// Main owns the restart and its retry cap; the editor shows the outcome and reloads the
+// inspector on the new realm.
+export const BEVY_REALM_SUPERVISION_EVENT = 'bevyRealm.supervision';
 
-export type BevyRealmExitEvent = {
-  path: string;
-  message: string;
-  /** How long the realm had been serving before it exited. */
-  uptimeMs: number;
-};
+/** `realm`: the realm process stopped. `server`: only its Multiplayer Server did; the realm still serves the editor. */
+export type BevyRealmStopCause = 'realm' | 'server';
+
+export type BevyRealmSupervisionEvent =
+  | {
+      kind: 'stopped';
+      path: string;
+      cause: BevyRealmStopCause;
+      message: string;
+      /** Delay before main restarts the realm, or null when it gave up. */
+      restartInMs: number | null;
+    }
+  /** The realm is being replaced now; its URLs stop working. */
+  | { kind: 'restarting'; path: string }
+  | { kind: 'restarted'; path: string; url: string; wsUrl: string };
 
 // Asset files added/changed/removed in a project's `assets/` tree from OUTSIDE the editor
 // (main → renderer → the inspector, which re-fetches its asset catalog). Lets the project
@@ -231,6 +243,7 @@ export interface Ipc {
   'inspector.detachSceneDebugger': (path: string) => void;
   'bevyRealm.start': (path: string) => Promise<{ url: string; wsUrl: string }>;
   'bevyRealm.kill': (path: string) => Promise<void>;
+  'bevyRealm.ensure': (path: string) => Promise<{ url: string; wsUrl: string }>;
   // Watch a project's assets/ tree for out-of-editor file changes, pushing
   // PROJECT_ASSETS_CHANGED_EVENT when one lands (#512). Idempotent per path.
   'projectWatcher.start': (path: string) => Promise<void>;

@@ -1,3 +1,6 @@
+import { join } from 'path';
+import fs from 'fs/promises';
+
 import type { Child, StreamType } from './bin';
 import { createLineBuffer } from './bevy-realm-build-events';
 
@@ -22,13 +25,47 @@ const MAX_BACKLOG_LINES = 500;
 // Tells `sdk-commands start` not to spawn its own Multiplayer Server.
 export const NO_SERVER_FLAG = '--no-server';
 
+// The flag as the start command's `arg` spec declares it. A bare mention of the flag in a
+// comment or a help string would match a substring check while `arg` still rejects it.
+const NO_SERVER_SPEC = /['"]--no-server['"]\s*:\s*Boolean/;
+
+/**
+ * Whether the scene's `sdk-commands start` spawns a Multiplayer Server. Only the versions
+ * that spawn one declare the flag that turns it off, and `arg` rejects unknown flags, so
+ * the flag may only be passed when this holds.
+ */
+export async function spawnsMultiplayerServer(path: string): Promise<boolean> {
+  const startCommand = await fs
+    .readFile(join(path, 'node_modules', '@dcl/sdk-commands/dist/commands/start/index.js'), 'utf-8')
+    .catch(() => '');
+  return NO_SERVER_SPEC.test(startCommand);
+}
+
 /** Whether a preview was started to leave the Multiplayer Server to the editor realm. */
 export function usesRealmServer(preview: Child): boolean {
   return preview.args.includes(NO_SERVER_FLAG);
 }
 
-export const REALM_SERVER_STOPPED =
-  "⚠️ WARNING! The editor's Multiplayer Server stopped. Restart the preview to run the scene with a Multiplayer Server.";
+// One scene room takes one server: a second one loses the room and exits. A preview that
+// started while the editor realm had no server runs its own, and the realm then leaves the
+// server to it. cli.ts records that preview here; bevy-realm.ts reads it.
+const previewServers = new Map<string, Child>();
+
+/** Records the preview of the scene that runs its own Multiplayer Server, or clears it. */
+export function setPreviewServer(path: string, preview: Child | undefined): void {
+  if (preview) previewServers.set(path, preview);
+  else previewServers.delete(path);
+}
+
+/** Whether a live preview of the scene runs its own Multiplayer Server. */
+export function previewRunsServer(path: string): boolean {
+  return !!previewServers.get(path)?.alive();
+}
+
+export const REALM_SERVER_STOPPED = "⚠️ WARNING! The editor's Multiplayer Server stopped.";
+export const REALM_SERVER_RESTARTING = 'Creator Hub is restarting it.';
+export const REALM_SERVER_PREVIEW_HINT =
+  'Press Preview again to run the scene with its own Multiplayer Server.';
 
 type Listener = (text: string) => void;
 type Channel = { backlog: string[]; listeners: Set<Listener> };
@@ -75,9 +112,9 @@ export function captureRealmServerLogs(path: string, child: Child): void {
   }
 }
 
-/** Tells the consoles that share the realm's server that it is gone. */
-export function realmServerStopped(path: string): void {
-  publish(path, [REALM_SERVER_STOPPED]);
+/** Tells the consoles that share the realm's server that it is gone, and what happens next. */
+export function realmServerStopped(path: string, next?: string): void {
+  publish(path, next ? [REALM_SERVER_STOPPED, next] : [REALM_SERVER_STOPPED]);
 }
 
 /** Receives each new batch of server lines for the scene. Returns the unsubscribe. */

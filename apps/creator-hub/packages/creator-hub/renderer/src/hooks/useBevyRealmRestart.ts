@@ -1,30 +1,38 @@
 import { useEffect, useRef } from 'react';
 
+import type { BevyRealmSupervisionEvent } from '/shared/types/ipc';
+
 import { editor } from '#preload';
 
-export const MAX_AUTO_RESTARTS = 3;
-// A realm that served this long before exiting is a fresh failure, not part of a crash
-// loop, so it starts the count over instead of spending the scene open's last restart.
-export const HEALTHY_UPTIME_MS = 60_000;
+type StoppedEvent = Extract<BevyRealmSupervisionEvent, { kind: 'stopped' }>;
 
-/** Restart the project's Bevy realm after an unexpected exit, giving up after MAX_AUTO_RESTARTS in a row. */
+export type BevyRealmRestartHandlers = {
+  /** The realm or its Multiplayer Server stopped; main restarts it unless `restartInMs` is null. */
+  onStopped: (event: StoppedEvent) => void;
+  /** Main is replacing the realm now; the current realm URLs stop working. */
+  onRestarting: () => void;
+  onRestarted: (realm: { url: string; wsUrl: string }) => void;
+};
+
+/**
+ * Follows main's restarts of the project's Bevy realm (bevy-realm.ts owns the restart, its
+ * backoff and its retry cap), so the editor can tell the user and reload on the new realm.
+ */
 export function useBevyRealmRestart(
   projectPath: string | undefined,
-  handlers: { onRestart: () => void; onGiveUp: () => void },
+  handlers: BevyRealmRestartHandlers,
 ): void {
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
-  const crashes = useRef(0);
 
   useEffect(() => {
-    crashes.current = 0;
     if (!projectPath) return;
-    return editor.onBevyRealmExit(({ path, uptimeMs }) => {
-      if (path !== projectPath) return;
-      if (uptimeMs >= HEALTHY_UPTIME_MS) crashes.current = 0;
-      crashes.current += 1;
-      if (crashes.current <= MAX_AUTO_RESTARTS) handlersRef.current.onRestart();
-      else handlersRef.current.onGiveUp();
+    return editor.onBevyRealmSupervision(event => {
+      if (event.path !== projectPath) return;
+      const current = handlersRef.current;
+      if (event.kind === 'stopped') current.onStopped(event);
+      else if (event.kind === 'restarting') current.onRestarting();
+      else current.onRestarted({ url: event.url, wsUrl: event.wsUrl });
     });
   }, [projectPath]);
 }

@@ -52,9 +52,10 @@
         "retry": "Reintentar",
         "outdated_deps": "Las dependencias de esta escena están desactualizadas y no son compatibles con el renderizador Bevy. Actualízalas para continuar.",
         "update_deps": "Actualizar dependencias",
-        "data_layer_crashed": "La escena se detiene inesperadamente una y otra vez. Vuelve atrás y ábrela de nuevo, o revisa los registros."
+        "data_layer_crashed": "La escena se detiene inesperadamente una y otra vez. Reintenta, vuelve atrás y ábrela de nuevo, o revisa los registros."
       }
     },
+    "realm_server_restarting": "El servidor multijugador se detuvo inesperadamente. Se está reiniciando, lo que recarga el editor.",
     "realm_restarted": "La escena se detuvo inesperadamente y se recargó. Es posible que los cambios de los últimos segundos no se hayan guardado.",
     "header": {
       "actions": {
@@ -904,6 +905,13 @@
       "actions": {
         "view": "Ver",
         "discard_all": "Descartar todas"
+      }
+    },
+    "realm_server_stopped": {
+      "title": "El servidor multijugador se detiene una y otra vez, así que la escena funciona sin él. Reintentar lo reinicia y recarga el editor.",
+      "actions": {
+        "dismiss": "Descartar",
+        "retry": "Reintentar"
       }
     },
     "external_agent_access": {

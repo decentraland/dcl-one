@@ -22,8 +22,13 @@ import { downloadGithubRepo } from './download-github-folder';
 import { startMobileDebugServer } from './mobile-debug-server';
 import { qrCodeDataUrl } from './qr-code';
 import { getLanIp } from './network';
-import { getRealm } from './bevy-realm';
-import { NO_SERVER_FLAG } from './realm-server-logs';
+import { realmProvidesServer } from './bevy-realm';
+import {
+  NO_SERVER_FLAG,
+  setPreviewServer,
+  spawnsMultiplayerServer,
+  usesRealmServer,
+} from './realm-server-logs';
 import { addDependencyOverrides, ensureEditorFilesNotDeployed } from './project-config-files';
 
 // `mobile` marks a preview that was started for the mobile-QR flow (`--mobile`): the
@@ -43,10 +48,6 @@ const RAW_GLTF_PARAM = 'lsd-raw-gltf';
 // ready. sdk-commands prints it only with a LAN IP; if none is found it never comes, so
 // the mobile start settles (with no url) shortly after instead of hanging indefinitely.
 const MOBILE_DEEPLINK_GRACE_MS = 5000;
-
-// The flag as the start command's `arg` spec declares it. A bare mention of the flag in a
-// comment or a help string would match a substring check while `arg` still rejects it.
-const NO_SERVER_SPEC = /['"]--no-server['"]\s*:\s*Boolean/;
 
 const previewCache: Map<string, Preview> = new Map();
 export let deployServer: { stop: () => Promise<void> } | null = null;
@@ -344,23 +345,22 @@ export async function start(path: string, opts: StartOptions): Promise<string> {
 }
 
 /**
- * Flags that keep the preview from spawning a second Multiplayer Server for the scene.
+ * Which Multiplayer Server the preview gets: none when the scene's SDK has none, the
+ * editor realm's when it runs one, otherwise its own.
  *
  * The Bevy editor realm (bevy-realm.ts) is a `sdk-commands start` of the same project, so
  * on an SDK with the authoritative server it already runs one. A second server loses the
  * scene room to it and exits, and the preview console then reports that no server is
  * running while the realm's keeps serving. The preview reuses the realm's server instead;
- * realm-server-logs.ts relays that server's logs into the preview console.
+ * realm-server-logs.ts relays that server's logs into the preview console. A realm that is
+ * being restarted counts as running one.
  *
  * `arg` rejects unknown flags, so the flag is only passed when the scene's sdk-commands
  * declares it. Only versions that spawn a server do.
  */
-async function getServerArgs(path: string): Promise<string[]> {
-  if (!getRealm(path)) return [];
-  const startCommand = await fs
-    .readFile(join(path, 'node_modules', '@dcl/sdk-commands/dist/commands/start/index.js'), 'utf-8')
-    .catch(() => '');
-  return NO_SERVER_SPEC.test(startCommand) ? [NO_SERVER_FLAG] : [];
+async function getServerMode(path: string): Promise<'none' | 'realm' | 'own'> {
+  if (!(await spawnsMultiplayerServer(path))) return 'none';
+  return realmProvidesServer(path) ? 'realm' : 'own';
 }
 
 async function doStart(path: string, opts: StartOptions, generation: number): Promise<string> {
@@ -393,8 +393,15 @@ async function doStart(path: string, opts: StartOptions, generation: number): Pr
   // Otherwise reuse a running preview only if it's the same client — switching client
   // (Unity <-> Bevy) means a different launch, so tear the old one down and start fresh
   // below — and not a mobile-QR one: it never opened the desktop client, so a desktop
-  // Preview press must restart to actually launch it.
-  if (isPreviewRunning(preview) && preview.opts.client === opts.client && !preview.mobile) {
+  // Preview press must restart to actually launch it. A preview that leaves the
+  // Multiplayer Server to an editor realm that no longer runs one (it stopped and was not
+  // restarted, or the editor left the Bevy renderer) restarts too, with its own server.
+  if (
+    isPreviewRunning(preview) &&
+    preview.opts.client === opts.client &&
+    !preview.mobile &&
+    !(usesRealmServer(preview.child) && !realmProvidesServer(path))
+  ) {
     if (opts.client === PREVIEW_CLIENT.BEVY_WEB) {
       // The Bevy web client runs in the browser; sdk-commands opened the tab on
       // launch and there's no deep-link to re-issue. Re-open the stored URL so a
@@ -429,7 +436,8 @@ async function doStart(path: string, opts: StartOptions, generation: number): Pr
     // itself and prints no deeplink, so we wait for the browser URL it prints. Mobile
     // (`--mobile`): it serves the scene and prints the LAN QR deeplink, opening no client
     // at all. Both are bare.
-    const serverArgs = await getServerArgs(path);
+    const serverMode = await getServerMode(path);
+    const serverArgs = serverMode === 'realm' ? [NO_SERVER_FLAG] : [];
     const args = isMobile
       ? ['start', '--mobile', ...serverArgs]
       : isBevyWeb
@@ -460,6 +468,8 @@ async function doStart(path: string, opts: StartOptions, generation: number): Pr
 
     // registered before the deeplink resolves so a failed spawn is still killed below
     previewCache.set(path, { child: process, url: '', opts, mobile: isMobile });
+    // An editor realm that starts later leaves the server to this preview (bevy-realm.ts).
+    setPreviewServer(path, serverMode === 'own' ? process : undefined);
 
     if (isBevyWeb) {
       // No deep-link on this path — sdk-commands opens the Bevy client in the browser
