@@ -280,6 +280,10 @@ impl Explorer {
     /// answer with `ok: false`; an `Err` means the console could not be reached or did not
     /// answer in time.
     pub async fn command(&self, line: &str, deadline: Duration) -> Result<Answer> {
+        self.run(line, deadline, true).await
+    }
+
+    async fn run(&self, line: &str, deadline: Duration, record: bool) -> Result<Answer> {
         let started = Instant::now();
         let call = self.call("dcl/console", json!({ "command": line })).await?;
         let id = call
@@ -299,11 +303,13 @@ impl Explorer {
                         })
                         .unwrap_or_default(),
                 };
-                self.timeline.record(
+                if record {
+                    self.timeline.record(
                     &self.name,
                     "console",
                     json!({ "command": line, "ok": answer.ok, "output": answer.output.chars().take(400).collect::<String>() }),
-                );
+                    );
+                }
                 return Ok(answer);
             }
             if started.elapsed() >= deadline {
@@ -315,6 +321,40 @@ impl Explorer {
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
+    }
+
+    /// Sends one console command without waiting for its answer: for a burst of commands that
+    /// must reach the explorer faster than one answer takes.
+    pub async fn fire(&self, line: &str) -> Result<()> {
+        self.call("dcl/console", json!({ "command": line })).await?;
+        Ok(())
+    }
+
+    /// The log lines that contain `needle`, without colour codes or access tokens, newest last.
+    pub fn log_lines(&self, needle: &str) -> Vec<String> {
+        let text = std::fs::read(&self.log)
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .unwrap_or_default();
+        text.lines()
+            .filter(|line| line.contains(needle))
+            .map(|line| {
+                let mut plain = String::with_capacity(line.len());
+                let mut characters = line.chars();
+                while let Some(character) = characters.next() {
+                    if character == '\u{1b}' {
+                        // an escape sequence ends at its first letter
+                        for skipped in characters.by_ref() {
+                            if skipped.is_ascii_alphabetic() {
+                                break;
+                            }
+                        }
+                    } else {
+                        plain.push(character);
+                    }
+                }
+                crate::engine::timeline::redact_text(plain.trim())
+            })
+            .collect()
     }
 
     /// Runs a command whose output is JSON. Fails if the command failed or the output is not JSON.
@@ -335,6 +375,21 @@ impl Explorer {
     /// [`Self::query`] for a probe: the reason it is not answering yet, as text.
     pub async fn probe(&self, line: &str) -> Result<Value, String> {
         self.query(line).await.map_err(|error| format!("{error:#}"))
+    }
+
+    /// [`Self::probe`] that leaves no entry on the timeline: for a state polled many times,
+    /// where the caller records the changes.
+    pub async fn poll(&self, line: &str) -> Result<Value, String> {
+        let answer = self
+            .run(line, Duration::from_secs(10), false)
+            .await
+            .map_err(|error| format!("{error:#}"))?;
+        if !answer.ok {
+            return Err(format!("{}: `{line}` failed: {}", self.name, answer.output));
+        }
+        answer
+            .json()
+            .ok_or_else(|| format!("{}: `{line}` did not answer with JSON: {}", self.name, answer.output))
     }
 
     /// Whether the process is still running.

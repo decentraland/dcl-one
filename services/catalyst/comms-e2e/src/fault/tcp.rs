@@ -19,9 +19,21 @@ pub(super) async fn start(
     listen: SocketAddr,
     upstream: SocketAddr,
 ) -> Result<(SocketAddr, Vec<AbortHandle>)> {
-    let listener = TcpListener::bind(listen)
-        .await
-        .with_context(|| format!("the fault link cannot listen on TCP {listen}"))?;
+    // a port that a link dropped a moment ago may still be on its way out
+    let mut attempt = 0;
+    let listener = loop {
+        match TcpListener::bind(listen).await {
+            Ok(listener) => break listener,
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse && attempt < 100 => {
+                attempt += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("the fault link cannot listen on TCP {listen}"));
+            }
+        }
+    };
     let listen = listener.local_addr()?;
     let task = tokio::spawn(accept(shared, listener, upstream));
     Ok((listen, vec![task.abort_handle()]))

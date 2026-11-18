@@ -22,6 +22,28 @@ struct Flow {
     pump: AbortHandle,
 }
 
+impl Drop for Flow {
+    // The pump holds the listen socket: a flow that goes must take its pump along, or the port
+    // stays bound after the link is dropped.
+    fn drop(&mut self) {
+        self.pump.abort();
+    }
+}
+
+/// Binds `address`, waiting out a port that a link dropped a moment ago is still releasing.
+async fn bind(address: SocketAddr) -> std::io::Result<UdpSocket> {
+    let mut last = None;
+    for _ in 0..100 {
+        match UdpSocket::bind(address).await {
+            Ok(socket) => return Ok(socket),
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => last = Some(error),
+            Err(error) => return Err(error),
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    Err(last.expect("a failed attempt left its error"))
+}
+
 /// The listen socket, which a closed port takes away and a restore puts back.
 type Listen = Arc<Mutex<Option<Arc<UdpSocket>>>>;
 
@@ -31,7 +53,7 @@ pub(super) async fn start(
     upstream: SocketAddr,
 ) -> Result<(SocketAddr, Vec<AbortHandle>)> {
     let socket = Arc::new(
-        UdpSocket::bind(listen)
+        bind(listen)
             .await
             .with_context(|| format!("the fault link cannot listen on UDP {listen}"))?,
     );
@@ -62,18 +84,15 @@ async fn relay(
                 }
                 changed.await;
             }
-            // the port was ours a moment ago; a few tries cover a slow release
-            for _ in 0..50 {
-                if let Ok(socket) = UdpSocket::bind(address).await {
+            match bind(address).await {
+                Ok(socket) => {
                     *listen.lock() = Some(Arc::new(socket));
                     shared.record("port reopened", ());
-                    break;
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-            }
-            if listen.lock().is_none() {
-                shared.record("port lost", format!("cannot bind {address} again"));
-                return;
+                Err(error) => {
+                    shared.record("port lost", format!("cannot bind {address} again: {error}"));
+                    return;
+                }
             }
         }
         let socket = listen.lock().clone().expect("the port is open here");
@@ -104,9 +123,7 @@ async fn relay(
                 continue;
             }
             // cut: the next packet starts a new flow, from a new upstream port
-            if let Some(flow) = flows.remove(&client) {
-                flow.pump.abort();
-            }
+            flows.remove(&client);
         }
         if !flows.contains_key(&client) {
             let Ok(socket) = UdpSocket::bind((client.ip(), 0)).await else {

@@ -415,3 +415,37 @@ async fn each_kind_of_link_refuses_the_other_kind_of_fault() {
     assert!(udp.orphan().is_err());
     assert!(tcp.close_port().is_err());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_dropped_link_frees_its_port_for_the_next_one() {
+    let ctx = ctx("ports");
+    let (udp_server, _seen) = udp_echo().await;
+    let (tcp_server, _events) = tcp_echo().await;
+    // fixed ports, as the fronts of an explorer have: the next scenario binds the same ones
+    let udp_port = {
+        let probe = UdpSocket::bind(ANY).await.unwrap();
+        probe.local_addr().unwrap()
+    };
+    let tcp_port = {
+        let probe = TcpListener::bind(ANY).await.unwrap();
+        probe.local_addr().unwrap()
+    };
+    for round in 0..3 {
+        let udp = FaultLink::udp(&ctx, "udp", udp_port, udp_server)
+            .await
+            .unwrap_or_else(|error| panic!("round {round}: {error:#}"));
+        let tcp = FaultLink::tcp(&ctx, "tcp", tcp_port, tcp_server)
+            .await
+            .unwrap_or_else(|error| panic!("round {round}: {error:#}"));
+        // a live flow and a live connection: what a scenario leaves behind when it ends
+        let client = UdpSocket::bind(ANY).await.unwrap();
+        client.connect(udp.address()).await.unwrap();
+        client.send(b"hello").await.unwrap();
+        assert_eq!(receive(&client, SOON).await.as_deref(), Some(&b"echo:hello"[..]));
+        let mut stream = TcpStream::connect(tcp.address()).await.unwrap();
+        stream.write_all(b"hello").await.unwrap();
+        assert!(read_some(&mut stream, SOON).await.is_some());
+        drop(udp);
+        drop(tcp);
+    }
+}

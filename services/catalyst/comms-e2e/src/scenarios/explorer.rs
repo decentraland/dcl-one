@@ -14,7 +14,13 @@ use crate::pulse::PulseBot;
 
 /// The scenarios of this group, in the order a run takes them.
 pub fn all() -> Vec<&'static Scenario> {
-    vec![&UPLINK_STALL, &OUT_OF_GRID, &STALE_SOCKET, &PORT_UNREACHABLE]
+    vec![
+        &UPLINK_STALL,
+        &OUT_OF_GRID,
+        &PAST_THE_EAST_EDGE,
+        &STALE_SOCKET,
+        &PORT_UNREACHABLE,
+    ]
 }
 
 const NEEDS: Needs = Needs {
@@ -39,12 +45,26 @@ static OUT_OF_GRID: Scenario = Scenario {
     name: "explorer-out-of-grid",
     tags: &["explorer", "battle"],
     guards: &["dcl-one #1205"],
-    summary: "The explorer leaves the parcel grid and comes back: Pulse stays connected and \
-              observers see it where it re-entered.",
+    summary: "The explorer walks off the north edge of the parcel grid, where no parcel index \
+              is valid, and comes back: Pulse stays connected and the observer sees it where it \
+              re-entered.",
     needs: NEEDS,
     hostile: false,
     default_repeat: 1,
     run: |ctx| Box::pin(out_of_grid(ctx)),
+};
+
+static PAST_THE_EAST_EDGE: Scenario = Scenario {
+    name: "explorer-past-the-east-edge",
+    tags: &["explorer", "battle"],
+    guards: &["dcl-one #1205"],
+    summary: "The explorer walks off the east edge of the parcel grid, where the parcel index \
+              wraps into the next row: it must not appear on the far side of the map, and the \
+              observer beside it must not see it leave.",
+    needs: NEEDS,
+    hostile: false,
+    default_repeat: 1,
+    run: |ctx| Box::pin(past_the_east_edge(ctx)),
 };
 
 static STALE_SOCKET: Scenario = Scenario {
@@ -156,9 +176,9 @@ async fn start(ctx: &Ctx, preview: bool) -> Result<Subject> {
 }
 
 /// The explorer's own word on its Pulse connection: `authenticated`, `terminal disconnect`,
-/// `waiting`, `connecting` and so on.
+/// `waiting`, `connecting` and so on. Polled quietly; the callers record what matters.
 async fn pulse_state(explorer: &Explorer) -> Result<String, String> {
-    let state = explorer.probe("/pulse_state").await?;
+    let state = explorer.poll("/pulse_state").await?;
     Ok(state["state"].as_str().unwrap_or("unknown").to_owned())
 }
 
@@ -243,27 +263,56 @@ async fn uplink_stall(ctx: Ctx) -> Result<()> {
     let limits = ctx.stack().limits;
     let home = subject.position;
     let away = [home[0] + 6.0, home[1], home[2]];
+    let wallet = subject.wallet.clone();
+
+    // First, with a healthy link: a console move reaches the observer as a teleport. Without
+    // this the rest would prove nothing.
+    let before = bot.view().teleports;
+    move_to(&subject.explorer, away).await?;
+    move_to(&subject.explorer, home).await?;
+    expect_or(&ctx, "the observer sees each console move as a teleport", SOON, || {
+        bot.alive()?;
+        let seen = bot.view().teleports - before;
+        (seen >= 2).then_some(()).ok_or_else(|| format!("{seen} teleports seen for 2 moves"))
+    })
+    .await?;
+    let teleports_before = bot.view().teleports;
 
     // Each move is a teleport: a reliable message the explorer keeps until Pulse acknowledges it.
-    // With the uplink stalled none is acknowledged, so they pile up on the explorer's side.
+    // With the uplink stalled none is acknowledged, so they pile up on the explorer's side. The
+    // stall is short: well under what either end waits before it gives the connection up.
     subject.fronts.pulse.set(Direction::Uplink, Fault::Stall);
-    let stall = Duration::from_secs(3);
+    let stall = Duration::from_millis(2000);
     let started = Instant::now();
     let mut moves = 0u32;
     while started.elapsed() < stall {
-        move_to(&subject.explorer, if moves % 2 == 0 { away } else { home }).await?;
+        let target = if moves % 2 == 0 { away } else { home };
+        let line = format!("/move_player_to {} {} {}", target[0], target[1], target[2]);
+        subject.explorer.fire(&line).await?;
         moves += 1;
+        tokio::time::sleep(Duration::from_millis(25)).await;
     }
     let last = if moves % 2 == 1 { away } else { home };
-    ctx.note("teleports during the stall", moves);
+    ctx.note("moves asked during the stall", moves);
     ctx.note("server discrete burst", limits.discrete_burst);
     subject.fronts.pulse.restore();
 
-    // What was kept is resent when the uplink returns. The session must outlive that.
-    expect_pulse(&ctx, &subject.explorer, "Pulse is authenticated after the stall", Duration::from_secs(20)).await?;
-    pulse_stays(&ctx, &subject.explorer, "Pulse stays authenticated after the resend", Duration::from_secs(10)).await?;
-    observer_sees_at(&ctx, &bot, &subject.wallet, last, "the observer sees the explorer where it last teleported").await?;
+    // What was kept is resent when the uplink returns. The session must outlive that: not ended
+    // for good by the server, and not dropped and dialled again either.
+    let verdict = async {
+        expect_pulse(&ctx, &subject.explorer, "Pulse is authenticated after the stall", Duration::from_secs(20)).await?;
+        pulse_stays(&ctx, &subject.explorer, "Pulse stays authenticated after the resend", Duration::from_secs(12)).await
+    }
+    .await;
+    let view = bot.view();
+    ctx.note("teleports the observer saw from the stall", view.teleports - teleports_before);
     ctx.note("packets dropped by the stall", subject.fronts.pulse.counters().dropped);
+    ctx.note("explorer log, disconnects", subject.explorer.log_lines("pulse: disconnected"));
+    verdict?;
+    if view.count_of(&wallet) != 1 {
+        bail!("after the stall the observer holds {} subjects for the explorer, expected 1", view.count_of(&wallet));
+    }
+    observer_sees_at(&ctx, &bot, &subject.wallet, last, "the observer sees the explorer where it last teleported").await?;
     subject.explorer.stop().await;
     Ok(())
 }
@@ -274,11 +323,12 @@ async fn out_of_grid(ctx: Ctx) -> Result<()> {
     let grid = ctx.stack().grid;
     let home = subject.position;
 
-    // two parcels past the padded edge of the grid
+    // Two parcels past the padded north edge: the index a client computes there is past the end
+    // of the grid, which the server refuses for good.
     let outside = [
-        (grid.max_parcel_x + grid.padding + 2) as f32 * grid.parcel_size as f32 + 8.0,
+        home[0],
         0.0,
-        home[2],
+        (grid.max_parcel_z + grid.padding + 2) as f32 * grid.parcel_size as f32 + 8.0,
     ];
     if grid.locate(outside).is_some() {
         bail!("{outside:?} is inside the grid of this stack; the scenario needs a position outside");
@@ -298,6 +348,61 @@ async fn out_of_grid(ctx: Ctx) -> Result<()> {
     move_to(&subject.explorer, back).await?;
     observer_sees_at(&ctx, &bot, &subject.wallet, back, "the observer sees the explorer where it re-entered the grid").await?;
     pulse_stays(&ctx, &subject.explorer, "Pulse stays authenticated after re-entry", Duration::from_secs(3)).await?;
+    subject.explorer.stop().await;
+    Ok(())
+}
+
+async fn past_the_east_edge(ctx: Ctx) -> Result<()> {
+    let subject = start(&ctx, true).await?;
+    let bot = observer(&ctx, &subject).await?;
+    let grid = ctx.stack().grid;
+    let size = grid.parcel_size as f32;
+    let home = subject.position;
+
+    // Two parcels past the padded east edge. A client that computes the parcel index there without
+    // a bound gets a valid index: the first parcels of the next row, on the west side of the map.
+    let parcel_x = grid.max_parcel_x + grid.padding + 2;
+    let parcel_z = (home[2] / size).floor() as i32;
+    let outside = [parcel_x as f32 * size + 8.0, 0.0, home[2]];
+    if grid.locate(outside).is_some() {
+        bail!("{outside:?} is inside the grid of this stack; the scenario needs a position outside");
+    }
+    let encoder = grid.encoder();
+    let (wrapped_x, wrapped_z) = encoder.decode(encoder.encode(parcel_x, parcel_z));
+    let far_side = [wrapped_x as f32 * size + 8.0, 0.0, wrapped_z as f32 * size + 8.0];
+    ctx.note("where an unbounded index would place the explorer", far_side);
+
+    // a second bot waits where the wrapped index points
+    let far = PulseBot::enter(&ctx, "far observer", &ctx.identity(1)).await?;
+    far.teleport(&subject.realm, [far_side[0] + 2.0, 0.0, far_side[2] + 2.0])?;
+
+    move_to(&subject.explorer, outside).await?;
+    let wallet = subject.wallet.clone();
+    let started = Instant::now();
+    let window = Duration::from_secs(8);
+    while started.elapsed() < window {
+        bot.alive().map_err(|reason| anyhow!("the observer: {reason}"))?;
+        far.alive().map_err(|reason| anyhow!("the far observer: {reason}"))?;
+        if far.view().count_of(&wallet) > 0 {
+            let seen = far.view().of(&wallet).map(|subject| subject.world);
+            bail!(
+                "the explorer stands at {outside:?}, east of the grid, and a bot on the far side of the map sees it at {seen:?}"
+            );
+        }
+        if bot.view().count_of(&wallet) != 1 {
+            bail!(
+                "the explorer stands east of the grid and the observer beside where it was holds {} subjects for it, expected 1 (it must not be told the explorer left)",
+                bot.view().count_of(&wallet)
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    ctx.record("expect", "held", serde_json::json!({ "what": "nobody sees the explorer anywhere else, and the observer still holds it", "for_ms": window.as_millis() as u64 }));
+    expect_pulse(&ctx, &subject.explorer, "Pulse is still authenticated", SOON).await?;
+
+    let back = [home[0] + 16.0, 0.0, home[2]];
+    move_to(&subject.explorer, back).await?;
+    observer_sees_at(&ctx, &bot, &subject.wallet, back, "the observer sees the explorer where it re-entered the grid").await?;
     subject.explorer.stop().await;
     Ok(())
 }
@@ -327,7 +432,24 @@ async fn stale_socket(ctx: Ctx) -> Result<()> {
 
     // The client side of every connection through the API front closes; the server side stays
     // open. The explorer knows its socket is gone; the server still counts it as connected.
+    let flows_before = subject.fronts.api.counters().flows;
     subject.fronts.api.orphan()?;
+    // the explorer must notice: its realm room leaves the connected state
+    expect_async(
+        &ctx,
+        "the explorer notices its archipelago socket is gone",
+        Duration::from_secs(30),
+        Duration::from_millis(100),
+        || async {
+            let connectivity = subject.explorer.poll("/connectivity_state").await?;
+            let rooms = connectivity["rooms"].as_array().cloned().unwrap_or_default();
+            let dialled = subject.fronts.api.counters().flows > flows_before;
+            (dialled || rooms.iter().any(|room| room["state"] != "connected"))
+                .then_some(())
+                .ok_or_else(|| format!("connectivity: {connectivity}"))
+        },
+    )
+    .await?;
 
     let conflict = expect_async(
         &ctx,
@@ -335,17 +457,19 @@ async fn stale_socket(ctx: Ctx) -> Result<()> {
         Duration::from_secs(60),
         Duration::from_millis(500),
         || async {
-            let connectivity = subject.explorer.probe("/connectivity_state").await?;
+            let connectivity = subject.explorer.poll("/connectivity_state").await?;
             let text = connectivity.to_string().to_lowercase();
             if text.contains("identity_conflict") || text.contains("identityconflict") || text.contains("identity conflict") {
                 return Err(format!("fatal: the explorer reports an identity conflict: {connectivity}"));
             }
-            let state = archipelago_transports(&subject.explorer).await?;
-            // one new connection through the front means it dialled again
-            let dialled = subject.fronts.api.counters().flows;
-            (state["total"].as_u64().unwrap_or(0) > 0 && dialled > 1)
+            let state = subject.explorer.poll("/transport_state").await?;
+            let rooms = connectivity["rooms"].as_array().cloned().unwrap_or_default();
+            let all_connected = !rooms.is_empty() && rooms.iter().all(|room| room["state"] == "connected");
+            // it dialled again through the front after the orphaning, and every room is back
+            let dialled = subject.fronts.api.counters().flows > flows_before;
+            (state["total"].as_u64().unwrap_or(0) > 0 && dialled && all_connected)
                 .then_some(connectivity.clone())
-                .ok_or_else(|| format!("transports: {state}, connectivity: {connectivity}"))
+                .ok_or_else(|| format!("dialled again: {dialled}, transports: {state}, connectivity: {connectivity}"))
         },
     )
     .await?;
