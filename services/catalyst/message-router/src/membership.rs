@@ -3,8 +3,9 @@
 //!
 //! - is the sender a member: one primary-key probe of `social.community_members`
 //!   (`community_id`, `member_address`), whatever the community's state, as upstream;
-//! - who receives it: the members of the community when `social.communities.active`, other
-//!   than the sender, lowercased; the `community_members_pkey` prefix serves the scan.
+//! - who receives it: the members of the community when `social.communities` is `active` and
+//!   not `suspended`, other than the sender, lowercased; the `community_members_pkey` prefix
+//!   serves the scan.
 //!
 //! Member addresses are stored lowercase; the sender's LiveKit identity is lowercased before
 //! it is compared.
@@ -37,7 +38,7 @@ impl PgMembership {
         sqlx::query_scalar(
             "SELECT lower(cm.member_address) FROM social.communities c \
              JOIN social.community_members cm ON cm.community_id = c.id \
-             WHERE c.id = $1 AND c.active AND cm.member_address <> $2",
+             WHERE c.id = $1 AND c.active AND NOT c.suspended AND cm.member_address <> $2",
         )
         .bind(community)
         .bind(sender.to_lowercase())
@@ -99,7 +100,7 @@ mod tests {
 
     /// Behind `CATALYST_TEST_DATABASE_URL`; skips without it.
     #[tokio::test]
-    async fn members_and_recipients_of_active_and_inactive_communities() {
+    async fn members_and_recipients_of_active_inactive_and_suspended_communities() {
         let Some(pool) = catalyst_db::scratch::pool(2).await else {
             return;
         };
@@ -107,6 +108,15 @@ mod tests {
         let roles = [(OWNER, "owner"), (MEMBER, "member"), (OTHER, "moderator")];
         let active = community(&pool, true, &roles).await;
         let inactive = community(&pool, false, &roles).await;
+        let suspended = community(&pool, true, &roles).await;
+        sqlx::query(
+            "UPDATE social.communities SET suspended = TRUE, suspended_at = now(), \
+             suspended_by = 'router test' WHERE id = $1",
+        )
+        .bind(suspended)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         assert!(members.is_member(active, MEMBER).await.unwrap());
         // the LiveKit identity may arrive checksummed
@@ -133,6 +143,14 @@ mod tests {
         assert!(
             members
                 .recipients(inactive, MEMBER)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(members.is_member(suspended, MEMBER).await.unwrap());
+        assert!(
+            members
+                .recipients(suspended, MEMBER)
                 .await
                 .unwrap()
                 .is_empty()

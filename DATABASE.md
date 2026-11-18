@@ -1147,9 +1147,9 @@ or reaction, at most 10 per sender in a burst and 5 per second sustained) it run
 
 - membership: `EXISTS` over `social.community_members` on `(community_id, member_address)`,
   one probe of `community_members_pkey`, whatever the community's state;
-- recipients: `social.communities` by `id` (its primary key) with `active`, joined to the
-  community's `social.community_members` rows through the `community_members_pkey` prefix,
-  every member but the sender, `lower(member_address)`. The result is the community's member
+- recipients: `social.communities` by `id` (its primary key), `active` and not `suspended`,
+  joined to the community's `social.community_members` rows through the
+  `community_members_pkey` prefix, every member but the sender, `lower(member_address)`. The result is the community's member
   count, which the router publishes in batches of 100 identities.
 
 Inputs are a community uuid from the packet topic and the sender's LiveKit identity, lowercased

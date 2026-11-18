@@ -195,7 +195,7 @@ token bucket (`MESSAGE_ROUTER_RATE_LIMIT_MAX_TOKENS` 10, `_REFILL_PER_SECOND` 5,
 swept every `_CLEANUP_INTERVAL_MS` 60,000) counts `rate_limited`. The rfc4 `Packet` must be a
 `chat` or `chat_reaction` on topic `community:<uuid>`, the room connected and the sender a
 member; it goes, with `Chat.forwarded_from` (or `ChatReaction.address`) set to the sender, to
-the other members of the active community on `community:<id>`, reliable, 100 destination
+the other members of the community, if active and not suspended, on `community:<id>`, reliable, 100 destination
 identities per publish; a failed publish is logged and the rest still go. Anything else counts
 `failed`.
 

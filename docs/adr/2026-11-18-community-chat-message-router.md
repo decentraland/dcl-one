@@ -37,7 +37,7 @@ secret.
   private messages room to subscribe and publish data only. The router asks again on every
   connection. The gateway keeps `/internal/message-router` private.
 - **Shared SQL reads.** The router reads `social.community_members` and
-  `social.communities.active` on its own small pool and writes nothing (`DATABASE.md`
+  `social.communities` (`active`, `suspended`) on its own small pool and writes nothing (`DATABASE.md`
   "Message router workload"). No schema change.
 
 ## Rejected options
