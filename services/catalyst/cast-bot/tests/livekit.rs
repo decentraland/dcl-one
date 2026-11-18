@@ -1,7 +1,9 @@
 //! `cast-bot` against a real LiveKit: a `livekit-server` this test starts on
 //! free loopback ports (the binary named by `LIVEKIT_SERVER_BIN`), a viewer
 //! joined with the Rust SDK, and the bot driven over stdio as the node
-//! drives it. Without `LIVEKIT_SERVER_BIN` the test says so and passes.
+//! drives it. Without `LIVEKIT_SERVER_BIN` the test says so and passes,
+//! except under CI (`CI=true`), where it fails. `CAST_BOT_BIN` names the bot
+//! to drive when it is not this build's (CI runs the Nix-built test binary).
 
 use std::process::Stdio;
 use std::time::Duration;
@@ -25,6 +27,39 @@ fn free_port() -> u16 {
         .local_addr()
         .unwrap()
         .port()
+}
+
+/// The binary under test.
+fn bot_binary() -> String {
+    std::env::var("CAST_BOT_BIN").unwrap_or_else(|_| env!("CARGO_BIN_EXE_cast-bot").to_string())
+}
+
+/// Sets the room's metadata through LiveKit's server API (Twirp JSON).
+async fn set_room_metadata(port: u16, metadata: &str) {
+    let admin = AccessToken::with_api_key(KEY, SECRET)
+        .with_grants(VideoGrants {
+            room_admin: true,
+            room: ROOM.into(),
+            ..Default::default()
+        })
+        .to_jwt()
+        .unwrap();
+    let body = json!({"room": ROOM, "metadata": metadata}).to_string();
+    let request = format!(
+        "POST /twirp/livekit.RoomService/UpdateRoomMetadata HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+         Authorization: Bearer {admin}\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut response = String::new();
+    tokio::io::AsyncReadExt::read_to_string(&mut stream, &mut response)
+        .await
+        .unwrap();
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
 }
 
 fn token(identity: &str, can_update_metadata: bool) -> String {
@@ -52,7 +87,7 @@ struct Bot {
 
 impl Bot {
     fn start() -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_cast-bot"))
+        let mut child = Command::new(bot_binary())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -125,6 +160,10 @@ async fn until<T>(
 #[tokio::test(flavor = "multi_thread")]
 async fn the_bot_publishes_slides_and_carries_data_both_ways() {
     let Ok(server_bin) = std::env::var("LIVEKIT_SERVER_BIN") else {
+        assert!(
+            std::env::var("CI").as_deref() != Ok("true"),
+            "LIVEKIT_SERVER_BIN is required in CI"
+        );
         eprintln!("SKIPPED: set LIVEKIT_SERVER_BIN to a livekit-server binary to run this test");
         return;
     };
@@ -164,10 +203,20 @@ async fn the_bot_publishes_slides_and_carries_data_both_ways() {
             .is_ok()
     );
 
+    // No LiveKit there: unavailable, not refused.
+    let mut unreachable = Bot::start();
+    unreachable
+        .send(json!({"type": "init", "url": format!("ws://127.0.0.1:{}", free_port()), "token": token("x", false)}))
+        .await;
+    let answer = unreachable.answer().await;
+    assert_eq!(answer["code"], "connect-unavailable", "{answer}");
+
     let (viewer, mut events) =
-        Room::connect(&url, &token("0xviewer", false), RoomOptions::default())
+        Room::connect(&url, &token("0xViewer", false), RoomOptions::default())
             .await
             .unwrap();
+    // The viewer presents; the bot reads the list as it joins.
+    set_room_metadata(port, r#"{"presenters":["0xviewer"]}"#).await;
 
     let mut bot = Bot::start();
     let identity = "presentation-bot:scene-room:access:1";
@@ -242,33 +291,57 @@ async fn the_bot_publishes_slides_and_carries_data_both_ways() {
     assert_eq!(payload, packet);
     assert_eq!(kind, DataPacketKind::Reliable);
 
-    viewer
-        .local_participant()
-        .publish_data(DataPacket {
-            payload: b"command".to_vec(),
-            reliable: true,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
+    // Only presenters' commands cross: the scene's other traffic stays in the room.
+    let command = br#"{"type":"presentation:get-state"}"#;
+    for payload in [&b"movement"[..], &command[..]] {
+        viewer
+            .local_participant()
+            .publish_data(DataPacket {
+                payload: payload.to_vec(),
+                reliable: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+    }
     let received = loop {
         let line = bot.next().await;
         if line["type"] == "dataReceived" {
             break line;
         }
     };
-    assert_eq!(received["identity"], "0xviewer");
+    assert_eq!(received["identity"], "0xViewer");
     assert_eq!(
         BASE64
             .decode(received["payload"].as_str().unwrap())
             .unwrap(),
-        b"command"
+        command
     );
+
+    // A room without the viewer among its presenters: its commands stay out too.
+    set_room_metadata(port, r#"{"presenters":["0xsomeoneelse"]}"#).await;
+    let changed = loop {
+        let line = bot.next().await;
+        if line["type"] == "roomMetadata" {
+            break line;
+        }
+    };
+    assert_eq!(changed["metadata"], r#"{"presenters":["0xsomeoneelse"]}"#);
+    viewer
+        .local_participant()
+        .publish_data(DataPacket {
+            payload: command.to_vec(),
+            reliable: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
 
     // The viewer leaves: the count drops to zero.
     viewer.close().await.unwrap();
     let count = loop {
         let line = bot.next().await;
+        assert_ne!(line["type"], "dataReceived", "{line}");
         if line["type"] == "participantCount" {
             break line["count"].clone();
         }
