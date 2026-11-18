@@ -445,6 +445,12 @@ describe('when the help opens near a viewport edge', () => {
       mobile: false
     })
     await ready('?edges')
+    expect(
+      await browser.evaluate(
+        `Array.from(document.querySelectorAll('input[type="checkbox"]')).filter(input => input.getClientRects().length).map(input => input.id)`
+      )
+    ).toEqual(['label-edge-top', 'label-edge-right', 'label-edge-left'])
+    expect(await browser.evaluate('document.documentElement.scrollHeight')).toBe(700)
     for (const [id, side] of [
       ['label-edge-top', 'below'],
       ['label-edge-right', 'above'],

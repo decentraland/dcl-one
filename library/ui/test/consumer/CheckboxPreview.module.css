@@ -7,6 +7,12 @@
   overflow-x: auto;
 }
 
+.labels {
+  display: grid;
+  gap: 16px;
+  justify-items: start;
+}
+
 .edges > :not(.edgeCases) {
   display: none;
 }

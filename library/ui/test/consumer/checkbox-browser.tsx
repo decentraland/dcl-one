@@ -90,6 +90,7 @@ function Fixture() {
     <main
       className={showEdges ? styles.edges : undefined}
       style={{
+        boxSizing: 'border-box',
         minHeight: '100vh',
         padding: 24,
         background: 'var(--dcl-bg-page)',
@@ -136,7 +137,7 @@ function Fixture() {
         </section>
       ))}
       <h2 style={{ fontSize: 16 }}>CheckboxLabel</h2>
-      <div style={{ display: 'grid', gap: 16, justifyItems: 'start' }}>
+      <div className={styles.labels}>
         <CheckboxLabel
           id="label-end"
           label="Open Debug Console"
