@@ -76,6 +76,13 @@ it("keeps the server's pick when the browser cannot tell the Mac's chip", () => 
   expect(main()).toHaveProperty("href", appleSilicon.url);
 });
 
+it("links an iPad, which names itself a Mac, to the download page", () => {
+  vi.stubGlobal("navigator", { ...window.navigator, maxTouchPoints: 5 });
+  render(<HeroDownload downloads={onMac} sid="s1" />);
+  expect(main()).toHaveProperty("href", expect.stringMatching(/\/download\/creator-hub$/));
+  expect(screen.queryByText("Also available on")).toBeNull();
+});
+
 it("reports the download and shows the install steps three seconds later", () => {
   render(<HeroDownload downloads={onWindows} sid="s1" />);
   fireEvent.click(main());

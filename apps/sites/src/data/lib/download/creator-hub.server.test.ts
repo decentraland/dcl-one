@@ -127,6 +127,7 @@ describe("the latest Creator Hub release", () => {
 
 describe("heroDownloads", () => {
   const MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
+  const MAC_FIREFOX = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:130.0) Gecko/20100101 Firefox/130.0";
   const WINDOWS = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
   const LINUX = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
   const PHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148";
@@ -146,6 +147,12 @@ describe("heroDownloads", () => {
     const downloads = heroDownloads(await latest(), MAC);
     expect(downloads?.primary).toMatchObject({ osKey: "macos", arch: "arm64" });
     expect(downloads?.primary.url).toContain("mac-arm64.dmg");
+    expect(downloads?.others.map((o) => `${o.osKey}-${o.arch}`)).toEqual(["macos-amd64", "windows-amd64"]);
+  });
+
+  it("offers a Mac visitor on Firefox, whose User-Agent names no Apple engine, the Apple Silicon build first", async () => {
+    const downloads = heroDownloads(await latest(), MAC_FIREFOX);
+    expect(downloads?.primary).toMatchObject({ osKey: "macos", arch: "arm64" });
     expect(downloads?.others.map((o) => `${o.osKey}-${o.arch}`)).toEqual(["macos-amd64", "windows-amd64"]);
   });
 

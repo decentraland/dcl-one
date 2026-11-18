@@ -1,18 +1,13 @@
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useState } from "react";
 
 import type { DownloadOption, HeroDownloads } from "@/data/lib/download/creator-hub.server";
+import { useCreatorHubDownloadClick } from "@/data/lib/download/creator-hub-click";
 import { detectMacChip } from "@/data/lib/download/mac-chip";
-import { track } from "@/core/lib/telemetry/track";
-import type { StoryId } from "@/core/lib/telemetry/story-id";
 
 import { copy } from "./content";
 import styles from "./CreateLanding.module.css";
 
 export const CREATOR_HUB_DOWNLOAD = "/download/creator-hub";
-
-const STORY: StoryId = "landings/creator-hub-download";
-// The installer starts downloading at once; the page that explains how to install it follows.
-const SUCCESS_DELAY_MS = 3000;
 
 const ICONS: Record<DownloadOption["osKey"], string> = {
   macos:
@@ -33,10 +28,11 @@ const buildName = (option: DownloadOption) => (option.osKey === "macos" ? `${opt
 
 /**
  * The server picks the Apple Silicon build for every Mac, whose User-Agent hides its chip. Where the browser
- * can tell the Mac is an Intel one (or the reverse), the build for it comes first.
+ * can tell the Mac is an Intel one, the Intel build comes first. An iPad names itself a Mac and has no installer.
  */
-function forThisMac(downloads: HeroDownloads): HeroDownloads {
+function forThisDevice(downloads: HeroDownloads): HeroDownloads | null {
   if (downloads.primary.osKey !== "macos") return downloads;
+  if (navigator.maxTouchPoints > 1) return null;
   const chip = detectMacChip();
   const arch = chip === "intel" ? "amd64" : chip === "apple_silicon" ? "arm64" : null;
   if (!arch || arch === downloads.primary.arch) return downloads;
@@ -54,12 +50,8 @@ type Props = {
 /** The hero's desktop call to action: the Creator Hub installer for this system, and the other builds under it. */
 export default function HeroDownload({ downloads, sid }: Props) {
   const [offered, setOffered] = useState(downloads);
-  useEffect(() => setOffered(downloads && forThisMac(downloads)), [downloads]);
-
-  const redirect = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => {
-    if (redirect.current !== null) clearTimeout(redirect.current);
-  }, []);
+  useEffect(() => setOffered(downloads && forThisDevice(downloads)), [downloads]);
+  const onDownload = useCreatorHubDownloadClick(sid);
 
   if (!offered) {
     return (
@@ -68,20 +60,6 @@ export default function HeroDownload({ downloads, sid }: Props) {
       </a>
     );
   }
-
-  const onDownload = (option: DownloadOption, kind: "primary" | "secondary", event: MouseEvent<HTMLAnchorElement>) => {
-    track(
-      "lp_creatorhub_download_clicked",
-      { os: option.osKey, arch: option.arch, file_name: option.fileName, kind },
-      { sid, story: STORY },
-    );
-    // A click that opens the file elsewhere (a new tab or window) leaves this page where it is.
-    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    if (redirect.current !== null) clearTimeout(redirect.current);
-    redirect.current = setTimeout(() => {
-      window.location.assign(`/download/creator-hub-success?${new URLSearchParams({ os: option.osKey, arch: option.arch })}`);
-    }, SUCCESS_DELAY_MS);
-  };
 
   const { primary, others } = offered;
   return (

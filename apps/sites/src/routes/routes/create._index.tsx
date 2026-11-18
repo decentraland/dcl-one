@@ -38,11 +38,18 @@ export function sdkWorkspaceHandoff(url: URL): string | null {
 // The landing never waits long for the release: without it the hero links to the download page, which does.
 const RELEASE_WAIT_MS = 300;
 
-function latestReleaseInTime() {
-  return Promise.race([
-    loadLatestRelease().catch(() => null),
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), RELEASE_WAIT_MS)),
-  ]);
+async function latestReleaseInTime() {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      loadLatestRelease().catch(() => null),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), RELEASE_WAIT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** `/create` is the Creator Hub's marketing landing on the web; the desktop shell and the Explorer's

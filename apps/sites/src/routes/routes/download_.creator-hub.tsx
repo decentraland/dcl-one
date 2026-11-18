@@ -4,26 +4,15 @@ import { redirect } from "react-router";
 import LdCreatorHubDownloadPage from "@ui/landings/pages/LdCreatorHubDownloadPage";
 
 import {
-  loadLatestRelease,
-  resolveDownload,
-  type DownloadOption,
-  type OsKey,
-} from "@/data/lib/download/creator-hub.server";
+  CREATOR_HUB_DOWNLOAD_STORY as STORY,
+  successPath,
+  useCreatorHubDownloadClick,
+} from "@/data/lib/download/creator-hub-click";
+import { loadLatestRelease, resolveDownload, type OsKey } from "@/data/lib/download/creator-hub.server";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
 
 import type { Route } from "./+types/download_.creator-hub";
-import type { StoryId } from "@/core/lib/telemetry/story-id";
-
-const STORY: StoryId = "landings/creator-hub-download";
-
-// The steps page opens 3 s after the click, the delay decentraland.org uses: the visitor sees the browser start
-// the installer download before the page changes.
-const SUCCESS_DELAY_MS = 3000;
-
-function successPath(os: OsKey, arch: string): string {
-  return `/download/creator-hub-success?${new URLSearchParams({ os, arch }).toString()}`;
-}
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
@@ -56,36 +45,15 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
 export default function CreatorHubDownloadRoute({ loaderData }: Route.ComponentProps) {
   const d = loaderData;
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onDownload = useCreatorHubDownloadClick(d.sid);
 
   useDownloadView(d.sid, d.detectedOs, d.detectedArch, d.version, d.overridden);
-  useEffect(() => () => {
-    if (timer.current !== null) clearTimeout(timer.current);
-  }, []);
-
-  function onDownload(option: DownloadOption) {
-    track(
-      "lp_creatorhub_download_clicked",
-      {
-        os: option.osKey,
-        arch: option.arch,
-        file_name: option.fileName || null,
-        kind: option === d.primary ? "primary" : "secondary",
-      },
-      { sid: d.sid, story: STORY },
-    );
-    if (timer.current !== null) clearTimeout(timer.current);
-    timer.current = setTimeout(() => {
-      window.location.assign(successPath(option.osKey, option.arch));
-    }, SUCCESS_DELAY_MS);
-  }
-
   return (
     <LdCreatorHubDownloadPage
       version={d.version}
       primary={d.primary}
       secondary={d.secondary}
-      onDownload={onDownload}
+      onDownload={(option, event) => onDownload(option, option === d.primary ? "primary" : "secondary", event)}
     />
   );
 }

@@ -217,9 +217,12 @@ export type HeroDownloads = {
 /**
  * The installers a page offers in place: the one for the system the User-Agent names, then the rest. Null when
  * that system has no installer, or when the release could not be read and only the releases page is known.
+ * Every Mac gets the Apple Silicon build first: its User-Agent says "Intel" on either chip.
  */
 export function heroDownloads(release: DownloadRelease, userAgent: string | null | undefined): HeroDownloads | null {
-  const { installable, primary } = resolveDownload(release, userAgent);
+  const resolved = resolveDownload(release, userAgent);
+  const { installable } = resolved;
+  const primary = (resolved.primary.osKey === "macos" && release.options[DEFAULT_OPTION]) || resolved.primary;
   if (!installable || !primary.fileName) return null;
   const others = Object.values(release.options).filter((option) => option !== primary && option.fileName);
   return { primary, others };
