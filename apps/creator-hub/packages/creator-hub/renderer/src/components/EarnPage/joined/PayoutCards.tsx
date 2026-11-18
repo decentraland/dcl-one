@@ -10,9 +10,11 @@ import { t } from '/@/modules/store/translation/utils';
 
 import { CopyToClipboard } from '../../CopyToClipboard';
 
+import modal from '../EarnModal.module.css';
+
 import { CopyIcon, InfoIcon, WarningIcon } from '../icons';
 
-import { EARN_TOOLTIP } from './parts';
+import { EARN_TOOLTIP, ExplainedChip } from './parts';
 import { shortAddress } from './wallet';
 import parts from './parts.module.css';
 import styles from './PayoutsTab.module.css';
@@ -88,16 +90,54 @@ function WalletInfo() {
 }
 
 /**
- * The payout wallet: its short address as a chip that copies it, and EDIT; ADD WALLET when none is set.
+ * The setup step a card is, as a circled number. Screen readers hear it as the start of the title.
+ */
+function CardTitle({
+  step,
+  id,
+  titleRef,
+  children,
+}: {
+  step: 1 | 2;
+  id: string;
+  titleRef?: React.Ref<HTMLHeadingElement>;
+  children: React.ReactNode;
+}) {
+  return (
+    <>
+      <span
+        className={styles.step}
+        aria-hidden
+      >
+        {step}
+      </span>
+      <h2
+        className={styles.cardTitle}
+        id={id}
+        ref={titleRef}
+        tabIndex={titleRef ? -1 : undefined}
+      >
+        <span className={modal.visuallyHidden}>{t('earn.joined.payouts.step', { step })} </span>
+        {children}
+      </h2>
+    </>
+  );
+}
+
+/**
+ * The payout wallet, step 2: its short address as a chip that copies it, and EDIT; ADD WALLET when
+ * none is set. Locked until the email is verified, since every change is emailed to it.
  * @param props.wallet - `undefined` while it loads.
  */
 export function WalletCard({
   wallet,
+  locked,
   editRef,
   onAdd,
   onChange,
 }: {
   wallet: PayoutWallet | null | undefined;
+  locked: boolean;
   editRef?: React.Ref<HTMLButtonElement>;
   onAdd: () => void;
   onChange: () => void;
@@ -107,47 +147,60 @@ export function WalletCard({
     <section
       className={styles.card}
       aria-labelledby={titleId}
+      data-locked={locked || undefined}
       data-testid="payouts-wallet-card"
     >
-      <div className={styles.cardHeader}>
-        <h2
-          className={styles.cardTitle}
-          id={titleId}
-        >
-          {t('earn.joined.payouts.wallet.title')}
-        </h2>
-        <WalletInfo />
-      </div>
-      {wallet && (
-        <>
-          <CopyToClipboard
-            className={styles.addressChip}
-            text={wallet.address}
-            label={t('earn.joined.payouts.wallet.copy')}
-            showPopup
+      <div className={styles.cardTop}>
+        <div className={styles.cardHeader}>
+          <CardTitle
+            step={2}
+            id={titleId}
           >
-            <span
-              className={styles.address}
-              title={wallet.address}
-            >
-              {shortAddress(wallet.address)}
+            {t('earn.joined.payouts.wallet.title')}
+          </CardTitle>
+          <WalletInfo />
+          {locked && (
+            <span className={styles.headerChip}>
+              <ExplainedChip
+                status="unavailable"
+                title={t('earn.joined.payouts.wallet.unavailable')}
+              />
             </span>
-            <CopyIcon />
-          </CopyToClipboard>
+          )}
+        </div>
+        {wallet && (
           <Button
             ref={editRef}
             className={styles.cornerButton}
             variant="outline"
+            disabled={locked}
             onClick={onChange}
           >
             {t('earn.joined.payouts.wallet.edit')}
           </Button>
-        </>
+        )}
+      </div>
+      {wallet && (
+        <CopyToClipboard
+          className={styles.addressChip}
+          text={wallet.address}
+          label={t('earn.joined.payouts.wallet.copy')}
+          showPopup
+        >
+          <span
+            className={styles.address}
+            title={wallet.address}
+          >
+            {shortAddress(wallet.address)}
+          </span>
+          <CopyIcon />
+        </CopyToClipboard>
       )}
       {wallet === null && (
         <Button
           className={styles.addWalletButton}
           variant="primary"
+          disabled={locked}
           onClick={onAdd}
         >
           {t('earn.joined.payouts.wallet.add')}
@@ -157,13 +210,18 @@ export function WalletCard({
   );
 }
 
-/** The enrollment's name and read-only email, with VERIFY EMAIL until the email is verified. */
+/**
+ * The enrollment's name and read-only email, step 1, with VERIFY EMAIL until the email is verified.
+ * Locked while none of the creator's places is in the program: the service sends no code then.
+ */
 export function ContactCard({
   enrollment,
+  locked,
   titleRef,
   onVerify,
 }: {
   enrollment: Enrollment | null;
+  locked: boolean;
   titleRef?: React.Ref<HTMLHeadingElement>;
   onVerify: () => void;
 }) {
@@ -173,27 +231,38 @@ export function ContactCard({
     <section
       className={styles.card}
       aria-labelledby={titleId}
+      data-locked={locked || undefined}
       data-testid="payouts-contact-card"
     >
-      <div className={styles.cardHeader}>
-        <h2
-          className={styles.cardTitle}
-          id={titleId}
-          ref={titleRef}
-          tabIndex={-1}
-        >
-          {t('earn.joined.payouts.contact.title')}
-        </h2>
+      <div className={styles.cardTop}>
+        <div className={styles.cardHeader}>
+          <CardTitle
+            step={1}
+            id={titleId}
+            titleRef={titleRef}
+          >
+            {t('earn.joined.payouts.contact.title')}
+          </CardTitle>
+          {locked && (
+            <span className={styles.headerChip}>
+              <ExplainedChip
+                status="unavailable"
+                title={t('earn.joined.payouts.contact.unavailable')}
+              />
+            </span>
+          )}
+        </div>
+        {unverified && (
+          <Button
+            className={styles.verifyEmailButton}
+            variant="primary"
+            disabled={locked}
+            onClick={onVerify}
+          >
+            {t('earn.joined.payouts.contact.verify')}
+          </Button>
+        )}
       </div>
-      {unverified && (
-        <Button
-          className={styles.verifyEmailButton}
-          variant="primary"
-          onClick={onVerify}
-        >
-          {t('earn.joined.payouts.contact.verify')}
-        </Button>
-      )}
       {enrollment && (
         <div className={styles.contactValues}>
           <div className={styles.contactValue}>

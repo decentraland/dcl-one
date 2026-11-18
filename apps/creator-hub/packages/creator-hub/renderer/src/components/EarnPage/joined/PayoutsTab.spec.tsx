@@ -19,6 +19,7 @@ import {
   OLDEST_CLOSED,
   exampleWorld,
   fail,
+  myPlaces,
   ok,
   payout,
   place,
@@ -30,6 +31,7 @@ vi.mock('/@/lib/creatorFundApi', () => ({
   getEnrollment: vi.fn(),
   getPayouts: vi.fn(),
   getPayoutWallet: vi.fn(),
+  getPlaces: vi.fn(),
   putPayoutWallet: vi.fn(),
   postEmailVerification: vi.fn(),
   putEmailVerification: vi.fn(),
@@ -46,6 +48,10 @@ const ENROLLMENT: Enrollment = {
   email: 'jane.doe@example.com',
   email_verified_at: null,
 };
+
+const VERIFIED: Enrollment = { ...ENROLLMENT, email_verified_at: '2026-10-30T15:00:00Z' };
+
+const NO_ACTIVE_PLACE = 'You need to have 1 active place to set up your wallet.';
 
 const WALLET: PayoutWallet = {
   address: '0x000000000000000000000000000000000000dEaD',
@@ -87,6 +93,8 @@ const GET_A_WALLET_URL = 'https://docs.decentraland.org/blockchain-integration/g
 const walletInfo = async () =>
   (await walletCard()).findByRole('button', { name: 'About payout wallets' });
 const learnMore = () => screen.findByRole('link', { name: /Learn More/ });
+const unavailableChip = (card: ReturnType<typeof within>) =>
+  card.getByText('Unavailable').closest('[tabindex="0"]') as HTMLElement;
 const pause = (ms: number) => act(() => new Promise<void>(resolve => setTimeout(resolve, ms)));
 
 const WALLET_CARD = '[data-testid="payouts-wallet-card"]';
@@ -148,7 +156,8 @@ describe('PayoutsTab', () => {
 
   beforeEach(() => {
     vi.mocked(api.getCycles).mockResolvedValue(ok(CYCLES));
-    vi.mocked(api.getEnrollment).mockResolvedValue(ok(ENROLLMENT));
+    vi.mocked(api.getEnrollment).mockResolvedValue(ok(VERIFIED));
+    vi.mocked(api.getPlaces).mockResolvedValue(ok(myPlaces([place('a')])));
     vi.mocked(api.getPayouts).mockResolvedValue(ok({ payouts: PAYOUTS }));
     vi.mocked(api.getPayoutWallet).mockResolvedValue(ok(WALLET));
     vi.mocked(Worlds.prototype.fetchWorldScenes).mockResolvedValue({ scenes: [], total: 3 } as any);
@@ -603,6 +612,7 @@ describe('PayoutsTab', () => {
     });
 
     it('should give ADD WALLET and an unverified VERIFY EMAIL the same primary button', async () => {
+      vi.mocked(api.getEnrollment).mockResolvedValue(ok(ENROLLMENT));
       await renderTab();
 
       const add = await (await walletCard()).findByRole('button', { name: 'Add wallet' });
@@ -693,6 +703,7 @@ describe('PayoutsTab', () => {
 
   describe('when the email is not verified', () => {
     beforeEach(() => {
+      vi.mocked(api.getEnrollment).mockResolvedValue(ok(ENROLLMENT));
       vi.mocked(api.postEmailVerification).mockResolvedValue(
         ok(
           {
@@ -787,8 +798,54 @@ describe('PayoutsTab', () => {
       expect(api.putEmailVerification).toHaveBeenCalledWith({ code: '000000' });
       expect(screen.queryByText('Unverified')).toBeNull();
       expect((await contactCard()).queryByRole('button', { name: 'Verify email' })).toBeNull();
-      const heading = screen.getByRole('heading', { level: 2, name: 'Contact Information' });
+      const heading = screen.getByRole('heading', {
+        level: 2,
+        name: 'Step 1: Contact Information',
+      });
       await waitFor(() => expect(document.activeElement).toBe(heading));
+      const wallet = await walletCard();
+      expect(wallet.queryByText('Unavailable')).toBeNull();
+      expect(wallet.getByRole('button', { name: 'Edit' }).hasAttribute('disabled')).toBe(false);
+    });
+
+    it('should lock the payout wallet, with an Unavailable chip that says to confirm the email', async () => {
+      vi.mocked(api.getPayoutWallet).mockResolvedValue(fail(404));
+      await renderTab();
+      const wallet = await walletCard();
+
+      expect(
+        (await wallet.findByRole('button', { name: 'Add wallet' })).hasAttribute('disabled'),
+      ).toBe(true);
+      expect(screen.getByTestId('payouts-wallet-card').hasAttribute('data-locked')).toBe(true);
+      act(() => unavailableChip(wallet).focus());
+
+      expect((await screen.findByRole('tooltip')).textContent).toBe(
+        'Confirm your email to set up your payout wallet.',
+      );
+      expect((await contactCard()).queryByText('Unavailable')).toBeNull();
+    });
+
+    it('should keep a wallet set before the email was verified, with EDIT disabled', async () => {
+      await renderTab();
+      const wallet = await walletCard();
+
+      expect(await wallet.findByText('0x00000...00dEaD')).toBeTruthy();
+      expect(wallet.getByRole('button', { name: 'Edit' }).hasAttribute('disabled')).toBe(true);
+    });
+
+    it('should say an active place is needed when the service refuses the code for it, and lock the step', async () => {
+      vi.mocked(api.postEmailVerification).mockResolvedValue({
+        ...fail(403),
+        body: { error: 'no_active_place' },
+      });
+      vi.mocked(api.getPlaces)
+        .mockResolvedValueOnce(ok(myPlaces([place('a')])))
+        .mockResolvedValue(ok(myPlaces([])));
+      const dialog = await openVerify();
+
+      expect((await within(dialog).findByRole('alert')).textContent).toBe(NO_ACTIVE_PLACE);
+      const contact = await contactCard();
+      await waitFor(() => expect(contact.getByText('Unavailable')).toBeTruthy());
     });
 
     it('should keep Resend Code under an expired code and let it send a new one', async () => {
@@ -886,9 +943,82 @@ describe('PayoutsTab', () => {
       expect((await screen.findByRole('alert')).textContent).toBe(
         'Something went wrong while loading your payouts.',
       );
-      expect(screen.queryByRole('heading', { name: 'Payout Wallet' })).toBeNull();
+      expect(screen.queryByRole('heading', { name: 'Step 2: Payout Wallet' })).toBeNull();
       fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-      expect(await screen.findByRole('heading', { name: 'Payout Wallet' })).toBeTruthy();
+      expect(await screen.findByRole('heading', { name: 'Step 2: Payout Wallet' })).toBeTruthy();
+    });
+  });
+
+  describe('when the setup steps show', () => {
+    it('should put the email first and the payout wallet second, each with its step number', async () => {
+      await renderTab();
+      await walletCard();
+
+      expect(
+        [...document.querySelectorAll(CARDS)].map(card => card.getAttribute('data-testid')),
+      ).toEqual(['payouts-contact-card', 'payouts-wallet-card']);
+      expect(
+        screen.getByRole('heading', { level: 2, name: 'Step 1: Contact Information' }),
+      ).toBeTruthy();
+      expect(screen.getByRole('heading', { level: 2, name: 'Step 2: Payout Wallet' })).toBeTruthy();
+    });
+
+    it('should ask for the places with no cycle, the view the service checks', async () => {
+      await renderTab();
+      await walletCard();
+
+      expect(api.getPlaces).toHaveBeenCalledWith();
+    });
+  });
+
+  describe('when none of the places is in the program', () => {
+    beforeEach(() => {
+      vi.mocked(api.getEnrollment).mockResolvedValue(ok(ENROLLMENT));
+      vi.mocked(api.getPlaces).mockResolvedValue(
+        ok(myPlaces([place('a', { status: 'not_eligible', reasons: ['content_policy'] })])),
+      );
+    });
+
+    it('should lock the email step, say an active place is needed, and send no code', async () => {
+      await renderTab();
+      const contact = await contactCard();
+      const verify = await contact.findByRole('button', { name: 'Verify email' });
+
+      expect(verify.hasAttribute('disabled')).toBe(true);
+      fireEvent.click(verify);
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(api.postEmailVerification).not.toHaveBeenCalled();
+      fireEvent.mouseEnter(unavailableChip(contact));
+      expect((await screen.findByRole('tooltip')).textContent).toBe(NO_ACTIVE_PLACE);
+    });
+
+    it('should keep the payout wallet locked behind the email', async () => {
+      await renderTab();
+
+      expect(unavailableChip(await walletCard())).toBeTruthy();
+    });
+
+    it('should not lock an email that is already verified, nor the wallet', async () => {
+      vi.mocked(api.getEnrollment).mockResolvedValue(ok(VERIFIED));
+      await renderTab();
+      await walletCard();
+
+      expect(screen.queryByText('Unavailable')).toBeNull();
+    });
+  });
+
+  describe('when the places fail to load', () => {
+    it('should show the steps and leave VERIFY EMAIL to the service', async () => {
+      vi.mocked(api.getEnrollment).mockResolvedValue(ok(ENROLLMENT));
+      vi.mocked(api.getPlaces).mockResolvedValue(fail(500));
+      await renderTab();
+      const contact = await contactCard();
+
+      expect(
+        (await contact.findByRole('button', { name: 'Verify email' })).hasAttribute('disabled'),
+      ).toBe(false);
+      expect(contact.queryByText('Unavailable')).toBeNull();
+      expect(screen.queryByRole('alert')).toBeNull();
     });
   });
 
@@ -958,6 +1088,20 @@ describe('PayoutsTab', () => {
         expect(tracked('Creator Fund Payout Wallet Saved')).toEqual([{ action: 'edit', ok: true }]),
       );
       expectNoPrivateValuesTracked();
+    });
+
+    it('should say the wallet was kept when the service could not email the change', async () => {
+      vi.mocked(api.putPayoutWallet).mockResolvedValue({
+        ...fail(502),
+        body: { error: 'email_unavailable' },
+      });
+
+      await saveWallet('Edit', 'Change payout wallet', 'Save');
+
+      const dialog = screen.getByRole('dialog', { name: 'Change payout wallet' });
+      expect((await within(dialog).findByRole('alert')).textContent).toBe(
+        "We couldn't email you about this change, so your wallet wasn't saved. Please try again.",
+      );
     });
 
     it('should track a refused wallet as a save that failed', async () => {

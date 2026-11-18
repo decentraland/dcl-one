@@ -62,12 +62,21 @@ export type ChipProps =
   | { status: 'not_eligible'; reasons: string[] }
   | { status: 'replaced' };
 
-function ExplainedChip({
+type ExplainedStatus = 'not_eligible' | 'replaced' | 'unavailable';
+
+const CHIP_LABELS: Record<ExplainedStatus, TranslationPath> = {
+  not_eligible: 'earn.joined.my_places.status.not_eligible',
+  replaced: 'earn.joined.my_places.status.replaced',
+  unavailable: 'earn.joined.payouts.unavailable',
+};
+
+/** A chip that explains itself in a tooltip, on hover and on keyboard focus. */
+export function ExplainedChip({
   status,
   icon,
   title,
 }: {
-  status: 'not_eligible' | 'replaced';
+  status: ExplainedStatus;
   icon?: React.ReactNode;
   title: React.ReactNode;
 }) {
@@ -85,7 +94,7 @@ function ExplainedChip({
         tabIndex={0}
       >
         {icon}
-        {t(`earn.joined.my_places.status.${status}`)}
+        {t(CHIP_LABELS[status])}
       </span>
     </Tooltip>
   );

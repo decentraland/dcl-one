@@ -1845,14 +1845,17 @@
           "learn_more": "了解更多",
           "copy": "复制钱包地址",
           "edit": "编辑",
-          "add": "添加钱包"
+          "add": "添加钱包",
+          "unavailable": "请先验证邮箱，再设置收款钱包。",
+          "notify_failed": "我们无法就此更改向你发送邮件，因此钱包未保存。请重试。"
         },
         "contact": {
           "title": "联系信息",
           "full_name": "全名",
           "email": "电子邮箱",
           "unverified": "未验证",
-          "verify": "验证邮箱"
+          "verify": "验证邮箱",
+          "unavailable": "你需要有 1 个活跃地点才能设置钱包。"
         },
         "table": {
           "label": "付款",
@@ -1904,7 +1907,9 @@
           "email_verified": "邮箱已验证"
         },
         "cancel": "取消",
-        "error": "加载你的付款时出了点问题。"
+        "error": "加载你的付款时出了点问题。",
+        "step": "第 {step} 步：",
+        "unavailable": "不可用"
       }
     },
     "errors": {

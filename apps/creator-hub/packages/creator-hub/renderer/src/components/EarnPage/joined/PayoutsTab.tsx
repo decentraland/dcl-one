@@ -32,15 +32,22 @@ const FOCUS_AFTER: Record<OpenModal, FocusTarget> = {
   verify_email: 'contact',
 };
 
-/** The Creator Fund payouts: the payout wallet, the contact details and the payout per cycle. */
+/**
+ * The Creator Fund payouts: two setup steps, then the payout per cycle. Step 1 verifies the email,
+ * and needs one of the creator's places in the program; step 2, the payout wallet, needs a verified
+ * email, since every change to it is emailed there.
+ */
 export function PayoutsTab() {
   const dispatch = useDispatch();
   const cycles = useSelector(state => state.creatorFund.cycles);
   const enrollment = useSelector(state => state.creatorFund.enrollment);
   const payouts = useSelector(state => state.creatorFund.payouts);
   const wallet = useSelector(state => state.creatorFund.payoutWallet);
+  const hasActivePlace = useSelector(state => state.creatorFund.hasActivePlace);
   const [loaded, setLoaded] = useState(() =>
-    [payouts, wallet, enrollment].every(resource => resource.status === 'succeeded'),
+    [payouts, wallet, enrollment, hasActivePlace].every(
+      resource => resource.status === 'succeeded',
+    ),
   );
   const [modal, setModal] = useState<OpenModal | null>(null);
   const [notice, setNotice] = useState<TranslationPath | null>(null);
@@ -58,6 +65,7 @@ export function PayoutsTab() {
     const requests: Promise<unknown>[] = [
       dispatch(actions.fetchPayouts()),
       dispatch(actions.fetchPayoutWallet()),
+      dispatch(actions.fetchHasActivePlace()),
     ];
     if (enrollment.status === 'idle') requests.push(dispatch(actions.fetchEnrollment()));
     loadedWhenSettled(requests);
@@ -85,11 +93,15 @@ export function PayoutsTab() {
     if (payouts.status === 'failed') requests.push(dispatch(actions.fetchPayouts()));
     if (wallet.status === 'failed') requests.push(dispatch(actions.fetchPayoutWallet()));
     if (enrollment.status === 'failed') requests.push(dispatch(actions.fetchEnrollment()));
+    if (hasActivePlace.status === 'failed') requests.push(dispatch(actions.fetchHasActivePlace()));
     loadedWhenSettled(requests);
   };
 
   const failed = [payouts, wallet, enrollment].some(resource => resource.status === 'failed');
   const empty = loaded && !failed && payouts.data?.payouts.length === 0;
+  const emailVerified = !!enrollment.data?.email_verified_at;
+  // Only a known "no" locks the email step: when the places can't be read the service still decides.
+  const emailLocked = !emailVerified && hasActivePlace.data === false;
 
   let body: React.ReactNode;
   if (!loaded) {
@@ -109,19 +121,21 @@ export function PayoutsTab() {
     body = (
       <>
         <div className={styles.cardsRow}>
-          <WalletCard
-            wallet={wallet.status === 'succeeded' ? wallet.data : undefined}
-            editRef={editRef}
-            onAdd={() => setModal('add_wallet')}
-            onChange={() => setModal('change_wallet')}
-          />
           <ContactCard
             enrollment={enrollment.data}
+            locked={emailLocked}
             titleRef={contactTitleRef}
             onVerify={() => {
               void analytics.track('Creator Fund Email Verification Started', undefined);
               setModal('verify_email');
             }}
+          />
+          <WalletCard
+            wallet={wallet.status === 'succeeded' ? wallet.data : undefined}
+            locked={!emailVerified}
+            editRef={editRef}
+            onAdd={() => setModal('add_wallet')}
+            onChange={() => setModal('change_wallet')}
           />
         </div>
         {list}

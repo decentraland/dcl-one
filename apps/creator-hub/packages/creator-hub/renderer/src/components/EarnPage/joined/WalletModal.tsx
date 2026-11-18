@@ -39,7 +39,7 @@ const COPY: Record<
   },
 };
 
-type Submission = 'idle' | 'saving' | 'refused' | 'failed';
+type Submission = 'idle' | 'saving' | 'refused' | 'failed' | 'unnotified';
 
 /** The wallet address field, focused once it mounts inside the dialog; its error line is live. */
 function WalletField({
@@ -139,7 +139,8 @@ export function WalletModal({
       fieldRef.current?.focus();
       return;
     }
-    setSubmission('failed');
+    // The service emails every change and keeps the old wallet when that email can't go out.
+    setSubmission(result.payload?.body?.error === 'email_unavailable' ? 'unnotified' : 'failed');
   };
 
   return (
@@ -178,12 +179,16 @@ export function WalletModal({
           <WarningIcon />
           {t('earn.joined.payouts.erc20')}
         </div>
-        {submission === 'failed' && (
+        {(submission === 'failed' || submission === 'unnotified') && (
           <p
             className={styles.failureLine}
             role="alert"
           >
-            {t('earn.errors.generic')}
+            {t(
+              submission === 'unnotified'
+                ? 'earn.joined.payouts.wallet.notify_failed'
+                : 'earn.errors.generic',
+            )}
           </p>
         )}
         <div className={cx(modal.actions, styles.payoutActions)}>

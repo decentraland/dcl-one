@@ -1845,14 +1845,17 @@
           "learn_more": "Más información",
           "copy": "Copiar la dirección de la billetera",
           "edit": "Editar",
-          "add": "Agregar billetera"
+          "add": "Agregar billetera",
+          "unavailable": "Confirma tu correo para configurar tu billetera de pagos.",
+          "notify_failed": "No pudimos enviarte un correo sobre este cambio, así que no guardamos tu billetera. Vuelve a intentarlo."
         },
         "contact": {
           "title": "Información de contacto",
           "full_name": "Nombre completo",
           "email": "Correo electrónico",
           "unverified": "Sin verificar",
-          "verify": "Verificar correo"
+          "verify": "Verificar correo",
+          "unavailable": "Necesitas tener 1 lugar activo para configurar tu billetera."
         },
         "table": {
           "label": "Pagos",
@@ -1904,7 +1907,9 @@
           "email_verified": "Correo verificado"
         },
         "cancel": "Cancelar",
-        "error": "Algo salió mal al cargar tus pagos."
+        "error": "Algo salió mal al cargar tus pagos.",
+        "step": "Paso {step}:",
+        "unavailable": "No disponible"
       }
     },
     "errors": {

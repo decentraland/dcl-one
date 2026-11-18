@@ -28,10 +28,20 @@
   border-radius: var(--shape-borderRadiusXLarge);
 }
 
+.cardTop {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+/* Wraps the Unavailable chip under the title when the row has no room for it beside the button. */
 .cardHeader {
   display: flex;
+  flex: 1;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: 8px 4px;
+  min-width: 0;
   min-height: 24px;
 }
 
@@ -56,10 +66,42 @@
   outline-offset: 2px;
 }
 
+.step {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
+  margin-right: 6px;
+  border: 1.5px solid var(--palette-neutral-softWhite);
+  border-radius: 50%;
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h7-semi-size);
+  font-weight: var(--type-h7-semi-weight);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--palette-neutral-softWhite);
+}
+
+.headerChip {
+  display: inline-flex;
+  margin-left: 6px;
+}
+
+/* A step that can't be set up yet: grey, with only its Unavailable chip and the wallet info at full strength. */
+.card[data-locked] > :not(.cardTop),
+.card[data-locked] .cardTop > :not(.cardHeader),
+.card[data-locked] .step,
+.card[data-locked] .cardTitle {
+  opacity: 0.4;
+}
+
 .cornerButton.cornerButton.cornerButton.cornerButton {
-  position: absolute;
-  top: 19px;
-  right: 19px;
+  flex-shrink: 0;
+  margin: -1px -1px -9.5px 0;
   min-width: 0;
   height: 34.5px;
   box-sizing: border-box;
@@ -120,9 +162,8 @@
 }
 
 .verifyEmailButton.verifyEmailButton.verifyEmailButton.verifyEmailButton {
-  position: absolute;
-  top: 19px;
-  right: 19px;
+  flex-shrink: 0;
+  margin: -1px -1px -9.5px 0;
   min-width: 0;
   height: 34.5px;
   box-sizing: border-box;
@@ -147,6 +188,18 @@
 
 .verifyEmailButton.verifyEmailButton.verifyEmailButton.verifyEmailButton:hover {
   background-color: var(--primary-hover);
+}
+
+.cornerButton.cornerButton.cornerButton.cornerButton:disabled,
+.cornerButton.cornerButton.cornerButton.cornerButton:disabled:hover,
+.addWalletButton.addWalletButton.addWalletButton.addWalletButton:disabled,
+.addWalletButton.addWalletButton.addWalletButton.addWalletButton:disabled:hover,
+.verifyEmailButton.verifyEmailButton.verifyEmailButton.verifyEmailButton:disabled,
+.verifyEmailButton.verifyEmailButton.verifyEmailButton.verifyEmailButton:disabled:hover {
+  color: var(--dcl-silver);
+  background-color: var(--palette-whiteTransparent-subtle);
+  border-color: transparent;
+  cursor: default;
 }
 
 .infoGroup {
