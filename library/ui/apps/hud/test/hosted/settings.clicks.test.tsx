@@ -5,6 +5,9 @@ import { SettingsPanel, resetSettingsTab } from '../../features/settings/Setting
 import type { Setting } from '@explorer-core/engine/protocol'
 import type { SettingsState } from '../../features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from '../harness'
+import { PREF, getPref } from '@explorer-core/lib/prefs'
+
+vi.mock('@hud-host', async (original) => ({ ...(await original<object>()), CAN_ASK_BEFORE_LEAVING: true }))
 
 const base = (over: Partial<Setting>): Setting => ({
   name: 'x',
@@ -142,5 +145,25 @@ describe('compact settings', () => {
     cleanup()
     render(<SettingsPanel lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }} settings={settings} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />)
     expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('aria-selected', 'true')
+  })
+})
+
+// The browser's question before the page goes, where the host can ask it (CAN_ASK_BEFORE_LEAVING).
+describe('ask before leaving the page', () => {
+  beforeEach(() => resetSettingsTab())
+
+  it('is off, only in the Gameplay tab, stored when turned on, and off again after the tab reset', async () => {
+    const settings: SettingsState = { ...fakeSession().settings, open: true, list: [SELECT, base({ name: 'chat_bubbles', category: 'Gameplay' })], set: vi.fn() }
+    render(<SettingsPanel lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }} settings={settings} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />)
+    const name = 'Ask Before Leaving the Page'
+    expect(screen.queryByRole('switch', { name })).toBeNull()
+    await userEvent.click(screen.getByRole('tab', { name: 'Gameplay' }))
+    expect(screen.getByRole('switch', { name })).not.toBeChecked()
+    await userEvent.click(screen.getByRole('switch', { name }))
+    expect(screen.getByRole('switch', { name })).toBeChecked()
+    expect(getPref(PREF.askBeforeLeaving)).toBe('1')
+    await userEvent.click(screen.getByRole('button', { name: /Reset all defaults/i }))
+    expect(screen.getByRole('switch', { name })).not.toBeChecked()
+    expect(getPref(PREF.askBeforeLeaving)).toBe('0')
   })
 })

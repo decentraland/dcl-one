@@ -5,12 +5,14 @@
 import {
   BLOG_HOME,
   BLOG_SEARCH,
+  BLOG_SEARCH_SUGGESTIONS_LIMIT,
   blogAuthorHref,
   blogCategoryHref,
   blogPostHref,
   type BlogCategory,
   type BlogImage,
   type BlogRelatedCard,
+  type BlogSearchSuggestions,
 } from "@dcl/one-ui/apps/sites/blog/blogModel";
 
 import { publicPageUrl, type BaseEnv } from "../catalyst/bases";
@@ -163,6 +165,34 @@ export function loadBlogSearch(request: Request, env?: BaseEnv) {
           ? `Type at least ${SEARCH_MIN_LENGTH} characters to search.`
           : `Nothing matches “${q}”. Try another word or browse every article.`,
         categories: menu(categories),
+      },
+    };
+  });
+}
+
+/**
+ * `/api/blog/search?q=`: the search dropdown's first matches, read through the same memoized search
+ * as the results page, so typing and then opening "See more results" asks the CMS once. A query
+ * under SEARCH_MIN_LENGTH asks nothing.
+ */
+export function loadBlogSearchSuggestions(request: Request, env?: BaseEnv): Promise<BlogOutcome<BlogSearchSuggestions>> {
+  const query = parseBlogQuery(new URL(request.url).searchParams.get("q"));
+  if (query.length < SEARCH_MIN_LENGTH) return Promise.resolve({ status: 200, payload: { query, posts: [], total: 0 } });
+  return guarded<BlogSearchSuggestions>(request, env, async (cms) => {
+    const found = await cms.search(query, 1);
+    return {
+      status: 200,
+      payload: {
+        query,
+        total: found.total,
+        posts: found.posts.slice(0, BLOG_SEARCH_SUGGESTIONS_LIMIT).map(({ slug, title, description, image, hue, category }) => ({
+          slug,
+          title,
+          description,
+          image,
+          hue,
+          href: blogPostHref(category.slug, slug),
+        })),
       },
     };
   });

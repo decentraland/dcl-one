@@ -650,9 +650,24 @@ impl DirectSigner {
 /// buyer's quota slot is kept and a client follows the purchase instead of signing again. The
 /// refusals that prove nothing was sent come before this, from validation and gas estimation.
 fn send_failure(hash: &str, e: RpcError) -> ApiError {
+    if cannot_pay_for_gas(&e) {
+        tracing::error!(
+            tx_hash = %hash,
+            error = %e,
+            "economy: the relayer wallet could not fund this transaction's gas; check its balance"
+        );
+    }
     ApiError::RelayerTimeout(format!(
         "transaction {hash} may have been broadcast: eth_sendRawTransaction failed ({e})"
     ))
+}
+
+/// Whether the node refused the send because the relayer's wallet held too little to pay for this
+/// transaction's gas. The answer is still a 504 that keeps the slot (`send_failure`); this only
+/// logs it on its own, apart from a slow or unreachable node, so a wallet running dry is seen.
+/// Matched on the error message nodes answer for it ("insufficient funds for gas * price + value").
+fn cannot_pay_for_gas(e: &RpcError) -> bool {
+    matches!(e, RpcError::Response { message, .. } if message.to_ascii_lowercase().contains("insufficient funds"))
 }
 
 /// The nonce a signed EIP-2718 transaction carries.
@@ -711,6 +726,31 @@ mod tests {
                 ReservationDisposition::Keep,
                 "{what}"
             );
+        }
+    }
+
+    /// An empty relayer wallet is the node's answer about the wallet, not about the network: it
+    /// is logged on its own. A timeout, a gateway error or another refusal is not.
+    #[test]
+    fn an_empty_relayer_wallet_is_told_apart_from_a_slow_node() {
+        let answered = |message: &str| RpcError::Response {
+            code: -32000,
+            message: message.into(),
+        };
+        assert!(cannot_pay_for_gas(&answered(
+            "insufficient funds for gas * price + value"
+        )));
+        assert!(cannot_pay_for_gas(&answered(
+            "Insufficient funds for gas * price + value: balance 0, tx cost 21000"
+        )));
+        for other in [
+            RpcError::Transport("operation timed out".into()),
+            RpcError::Transport("rpc responded with status 502".into()),
+            answered("nonce too low: next nonce 6, tx nonce 5"),
+            answered("already known"),
+            answered("execution reverted"),
+        ] {
+            assert!(!cannot_pay_for_gas(&other), "{other}");
         }
     }
 

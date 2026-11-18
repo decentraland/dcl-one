@@ -346,6 +346,9 @@ pub async fn verify_server_signed_fetch(
     .await
 }
 
+/// The refusal detail of a request without an `Authorization` header.
+const NO_AUTHORIZATION_HEADER: &str = "no authorization header";
+
 /// The platform service token in front of the voice routes and the world
 /// ban-status route: unset is a misconfiguration (503), a missing or wrong
 /// bearer a 401.
@@ -359,21 +362,35 @@ pub fn require_service_token(
             environment_variable: "COMMS_GATEKEEPER_AUTH_TOKEN",
         }),
         Err(Refusal::Mismatch) => Err(AuthorityNotEstablished::PresentedSharedSecretDidNotMatch),
-        Err(Refusal::NoBearer) => Err(AuthorityNotEstablished::AuthenticationMissingOrInvalid {
-            detail: "no bearer token",
-        }),
+        Err(Refusal::NoBearer) => {
+            let absent = headers
+                .get(axum::http::header::AUTHORIZATION)
+                .is_none_or(|v| v.is_empty());
+            Err(AuthorityNotEstablished::AuthenticationMissingOrInvalid {
+                detail: if absent {
+                    NO_AUTHORIZATION_HEADER
+                } else {
+                    "no bearer token"
+                },
+            })
+        }
     }
 }
 
-/// The wire text of every service-token refusal (the old gate answered 401
-/// "Authentication required" for both the missing and the wrong bearer).
+/// The wire text of every service-token refusal, as upstream's
+/// `bearerTokenMiddleware` (`@dcl/http-commons`) words it: 401 "Authorization
+/// header is missing" without the header (capture
+/// `voice-chat-status-401-no-token`), else 401 "Invalid authorization header".
 pub fn service_token_error(why: AuthorityNotEstablished) -> ApiError {
     match why {
         AuthorityNotEstablished::CredentialNotConfigured { .. } => ApiError::http(
             503,
             "This route is unavailable: COMMS_GATEKEEPER_AUTH_TOKEN is not configured, so the platform service token cannot be verified",
         ),
-        _ => ApiError::http(401, "Authentication required"),
+        AuthorityNotEstablished::AuthenticationMissingOrInvalid {
+            detail: NO_AUTHORIZATION_HEADER,
+        } => ApiError::http(401, "Authorization header is missing"),
+        _ => ApiError::http(401, "Invalid authorization header"),
     }
 }
 
@@ -861,6 +878,18 @@ mod tests {
         ));
         headers.insert("authorization", HeaderValue::from_static("Bearer t"));
         assert!(require_service_token(Some("t"), &headers).is_ok());
+        let message = |headers: &HeaderMap| {
+            service_token_error(require_service_token(Some("t"), headers).unwrap_err()).message
+        };
+        assert_eq!(
+            message(&HeaderMap::new()),
+            "Authorization header is missing"
+        );
+        for value in ["Bearer nope", "Basic t", "t"] {
+            let mut headers = HeaderMap::new();
+            headers.insert("authorization", HeaderValue::from_str(value).unwrap());
+            assert_eq!(message(&headers), "Invalid authorization header", "{value}");
+        }
         assert_eq!(
             service_token_error(AuthorityNotEstablished::PresentedSharedSecretDidNotMatch).code,
             401

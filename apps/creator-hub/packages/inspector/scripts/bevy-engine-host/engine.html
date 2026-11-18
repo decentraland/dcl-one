@@ -52,7 +52,7 @@
         display: block;
       }
     </style>
-    <!-- Media libs the engine wasm expects as window globals (LivekitClient, Hls).
+    <!-- Media libs the engine wasm expects as window globals (LivekitClient).
          These run same-origin with the editor bridge, so pin EXACT versions with
          Subresource Integrity: the browser refuses to execute a script whose bytes
          don't match the hash, so a compromised/mutated CDN payload can't run. Bump
@@ -62,11 +62,6 @@
     <script
       src="https://cdn.jsdelivr.net/npm/livekit-client@2.21.0/dist/livekit-client.umd.min.js"
       integrity="sha384-/0L8HD1sXzBDqZAU0s9eTwBbWz4KHVXXXT/aIZRsdbLZRm2z8jkLs5VYHJgnHTqj"
-      crossorigin="anonymous"
-    ></script>
-    <script
-      src="https://cdn.jsdelivr.net/npm/hls.js@1.6.16/dist/hls.min.js"
-      integrity="sha384-5E8B0pTlZZJMabWpC0fyYf6OUpe15jJij34BqBAh4NXoHAlLNOjCPRrwtOXOQFAn"
       crossorigin="anonymous"
     ></script>
   </head>
