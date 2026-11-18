@@ -5,8 +5,14 @@
 //! disturbs traffic (`fault`), and the headless explorer as a child process (`explorer`). The
 //! `engine` runs scenarios, repeats races with seeds, and reports.
 
+pub mod archipelago;
 pub mod engine;
+pub mod explorer;
+pub mod fault;
+pub mod gatekeeper;
 pub mod identity;
+pub mod livekit;
+pub mod oracle;
 pub mod pulse;
 pub mod scenarios;
 pub mod stack;

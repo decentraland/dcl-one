@@ -225,6 +225,28 @@ impl PulseBot {
         );
     }
 
+    /// Sends a scene listener's signed handshake without waiting; [`Self::handshake_outcome`]
+    /// reads the answer.
+    pub fn send_listener_handshake(
+        &self,
+        identity: &Identity,
+        area_of_interest: Vec<catalyst_comms::pulse::decentraland::pulse::SceneListenerAoi>,
+    ) {
+        {
+            let mut session = self.shared.session.lock();
+            session.own_wallet = Some(identity.address());
+            session.view.handshake = None;
+        }
+        self.shared.record(
+            "listener handshake sent",
+            serde_json::json!({ "wallet": identity.address(), "areas": area_of_interest.len() }),
+        );
+        self.send(
+            identity.pulse_listener_handshake(now_ms(), area_of_interest),
+            Channel::Reliable,
+        );
+    }
+
     /// Waits for the answer to a handshake already sent.
     pub async fn handshake_outcome(
         &self,

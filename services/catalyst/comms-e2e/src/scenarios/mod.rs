@@ -1,10 +1,17 @@
 //! Every scenario the utility knows, by name.
 
+pub mod connections;
+pub mod explorer;
+pub mod pulse;
+
 use crate::engine::Scenario;
 
 /// All scenarios, in the order a full run takes them.
 pub fn registry() -> Vec<&'static Scenario> {
-    Vec::new()
+    let mut all = pulse::all();
+    all.extend(connections::all());
+    all.extend(explorer::all());
+    all
 }
 
 /// The scenarios a selection names: one name, or every scenario carrying a tag.

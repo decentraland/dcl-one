@@ -1784,11 +1784,13 @@ dependencies = [
  "catalyst-comms",
  "clap",
  "dcl-auth",
+ "dcl-livekit-token",
  "futures",
  "hex",
  "parking_lot",
  "prost",
  "reqwest",
+ "rustls",
  "rusty_enet",
  "serde",
  "serde_json",
@@ -1797,6 +1799,7 @@ dependencies = [
  "tokio-tungstenite 0.30.0",
  "toml",
  "url",
+ "web-transport-quinn",
 ]
 
 [[package]]
