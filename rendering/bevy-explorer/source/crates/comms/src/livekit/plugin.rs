@@ -282,43 +282,90 @@ fn respond_to_audio_settings_change(
         .set_volume(audio_settings.voice_chat() as f64, Tween::default());
 }
 
-/// The microphone key toggles the nearby mic, or the call mic while a call is connected.
+/// In a call, a mic key press held at least this long is push-to-talk; a shorter one leaves the
+/// mic open.
+const CALL_MIC_HOLD_SECS: f32 = 0.5;
+
+/// A mic key press that opened the mic or found it open.
+struct MicKeyPress {
+    pressed_at: f32,
+    in_call: bool,
+    /// The mic was open at the press.
+    was_open: bool,
+}
+
+impl MicKeyPress {
+    /// Nearby, every release closes the mic. In a call, a release closes it after a hold, or
+    /// when the mic was open at the press.
+    fn closes_on_release(&self, released_at: f32) -> bool {
+        !self.in_call || self.was_open || released_at - self.pressed_at >= CALL_MIC_HOLD_SECS
+    }
+}
+
+/// The microphone key drives the nearby mic, or the call mic while a call is connected: a press
+/// opens the mic and its release closes it, except that a short press in a call leaves it open.
 fn handle_input(
     input_manager: InputManager,
+    time: Res<Time<Real>>,
     mut mic_state: ResMut<MicState>,
-    mut pressed: Local<bool>,
+    mut press: Local<Option<MicKeyPress>>,
+    mut held: Local<bool>,
     call_mic: Option<Res<CallMic>>,
     voice_inputs: Option<ResMut<VoiceInputs>>,
 ) {
-    let toggled = if *pressed {
-        if input_manager.just_up(SystemAction::Microphone) {
-            *pressed = false;
-            true
-        } else {
-            false
+    let now = time.elapsed_secs();
+    let call = match (&call_mic, voice_inputs) {
+        (Some(call_mic), Some(voice_inputs)) if call_mic.in_call => {
+            Some((call_mic.enabled, voice_inputs))
+        }
+        _ => None,
+    };
+    if *held {
+        if !input_manager.just_up(SystemAction::Microphone) {
+            return;
+        }
+        *held = false;
+        let Some(press) = press.take() else {
+            return;
+        };
+        if !press.closes_on_release(now) {
+            return;
+        }
+        match call {
+            Some((_, mut voice_inputs)) if press.in_call => {
+                voice_inputs.0.push_back(VoiceInput::SetMic(false));
+            }
+            _ if !press.in_call => mic_state.enabled = false,
+            // the call ended during the press
+            _ => (),
         }
     } else if input_manager.just_down(SystemAction::Microphone, InputPriority::None) {
-        *pressed = true;
-        true
-    } else {
-        false
-    };
-    if !toggled {
-        return;
-    }
-    match (call_mic, voice_inputs) {
-        (Some(call_mic), Some(mut voice_inputs)) if call_mic.in_call => {
-            voice_inputs
-                .0
-                .push_back(VoiceInput::SetMic(!call_mic.enabled));
-        }
-        // the push-to-talk release toggles too; count the press only
-        _ if mic_state.scene_blocked() => {
-            if *pressed {
-                mic_state.refuse();
+        *held = true;
+        *press = match call {
+            Some((was_open, mut voice_inputs)) => {
+                if !was_open {
+                    voice_inputs.0.push_back(VoiceInput::SetMic(true));
+                }
+                Some(MicKeyPress {
+                    pressed_at: now,
+                    in_call: true,
+                    was_open,
+                })
             }
-        }
-        _ => mic_state.enabled = !mic_state.enabled,
+            None if mic_state.scene_blocked() => {
+                mic_state.refuse();
+                None
+            }
+            None => {
+                let was_open = mic_state.enabled;
+                mic_state.enabled = true;
+                Some(MicKeyPress {
+                    pressed_at: now,
+                    in_call: false,
+                    was_open,
+                })
+            }
+        };
     }
 }
 
@@ -403,5 +450,42 @@ fn respond_to_rpc_calls(
             }
             _ => (),
         }
+    }
+}
+
+#[cfg(test)]
+mod mic_key_tests {
+    use super::*;
+
+    fn press(in_call: bool, was_open: bool) -> MicKeyPress {
+        MicKeyPress {
+            pressed_at: 10.0,
+            in_call,
+            was_open,
+        }
+    }
+
+    #[test]
+    fn nearby_release_always_closes() {
+        for was_open in [false, true] {
+            assert!(press(false, was_open).closes_on_release(10.1));
+            assert!(press(false, was_open).closes_on_release(12.0));
+        }
+    }
+
+    #[test]
+    fn call_tap_from_closed_leaves_the_mic_open() {
+        assert!(!press(true, false).closes_on_release(10.0 + CALL_MIC_HOLD_SECS / 2.0));
+    }
+
+    #[test]
+    fn call_hold_from_closed_is_push_to_talk() {
+        assert!(press(true, false).closes_on_release(10.0 + CALL_MIC_HOLD_SECS));
+    }
+
+    #[test]
+    fn call_press_while_open_closes_on_release() {
+        assert!(press(true, true).closes_on_release(10.1));
+        assert!(press(true, true).closes_on_release(12.0));
     }
 }

@@ -100,9 +100,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
 - **Voice chat (private calls and community streams)** keeps the call statuses and guards, the
   3 × 2000 ms re-dial budget, the 1 s hang-up-before-join delay and the server's 60 s ring.
-  - Don't add hold-to-talk to the call mic: `T` opens the chat. The `Microphone` key (`V`) toggles
-    the call mic while a call is connected and the nearby mic otherwise. A community listener's
-    `V` does nothing, since a listener can't speak.
+  - Don't bind the mic to `T`: it opens the chat. The `Microphone` key (`V`) drives the call mic
+    while a call is connected and the nearby mic otherwise, as Unity's `T` does. Nearby, a press
+    opens the mic and its release closes it. In a call, a press shorter than 0.5 s leaves the mic
+    open and a longer one is push-to-talk. A press while the mic is open closes it on release. A
+    community listener's `V` does nothing, since a listener can't speak.
   - Don't start a call's mic from a stored setting. It goes up on the call's first connect for
     whoever may speak (both sides of a private call, a stream's speakers). Don't turn it back on
     after a re-dial: what the user chose since then stands.
