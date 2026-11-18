@@ -167,8 +167,8 @@ impl ProfileEntry {
     }
 
     /// nothing better to look for. A compact reader takes any data; a full reader takes
-    /// the catalyst's answer, or a guest peer's own answer (which the catalyst never
-    /// holds), at the announced version
+    /// the catalyst's answer, or a guest peer's own answer (a throwaway guest's profile is
+    /// never on the catalyst; a guest account's is), at the announced version
     fn satisfied(&self) -> bool {
         if self.wanted == ProfileTier::Compact {
             return self.data.is_some() || self.compact.is_some();
