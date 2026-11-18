@@ -5772,7 +5772,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/engine.js",
-      "sha256": "644cba943c8a2d70ab17ac525a8455de286398aecd3e117bf976c2ed5b46e7e9"
+      "sha256": "6bacb239b7e9837420c5c92ef8fb37bfee57e5e4e46b1de1c816089a49b7d54e"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/perf_stream.js",
@@ -9241,7 +9241,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/engine/EngineHost.tsx",
-      "sha256": "e315becbede258508fff68704b303cd01867a9073958e016962aeb4e0fd4a6d9"
+      "sha256": "f2b0bd34cc3d47940d8487fb7b7792c9bbd24679bac5547ccc8cba4b90fdda2b"
     },
     {
       "path": "library/ui/apps/hud/features/engine/EngineViewport.module.css",
