@@ -1757,8 +1757,18 @@ async fn resync_requests(ctx: Ctx) -> Result<()> {
         if let (Some(before), Some(after)) = (before, metric_total(&ctx, series).await) {
             ctx.note("resync_metric_before", before);
             ctx.note("resync_metric_after", after);
-            if after < before {
-                bail!("the resync metric went down from {before} to {after}");
+            // The metric is the server's count of resync requests it answered, over every player
+            // of the stack: other players only add to it. The requests this run made for a
+            // subject the asker can see (every one but the unknown subject) each are answered
+            // once the subject next moves, so at least that many must have been added.
+            let answered = requests
+                .iter()
+                .filter(|(label, _, _)| *label != "unknown-subject")
+                .count() as f64;
+            if after - before < answered {
+                bail!(
+                    "the server's resync count grew from {before} to {after}, by less than the {answered} requests this run made for a subject the asker sees"
+                );
             }
         }
         Ok(())

@@ -8,6 +8,7 @@ use url::Url;
 
 use crate::archipelago::{ArchipelagoBot, ArchipelagoOptions, Assignment, read_connection_string};
 use crate::engine::{Ctx, expect_async, expect_or};
+use crate::gatekeeper::{Gatekeeper, GatekeeperError};
 use crate::identity::Identity;
 use crate::livekit::{JoinOptions, LiveKitJoin};
 use crate::oracle::{self, Peer};
@@ -301,4 +302,142 @@ pub fn via(link: &crate::fault::FaultLink) -> ArchipelagoOptions {
         via: Some(link.address()),
         deadline: None,
     }
+}
+
+/// A platform-wide ban that is lifted on every way out of a scenario: the explicit
+/// [`BanGuard::lift`] on the normal path, and this guard's `Drop` on every other (an early `?`, a
+/// panic, or the runner dropping the future at the scenario deadline).
+///
+/// `Drop` cannot await, so it makes the request on a helper thread with its own runtime and
+/// client, and waits for that thread: when the guard is gone the request has completed (or
+/// failed, which is recorded), and the process does not move on with the ban in place.
+pub struct BanGuard {
+    ctx: Ctx,
+    address: String,
+    lifted: bool,
+}
+
+impl BanGuard {
+    /// Bans `address`. The guard exists before the request is made: a ban whose answer was lost
+    /// may still have been applied.
+    pub async fn place(
+        ctx: &Ctx,
+        gatekeeper: &Gatekeeper,
+        address: &str,
+        reason: &str,
+    ) -> Result<BanGuard> {
+        let guard = BanGuard {
+            ctx: ctx.clone(),
+            address: address.to_owned(),
+            lifted: false,
+        };
+        gatekeeper
+            .ban(address, reason)
+            .await
+            .map_err(|error| anyhow!("banning the wallet: {error}"))?;
+        ctx.record("moderator", "banned", address);
+        Ok(guard)
+    }
+
+    /// Lifts the ban and waits for the answer. A ban that is not there (404) is lifted.
+    pub async fn lift(mut self) -> Result<(), GatekeeperError> {
+        self.lifted = true;
+        let gatekeeper = Gatekeeper::new(&self.ctx)
+            .map_err(|error| GatekeeperError::Unexpected(error.to_string()))?;
+        let lifted = gatekeeper.unban(&self.address).await;
+        self.ctx
+            .record("moderator", "unban answered", format!("{lifted:?}"));
+        match lifted {
+            Err(error) if error.status() == Some(404) => Ok(()),
+            other => other,
+        }
+    }
+}
+
+impl Drop for BanGuard {
+    fn drop(&mut self) {
+        if self.lifted {
+            return;
+        }
+        let ctx = self.ctx.clone();
+        let address = self.address.clone();
+        let helper = std::thread::Builder::new()
+            .name("ban-lift".to_owned())
+            .spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|error| error.to_string())?;
+                runtime.block_on(async {
+                    let gatekeeper = Gatekeeper::new(&ctx).map_err(|error| error.to_string())?;
+                    gatekeeper
+                        .unban(&address)
+                        .await
+                        .map_err(|error| error.to_string())
+                })
+            });
+        let outcome = match helper {
+            Ok(handle) => handle
+                .join()
+                .unwrap_or_else(|_| Err("the helper thread panicked".to_owned())),
+            Err(error) => Err(format!("no helper thread: {error}")),
+        };
+        self.ctx
+            .record("moderator", "unban on the way out", format!("{outcome:?}"));
+    }
+}
+
+/// What the realm description (`<api>/about`) says about the comms adapter, once it answers 200.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RealmDescription {
+    /// `comms.adapter`: the adapter the realm tells a client to connect with.
+    pub adapter: String,
+}
+
+/// One look at the realm description: the status it answered, and what it names when it is a 200.
+/// The description answers 503 while parts of the stack are still coming back, and a client that
+/// asks then is told there is no realm.
+pub async fn realm_description(api: &Url) -> Result<RealmDescription, String> {
+    let url = api.join("about").map_err(|error| error.to_string())?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let response = client.get(url).send().await.map_err(|error| {
+        format!(
+            "no answer: {}",
+            crate::engine::timeline::redact_text(&error.to_string())
+        )
+    })?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("HTTP {status}"));
+    }
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|error| format!("HTTP {status} with a body that is not JSON: {error}"))?;
+    let adapter = body
+        .pointer("/comms/adapter")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if adapter.is_empty() {
+        return Err(format!("HTTP {status} that names no comms adapter"));
+    }
+    Ok(RealmDescription {
+        adapter: adapter.to_owned(),
+    })
+}
+
+/// Waits until the realm description answers 200 and names the comms adapter.
+pub async fn expect_realm_description(
+    ctx: &Ctx,
+    api: &Url,
+    what: &str,
+    deadline: Duration,
+) -> Result<RealmDescription> {
+    expect_async(ctx, what, deadline, Duration::from_millis(250), || async {
+        realm_description(api).await
+    })
+    .await
 }

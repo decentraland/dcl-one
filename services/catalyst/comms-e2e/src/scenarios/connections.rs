@@ -6,6 +6,7 @@ use anyhow::{Result, anyhow, bail};
 use catalyst_comms::pulse::hardening::DisconnectReason;
 
 use super::connections_support::*;
+use super::waits::holds_for_async;
 use crate::archipelago::{
     ArchipelagoBot, ArchipelagoOptions, ArchipelagoOutcome, KICKED_NEW_SESSION, socket_url,
 };
@@ -317,16 +318,28 @@ async fn stale_socket_reconnect(ctx: Ctx) -> Result<()> {
     // once the new socket heartbeats, the wallet is one peer, and stays one
     again.heartbeat(here);
     expect_peer_count(&ctx, &wallet, 1).await?;
-    for _ in 0..8 {
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        let peers = crate::oracle::peers(api(&ctx)?).await?;
-        let held = crate::oracle::of_wallet(&peers, &wallet).len();
-        if held != 1 {
-            bail!(
-                "the wallet was listed once and then {held} time(s) while its new socket was connected"
-            );
-        }
-    }
+    let api_url = api(&ctx)?.clone();
+    holds_for_async(
+        &ctx,
+        "the statistics route lists the wallet once while its new socket is connected",
+        Duration::from_secs(4),
+        Duration::from_millis(500),
+        || {
+            let (api_url, wallet) = (api_url.clone(), wallet.clone());
+            async move {
+                let peers = crate::oracle::peers(&api_url)
+                    .await
+                    .map_err(|error| format!("{error:#}"))?;
+                let held = crate::oracle::of_wallet(&peers, &wallet).len();
+                if held == 1 {
+                    Ok(())
+                } else {
+                    Err(format!("it was listed once and then {held} time(s)"))
+                }
+            }
+        },
+    )
+    .await?;
     again
         .alive()
         .map_err(|reason| anyhow!("the new socket: {reason}"))?;
@@ -558,15 +571,17 @@ async fn ban_eviction(ctx: Ctx) -> Result<()> {
     let device = bring_up(&ctx, "banned", &identity, &realm, here).await?;
     first_assignment(&ctx, &device.archipelago).await?;
 
-    gatekeeper
-        .ban(&wallet, "comms-e2e: the ban eviction scenario")
-        .await
-        .map_err(|error| anyhow!("banning the wallet: {error}"))?;
-    ctx.record("moderator", "banned", &wallet);
+    // The guard exists before the ban does and lifts it on every way out of this function,
+    // including the runner dropping the future at the deadline.
+    let ban = BanGuard::place(
+        &ctx,
+        &gatekeeper,
+        &wallet,
+        "comms-e2e: the ban eviction scenario",
+    )
+    .await?;
     let outcome = ban_checks(&ctx, &gatekeeper, &identity, &device).await;
-    // the ban is lifted whatever happened
-    let lifted = gatekeeper.unban(&wallet).await;
-    ctx.record("moderator", "unban answered", format!("{lifted:?}"));
+    let lifted = ban.lift().await;
     outcome?;
     lifted.map_err(|error| anyhow!("lifting the ban: {error}"))?;
     if gatekeeper
@@ -623,32 +638,44 @@ async fn ban_checks(
         bail!("the gatekeeper does not list the wallet as banned");
     }
     let url = socket_url(api(ctx)?)?;
-    match ArchipelagoBot::begin(
+    // The connector verifies the wallet's signature and then, for a banned wallet, sends its kick
+    // message (it has one reason, `KICKED_NEW_SESSION`) and closes: nothing else is the refusal.
+    let bot = ArchipelagoBot::begin(
         ctx,
         "banned-again",
         &url,
         identity,
         ArchipelagoOptions::default(),
     )
-    .await
-    {
-        Ok(bot) => match bot.finish_outcome(ctx, identity).await? {
-            ArchipelagoOutcome::Welcomed => bail!("a banned wallet was welcomed by archipelago"),
-            outcome => ctx.note("archipelago reconnect", format!("{outcome:?}")),
-        },
-        // refused before the challenge: also a refusal
-        Err(error) => ctx.note(
-            "archipelago reconnect",
-            format!("refused before the challenge: {error:#}"),
+    .await?;
+    match bot.finish_outcome(ctx, identity).await? {
+        ArchipelagoOutcome::Kicked(reason) if reason == KICKED_NEW_SESSION => {
+            ctx.note(
+                "archipelago reconnect",
+                format!("kicked with reason {reason}"),
+            );
+        }
+        outcome => bail!(
+            "a banned wallet must be kicked with reason {KICKED_NEW_SESSION} by archipelago, got {outcome:?}"
         ),
     }
+    // Pulse replies to the handshake with `success: false` and the error `banned`, then ends the
+    // connection with `DisconnectReason::Banned`: either of the two reaches the bot first.
     let pulse = PulseBot::dial(ctx, "banned-pulse-again", ConnectOptions::default()).await?;
     match pulse
         .handshake(ctx, identity, HandshakeOptions::default())
         .await?
     {
-        HandshakeOutcome::Accepted => bail!("a banned wallet was accepted by Pulse"),
-        outcome => ctx.note("Pulse reconnect", format!("{outcome:?}")),
+        HandshakeOutcome::Refused { error } if error.as_deref() == Some("banned") => {
+            ctx.note("Pulse reconnect", "refused: banned");
+        }
+        HandshakeOutcome::Disconnected { code } if code == DisconnectReason::Banned.code() => {
+            ctx.note("Pulse reconnect", "disconnected: banned");
+        }
+        outcome => bail!(
+            "a banned wallet must be refused by Pulse as banned (error `banned` or disconnect code {}), got {outcome:?}",
+            DisconnectReason::Banned.code()
+        ),
     }
     Ok(())
 }
@@ -677,14 +704,25 @@ async fn stationary_credentials(ctx: Ctx) -> Result<()> {
     let here = spot(&ctx, 0);
     let identity = ctx.identity(0);
 
+    // what the stack answers before the restart is what it must answer again after it
+    let before = expect_realm_description(
+        &ctx,
+        api(&ctx)?,
+        "the realm description answers 200 and names the comms adapter before the restart",
+        STACK_BACK_DEADLINE,
+    )
+    .await?;
+
     let device = bring_up(&ctx, "standing", &identity, &realm, here).await?;
     first_assignment(&ctx, &device.archipelago).await?;
 
     ctx.record("runner", "restart", program);
+    // The child is killed if this future is dropped (the scenario deadline).
     let status = tokio::time::timeout(
         Duration::from_secs(180),
         tokio::process::Command::new(program)
             .args(arguments)
+            .kill_on_drop(true)
             .status(),
     )
     .await
@@ -693,17 +731,47 @@ async fn stationary_credentials(ctx: Ctx) -> Result<()> {
         bail!("the restart command failed: {status}");
     }
 
-    // the gatekeeper answers again
-    let gatekeeper_url = api(&ctx)?.join("comms-gatekeeper/status")?;
-    expect_async(
+    // whatever the checks find, the stack is left as it was found
+    let outcome = after_restart(&ctx, &identity, &device).await;
+    let back = expect_realm_description(
         &ctx,
+        api(&ctx)?,
+        "the realm description answers 200 again after the restart, as before it",
+        STACK_BACK_DEADLINE,
+    )
+    .await;
+    outcome?;
+    let after = back?;
+    if after != before {
+        bail!(
+            "the realm names a different comms adapter after the restart: before {before:?}, after {after:?}"
+        );
+    }
+    Ok(())
+}
+
+/// How long a restarted stack may take to answer as it did before the restart.
+const STACK_BACK_DEADLINE: Duration = Duration::from_secs(60);
+
+async fn after_restart(
+    ctx: &Ctx,
+    identity: &crate::identity::Identity,
+    device: &Device,
+) -> Result<()> {
+    // the gatekeeper answers again
+    let gatekeeper_url = api(ctx)?.join("comms-gatekeeper/status")?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    expect_async(
+        ctx,
         "the gatekeeper answers after the restart",
         Duration::from_secs(120),
         Duration::from_secs(1),
         || {
-            let url = gatekeeper_url.clone();
+            let (url, client) = (gatekeeper_url.clone(), client.clone());
             async move {
-                match reqwest::get(url).await {
+                match client.get(url).send().await {
                     Ok(response) if response.status().is_success() => Ok(()),
                     Ok(response) => Err(format!("it answers {}", response.status())),
                     Err(error) => Err(error.to_string()),
@@ -714,9 +782,9 @@ async fn stationary_credentials(ctx: Ctx) -> Result<()> {
     .await?;
 
     // the same device returns and does not move: the room must come without a heartbeat
-    let again = ArchipelagoBot::open(&ctx, "standing-again", &identity.same_device()).await?;
-    let assignment = first_assignment(&ctx, &again).await?;
-    check_credentials(&assignment, &identity)?;
+    let again = ArchipelagoBot::open(ctx, "standing-again", &identity.same_device()).await?;
+    let assignment = first_assignment(ctx, &again).await?;
+    check_credentials(&assignment, identity)?;
     device.pulse.expect_alive()?;
     Ok(())
 }

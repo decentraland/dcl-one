@@ -6,6 +6,7 @@ pub mod explorer;
 pub mod livekit;
 pub mod pulse;
 pub mod support;
+pub mod waits;
 pub mod webtransport;
 
 use crate::engine::Scenario;
