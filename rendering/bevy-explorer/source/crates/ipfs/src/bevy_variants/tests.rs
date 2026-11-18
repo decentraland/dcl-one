@@ -103,17 +103,28 @@ fn parses_a_v3_manifest() {
 }
 
 #[test]
-fn rejects_other_versions_and_garbage() {
-    let manifest = |v: u32| format!(r#"{{"v": {v}, "files": {{}}}}"#);
-    assert!(parse_manifest(manifest(3).as_bytes()).is_ok());
-    // v1 and v2 manifests (variants with a CID) are no longer read
-    assert!(parse_manifest(manifest(2).as_bytes())
-        .unwrap_err()
-        .contains("version 2"));
-    assert!(parse_manifest(manifest(1).as_bytes()).is_err());
-    assert!(parse_manifest(manifest(4).as_bytes()).is_err());
+fn reads_any_version_and_rejects_garbage() {
+    // `v` is abgen's rebuild reference: the client reads the paths whatever it says, or
+    // without it
+    let listed = format!(r#""files": {{"{ORIGINAL_CID}": ["bevy/t4/{VARIANT_CID}"]}}"#);
+    for manifest in [
+        format!(r#"{{"v": 3, {listed}}}"#),
+        format!(r#"{{"v": 4, "added": true, {listed}}}"#),
+        format!(r#"{{{listed}}}"#),
+    ] {
+        let manifest = parse_manifest(manifest.as_bytes()).unwrap();
+        assert_eq!(
+            manifest.files[ORIGINAL_CID][0].path,
+            format!("bevy/t4/{VARIANT_CID}")
+        );
+    }
+    // the entries of the first manifests were objects, not paths: not a manifest
+    let objects = format!(
+        r#"{{"v": 2, "files": {{"{ORIGINAL_CID}": [{{"cid": "{VARIANT_CID}"}}]}}}}"#
+    );
+    assert!(parse_manifest(objects.as_bytes()).is_err());
     assert!(parse_manifest(b"<html>not found</html>").is_err());
-    assert!(parse_manifest(br#"{"files": {}}"#).is_err());
+    assert!(parse_manifest(br#"{"error": "not found"}"#).is_err());
 }
 
 #[test]
