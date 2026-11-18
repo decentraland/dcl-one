@@ -48,6 +48,20 @@ describe("a website Shop card's price", () => {
     expect(collectiblePriceText(toCollectibleCard(item({ isOnSale: false, price: "0" }), "12"))).toBe("1.23456789 MANA");
   });
 
+  it("a sold-out primary shows nothing, even when the catalogue marks it on sale with resales", () => {
+    const card = toCollectibleCard(item({ available: 0 }), "12");
+    expect(card.payment).toEqual({ kind: "none" });
+    expect(collectiblePriceText(card)).toBeNull();
+  });
+
+  it("a row whose supply is unknown is not sold out", () => {
+    expect(collectiblePriceText(toCollectibleCard(item({ available: null }), "12"))).toBe("12 credits");
+  });
+
+  it("the last copy left is still on sale", () => {
+    expect(collectiblePriceText(toCollectibleCard(item({ available: 1 }), "12"))).toBe("12 credits");
+  });
+
   it("an unpriced row shows nothing", () => {
     expect(collectiblePriceText(toCollectibleCard(item({ isOnSale: false, price: "0", minListingPrice: null }), null))).toBeNull();
   });

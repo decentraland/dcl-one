@@ -147,14 +147,12 @@ describe("fetchProfileCreations", () => {
     expect(items[0]?.payment).toEqual({ kind: "mana", mana: "1,500" });
   });
 
-  it("prices a sold-out primary item exactly as its Shop website card does", async () => {
-    // The Shop card's rule (`cardPayment`) does not read `available`; whether a sold-out primary
-    // should still show its primary price is an open question for the Shop owner.
+  it("gives a sold-out primary item no price, though the catalogue still marks it on sale", async () => {
     json.mockResolvedValue({ data: [item({ available: 0, minListingPrice: MANA(80) })], total: 1 });
 
     const { items } = await fetchProfileCreations(CREATOR, { category: "wearable", first: 24 });
 
-    expect(items[0]?.payment).toEqual({ kind: "credits", credits: "12" });
+    expect(items[0]?.payment).toEqual({ kind: "none" });
   });
 
   it("gives a delisted item with no listing no price, though the catalogue keeps its old one", async () => {

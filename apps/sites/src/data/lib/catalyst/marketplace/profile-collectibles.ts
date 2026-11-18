@@ -88,6 +88,7 @@ const CreationRowSchema = CatalogItemSchema.pick({
   isOnSale: true,
   chainId: true,
   category: true,
+  available: true,
 }).extend({ data: z.record(z.string(), z.unknown()).nullish() });
 
 const AssetRowSchema = z.object({
