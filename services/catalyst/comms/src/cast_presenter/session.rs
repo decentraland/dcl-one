@@ -4,10 +4,17 @@
 //! stop, and the idle reaper (every 60 s, a session with no remote
 //! participant for 5 minutes stops).
 //!
+//! The bot token is checked here before anything else: signed by this
+//! node's LiveKit key, unexpired, a `presentation-bot:` identity in the room
+//! its grant names, allowed to publish a screen share
+//! ([`LiveKitTarget::check_bot_token`]). Any other token, a player's scene
+//! token included, is refused before a slot is taken or a bot started.
+//!
 //! Every bot this node runs holds a slot of `MAX_CONCURRENT_PRESENTATIONS`:
-//! a session, a creation in progress, or the JSON path's credential check.
-//! A creation runs in its own task, so a client that goes away mid-request
-//! leaves either a running session or nothing.
+//! a session, a creation in progress, or the JSON path's credential check
+//! and download. A creation runs in its own task, so a client that goes
+//! away mid-request leaves either a running session or nothing. Multipart
+//! uploads being read hold an upload permit, as many as there are slots.
 //!
 //! The PDF load and each render have a deadline ([`RENDER_TIMEOUT`]). hayro
 //! cannot be interrupted, so a timed-out render keeps its blocking thread
@@ -19,7 +26,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
 
 use super::bot::{BotLauncher, BotLink, ConnectError, RoomData, RoomState};
 use super::render::{Frame, PdfDocument};
@@ -35,6 +42,11 @@ const OVERLAY_BROADCAST_INTERVAL: Duration = Duration::from_millis(250);
 pub const RENDER_TIMEOUT: Duration = Duration::from_secs(30);
 /// `MAX_CONCURRENT_PRESENTATIONS` when unset.
 pub const DEFAULT_MAX_CONCURRENT: usize = 10;
+/// The identity prefix of the gatekeeper's presentation-bot tokens
+/// (`presentation-bot:<room>:<access id>:<uuid>`).
+pub const BOT_IDENTITY_PREFIX: &str = "presentation-bot:";
+/// The track source the bot publishes, as LiveKit names it in a grant.
+const SCREEN_SHARE_SOURCE: &str = "screen_share";
 
 /// Why a presentation was not created.
 #[derive(Debug, thiserror::Error)]
@@ -50,7 +62,8 @@ pub enum CreateError {
     /// or publishing failed.
     #[error("{0}")]
     Internal(String),
-    /// 401, the credential check only: LiveKit refused the token.
+    /// 401: the token is not a presentation-bot token of this node's
+    /// LiveKit, or (the JSON path's credential check) LiveKit refused it.
     #[error("{0}")]
     InvalidCredentials(String),
     /// 503, the credential check only: the bot did not start or LiveKit did
@@ -59,8 +72,9 @@ pub enum CreateError {
     Unavailable(String),
 }
 
-/// The node's own LiveKit: the only server a presentation joins.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The node's own LiveKit: the only server a presentation joins, and the
+/// key its bot tokens must be signed with.
+#[derive(Clone, PartialEq, Eq)]
 pub struct LiveKitTarget {
     /// The client-facing signaling URL (`LIVEKIT_WS_URL`, else `LIVEKIT_HOST`),
     /// the one the gatekeeper's presentation-bot token answer names: a
@@ -69,23 +83,92 @@ pub struct LiveKitTarget {
     /// The URL the bot dials: the node's own route to LiveKit (`LIVEKIT_API_HOST`,
     /// else `LIVEKIT_HOST`), never the request's.
     pub connect_url: String,
+    /// The key the gatekeeper mints bot tokens with.
+    pub api_key: String,
+    pub api_secret: String,
+}
+
+impl std::fmt::Debug for LiveKitTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LiveKitTarget")
+            .field("client_url", &self.client_url)
+            .field("connect_url", &self.connect_url)
+            .field("api_key", &self.api_key)
+            .field("api_secret", &"<set>")
+            .finish()
+    }
 }
 
 impl LiveKitTarget {
-    /// From the gatekeeper's resolved endpoints; `None` without a LiveKit.
-    pub fn from_endpoints(client_url: &str, api_url: &str) -> Option<Self> {
-        if client_url.is_empty() {
+    /// From the gatekeeper's LiveKit; `None` without one.
+    pub fn from_livekit(livekit: &crate::shared::livekit::LiveKit) -> Option<Self> {
+        if livekit.client_url.is_empty() {
             return None;
         }
-        let connect_url = if api_url.is_empty() {
-            client_url.to_string()
+        let connect_url = if livekit.api_url.is_empty() {
+            livekit.client_url.clone()
         } else {
-            crate::shared::livekit::client_ws_url(api_url)
+            crate::shared::livekit::client_ws_url(&livekit.api_url)
         };
         Some(Self {
-            client_url: client_url.to_string(),
+            client_url: livekit.client_url.clone(),
             connect_url,
+            api_key: livekit.api_key.clone(),
+            api_secret: livekit.api_secret.clone(),
         })
+    }
+
+    /// Whether `token` is a presentation-bot token of this LiveKit at `now`
+    /// (unix seconds), or why not: signed with its key and valid then (as
+    /// LiveKit checks it), a `presentation-bot:<room>:` identity whose room
+    /// is the one its grant joins, and allowed to publish a screen share.
+    pub fn check_bot_token(&self, token: &str, now: u64) -> Result<(), &'static str> {
+        let claims = crate::shared::livekit::verify_access_token(
+            &self.api_key,
+            &self.api_secret,
+            token,
+            now,
+        )
+        .ok_or("not a valid token of this node's LiveKit")?;
+        let video = claims
+            .get("video")
+            .and_then(serde_json::Value::as_object)
+            .ok_or("no video grant")?;
+        let room = video
+            .get("room")
+            .and_then(serde_json::Value::as_str)
+            .filter(|room| !room.is_empty())
+            .ok_or("no room in the grant")?;
+        let identity = claims
+            .get("sub")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let in_room = identity
+            .strip_prefix(BOT_IDENTITY_PREFIX)
+            .and_then(|rest| rest.strip_prefix(room))
+            .is_some_and(|rest| rest.starts_with(':'));
+        if !in_room {
+            return Err("not a presentation-bot identity of the granted room");
+        }
+        let flag = |name: &str| video.get(name).and_then(serde_json::Value::as_bool);
+        if flag("roomJoin") != Some(true) {
+            return Err("the grant does not join the room");
+        }
+        // LiveKit reads an absent `canPublish` as allowed, and an absent or
+        // empty `canPublishSources` as every source.
+        let sources = video
+            .get("canPublishSources")
+            .and_then(serde_json::Value::as_array);
+        let screen_share = sources.is_none_or(|sources| {
+            sources.is_empty()
+                || sources
+                    .iter()
+                    .any(|source| source.as_str() == Some(SCREEN_SHARE_SOURCE))
+        });
+        if flag("canPublish") == Some(false) || !screen_share {
+            return Err("the grant cannot publish a screen share");
+        }
+        Ok(())
     }
 
     /// Whether `livekit_url` names this node's LiveKit (trailing `/` aside).
@@ -132,10 +215,12 @@ pub struct Presenter {
     sessions: Mutex<HashMap<String, Arc<Session>>>,
     /// Slots held by creations and credential checks.
     in_flight: AtomicUsize,
+    /// Multipart uploads being read; `None` when unlimited.
+    uploads: Option<Arc<Semaphore>>,
 }
 
 /// A slot of the concurrency limit, released on drop unless a session took it.
-struct Slot {
+pub struct Slot {
     presenter: Arc<Presenter>,
     held: bool,
 }
@@ -207,12 +292,14 @@ impl Presenter {
         livekit: LiveKitTarget,
         max_concurrent: usize,
     ) -> Arc<Self> {
+        let max_concurrent = (max_concurrent > 0).then_some(max_concurrent);
         Arc::new(Self {
             launcher,
             livekit,
-            max_concurrent: (max_concurrent > 0).then_some(max_concurrent),
+            max_concurrent,
             sessions: Mutex::new(HashMap::new()),
             in_flight: AtomicUsize::new(0),
+            uploads: max_concurrent.map(|max| Arc::new(Semaphore::new(max))),
         })
     }
 
@@ -240,8 +327,31 @@ impl Presenter {
             .is_some_and(|max| sessions + self.in_flight.load(Ordering::SeqCst) >= max)
     }
 
+    /// A permit to read a multipart upload, or 429 when as many uploads as
+    /// there are slots are being read. Unlimited when the slots are.
+    pub fn upload_permit(&self) -> Result<Option<OwnedSemaphorePermit>, CreateError> {
+        match &self.uploads {
+            None => Ok(None),
+            Some(uploads) => uploads
+                .clone()
+                .try_acquire_owned()
+                .map(Some)
+                .map_err(|_| self.capacity_error()),
+        }
+    }
+
+    /// 401 unless `token` is a presentation-bot token of this node's LiveKit
+    /// ([`LiveKitTarget::check_bot_token`]).
+    pub fn verify_token(&self, token: &str) -> Result<(), CreateError> {
+        let now =
+            crate::shared::livekit::unix_now().map_err(|e| CreateError::Internal(e.to_string()))?;
+        self.livekit
+            .check_bot_token(token, now)
+            .map_err(|why| CreateError::InvalidCredentials(why.to_string()))
+    }
+
     /// A slot, or 429 when every one is taken.
-    fn reserve(self: &Arc<Self>) -> Result<Slot, CreateError> {
+    pub fn reserve(self: &Arc<Self>) -> Result<Slot, CreateError> {
         let sessions = self.sessions.lock().unwrap();
         if self.full(sessions.len()) {
             return Err(self.capacity_error());
@@ -253,10 +363,11 @@ impl Presenter {
         })
     }
 
-    /// The JSON path's pre-flight: connect and disconnect, so a refused token
-    /// costs no download. It holds a slot while its bot runs.
-    pub async fn validate_credentials(self: &Arc<Self>, token: &str) -> Result<(), CreateError> {
-        let _slot = self.reserve()?;
+    /// The JSON path's pre-flight, under the caller's slot: the token
+    /// checked here, then a connect and disconnect, so a token LiveKit
+    /// refuses costs no download.
+    pub async fn validate_credentials(&self, _slot: &Slot, token: &str) -> Result<(), CreateError> {
+        self.verify_token(token)?;
         match self
             .launcher
             .connect(&self.livekit.connect_url, token)
@@ -271,16 +382,31 @@ impl Presenter {
         }
     }
 
-    /// Creates a session from a PDF: the concurrency limit, the LiveKit
-    /// connect, the first slide published, the first state broadcast. The
-    /// work runs in its own task: dropping this future does not stop it.
+    /// Creates a session from a PDF: the token, the concurrency limit, the
+    /// LiveKit connect, the first slide published, the first state
+    /// broadcast. The work runs in its own task: dropping this future does
+    /// not stop it.
     pub async fn create(
         self: &Arc<Self>,
         file: Vec<u8>,
         livekit_token: &str,
         file_name: &str,
     ) -> Result<PresentationInfo, CreateError> {
+        self.verify_token(livekit_token)?;
         let slot = self.reserve()?;
+        self.create_reserved(slot, file, livekit_token, file_name)
+            .await
+    }
+
+    /// [`Self::create`] in a slot the caller holds.
+    pub async fn create_reserved(
+        self: &Arc<Self>,
+        slot: Slot,
+        file: Vec<u8>,
+        livekit_token: &str,
+        file_name: &str,
+    ) -> Result<PresentationInfo, CreateError> {
+        self.verify_token(livekit_token)?;
         let presenter = self.clone();
         let (token, file_name) = (livekit_token.to_string(), file_name.to_string());
         crate::shared::task::spawn_with(async move {

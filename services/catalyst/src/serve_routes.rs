@@ -220,10 +220,7 @@ pub(super) fn build_routes(
             "/cast-presenter-service",
             comms::cast_presenter::router(comms::cast_presenter::presenter(
                 config.social.cast_bot_bin.clone(),
-                comms::cast_presenter::LiveKitTarget::from_endpoints(
-                    &gatekeeper.livekit.client_url,
-                    &gatekeeper.livekit.api_url,
-                ),
+                comms::cast_presenter::LiveKitTarget::from_livekit(&gatekeeper.livekit),
                 config.social.max_concurrent_presentations,
             )),
         )

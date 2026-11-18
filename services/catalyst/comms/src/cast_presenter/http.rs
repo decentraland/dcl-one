@@ -12,7 +12,7 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
 use super::files::{self, MAX_FILE_SIZE, MAX_JSON_BODY_SIZE};
-use super::session::{CreateError, Presenter};
+use super::session::{CreateError, Presenter, Slot};
 use super::ssrf::{self, DownloadError};
 use super::wire::FileType;
 
@@ -41,12 +41,14 @@ fn too_large(max_bytes: usize) -> Response {
     )
 }
 
-/// The request's file and LiveKit credentials, from either form.
+/// The request's file and LiveKit credentials, from either form, and the
+/// JSON path's slot.
 struct Parsed {
     file: Vec<u8>,
     file_name: String,
     livekit_token: String,
     presenter_identity: Option<String>,
+    slot: Option<Slot>,
 }
 
 /// A multipart body as busboy reads it with `files: 1, fields: 10`: the
@@ -173,9 +175,15 @@ async fn parse_json(presenter: &Arc<Presenter>, body: bytes::Bytes) -> Result<Pa
         return Err(bad_request("Missing url"));
     };
     let livekit_token = credentials(presenter, text("livekitToken"), text("livekitUrl"))?;
-    // The token first, so a refused one costs no download.
+    // The token first, so a refused one takes no slot, starts no bot and
+    // costs no download; then one slot for the check, the download and the
+    // presentation.
     presenter
-        .validate_credentials(&livekit_token)
+        .verify_token(&livekit_token)
+        .map_err(create_failure)?;
+    let slot = presenter.reserve().map_err(create_failure)?;
+    presenter
+        .validate_credentials(&slot, &livekit_token)
         .await
         .map_err(create_failure)?;
     let resolved = files::resolve_file_url(url);
@@ -187,6 +195,7 @@ async fn parse_json(presenter: &Arc<Presenter>, body: bytes::Bytes) -> Result<Pa
         file_name: resolved.filename.unwrap_or(downloaded.filename),
         livekit_token,
         presenter_identity,
+        slot: Some(slot),
     })
 }
 
@@ -204,6 +213,8 @@ pub async fn create_presentation(
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default()
         .to_string();
+    // A multipart upload is read under a permit, held until the answer.
+    let mut _upload = None;
     let parsed = if content_type.contains("application/json") {
         // The body as received: Content-Length can be absent or wrong.
         let Ok(body) = axum::body::to_bytes(request.into_body(), MAX_JSON_BODY_SIZE).await else {
@@ -222,6 +233,10 @@ pub async fn create_presentation(
         if presenter.at_capacity() {
             return create_failure(presenter.capacity_error());
         }
+        match presenter.upload_permit() {
+            Ok(permit) => _upload = permit,
+            Err(e) => return create_failure(e),
+        }
         match parse_multipart(&content_type, request.into_body()).await {
             Err(response) => Err(response),
             Ok((file, fields)) => {
@@ -236,6 +251,7 @@ pub async fn create_presentation(
                                 file_name,
                                 livekit_token,
                                 presenter_identity,
+                                slot: None,
                             },
                         )
                     }
@@ -277,10 +293,19 @@ pub async fn create_presentation(
         size = parsed.file.len(),
         "Creating presentation from pdf file"
     );
-    match presenter
-        .create(parsed.file, &parsed.livekit_token, &file_name)
-        .await
-    {
+    let created = match parsed.slot {
+        Some(slot) => {
+            presenter
+                .create_reserved(slot, parsed.file, &parsed.livekit_token, &file_name)
+                .await
+        }
+        None => {
+            presenter
+                .create(parsed.file, &parsed.livekit_token, &file_name)
+                .await
+        }
+    };
+    match created {
         Ok(info) => (StatusCode::CREATED, Json(info)).into_response(),
         Err(e) => create_failure(e),
     }

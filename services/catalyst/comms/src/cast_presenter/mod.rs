@@ -18,10 +18,15 @@
 //! - `livekitUrl` must be this node's LiveKit, the URL the gatekeeper's
 //!   presentation-bot token answer names (400 otherwise); the bot dials the
 //!   node's own route to it, never the request's URL ([`session::LiveKitTarget`]).
-//! - The bot connects with the given token before any rendering; a refused
-//!   token answers 401 on the JSON path (checked before the download; 503
-//!   when the bot or LiveKit is unavailable) and 500 on the multipart path,
-//!   as upstream.
+//! - The token must be a presentation-bot token of this node's LiveKit (its
+//!   key's signature, unexpired, a `presentation-bot:` identity of the room
+//!   it joins, allowed to publish a screen share): any other answers 401
+//!   before a slot is taken or a bot started ([`session`]). Multipart uploads
+//!   are read under a permit, as many at once as there are slots (429).
+//! - The bot then connects with the token before any rendering; a token
+//!   LiveKit refuses answers 401 on the JSON path (checked before the
+//!   download; 503 when the bot or LiveKit is unavailable) and 500 on the
+//!   multipart path, as upstream.
 //! - PDF slides ([`render`] names the renderer and why), one SCREENSHARE
 //!   track, the commands `navigate`, `get-state`, `stop` and
 //!   `overlay:update` from the room's presenters, the state broadcast and

@@ -148,8 +148,8 @@ MV-1 to MV-4 (Cast routes, watcher token, the `apps/sites` streamer and watcher,
    - Requests: multipart upload or JSON `url` (Google Slides and Drive links rewritten; HTTPS, public
      addresses only, pinned connection, 5 redirects, 100 MiB, 60 s); extension and magic bytes; JSON
      body 1 MiB; `MAX_CONCURRENT_PRESENTATIONS` (default 10, 0 unlimited) answers 429.
-   - Answers and statuses: `create-presentation-handler.ts:38-178`. A refused token answers 401 on
-     the JSON path, before the download, and 500 on the multipart path, as upstream.
+   - Answers and statuses: `create-presentation-handler.ts:38-178`. A token LiveKit refuses answers
+     401 on the JSON path, before the download, and 500 on the multipart path, as upstream.
    - Data channel: the RFC-4 `Packet.scene` framing on topic `presentation` (`comms.ts:1-86`), with
      commands only from the room metadata's `presenters`. `navigate`, `get-state`, `stop` and
      `overlay:update` are handled; the `presentation:state`, `presentation:stopped` and bot-metadata
@@ -160,6 +160,10 @@ MV-1 to MV-4 (Cast routes, watcher token, the `apps/sites` streamer and watcher,
    - Tests: `comms::cast_presenter::tests`, and `C/cast-bot/tests/livekit.rs` against a local
      `livekit-server`.
    Divergences:
+   - Only the gatekeeper's presentation-bot tokens are taken: the node checks the signature with its
+     LiveKit key, the expiry, a `presentation-bot:` identity of the granted room and a grant that can
+     publish a screen share, before a slot or a bot. Any other token answers 401 on both paths.
+   - Multipart uploads are read at most `MAX_CONCURRENT_PRESENTATIONS` at once (429 past that).
    - PDFs render with hayro, not pdfjs: pixels differ, and annotation appearance streams are not drawn.
    - `ws://` LiveKit URLs are accepted on loopback hosts.
    - The SSRF resolver reads the hosts file.
