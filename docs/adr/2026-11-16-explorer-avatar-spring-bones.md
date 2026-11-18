@@ -85,7 +85,7 @@ transforms use.
 ## Measured cost
 
 Measured on the web build on 2026-11-18, with CI's release builds (wasm-opt): main at `0180c200a`
-against the commit that turns the setting on in the presets, `9c572d29b`. Chrome 157 on an Apple
+against a build whose presets carry the setting. Chrome 157 on an Apple
 M1 Pro (macOS 26.5), a 1600×900 window at a device pixel ratio of 2, a new account with the Medium
 preset picked in Settings, so main ran with the setting off and the change with it on. Each build
 then ran the same scenes with the setting turned the other way by hand. Three runs of each build,
@@ -110,10 +110,9 @@ beard), up to nine on one avatar. Ten avatars were simulated, the player among t
 
 The frame columns are the median of each build's three runs of the mean frame time. The on − off
 columns pair the two settings within a run of one build, six runs in all, as median and range:
-the two builds differ by more than the setting (main was six commits ahead, two of them engine
-fixes away from avatars), and a run's mean moves by more between runs (41.7 to 43.6 ms in steady)
-than the setting moves it. Ten simulated avatars cost about half a millisecond of the main world's
-schedules a frame, 1 to 2 % of this frame.
+a run's mean moves by more between runs (41.7 to 43.6 ms in steady) than the setting moves it.
+Ten simulated avatars cost about half a millisecond of the main world's schedules a frame: 1 to
+2 % of this frame, and about 3 % of the 16.7 ms frame of the 60 fps target.
 
 Worst frames, setting on against off, over the six runs:
 
