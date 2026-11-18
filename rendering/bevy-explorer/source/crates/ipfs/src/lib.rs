@@ -1,5 +1,6 @@
 mod batch_sizes;
 pub mod bevy_variants;
+pub mod cache_heal;
 pub mod content_hash;
 mod debug_panel;
 mod download;
@@ -11,6 +12,7 @@ pub use priority_gate::{PriorityGate, Ticket};
 #[cfg(feature = "ipfs_debug")]
 mod ipfs_debug;
 pub mod ipfs_path;
+pub mod partition;
 mod request_metrics;
 #[cfg(any(target_arch = "wasm32", test))]
 pub mod web_cache;
@@ -672,6 +674,7 @@ impl Plugin for IpfsIoPlugin {
         app.add_console_command::<ChangeRealmCommand, _>(change_realm_command);
         app.add_plugins(debug_panel::WebRequestsDebugPanelPlugin);
         app.add_plugins(bevy_variants::BevyVariantsPlugin);
+        app.add_plugins(cache_heal::CacheHealPlugin);
         #[cfg(target_arch = "wasm32")]
         app.add_plugins(web_cache_plugin::WebCachePlugin {
             preview: self.preview,
@@ -1121,6 +1124,8 @@ pub struct IpfsIo {
     // urls that failed, answered from memory on a repeat request (`failed_remotes`)
     failed_remotes: std::sync::Mutex<FailedRemotes>,
     pub(crate) bevy_variants: bevy_variants::BevyVariants,
+    // cached entries checked after a failed load (`cache_heal`)
+    pub(crate) cache_heals: cache_heal::CacheHeals,
     #[cfg(feature = "ipfs_debug")]
     debug_overlay_sender: tokio::sync::mpsc::UnboundedSender<IpfsDebug>,
 }
@@ -1165,6 +1170,7 @@ impl IpfsIo {
             in_flight: Default::default(),
             failed_remotes: Default::default(),
             bevy_variants: Default::default(),
+            cache_heals: Default::default(),
             #[cfg(feature = "ipfs_debug")]
             debug_overlay_sender,
         }
@@ -1527,8 +1533,7 @@ impl IpfsIo {
         self.default_fs_path.as_deref()
     }
 
-    /// The cached bytes under `key` (native only: on web the worker's cache is read through
-    /// `web_cache`).
+    /// The cached bytes under `key` on native. Web reads go through `web_cache`.
     async fn read_disk_cache(&self, key: &CacheKey) -> Result<Option<Vec<u8>>, std::io::Error> {
         let Some(cached) = self
             .cache_path()
@@ -1544,19 +1549,20 @@ impl IpfsIo {
         Ok(Some(buffer))
     }
 
-    /// Drops the cached bytes under `key`, if there are any (native only: on web the worker's
-    /// cache entry goes through `web_cache`).
+    /// Drops the native cache entry under `key` and returns whether it existed. Web eviction
+    /// goes through `web_cache`.
     #[cfg(not(target_arch = "wasm32"))]
-    async fn forget_disk_cache(&self, key: &CacheKey) -> Result<(), std::io::Error> {
+    async fn forget_disk_cache(&self, key: &CacheKey) -> Result<bool, std::io::Error> {
         let Some(cached) = self
             .cache_path()
             .and_then(|root| root.join_relative(key.name()))
         else {
-            return Ok(());
+            return Ok(false);
         };
         match async_fs::remove_file(&cached).await {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
-            _ => Ok(()),
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
         }
     }
 
@@ -1698,8 +1704,7 @@ impl IpfsIo {
     /// Poll the scene's content server until each of `file_paths` (resolved via the scene
     /// collection) is fetchable, sharing one `timeout` budget; returns whether all became available.
     /// Used after writing imported files to wait for the dev server to index them before the
-    /// renderer first tries to load them — otherwise that first load 404s and is never retried. On
-    /// web the successful GETs also warm the service-worker cache for the exact URLs the loader uses.
+    /// renderer first tries to load them.
     pub async fn await_contents_available(
         &self,
         file_paths: &[String],
@@ -2160,20 +2165,32 @@ impl IpfsIo {
             let cache_key =
                 cache_key.filter(|_| !url::Url::parse(&remote).is_ok_and(|url| url.is_loopback()));
 
-            // on web the service worker's cache (`web_cache`) is the content cache: anything with
-            // a cache key (content by hash, and urls by their digest) is looked up there once,
-            // here; the download that follows a miss does not ask the worker again
             #[cfg(target_arch = "wasm32")]
             let sw_caches = cache_key.is_some();
 
-            // the worker's cache is the disk cache here: read it directly, so a cached file
-            // doesn't wait on a request slot behind every download in the queue
+            // Read the web cache before acquiring a request slot so cache hits skip the download queue.
             #[cfg(target_arch = "wasm32")]
             if sw_caches {
                 if let Some(cached) = web_cache::read(&remote).await {
                     ipfs_io_read_state.send_cached(cached.len());
                     return Ok(Box::new(VecReader::new(cached)));
                 }
+            }
+
+            // `data:` and `blob:` urls (files of an entity registered inline, such as an unpublished
+            // item a page supplies) are the page's own: the http client refuses their schemes, the
+            // browser serves them without a request slot. The avatar preview only (`avatar-preview`)
+            #[cfg(all(target_arch = "wasm32", feature = "avatar-preview"))]
+            if remote.starts_with("data:") || remote.starts_with("blob:") {
+                return match web_cache::fetch_local(&remote).await {
+                    Ok(bytes) => {
+                        ipfs_io_read_state.send_cached(bytes.len());
+                        Ok(Box::new(VecReader::new(bytes)))
+                    }
+                    Err(e) => ipfs_io_read_state.send_failure(Err(AssetReaderError::Io(Arc::new(
+                        std::io::Error::other(format!("failed to read `{remote}`: {e}")),
+                    )))),
+                };
             }
 
             // a failure is answered from memory for the retry window, or for the session when the
@@ -2219,8 +2236,9 @@ impl IpfsIo {
             };
             // one download per url: a second read of a url already in flight (the same file
             // under another asset path, say) takes the first's bytes instead of queueing a
-            // download of its own behind everything requested since. By url, not by hash: the
-            // bytes are shared before the hash check, and a scene names its own server
+            // download of its own behind everything requested since. By url, not by hash: a
+            // name the hash check can't verify is shared unchecked, and a scene names its own
+            // server
             let (download, task) = self.share_download(key, token, path.to_owned(), remote, scene);
             let joined = task.is_none();
             if let Some(task) = task {

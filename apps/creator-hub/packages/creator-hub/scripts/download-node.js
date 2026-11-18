@@ -2,17 +2,14 @@
  * Downloads a real Node.js binary into `node-bin/` so the packaged app can spawn scene
  * tooling on it instead of on Electron.
  *
- * Why: the Hub runs `sdk-commands` in an Electron utility process, where `process.execPath`
- * is the Electron Helper and `process.versions.electron` is set. sdk-commands passes that
- * same execPath down when it spawns the multiplayer server, so the server ends up on
- * Electron's module ABI (143) — and `isolated-vm`, which it depends on, only ships builds
- * for Node's ABIs. Handing it a real Node makes sdk-commands take its plain-Node code paths
- * on its own, with no changes needed on that side.
+ * Why: the Hub runs `sdk-commands`, npm and the scene optimizer as child processes. On
+ * Electron, `process.execPath` is the Electron Helper and native modules load against
+ * Electron's module ABI. The optimizer toolchain (sharp) ships builds for Node's ABIs only,
+ * so the optimizer refuses to run without a real Node (`main/src/modules/optimizer`).
  *
- * Node 22 is pinned because its ABI (127) matches an `isolated-vm` prebuild, and because
- * @dcl/hammurabi-server refuses to run on any major other than 22 or 24.
- *
- * TEMPORARY: goes away once the multiplayer server drops `isolated-vm` (Bevy migration).
+ * The preview of a scene with `authoritativeMultiplayer` can also start a multiplayer server
+ * through the scene's own sdk-commands. That server uses `isolated-vm`, which ships builds for
+ * Node's ABIs only. Node 22 (ABI 127) matches the vendored Intel Mac build below.
  *
  * Runs as part of the electron-builder `beforePack` hook, once per target arch.
  */
@@ -89,9 +86,13 @@ function extract(archive, archiveName, destDir, isWindows) {
     }
 
     // Headers and docs are a third of the download and are never read at runtime; node-gyp
-    // fetches its own headers when something has to be compiled. `lib` / `node_modules` stay —
-    // that is where npm lives, and npm's prefix resolution expects to find it there.
-    for (const junk of ['include', 'share']) {
+    // fetches its own headers when something has to be compiled. Nothing the Hub spawns uses
+    // corepack. `lib` / `node_modules` stay — that is where npm lives, and npm's prefix
+    // resolution expects to find it there. LICENSE stays with the binary.
+    const corepack = isWindows
+      ? ['corepack', 'corepack.cmd', path.join('node_modules', 'corepack')]
+      : [path.join('bin', 'corepack'), path.join('lib', 'node_modules', 'corepack')];
+    for (const junk of ['include', 'share', 'CHANGELOG.md', 'README.md', ...corepack]) {
       fs.rmSync(path.join(destDir, junk), { recursive: true, force: true });
     }
 
@@ -102,6 +103,27 @@ function extract(archive, archiveName, destDir, isWindows) {
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+/**
+ * The Linux binary ships with its symbol table and debug info, which only a native debugger
+ * reads: native addons bind through the dynamic symbol table, and `strip` keeps that one.
+ * Only called once the archive has passed its checksum. macOS and Windows binaries are signed,
+ * and a strip would change the signed bytes, so they stay as downloaded. A failure (no `strip`
+ * on the build machine, or one built for another architecture) ships the binary as downloaded.
+ */
+function stripLinuxBinary(binary, platform) {
+  if (platform !== 'linux' || process.platform !== 'linux') return;
+  const before = fs.statSync(binary).size;
+  try {
+    execFileSync('strip', [binary], { stdio: ['ignore', 'ignore', 'pipe'] });
+  } catch (error) {
+    console.warn(
+      `download-node: strip failed, shipping the binary as downloaded: ${error.message}`,
+    );
+    return;
+  }
+  console.log(`download-node: stripped ${binary} (${before} -> ${fs.statSync(binary).size} bytes)`);
 }
 
 /**
@@ -119,6 +141,13 @@ function extract(archive, archiveName, destDir, isWindows) {
  */
 function copyVendoredPrebuilds(binaryDir, platform, arch) {
   if (platform !== 'darwin' || arch !== 'x64') return;
+  // The vendored build is for the ABI of Node 22 (127). With another major it would never load,
+  // and Intel Macs would try to compile isolated-vm, so the build stops here.
+  if (!NODE_VERSION.startsWith('v22.')) {
+    throw new Error(
+      `download-node: the vendored isolated-vm build is for Node 22 (ABI 127), not ${NODE_VERSION}; rebuild it`,
+    );
+  }
 
   const src = path.join(
     import.meta.dirname,
@@ -171,6 +200,7 @@ export default async function downloadNode(context) {
   }
 
   const dest = extract(archive, archiveName, destDir, isWindows);
+  stripLinuxBinary(dest, platform);
   copyVendoredPrebuilds(path.dirname(dest), electronPlatform, arch);
   console.log(`download-node: installed ${NODE_VERSION} ${platform}-${arch} at ${dest}`);
 }

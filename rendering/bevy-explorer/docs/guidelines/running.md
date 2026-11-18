@@ -191,7 +191,10 @@ World and Scene Loading show where the player is and which load stage is active.
 Deployment shows the Sites build serving `/play` and the commit the page's `catalyst` service reports, which is
 this deployment's APIs only behind its own gateway; it reads once each time it is expanded. The Explorer's own build
 is Performance's client version.
-Performance and Memory and limits expose the engine's measurements and budgets.
+Performance and Memory and limits expose the engine's measurements and budgets: the sampled
+frame-time snapshots, the frame-time breakdown and the memory tiers; a `performance-profiler`
+build adds Render and Profiler, Bevy's per-pass render timings and the scope profiler
+([profiling](profiling.md)).
 The room, voice, rendering, media and avatar sections appear with the plugins that
 supply them. When several readings need the same scene, peer or sample, the panel
 shows the cause once. Expand the reading count to see which fields it affects.
@@ -445,7 +448,7 @@ of the contract.
   output the way the real shader does, or it shows artifacts the render never produces.
 - `/player_position` reports z, and parcel y is `floor(z / 16)`, not `floor(-z / 16)`. That
   sign slip has looked like a hung console RPC before.
-- The `tracy` cargo feature enables bevy's Tracy tracing for native profiling.
+- The `tracy` cargo feature adds Tracy's wire layer for native profiling; the in-app readings and the capture steps are on the [profiling](profiling.md) page.
 
 ## Testing gotchas
 

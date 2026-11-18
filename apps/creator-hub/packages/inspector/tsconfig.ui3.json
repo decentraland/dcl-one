@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "strict": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "noUncheckedSideEffectImports": false,
+    "jsx": "react-jsx",
+    "composite": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "rootDir": "../../../ui3/src",
+    "outDir": "node_modules/.cache/ui3-types",
+    "tsBuildInfoFile": "node_modules/.cache/ui3-types/tsconfig.ui3.tsbuildinfo",
+    "types": [],
+    "paths": {
+      "react": ["../../node_modules/@types/react"],
+      "react-dom": ["../../node_modules/@types/react-dom"],
+      "react/jsx-runtime": ["../../node_modules/@types/react/jsx-runtime"]
+    }
+  },
+  "include": [
+    "src/css-modules.d.ts",
+    "../../../ui3/src/atoms/Spinner.tsx",
+    "../../../ui3/src/atoms/Tooltip.tsx",
+    "../../../ui3/src/atoms/DclLogomark.tsx",
+    "../../../ui3/src/atoms/dclLogomarkPaths.ts"
+  ]
+}

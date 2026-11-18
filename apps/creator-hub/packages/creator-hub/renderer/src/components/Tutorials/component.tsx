@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { Typography } from 'decentraland-ui2';
+import Text from '@ui/atoms/Text';
 import { useDispatch } from '#store';
 import { t } from '/@/modules/store/translation/utils';
 import { actions } from '/@/modules/store/editor';
@@ -34,13 +34,13 @@ export function Tutorial(props: { title: string; id: string; list?: string }) {
 export function Tutorials() {
   return (
     <div className="Tutorials">
-      <Typography
+      <Text
         variant="h6"
         className="title"
       >
         <i className="icon"></i>
         {t('tutorials.title')}
-      </Typography>
+      </Text>
       <div className="list">
         {tutorials.map(video => (
           <Tutorial

@@ -1,10 +1,12 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
+
+import { expectFocusTrap, pressBackdrop } from '../../../../tests/utils/modalContract';
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 
 import { DefaultModal } from '.';
 
@@ -13,7 +15,7 @@ type ModalProps = Parameters<typeof DefaultModal>[0];
 function renderModal(props: Partial<ModalProps> = {}) {
   const handlers = { onClose: vi.fn(), onCancel: vi.fn(), onConfirm: vi.fn() };
   render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <DefaultModal
         open
         title="Unpublish Scene"
@@ -23,7 +25,7 @@ function renderModal(props: Partial<ModalProps> = {}) {
         primary={{ label: 'Unpublish', onClick: handlers.onConfirm, state: 'idle' }}
         {...props}
       />
-    </ThemeProvider>,
+    </TestProviders>,
   );
   return handlers;
 }
@@ -49,6 +51,20 @@ describe('DefaultModal', () => {
       renderModal();
 
       expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel' }));
+    });
+
+    it('should keep focus in the dialog', () => {
+      renderModal();
+
+      expectFocusTrap();
+    });
+
+    it('should close from a press on the backdrop', () => {
+      const { onClose } = renderModal();
+
+      pressBackdrop();
+
+      expect(onClose).toHaveBeenCalledTimes(1);
     });
 
     it('should close from the Close button and from Escape', () => {

@@ -24,6 +24,7 @@ import { registerUiSound } from './domains/uiSound'
 import { registerEmotes } from './domains/emotes'
 import { registerWearables, sendEquipped } from './domains/wearables'
 import { registerCatalog } from './domains/catalog'
+import { registerGifting } from './domains/gifting'
 import { registerOutfits } from './domains/outfits'
 import { registerRandomizer } from './domains/randomizer'
 import { registerAvatarDraft } from './domains/avatarDraft'
@@ -34,6 +35,7 @@ import { registerCommunities } from './domains/communities'
 import { registerEvents } from './domains/events'
 import { registerGallery } from './domains/gallery'
 import { registerPlaces } from './domains/places'
+import { registerLobby } from './domains/lobby'
 import { registerMapPlayers } from './domains/mapPlayers'
 import { registerWorld } from './domains/world'
 import { registerVoice } from './domains/voice'
@@ -70,6 +72,7 @@ export function main(): void {
     registerEmotes(ctx)
     registerWearables(ctx)
     registerCatalog(ctx)
+    registerGifting(ctx)
     registerOutfits(ctx)
     registerRandomizer(ctx)
     registerAvatarDraft(ctx, async () => {
@@ -82,6 +85,7 @@ export function main(): void {
     registerEvents(ctx)
     registerGallery(ctx)
     registerPlaces(ctx)
+    registerLobby(ctx)
     registerMapPlayers(ctx)
     registerWorld(ctx)
     registerPointer(ctx)

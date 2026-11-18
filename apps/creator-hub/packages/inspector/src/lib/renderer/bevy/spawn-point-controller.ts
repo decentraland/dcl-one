@@ -1,4 +1,4 @@
-import mitt from 'mitt';
+import { createEmitter } from '../../utils/emitter';
 import type { Vector3 } from '@dcl/ecs-math';
 
 import type { SpawnPointController, SpawnPointTarget, Unsubscribe } from '../types';
@@ -57,7 +57,7 @@ export function createSpawnPointController(
   poster: SpawnPointGizmoPoster,
   resolvePosition: SpawnPositionResolver,
 ): BevySpawnPointController {
-  const events = mitt<Events>();
+  const events = createEmitter<Events>();
 
   let selectedIndex: number | null = null;
   let selectedTarget: SpawnPointTarget | null = null;

@@ -1,5 +1,5 @@
 import { createElement, createRef } from 'react'
-import type { NavBarProps, NavBarSection } from '@dcl/one-ui'
+import type { ButtonProps, NavBarProps, NavBarSection } from '@dcl/one-ui'
 
 const sections: NavBarSection[] = [
   { label: 'Discover', items: [{ label: 'Jump in', href: '/play/' }] },
@@ -167,3 +167,15 @@ const rendererAppearanceButton: import('@dcl/one-ui').ButtonProps = {
   appearance: 'inverse'
 }
 void rendererAppearanceButton
+
+const html = { __html: 'replace' }
+// @ts-expect-error Button owns its content; native HTML cannot replace it.
+const buttonHtml: ButtonProps = { children: 'Save', dangerouslySetInnerHTML: html }
+// @ts-expect-error Link-mode Button owns the same content structure.
+const linkHtml: ButtonProps = { href: '/save', children: 'Save', dangerouslySetInnerHTML: html }
+const htmlSpread = { children: 'Save', dangerouslySetInnerHTML: html }
+// @ts-expect-error HTML remains unsupported when supplied through a typed spread.
+const spreadButtonHtml: ButtonProps = { ...htmlSpread }
+// @ts-expect-error Link-mode spreads cannot override owned content either.
+const spreadLinkHtml: ButtonProps = { href: '/save', ...htmlSpread }
+void [buttonHtml, linkHtml, spreadButtonHtml, spreadLinkHtml]

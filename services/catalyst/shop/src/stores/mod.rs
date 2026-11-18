@@ -28,12 +28,12 @@
 //! proceeds are MANA; SHOP.md). A reader that is not configured, or a
 //! seller past the reader's bound, is the unavailable envelope.
 
+use crate::shared::routing::get;
 use axum::Json;
 use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::header::CACHE_CONTROL;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use serde::Serialize;
 use serde_json::Value;
 use sqlx::Row;

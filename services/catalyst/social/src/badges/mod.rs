@@ -40,7 +40,7 @@ pub mod types;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::routing::{erase, get, post};
+use crate::shared::routing::{erase, get, post};
 use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};

@@ -1,5 +1,5 @@
 import { createSlice, createSelector, isPending, type PayloadAction } from '@reduxjs/toolkit';
-import pLimit from 'p-limit';
+import { createLimit } from '/shared/limit';
 import type { Async } from '/shared/types/async';
 import type { ManagedProject, ManageTab } from '/shared/types/manage';
 import { FilterBy } from '/shared/types/manage';
@@ -127,7 +127,7 @@ export const initialState: Async<ManagementState> = {
 const PROJECTS_PAGE_LIMIT = 50;
 
 /** Scene lookups fan out one request per world, so they run a few at a time. */
-const limit = pLimit(6);
+const limit = createLimit(6);
 
 /** Gets all user ENS, LANDs, storage stats and filtered managed projects */
 export const fetchAllManagedProjectsData = createAsyncThunk(

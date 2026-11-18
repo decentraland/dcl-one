@@ -12,11 +12,11 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
     FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, ListenedCommunity, LiveSceneInfo,
+    FriendshipEventUpdate, HomeScene, HoverEvent, ListenedCommunity, LiveSceneInfo, LobbyStage,
     PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PlatformBanNotice,
     PortableInfo, ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi,
     SetAvatarData, TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage,
-    WelcomeState, WorldAccessEvent,
+    WelcomeState, WorldAccessEvent, WorldAccessVerdict,
 };
 
 // list of op declarations
@@ -45,10 +45,12 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_live_scene_info(),
             op_get_home_scene(),
             op_set_home_scene(),
+            op_set_lobby_stage(),
             op_get_service_urls(),
             op_get_welcome(),
             op_accept_terms(),
             op_get_satellite_view(),
+            op_get_world_access(),
             op_get_system_action_stream(),
             op_read_system_action_stream(),
             op_get_chat_stream(),
@@ -322,10 +324,24 @@ pub async fn op_accept_terms(state: Rc<RefCell<OpState>>) -> Result<(), anyhow::
 
 #[op2(async)]
 #[serde]
+pub async fn op_get_world_access(
+    state: Rc<RefCell<OpState>>,
+    #[string] world: String,
+) -> Result<WorldAccessVerdict, anyhow::Error> {
+    dcl_js::system_api::op_get_world_access(state, world).await
+}
+
+#[op2(async)]
+#[serde]
 pub async fn op_get_satellite_view(
     state: Rc<RefCell<OpState>>,
 ) -> Result<Option<SatelliteView>, anyhow::Error> {
     dcl_js::system_api::op_get_satellite_view(state).await
+}
+
+#[op2]
+pub fn op_set_lobby_stage(state: Rc<RefCell<OpState>>, #[serde] stage: Option<LobbyStage>) {
+    dcl_js::system_api::op_set_lobby_stage(state, stage);
 }
 
 #[op2]

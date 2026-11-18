@@ -253,6 +253,12 @@ module.exports.setHomeScene = async function(args) {
     await Deno.core.ops.op_set_home_scene(args.realm, args.parcel)
 }
 
+// { preset: string, layer: number, feet: Vector3 } draws the lobby's stage around the preview
+// avatar for the camera on that layer; null takes it down. Bridge (super-user) scene only.
+module.exports.setLobbyStage = async function(stage) {
+    Deno.core.ops.op_set_lobby_stage(stage ?? null)
+}
+
 // { [service web param]: base url } for every service the web build can redirect, resolved by
 // the engine: the service's override, else its composition from the base domain
 module.exports.getServiceUrls = async function() {
@@ -283,6 +289,11 @@ module.exports.acceptTerms = async function() {
 // }
 module.exports.getSatelliteView = async function() {
     return await Deno.core.ops.op_get_satellite_view()
+}
+
+// 'allowed' | 'invited' | 'denied' | 'password' | 'failed'
+module.exports.getWorldAccess = async function(world) {
+    return await Deno.core.ops.op_get_world_access(world)
 }
 
 // get system actions as a stream

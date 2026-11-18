@@ -23,8 +23,8 @@
     "directory": "packages/@dcl/playground-assets"
   },
   "scripts": {
-    "build": "npm run build-playground && api-extractor run",
-    "build-local": "npm run build-playground && api-extractor run --local --verbose --diagnostics",
+    "build": "./../sdk-commands/dist/index.js build --production --emitDeclaration --customEntryPoint && api-extractor run",
+    "build-local": "./../sdk-commands/dist/index.js build --production --emitDeclaration --customEntryPoint && api-extractor run --local --verbose --diagnostics",
     "build-playground": "./../sdk-commands/dist/index.js build --production --emitDeclaration --customEntryPoint"
   },
   "tsdoc": {

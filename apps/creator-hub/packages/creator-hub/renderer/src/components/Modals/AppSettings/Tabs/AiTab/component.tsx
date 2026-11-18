@@ -1,26 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import ContentCopyIcon from '@mui/icons-material/ContentCopy';
-import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
-import {
-  Box,
-  Button,
-  Checkbox,
-  CircularProgress,
-  FormControlLabel,
-  IconButton,
-  Switch,
-  TextField,
-  Tooltip,
-  Typography,
-} from 'decentraland-ui2';
+import Button from '@ui/atoms/Button';
+import Checkbox from '@ui/atoms/Checkbox';
+import IconButton from '@ui/atoms/IconButton';
+import Spinner from '@ui/atoms/Spinner';
+import Text from '@ui/atoms/Text';
+import TextField from '@ui/atoms/TextField';
+import Tooltip from '@ui/atoms/Tooltip';
 
 import { ai, misc } from '#preload';
 
 import { cliSetup, type AiProviderInfo } from '/shared/types/ai';
 import { t } from '/@/modules/store/translation/utils';
+import { ContentCopyIcon, KeyboardArrowDownIcon } from '@ui/atoms/icons-material';
 import { useCliSignIn } from '/@/hooks/useCliSignIn';
 import { SignInCodeField } from '/@/components/SignInCodeField';
+import { ToggleRow } from '../../ToggleRow';
 import type { BaseTabProps } from '../../types';
 
 import './styles.css';
@@ -38,7 +33,7 @@ function Accordion({
   children: ReactNode;
 }) {
   return (
-    <Box className="SettingsAccordion">
+    <div className="SettingsAccordion">
       <button
         type="button"
         className="SettingsAccordionHeader"
@@ -50,8 +45,8 @@ function Accordion({
         />
         <span className="SettingsAccordionTitle">{title}</span>
       </button>
-      {expanded && <Box className="SettingsAccordionBody">{children}</Box>}
-    </Box>
+      {expanded && <div className="SettingsAccordionBody">{children}</div>}
+    </div>
   );
 }
 
@@ -65,16 +60,16 @@ function CommandField({ label, value }: { label?: string; value: string }) {
     });
   }, [value]);
   return (
-    <Box className="CommandFieldWrapper">
+    <div className="CommandFieldWrapper">
       {label !== undefined && (
-        <Typography
+        <Text
           variant="caption"
-          color="text.secondary"
+          tone="secondary"
         >
           {label}
-        </Typography>
+        </Text>
       )}
-      <Box className="CommandField">
+      <div className="CommandField">
         <code>{value}</code>
         <IconButton
           size="small"
@@ -83,11 +78,11 @@ function CommandField({ label, value }: { label?: string; value: string }) {
         >
           <ContentCopyIcon
             fontSize="small"
-            color={copied ? 'primary' : 'inherit'}
+            tone={copied ? 'primary' : 'inherit'}
           />
         </IconButton>
-      </Box>
-    </Box>
+      </div>
+    </div>
   );
 }
 
@@ -123,15 +118,17 @@ function AgentConnect({
     );
   }, [track, info.id, onRecheck]);
   const spinner = (signIn.busy || pending) && (
-    <CircularProgress
+    <Spinner
+      ring="wide"
       size={10}
       color="inherit"
+      role="progressbar"
     />
   );
 
   return (
-    <Box className="AgentConnect">
-      <Box className="AgentConnectHeader">
+    <div className="AgentConnect">
+      <div className="AgentConnectHeader">
         <span className="AgentName">{info.label}</span>
         {info.available && info.needsLogin === true && (
           <span className="AgentStatus">
@@ -148,16 +145,14 @@ function AgentConnect({
         {info.available ? (
           info.managedSignIn === true && (
             <Tooltip
-              title={
-                pending
-                  ? ''
-                  : t('modal.app_settings.fields.ai_connect.sign_out_shared', {
-                      agent: info.label,
-                    })
-              }
-              describeChild
+              label={t('modal.app_settings.fields.ai_connect.sign_out_shared', {
+                agent: info.label,
+              })}
+              disabled={pending}
               enterDelay={150}
-              placement="top"
+              side="top"
+              portal
+              className="AgentSignTip"
             >
               <button
                 type="button"
@@ -190,62 +185,62 @@ function AgentConnect({
             {t('modal.app_settings.fields.ai_connect.sign_in')}
           </button>
         ) : null}
-      </Box>
+      </div>
       {signIn.busy && signIn.message !== '' && (
-        <Typography
+        <Text
           variant="caption"
-          color="text.secondary"
+          tone="secondary"
         >
           {signIn.message}
-        </Typography>
+        </Text>
       )}
       {signIn.url !== null && <CommandField value={signIn.url} />}
       {signIn.busy && signIn.url !== null && signIn.acceptsCode && (
         <SignInCodeField onSubmit={submitCode} />
       )}
       {signOutError !== null && (
-        <Typography
+        <Text
           variant="caption"
-          color="error"
+          tone="error"
         >
           {signOutError}
-        </Typography>
+        </Text>
       )}
       {signIn.error !== null && (
-        <Typography
+        <Text
           variant="caption"
-          color="error"
+          tone="error"
         >
           {signIn.error}
-        </Typography>
+        </Text>
       )}
       {info.needsLogin === true && (
-        <Typography
+        <Text
           variant="caption"
-          color="text.secondary"
+          tone="secondary"
         >
           {t(
             info.managedSignIn
               ? 'editor.ai.setup.needs_login_managed_help'
               : 'editor.ai.setup.needs_login_help',
           )}
-        </Typography>
+        </Text>
       )}
       {info.desktopInstalled === true && (
-        <Typography
+        <Text
           variant="caption"
-          color="text.secondary"
+          tone="secondary"
         >
           {t('editor.ai.setup.desktop_detected')}
-        </Typography>
+        </Text>
       )}
       {info.id === 'gemini' && (
-        <Typography
+        <Text
           variant="caption"
-          color="text.secondary"
+          tone="secondary"
         >
           {t('editor.ai.setup.gemini_plan_note')}
-        </Typography>
+        </Text>
       )}
       <Accordion
         title={t('modal.app_settings.fields.ai_connect.via_terminal')}
@@ -272,17 +267,17 @@ function AgentConnect({
         </button>
       </Accordion>
       {info.needsLogin === true && (
-        <Typography
+        <Text
           variant="caption"
-          color="text.secondary"
+          tone="secondary"
         >
           {t('editor.ai.setup.api_key_alternative', {
             envVar: cmds.apiKeyEnv,
             setting: t('modal.app_settings.fields.ai_api_key.label'),
           })}
-        </Typography>
+        </Text>
       )}
-    </Box>
+    </div>
   );
 }
 
@@ -382,45 +377,37 @@ const AiTab: React.FC<BaseTabProps> = ({ settings, updateSettings }) => {
   }, [mcpConfigSnippet]);
 
   return (
-    <Box className="FormContainer AiTab">
-      <Box className="AiField">
-        <FormControlLabel
-          control={
-            <Switch
-              checked={!!settings.aiAssistant}
-              onChange={(_event, checked) => handleAiAssistantChange(checked)}
-            />
-          }
+    <div className="FormContainer AiTab">
+      <div className="AiField">
+        <ToggleRow
+          checked={!!settings.aiAssistant}
           label={t('modal.app_settings.fields.ai_assistant.label')}
+          onChange={handleAiAssistantChange}
         />
-        <Typography
+        <Text
           variant="body2"
-          color="text.secondary"
+          tone="secondary"
           className="AiHint"
         >
           {t('modal.app_settings.fields.ai_assistant.help')}
-        </Typography>
+        </Text>
 
         {settings.aiAssistant && (
-          <Box className="AiNestedField">
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={!!settings.useApiKeyFromEnv}
-                  onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
-                    handleUseApiKeyFromEnvChange(event.target.checked)
-                  }
-                />
-              }
-              label={t('modal.app_settings.fields.ai_api_key.label')}
-            />
-            <Typography
+          <div className="AiNestedField">
+            <Checkbox
+              className="SettingsCheckbox"
+              checked={!!settings.useApiKeyFromEnv}
+              onChange={handleUseApiKeyFromEnvChange}
+            >
+              {t('modal.app_settings.fields.ai_api_key.label')}
+            </Checkbox>
+            <Text
               variant="caption"
-              color="text.secondary"
+              tone="secondary"
               className="AiHint"
             >
               {t('modal.app_settings.fields.ai_api_key.help')}
-            </Typography>
+            </Text>
 
             <Accordion
               title={t('modal.app_settings.fields.ai_connect.title')}
@@ -435,72 +422,70 @@ const AiTab: React.FC<BaseTabProps> = ({ settings, updateSettings }) => {
                 />
               ))}
             </Accordion>
-          </Box>
+          </div>
         )}
-      </Box>
+      </div>
 
       {/* Not nested under the assistant: outside agents are a separate grant, so the switch
           that revokes it must stay visible whatever the assistant setting is. */}
       <hr className="AiDivider" />
-      <Box className="AiField">
-        <FormControlLabel
-          control={
-            <Switch
-              checked={!!settings.exposeMcpServer}
-              onChange={(_event, checked) => handleExposeMcpChange(checked)}
-            />
-          }
+      <div className="AiField">
+        <ToggleRow
+          checked={!!settings.exposeMcpServer}
           label={t('modal.app_settings.fields.mcp_server.label')}
+          onChange={handleExposeMcpChange}
         />
-        <Typography
+        <Text
           variant="body2"
-          color="text.secondary"
+          tone="secondary"
           className="AiHint"
         >
           {t('modal.app_settings.fields.mcp_server.help')}
-        </Typography>
+        </Text>
         {settings.exposeMcpServer && (
-          <Box className="AiNestedField">
+          <div className="AiNestedField">
             {mcpConfigSnippet !== null && mcpConfigSnippet !== undefined ? (
               <>
                 <TextField
+                  aria-label={t('modal.app_settings.fields.mcp_server.label')}
                   value={mcpConfigSnippet}
                   multiline
                   fullWidth
                   minRows={7}
-                  InputProps={{ readOnly: true }}
+                  readOnly
                 />
                 <Button
-                  color="secondary"
+                  className="AiCopyButton"
                   variant="text"
-                  size="small"
+                  tone="neutral"
+                  size="sm"
                   startIcon={<ContentCopyIcon fontSize="small" />}
                   onClick={handleCopyMcpConfig}
-                  sx={{
-                    backgroundColor: 'var(--dark-gray)',
-                    '&:hover': { backgroundColor: 'var(--light-gray)' },
-                    '&&&&&&&': { color: 'var(--white)' },
-                  }}
                 >
                   {mcpCopied
                     ? t('modal.app_settings.fields.mcp_server.copied')
                     : t('modal.app_settings.fields.mcp_server.copy')}
                 </Button>
-                <Typography
+                <Text
                   variant="caption"
-                  color="text.secondary"
+                  tone="secondary"
                   className="AiHint"
                 >
                   {t('modal.app_settings.fields.mcp_server.note')}
-                </Typography>
+                </Text>
               </>
             ) : (
-              <CircularProgress size={20} />
+              <Spinner
+                ring="wide"
+                size={20}
+                color="primary"
+                role="progressbar"
+              />
             )}
-          </Box>
+          </div>
         )}
-      </Box>
-    </Box>
+      </div>
+    </div>
   );
 };
 

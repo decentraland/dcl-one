@@ -241,7 +241,8 @@ fn check_assets(
     // extension against the actual bytes. a required KHR_texture_basisu no
     // longer fails: the loader reads it natively
     for ev in failed_gltfs.read() {
-        if !ev.error.to_string().contains("KHR_draco_mesh_compression") {
+        let error = ev.error.to_string();
+        if !ipfs::cache_heal::names_repairable_extension(&error) {
             continue;
         }
         let asset_path = ev.path.clone();
@@ -382,7 +383,7 @@ fn pipe_events(
                     ProcessingAssetType::Gltf => {
                         if let Some(h) = asset_server.get_handle::<Gltf>(&req.base_path) {
                             // on wasm the cache path is the source url (the processed bytes
-                            // overwrite the service-worker cache entry for that url), so wrap
+                            // overwrite the web cache entry for that url), so wrap
                             // it in a url-form IpfsPath to make it loadable
                             #[cfg(target_arch = "wasm32")]
                             let cache_path = {

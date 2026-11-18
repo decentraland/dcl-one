@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo } from 'react';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 
 import { analytics, Event } from '../../lib/logic/analytics';
 import { getConfig } from '../../lib/logic/config';

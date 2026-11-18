@@ -482,3 +482,100 @@ fn waiting_materials_are_created_when_the_player_goes_behind_the_backdrop() {
     assert_eq!(created(&app, &entities), 50);
     assert_eq!(marked::<PendingMaterial>(&app, &entities), 0);
 }
+
+#[test]
+fn a_material_waiting_for_its_primitive_comes_with_it_once_the_slice_is_spent() {
+    let (mut app, root) = material_app();
+    preset_charges(&mut app, Duration::from_millis(10));
+    let primitives: Vec<_> = (0..2)
+        .map(|index| {
+            let scene_entity = scene_entity(&mut app, root);
+            app.world_mut()
+                .spawn((scene_entity, container(root), a_box(), material(index)))
+                .id()
+        })
+        .collect();
+    // glTF node modifiers' materials, which wait on their own
+    let modifiers = spawn_materials(&mut app, root, 10..13);
+    app.update();
+    let waiting_primitive = primitives
+        .iter()
+        .copied()
+        .find(|e| app.world().get::<PendingPrimitive>(*e).is_some())
+        .unwrap();
+    assert!(app
+        .world()
+        .get::<PendingMaterial>(waiting_primitive)
+        .is_some());
+    assert_eq!(marked::<PendingMaterial>(&app, &modifiers), 2);
+
+    // the primitive goes as `update_mesh`'s first; the waiting modifiers spend the slice
+    preset_charges(&mut app, Duration::from_millis(10));
+    app.update();
+
+    assert!(app.world().get::<Mesh3d>(waiting_primitive).is_some());
+    let materials = app.world().resource::<Assets<SceneMaterial>>();
+    let own = materials
+        .get(material_handle(&app, waiting_primitive).unwrap())
+        .unwrap();
+    assert_ne!(own.base.base_color, StandardMaterial::default().base_color);
+    assert_eq!(marked::<PendingMaterial>(&app, &modifiers), 1);
+}
+
+/// What `update_mesh` and `update_materials` cost a frame with the slice spent and `backlog`
+/// boxes waiting, each with a new material: 10,000 boxes a tick for ten ticks leave about 95,000.
+/// Each frame admits one box with its material, as the frame's first. The numbers are this
+/// build's (a debug build's workspace crates are unoptimized); compare backlogs.
+/// Run with `--ignored --nocapture`.
+#[test]
+#[ignore]
+fn per_frame_cost_with_a_large_backlog() {
+    const FRAMES: usize = 60;
+    for backlog in [100, 10_000, 95_000] {
+        let (mut app, root) = material_app();
+        let flood: Vec<_> = (0..backlog)
+            .map(|index| {
+                let scene_entity = SceneEntity {
+                    root,
+                    scene_id: dcl_types::SceneId(root),
+                    id: SceneEntityId {
+                        id: (512 + index % 60_000) as u16,
+                        generation: (index / 60_000) as u16,
+                    },
+                };
+                (scene_entity, container(root), a_box(), material(index))
+            })
+            .collect();
+        app.world_mut().spawn_batch(flood);
+        preset_charges(&mut app, Duration::from_millis(10));
+        app.update();
+
+        let mesh = app.world_mut().register_system(update_mesh);
+        let materials = app.world_mut().register_system(update_materials);
+        let frame = |app: &mut App| {
+            preset_charges(app, Duration::from_millis(10));
+            let start = bevy::platform::time::Instant::now();
+            app.world_mut().run_system(mesh).unwrap();
+            let mesh_time = start.elapsed();
+            let start = bevy::platform::time::Instant::now();
+            app.world_mut().run_system(materials).unwrap();
+            (mesh_time, start.elapsed())
+        };
+        // a new system's first run sees every component as changed
+        for _ in 0..3 {
+            frame(&mut app);
+        }
+        let (mut mesh_times, mut material_times): (Vec<_>, Vec<_>) =
+            (0..FRAMES).map(|_| frame(&mut app)).unzip();
+        mesh_times.sort();
+        material_times.sort();
+        println!(
+            "backlog {backlog:>6}: update_mesh median {:>8.1} µs, max {:>8.1} µs; \
+             update_materials median {:>8.1} µs, max {:>8.1} µs",
+            mesh_times[FRAMES / 2].as_secs_f64() * 1e6,
+            mesh_times[FRAMES - 1].as_secs_f64() * 1e6,
+            material_times[FRAMES / 2].as_secs_f64() * 1e6,
+            material_times[FRAMES - 1].as_secs_f64() * 1e6,
+        );
+    }
+}

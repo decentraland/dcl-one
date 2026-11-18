@@ -19,6 +19,25 @@
   gap: 2px;
 }
 
+/* The update button keeps the brand colour, the checking button its grey fill and the download
+   button its dark fill. */
+.update-settings__button-area .btn {
+  letter-spacing: 0.4px;
+}
+
+.update-settings__button-area .btn--primary:not([data-tone]) {
+  background: var(--brand);
+}
+
+.update-settings__button-area .btn--primary[data-tone="neutral"]:disabled {
+  background: #a09ba8;
+  color: var(--ctl-disabled-ink);
+}
+
+.update-settings__button-area .update-settings__progress.btn--primary:disabled {
+  background: rgba(255, 255, 255, 0.12);
+}
+
 .update-settings__message-container {
   gap: 8px;
   align-items: center;
@@ -52,7 +71,6 @@
 .update-settings__release-notes-header {
   color: var(--white);
   font-weight: 500;
-  margin-bottom: 16px;
 }
 
 .update-settings__release-notes-content {

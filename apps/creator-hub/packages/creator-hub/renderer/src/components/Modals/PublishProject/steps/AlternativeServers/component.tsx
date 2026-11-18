@@ -1,5 +1,5 @@
 import { type ChangeEvent, useCallback, useState } from 'react';
-import { Button } from 'decentraland-ui2';
+import Button from '@ui/atoms/Button';
 
 import { misc } from '#preload';
 
@@ -13,6 +13,7 @@ import GenesisPlazaPng from '/assets/images/genesis_plaza.webp';
 import { PublishModal } from '../../PublishModal';
 import type { Props } from '../../types';
 
+import buttons from '../../buttons.module.css';
 import './styles.css';
 
 export function AlternativeServers(props: Props) {
@@ -79,7 +80,11 @@ export function AlternativeServers(props: Props) {
             >
               {t('option_box.learn_more')}
             </span>
-            <Button onClick={handleClick}>
+            <Button
+              className={buttons.text}
+              variant="text"
+              onClick={handleClick}
+            >
               {t('modal.publish_project.alternative_servers.action.custom_server')}
             </Button>
           </div>

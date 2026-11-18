@@ -15,7 +15,7 @@ import type { PassportTab } from '../profile/ProfilePassport'
 import { EDITOR_BUILD } from '@explorer-core/features/editorHost/config'
 import { EditorOffered } from '../editorHost/EditorOffered'
 import { useLiveEventCount } from '../events/useLiveEventCount'
-import { canExit, exitApplication } from '../gate/exitApplication'
+import { exitApplication } from '../gate/exitApplication'
 import { signOutOfWorld } from '../gate/signOutOfWorld'
 import { useAutoHide } from './useAutoHide'
 import { useRailPopover } from './useRailPopover'
@@ -23,6 +23,7 @@ import { hudInsetRef } from '../../lib/hudInset'
 import styles from './Sidebar.module.css'
 import { boltArt } from './railIcons'
 import { MePanel } from './panels/MePanel'
+import { inviteLink } from './inviteLink'
 import { MapPanel } from './panels/MapPanel'
 import { DiscoverPanel } from './panels/DiscoverPanel'
 import { ShopPanel } from './panels/ShopPanel'
@@ -384,18 +385,19 @@ export function Sidebar({
           />
         </div>
       </nav>
-      {mapVisible && <MapPanel minimap={session.minimap} map={session.map} setEngineViewport={session.setEngineViewport} />}
+      {mapVisible && <MapPanel minimap={session.minimap} map={session.map} referrer={profile?.address} setEngineViewport={session.setEngineViewport} />}
       {panel != null && (
         <PanelHost key={panel.id} anchor={panel.anchor} rise={PANEL_RISE[panel.id]} onClose={closePanel}>
           {panel.id === 'me' && (
             <MePanel
               profile={profile}
               backpackKey={keyHintFor(snap, 'Backpack')}
+              inviteLink={inviteLink(profile)}
               onBackpack={session.backpack.toggle}
               onProfile={onViewProfile != null ? () => onViewProfile() : session.profile.toggle}
               onBadges={onViewProfile != null ? () => onViewProfile('badges') : undefined}
               onSignOut={signOutOffered ? signOutOfWorld : undefined}
-              onExit={canExit() ? exitApplication : undefined}
+              onExit={exitApplication}
               onClose={closePanel}
             />
           )}

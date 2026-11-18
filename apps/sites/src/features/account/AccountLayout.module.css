@@ -1,0 +1,157 @@
+/* The account settings frame, as decentraland.org's account layout: the brand gradient, and from
+ * 1024px the menu rail beside the open section. Below 1024px `/account` is the menu alone, edge to
+ * edge down to the bottom, and a section is its own screen under a back and close header. The source's
+ * radial gradient (#7434B1 -> #481C6C -> #2B1040) has no token; the brand tokens the profile frame
+ * uses stand in for it. */
+.root {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100%;
+  /* The top bar overlays the page (as on the source), so the frame is one screen tall and its top
+   * padding clears the bar: 24px below it on a section screen, flush for the phone menu. */
+  min-height: 100dvh;
+  padding-top: calc(var(--site-header-h, 64px) + var(--dcl-space-24));
+  padding-bottom: var(--dcl-space-64);
+  background: radial-gradient(
+    123.58% 82% at 9.01% 25.79%,
+    var(--dcl-brand-purple) 0%,
+    var(--dcl-brand-purple-dark) 37.11%,
+    var(--dcl-neutrals-black) 100%
+  );
+  color: var(--dcl-text-primary);
+}
+
+.root[data-view='menu'] {
+  padding-top: var(--site-header-h, 64px);
+  padding-bottom: 0;
+}
+
+.frame {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.content {
+  box-sizing: border-box;
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  padding: 0 var(--dcl-space-16);
+}
+
+.root[data-view='menu'] .content,
+.root[data-view='section'] .sidebar {
+  display: none;
+}
+
+.mobileHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dcl-space-16);
+  padding-bottom: var(--dcl-space-16);
+}
+
+.mobileTitle {
+  display: flex;
+  margin: 0;
+}
+
+.back,
+.close {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dcl-radius-sm);
+  background: none;
+  color: var(--dcl-text-primary);
+  cursor: pointer;
+}
+
+.back {
+  composes: text626f64792f6c67 from '@dcl/one-ui/text-styles.module.css';
+  gap: var(--dcl-space-8);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.close {
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+@media (hover: hover) {
+  .back:hover,
+  .close:hover {
+    color: var(--dcl-neutrals-gray);
+  }
+}
+
+.back:focus-visible,
+.close:focus-visible {
+  outline: 2px solid var(--dcl-transparencies-white-60);
+  outline-offset: 2px;
+}
+
+.signedOut {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dcl-space-24);
+  min-height: 50vh;
+  padding: 0 var(--dcl-space-16);
+  text-align: center;
+}
+
+.signedOutTitle {
+  composes: text68656164696e672f34 from '@dcl/one-ui/text-styles.module.css';
+  margin: 0;
+}
+
+.checking {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dcl-space-12);
+  min-height: 50vh;
+  color: var(--dcl-text-secondary);
+}
+
+@media (min-width: 1024px) {
+  /* The source's content starts 59px below its 92px bar; the 60px of spacing tokens stand in for it. */
+  .root,
+  .root[data-view='menu'] {
+    padding-top: calc(var(--site-header-h, 92px) + var(--dcl-space-48) + var(--dcl-space-12));
+    padding-bottom: var(--dcl-space-64);
+  }
+
+  .frame {
+    flex-direction: row;
+    align-items: stretch;
+    gap: var(--dcl-space-24);
+    padding: 0 var(--dcl-space-24) 0 var(--dcl-space-16);
+  }
+
+  .root[data-view='section'] .sidebar {
+    display: flex;
+  }
+
+  .content,
+  .root[data-view='menu'] .content {
+    display: block;
+    padding: 0;
+  }
+
+  .mobileHeader {
+    display: none;
+  }
+}

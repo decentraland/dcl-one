@@ -1,6 +1,7 @@
 pub mod change_realm;
 pub mod chat;
 pub mod crash_report;
+pub mod lobby_stage;
 pub mod login;
 pub mod oow;
 pub mod sysinfo;
@@ -51,6 +52,7 @@ impl Plugin for SystemUiPlugin {
             LoginPlugin,
             ChangeRealmPlugin,
             OowUiPlugin,
+            lobby_stage::LobbyStagePlugin,
         ));
 
         app.add_systems(PostUpdate, handle_scene_permissions);

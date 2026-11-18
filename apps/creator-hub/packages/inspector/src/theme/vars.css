@@ -125,6 +125,9 @@
   --shadow-toast: 0 4px 4px rgba(0, 0, 0, 0.1);
   --shadow-popover: 0 4px 10px rgba(0, 0, 0, 0.25);
 
+  /* Layer of the shared ui3 tooltip: above the menus and under the loading overlay. */
+  --z-overlay: 1900;
+
   /* DCL Colors */
   --brand: #ff2d55;
   --primary-main: var(--brand);
@@ -133,6 +136,14 @@
   --accent: #ff7439;
   --secondary-main: var(--accent);
   --secondary-dark: #f45708;
+  /* Page, text and status colours that component styles and `theme/base.css` name directly. */
+  --background: #18141a;
+  --modal: #242129;
+  --text: var(--white);
+  --secondary-text: #676370;
+  --text-on-primary: var(--white);
+  --primary: var(--brand);
+  --danger: #ffa900;
   /* Color definitions */
   --white: #ffffff;
   --white-gray: #e7e7e7;

@@ -11,7 +11,9 @@ use serde_json::{Value, json};
 use super::*;
 use crate::access::Ban;
 use crate::gatekeeper::moderation::test_support::StubBanStatus;
-use crate::gatekeeper::streaming::cast::{build_stream_links, is_valid_presenter_identity};
+use crate::gatekeeper::streaming::cast::{
+    build_stream_links, is_valid_presenter_identity, shown_name, watcher_wallet,
+};
 use crate::rooms::{ActiveDeployment, ResolvedRoom};
 use crate::world_identity::{Parcel, RealmId, SceneId, WorldName};
 
@@ -362,6 +364,16 @@ async fn seed_genesis_place(pool: &PgPool, scene: &Scene, title: Option<&str>) {
         .unwrap();
 }
 
+/// A world the worlds store knows, as one a Cast runs in is: its access
+/// edits stamp the authorization proofs world tokens carry.
+async fn seed_world(pool: &PgPool, world: &WorldName) {
+    sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1) ON CONFLICT DO NOTHING")
+        .bind(world.key())
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 /// A stream credential row as a stream link stores it.
 async fn seed_access(
     pool: &PgPool,
@@ -424,6 +436,22 @@ fn stream_links_name_the_cast_app_with_upstreams_default() {
             "https://cast.example/w/foo.dcl.eth".to_owned()
         )
     );
+}
+
+#[test]
+fn a_watchers_wallet_comes_from_its_signed_attribute() {
+    let wallet = address_of(KEY);
+    let attributes: std::collections::BTreeMap<String, String> =
+        [("dcl.castWatcher".to_owned(), wallet.clone())].into();
+    assert_eq!(
+        watcher_wallet("watch:scene:main:x:1", &attributes).map(|a| a.as_str().to_owned()),
+        Some(wallet)
+    );
+    // Only for a watcher's identity, and only a wallet.
+    assert_eq!(watcher_wallet("stream:p:1", &attributes), None);
+    let junk: std::collections::BTreeMap<String, String> =
+        [("dcl.castWatcher".to_owned(), "Moderator".to_owned())].into();
+    assert_eq!(watcher_wallet("watch:scene:main:x:1", &junk), None);
 }
 
 #[test]
@@ -826,6 +854,7 @@ async fn a_scene_admin_gets_a_stream_link_that_is_reused_until_it_expires() {
 async fn a_world_scene_admin_gets_a_link_watchers_open_by_world_name() {
     let Some(pool) = scratch().await else { return };
     let world = WorldName::parse(&format!("castworld{}.dcl.eth", tag())).unwrap();
+    seed_world(&pool, &world).await;
     let scene_id = format!("bafkreiworld{}", tag());
     let room = resolved_room(RealmId::World(world.clone()), &scene_id, "3,4");
     let place_id = format!("cast-world-{}", tag());
@@ -878,6 +907,25 @@ async fn a_world_scene_admin_gets_a_link_watchers_open_by_world_name() {
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["roomId"], room.room);
+    // The world authorization proof a scene join carries, for this watcher and
+    // room: the world access sweep keeps it past any earlier access edit.
+    let claims = claims(&body["token"]);
+    let proof = claims["attributes"]["dcl.worldAuthorization"]
+        .as_str()
+        .expect("a world watcher's token carries the authorization proof");
+    let authorized_after = |cutoff: chrono::NaiveDateTime| {
+        crate::gatekeeper::admission::world_mint::authorized_after(
+            &h.state.livekit.api_secret,
+            &world,
+            body["identity"].as_str().unwrap(),
+            &room.room,
+            Some(proof),
+            cutoff,
+        )
+    };
+    let now = chrono::Utc::now().naive_utc();
+    assert!(authorized_after(now - chrono::Duration::hours(1)));
+    assert!(!authorized_after(now + chrono::Duration::hours(1)));
 }
 
 #[tokio::test]
@@ -1059,6 +1107,7 @@ async fn a_viewer_watches_a_parcel_or_world_stream_unless_banned() {
     let scene = genesis_scene();
     seed_genesis_place(&pool, &scene, Some("Cast Plaza")).await;
     let world = WorldName::parse(&format!("cast{}.dcl.eth", tag())).unwrap();
+    seed_world(&pool, &world).await;
     let world_scene = format!("bafkreiworld{}", tag());
     let world_room = resolved_room(RealmId::World(world.clone()), &world_scene, "0,0");
     let world_place = format!("cast-world-{}", tag());
@@ -1120,6 +1169,8 @@ async fn a_viewer_watches_a_parcel_or_world_stream_unless_banned() {
     let claims = claims(&body["token"]);
     assert_eq!(claims["sub"], identity);
     assert_eq!(claims["name"], "Viewer #1");
+    // The viewer's wallet rides in a signed attribute, for the ban sweeps.
+    assert_eq!(claims["attributes"]["dcl.castWatcher"], address_of(&key));
     assert_eq!(
         claims["metadata"],
         // JSON.stringify's insertion order.
@@ -1463,6 +1514,7 @@ async fn scene_admins_list_promote_and_demote_presenters() {
 async fn a_private_worlds_cast_refuses_watchers_the_world_does_not_admit() {
     let Some(pool) = scratch().await else { return };
     let world = WorldName::parse(&format!("castprivate{}.dcl.eth", tag())).unwrap();
+    seed_world(&pool, &world).await;
     let scene_id = format!("bafkreiprivate{}", tag());
     let room = resolved_room(RealmId::World(world.clone()), &scene_id, "1,1");
     let place_id = format!("cast-private-{}", tag());
@@ -1757,6 +1809,73 @@ async fn an_expired_credential_does_not_promote_admins_on_join() {
     assert!(!promoted);
 }
 
+/// A reset whose new credential cannot be stored: the old key stays in
+/// force, no cleanup is recorded for it, and the new ingress is deleted.
+#[tokio::test]
+async fn a_reset_that_cannot_store_its_credential_keeps_the_old_key() {
+    let Some(pool) = scratch().await else { return };
+    let scene = genesis_scene();
+    seed_genesis_place(&pool, &scene, None).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness(pool.clone(), Some(room), PermissionDecision::Allowed, None).await;
+    let metadata = scene_metadata(&scene);
+    let (status, first) = h
+        .signed(KEY, "GET", "/cast/generate-stream-link", &metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let active = || async {
+        sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM social.scene_stream_access WHERE place_id = $1 AND active",
+        )
+        .bind(&scene.place_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    let old_access = active().await;
+    // Refuses this place's next insert only, inside the replacement's transaction.
+    let function = format!("cast_refuse_{}", tag());
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE FUNCTION social.{function}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
+         IF NEW.place_id = '{place}' THEN RAISE EXCEPTION 'refused by test'; END IF; RETURN NEW; END $$; \
+         CREATE TRIGGER {function} BEFORE INSERT ON social.scene_stream_access \
+         FOR EACH ROW EXECUTE FUNCTION social.{function}();",
+        place = scene.place_id
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, _) = h
+        .signed(KEY, "PUT", "/scene-stream-access", &metadata, None)
+        .await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP TRIGGER {function} ON social.scene_stream_access; DROP FUNCTION social.{function}();"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(active().await, old_access);
+    let pending: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM social.scene_stream_cleanup WHERE access_id = $1)",
+    )
+    .bind(old_access)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!pending);
+    // The new ingress was minted and then deleted; the old key still admits a streamer.
+    assert_eq!(h.livekit.ingresses.load(Ordering::SeqCst), 2);
+    assert_eq!(h.livekit.deleted_ingresses.load(Ordering::SeqCst), 1);
+    let (status, _) = h
+        .post(
+            "/cast/streamer-token",
+            json!({"token": first["streamingKey"], "identity": "Ada"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
 /// Upstream mints the replacement's ingress before revoking the old one: a
 /// LiveKit failure while replacing an expired key leaves that key in place.
 #[tokio::test]
@@ -1967,6 +2086,7 @@ async fn the_scene_adapter_adds_a_joining_admin_to_the_presenters() {
     .await;
     let metadata = json!({
         "signer": "dcl:explorer",
+        "realmName": "main",
         "sceneId": scene.id,
         "parcel": scene.parcel,
         "realm": { "serverName": "main", "hostname": "peer.example", "protocol": "v3" },
@@ -1992,4 +2112,311 @@ async fn the_scene_adapter_adds_a_joining_admin_to_the_presenters() {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     assert_eq!(presenters, json!([admin]));
+}
+
+#[test]
+fn display_names_drop_invisible_characters_and_never_carry_another_wallet() {
+    let own = Address::parse(&address_of(KEY)).unwrap();
+    let other = address_of(OUTSIDER_KEY);
+    let guest = format!("Guest#{}", &own.as_str()[38..]);
+    assert_eq!(shown_name("  Ada \t Lovelace ", Some(&own)), "Ada Lovelace");
+    // Direction overrides, zero-width marks, the grapheme joiner, variation
+    // selectors and tags render nothing.
+    assert_eq!(
+        shown_name("Mod\u{202e}rotareD\u{200b}", Some(&own)),
+        "ModrotareD"
+    );
+    assert_eq!(shown_name("A\u{34f}d\u{fe0f}a\u{e0041}", Some(&own)), "Ada");
+    // Names that render blank (fillers, the blank braille cell) fall back.
+    for blank in [
+        "\u{200b}\u{feff}",
+        "\u{3164}\u{3164}",
+        "\u{115f}\u{1160}",
+        "\u{ffa0}",
+        "\u{2800}",
+    ] {
+        assert_eq!(shown_name(blank, Some(&own)), guest, "{blank:?}");
+    }
+    // Another wallet's address, bare, inside a name, split by an invisible
+    // character, through lookalike letters or abbreviated, is not shown.
+    let (head, tail) = other.split_at(22);
+    let lookalike = other
+        .replacen("0x", "0\u{445}", 1)
+        .replace('a', "\u{430}")
+        .replace('e', "\u{435}");
+    let abbreviated = format!("{}…{}", &other[..6], &other[38..]);
+    for spoof in [
+        other.clone(),
+        format!("admin {}", other.to_uppercase().replace("0X", "0x")),
+        format!("{head}\u{34f}{tail}"),
+        lookalike,
+        abbreviated.clone(),
+        abbreviated.replace('…', "..."),
+        format!("\u{ff10}\u{ff58}{}", &other[2..]),
+    ] {
+        assert_eq!(shown_name(&spoof, Some(&own)), guest, "{spoof:?}");
+    }
+    assert_eq!(shown_name(&other, None), "Streamer");
+    // Another viewer's default name is not shown; the caller's own is.
+    assert_eq!(shown_name("Guest#beef", Some(&own)), guest);
+    assert_eq!(shown_name(&guest, Some(&own)), guest);
+    // The caller's own address, full or abbreviated, is theirs to show.
+    assert_eq!(shown_name(own.as_str(), Some(&own)), own.as_str());
+    let own_short = format!("{}…{}", &own.as_str()[..6], &own.as_str()[38..]);
+    // NFKC spells the ellipsis as three dots.
+    assert_eq!(
+        shown_name(&own_short, Some(&own)),
+        own_short.replace('…', "...")
+    );
+    assert_eq!(shown_name("Viewer #1", Some(&own)), "Viewer #1");
+    assert_eq!(shown_name("Oxford Room", Some(&own)), "Oxford Room");
+}
+
+/// A streamer identity of `place` whose token was minted `age_ms` ago, as
+/// `streamer_token` mints them (a version 7 UUID carries the time).
+fn streamer_minted_ago(place: &str, age_ms: i64) -> String {
+    let mut bytes = *Uuid::new_v4().as_bytes();
+    let ms = ((chrono::Utc::now().timestamp_millis() - age_ms) as u64).to_be_bytes();
+    bytes[..6].copy_from_slice(&ms[2..]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x70;
+    format!(
+        "stream:{place}:{}:{}",
+        Uuid::new_v4(),
+        Uuid::from_bytes(bytes)
+    )
+}
+
+#[tokio::test]
+async fn streamer_presenters_stay_bounded_and_follow_the_streamers_session() {
+    let Some(pool) = scratch().await else { return };
+    let scene = genesis_scene();
+    seed_genesis_place(&pool, &scene, None).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness(pool.clone(), Some(room), PermissionDecision::Allowed, None).await;
+    let key = seed_access(
+        &pool,
+        &scene.place_id,
+        Some(&scene.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    // Ten ids whose token expired unused, 32 recent ones (the first connected), and a wallet.
+    let expired: Vec<String> = (0..10)
+        .map(|_| streamer_minted_ago(&scene.place_id, 10 * 60 * 1000))
+        .collect();
+    let recent: Vec<String> = (0..32)
+        .map(|_| streamer_minted_ago(&scene.place_id, 60 * 1000))
+        .collect();
+    let admin = address_of(KEY);
+    let mut listed: Vec<Value> = expired.iter().chain(&recent).map(|id| json!(id)).collect();
+    listed.push(json!(admin));
+    h.livekit
+        .set_metadata(&scene.room, json!({ "presenters": listed }));
+    h.livekit
+        .join(&scene.room, &recent[0], chrono::Utc::now().timestamp());
+
+    let (status, body) = h
+        .post(
+            "/cast/streamer-token",
+            json!({"token": key, "identity": address_of(OUTSIDER_KEY)}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let streamer = body["identity"].as_str().unwrap().to_owned();
+    // An address is not a streamer's name to show.
+    assert_eq!(claims(&body["token"])["name"], "Streamer");
+    let presenters: Vec<String> =
+        serde_json::from_value(h.livekit.metadata(&scene.room)["presenters"].clone()).unwrap();
+    // Expired ids went first; then the oldest recent one not in the room made way.
+    assert!(expired.iter().all(|id| !presenters.contains(id)));
+    assert_eq!(
+        presenters
+            .iter()
+            .filter(|id| id.starts_with("stream:"))
+            .count(),
+        32
+    );
+    assert!(presenters.contains(&recent[0]));
+    assert!(!presenters.contains(&recent[1]));
+    assert!(presenters.contains(&streamer));
+    assert!(presenters.contains(&admin));
+
+    // Through the LiveKit webhook: the old session of a full reconnect leaves
+    // with DUPLICATE_IDENTITY and keeps the streamer; a real leave removes it,
+    // and a rejoin with the live credential puts it back.
+    let event = |id: &str, kind: &str, at: i64, reason: Option<&str>| {
+        let mut participant = json!({"sid": format!("PA_{id}"), "identity": streamer});
+        if let Some(reason) = reason {
+            participant["disconnectReason"] = json!(reason);
+        }
+        json!({"id": id, "event": kind, "createdAt": at, "room": {"name": scene.room}, "participant": participant})
+    };
+    let dispatch = crate::gatekeeper::webhook::dispatch_for_tests;
+    let listed = |h: &Harness| {
+        h.livekit.metadata(&scene.room)["presenters"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(streamer))
+    };
+    dispatch(
+        &h.state,
+        &event(
+            &format!("dup-{}", tag()),
+            "participant_left",
+            100,
+            Some("DUPLICATE_IDENTITY"),
+        ),
+    )
+    .await
+    .unwrap();
+    assert!(
+        listed(&h),
+        "a full reconnect's old session keeps the presenter"
+    );
+    dispatch(
+        &h.state,
+        &event(
+            &format!("left-{}", tag()),
+            "participant_left",
+            101,
+            Some("CLIENT_INITIATED"),
+        ),
+    )
+    .await
+    .unwrap();
+    assert!(!listed(&h), "a streamer that left is no longer a presenter");
+    dispatch(
+        &h.state,
+        &event(&format!("join-{}", tag()), "participant_joined", 102, None),
+    )
+    .await
+    .unwrap();
+    assert!(
+        listed(&h),
+        "a streamer that rejoins with a live credential is a presenter again"
+    );
+    assert!(
+        h.livekit.metadata(&scene.room)["presenters"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(admin))
+    );
+}
+
+/// A concurrent change while a reset stores its credential (here the insert
+/// is silently skipped, as when another credential won the place): 409, the
+/// old key stays, no cleanup is recorded, and the new ingress is deleted.
+#[tokio::test]
+async fn a_reset_that_loses_to_a_concurrent_change_keeps_the_old_key() {
+    let Some(pool) = scratch().await else { return };
+    let scene = genesis_scene();
+    seed_genesis_place(&pool, &scene, None).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness(pool.clone(), Some(room), PermissionDecision::Allowed, None).await;
+    let metadata = scene_metadata(&scene);
+    let (status, first) = h
+        .signed(KEY, "GET", "/cast/generate-stream-link", &metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let function = format!("cast_skip_{}", tag());
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE FUNCTION social.{function}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
+         IF NEW.place_id = '{place}' THEN RETURN NULL; END IF; RETURN NEW; END $$; \
+         CREATE TRIGGER {function} BEFORE INSERT ON social.scene_stream_access \
+         FOR EACH ROW EXECUTE FUNCTION social.{function}();",
+        place = scene.place_id
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = h
+        .signed(KEY, "PUT", "/scene-stream-access", &metadata, None)
+        .await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP TRIGGER {function} ON social.scene_stream_access; DROP FUNCTION social.{function}();"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    // The reset route answers its own failure text for anything but success.
+    assert!(
+        status.is_client_error() || status.is_server_error(),
+        "{status} {body}"
+    );
+    let (kept, pending): (String, bool) = sqlx::query_as(
+        "SELECT streaming_key, EXISTS(SELECT 1 FROM social.scene_stream_cleanup c WHERE c.access_id = a.id) \
+         FROM social.scene_stream_access a WHERE place_id = $1 AND active",
+    )
+    .bind(&scene.place_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, first["streamingKey"].as_str().unwrap());
+    assert!(!pending);
+    assert_eq!(h.livekit.ingresses.load(Ordering::SeqCst), 2);
+    assert_eq!(h.livekit.deleted_ingresses.load(Ordering::SeqCst), 1);
+}
+
+/// A reset intent whose replacement never arrived (left by a crash before
+/// replacements committed with their intent, or a replacement revoked in
+/// turn) is delivered as a revocation once the grace hour is over, instead of
+/// retrying forever; a recent one keeps waiting.
+#[tokio::test]
+async fn an_orphaned_reset_becomes_a_revocation_after_an_hour() {
+    let Some(pool) = scratch().await else { return };
+    let scene = genesis_scene();
+    seed_genesis_place(&pool, &scene, None).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness(pool.clone(), Some(room), PermissionDecision::Allowed, None).await;
+    let mut intents = Vec::new();
+    for age in [chrono::Duration::hours(2), chrono::Duration::minutes(10)] {
+        seed_access(
+            &pool,
+            &scene.place_id,
+            Some(&scene.room),
+            chrono::Duration::days(1),
+        )
+        .await;
+        let id: Uuid = sqlx::query_scalar(
+            "UPDATE social.scene_stream_access SET active = false WHERE place_id = $1 AND active RETURNING id",
+        )
+        .bind(&scene.place_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO social.scene_stream_cleanup (access_id, place_id, notification_kind, occurred_at, due_at, ingress_deleted) \
+             VALUES ($1, $2, 'streaming_key_reset', timezone('UTC', now()) - $3::interval, timezone('UTC', now()), true)",
+        )
+        .bind(id)
+        .bind(&scene.place_id)
+        .bind(format!("{} seconds", age.num_seconds()))
+        .execute(&pool)
+        .await
+        .unwrap();
+        intents.push(id);
+    }
+    crate::gatekeeper::streaming::drain_cleanup_for_test(&h.state)
+        .await
+        .unwrap();
+    let kind = |id: Uuid| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT notification_kind FROM social.scene_stream_cleanup WHERE access_id = $1",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(
+        kind(intents[0]).await.as_deref(),
+        Some("streaming_key_revoke")
+    );
+    assert_eq!(
+        kind(intents[1]).await.as_deref(),
+        Some("streaming_key_reset")
+    );
 }

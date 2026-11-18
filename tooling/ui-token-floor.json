@@ -1,4 +1,32 @@
 {
+  "apps/sites/src/features/account/AccountLayout.module.css": {
+    "primitives": 0,
+    "tokens": 24
+  },
+  "apps/sites/src/features/account/AccountSidebar.module.css": {
+    "primitives": 0,
+    "tokens": 34
+  },
+  "apps/sites/src/features/account/CreditsSettings.module.css": {
+    "primitives": 0,
+    "tokens": 14
+  },
+  "apps/sites/src/features/account/LeaveCreditsDialog.module.css": {
+    "primitives": 0,
+    "tokens": 21
+  },
+  "apps/sites/src/features/account/NotificationGroupAccordion.module.css": {
+    "primitives": 0,
+    "tokens": 12
+  },
+  "apps/sites/src/features/account/NotificationsSettings.module.css": {
+    "primitives": 0,
+    "tokens": 24
+  },
+  "apps/sites/src/features/components/CopyAddress.module.css": {
+    "primitives": 0,
+    "tokens": 12
+  },
   "apps/sites/src/features/components/chrome/SitesTopBar.module.css": {
     "primitives": 0,
     "tokens": 12
@@ -39,6 +67,10 @@
     "primitives": 0,
     "tokens": 14
   },
+  "apps/sites/src/features/profile/ProfileHeader.module.css": {
+    "primitives": 0,
+    "tokens": 19
+  },
   "apps/sites/src/features/social/report/ReportForm.module.css": {
     "primitives": 0,
     "tokens": 77
@@ -73,10 +105,6 @@
   },
   "apps/ui3/src/explorer/pages/social.css": {
     "primitives": 3,
-    "tokens": 0
-  },
-  "apps/ui3/src/landings/pages/ldhomepage.css": {
-    "primitives": 5,
     "tokens": 0
   },
   "apps/ui3/src/landings/pages/ldinvitereferralview.css": {
@@ -157,10 +185,6 @@
   },
   "apps/ui3/src/web/pages/stprofilereferralrewardstab.css": {
     "primitives": 16,
-    "tokens": 0
-  },
-  "apps/ui3/src/web/pages/stsocialcommunitydetail.css": {
-    "primitives": 18,
     "tokens": 0
   },
   "apps/ui3/src/web/pages/ststorageenvironment.css": {

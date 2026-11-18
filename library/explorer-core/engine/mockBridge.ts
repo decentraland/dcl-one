@@ -20,6 +20,7 @@ import {
   type Emote,
   type Envelope,
   type GalleryPhoto,
+  type GiftableItem,
   type Outfit,
   type OutfitsMetadata,
   type PageToScene,
@@ -1282,6 +1283,29 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       reply({ kind: 'catalogPage', catalog: 'wearables', items: items.slice(start, start + msg.pageSize), total, requestId: msg.requestId })
       return
     }
+    if (msg.kind === 'giftingQuery') {
+      // The collectibles as owned matic tokens: every third one owns three copies, and the first equipped one
+      // only one, so the picker's count, equipped cover and spare-copy rules all show in ?mock=1.
+      const collectibles = mockWearables.filter((w) => (w.rarity ?? 'base') !== 'base')
+      const owned: GiftableItem[] = (msg.catalog === 'wearables' ? collectibles : collectibles.slice(0, 5)).map((w, i) => {
+        const item = `urn:decentraland:matic:collections-v2:0x${(i + 1).toString(16).padStart(40, '0')}:0`
+        const amount = i % 3 === 0 ? 3 : 1
+        return {
+          urn: item,
+          name: msg.catalog === 'wearables' ? w.name : `Mock Emote ${i + 1}`,
+          rarity: w.rarity,
+          category: msg.catalog === 'wearables' ? w.category : 'dance',
+          thumbnail: w.thumbnail,
+          amount,
+          tokens: Array.from({ length: amount }, (_, t) => ({ urn: `${item}:${100 + t}`, tokenId: String(100 + t), transferredAt: 1_700_000_000 + t }))
+        }
+      })
+      const items = msg.search ? owned.filter((o) => o.name.toLowerCase().includes(msg.search!.toLowerCase())) : owned
+      const start = msg.page * msg.pageSize
+      const equipped = owned[1] != null ? [owned[1].tokens[0]!.urn] : []
+      reply({ kind: 'giftingPage', catalog: msg.catalog, items: items.slice(start, start + msg.pageSize), total: items.length, equipped, failed: false, requestId: msg.requestId })
+      return
+    }
     if (msg.kind === 'setAvatarColor') {
       mockColors[msg.target] = msg.color
       reply({ kind: 'wearables', equipped: equippedNow(), colors: mockColors })
@@ -1422,6 +1446,14 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     if (msg.kind === 'setEventAttending') {
       setMockReminder(msg.eventId, msg.attending)
       setTimeout(() => reply({ kind: 'eventAttending', eventId: msg.eventId, attending: msg.attending }), 300)
+      return
+    }
+    if (msg.kind === 'getPlace') {
+      setTimeout(() => reply({ kind: 'place', requestId: msg.requestId, place: { id: msg.id, user_like: false, user_dislike: false, user_favorite: false, user_visits: 1234, updated_at: new Date().toISOString() } }), 300)
+      return
+    }
+    if (msg.kind === 'getWorldAccess') {
+      setTimeout(() => reply({ kind: 'worldAccess', requestId: msg.requestId, access: 'allowed' }), 300)
       return
     }
     if (msg.kind === 'getEventPlaces') {
@@ -1811,6 +1843,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       })
       return
     }
+    if (msg.kind === 'quit') return
     if (msg.kind === 'deleteGalleryPhoto') {
       const i = mockGallery.findIndex((p) => p.id === msg.id)
       if (i >= 0) mockGallery.splice(i, 1)
