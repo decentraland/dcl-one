@@ -775,6 +775,9 @@ def project(config, postgres_only=False):
     pulse = process('pulse', {'api': 'process_healthy', 'nats': 'process_healthy'})
     pulse['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': pulse_ports(config)[2], 'path': '/metrics'},
                                 'period_seconds': 1, 'failure_threshold': 60}
+    # Pulse exits when it loses its generation lease, as a PostgreSQL restart does; a new start takes a fresh
+    # generation. The budget covers PostgreSQL coming back and is spent over the supervisor's lifetime.
+    pulse['availability'] = {'restart': 'on_failure', 'backoff_seconds': 2, 'max_restarts': 10}
     valkey = process('valkey')
     valkey['readiness_probe'] = {'exec': {'command': command('valkey-ready')},
                                  'period_seconds': 1, 'timeout_seconds': 15, 'failure_threshold': 60}
@@ -1321,7 +1324,9 @@ def wait_ready(timeout, postgres_only=False):
             raise RuntimeError('The development supervisor is not running. Run foundation-dev up.')
         listing = json.loads(processes.stdout)
         for process in listing:
-            if process.get('exit_code', 0) != 0 and not process.get('is_running'):
+            # A process waiting for its restart has failed only once its restart budget runs out.
+            if process.get('exit_code', 0) != 0 and not process.get('is_running') \
+                    and process.get('status') != 'Restarting':
                 name = process['name']
                 raise RuntimeError(f'{name} failed. Inspect foundation-dev logs {name}.')
         if time.monotonic() - reported >= PROGRESS_SECONDS:
@@ -1337,6 +1342,8 @@ def wait_ready(timeout, postgres_only=False):
                     ensure_collation(config, 'template1')
                 print('PostgreSQL is ready for scratch test databases.')
                 return 0
+            if any(process.get('status') == 'Restarting' for process in listing):
+                raise RuntimeError('A process is restarting')
             for url in urls:
                 with urllib.request.urlopen(url, timeout=3) as response:
                     if response.status != 200:

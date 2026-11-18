@@ -51,7 +51,8 @@ and shows no other avatars:
   --webtransport-developer-mode --ignore-certificate-errors-spki-list=<hash from status>
 ```
 
-`/about` answers 503 while Pulse is down.
+`/about` answers 503 while Pulse is down. Pulse exits when it loses its generation lease (a PostgreSQL
+restart ends it), and the supervisor starts it again with a fresh generation.
 
 ## Data profiles
 
