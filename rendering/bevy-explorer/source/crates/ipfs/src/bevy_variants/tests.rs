@@ -119,9 +119,7 @@ fn reads_any_version_and_rejects_garbage() {
         );
     }
     // the entries of the first manifests were objects, not paths: not a manifest
-    let objects = format!(
-        r#"{{"v": 2, "files": {{"{ORIGINAL_CID}": [{{"cid": "{VARIANT_CID}"}}]}}}}"#
-    );
+    let objects = format!(r#"{{"v": 2, "files": {{"{ORIGINAL_CID}": [{{"cid": "{VARIANT_CID}"}}]}}}}"#);
     assert!(parse_manifest(objects.as_bytes()).is_err());
     assert!(parse_manifest(b"<html>not found</html>").is_err());
     assert!(parse_manifest(br#"{"error": "not found"}"#).is_err());
