@@ -628,6 +628,9 @@ export function keyDefinition(code: string): KeyDefinition | null {
   }
   const digit = /^Digit([0-9])$/.exec(code)
   if (digit) return { key: digit[1], keyCode: digit[1].charCodeAt(0), text: digit[1], location: 0 }
+  // the numpad's digits (the quick emotes' keys): their own key codes, 96 to 105, on the numpad
+  const numpad = /^Numpad([0-9])$/.exec(code)
+  if (numpad) return { key: numpad[1], keyCode: 96 + Number(numpad[1]), text: numpad[1], location: 3 }
   const fn = /^F([1-9]|1[0-2])$/.exec(code)
   if (fn) return { key: code, keyCode: 111 + Number(fn[1]), location: 0 }
   return Object.hasOwn(NAMED_KEYS, code) ? { ...NAMED_KEYS[code] } : null

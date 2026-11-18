@@ -6417,7 +6417,7 @@
     },
     {
       "path": "library/explorer-core/lib/hudAutomation.ts",
-      "sha256": "e8b933805487a1e9b7591d98dcfcc97d0b0570a2e756d4331c4459e22818bd8e"
+      "sha256": "69aa4676c25d046968e2f279185016aa2eb4f1983ecdac551a8335afcdf43512"
     },
     {
       "path": "library/explorer-core/lib/hudScale.ts",
@@ -6589,7 +6589,7 @@
     },
     {
       "path": "library/explorer-core/test/hudAutomation.test.ts",
-      "sha256": "b93bbc6f16817f308e3f5430c62c1fc9ad1cac5e2a43bb20a9bf6dbbc0843770"
+      "sha256": "ce26a8a657eb7dc453564ff4f2cbcc5af2da8d130b04be08016e679028dd45a0"
     },
     {
       "path": "library/explorer-core/test/hudScale.test.ts",

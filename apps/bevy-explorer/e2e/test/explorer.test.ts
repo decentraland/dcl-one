@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { ConsoleError, FakeConsole, commandOf, redactLine } from '../driver/console.ts'
-import { type CommandRecord, Explorer, parseLiveScenes, parsePortables, parseSmartWearables, type WorldState } from '../driver/explorer.ts'
+import { type CommandRecord, Explorer, parseLiveScenes, parsePortables, parseSmartWearables, realmTarget, type WorldState } from '../driver/explorer.ts'
 import { enterWorld } from '../driver/session.ts'
 
 function world(overrides: Partial<WorldState> = {}): string {
@@ -498,6 +498,18 @@ describe('Explorer', () => {
     const png = await explorer.screenshot()
     assert.equal(png.length, 9000)
     assert.match(records[0]!.reply ?? '', /\.\.\. \(12000 chars\)$/)
+  })
+})
+
+describe('realmTarget', () => {
+  test('a World is gone back to by its name, since its realm is the catalyst URL', () => {
+    assert.equal(realmTarget({ realm: 'https://peer.decentraland.zone', realmName: '33.dcl.eth' }), '33.dcl.eth')
+    assert.equal(realmTarget({ realm: 'https://peer.decentraland.zone', realmName: 'Pixelpixie.DCL.eth' }), 'Pixelpixie.DCL.eth')
+  })
+
+  test('Genesis City, or a realm with no name, is gone back to by its URL', () => {
+    assert.equal(realmTarget({ realm: 'https://peer.decentraland.zone', realmName: 'artemis' }), 'https://peer.decentraland.zone')
+    assert.equal(realmTarget({ realm: 'https://peer.decentraland.zone', realmName: null }), 'https://peer.decentraland.zone')
   })
 })
 
