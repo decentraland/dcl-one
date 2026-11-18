@@ -53,11 +53,10 @@ pub(super) async fn resolve<'e>(
     }
     let path = match input {
         PosterInput::Default => return Ok(DEFAULT_EVENT_IMAGE.into()),
-        PosterInput::Upstream(path) if matches!(write, PosterWrite::Create) => {
-            return Ok(node_assets::upstream_poster_url(path));
+        PosterInput::Upstream(_) if matches!(write, PosterWrite::Replace(_)) => {
+            return Err(invalid());
         }
-        PosterInput::Upstream(_) => return Err(invalid()),
-        PosterInput::Local(path) | PosterInput::Mounted(path) => path,
+        PosterInput::Upstream(path) | PosterInput::Local(path) | PosterInput::Mounted(path) => path,
     };
     let (kind, file) = path[1..].split_once('/').expect("validated poster path");
     let origin: Option<String> =
@@ -66,15 +65,17 @@ pub(super) async fn resolve<'e>(
             .bind(file)
             .fetch_optional(executor)
             .await?;
-    if origin.as_deref() == Some("local") {
+    if origin.as_deref() == Some("local") && !matches!(input, PosterInput::Upstream(_)) {
         return Ok(path.to_owned());
     }
     if matches!(
-        (write, input),
-        (PosterWrite::Create, PosterInput::Mounted(_))
-    ) && (origin.as_deref() == Some("upstream")
-        || (origin.is_none() && !node_assets::is_uploaded_poster_key(file)))
-    {
+        (write, input, origin.as_deref()),
+        (
+            PosterWrite::Create,
+            PosterInput::Mounted(_) | PosterInput::Upstream(_),
+            Some("upstream")
+        )
+    ) {
         return Ok(node_assets::upstream_poster_url(path));
     }
     Err(ApiError::bad_request("Poster upload not found"))
@@ -293,7 +294,7 @@ async fn upload(
     .execute(&state.pool)
     .await?;
     Ok(Json(poster_response(
-        state.settings.asset_rewrite_domain.as_deref(),
+        state.settings.asset_rewrite_base.as_deref(),
         kind,
         &name,
         size,
@@ -490,6 +491,16 @@ mod tests {
         assert_eq!(
             poster_response(None, "poster-vertical", "abc.webp", 7, "image/webp"),
             json!({ "ok": true, "data": { "filename": "poster-vertical/abc.webp", "url": "/events-assets-099ac00/poster-vertical/abc.webp", "size": 7, "type": "image/webp" } })
+        );
+        assert_eq!(
+            poster_response(
+                Some("https://node.example:8443/prefix"),
+                "poster",
+                "abc.webp",
+                7,
+                "image/webp"
+            )["data"]["url"],
+            "https://node.example:8443/prefix/events-assets-099ac00/poster/abc.webp"
         );
         assert_eq!(
             too_large("poster").to_string(),

@@ -132,9 +132,9 @@ impl MirrorSource {
 pub struct Settings {
     /// The node's content base URL; thumbnails from it pass the image filter.
     pub content_public_url: String,
-    /// The deployment's domain used for node-local asset paths in API records.
+    /// The deployment's public base used for node-local asset paths in API records.
     /// When unset, records retain their upstream asset URLs.
-    pub asset_rewrite_domain: Option<String>,
+    pub asset_rewrite_base: Option<String>,
     /// Bearer for the events moderation routes; unset refuses them.
     pub events_admin_token: Option<String>,
     /// Optional moderation webhook, dispatched only with operator writes enabled.
@@ -218,18 +218,25 @@ impl std::fmt::Debug for Settings {
 }
 
 impl Settings {
-    /// Use the public domain for node-local asset paths. Keep upstream URLs
-    /// for decentraland.org and its subdomains, IP addresses, single-label
-    /// hosts, and deployments without a public URL.
-    pub fn asset_rewrite_domain_for(public_url: Option<&str>) -> Option<String> {
-        public_url
-            .and_then(|u| url::Url::parse(u).ok())
-            .and_then(|u| match u.host() {
-                Some(url::Host::Domain(h)) => Some(h.to_string()),
-                _ => None,
-            })
-            .filter(|h| h.contains('.'))
-            .filter(|h| h != "decentraland.org" && !h.ends_with(".decentraland.org"))
+    /// Use the complete public base for node-local paths when the node has
+    /// a public domain outside decentraland.org.
+    pub fn asset_rewrite_base_for(public_url: Option<&str>) -> Option<String> {
+        let url = url::Url::parse(public_url?).ok()?;
+        let url::Host::Domain(host) = url.host()? else {
+            return None;
+        };
+        if !matches!(url.scheme(), "http" | "https")
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || !host.contains('.')
+            || host == "decentraland.org"
+            || host.ends_with(".decentraland.org")
+        {
+            return None;
+        }
+        Some(url.as_str().trim_end_matches('/').to_owned())
     }
 
     pub fn events_asset_base_for(public_url: &str) -> String {
@@ -239,7 +246,7 @@ impl Settings {
     pub fn for_tests() -> Self {
         Self {
             content_public_url: "http://localhost/content/".to_string(),
-            asset_rewrite_domain: None,
+            asset_rewrite_base: None,
             events_admin_token: None,
             events_slack_webhook: None,
             events_upcoming_summaries_enabled: false,
@@ -316,12 +323,12 @@ impl ExploreState {
             places: PlacesComponent::new(
                 pool.clone(),
                 &settings.content_public_url,
-                settings.asset_rewrite_domain.clone(),
+                settings.asset_rewrite_base.clone(),
             )
             .with_worlds_mirror(settings.worlds_upstream.is_some()),
             events: EventsComponent::new(
                 pool.clone(),
-                settings.asset_rewrite_domain.clone(),
+                settings.asset_rewrite_base.clone(),
                 settings.events_asset_base_url.clone(),
             ),
             schedules: SchedulesComponent::new(pool.clone()),
@@ -1164,20 +1171,24 @@ mod tests {
     }
 
     #[test]
-    fn the_asset_rewrite_domain_is_the_public_host_unless_it_is_decentraland() {
+    fn the_asset_rewrite_base_preserves_the_public_mount_unless_it_is_decentraland() {
         assert_eq!(
-            Settings::asset_rewrite_domain_for(Some("https://interconnected.online/")).as_deref(),
-            Some("interconnected.online")
+            Settings::asset_rewrite_base_for(Some("https://node.example:8443/prefix/")).as_deref(),
+            Some("https://node.example:8443/prefix")
         );
         assert_eq!(
-            Settings::asset_rewrite_domain_for(Some("https://events.decentraland.org")),
+            Settings::asset_rewrite_base_for(Some("https://interconnected.online/")).as_deref(),
+            Some("https://interconnected.online")
+        );
+        assert_eq!(
+            Settings::asset_rewrite_base_for(Some("https://events.decentraland.org")),
             None
         );
         assert_eq!(
-            Settings::asset_rewrite_domain_for(Some("https://decentraland.org")),
+            Settings::asset_rewrite_base_for(Some("https://decentraland.org")),
             None
         );
-        assert_eq!(Settings::asset_rewrite_domain_for(None), None);
+        assert_eq!(Settings::asset_rewrite_base_for(None), None);
         for local in [
             "http://127.0.0.1:5212",
             "http://localhost:5212/",
@@ -1185,12 +1196,12 @@ mod tests {
             "http://devbox:5212",
         ] {
             assert_eq!(
-                Settings::asset_rewrite_domain_for(Some(local)),
+                Settings::asset_rewrite_base_for(Some(local)),
                 None,
                 "{local}"
             );
         }
-        assert_eq!(Settings::asset_rewrite_domain_for(Some("garbage")), None);
+        assert_eq!(Settings::asset_rewrite_base_for(Some("garbage")), None);
     }
 
     #[test]

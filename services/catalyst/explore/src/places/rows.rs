@@ -477,14 +477,14 @@ pub(super) fn world_thumbnail_key(key: &str) -> Option<std::borrow::Cow<'_, str>
 pub(super) fn place_image_url(
     value: Option<&str>,
     content_origin: Option<&ContentOrigin>,
-    asset_domain: Option<&str>,
+    asset_base: Option<&str>,
     world_thumbnail: Option<&str>,
 ) -> Option<String> {
     let value = value?;
     let sanitized = sanitize_image_url(Some(value), content_origin)?;
     // Match the stored URL because sanitization drops default ports and normalizes dot segments.
     let Some(mapped) =
-        asset_domain.and_then(|domain| crate::node_assets::node_asset_url(value, domain))
+        asset_base.and_then(|domain| crate::node_assets::node_asset_url(value, domain))
     else {
         return Some(sanitized);
     };
@@ -503,7 +503,7 @@ pub(super) fn place_image_url(
 pub(super) fn row_to_place(
     r: sqlx::postgres::PgRow,
     content_origin: Option<&ContentOrigin>,
-    asset_domain: Option<&str>,
+    asset_base: Option<&str>,
 ) -> PlaceRow {
     let viewer_favorite = r.try_get::<bool, _>("viewer_favorite").ok();
     let viewer_like = r.try_get::<Option<bool>, _>("viewer_like").ok().flatten();
@@ -535,7 +535,7 @@ pub(super) fn row_to_place(
                 .unwrap_or(None)
                 .as_deref(),
             content_origin,
-            asset_domain,
+            asset_base,
             r.try_get::<Option<String>, _>("world_thumbnail_hash")
                 .unwrap_or(None)
                 .as_deref(),
@@ -676,40 +676,48 @@ mod wire_tests {
         let cdn_image = "https://cdn.example/p.png";
         let cases = [
             (
-                Some("node.example"),
+                Some("https://node.example"),
                 Some(place_image),
                 Some("https://node.example/content/contents/bafyA"),
             ),
             (
-                Some("node.example"),
+                Some("https://node.example"),
                 Some("https://worlds-content-server.decentraland.org/contents/1b79"),
                 Some("https://node.example/worlds-content-server/contents/1b79"),
             ),
             (
-                Some("node.example"),
+                Some("https://node.example"),
                 Some("https://api.decentraland.org/v2/map.png?center=1,1"),
                 Some("https://node.example/api/v2/map.png?center=1,1"),
             ),
-            (Some("node.example"), Some(cdn_image), Some(cdn_image)),
-            (Some("node.example"), Some("javascript:alert(1)"), None),
-            (Some("node.example"), None, None),
             (
-                Some("node.example"),
+                Some("https://node.example"),
+                Some(cdn_image),
+                Some(cdn_image),
+            ),
+            (
+                Some("https://node.example"),
+                Some("javascript:alert(1)"),
+                None,
+            ),
+            (Some("https://node.example"), None, None),
+            (
+                Some("https://node.example"),
                 Some("https://peer-ec1.decentraland.org:443/content/contents/bafyA"),
                 Some(place_image),
             ),
             (
-                Some("node.example"),
+                Some("https://node.example"),
                 Some("https://peer-ec1.decentraland.org/content/contents/unused/../bafyA"),
                 Some(place_image),
             ),
             (None, Some(place_image), Some(place_image)),
         ];
-        for (asset_domain, image, expected) in cases {
+        for (asset_base, image, expected) in cases {
             let state = crate::ExploreState::new(
                 pool.clone(),
                 crate::Settings {
-                    asset_rewrite_domain: asset_domain.map(str::to_owned),
+                    asset_rewrite_base: asset_base.map(str::to_owned),
                     ..crate::Settings::for_tests()
                 },
                 None,
@@ -724,7 +732,7 @@ mod wire_tests {
             let place = row_to_place(
                 row,
                 state.places.content_origin(),
-                state.places.asset_domain(),
+                state.places.asset_base(),
             );
             assert_eq!(place.image.as_deref(), expected, "{image:?}");
         }
@@ -851,11 +859,11 @@ mod wire_tests {
             serde_json::from_str(&get_body(app, route).await).unwrap()
         }
 
-        for domain in [Some("node.example".to_owned()), None] {
+        for domain in [Some("https://node.example".to_owned()), None] {
             let state = Arc::new(crate::ExploreState::new(
                 pool.clone(),
                 crate::Settings {
-                    asset_rewrite_domain: domain.clone(),
+                    asset_rewrite_base: domain.clone(),
                     ..crate::Settings::for_tests()
                 },
                 None,

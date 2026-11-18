@@ -14,23 +14,16 @@ fn poster_path(path: &str) -> Option<(&str, &str)> {
     (matches!(kind, "poster" | "poster-vertical") && valid_file(file)).then_some((kind, file))
 }
 
-pub(crate) fn mounted_poster_url(path: &str, domain: Option<&str>) -> String {
-    match domain {
-        Some(domain) => format!("https://{domain}/{HOST_PREFIX}{path}"),
-        None => format!("/{HOST_PREFIX}{path}"),
-    }
+pub(crate) fn mounted_poster_url(path: &str, base: Option<&str>) -> String {
+    format!("{}/{HOST_PREFIX}{path}", base.unwrap_or_default())
 }
 
 /// Projects upload keys and copied posters onto the same mounted routes.
-pub(crate) fn event_image_url(
-    image: &str,
-    domain: Option<&str>,
-    events_asset_base: &str,
-) -> String {
+pub(crate) fn event_image_url(image: &str, base: Option<&str>, events_asset_base: &str) -> String {
     if poster_path(image).is_some() {
-        return mounted_poster_url(image, domain);
+        return mounted_poster_url(image, base);
     }
-    to_node(&absolute_default_image(image, events_asset_base), domain)
+    to_node(&absolute_default_image(image, events_asset_base), base)
 }
 
 /// Expand the bundled default for consumers that render a stored event.
@@ -54,8 +47,11 @@ pub(crate) fn upstream_poster_url(path: &str) -> String {
     format!("https://{POSTER_BUCKET}{path}")
 }
 
+fn mounted_path(path: &str) -> Option<&str> {
+    path.strip_prefix('/')?.strip_prefix(HOST_PREFIX)
+}
+
 /// Parses authoring inputs using the same poster keys and mount as the read projection.
-/// A mounted key needs the stored value or the poster index to identify its origin.
 pub(crate) fn event_poster_input<'a>(
     image: &'a str,
     settings: &Settings,
@@ -63,125 +59,99 @@ pub(crate) fn event_poster_input<'a>(
 ) -> Option<PosterInput<'a>> {
     let image = image.trim();
     let valid_kind = |path| poster_path(path).is_some_and(|(kind, _)| kind == expected_kind);
-    if image == DEFAULT_EVENT_IMAGE {
-        return Some(PosterInput::Default);
+    let legacy = |path| {
+        if path == DEFAULT_EVENT_IMAGE {
+            Some(PosterInput::Default)
+        } else {
+            valid_kind(path).then_some(PosterInput::Local(path))
+        }
+    };
+    if let Some(path) = mounted_path(image) {
+        return valid_kind(path).then_some(PosterInput::Mounted(path));
     }
-    if let Some(path) = image
-        .strip_prefix('/')
-        .and_then(|path| path.strip_prefix(HOST_PREFIX))
+    if let Some(input) = legacy(image) {
+        return Some(input);
+    }
+    let base = settings
+        .asset_rewrite_base
+        .as_deref()
+        .and_then(|base| Url::parse(base).ok());
+    if let Some(base) = &base
+        && let Some(path) = image.strip_prefix(base.path().trim_end_matches('/'))
+        && let Some(path) = mounted_path(path)
     {
         return valid_kind(path).then_some(PosterInput::Mounted(path));
     }
-    if valid_kind(image) {
-        return Some(PosterInput::Local(image));
-    }
-    if let Some((url, path)) = parse_upstream_url(image) {
-        if url.host_str() == Some(POSTER_BUCKET) {
-            return valid_kind(path).then_some(PosterInput::Upstream(path));
-        }
-        if let Some(path) = path
-            .strip_prefix('/')
-            .and_then(|path| path.strip_prefix(HOST_PREFIX))
-        {
-            return (url.host_str() == settings.asset_rewrite_domain.as_deref()
-                && valid_kind(path))
-            .then_some(PosterInput::Mounted(path));
-        }
-    }
-    let (url, path) = legacy_poster_url(image)?;
-    for base in [
-        &settings.events_asset_base_url,
-        &settings.content_public_url,
-    ] {
-        let Ok(base) = Url::parse(base) else { continue };
-        if base.origin() != url.origin() {
-            continue;
-        }
-        let prefix = base.path().trim_end_matches('/');
-        if let Some(path) = path.strip_prefix(prefix) {
-            if path == DEFAULT_EVENT_IMAGE {
-                return Some(PosterInput::Default);
-            }
-            if valid_kind(path) {
-                return Some(PosterInput::Local(path));
-            }
-        }
-        if path == DEFAULT_EVENT_IMAGE {
-            return Some(PosterInput::Default);
-        }
-        if valid_kind(path) {
-            return Some(PosterInput::Local(path));
-        }
-    }
-    None
-}
 
-fn legacy_poster_url(image: &str) -> Option<(Url, &str)> {
-    let (_, rest) = image.split_once("://")?;
-    let (authority, path) = rest.split_at(rest.find('/')?);
-    let url = Url::parse(image).ok()?;
-    if !matches!(url.scheme(), "http" | "https")
-        || image.bytes().any(|byte| byte.is_ascii_control())
-        || !authority.eq_ignore_ascii_case(&url[Position::BeforeHost..Position::AfterPort])
-        || path != url.path()
-        || (url.port().is_some()
-            && !matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]")))
-    {
+    let (url, path) = parse_asset_url(image)?;
+    if url.query().is_some() {
         return None;
     }
-    Some((url, path))
-}
-
-pub(crate) fn is_uploaded_poster_key(file: &str) -> bool {
-    file.split_once('.').is_some_and(|(hash, _)| {
-        hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+    if url.scheme() == "https" && url.port().is_none() && url.host_str() == Some(POSTER_BUCKET) {
+        return valid_kind(path).then_some(PosterInput::Upstream(path));
+    }
+    if let Some(base) = base
+        && base.origin() == url.origin()
+        && let Some(path) = path.strip_prefix(base.path().trim_end_matches('/'))
+        && let Some(path) = mounted_path(path)
+    {
+        return valid_kind(path).then_some(PosterInput::Mounted(path));
+    }
+    [
+        &settings.events_asset_base_url,
+        &settings.content_public_url,
+    ]
+    .into_iter()
+    .filter_map(|base| Url::parse(base).ok())
+    .filter(|base| base.origin() == url.origin())
+    .find_map(|base| {
+        path.strip_prefix(base.path().trim_end_matches('/'))
+            .and_then(legacy)
+            .or_else(|| legacy(path))
     })
 }
 
 /// Maps a recognised upstream asset to its path on the node's public domain.
-pub fn node_asset_url(url: &str, domain: &str) -> Option<String> {
+pub fn node_asset_url(url: &str, base: &str) -> Option<String> {
     let (parsed, path_and_query) = parse_upstream_url(url)?;
     let host = parsed.host_str()?;
     let path = parsed.path();
 
     if host == "api.decentraland.org" && matches!(path, "/v1/map.png" | "/v2/map.png") {
-        return Some(format!("https://{domain}/api{path_and_query}"));
+        return Some(format!("{base}/api{path_and_query}"));
     }
     if parsed.query().is_some() {
         return None;
     }
 
     match host {
-        POSTER_BUCKET if poster_path(path).is_some() => {
-            Some(mounted_poster_url(path, Some(domain)))
-        }
+        POSTER_BUCKET if poster_path(path).is_some() => Some(mounted_poster_url(path, Some(base))),
         host if is_peer_host(host)
             && path
                 .strip_prefix("/content/contents/")
                 .is_some_and(is_asset_segment) =>
         {
-            Some(format!("https://{domain}{path}"))
+            Some(format!("{base}{path}"))
         }
         "worlds-content-server.decentraland.org"
             if path
                 .strip_prefix("/contents/")
                 .is_some_and(is_asset_segment) =>
         {
-            Some(format!("https://{domain}/worlds-content-server{path}"))
+            Some(format!("{base}/worlds-content-server{path}"))
         }
         _ => None,
     }
 }
 
 /// Leaves the stored URL intact when there is no domain or the asset is unrecognised.
-pub fn to_node(url: &str, domain: Option<&str>) -> String {
-    domain
-        .and_then(|domain| node_asset_url(url, domain))
+pub fn to_node(url: &str, base: Option<&str>) -> String {
+    base.and_then(|base| node_asset_url(url, base))
         .unwrap_or_else(|| url.to_owned())
 }
 
 /// Maps a production jump link to the node while retaining its query spelling.
-pub fn node_page_url(url: &str, domain: &str) -> Option<String> {
+pub fn node_page_url(url: &str, base: &str) -> Option<String> {
     let (parsed, path_and_query) = parse_upstream_url(url)?;
     if parsed.host_str()? != "decentraland.org"
         || !matches!(parsed.path(), "/jump" | "/jump/events")
@@ -190,24 +160,28 @@ pub fn node_page_url(url: &str, domain: &str) -> Option<String> {
         return None;
     }
 
-    Some(format!("https://{domain}{path_and_query}"))
+    Some(format!("{base}{path_and_query}"))
 }
 
 fn parse_upstream_url(url: &str) -> Option<(Url, &str)> {
-    let (scheme, rest) = url.split_once("://")?;
-    if !scheme.eq_ignore_ascii_case("https") || url.bytes().any(|byte| byte.is_ascii_control()) {
-        return None;
-    }
+    let (parsed, path_and_query) = parse_asset_url(url)?;
+    (parsed.scheme() == "https" && parsed.port().is_none()).then_some((parsed, path_and_query))
+}
 
-    let parsed = Url::parse(url).ok()?;
-    let host = parsed.host_str()?;
+fn parse_asset_url(url: &str) -> Option<(Url, &str)> {
+    let (_, rest) = url.split_once("://")?;
     let (authority, path_and_query) = rest.split_at(rest.find('/')?);
+    let parsed = Url::parse(url).ok()?;
     let path = path_and_query
         .split_once('?')
         .map_or(path_and_query, |(path, _)| path);
 
-    // Check the raw authority and path because Url normalizes default ports and dot segments.
-    if !authority.eq_ignore_ascii_case(host) || path != parsed.path() || parsed.fragment().is_some()
+    // Url can normalize explicit default ports and dot segments.
+    if !matches!(parsed.scheme(), "http" | "https")
+        || url.bytes().any(|byte| byte.is_ascii_control())
+        || !authority.eq_ignore_ascii_case(&parsed[Position::BeforeHost..Position::AfterPort])
+        || path != parsed.path()
+        || parsed.fragment().is_some()
     {
         return None;
     }
@@ -243,7 +217,7 @@ fn is_asset_segment(segment: &str) -> bool {
 mod tests {
     use super::{node_asset_url, node_page_url, to_node};
 
-    const D: &str = "node.example";
+    const D: &str = "https://node.example";
 
     #[test]
     fn poster_projection_uses_inputs_the_upload_policy_recognizes() {
@@ -252,8 +226,8 @@ mod tests {
 
         for domain in [None, Some(D.to_owned())] {
             let settings = Settings {
-                asset_rewrite_domain: domain.clone(),
-                events_asset_base_url: format!("https://{D}/events"),
+                asset_rewrite_base: domain.clone(),
+                events_asset_base_url: format!("{D}/events"),
                 ..Settings::for_tests()
             };
             for kind in ["poster", "poster-vertical"] {
@@ -299,9 +273,50 @@ mod tests {
     }
 
     #[test]
+    fn mounted_inputs_require_the_configured_origin_and_path() {
+        use super::{PosterInput, event_poster_input, mounted_poster_url};
+        let base = "https://node.example:8443/prefix";
+        let settings = crate::Settings {
+            asset_rewrite_base: Some(base.into()),
+            events_asset_base_url: format!("{base}/events"),
+            ..crate::Settings::for_tests()
+        };
+        let key = "/poster/example.webp";
+        let mounted = mounted_poster_url(key, Some(base));
+        assert_eq!(
+            event_poster_input(&mounted, &settings, "poster"),
+            Some(PosterInput::Mounted(key))
+        );
+        assert_eq!(
+            event_poster_input(
+                "/prefix/events-assets-099ac00/poster/example.webp",
+                &settings,
+                "poster"
+            ),
+            Some(PosterInput::Mounted(key))
+        );
+        assert_eq!(
+            event_poster_input(&format!("{base}/events{key}"), &settings, "poster"),
+            Some(PosterInput::Local(key))
+        );
+        for invalid in [
+            mounted.replace(":8443", ":8444"),
+            mounted.replace(":8443", ""),
+            mounted.replace("/prefix", "/prefix-sibling"),
+            mounted.replace("/prefix", ""),
+        ] {
+            assert_eq!(
+                event_poster_input(&invalid, &settings, "poster"),
+                None,
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
     fn a_third_party_image_is_preserved_on_read_and_refused_by_upload_policy() {
         let settings = crate::Settings {
-            asset_rewrite_domain: Some(D.into()),
+            asset_rewrite_base: Some(D.into()),
             ..crate::Settings::for_tests()
         };
         let image = "https://images.example.org/cover.png";
@@ -316,8 +331,8 @@ mod tests {
         use crate::Settings;
 
         let settings = Settings {
-            asset_rewrite_domain: Some(D.to_owned()),
-            events_asset_base_url: format!("https://{D}/events"),
+            asset_rewrite_base: Some(D.to_owned()),
+            events_asset_base_url: format!("{D}/events"),
             ..Settings::for_tests()
         };
         for input in [

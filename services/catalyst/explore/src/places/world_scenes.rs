@@ -21,14 +21,12 @@ const PARENT_PRESENT_OR_INCOMPLETE: &str = "(NOT EXISTS (SELECT 1 FROM explore.m
 
 pub(super) fn scene_row(row: sqlx::postgres::PgRow, places: &PlacesComponent) -> Option<PlaceRow> {
     let thumbnail_hash: Option<String> = row.get("world_thumbnail_hash");
-    let mut place = row_to_place(row, places.content_origin(), places.asset_domain());
-    if let Some(domain) = places.asset_domain()
+    let mut place = row_to_place(row, places.content_origin(), places.asset_base());
+    if let Some(base) = places.asset_base()
         && let Some(hash) = thumbnail_hash.as_deref()
         && world_thumbnail_key(hash).is_some()
     {
-        place.image = Some(format!(
-            "https://{domain}/worlds-content-server/contents/{hash}"
-        ));
+        place.image = Some(format!("{base}/worlds-content-server/contents/{hash}"));
     }
     place.scene_place = true;
     let parse = |value: &str| -> Option<(i32, i32)> {

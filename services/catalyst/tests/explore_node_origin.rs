@@ -147,7 +147,7 @@ async fn check_explore_reads(public_url: Option<&str>) {
     let state = Arc::new(ExploreState::new(
         database.pool.clone(),
         Settings {
-            asset_rewrite_domain: Settings::asset_rewrite_domain_for(public_url),
+            asset_rewrite_base: Settings::asset_rewrite_base_for(public_url),
             ..Settings::for_tests()
         },
         None,
@@ -217,4 +217,9 @@ async fn no_answer_names_a_production_asset_host() {
 #[tokio::test]
 async fn answers_keep_stored_urls_without_a_public_url() {
     check_explore_reads(None).await;
+}
+
+#[tokio::test]
+async fn answers_keep_the_public_prefix_and_port() {
+    check_explore_reads(Some("https://node.example:8443/prefix")).await;
 }

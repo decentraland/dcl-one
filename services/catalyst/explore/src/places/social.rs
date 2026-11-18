@@ -624,7 +624,7 @@ mod tests {
             pool,
             crate::Settings {
                 places_base_url: "https://places.example.org/ignored".into(),
-                asset_rewrite_domain: Some("node.example".into()),
+                asset_rewrite_base: Some("https://node.example".into()),
                 ..crate::Settings::for_tests()
             },
             None,

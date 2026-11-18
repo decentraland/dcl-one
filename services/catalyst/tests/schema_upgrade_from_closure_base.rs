@@ -627,6 +627,14 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
             .fetch_one(pool)
             .await
             .unwrap();
+    sqlx::query(
+        "INSERT INTO explore.poster (kind,file,blob_cid,content_type,byte_size,origin,fetched_at)
+         VALUES ('poster','legacy.bin','fixture','application/octet-stream',12,'upstream',now())",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
     let done =
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
             .await
@@ -810,6 +818,26 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
             .await
             .unwrap();
     assert_eq!(status.exit_code(), 0, "{:?}", status.lines());
+
+    sqlx::query(
+        "INSERT INTO explore.poster (kind,file,blob_cid,content_type,byte_size,origin,fetched_at)
+         VALUES ('poster','new.avif','fixture','image/avif',16,'upstream',now())",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let posters: Vec<(String, String, i64)> =
+        sqlx::query_as("SELECT file,content_type,byte_size FROM explore.poster ORDER BY file")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        posters,
+        [
+            ("legacy.bin".into(), "application/octet-stream".into(), 12),
+            ("new.avif".into(), "image/avif".into(), 16),
+        ]
+    );
 
     // a change no step covers (a column dropped by hand) is refused, with nothing applied
     sqlx::query("ALTER TABLE worlds.worlds DROP COLUMN title")

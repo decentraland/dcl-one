@@ -2,7 +2,7 @@
 
 ## Public URLs and image paths
 
-Set `PUBLIC_URL` to the externally reachable node base URL, including any deployment prefix. The default bind-address fallback is for local use; a host such as `0.0.0.0` is not a public client destination. `EVENTS_BASE_URL` identifies the events website for sitemaps and does not select the backend asset origin.
+Set `PUBLIC_URL` to the externally reachable node base URL, including its port and any deployment prefix. Uploaded and mirrored posters share the `/events-assets-099ac00` mount on a configured public rewrite base. The default bind-address fallback is for local use; a host such as `0.0.0.0` is not a public client destination. `EVENTS_BASE_URL` identifies the events website for sitemaps and does not select the backend asset origin.
 
 An event created without a poster gets the old service's default (`createEvent.ts:209-224`): the parcel map `https://api.decentraland.org/v1/parcels/<x>/<y>/map.png` (the estate map `/v1/estates/<id>/map.png` once the scene's estate is known) for a land event, `EVENTS_BASE_URL/images/event-default.jpg` for a world event. The default is regenerated when the event moves and when a world event's poster is cleared; an organizer's own poster is never replaced. A row whose image is the local default `/assets/event-default.webp` expands it to `PUBLIC_URL/events/assets/event-default.webp` in responses and notifications.
 

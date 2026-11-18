@@ -81,7 +81,7 @@ impl ListSource {
 pub struct PlacesComponent {
     pool: PgPool,
     content_origin: Option<ContentOrigin>,
-    asset_domain: Option<String>,
+    asset_base: Option<String>,
     content_public_url: String,
     worlds_mirror_configured: bool,
     category_cache: TtlCache<CategoryCounts>,
@@ -91,11 +91,11 @@ pub struct PlacesComponent {
 
 impl PlacesComponent {
     /// Thumbnails from `content_public_url` are exempt from the internal-host image filter.
-    pub fn new(pool: PgPool, content_public_url: &str, asset_domain: Option<String>) -> Self {
+    pub fn new(pool: PgPool, content_public_url: &str, asset_base: Option<String>) -> Self {
         Self {
             pool,
             content_origin: ContentOrigin::parse(content_public_url),
-            asset_domain,
+            asset_base,
             content_public_url: content_public_url.to_string(),
             worlds_mirror_configured: false,
             category_cache: Default::default(),
@@ -113,8 +113,8 @@ impl PlacesComponent {
         self.content_origin.as_ref()
     }
 
-    pub fn asset_domain(&self) -> Option<&str> {
-        self.asset_domain.as_deref()
+    pub fn asset_base(&self) -> Option<&str> {
+        self.asset_base.as_deref()
     }
 
     /// Binds the signer to a page query; false means the page is known empty
@@ -262,7 +262,7 @@ impl PlacesComponent {
                 if r.try_get::<bool, _>("canonical_scene").unwrap_or(false) {
                     world_scenes::scene_row(r, self)
                 } else {
-                    Some(row_to_place(r, self.content_origin(), self.asset_domain()))
+                    Some(row_to_place(r, self.content_origin(), self.asset_base()))
                 }
             })
             .collect();
@@ -390,7 +390,7 @@ impl PlacesComponent {
         }
         Ok(q.fetch_optional(&self.pool)
             .await?
-            .map(|r| row_to_place(r, self.content_origin(), self.asset_domain())))
+            .map(|r| row_to_place(r, self.content_origin(), self.asset_base())))
     }
 
     /// The places-table rows an id set names, as `POST /api/places` lists them
@@ -602,7 +602,7 @@ impl PlacesComponent {
         let mut row = q
             .fetch_optional(&self.pool)
             .await?
-            .map(|r| row_to_place(r, self.content_origin(), self.asset_domain()));
+            .map(|r| row_to_place(r, self.content_origin(), self.asset_base()));
         if let Some(row) = row.as_mut() {
             self.fill_world_place_fields(std::slice::from_mut(row))
                 .await?;
@@ -667,7 +667,7 @@ impl PlacesComponent {
                 row.image = place_image_url(
                     text("image").as_deref(),
                     self.content_origin(),
-                    self.asset_domain(),
+                    self.asset_base(),
                     text("world_thumbnail_hash").as_deref(),
                 );
             }
@@ -1170,7 +1170,7 @@ mod world_fallback_tests {
         let state = crate::ExploreState::new(
             pool,
             crate::Settings {
-                asset_rewrite_domain: Some("node.example".into()),
+                asset_rewrite_base: Some("https://node.example".into()),
                 ..crate::Settings::for_tests()
             },
             None,

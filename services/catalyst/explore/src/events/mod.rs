@@ -231,7 +231,7 @@ pub struct NextEvent {
 
 pub struct EventsComponent {
     pool: PgPool,
-    rewrite_domain: Option<String>,
+    rewrite_base: Option<String>,
     events_asset_base_url: String,
     pub foundation: Arc<foundation::Foundation>,
 }
@@ -321,15 +321,11 @@ struct EventRow {
 }
 
 impl EventsComponent {
-    /// `rewrite_domain`: the domain for node-local asset paths in event records.
-    pub fn new(
-        pool: PgPool,
-        rewrite_domain: Option<String>,
-        events_asset_base_url: String,
-    ) -> Self {
+    /// `rewrite_base`: the public base for node-local asset paths in event records.
+    pub fn new(pool: PgPool, rewrite_base: Option<String>, events_asset_base_url: String) -> Self {
         Self {
             pool,
-            rewrite_domain,
+            rewrite_base,
             events_asset_base_url,
             foundation: Arc::new(foundation::Foundation::default()),
         }
@@ -340,7 +336,7 @@ impl EventsComponent {
     async fn view(&self, max_dates: usize) -> RecordView<'_> {
         self.foundation.refresh_if_stale(&self.pool).await;
         RecordView {
-            rewrite_domain: self.rewrite_domain.as_deref(),
+            rewrite_base: self.rewrite_base.as_deref(),
             events_asset_base_url: &self.events_asset_base_url,
             max_dates,
             foundation: self.foundation.snapshot(),
@@ -1010,7 +1006,7 @@ pub const FULL_RECURRENCE_WINDOW: usize = 1000;
 
 /// What a read projects a row with.
 struct RecordView<'a> {
-    rewrite_domain: Option<&'a str>,
+    rewrite_base: Option<&'a str>,
     events_asset_base_url: &'a str,
     max_dates: usize,
     foundation: foundation::Names,
@@ -1018,22 +1014,21 @@ struct RecordView<'a> {
 
 fn project_event_image(
     image: &str,
-    domain: Option<&str>,
+    base: Option<&str>,
     events_asset_base_url: &str,
 ) -> Option<String> {
     let image = sanitize_asset_url(image).ok()?;
     Some(crate::node_assets::event_image_url(
         &image,
-        domain,
+        base,
         events_asset_base_url,
     ))
 }
 
-fn project_event_url(url: &str, domain: Option<&str>) -> Option<String> {
+fn project_event_url(url: &str, base: Option<&str>) -> Option<String> {
     let url = validate_event_url(url).ok()?;
     Some(
-        domain
-            .and_then(|domain| crate::node_assets::node_page_url(&url, domain))
+        base.and_then(|base| crate::node_assets::node_page_url(&url, base))
             .unwrap_or(url),
     )
 }
@@ -1043,7 +1038,7 @@ fn event_row_to_record(
     verified_viewer: Option<&str>,
     view: &RecordView<'_>,
 ) -> EventRecord {
-    let rewrite_domain = view.rewrite_domain;
+    let rewrite_base = view.rewrite_base;
     let events_asset_base_url = view.events_asset_base_url;
     let raw = &r.raw;
     let start_at = r.start_at.map(|n| n.and_utc());
@@ -1053,10 +1048,10 @@ fn event_row_to_record(
     let image = raw
         .get("image")
         .and_then(Value::as_str)
-        .and_then(|s| project_event_image(s, rewrite_domain, events_asset_base_url));
+        .and_then(|s| project_event_image(s, rewrite_base, events_asset_base_url));
     let image_vertical = raw.get("image_vertical").cloned().and_then(|v| match v {
         Value::String(s) => {
-            project_event_image(&s, rewrite_domain, events_asset_base_url).map(Value::String)
+            project_event_image(&s, rewrite_base, events_asset_base_url).map(Value::String)
         }
         other => Some(other),
     });
@@ -1064,7 +1059,7 @@ fn event_row_to_record(
     let url = raw
         .get("url")
         .and_then(Value::as_str)
-        .and_then(|s| project_event_url(s, rewrite_domain));
+        .and_then(|s| project_event_url(s, rewrite_base));
     let user = raw_str(raw, "user").or_else(|| r.user_creator.clone());
     let owner_view = matches!((verified_viewer,user.as_deref()),(Some(viewer),Some(owner)) if viewer.eq_ignore_ascii_case(owner));
     let scene_name = strip_all_markup_opt(raw_str(raw, "scene_name"));
@@ -1287,9 +1282,9 @@ fn parse_dt(v: Option<&Value>) -> Option<DateTime<Utc>> {
 mod tests {
     use super::*;
 
-    fn test_view(rewrite_domain: Option<&'static str>) -> RecordView<'static> {
+    fn test_view(rewrite_base: Option<&'static str>) -> RecordView<'static> {
         RecordView {
-            rewrite_domain,
+            rewrite_base,
             events_asset_base_url: "https://events.decentraland.org",
             max_dates: MAX_EVENT_RECURRENT,
             foundation: Arc::new(std::collections::HashSet::new()),
@@ -1490,7 +1485,7 @@ mod tests {
         let rec = event_row_to_record(
             row_with(raw.clone(), None, None),
             None,
-            &test_view(Some("node.example")),
+            &test_view(Some("https://node.example")),
         );
         assert_eq!(
             rec.image.as_deref(),
@@ -1521,16 +1516,16 @@ mod tests {
         let local = "https://node.example/jump/events?position=0%2C0&realm=x.dcl.eth";
         let organiser = "https://example.com/party";
 
-        for (asset_domain, stored, expected) in [
-            (Some("node.example"), upstream, local),
+        for (asset_base, stored, expected) in [
+            (Some("https://node.example"), upstream, local),
             (None, upstream, upstream),
-            (Some("node.example"), organiser, organiser),
+            (Some("https://node.example"), organiser, organiser),
             (None, organiser, organiser),
         ] {
             let record = event_row_to_record(
                 row_with(json!({ "url": stored }), None, None),
                 None,
-                &test_view(asset_domain),
+                &test_view(asset_base),
             );
             assert_eq!(record.url.as_deref(), Some(expected), "{stored}");
         }
@@ -2081,7 +2076,9 @@ mod tests {
         );
         assert_eq!(
             rec.image_vertical,
-            Some(Value::String("/poster/bafabc123".into()))
+            Some(Value::String(
+                "/events-assets-099ac00/poster/bafabc123".into()
+            ))
         );
     }
 

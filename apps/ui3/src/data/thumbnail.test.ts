@@ -147,6 +147,51 @@ test("leaves unrecognized node poster paths, other origins, local uploads, signe
   }
 });
 
+describe("when a mounted poster uses the page's public base", () => {
+  let base: string;
+  let source: string;
+
+  beforeEach(() => {
+    vi.stubEnv("CATALYST_URL", "http://127.0.0.1:5210");
+    vi.stubEnv("VITE_CATALYST_URL", "");
+    base = "https://node.example";
+    source = `${base}/events-assets-099ac00/poster/copied.webp`;
+  });
+
+  describe("and the site has no explicit public base", () => {
+    beforeEach(() => {
+      vi.stubEnv("PUBLIC_CATALYST_URL", "");
+      vi.stubGlobal("window", { location: new URL(base) });
+    });
+
+    it("should leave the poster unchanged in both renders", () => {
+      for (const ssr of [true, false]) {
+        vi.stubEnv("SSR", ssr);
+        expect(publicThumbnail(source)).toBe(source);
+      }
+    });
+  });
+
+  describe("and the public base includes a prefix and port", () => {
+    let expected: string;
+
+    beforeEach(() => {
+      base = "https://node.example:8443/prefix";
+      source = `${base}/events-assets-099ac00/poster/copied.webp`;
+      expected = "/prefix/media/convert?width=640&url=" + encodeURIComponent("https://events-assets-099ac00.decentraland.org/poster/copied.webp");
+      vi.stubEnv("PUBLIC_CATALYST_URL", base);
+      vi.stubGlobal("__CATALYST_BASE__", base);
+    });
+
+    it("should use the same prefixed converter path in both renders", () => {
+      for (const ssr of [true, false]) {
+        vi.stubEnv("SSR", ssr);
+        expect(publicThumbnail(source)).toBe(expected);
+      }
+    });
+  });
+});
+
 test("a Foundation peer's collection thumbnail comes from the serving node's own derivative", () => {
   vi.stubEnv("VITE_CATALYST_URL", "");
   const path = "/lambdas/collections/contents/urn:decentraland:matic:collections-v2:0xabc:0/thumbnail";

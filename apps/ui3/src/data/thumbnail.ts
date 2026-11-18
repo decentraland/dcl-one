@@ -10,7 +10,15 @@ function catalystOrigin(): string | null {
   }
 }
 
-type EmbeddedWindow = Window & typeof globalThis & { __DCL_PLAY_EMBEDDED__?: boolean; __SITE_BASE__?: string };
+type EmbeddedWindow = Window & typeof globalThis & {
+  __CATALYST_BASE__?: string;
+  __DCL_PLAY_EMBEDDED__?: boolean;
+  __SITE_BASE__?: string;
+};
+
+const POSTER_MOUNT = "events-assets-099ac00";
+const POSTER_BUCKET = `${POSTER_MOUNT}.decentraland.org`;
+const UPLOADED_POSTER = /^\/[^/]+\/[0-9a-f]{64}\.[a-z]+$/i;
 
 function embeddedSiteBase(): string {
   if (typeof window === "undefined") return "";
@@ -20,6 +28,26 @@ function embeddedSiteBase(): string {
 
 function mediaBase(): string {
   return (import.meta.env.VITE_CATALYST_URL ?? "").replace(/\/$/, "") || embeddedSiteBase();
+}
+
+function mountedPoster(url: URL): { path: string; prefix: string } | undefined {
+  // The SSR transport can use a different origin than the public page.
+  const renderedBase = import.meta.env.SSR
+    ? (typeof process === "undefined" ? undefined : process.env.PUBLIC_CATALYST_URL)
+    : (typeof window === "undefined" ? undefined : (window as EmbeddedWindow).__CATALYST_BASE__);
+  const configured = mediaBase() || renderedBase;
+  if (!configured) return undefined;
+  const base = new URL(configured);
+  if (url.origin !== base.origin) return undefined;
+  const prefix = base.pathname.replace(/\/+$/, "");
+  const mount = `${prefix}/${POSTER_MOUNT}`;
+  if (!url.pathname.startsWith(mount)) return undefined;
+  const path = url.pathname.slice(mount.length);
+  return /^\/poster(?:-vertical)?\/[^/]+$/.test(path) ? { path, prefix } : undefined;
+}
+
+function resized(source: string, width: ThumbnailWidth, base: string): string {
+  return `${base}/media/convert?width=${width}&url=${encodeURIComponent(source)}`;
 }
 
 export function publicThumbnail(source: string | null | undefined, width: ThumbnailWidth = 640): string | undefined {
@@ -32,22 +60,24 @@ export function publicThumbnail(source: string | null | undefined, width: Thumbn
       url.searchParams.set("width", String(width));
       return url.toString();
     }
-    const nodePosterPath = url.origin === catalyst
-      ? /^\/events-assets-099ac00(\/poster(?:-vertical)?\/[^/]+)$/.exec(url.pathname)?.[1]
-      : undefined;
-    const uploadedPosterPath = /^\/[^/]+\/[0-9a-f]{64}\.[a-z]+$/i;
-    if (nodePosterPath && uploadedPosterPath.test(nodePosterPath)) return source;
-    const known = /^(peer(?:-[a-z]+\d)?|worlds-content-server|events-assets-099ac00|assets-cdn)\.decentraland\.org$/.test(url.hostname);
+    const mounted = mountedPoster(url);
+    if (mounted) {
+      return UPLOADED_POSTER.test(mounted.path)
+        ? source
+        : resized(`https://${POSTER_BUCKET}${mounted.path}`, width, mediaBase() || mounted.prefix);
+    }
+    const known = url.hostname === POSTER_BUCKET
+      || /^(peer(?:-[a-z]+\d)?|worlds-content-server|assets-cdn)\.decentraland\.org$/.test(url.hostname);
     if (/^peer(?:-[a-z]+\d)?\.decentraland\.org$/.test(url.hostname) && /^\/lambdas\/collections\/contents\/[^/]+\/thumbnail$/.test(url.pathname)) {
       return `${mediaBase()}${url.pathname}?width=${width}`;
     }
-    const eventMirror = url.hostname === "events-assets-099ac00.interconnected.online"
+    const eventMirror = url.hostname === `${POSTER_MOUNT}.interconnected.online`
       && /^\/poster(?:-vertical)?\/[^/]+$/.test(url.pathname);
-    const posterCopy = !known && !eventMirror && url.hostname.startsWith("events-assets-099ac00.")
-      && /^\/poster(?:-vertical)?\/[^/]+$/.test(url.pathname) && !uploadedPosterPath.test(url.pathname);
-    if (nodePosterPath || posterCopy) source = `https://events-assets-099ac00.decentraland.org${nodePosterPath ?? url.pathname}`;
+    const posterCopy = !known && !eventMirror && url.hostname.startsWith(`${POSTER_MOUNT}.`)
+      && /^\/poster(?:-vertical)?\/[^/]+$/.test(url.pathname) && !UPLOADED_POSTER.test(url.pathname);
+    if (posterCopy) source = `https://${POSTER_BUCKET}${url.pathname}`;
     else if (!known && !eventMirror) return source;
-    return `${mediaBase()}/media/convert?width=${width}&url=${encodeURIComponent(source)}`;
+    return resized(source, width, mediaBase());
   } catch { return source; }
 }
 
