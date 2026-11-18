@@ -14,6 +14,7 @@ import { getProjectId, track } from './analytics';
 import { getWindow } from './window';
 import { createLineBuffer, parseSceneBuildEvents } from './bevy-realm-build-events';
 import { clearAllRealmDown, clearRealmDown, markRealmDown } from './realm-status';
+import { captureRealmServerLogs, realmServerStopped } from './realm-server-logs';
 
 /**
  * The Bevy editor renderer loads the scene from an HTTP realm, and the inspector
@@ -107,6 +108,7 @@ async function startInternal(path: string): Promise<{ url: string; wsUrl: string
   });
 
   relayBuildEvents(path, child);
+  captureRealmServerLogs(path, child);
 
   // Track the child IMMEDIATELY (before waiting for it to serve) so a kill(path)
   // during startup — the user switches renderer or closes the editor while the
@@ -176,6 +178,7 @@ function watchExit(path: string, child: Child): void {
     if (shuttingDown || realms.get(path)?.child !== child) return;
     realms.delete(path);
     markRealmDown(path);
+    realmServerStopped(path);
     log.error(`[BevyRealm] ${path} exited unexpectedly: ${message}`);
     const window = getWindow(MAIN_WINDOW_ID);
     if (!window || window.isDestroyed()) return;
@@ -193,6 +196,7 @@ async function stopRealm(path: string): Promise<void> {
   const realm = realms.get(path);
   const promise = realm?.child.kill().catch(() => {});
   realms.delete(path);
+  if (realm && !shuttingDown) realmServerStopped(path);
   await promise;
 }
 

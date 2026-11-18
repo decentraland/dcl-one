@@ -64,10 +64,15 @@ export function cardEligibility(item: CatalogItem, session: Session) {
   return ruleFor({ asset, kind: assetKindOf(item.category), sale: resale ? "secondary" : "primaryMint", bundle: false, settlement: [] }, session);
 }
 
+/** A primary row whose mint has no copies left: sold out, with no price and no Buy, whatever its sale flags say. */
+export function isSoldOutPrimary(item: Pick<CatalogItem, "tokenId" | "listingType"> & { available?: number | null }): boolean {
+  return !item.tokenId && item.listingType !== "secondary" && item.available === 0;
+}
+
 export function cardPrice(item: CatalogItem, session: Session): CardPrice {
   const listed = item.onSale !== false && (item.priceCredits > 0 || !!item.manaWei || !!item.tradeId || item.acquisition === "store");
   const primary = !item.tokenId && item.listingType !== "secondary";
-  if (primary && item.available === 0) return { kind: "soldOut" };
+  if (isSoldOutPrimary(item)) return { kind: "soldOut" };
   // A catalogue row reports a closed mint as a zero price (hasPrimaryListing false). Our backend also sends
   // isOnSale false then, but upstream's catalogue can still mark it on sale with the trade row the mint left.
   if (!listed || (primary && item.hasPrimaryListing === false && !(item.priceCredits > 0))) return { kind: "notForSale" };
