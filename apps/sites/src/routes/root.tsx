@@ -29,7 +29,8 @@ import NotFoundPage from "@/features/not-found/NotFoundPage";
 import StatusPage from "@ui/components/StatusPage";
 import { EMBED_BOOT_SCRIPT } from "@ui/web/frames/embed";
 import type { ShouldRevalidateFunctionArgs } from "react-router";
-import { pageSid, sessionMiddleware } from "@/core/lib/telemetry/session";
+import { pageSid, parseCookies, sessionMiddleware } from "@/core/lib/telemetry/session";
+import { sitesLanguage } from "@ui/web/frames/sites-locale";
 import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { browserCatalystBase } from "@/data/lib/catalyst/bases";
 import { isCommitteeMember } from "@/data/lib/catalyst/creator-hub/committee-membership.server";
@@ -70,6 +71,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     catalystBase,
     shopApiMode,
     wallet,
+    locale: sitesLanguage(parseCookies(request.headers.get("cookie")).lang).code,
     /** The curation committee seat; read only for a Creator Hub path, false on every other path. */
     committee,
     /**
@@ -117,7 +119,7 @@ export function meta(_args: Route.MetaArgs) {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData("root") as
-    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; commitHash?: string; pulseServer?: string; catalystBase?: string; shopApiMode?: string }
+    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; commitHash?: string; pulseServer?: string; catalystBase?: string; shopApiMode?: string; locale?: string }
     | undefined;
   const publicEnv = JSON.stringify({
     thirdwebClientId: data?.thirdwebClientId ?? "",
@@ -137,7 +139,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     // The docs theme boot script sets data-docs-theme* on <html> before hydration.
-    <html lang="en" suppressHydrationWarning>
+    <html lang={data?.locale ?? "en"} suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />

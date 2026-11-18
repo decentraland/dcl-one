@@ -17,6 +17,7 @@ import {
 import {
   GeneralBell,
   GeneralClose,
+  GeneralCopy,
   GeneralDecentralandColor,
   GeneralDownArrow,
   GeneralManaColour,
@@ -57,9 +58,9 @@ export type NavBarBalances = {
   polygonMana?: number
 }
 
-export type NavBarAccountAction =
-  | { label: string; href: string; onSelect?: undefined }
-  | { label: string; onSelect: () => void; href?: undefined }
+export type NavBarAccountAction = { label: string; icon?: ReactNode } & (
+  { href: string; onSelect?: undefined } | { onSelect: () => void; href?: undefined }
+)
 
 /** The Sign in action: a link or a callback. */
 export type NavBarSignIn =
@@ -69,6 +70,8 @@ export type NavBarNotifications = {
   /** Unread notifications; the badge is hidden when 0, negative or not finite. */
   count?: number
   onSelect: () => void
+  panel?: ReactNode
+  expanded?: boolean
 }
 
 export type NavBarLabels = {
@@ -105,6 +108,7 @@ type NavBarCommonProps = {
   notifications?: NavBarNotifications
   /** Signed in: the account menu's entries, for example profile links and sign out. */
   accountActions?: readonly NavBarAccountAction[]
+  accountMenuAppearance?: 'default' | 'sites'
   linkComponent?: NavBarLinkComponent
   labels?: Partial<NavBarLabels>
   /**
@@ -331,18 +335,22 @@ function NotificationsButton({
   count,
   labels,
   icon,
-  onClick
+  onClick,
+  expanded
 }: {
   count: number
   labels: NavBarLabels
   icon?: ReactNode
   onClick: () => void
+  expanded?: boolean | undefined
 }) {
   return (
     <button
       type="button"
       className={styles.iconButton}
       aria-label={count > 0 ? labels.unreadNotifications(count) : labels.notifications}
+      aria-expanded={expanded}
+      aria-haspopup={expanded === undefined ? undefined : 'dialog'}
       onClick={(event) => {
         event.currentTarget.focus({ preventScroll: true })
         onClick()
@@ -378,7 +386,12 @@ function AccountActionList({
               href: action.href,
               className: styles.menuItem,
               onClick: onDone,
-              children: action.label
+              children: (
+                <>
+                  {action.icon}
+                  {action.label}
+                </>
+              )
             })
           ) : (
             <button
@@ -389,6 +402,7 @@ function AccountActionList({
                 action.onSelect()
               }}
             >
+              {action.icon}
               {action.label}
             </button>
           )}
@@ -403,21 +417,39 @@ function AccountMenu({
   actions,
   labels,
   renderLink,
-  onDone
+  onDone,
+  appearance
 }: {
   account: NavBarAccount
   actions: readonly NavBarAccountAction[]
   labels: NavBarLabels
   renderLink: LinkRenderer
   onDone?: () => void
+  appearance?: NavBarCommonProps['accountMenuAppearance']
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuId = useId()
   const { open, setOpen, toggle, onKeyDown, onBlur } = usePopup(rootRef, triggerRef)
   const displayName = account.name || shortAddress(account.address)
+  const sites = appearance === 'sites'
+  const [copyStatus, setCopyStatus] = useState('')
+  const copyAddress = async () => {
+    try {
+      await navigator.clipboard.writeText(account.address)
+      setCopyStatus('User ID copied')
+    } catch {
+      setCopyStatus('Could not copy user ID')
+    }
+  }
   return (
-    <div ref={rootRef} className={styles.account} onKeyDown={onKeyDown} onBlur={onBlur}>
+    <div
+      ref={rootRef}
+      className={styles.account}
+      data-appearance={appearance}
+      onKeyDown={onKeyDown}
+      onBlur={onBlur}
+    >
       <button
         ref={triggerRef}
         type="button"
@@ -425,17 +457,45 @@ function AccountMenu({
         aria-label={labels.account(displayName)}
         aria-expanded={open}
         aria-controls={menuId}
-        onClick={toggle}
+        onClick={() => {
+          setCopyStatus('')
+          toggle()
+        }}
       >
         <Avatar account={account} />
       </button>
       <div id={menuId} className={styles.accountMenu} hidden={!open} tabIndex={-1}>
-        <p className={styles.accountName}>{displayName}</p>
-        {account.name ? (
-          <p className={styles.accountAddress} title={account.address}>
-            {shortAddress(account.address)}
-          </p>
-        ) : null}
+        <div className={styles.accountHeader}>
+          {sites ? (
+            <div className={styles.accountMenuAvatar}>
+              <Avatar account={account} />
+            </div>
+          ) : null}
+          <div className={styles.accountDetails}>
+            <p className={styles.accountName}>{displayName}</p>
+            {sites ? (
+              <div className={styles.accountIdentity}>
+                <span>User ID</span>
+                <span title={account.address}>{shortAddress(account.address)}</span>
+                <button
+                  type="button"
+                  aria-label="Copy user ID"
+                  className={styles.iconButton}
+                  onClick={() => void copyAddress()}
+                >
+                  <GeneralCopy size={16} aria-hidden="true" />
+                </button>
+                <span role="status" className={styles.visuallyHidden}>
+                  {copyStatus}
+                </span>
+              </div>
+            ) : account.name ? (
+              <p className={styles.accountAddress} title={account.address}>
+                {shortAddress(account.address)}
+              </p>
+            ) : null}
+          </div>
+        </div>
         {actions.length > 0 ? (
           <AccountActionList
             actions={actions}
@@ -629,6 +689,7 @@ export function NavBar({
   mobileSecondaryNavigation,
   notifications,
   accountActions = [],
+  accountMenuAppearance,
   linkComponent,
   labels: labelOverrides,
   locale = 'en-US',
@@ -757,15 +818,22 @@ export function NavBar({
             </div>
           ) : null}
           {account && notifications ? (
-            <NotificationsButton
-              count={count}
-              labels={labels}
-              icon={icons?.notifications}
-              onClick={() => {
-                dismissDrawer()
-                notifications.onSelect()
-              }}
-            />
+            <div
+              className={styles.notificationControl}
+              data-panel={notifications.panel ? true : undefined}
+            >
+              <NotificationsButton
+                count={count}
+                labels={labels}
+                icon={icons?.notifications}
+                expanded={notifications.expanded}
+                onClick={() => {
+                  dismissDrawer()
+                  notifications.onSelect()
+                }}
+              />
+              {notifications.panel}
+            </div>
           ) : null}
           {hasAccountOverride ? (
             !drawerOpen && hasSlot(accountControl) ? (
@@ -773,7 +841,9 @@ export function NavBar({
             ) : null
           ) : account ? (
             <AccountMenu
+              key={account.address}
               account={account}
+              appearance={accountMenuAppearance}
               actions={accountActions}
               labels={labels}
               renderLink={renderLink}
