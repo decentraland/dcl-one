@@ -1,6 +1,6 @@
 import React from 'react';
 import { useDrag } from 'react-dnd';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import { useAppSelector } from '../../../redux/hooks';
 import { getMobileHudSelected } from '../../../redux/ui-designer';

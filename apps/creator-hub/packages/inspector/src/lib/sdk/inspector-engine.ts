@@ -1,4 +1,4 @@
-import mitt from 'mitt';
+import { createEmitter } from '../utils/emitter';
 
 import { createEngineContext } from '../data-layer/host/utils/engine';
 import { createFloorEntityContainer } from './entity-id-floor';
@@ -8,7 +8,7 @@ export function createInspectorEngine(): Omit<
   SdkContextValue,
   'operations' | 'enumEntity' | 'renderer' | 'currentRendererId'
 > {
-  const events = mitt<SdkContextEvents>();
+  const events = createEmitter<SdkContextEvents>();
   const { engine, components } = createEngineContext({
     // Allocate new authored entities above the active renderer's live-entity floor so
     // they can't collide with runtime code entities (#1468). Transparent when no

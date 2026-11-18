@@ -62,7 +62,7 @@ mod tests;
 
 use std::sync::Arc;
 
-use crate::routing::{erase, get, post};
+use crate::shared::routing::{erase, get, post};
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, OriginalUri};
 use axum::http::HeaderMap;
@@ -618,7 +618,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/v2/communities/{id}/members", get(members::get_members_v2))
         .route(
             "/v1/communities/{id}/members/{address}",
-            crate::routing::delete(members::remove_member)
+            crate::shared::routing::delete(members::remove_member)
                 .patch(erase(members::update_member_role)),
         )
         .route(
@@ -633,7 +633,7 @@ pub fn router(state: SharedState) -> Router {
         )
         .route(
             "/v1/communities/{id}/places/{placeId}",
-            crate::routing::delete(places::remove_place),
+            crate::shared::routing::delete(places::remove_place),
         )
         .route(
             "/v1/communities/{id}/posts",
@@ -642,7 +642,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/v2/communities/{id}/posts", get(posts::get_posts_v2))
         .route(
             "/v1/communities/{id}/posts/{postId}",
-            crate::routing::delete(posts::delete_post).patch(erase(posts::edit_post)),
+            crate::shared::routing::delete(posts::delete_post).patch(erase(posts::edit_post)),
         )
         .route(
             "/v1/communities/{id}/posts/{postId}/like",
@@ -658,7 +658,7 @@ pub fn router(state: SharedState) -> Router {
         )
         .route(
             "/v1/communities/{id}/requests/{requestId}",
-            crate::routing::patch(requests::update_request_status),
+            crate::shared::routing::patch(requests::update_request_status),
         )
         .route(
             "/v1/communities/{id}/managed",

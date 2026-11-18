@@ -1,13 +1,13 @@
-.MuiModal-root .MissingProjects .Row {
+[role="dialog"] .MissingProjects .Row {
   justify-content: space-between;
   margin-bottom: 20px;
 }
 
-.MuiModal-root .MissingProjects .Row .actions {
+[role="dialog"] .MissingProjects .Row .actions {
   display: flex;
 }
 
-.MuiModal-root .MissingProjects .discard-all {
+[role="dialog"] .MissingProjects .discard-all {
   width: 100%;
   padding: 10px 0;
   margin-top: 30px;

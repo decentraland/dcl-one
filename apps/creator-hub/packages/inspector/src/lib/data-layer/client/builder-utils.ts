@@ -1,6 +1,8 @@
 import { getConfig } from '../../logic/config';
 
-export async function downloadAssets(mappings: Record<string, string>) {
+export async function downloadAssets(
+  mappings: Record<string, string>,
+): Promise<Record<string, Buffer>> {
   const fileContent: Record<string, Buffer> = {};
 
   async function downloadAndAssignAsset([path, contentHash]: [string, string]) {

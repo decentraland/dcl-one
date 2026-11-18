@@ -401,6 +401,25 @@ impl CrdtContexts {
             .copied()
             .or_else(|| (!common::structs::multi_tenant()).then(|| self.shared()))
     }
+
+    /// Removes the contexts `keep` rejects and returns their entities. Marks the resource changed
+    /// only when something was removed: change-detecting readers (the listener AoI rebuild) must
+    /// not run on every frame of a per-frame sweep.
+    pub fn reap(contexts: &mut ResMut<Self>, mut keep: impl FnMut(&str) -> bool) -> Vec<Entity> {
+        let doomed: Vec<String> = contexts
+            .0
+            .iter()
+            .filter(|(hash, _)| !keep(hash))
+            .map(|(hash, _)| hash.clone())
+            .collect();
+        if doomed.is_empty() {
+            return Vec::new();
+        }
+        doomed
+            .iter()
+            .filter_map(|hash| contexts.0.remove(hash))
+            .collect()
+    }
 }
 
 impl GlobalCrdtState {
@@ -512,7 +531,10 @@ impl GlobalCrdtState {
     }
 }
 
+/// Requires `ForeignAvatar`: the avatar crate tells remote avatars apart by that marker, as it
+/// does not depend on comms.
 #[derive(Component, Debug)]
+#[require(common::structs::ForeignAvatar)]
 pub struct ForeignPlayer {
     pub address: Address,
     /// the crdt context (player-presence view) this player entity belongs to; the same
@@ -1627,6 +1649,59 @@ pub fn acceptable_emote_urn(urn: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Resource, Default)]
+    struct Doomed(Option<String>);
+
+    #[derive(Resource, Default)]
+    struct Observed {
+        changed: bool,
+    }
+
+    fn reap_doomed(mut contexts: ResMut<CrdtContexts>, doomed: Res<Doomed>) {
+        CrdtContexts::reap(&mut contexts, |hash| Some(hash) != doomed.0.as_deref());
+    }
+
+    fn observe(contexts: Res<CrdtContexts>, mut observed: ResMut<Observed>) {
+        observed.changed = contexts.is_changed();
+    }
+
+    #[test]
+    fn reaping_marks_contexts_changed_only_when_something_is_removed() {
+        let mut app = App::new();
+        let shared = app.world_mut().spawn_empty().id();
+        let room = app.world_mut().spawn_empty().id();
+        app.insert_resource(CrdtContexts(HashMap::from_iter([
+            (String::new(), shared),
+            ("room".to_owned(), room),
+        ])))
+        .init_resource::<Doomed>()
+        .init_resource::<Observed>()
+        .add_systems(Update, (reap_doomed, observe).chain());
+
+        // the first frame sees the resource as added
+        app.update();
+        assert!(app.world().resource::<Observed>().changed);
+
+        app.update();
+        assert!(!app.world().resource::<Observed>().changed);
+        assert_eq!(app.world().resource::<CrdtContexts>().0.len(), 2);
+
+        app.world_mut().resource_mut::<Doomed>().0 = Some("room".to_owned());
+        app.update();
+        assert!(app.world().resource::<Observed>().changed);
+        assert_eq!(
+            app.world()
+                .resource::<CrdtContexts>()
+                .0
+                .keys()
+                .collect::<Vec<_>>(),
+            vec![""]
+        );
+
+        app.update();
+        assert!(!app.world().resource::<Observed>().changed);
+    }
 
     #[test]
     fn a_packet_names_the_movement_state_it_announces() {

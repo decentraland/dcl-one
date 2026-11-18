@@ -1,10 +1,11 @@
-import { StrictMode } from 'react'
+import { Profiler, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import '@fontsource-variable/inter/index.css' // self-hosted Inter (matches the Figma type)
 // The shared design system's tokens and fonts (library/ui), loaded once for the whole HUD. Its rules sit in
 // cascade layers, so this app's own unlayered styles keep precedence.
 import '@dcl/one-ui/foundations.css'
 import { App } from './App'
+import { installHudMainThreadCostMeter, recordHudReactCommit } from './lib/hudMainThreadCost'
 import { registerCoiServiceWorker } from '@explorer-core/lib/coiServiceWorker'
 import { installCefNativeBridge } from '@explorer-core/lib/cefNativeBridge'
 import { installHudAutomation } from '@explorer-core/lib/hudAutomation'
@@ -12,6 +13,7 @@ import { installLocalNetworkFetch } from '@explorer-core/lib/localNetworkFetch'
 import { installHudScale } from '@explorer-core/lib/hudScale'
 import { countLaunch } from '@explorer-core/lib/launchCount'
 import { isNativeHud } from './lib/bootMode'
+import { publicUrl } from './lib/publicUrl'
 import { inShell } from '@explorer-core/lib/shell'
 import { loadPrefs } from '@explorer-core/lib/prefs'
 import { bootAnalytics, dropAttributionParams, listenForGoogleTag } from '@explorer-core/lib/analytics'
@@ -28,6 +30,14 @@ installHudScale()
 // The HUD's test commands: on the web engine.js runs them in this page (natively the engine asks
 // over window.cef, see cefNativeBridge).
 if (!isNativeHud()) installHudAutomation()
+
+// The HUD's main-thread cost meter (web only): the HUD's scripts are the bundle under assets/ in
+// a build and Vite's module URLs on the dev server.
+installHudMainThreadCostMeter(
+  import.meta.env.DEV
+    ? ['src/', '@fs/', '@id/', '@vite/', '@react-refresh', 'node_modules/'].map(publicUrl)
+    : [publicUrl('assets/')]
+)
 
 let redirecting = false
 // NATIVE (?native=1): bevy renders the 3D world *behind* this transparent webview, so the page must
@@ -73,7 +83,9 @@ if (!redirecting) void loadPrefs().then(() => {
   dropAttributionParams([AUTH_RETURN_PARAM])
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <App />
+      <Profiler id="hud" onRender={recordHudReactCommit}>
+        <App />
+      </Profiler>
     </StrictMode>
   )
 })

@@ -1,5 +1,4 @@
-import { isValid as isValidAddress } from 'decentraland-ui2/dist/components/AddressField/utils';
-
+const ADDRESS = /^0x[a-fA-F0-9]{40}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type CsvResult = {
@@ -16,7 +15,7 @@ export function parseCsv(fileName: string, content: string): CsvResult {
   const invalidLines: string[] = [];
   for (const line of content.split(/[\r\n]+/).map(text => text.trim())) {
     if (!line) continue;
-    if (isValidAddress(line)) addresses.add(line.toLowerCase());
+    if (ADDRESS.test(line)) addresses.add(line.toLowerCase());
     else if (UUID.test(line)) communityIds.add(line);
     else invalidLines.push(line);
   }

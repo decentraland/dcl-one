@@ -1,4 +1,4 @@
-import type { EventCardCreator, EventCardTime } from "@dcl/one-ui/apps/sites/events/types";
+import type { EventCardCreator, EventCardTime, UpcomingEventCardProps } from "@dcl/one-ui/apps/sites/events/types";
 
 import { eventOccurrence, type Event } from "@/data/lib/catalyst/places/events";
 import {
@@ -387,4 +387,24 @@ export const MAX_DAY_OFFSET = 365;
 export function readDayOffset(params: URLSearchParams): number {
   const value = Number(params.get(DAY_PARAM) ?? 0);
   return Number.isSafeInteger(value) && value > 0 ? Math.min(value, MAX_DAY_OFFSET) : 0;
+}
+
+/**
+ * An event as an Upcoming card: title, cover, host, relative start and the calendar link (left out
+ * while the origin is unknown, as on a server render). The caller adds how it opens and Remind me.
+ */
+export function upcomingCardProps(
+  event: Event,
+  ctx: { href: string; now: number; zone: Zone; origin: string; profiles: CreatorProfiles },
+): UpcomingEventCardProps {
+  const start = event.next_start_at ?? event.start_at;
+  return {
+    id: event.id,
+    title: event.name ?? "Untitled event",
+    image: event.image,
+    href: ctx.href,
+    creator: eventCreator(event, ctx.profiles),
+    time: start ? { label: relativeStart(start, ctx.now, ctx.zone), dateTime: start } : { label: "Soon" },
+    calendarHref: ctx.origin ? calendarHref(event, eventPageShareUrl(ctx.origin, event)) : undefined,
+  };
 }

@@ -1,0 +1,32 @@
+.group { display: flex; flex-direction: column; gap: 4px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.group[data-row] { flex-direction: row; flex-wrap: wrap; gap: 4px 16px; }
+.legend { margin-bottom: 4px; padding: 0; font-size: var(--fs-12, 12px); color: var(--text-tone-secondary, var(--ink-7)); }
+
+.radio {
+  display: inline-flex; align-items: center; gap: 9px; cursor: pointer; user-select: none;
+  color: var(--text-tone-primary, var(--text)); font-size: 1rem; line-height: 1.5;
+}
+.radio[data-disabled] { color: var(--text-tone-disabled, var(--ink-45)); cursor: default; }
+.input {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  border: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+.dot {
+  display: grid; place-items: center; flex: 0 0 auto; box-sizing: border-box;
+  width: 20px; height: 20px; border: 2px solid var(--ink-7); border-radius: 50%;
+  transition: border-color .15s ease;
+}
+.dot::after {
+  content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--brand);
+  transform: scale(0); transition: transform .15s ease;
+}
+.radio[data-size="small"] .dot { width: 16px; height: 16px; }
+.radio[data-size="small"] .dot::after { width: 8px; height: 8px; }
+.input:checked + .dot { border-color: var(--brand); }
+.input:checked + .dot::after { transform: scale(1); }
+.input:focus-visible + .dot {
+  outline: var(--focus-ring-width, 2px) solid var(--focus-ring-color, var(--brand));
+  outline-offset: var(--focus-ring-offset, 2px);
+}
+.input:disabled + .dot { border-color: var(--ctl-disabled-ink, var(--ink-45)); }
+.input:disabled + .dot::after { background: var(--ctl-disabled-ink, var(--ink-45)); }

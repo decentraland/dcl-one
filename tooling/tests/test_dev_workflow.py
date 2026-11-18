@@ -95,7 +95,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('        shard: [1, 2, 3]\n', rust)
         self.assertIn('      CATALYST_TEST_SHARD: ${{ matrix.shard }}/3\n', rust)
         # One of those shards runs the provisioned Archipelago tests; tooling/dev-regressions.py reads the setting.
-        self.assertIn("      CATALYST_TEST_PROVISIONED_SHARD: '2'\n", rust)
+        self.assertIn("      CATALYST_TEST_PROVISIONED_SHARD: '1'\n", rust)
         self.assertEqual(rust.count('CATALYST_TEST_PROVISIONED_SHARD:'), 1)
         # The dependency cache: the action prunes workspace output before saving, main writes, PRs read.
         self.assertNotIn('actions/cache', rust)
@@ -444,9 +444,10 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('BASE_SHA: ${{ github.event.pull_request.base.sha }}', web)
         steps = re.split(r'^      - ', web, flags=re.M)[1:]
         selected = [step for step in steps if 'if: steps.web-coverage.outputs' in step]
-        self.assertEqual(len(selected), 3)
+        self.assertEqual(len(selected), 4)
         for app in ('ui3', 'sites', 'ui3/editor-scene'):
             self.assertTrue(any(f'pnpm --dir apps/{app} test\n' in step for step in selected))
+        self.assertTrue(any('pnpm --dir apps/ui3 test:browser\n' in step for step in selected))
         contracts = next(step for step in steps if 'name: Check web types' in step)
         self.assertNotIn('\n        if:', contracts)
         self.assertIn('typecheck:scripts', contracts)

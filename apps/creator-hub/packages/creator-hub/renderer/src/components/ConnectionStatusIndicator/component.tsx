@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
-import SignalWifiOffIcon from '@mui/icons-material/SignalWifiOff';
-import { Tooltip, IconButton, Box } from 'decentraland-ui2';
+import IconButton from '@ui/atoms/IconButton';
+import Tooltip from '@ui/atoms/Tooltip';
+import { SignalWifiOffIcon } from '@ui/atoms/icons-material';
 
 import { useConnectionStatus } from '/@/hooks/useConnectionStatus';
 import { ConnectionStatus } from '/@/lib/connection';
@@ -25,8 +26,14 @@ export function ConnectionStatusIndicator() {
 
   return (
     <>
-      <Box className="ConnectionStatusIndicator">
-        <Tooltip title={t('connection.offline.tooltip')}>
+      <div className="ConnectionStatusIndicator">
+        <Tooltip
+          label={t('connection.offline.tooltip')}
+          side="bottom"
+          tipClassName="ConnectionStatusTip"
+          portal
+          keepInViewport
+        >
           <IconButton
             aria-label="connection-status"
             className="connection-status-offline"
@@ -35,7 +42,7 @@ export function ConnectionStatusIndicator() {
             <SignalWifiOffIcon className="offline-icon" />
           </IconButton>
         </Tooltip>
-      </Box>
+      </div>
       <ConnectionModal
         open={modalOpen}
         onClose={handleClose}

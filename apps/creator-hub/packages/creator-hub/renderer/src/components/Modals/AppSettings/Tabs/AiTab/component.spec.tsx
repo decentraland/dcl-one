@@ -1,11 +1,11 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 import { ai, misc } from '#preload';
 
 import type { AiProviderInfo } from '/shared/types/ai';
 import type { AppSettings } from '/shared/types/settings';
 
+import { TestProviders } from '../../../../../../tests/utils/TestProviders';
 import AiTab from './component';
 
 vi.mock('/@/modules/store/translation/utils', async importOriginal => ({
@@ -25,12 +25,12 @@ const claude: AiProviderInfo = {
 function renderWith(info: AiProviderInfo) {
   vi.spyOn(ai, 'detectProviders').mockResolvedValue([info]);
   render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <AiTab
         settings={{ aiAssistant: true } as AppSettings}
         updateSettings={vi.fn()}
       />
-    </ThemeProvider>,
+    </TestProviders>,
   );
 }
 
@@ -164,20 +164,17 @@ describe('AI settings access for outside agents', () => {
     vi.spyOn(ai, 'getMcpServerInfo').mockResolvedValue(mcpInfo);
     vi.spyOn(ai, 'onExternalAccessChanged').mockReturnValue({ cleanup: vi.fn() });
     render(
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <AiTab
           settings={settings as AppSettings}
           updateSettings={updateSettings}
         />
-      </ThemeProvider>,
+      </TestProviders>,
     );
     return updateSettings;
   }
   const accessSwitch = () =>
-    screen
-      .getByText('modal.app_settings.fields.mcp_server.label')
-      .closest('label')!
-      .querySelector('input')!;
+    screen.getByRole('switch', { name: 'modal.app_settings.fields.mcp_server.label' });
 
   afterEach(() => {
     cleanup();
@@ -188,7 +185,7 @@ describe('AI settings access for outside agents', () => {
     it('should still show the switch, so access can be turned off', () => {
       renderSettings({ aiAssistant: false, exposeMcpServer: true });
 
-      expect(accessSwitch().checked).toBe(true);
+      expect(accessSwitch().getAttribute('aria-checked')).toBe('true');
     });
   });
 
@@ -226,12 +223,12 @@ describe('AI settings access for outside agents', () => {
         return { cleanup: vi.fn() };
       });
       render(
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <AiTab
             settings={{ aiAssistant: true, exposeMcpServer: true } as AppSettings}
             updateSettings={vi.fn()}
           />
-        </ThemeProvider>,
+        </TestProviders>,
       );
       await waitFor(() => expect(getInfo).toHaveBeenCalledTimes(1));
 

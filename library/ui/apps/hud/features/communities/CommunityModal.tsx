@@ -518,7 +518,7 @@ export function CommunityModal({
     })
   }
   const copyLink = (): void => {
-    void navigator.clipboard?.writeText(siteUrl(`/communities/${community.id}`)).catch(() => undefined)
+    void navigator.clipboard?.writeText(siteUrl(`/social/communities/${encodeURIComponent(community.id)}`)).catch(() => undefined)
     setMenuOpen(false)
   }
 

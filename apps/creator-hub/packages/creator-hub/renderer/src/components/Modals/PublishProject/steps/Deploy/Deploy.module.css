@@ -16,3 +16,19 @@
   outline: 2px solid var(--palette-info-light);
   outline-offset: 2px;
 }
+
+:global(.Deploy) .settingsLink {
+  align-self: flex-start;
+  color: var(--brand);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: normal;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+:global(.Deploy) .settingsLink:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}

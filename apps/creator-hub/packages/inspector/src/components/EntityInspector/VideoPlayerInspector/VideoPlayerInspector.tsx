@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { useDrop } from 'react-dnd';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 import { LIVEKIT_STREAM_SRC } from '@dcl/asset-packs';
 import { withSdk } from '../../../hoc/withSdk';
 import { useHasComponent } from '../../../hooks/sdk/useHasComponent';

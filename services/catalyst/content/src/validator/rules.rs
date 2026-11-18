@@ -17,7 +17,7 @@ use super::checker::{
 };
 use super::error::ValidationResponse;
 use super::helpers::{
-    count_urn_segments, navmap_thumbnail_error, profile_has_emotes,
+    avatar_has_snapshots, count_urn_segments, navmap_thumbnail_error, profile_has_emotes,
     should_validate_face_thumbnail, validate_profile_emote_urns, validate_profile_wearable_urns,
 };
 use super::image_metadata::{check_face256_thumbnail_image, check_wearable_thumbnail_image};
@@ -571,11 +571,7 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
                 && let Some(avatars) = metadata.get("avatars").and_then(|v| v.as_array())
             {
                 for avatar in avatars {
-                    if avatar
-                        .get("avatar")
-                        .and_then(|a| a.get("snapshots"))
-                        .is_some()
-                    {
+                    if avatar_has_snapshots(avatar) {
                         return ValidationResponse::fail(
                             "Avatars must not have snapshots.".to_string(),
                         );

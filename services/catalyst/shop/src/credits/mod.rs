@@ -109,8 +109,8 @@ mod usage_tests;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::{delete, erase, get, post};
 use axum::Router;
-use axum::routing::{delete, get, post};
 use sqlx::PgPool;
 
 use crate::auth::eip1654::Eip1654Validator;
@@ -1010,7 +1010,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/season", get(handlers::users::season))
         .route(
             "/captcha",
-            get(handlers::captcha::generate).post(handlers::captcha::claim),
+            get(handlers::captcha::generate).post(erase(handlers::captcha::claim)),
         )
         .route(
             "/usage-index/status",
@@ -1119,7 +1119,7 @@ pub fn shop_router(state: SharedState) -> Router {
         .route("/v1/credit-program/season", get(handlers::users::season))
         .route(
             "/v1/captcha",
-            get(handlers::captcha::generate).post(handlers::captcha::claim),
+            get(handlers::captcha::generate).post(erase(handlers::captcha::claim)),
         )
         .route(
             "/dev/packs/{sku}/mock-purchase",

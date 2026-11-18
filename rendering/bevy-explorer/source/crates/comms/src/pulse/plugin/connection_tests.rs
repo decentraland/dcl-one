@@ -20,7 +20,7 @@ fn address(wallet: &str) -> Address {
 
 /// A session on a stub link, `Connecting` as a freshly spawned driver leaves it, and the driver's
 /// end of that link, for the test to play.
-fn session_with_link(role: PulseRole) -> (PulseSession, PulseDriverChannels) {
+pub(super) fn session_with_link(role: PulseRole) -> (PulseSession, PulseDriverChannels) {
     let (link, driver) = transport::pulse_channels(16);
     let grid = PulseParcelGrid::default();
     let session = PulseSession {
