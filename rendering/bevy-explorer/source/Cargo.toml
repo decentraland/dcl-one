@@ -100,6 +100,8 @@ opt-level = 3
 [workspace.lints.clippy]
 too_many_arguments = "allow"
 type_complexity = "allow"
+todo = "deny"
+unimplemented = "deny"
 
 [workspace]
 resolver = "2"
