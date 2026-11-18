@@ -389,13 +389,11 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
     }
   }, [isRouteError, routeStatus, name, message, stack]);
 
-  if (isRouteError) {
-    return <RouteErrorView error={error} />;
-  }
-
-  // Every visitor gets the branded 500 screen, the dev server's too (dev and prod serve
-  // alike); the trace goes to the client-error report above.
-  return <StatusPage status={500} />;
+  return (
+    <div lang="en">
+      {isRouteError ? <RouteErrorView error={error} /> : <StatusPage status={500} />}
+    </div>
+  );
 }
 
 function RouteErrorView({
