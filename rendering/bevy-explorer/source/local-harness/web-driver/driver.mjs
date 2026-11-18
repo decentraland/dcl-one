@@ -44,6 +44,11 @@ const MOUSE_BUTTONS = { left: 1, right: 2, middle: 4 };
 // The targets that hold frames of the page: the page itself and an out-of-process iframe. Others
 // (workers) are let go.
 const FRAME_TARGETS = new Set(['page', 'iframe']);
+// What a console command fails with when the document it runs in is replaced or closed before it
+// answers, as a click that loads the page again does.
+export const APP_GONE = 'the app frame went away before it answered: its document was replaced or closed';
+// How Chrome answers a call into a context that has just been destroyed.
+const CONTEXT_GONE = /context was destroyed|target navigated or closed|cannot find context/i;
 
 // Chrome as the benchmark runner finds it (local-harness/benchmark/src/chrome.rs `find`).
 function chromeCandidates(env) {
@@ -288,6 +293,8 @@ class Driver {
   #stderr = [];
   #sessions = new Map();
   #contexts = new Map();
+  // what waits for a context to go away, by the context's key
+  #ends = new Map();
   #page = null;
   #app = null;
   #held = new Set();
@@ -386,7 +393,7 @@ class Driver {
       case 'Target.detachedFromTarget':
         this.#sessions.delete(params.sessionId);
         for (const [key, context] of this.#contexts) {
-          if (context.session.id === params.sessionId) this.#contexts.delete(key);
+          if (context.session.id === params.sessionId) this.#forget(key);
         }
         break;
       case 'Runtime.executionContextCreated': {
@@ -404,11 +411,11 @@ class Driver {
         break;
       }
       case 'Runtime.executionContextDestroyed':
-        this.#contexts.delete(`${sessionId}:${params.executionContextId}`);
+        this.#forget(`${sessionId}:${params.executionContextId}`);
         break;
       case 'Runtime.executionContextsCleared':
         for (const [key, context] of this.#contexts) {
-          if (context.session.id === sessionId) this.#contexts.delete(key);
+          if (context.session.id === sessionId) this.#forget(key);
         }
         break;
       case 'Runtime.consoleAPICalled':
@@ -498,6 +505,31 @@ class Driver {
 
   // --- the app frame: ready and console commands ---
 
+  #forget(key) {
+    this.#contexts.delete(key);
+    const ends = this.#ends.get(key);
+    this.#ends.delete(key);
+    for (const end of ends ?? []) end();
+  }
+
+  // A rejection with APP_GONE once `context` goes away. Chrome may never answer a call into an
+  // out-of-process frame whose target detaches, so a command must not wait on that answer alone.
+  #gone(context) {
+    const key = `${context.session.id}:${context.id}`;
+    let end;
+    const promise = new Promise((_, reject) => {
+      end = () => reject(new Error(APP_GONE));
+    });
+    promise.catch(() => {});
+    if (!this.#contexts.has(key)) {
+      end();
+      return { promise, cancel: () => {} };
+    }
+    if (!this.#ends.has(key)) this.#ends.set(key, new Set());
+    this.#ends.get(key).add(end);
+    return { promise, cancel: () => this.#ends.get(key)?.delete(end) };
+  }
+
   // The context that has the console and the binding: the app frame's, not the shell's.
   async #findApp() {
     if (this.#app && this.#contexts.has(`${this.#app.session.id}:${this.#app.id}`)) return this.#app;
@@ -571,14 +603,24 @@ class Driver {
       throw new Error(this.#goneMessage(info));
     });
     exited.catch(() => {});
-    const answer = await within(
-      Promise.race([
-        this.#send('Runtime.evaluate', { expression, contextId: context.id, awaitPromise: true, returnByValue: true }, context.session),
-        exited
-      ]),
-      Math.max(1, timeout - (Date.now() - started)),
-      () => `\`${line}\` did not finish within ${timeout} ms`
-    );
+    const gone = this.#gone(context);
+    const evaluated = this.#send('Runtime.evaluate', { expression, contextId: context.id, awaitPromise: true, returnByValue: true }, context.session)
+      .catch((error) => {
+        if (!CONTEXT_GONE.test(error.message)) throw error;
+        // the answer can come before the event that says so: no later command may go to it
+        this.#forget(`${context.session.id}:${context.id}`);
+        throw new Error(APP_GONE);
+      });
+    let answer;
+    try {
+      answer = await within(
+        Promise.race([evaluated, exited, gone.promise]),
+        Math.max(1, timeout - (Date.now() - started)),
+        () => `\`${line}\` did not finish within ${timeout} ms`
+      );
+    } finally {
+      gone.cancel();
+    }
     if (answer.exceptionDetails) {
       throw new Error(answer.exceptionDetails.exception?.description ?? answer.exceptionDetails.text);
     }

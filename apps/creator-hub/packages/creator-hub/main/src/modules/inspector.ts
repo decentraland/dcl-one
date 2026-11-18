@@ -7,6 +7,11 @@ import log from 'electron-log';
 import type { Child } from './bin';
 import * as cache from './cache';
 import { getAvailablePort } from './port';
+import {
+  getRealmServerBacklog,
+  subscribeRealmServerLogs,
+  usesRealmServer,
+} from './realm-server-logs';
 import { createStaticHandler } from './static-server';
 
 // One debugger per preview (keyed by scene path), fanning its output out to every window
@@ -15,6 +20,8 @@ import { createStaticHandler } from './static-server';
 type DebuggerState = {
   preview: Child;
   listener: number;
+  /** Set when the preview reuses the editor realm's Multiplayer Server (realm-server-logs.ts). */
+  unsubscribeRealmServer?: () => void;
   exitHandler: () => void;
   targets: Set<WebContents>;
 };
@@ -150,6 +157,7 @@ function getDebuggerChannel(path: string) {
 }
 
 function teardownDebugger(state: DebuggerState) {
+  state.unsubscribeRealmServer?.();
   state.preview.off(state.listener);
   state.preview.process.off('exit', state.exitHandler);
 }
@@ -199,6 +207,13 @@ export async function attachSceneDebugger(
       debuggers.delete(path);
     };
     child.process.once('exit', created.exitHandler);
+    // The preview's own output never shows the shared server's logs, so they are forwarded
+    // from the editor realm, whichever realm process is serving the scene at the time.
+    if (usesRealmServer(child)) {
+      created.unsubscribeRealmServer = subscribeRealmServerLogs(path, text =>
+        sendToTargets(created, eventName, text),
+      );
+    }
     debuggers.set(path, created);
     state = created;
   }
@@ -215,7 +230,9 @@ export async function attachSceneDebugger(
   // keeps coming), but on every re-attach after "Reload scene from disk" it silently emptied
   // the console of a still-running preview. Returning it lets the renderer replay it after it
   // has registered, with no race.
-  const backlog = child.stdall({ sanitize: false });
+  // The shared server started before this preview, so its logs so far go first.
+  const serverBacklog = state.unsubscribeRealmServer ? getRealmServerBacklog(path) : '';
+  const backlog = [...(serverBacklog ? [serverBacklog] : []), ...child.stdall({ sanitize: false })];
 
   return { eventName, backlog };
 }
