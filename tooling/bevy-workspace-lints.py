@@ -7,15 +7,22 @@ added there applies to the whole workspace. Offline: reads the manifests, runs n
 """
 
 import glob
+import os
 import sys
 import tomllib
 from pathlib import Path
 
-SOURCE = Path(__file__).resolve().parents[1] / "rendering/bevy-explorer/source"
+REPOSITORY = Path(__file__).resolve().parents[1]
+SOURCE = REPOSITORY / "rendering/bevy-explorer/source"
+
+
+def normal(path):
+    """An absolute path with `.` and `..` removed and symlinks kept, as Cargo compares them."""
+    return Path(os.path.normpath(path))
 
 
 def path_dependencies(manifest, document, inherited):
-    """The directories of the `path` dependencies a package declares in any dependency table, with
+    """The manifests of the `path` dependencies a package declares in any dependency table, with
     a `workspace = true` entry resolved through the root's `[workspace.dependencies]`."""
     for table in [document, *document.get("target", {}).values()]:
         for kind in ("dependencies", "dev-dependencies", "build-dependencies"):
@@ -25,42 +32,51 @@ def path_dependencies(manifest, document, inherited):
                 if dependency.get("workspace") is True:
                     dependency = inherited.get(name, {})
                     if isinstance(dependency, dict) and "path" in dependency:
-                        yield (SOURCE / dependency["path"]).resolve()
+                        yield normal(SOURCE / dependency["path"] / "Cargo.toml")
                 elif "path" in dependency:
-                    yield (manifest.parent / dependency["path"]).resolve()
+                    yield normal(manifest.parent / dependency["path"] / "Cargo.toml")
 
 
 def member_manifests():
-    """As Cargo resolves them: the root package, the `members` entries and every path dependency
-    inside the workspace directory, transitively. `exclude` removes a directory and everything
-    below it, except a member listed by name rather than by glob."""
-    root = (SOURCE / "Cargo.toml").resolve()
+    """As Cargo resolves them: the root package, the `members` entries and every path dependency,
+    transitively. A path dependency outside the workspace directory is a member only when its
+    `package.workspace` names this root. `exclude` removes a directory and everything below it,
+    except what lies under a member listed by name rather than by glob."""
+    root = SOURCE / "Cargo.toml"
     workspace = tomllib.loads(root.read_text())["workspace"]
     inherited = workspace.get("dependencies", {})
-    excluded = [(SOURCE / path).resolve() for path in workspace.get("exclude", [])]
-    named = {(SOURCE / pattern / "Cargo.toml").resolve() for pattern in workspace["members"] if not glob.has_magic(pattern)}
-    pending = [root, *named] + [(directory / "Cargo.toml").resolve()
-                                for pattern in workspace["members"] for directory in SOURCE.glob(pattern)]
+    excluded = [normal(SOURCE / path) for path in workspace.get("exclude", [])]
+    named = [normal(SOURCE / pattern) for pattern in workspace["members"] if not glob.has_magic(pattern)]
+    listed = [normal(SOURCE / pattern / "Cargo.toml") for pattern in workspace["members"] if not glob.has_magic(pattern)]
+    listed += [normal(directory / "Cargo.toml") for pattern in workspace["members"] if glob.has_magic(pattern)
+               for directory in SOURCE.glob(pattern)]
+    pending = [(root, False)] + [(manifest, False) for manifest in listed]
     found = {}
     while pending:
-        manifest = pending.pop()
-        if manifest in found or not manifest.is_file() or not manifest.is_relative_to(SOURCE.resolve()):
+        manifest, is_path_dependency = pending.pop()
+        if manifest in found or not manifest.is_file():
             continue
-        if manifest not in named and any(manifest.is_relative_to(path) for path in excluded):
+        document = tomllib.loads(manifest.read_text())
+        if is_path_dependency and not manifest.parent.is_relative_to(SOURCE):
+            pointer = document.get("package", {}).get("workspace")
+            if pointer is None or normal(manifest.parent / pointer) != SOURCE:
+                continue
+        if (not any(manifest.is_relative_to(member) for member in named)
+                and any(manifest.is_relative_to(path) for path in excluded)):
             continue
-        found[manifest] = document = tomllib.loads(manifest.read_text())
-        pending.extend(directory / "Cargo.toml" for directory in path_dependencies(manifest, document, inherited))
+        found[manifest] = document
+        pending.extend((dependency, True) for dependency in path_dependencies(manifest, document, inherited))
     return {manifest: document for manifest, document in sorted(found.items()) if "package" in document}
 
 
 def main():
     missing = [
-        manifest.relative_to(SOURCE.resolve())
+        os.path.relpath(manifest, REPOSITORY)
         for manifest, document in member_manifests().items()
         if document.get("lints") != {"workspace": True}
     ]
     for manifest in missing:
-        print(f"::error file=rendering/bevy-explorer/source/{manifest}::"
+        print(f"::error file={manifest}::"
               "add `[lints] workspace = true` so the workspace lints reach this package")
     return 1 if missing else 0
 
