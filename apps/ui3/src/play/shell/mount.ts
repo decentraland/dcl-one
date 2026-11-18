@@ -55,8 +55,9 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
   // Set by the app's sign-out: the old app's URL sync must not write its place back before the reload.
   let signedOut = false
   // Back, a closed tab or a typed address would drop the session: while the app says one runs
-  // (bevy-shell:session), the browser asks first. The page's own exits (sign-in, the untrusted-link
-  // gate) go through leave().
+  // (bevy-shell:session, said only when the player turned Ask Before Leaving the Page on in
+  // Settings), the browser asks first. The page's own exits (sign-in, the untrusted-link gate) go
+  // through leave().
   let live = false
   let leaving = false
   function leave(go: () => void): void {
