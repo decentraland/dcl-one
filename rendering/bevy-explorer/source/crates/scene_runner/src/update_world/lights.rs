@@ -562,13 +562,13 @@ pub fn update_directional_light(
 
         if let Some(sun) = maybe_sun {
             if let Some(color) = &sun.color {
-                // as for LightSource: colours > 1 are rescaled to 1, and the light is
-                // multiplied by pow(max, 2.2), so the sky gets the hue only
+                // the ramp is linear: colours > 1 are rescaled to 1, and the light is
+                // multiplied by the max, so the sky gets the hue only
                 let color = color.sample(day_fraction);
                 let color_scale = color.max_element().max(1.0);
                 let color = color / color_scale;
                 global_light.dir_color = Color::linear_rgb(color.x, color.y, color.z);
-                global_light.dir_illuminance *= color_scale.powf(2.2);
+                global_light.dir_illuminance *= color_scale;
             }
             // the light only: the sky keeps its time-of-day brightness
             if let Some(intensity) = sun.intensity {
