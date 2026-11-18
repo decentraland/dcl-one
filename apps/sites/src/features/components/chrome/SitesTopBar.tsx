@@ -32,7 +32,7 @@ import SitesNotificationsDialog from "@dcl/one-ui/apps/sites/chrome/SitesNotific
 import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
 import wordmark from "@dcl/one-ui/apps/sites/assets/dcl_name.svg?url";
 import { SitesLocaleContext } from "@ui/web/frames/sites-locale";
-import { homeCopy } from "@/features/home/locale";
+import { homeCopy } from "../../home/locale";
 import { useChromeNotifications } from "./useChromeNotifications";
 import styles from "./SitesTopBar.module.css";
 
