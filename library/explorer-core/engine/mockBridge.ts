@@ -1076,7 +1076,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       for (let done = 0; done <= total; done++) setTimeout(() => reply(at(done, 'running')), 3000 + done * 500)
       setTimeout(() => reply(at(total, 'ready')), 3000 + (total + 1) * 500)
     }
-    reply({ kind: 'mapPins', pins: MOCK_MAP_PINS })
+    // ?mockpins=1 → two quest pins on both maps, one with a broken icon url to show the fallback.
+    if (new URLSearchParams(location.search).get('mockpins') === '1') reply({ kind: 'mapPins', pins: MOCK_MAP_PINS })
     // ?mockportables=1 → the portables list, so the rail button and its popover are exercisable.
     if (new URLSearchParams(location.search).get('mockportables') === '1') sendPortables()
     // ?perm=1 → fire a sample scene permission prompt so the dialog is exercisable in the mock, and

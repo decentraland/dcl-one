@@ -253,17 +253,6 @@
   transform: scale(calc(1 / var(--map-scale))) rotate(calc(var(--map-yaw) * -1deg)) translate(-50%, -50%);
   transform-origin: 0 0;
 }
-.questFrame {
-  overflow: hidden;
-  border-radius: 50%;
-  background: var(--white);
-}
-.questFrame img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
 
 /* Same inverse transform as the pin, offset below the anchor instead of above it. */
 .poiLabel {

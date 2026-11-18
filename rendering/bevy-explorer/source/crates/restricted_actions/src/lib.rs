@@ -1,6 +1,6 @@
 pub mod agent_commands;
 pub mod explorer_ui;
-pub mod map_pins;
+mod map_pins;
 pub mod portables;
 pub mod smart_wearables;
 pub mod teleport;

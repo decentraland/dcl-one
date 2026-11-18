@@ -1429,9 +1429,10 @@ impl std::str::FromStr for PortableExperiencesToggle {
 #[derive(Component)]
 pub struct NearbyVoiceDisabled;
 
-/// On a scene root whose scene.json declares `isPortableExperience: true`.
+/// On the root of a scene loaded as a portable experience whose scene.json also declares
+/// `isPortableExperience: true`: the only scenes whose `MapPin`s are read.
 #[derive(Component)]
-pub struct DeclaresPortableExperience;
+pub struct ReadsMapPins;
 
 pub trait PermissionStrings {
     fn active(&self) -> &str;

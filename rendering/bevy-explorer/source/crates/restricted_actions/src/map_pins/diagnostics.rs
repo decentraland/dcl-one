@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
-use common::structs::DeclaresPortableExperience;
+use common::structs::ReadsMapPins;
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use scene_runner::{renderer_context::RendererSceneContext, SceneEntity};
 use serde_json::json;
@@ -18,7 +18,7 @@ impl Plugin for MapPinsDebugPanelPlugin {
                 title: "Map pins",
                 query: "/map_pins_state",
                 fields: &[
-                    ("Scenes declaring a portable experience", "scenes"),
+                    ("Portable experiences read", "scenes"),
                     ("Pins read from those scenes", "read"),
                     ("Pins of other scenes, ignored", "ignored"),
                     ("HUD subscribers", "subscribers"),
@@ -39,17 +39,17 @@ fn map_pins_state(
     mut input: ConsoleCommand<MapPinsState>,
     streams: Res<MapPinStreams>,
     pins: Query<&SceneEntity, With<MapPin>>,
-    declaring: Query<&RendererSceneContext, With<DeclaresPortableExperience>>,
+    reading: Query<&RendererSceneContext, With<ReadsMapPins>>,
 ) {
     if input.take().is_none() {
         return;
     }
     let read = pins
         .iter()
-        .filter(|scene_entity| declaring.contains(scene_entity.root))
+        .filter(|scene_entity| reading.contains(scene_entity.root))
         .count();
     let ignored = pins.iter().count() - read;
-    let scenes = declaring
+    let scenes = reading
         .iter()
         .map(|context| format!("{} ({})", context.title, context.hash))
         .collect::<Vec<_>>();
@@ -67,7 +67,7 @@ fn map_pins_state(
                 .collect::<Vec<_>>()
                 .join("; ")),
             "unavailable": {
-                "scenes": "No live scene declares isPortableExperience: true.",
+                "scenes": "No running portable experience declares isPortableExperience: true.",
                 "sent": "The HUD is not following the map pins.",
                 "pins": "No pins sent.",
             },

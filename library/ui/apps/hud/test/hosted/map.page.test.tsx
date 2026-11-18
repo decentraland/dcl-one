@@ -11,6 +11,7 @@ import { mapPins } from '@explorer-core/features/map/mapPins'
 import { navigation } from '@explorer-core/features/map/navigation'
 import { eventOf, placeOf } from '@explorer-core/test/mapFixtures'
 import { MapPage } from '../../features/map/MapPage'
+import { MARKER_ART } from '../../features/map/mapArt'
 import type { MapState, TravelOutcome } from '../../features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from '../harness'
 
@@ -193,8 +194,8 @@ describe('map layers', () => {
     renderMap()
     act(() =>
       mapPins.receive([
-        { id: 'bafypx:512', x: 10, y: -5, title: 'Memory Grid', description: 'Win a round', icon: null },
-        { id: 'bafypx:513', x: 3, y: 2, title: 'Tile Tally', description: '', icon: 'https://content.test/tile_tally.png' }
+        { id: 'bafypx:512', x: 10, y: -5, title: 'Memory Grid', icon: null },
+        { id: 'bafypx:513', x: 3, y: 2, title: 'Tile Tally', icon: 'https://content.test/tile_tally.png' }
       ])
     )
     const memory = marker('Memory Grid')
@@ -202,7 +203,7 @@ describe('map layers', () => {
     expect(within(view()).queryByText('Memory Grid')).not.toBeInTheDocument()
     expect(marker('Tile Tally').querySelector('img')).toHaveAttribute('src', 'https://content.test/tile_tally.png')
     fireEvent.error(marker('Tile Tally').querySelector('img')!)
-    expect(marker('Tile Tally').querySelector('img')).not.toHaveAttribute('src', 'https://content.test/tile_tally.png')
+    expect(marker('Tile Tally').querySelector('img')).toHaveAttribute('src', MARKER_ART.quest)
 
     await userEvent.click(screen.getByRole('button', { name: 'Layers' }))
     await userEvent.click(within(screen.getByRole('region', { name: 'Layers' })).getByRole('switch', { name: 'Quest Mini-Games' }))
@@ -212,7 +213,7 @@ describe('map layers', () => {
   it('opens the place under a quest pin when it is clicked', async () => {
     serve({ places: [place('p', 'Plaza', ['10,-5'])] })
     renderMap()
-    act(() => mapPins.receive([{ id: 'bafypx:512', x: 10, y: -5, title: 'Memory Grid', description: '', icon: null }]))
+    act(() => mapPins.receive([{ id: 'bafypx:512', x: 10, y: -5, title: 'Memory Grid', icon: null }]))
     await userEvent.click(marker('Memory Grid'))
     expect(await within(panel()).findByRole('heading', { name: 'Plaza' })).toBeInTheDocument()
   })

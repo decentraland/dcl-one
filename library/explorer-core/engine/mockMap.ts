@@ -118,8 +118,8 @@ export const MOCK_PEERS: Peer[] = [
 
 /** One pin without an icon, one whose icon fails to load. */
 export const MOCK_MAP_PINS: MapPinInfo[] = [
-  { id: 'bafymockpx:512', x: 3, y: 2, title: 'Memory Grid', description: 'Win a round', icon: null },
-  { id: 'bafymockpx:513', x: -4, y: 5, title: 'Tile Tally', description: 'Win a round', icon: 'https://content.invalid/images/icons/tile_tally.png' }
+  { id: 'bafymockpx:512', x: 3, y: 2, title: 'Memory Grid', icon: null },
+  { id: 'bafymockpx:513', x: -4, y: 5, title: 'Tile Tally', icon: 'https://content.invalid/images/icons/tile_tally.png' }
 ]
 
 /** Players the mock engine holds near the player, in world metres. */

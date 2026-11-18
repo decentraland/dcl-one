@@ -1,20 +1,19 @@
-//! Scene map pins (`MapPin`) for the HUD map. Only scenes whose scene.json declares
+//! Scene map pins (`MapPin`) for the HUD map. Only portable experiences whose scene.json declares
 //! `isPortableExperience: true` are read; the HUD follows them through `GetMapPinsStream`.
+
+use std::collections::HashSet;
 
 use bevy::{
     prelude::*,
     tasks::{IoTaskPool, Task},
 };
-use common::{
-    rpc::RpcStreamSender, sets::SceneSets, structs::DeclaresPortableExperience, util::TaskExt,
-};
+use common::{rpc::RpcStreamSender, sets::SceneSets, structs::ReadsMapPins, util::TaskExt};
 use dcl_component::{
     proto_components::{common::texture_union::Tex, sdk::components::PbMapPin},
-    SceneComponentId,
+    ComponentPosition, SceneComponentId,
 };
-use dcl_types::interface::ComponentPosition;
 use ipfs::{
-    ipfs_path::{IpfsPath, IpfsType},
+    ipfs_path::{content_file_path, IpfsPath, IpfsType},
     IpfsResource,
 };
 use scene_runner::{
@@ -24,7 +23,10 @@ use system_bridge::{MapPinInfo, SystemApi};
 
 mod diagnostics;
 
-pub struct MapPinsPlugin;
+/// The title is the pin's accessible name.
+const MAX_TITLE_CHARS: usize = 100;
+
+pub(crate) struct MapPinsPlugin;
 
 impl Plugin for MapPinsPlugin {
     fn build(&self, app: &mut App) {
@@ -33,6 +35,7 @@ impl Plugin for MapPinsPlugin {
             ComponentPosition::EntityOnly,
         );
         app.init_resource::<MapPinStreams>();
+        app.add_observer(clear_map_pin_icon);
         app.add_plugins(diagnostics::MapPinsDebugPanelPlugin);
         app.add_systems(
             Update,
@@ -44,13 +47,11 @@ impl Plugin for MapPinsPlugin {
 }
 
 #[derive(Component, Debug, Clone, PartialEq)]
-pub struct MapPin {
+struct MapPin {
     /// `None` when the position is missing or not finite: the pin is not shown.
-    pub parcel: Option<IVec2>,
-    pub title: String,
-    pub description: String,
-    /// A file of the scene's content; other texture kinds draw the default pin.
-    pub icon_src: Option<String>,
+    parcel: Option<IVec2>,
+    title: String,
+    icon_src: Option<String>,
 }
 
 impl From<PbMapPin> for MapPin {
@@ -64,20 +65,30 @@ impl From<PbMapPin> for MapPin {
             Some(Tex::Texture(texture)) if !texture.src.is_empty() => Some(texture.src),
             _ => None,
         };
+        let mut title = pin.title;
+        if let Some((cut, _)) = title.char_indices().nth(MAX_TITLE_CHARS) {
+            title.truncate(cut);
+        }
         Self {
             parcel,
-            title: pin.title,
-            description: pin.description,
+            title,
             icon_src,
         }
     }
 }
 
+/// Stays in place while a changed src resolves, so the pin never leaves the map meanwhile.
 #[derive(Component, Debug, Clone, PartialEq)]
-pub struct MapPinIcon(pub Option<String>);
+struct MapPinIcon {
+    src: Option<String>,
+    url: Option<String>,
+}
 
 #[derive(Component)]
-struct ResolvingMapPinIcon(Task<Option<String>>);
+struct ResolvingMapPinIcon {
+    src: String,
+    task: Task<Option<String>>,
+}
 
 #[derive(Resource, Default)]
 struct MapPinStreams {
@@ -85,60 +96,90 @@ struct MapPinStreams {
     last: Option<Vec<MapPinInfo>>,
 }
 
-/// Only a file in the scene's content map becomes an icon: `to_url` hands back a src it can't
-/// find unchanged when it parses as a url, and an external url is not drawn.
+/// The loader fetches a content-map miss that parses as a url (after dropping any leading `/`),
+/// so such a src is refused: a scene must not make the HUD request a host of its choosing.
 async fn icon_url(ipfs: IpfsResource, scene_hash: String, src: String) -> Option<String> {
+    if super::filename_looks_like_url(&content_file_path(&src)) {
+        return None;
+    }
     let context = ipfs.context.read().await;
-    IpfsPath::new(IpfsType::new_content_file(scene_hash, src.clone()))
+    IpfsPath::new(IpfsType::new_content_file(scene_hash, src))
         .to_url(&context)
         .ok()
-        .filter(|url| *url != src)
+}
+
+fn clear_map_pin_icon(trigger: Trigger<OnRemove, MapPin>, mut commands: Commands) {
+    if let Ok(mut entity) = commands.get_entity(trigger.target()) {
+        entity.try_remove::<(MapPinIcon, ResolvingMapPinIcon)>();
+    }
 }
 
 fn resolve_map_pin_icons(
     mut commands: Commands,
-    changed: Query<(Entity, &MapPin, &SceneEntity), Changed<MapPin>>,
+    changed: Query<(Entity, &MapPin, &SceneEntity, Option<&MapPinIcon>), Changed<MapPin>>,
     mut resolving: Query<(Entity, &mut ResolvingMapPinIcon)>,
-    roots: Query<&RendererSceneContext, With<DeclaresPortableExperience>>,
+    roots: Query<&RendererSceneContext, With<ReadsMapPins>>,
     ipfs: Res<IpfsResource>,
 ) {
-    for (entity, pin, scene_entity) in changed.iter() {
+    // a task replaced or dropped this frame may still complete now, with a stale result
+    let mut superseded = HashSet::new();
+    for (entity, pin, scene_entity, icon) in changed.iter() {
         let Ok(context) = roots.get(scene_entity.root) else {
             continue;
         };
-        let mut entity = commands.entity(entity);
+        let in_flight = resolving.get(entity).ok().map(|(_, r)| r.src.as_str());
+        if in_flight.is_some() && in_flight == pin.icon_src.as_deref() {
+            continue;
+        }
+        let mut commands = commands.entity(entity);
+        if in_flight.is_some() {
+            superseded.insert(entity);
+        }
+        if icon.is_some_and(|icon| icon.src == pin.icon_src) {
+            commands.remove::<ResolvingMapPinIcon>();
+            continue;
+        }
         match pin.icon_src.clone() {
             Some(src) => {
-                let task =
-                    IoTaskPool::get().spawn(icon_url(ipfs.clone(), context.hash.to_string(), src));
-                entity
-                    .remove::<MapPinIcon>()
-                    .insert(ResolvingMapPinIcon(task));
+                let task = IoTaskPool::get().spawn(icon_url(
+                    ipfs.clone(),
+                    context.hash.to_string(),
+                    src.clone(),
+                ));
+                commands.insert(ResolvingMapPinIcon { src, task });
             }
             None => {
-                entity
-                    .remove::<ResolvingMapPinIcon>()
-                    .insert(MapPinIcon(None));
+                commands.remove::<ResolvingMapPinIcon>().insert(MapPinIcon {
+                    src: None,
+                    url: None,
+                });
             }
         }
     }
-    for (entity, mut task) in resolving.iter_mut() {
-        if let Some(icon) = task.0.complete() {
+    for (entity, mut resolving) in resolving.iter_mut() {
+        if superseded.contains(&entity) {
+            continue;
+        }
+        if let Some(url) = resolving.task.complete() {
             commands
                 .entity(entity)
                 .remove::<ResolvingMapPinIcon>()
-                .insert(MapPinIcon(icon));
+                .insert(MapPinIcon {
+                    src: Some(resolving.src.clone()),
+                    url,
+                });
         }
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn stream_map_pins(
     mut streams: ResMut<MapPinStreams>,
     mut events: EventReader<SystemApi>,
-    pins: Query<(Ref<MapPinIcon>, &MapPin, &SceneEntity)>,
+    pins: Query<(&MapPinIcon, &MapPin, &SceneEntity)>,
+    changed: Query<(), (With<MapPinIcon>, Or<(Changed<MapPin>, Changed<MapPinIcon>)>)>,
     mut removed_pins: RemovedComponents<MapPin>,
-    mut removed_icons: RemovedComponents<MapPinIcon>,
-    roots: Query<&RendererSceneContext, With<DeclaresPortableExperience>>,
+    roots: Query<&RendererSceneContext, With<ReadsMapPins>>,
 ) {
     let new: Vec<_> = events
         .read()
@@ -147,7 +188,7 @@ fn stream_map_pins(
             _ => None,
         })
         .collect();
-    let removed = removed_pins.read().count() + removed_icons.read().count() > 0;
+    let removed = removed_pins.read().count() > 0;
     streams.senders.extend(new.iter().cloned());
     streams.senders.retain(|s| !s.is_closed());
     if streams.senders.is_empty() {
@@ -155,7 +196,7 @@ fn stream_map_pins(
         return;
     }
 
-    if removed || streams.last.is_none() || pins.iter().any(|(icon, ..)| icon.is_changed()) {
+    if removed || streams.last.is_none() || !changed.is_empty() {
         let mut list: Vec<_> = pins
             .iter()
             .filter_map(|(icon, pin, scene_entity)| {
@@ -166,8 +207,7 @@ fn stream_map_pins(
                     x: parcel.x,
                     y: parcel.y,
                     title: pin.title.clone(),
-                    description: pin.description.clone(),
-                    icon: icon.0.clone(),
+                    icon: icon.url.clone(),
                 })
             })
             .collect();
@@ -191,6 +231,9 @@ fn stream_map_pins(
 mod tests {
     use super::*;
     use dcl_component::proto_components::common::{Texture, TextureUnion, Vector2};
+    use ipfs::{ContentMap, IpfsModifier};
+
+    const CONTENT: &str = "https://content.test/contents/";
 
     fn pb(x: f32, y: f32, tex: Option<Tex>) -> PbMapPin {
         PbMapPin {
@@ -236,6 +279,15 @@ mod tests {
         assert_eq!(MapPin::from(pb(0.0, 0.0, Some(avatar))).icon_src, None);
     }
 
+    #[test]
+    fn a_long_title_is_cut_on_a_character() {
+        let mut long = pb(0.0, 0.0, None);
+        long.title = "é".repeat(MAX_TITLE_CHARS + 5);
+        assert_eq!(MapPin::from(long).title, "é".repeat(MAX_TITLE_CHARS));
+        assert_eq!(MapPin::from(pb(0.0, 0.0, None)).title, "Memory Grid");
+    }
+
+    /// `bafypx` holds two files, served from [`CONTENT`].
     fn app() -> App {
         let ipfs = ipfs::IpfsIo::new(
             false,
@@ -245,6 +297,17 @@ mod tests {
             4,
             tokio::sync::mpsc::unbounded_channel().0,
         );
+        ipfs.add_collection(
+            "bafypx".to_owned(),
+            ContentMap::from_content([
+                ("images/icon.png".to_owned(), "bafyicon".to_owned()),
+                ("images/other.png".to_owned(), "bafyother".to_owned()),
+            ]),
+            Some(IpfsModifier {
+                base_url: Some(CONTENT.to_owned()),
+            }),
+            None,
+        );
         IoTaskPool::get_or_init(Default::default);
         let mut app = App::new();
         app.add_event::<SystemApi>()
@@ -252,17 +315,18 @@ mod tests {
                 inner: std::sync::Arc::new(ipfs),
             })
             .init_resource::<MapPinStreams>()
+            .add_observer(clear_map_pin_icon)
             .add_systems(Update, (resolve_map_pin_icons, stream_map_pins).chain());
         app
     }
 
-    fn scene_root(app: &mut App, hash: &str, declares: bool) -> Entity {
+    fn scene_root(app: &mut App, hash: &str, reads: bool) -> Entity {
         let root = app.world_mut().spawn_empty().id();
         let context = RendererSceneContext::new(
             dcl_types::SceneId(root),
             hash.to_owned(),
             "storage_root".to_owned(),
-            false,
+            reads,
             0,
             "title".to_owned(),
             IVec2::ZERO,
@@ -279,8 +343,8 @@ mod tests {
         );
         let mut root_entity = app.world_mut().entity_mut(root);
         root_entity.insert(context);
-        if declares {
-            root_entity.insert(DeclaresPortableExperience);
+        if reads {
+            root_entity.insert(ReadsMapPins);
         }
         root
     }
@@ -309,6 +373,27 @@ mod tests {
         std::iter::from_fn(|| rx.try_recv().ok()).collect()
     }
 
+    fn update_until(
+        app: &mut App,
+        rx: &mut common::rpc::RpcStreamReceiver<Vec<MapPinInfo>>,
+        done: impl Fn(&[MapPinInfo]) -> bool,
+    ) -> Vec<Vec<MapPinInfo>> {
+        let mut sent = Vec::new();
+        for _ in 0..400 {
+            app.update();
+            sent.extend(drain(rx));
+            if sent.last().is_some_and(|list| done(list)) {
+                return sent;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("never sent; got {sent:?}");
+    }
+
+    fn set_pin(app: &mut App, pin: Entity, value: PbMapPin) {
+        *app.world_mut().get_mut::<MapPin>(pin).unwrap() = MapPin::from(value);
+    }
+
     #[test]
     fn only_portable_experience_scenes_send_their_pins_and_removal_is_sent() {
         let mut app = app();
@@ -333,11 +418,16 @@ mod tests {
         app.update();
         assert!(drain(&mut rx).is_empty());
 
-        *app.world_mut().get_mut::<MapPin>(px_pin).unwrap() = MapPin::from(pb(11.0, 0.0, None));
+        set_pin(&mut app, px_pin, pb(11.0, 0.0, None));
         app.update();
         let sent = drain(&mut rx);
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0][0].x, 11);
+
+        // a write of the same value sends nothing
+        set_pin(&mut app, px_pin, pb(11.0, 0.0, None));
+        app.update();
+        assert!(drain(&mut rx).is_empty());
 
         let mut late = subscribe(&mut app);
         app.update();
@@ -363,26 +453,99 @@ mod tests {
     }
 
     #[test]
-    fn a_pin_waits_for_its_icon_and_a_file_outside_the_content_draws_the_default() {
+    fn a_content_file_is_the_icon_and_anything_else_draws_the_default() {
         let mut app = app();
         let px = scene_root(&mut app, "bafypx", true);
-        spawn_pin(
+        let srcs = [
+            "images/icon.png",
+            "/Images/Icon.png",
+            "images/missing.png",
+            // a content-map miss that parses as a url would be fetched as one
+            "https://host.example",
+            "HTTPS://Host.Example/x",
+            "https://host.example:443/a b.png",
+            "/https://host.example/x.png",
+            " http://host.example/x.png",
+            "data:image/png;base64,AAAA",
+        ];
+        for (id, src) in srcs.iter().enumerate() {
+            spawn_pin(
+                &mut app,
+                px,
+                512 + id as u16,
+                pb(id as f32, 0.0, Some(texture(src))),
+            );
+        }
+        let mut rx = subscribe(&mut app);
+        let sent = update_until(&mut app, &mut rx, |list| list.len() == srcs.len());
+        let icons: Vec<_> = sent
+            .last()
+            .unwrap()
+            .iter()
+            .map(|p| p.icon.as_deref())
+            .collect();
+        let icon = Some("https://content.test/contents/bafyicon");
+        let mut expected = vec![None; srcs.len()];
+        expected[0] = icon;
+        expected[1] = icon;
+        assert_eq!(icons, expected);
+    }
+
+    #[test]
+    fn a_moving_pin_keeps_its_icon_and_a_new_icon_replaces_it_without_a_gap() {
+        let mut app = app();
+        let px = scene_root(&mut app, "bafypx", true);
+        let pin = spawn_pin(
             &mut app,
             px,
             512,
-            pb(1.0, 1.0, Some(texture("images/icons/missing.png"))),
+            pb(1.0, 1.0, Some(texture("images/icon.png"))),
         );
         let mut rx = subscribe(&mut app);
-        let mut sent = Vec::new();
-        for _ in 0..200 {
-            app.update();
-            sent.extend(drain(&mut rx));
-            if sent.iter().any(|list| !list.is_empty()) {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        let pins = sent.into_iter().find(|list| !list.is_empty()).unwrap();
-        assert_eq!(pins[0].icon, None);
+        update_until(&mut app, &mut rx, |list| list.len() == 1);
+
+        set_pin(
+            &mut app,
+            pin,
+            pb(2.0, 1.0, Some(texture("images/icon.png"))),
+        );
+        app.update();
+        let sent = drain(&mut rx);
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert_eq!(sent[0][0].x, 2);
+        assert_eq!(
+            sent[0][0].icon.as_deref(),
+            Some("https://content.test/contents/bafyicon")
+        );
+        assert!(!app.world().entity(pin).contains::<ResolvingMapPinIcon>());
+
+        set_pin(
+            &mut app,
+            pin,
+            pb(2.0, 1.0, Some(texture("images/other.png"))),
+        );
+        let sent = update_until(&mut app, &mut rx, |list| {
+            list[0].icon.as_deref() == Some("https://content.test/contents/bafyother")
+        });
+        assert!(sent.iter().all(|list| list.len() == 1), "{sent:?}");
+    }
+
+    #[test]
+    fn removing_a_pin_drops_its_icon() {
+        let mut app = app();
+        let px = scene_root(&mut app, "bafypx", true);
+        let pin = spawn_pin(
+            &mut app,
+            px,
+            512,
+            pb(1.0, 1.0, Some(texture("images/icon.png"))),
+        );
+        app.update();
+        assert!(app.world().entity(pin).contains::<ResolvingMapPinIcon>());
+        app.world_mut().entity_mut(pin).remove::<MapPin>();
+        app.update();
+        let entity = app.world().entity(pin);
+        assert!(!entity.contains::<ResolvingMapPinIcon>());
+        assert!(!entity.contains::<MapPinIcon>());
     }
 }

@@ -218,8 +218,8 @@ describe('minimap layers', () => {
     const container = await renderAt()
     act(() =>
       mapPins.receive([
-        { id: 'bafypx:512', x: 1, y: 1, title: 'Memory Grid', description: '', icon: null },
-        { id: 'bafypx:513', x: 2, y: 1, title: 'Tile Tally', description: '', icon: 'https://content.test/tile_tally.png' }
+        { id: 'bafypx:512', x: 1, y: 1, title: 'Memory Grid', icon: null },
+        { id: 'bafypx:513', x: 2, y: 1, title: 'Tile Tally', icon: 'https://content.test/tile_tally.png' }
       ])
     )
     const pins = container.querySelectorAll('[data-marker="pins"]')

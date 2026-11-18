@@ -232,7 +232,7 @@ const QuestPin = memo(function QuestPin({ pin, onPick }: { pin: PinMarker; onPic
       }}
     >
       <span className={styles.scaler}>
-        <QuestPinIcon icon={pin.icon} className={styles.pinIcon} frameClassName={styles.questFrame} />
+        <QuestPinIcon icon={pin.icon} className={styles.pinIcon} />
       </span>
     </button>
   )

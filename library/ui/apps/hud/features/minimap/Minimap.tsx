@@ -457,7 +457,7 @@ export const Minimap = memo(function Minimap({
                 {inGenesis && layers.has('pins') &&
                   layerData.pins.map((m) => (
                     <span key={m.id} className={styles.poi} style={atlasPxAt(m.key)} data-marker="pins">
-                      <QuestPinIcon icon={m.icon} className={styles.questPin} frameClassName={styles.questFrame} />
+                      <QuestPinIcon icon={m.icon} className={styles.questPin} />
                     </span>
                   ))}
                 {inGenesis && layers.has('liveEvents') &&

@@ -13,7 +13,6 @@ ui_core = { workspace = true }
 comms = { workspace = true }
 wallet = { workspace = true }
 dcl_component = { workspace = true }
-dcl_types = { workspace = true }
 nft = { workspace = true }
 console = { workspace = true }
 collectibles = { workspace = true }
@@ -42,3 +41,6 @@ rand = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = { workspace = true }
+
+[dev-dependencies]
+dcl_types = { workspace = true }

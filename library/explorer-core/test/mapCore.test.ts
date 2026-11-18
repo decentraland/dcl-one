@@ -178,12 +178,12 @@ describe('marker layers', () => {
 
 describe('quest pins', () => {
   it('stand on the centre of their parcel, keep their icon and replace the whole list', () => {
-    expect(pinMarkers([{ id: 'px:1', x: -3, y: 7, title: 'Memory Grid', description: 'Win', icon: null }])).toEqual([
+    expect(pinMarkers([{ id: 'px:1', x: -3, y: 7, title: 'Memory Grid', icon: null }])).toEqual([
       { id: 'px:1', key: { x: -3, y: 7 }, position: parcelCenter({ x: -3, y: 7 }), title: 'Memory Grid', icon: null }
     ])
     let calls = 0
     const off = mapPins.subscribe(() => calls++)
-    mapPins.receive([{ id: 'px:1', x: 0, y: 0, title: '', description: '', icon: 'https://content.test/a.png' }])
+    mapPins.receive([{ id: 'px:1', x: 0, y: 0, title: '', icon: 'https://content.test/a.png' }])
     expect(mapPins.getSnapshot().map((p) => p.icon)).toEqual(['https://content.test/a.png'])
     mapPins.clear()
     mapPins.clear()
