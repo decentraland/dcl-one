@@ -60,6 +60,16 @@ pub struct Needs {
 }
 
 impl Needs {
+    /// Nothing beyond Pulse over ENet.
+    pub const NONE: Needs = Needs {
+        api: false,
+        webtransport: false,
+        pulse_metrics: false,
+        livekit: false,
+        moderator: false,
+        explorer: false,
+    };
+
     /// What `stack` lacks for this scenario, if anything.
     pub fn missing(&self, stack: &Stack) -> Option<String> {
         let mut missing = Vec::new();
