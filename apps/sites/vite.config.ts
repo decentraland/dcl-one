@@ -125,7 +125,18 @@ function nodeProxy(): Record<string, ProxyOptions> {
     "/comms-gatekeeper": to(),
     // Cast 2.0: the gateway's `^~ /cast/` alias to the gatekeeper, except the stream and watch
     // pages (/cast/s/, /cast/w/), which are this app's (infra/gateway/gateway.py).
-    "^/cast/(?!s/|w/)": to({ rewrite: (path) => `/comms-gatekeeper${path}` }),
+    // As the gateway, it forwards the path the browser signed (`x-original-path`): the node takes
+    // a signature over it, as the watcher token's signed fetch over `/cast/watcher-token` is.
+    "^/cast/(?!s/|w/)": to({
+      rewrite: (path) => `/comms-gatekeeper${path}`,
+      configure: (proxy) => {
+        proxy.on("proxyReq", (proxyReq, req) => {
+          // `req.url` is already rewritten here; connect keeps the browser's in `originalUrl`.
+          const original = (req as { originalUrl?: string }).originalUrl ?? req.url;
+          if (original) proxyReq.setHeader("x-original-path", original);
+        });
+      },
+    }),
     "/badges": to(),
     "/profile-images": to(),
     "/signatures-api": to(),
