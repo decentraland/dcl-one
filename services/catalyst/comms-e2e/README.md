@@ -25,14 +25,20 @@ Expected limits, disconnect codes and the parcel grid come from the server crate
 ## Running
 
 ```
+comms-e2e doctor --stack-file <file>
 comms-e2e list [--tag pulse]
 comms-e2e run <scenario | --tag <tag> | --all> --stack-file <file>
               [--repeat <n>] [--seed <n>] [--strict] [--transport enet|webtransport]
               [--report <file.json>] [--work-dir <directory>] [--allow-host <host>]
+              [--deadline <seconds>] [--timeline <n>] [--one-source-address]
 comms-e2e console --stack-file <file> "/world_state" "/pulse_state"
 comms-e2e address --key-env <VARIABLE>
 ```
 
+- `doctor` dials every address the stack file names once, and checks the files and the
+  environment variables it names (set or not set, never the value). Run it first: what the file
+  names and is not there is `FAILED` and the exit code is 1; what the file leaves out is `absent`
+  and only skips the scenarios that need it.
 - The exit code is 0 only if nothing failed. `--strict` also fails the run on a skipped scenario.
 - A failure prints the first expectation that did not hold, the seed that replays it
   (`--seed`), and the end of the timeline. `--report` writes every timeline in full.
@@ -42,8 +48,28 @@ comms-e2e address --key-env <VARIABLE>
   private address unless `--allow-host` names it.
 - `console` starts one explorer behind the fault links and runs console commands in it: the way
   to see what a build answers before writing a scenario.
+- One repeat may take `--deadline` seconds (300 unless given). A failure shows the last
+  `--timeline` entries (40 unless given).
+- The explorer fronts are fixed ports, so one machine runs one explorer scenario or `console` at
+  a time.
 
 The tool does not start the stack. It dials one that is already up.
+
+**Source addresses.** The servers count several budgets by source address: Pulse remembers 256
+handshakes per address against replays, and admits 32 connections per address before
+authentication. A run makes hundreds of handshakes from one machine. So against a loopback
+stack, each scenario and repeat dials from an address of its own in `127.0.0.0/8`, which every
+bot of that scenario shares; "many actors on one address" still means what it says inside a
+scenario. `--one-source-address` turns this off. It is off by itself on macOS, where loopback is
+one address, against a stack that is not on loopback, and for WebTransport without a pinned
+certificate hash. The explorer always dials from the ordinary address.
+
+**Transports.** `--transport webtransport` runs the Pulse scenarios again over WebTransport. The
+expectations are the same on both: the same limits, the same disconnect codes. One thing a
+scenario does differently: a WebTransport session has no keep-alive of its own and QUIC ends an
+idle one after 30 seconds, so during a stall longer than that a quiet observer repeats its
+position (`pulse-stall-and-resume`). A session the server ends without a Pulse disconnect code
+reaching the client fails the scenario that expected the code, on either transport.
 
 ## The stack file
 
@@ -98,7 +124,7 @@ The LiveKit SDK brings libwebrtc, which stays out of this workspace.
 |---|---|---|
 | `pulse` | Smoke, refusal codes, the authentication timeout, rate limits, the same-wallet race, the handshake swarm, churn, a realm round trip, the emote lifecycle, resync requests, stall and resume, the scene listener, bursts over WebTransport | Pulse. All but the last run on either transport (`--transport`). |
 | `connections` | The full stack for one wallet, a second device, a stale socket, assignment order, mints under churn, ban eviction, credentials across a restart, two LiveKit joins with one identity | The API, and LiveKit for the joins |
-| `explorer` | An uplink stall while teleporting, off the north edge of the grid, off the east edge, a stale archipelago socket, an unreachable Pulse port | The API and a headless explorer build |
+| `explorer` | An uplink stall while teleporting, off the north edge of the grid, off the east edge, a stale archipelago socket, an unreachable Pulse port, two explorers with one wallet, packets from Pulse out of order | The API and a headless explorer build |
 
 Races repeat by default and take their order and gaps from the seed, so a failure replays.
 
