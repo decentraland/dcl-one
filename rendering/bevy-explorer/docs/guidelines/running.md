@@ -26,6 +26,9 @@ to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` 
 `source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs; there
 `CEF_PATH` takes a Windows path, and `just` runs from Git Bash (see [Platforms](platforms.md#native)).
 
+With Nix, `nix develop .#explorer` from the repository root has the tools and libraries of this
+loop on Linux and macOS, and one Cargo build directory for every worktree (see `source/readme.md`).
+
 ### Gateway routing
 
 For a deployment serving the APIs on one origin, run `just native-debug --gateway https://example.org`.
@@ -78,10 +81,10 @@ pinned Rust, protoc, CEF and platform libraries, including `CEF_PATH`. With thos
 
 ```sh
 sh scripts/gen-ts-bindings.sh
-corepack pnpm@11.27.0 --dir react-web install --frozen-lockfile --ignore-scripts
-corepack pnpm@11.27.0 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
-corepack pnpm@11.27.0 --dir react-web/bridge-scene --filter @dcl/hashing build
-corepack pnpm@11.27.0 --dir react-web run bundle:native
+corepack pnpm@12.21.0 --dir react-web install --frozen-lockfile --ignore-scripts
+corepack pnpm@12.21.0 --dir react-web/bridge-scene install --frozen-lockfile --ignore-scripts
+corepack pnpm@12.21.0 --dir react-web/bridge-scene --filter @dcl/hashing build
+corepack pnpm@12.21.0 --dir react-web run bundle:native
 cargo build --release --locked --package dcl_deno_ipc
 cargo build --release --locked
 ```
@@ -188,7 +191,10 @@ World and Scene Loading show where the player is and which load stage is active.
 Deployment shows the Sites build serving `/play` and the commit the page's `catalyst` service reports, which is
 this deployment's APIs only behind its own gateway; it reads once each time it is expanded. The Explorer's own build
 is Performance's client version.
-Performance and Memory and limits expose the engine's measurements and budgets.
+Performance and Memory and limits expose the engine's measurements and budgets: the sampled
+frame-time snapshots, the frame-time breakdown and the memory tiers; a `performance-profiler`
+build adds Render and Profiler, Bevy's per-pass render timings and the scope profiler
+([profiling](profiling.md)).
 The room, voice, rendering, media and avatar sections appear with the plugins that
 supply them. When several readings need the same scene, peer or sample, the panel
 shows the cause once. Expand the reading count to see which fields it affects.
@@ -219,25 +225,36 @@ State, in every build:
   waits for it to turn true after filling a field and false after leaving one (null where the
   client takes no input).
 - `/avatar_state [all|<address>]`: avatars as selected (body shape, wearables, emotes, forced
-  slots), as rendered (built or not, wearables by category, hidden categories) and the emote
+  slots), as rendered (built or not, wearables by category, hidden categories), the files it
+  could not be built from (`loadFailures`: bodies and wearables its builds leave out, `noBody`
+  when neither its body nor the default body could be built) and the emote
   each plays (with `idle`: whether a triggered emote may take over, which a scene's non-idle
   movement animation does not let it), as a JSON array; the player's by default. The HUD's preview avatars are tagged
   `preview`. Rendered URNs are normalised (lowercase, default wearables included); selected ones
   are as written. The HUD uses `/avatar_state --panel` for a single local-player report.
   It shows the completed model while a replacement loads and explains missing readings.
+- `/spring_bones [true|false]`: spring bones, the swing of a wearable's own bones (hair, tails,
+  capes): `enabled` (the Jiggle Bones setting, which an argument sets and saves),
+  `simulated_avatars` of at most `max_simulated_avatars`, `simulated_chains`, and for the player's
+  built avatar `player_simulated`, `chains`, `joints` (spring bones in them) and `longest_chain`,
+  each `null` with a reason in `unavailable` until the avatar is built. The player is simulated
+  first, then the avatars nearest the camera and in front of it. The Spring bones debug section
+  reads it.
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
 - `/voice_state`: the mic (`available`, `enabled`, and `sceneBlocked` while the scene the player
   stands in turns nearby voice off) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
-- `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown` and
-  `hidden` (the players' tags that show, and those that don't), `atlas` (the glyph atlas' distance-field and colour page sizes, in
+- `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown`,
+  `sceneAvatars` (of those shown, the tags over a scene's avatars) and `hidden` (the tags that
+  don't show), `atlas` (the glyph atlas' distance-field and colour page sizes, in
   pixels), `bubbles` (the chat bubble setting) and `tags`, one per shown tag: `player` (an
-  address, `local`, or null for an avatar with no wallet), `name`, `suffix`, `verified`,
+  address, `local`, or null for an avatar with no wallet), `sceneAvatar` (the tag is over an
+  avatar a scene made with `AvatarShape`), `name`, `suffix`, `verified`,
   `official`, `voice` (`off`, `idle`, `speaking`, `hushed`), `distance` from the camera in metres,
-  `opacity`, `scale` (metres per tag unit), `position` (all four as the shader works them out), `headOffset` (metres over the head bone;
-  null until the avatar is built) and `bubble` (null, or its `kind`,
+  `opacity`, `scale` (metres per tag unit), `position` (all four as the shader works them out), `headOffset` (metres over the head bone for
+  an avatar at a scale of one; null until the avatar is built) and `bubble` (null, or its `kind`,
   `mention` and message `length`; never the message).
   `/nametag_bubble <local|all|address> <nearby|community|dm> <message>` shows a message in a chat
   bubble over the nametags it names, locally only; `/chat_bubble_text <message id> <message>`
@@ -336,7 +353,9 @@ The HUD and input:
 - `/hud_logout` (web, under a test runner as `/hud_login` is): sign out through the HUD's own
   flow, the engine included, back to the HUD's start page, where `/hud_login` takes a sign-in
   again; a `/hud_login` still waiting for its answer fails with `signed out`. The engine's
-  `/logout` never reaches the HUD, which stays signed in and refuses a new `/hud_login`. A sign-in
+  `/logout` never reaches the HUD, which stays signed in and refuses a new `/hud_login`.
+  `/logout --forget` also drops the sign-in the engine keeps, so the next start opens on sign-in;
+  the HUD's Sign Out sends it, and a cancelled sign-in sends `/logout` alone. A sign-in
   the engine still holds keeps the next one waiting (`a sign-in is still finishing`) until the
   engine answers it; one it never answers needs a page reload.
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and
@@ -431,7 +450,7 @@ of the contract.
   output the way the real shader does, or it shows artifacts the render never produces.
 - `/player_position` reports z, and parcel y is `floor(z / 16)`, not `floor(-z / 16)`. That
   sign slip has looked like a hung console RPC before.
-- The `tracy` cargo feature enables bevy's Tracy tracing for native profiling.
+- The `tracy` cargo feature adds Tracy's wire layer for native profiling; the in-app readings and the capture steps are on the [profiling](profiling.md) page.
 
 ## Testing gotchas
 

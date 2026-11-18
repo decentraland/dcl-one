@@ -753,7 +753,7 @@ describe('getMobilePreview', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8000/mobile-preview');
     expect(result?.url).toContain('preview=http://192.168.0.10:8000');
     expect(result?.url).toContain('scene-inspector=');
-    expect(result?.qr).toMatch(/^data:image\/png;base64,/);
+    expect(result?.qr).toMatch(/^data:image\/svg\+xml;base64,/);
   });
 
   it('should ask the running desktop preview server for the QR (the deeplink carries the realm)', async () => {

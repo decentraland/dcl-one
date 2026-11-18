@@ -65,7 +65,7 @@
           default = pkgs.mkShell (environment // {
             packages = with pkgs; [
               rust nodejs_26 (pnpm.override { nodejs-slim = nodejs-slim_26; })
-              postgresql_18 process-compose watchexec livekit nats-server python3 bashInteractive
+              postgresql_18 process-compose watchexec livekit livekit-ingress valkey nats-server python3 bashInteractive
               gitMinimal git-lfs gh ripgrep libarchive pkg-config cmake clang protobuf curl jq ffmpeg-headless dev
             ];
             LOCALE_ARCHIVE = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "${pkgs.glibcLocales}/lib/locale/locale-archive";
@@ -100,8 +100,38 @@
             PNPM = "pnpm";
             pnpm_config_manage_package_manager_versions = "false";
           };
+          # The native Explorer's loop, `cargo build` and `just native-debug` in
+          # rendering/bevy-explorer/source: the toolchain, the build tools and the libraries of the
+          # Nix package (infra/packages/bevy-explorer-native.nix). No services. Linux compiles with
+          # the package's clang; on x86_64 the prebuilt V8 and CEF come from the store, so no build
+          # script downloads them and `just setup-cef` is not needed. macOS compiles and links with
+          # Apple's toolchain (Xcode command line tools), which has the SDK the engine needs.
+          native = import ./infra/packages/bevy-explorer-native.nix { inherit pkgs; };
+          explorerHook = builtins.readFile ./infra/dev/explorer-shell-hook.sh;
+          explorerTools = with pkgs; native.tools ++ [
+            rust just python3 gitMinimal nodejs_26 (pnpm.override { nodejs-slim = nodejs-slim_26; })
+          ];
+          explorerNode = { PNPM = "pnpm"; pnpm_config_manage_package_manager_versions = "false"; };
+          explorer =
+            if pkgs.stdenv.hostPlatform.isDarwin then pkgs.mkShellNoCC (explorerNode // {
+              packages = explorerTools;
+              buildInputs = [ pkgs.ffmpeg_6-headless ];
+              shellHook = explorerHook;
+            })
+            else (pkgs.mkShell.override { inherit (native) stdenv; }) (explorerNode // {
+              packages = explorerTools ++ [ pkgs.rustPlatform.bindgenHook ];
+              buildInputs = native.libraries;
+              # What the client loads at run time and no binary names: the window system, Vulkan, audio.
+              EXPLORER_RUNTIME_LIBRARIES = pkgs.lib.makeLibraryPath (with pkgs; [
+                vulkan-loader libxkbcommon wayland libx11 libxcursor libxi libxrandr libGL alsa-lib udev
+              ]);
+              shellHook = explorerHook;
+            } // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+              RUSTY_V8_ARCHIVE = "${native.v8}";
+              CEF_PATH = "${native.cef}";
+            });
         in {
-          inherit default ci wasm;
+          inherit default ci wasm explorer;
           # foundation-dev desktop: the Tauri shell (apps/desktop). Linux needs
           # WebKitGTK; libsoup gets TLS from glib-networking.
           desktop = default.overrideAttrs (old: {

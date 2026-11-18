@@ -3,7 +3,7 @@ import { useDrop } from 'react-dnd';
 import { HiOutlineUpload } from 'react-icons/hi';
 import { VscFolderOpened as FolderIcon } from 'react-icons/vsc';
 import { MdLink as LinkIcon } from 'react-icons/md';
-import cx from 'classnames';
+import { cx } from '../../lib/utils/cx';
 
 import { getNode, DropTypesEnum, type LocalAssetDrop } from '../../lib/sdk/drag-drop';
 import { EXTENSIONS, withAssetDir } from '../../lib/data-layer/host/fs-utils';
@@ -93,7 +93,7 @@ const FieldMode: React.FC<
     () => ({
       accept: allowCatalogDrop ? [DropTypesEnum.LocalAsset] : [],
       drop: ({ value, context }: LocalAssetDrop, monitor) => {
-        if (monitor.didDrop()) return;
+        if (disabled || monitor.didDrop()) return;
 
         const node = context.tree.get(value)!;
         const element = getNode(node, context.tree, isValidNode);
@@ -106,12 +106,13 @@ const FieldMode: React.FC<
         }
       },
       canDrop: ({ value, context }: LocalAssetDrop) => {
+        if (disabled) return false;
         const node = context.tree.get(value)!;
         return !!getNode(node, context.tree, isValidNode);
       },
       collect: monitor => ({ canDrop: monitor.canDrop() }),
     }),
-    [isValidNode, notifyChange, allowCatalogDrop],
+    [isValidNode, notifyChange, allowCatalogDrop, disabled],
   );
 
   const handleDropdownChange = useCallback(

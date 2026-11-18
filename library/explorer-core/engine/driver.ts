@@ -45,8 +45,9 @@ export interface LoginDriver {
   emailVerify?(email: string, code: string): Promise<AuthIdentity>
   loginEmail?(identity: AuthIdentity): Promise<void>
   loginCancel(): Promise<void>
-  /** Sign out of the current account → back to the login screen. */
-  logout(): Promise<void>
+  /** Sign out of the current account → back to the login screen. `forget` also drops the sign-in the
+   *  engine keeps (a person signing out), so the next start opens on sign-in. */
+  logout(forget?: boolean): Promise<void>
   /** Hand a same-domain SSO identity to the engine (replaces the auth-server poll).
    *  `defaultOnError` continues with (and deploys) a default profile if the user's current
    *  profile can't be fetched — it OVERWRITES the server-side profile, so only pass it after
@@ -78,6 +79,9 @@ export interface LoginDriver {
   engineReady?(): boolean
   /** Tell the transport the bridge scene is now expected, so its absence can be reported. */
   expectBridge?(): void
+  /** Whether the bridge scene has answered the page's handshake. Optional — the mock has no
+   *  bridge to wait for. */
+  bridgeReady?(): boolean
   /** Real weighted boot progress (0–100) + active step id, surfaced from the engine loader for
    *  the login footer bar. Optional — the mock has no engine to download. */
   loadProgress?(): number

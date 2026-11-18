@@ -70,12 +70,6 @@ export function getDeltaDirection(value: number | null): 'up' | 'down' | 'flat' 
   return value > 0 ? 'up' : 'down';
 }
 
-/** Renders as "6.6 min vs. last week", without the sign — the arrow carries it. */
-export function formatMinutesDelta(value: number | null) {
-  if (value === null) return NO_VALUE;
-  return t('analytics.detail.engagement.delta', { value: decimalNumber.format(Math.abs(value)) });
-}
-
 /** Day 3 or Day 7 retention: at or above the benchmark reads as positive, below it is called out in the brand colour. */
 export function getRetentionColor(value: number | null) {
   if (value === null) return undefined;

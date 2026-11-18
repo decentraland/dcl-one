@@ -1,8 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { captureException } from '@sentry/electron/renderer';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 
 import type { Project } from '/shared/types/projects';
 import { en } from '/@/modules/store/translation/locales';
@@ -15,8 +15,7 @@ const crash = { enabled: true };
 vi.mock('@sentry/electron/renderer', () => ({ captureException: vi.fn() }));
 vi.mock('#store', () => ({ useDispatch: () => vi.fn() }));
 vi.mock('/@/modules/store/ens', () => ({ fetchENSList: vi.fn() }));
-// ui2's Modal reads theme breakpoints that don't resolve under happy-dom; the step specs
-// stub it the same way.
+// The modal shell is not under test here; the step specs stub it the same way.
 vi.mock('./PublishModal', () => ({
   PublishModal: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
     open ? <div>{children}</div> : null,
@@ -40,14 +39,14 @@ const project = { id: 'project-1', title: 'My Scene' } as Project;
 
 function renderModal(onClose = vi.fn()) {
   const result = render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <p>Editor behind the modal</p>
       <PublishProject
         open
         project={project}
         onClose={onClose}
       />
-    </ThemeProvider>,
+    </TestProviders>,
   );
   return { onClose, ...result };
 }
@@ -121,14 +120,14 @@ describe('PublishProject error boundary', () => {
 
       crash.enabled = false;
       const modal = (open: boolean) => (
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <p>Editor behind the modal</p>
           <PublishProject
             open={open}
             project={project}
             onClose={onClose}
           />
-        </ThemeProvider>
+        </TestProviders>
       );
       rerender(modal(false));
       rerender(modal(true));

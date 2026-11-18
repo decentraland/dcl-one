@@ -1,2 +1,2 @@
-import { Loading } from './Loading';
-export { Loading };
+import { Loading, LoadingSpinner } from './Loading';
+export { Loading, LoadingSpinner };

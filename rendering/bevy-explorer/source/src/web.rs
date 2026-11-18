@@ -9,6 +9,9 @@ use bevy::{
 };
 use bevy_console::ConsoleConfiguration;
 use common::{
+    perf::{
+        HudMainThreadCostDataPoint, LongAnimationFrameSums, ReactCommitSums, SamplingPausedReason,
+    },
     rpc::RpcResultSender,
     structs::{
         AppConfig, CurrentRealm, EditorMode, PreviewMode, PrimaryUser, SessionGraphics,
@@ -22,7 +25,10 @@ use input_manager::InputPriorities;
 use once_cell::sync::OnceCell;
 use perf_output::{layer::PerfLogLayer, stream::Stream};
 use scene_runner::vec3_to_parcel;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
 use system_bridge::{SystemApi, SystemBridge};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::js_sys;
@@ -46,6 +52,54 @@ static PERF_STREAM: OnceCell<(String, bool)> = OnceCell::new();
 #[wasm_bindgen]
 pub fn engine_set_viewport_active(active: bool) {
     VIEWPORT_ACTIVE.store(active, Ordering::Relaxed);
+}
+
+static PAGE_HAS_FOCUS: AtomicBool = AtomicBool::new(true);
+
+/// Stores the page's `document.hasFocus()`.
+#[wasm_bindgen]
+pub fn engine_set_page_focus(has_focus: bool) {
+    PAGE_HAS_FOCUS.store(has_focus, Ordering::Relaxed);
+}
+
+/// The HUD cost windows the page stored and the engine has not taken, summed into one.
+static HUD_MAIN_THREAD_COST_WINDOW: Mutex<Option<HudMainThreadCostDataPoint>> = Mutex::new(None);
+
+/// Adds the page's HUD cost window to the stored one and returns true; returns false, storing
+/// nothing, while the engine holds the lock (the page thread must not block). With
+/// `react_commits_reported` false, the window holds no React commits.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn engine_set_hud_main_thread_cost(
+    covered_seconds: f32,
+    react_commits_reported: bool,
+    react_commit_count: u32,
+    react_commit_time_sum_ms: f32,
+    long_animation_frames_supported: bool,
+    long_animation_frame_count: u32,
+    hud_script_time_sum_ms: f32,
+    style_and_layout_time_sum_ms: f32,
+) -> bool {
+    let window = HudMainThreadCostDataPoint {
+        covered_seconds,
+        react_commits: react_commits_reported.then_some(ReactCommitSums {
+            commit_count: react_commit_count,
+            commit_time_sum_ms: react_commit_time_sum_ms,
+        }),
+        long_animation_frames: long_animation_frames_supported.then_some(LongAnimationFrameSums {
+            frame_count: long_animation_frame_count,
+            hud_script_time_sum_ms,
+            style_and_layout_time_sum_ms,
+        }),
+    };
+    let Ok(mut stored) = HUD_MAIN_THREAD_COST_WINDOW.try_lock() else {
+        return false;
+    };
+    match stored.as_mut() {
+        Some(stored) => stored.add(&window),
+        None => *stored = Some(window),
+    }
+    true
 }
 
 /// The harness's browser leg: `perfStream`, the same-origin path the benchmark log (and, with
@@ -545,8 +599,21 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
         level: Level::INFO,
         filter,
         custom_layer: |_| {
-            perf_output::stream::log_sink()
-                .map(|sink| Box::new(PerfLogLayer::new(sink)) as BoxedLayer)
+            // the benchmark log when the page streams it
+            let benchmark_log = perf_output::stream::log_sink().map(PerfLogLayer::new);
+            // and in a `performance-profiler` build the scope profiler's layer
+            #[cfg(feature = "performance-profiler")]
+            {
+                use bevy::log::tracing_subscriber::{Layer, Registry};
+                Some(
+                    Box::new(<Option<PerfLogLayer> as Layer<Registry>>::and_then(
+                        benchmark_log,
+                        crate::perf::profiled_scopes::profiled_scopes_layer(),
+                    )) as BoxedLayer,
+                )
+            }
+            #[cfg(not(feature = "performance-profiler"))]
+            benchmark_log.map(|layer| Box::new(layer) as BoxedLayer)
         },
     });
 
@@ -578,6 +645,12 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
     app.add_systems(Update, update_winit_fps)
         .add_systems(Update, update_url_params)
         .add_systems(Update, update_text_focus)
+        .insert_resource(BrowserPageFocus::current())
+        .add_systems(
+            First,
+            update_browser_page_focus_system
+                .before(crate::perf::frame_inputs::collect_frame_inputs_system),
+        )
         .add_systems(Last, engine_heartbeat_system);
     if perf_output::stream::started() {
         app.add_systems(Update, perf_stream_drain)
@@ -758,6 +831,51 @@ impl Drop for PerfStreamEnd {
 /// Pings the JS watchdog each frame so it can detect a stalled engine loop.
 fn engine_heartbeat_system(_js: JsThread) {
     engine_heartbeat();
+}
+
+/// The browser page's focus and the engine viewport's activity.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct BrowserPageFocus {
+    /// `document.hasFocus()`: the tab is the active tab of the focused browser window.
+    page_has_focus: bool,
+    /// `!document.hidden`, and the host has not deactivated the viewport.
+    viewport_active: bool,
+}
+
+impl BrowserPageFocus {
+    /// The values `engine_set_page_focus` and `engine_set_viewport_active` last stored.
+    fn current() -> Self {
+        Self {
+            page_has_focus: PAGE_HAS_FOCUS.load(Ordering::Relaxed),
+            viewport_active: VIEWPORT_ACTIVE.load(Ordering::Relaxed),
+        }
+    }
+
+    /// `ViewportInactive` while the viewport is inactive, else `WindowUnfocused` while the page
+    /// lacks focus, else `None`.
+    pub(crate) fn sampling_paused_reason(&self) -> Option<SamplingPausedReason> {
+        if !self.viewport_active {
+            Some(SamplingPausedReason::ViewportInactive)
+        } else if !self.page_has_focus {
+            Some(SamplingPausedReason::WindowUnfocused)
+        } else {
+            None
+        }
+    }
+}
+
+/// Copies the page's focus and the viewport's activity into [`BrowserPageFocus`].
+fn update_browser_page_focus_system(mut focus: ResMut<BrowserPageFocus>) {
+    focus.set_if_neq(BrowserPageFocus::current());
+}
+
+/// Takes the HUD cost windows the page stored since the last take, summed; `None` when none
+/// arrived.
+pub(crate) fn take_hud_main_thread_cost_window() -> Option<HudMainThreadCostDataPoint> {
+    HUD_MAIN_THREAD_COST_WINDOW
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .take()
 }
 
 fn update_text_focus(priorities: Res<InputPriorities>, mut prev: Local<bool>, _js: JsThread) {

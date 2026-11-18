@@ -682,22 +682,13 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
 
     // Comms consumes Shop's same name owner result, including the ready local
     // index when no subgraph exists and case-insensitive optional suffixes.
-    use crate::comms::interfaces::NameOwnerReader;
     for name in ["Alice", "ALICE.dcl.eth", "ALICE.DCL.ETH"] {
-        let owner = NameOwnerReader::name_owner(bare.as_ref(), name)
-            .await
-            .unwrap()
-            .unwrap();
+        let owner = bare.name_owner(name).await.unwrap().unwrap();
         assert_eq!(owner.as_str(), OWNER);
         let (status, body) = get(&bare, &format!("/lambdas/names/{name}/owner")).await;
         assert_eq!((status, body), (StatusCode::OK, json!({"owner":OWNER})));
     }
-    assert_eq!(
-        NameOwnerReader::name_owner(bare.as_ref(), "nobody")
-            .await
-            .unwrap(),
-        None
-    );
+    assert_eq!(bare.name_owner("nobody").await.unwrap(), None);
 
     let (status, body) = get(&state, "/lambdas/collections").await;
     assert_eq!(status, StatusCode::OK, "{body}");

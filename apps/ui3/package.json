@@ -5,6 +5,7 @@
   "engines": {
     "node": ">=24"
   },
+  "packageManager": "pnpm@12.21.0+sha512.66fd8278ee28935ce951792d34367ff3af5c432a2756445823029533835b8da529bbe0be5130afd56ed0713fb8789e47bad82d93bd5ae2fe54b15562d6276ef0",
   "description": "React (react-dom only) re-implementation of the Decentraland client UI, aiming for near-pixel-perfect parity. Vite SPA.",
   "license": "Apache-2.0",
   "repository": {
@@ -36,7 +37,8 @@
     "prebuild:lib": "node scripts/check-generated.mts",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.play.json --noEmit && tsc -p ../../library/shop/tsconfig.json --noEmit",
     "pretypecheck": "node scripts/check-generated.mts",
-    "test": "vitest run",
+    "test": "vitest run --project '!ui3-browser'",
+    "test:browser": "vitest run --project ui3-browser",
     "pretest": "node scripts/check-generated.mts",
     "test:watch": "vitest",
     "gen:schema-stubs": "node scripts/gen-schema-stubs.mts",

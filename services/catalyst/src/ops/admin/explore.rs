@@ -227,9 +227,12 @@ fn flag_name(body: &Value) -> Result<String, Response> {
 }
 
 async fn reload_flags(api: &crate::explore::api::Shared) -> sqlx::Result<()> {
-    api.flags
-        .reload(&api.pool, &api.settings.feature_flags_app)
-        .await
+    crate::explore::api::feature_flags::reload(
+        &api.flags,
+        &api.pool,
+        &api.settings.feature_flags_app,
+    )
+    .await
 }
 
 /// `POST /admin/api/explorer-api/flags-toggle` `{name, value?}` (`value`,
@@ -851,7 +854,7 @@ pub async fn challenges_list(session: AdminSession, State(state): State<SharedSt
         Ok(a) => a,
         Err(resp) => return resp,
     };
-    let answer = Json(crate::explore::api::auth_api::admin_list_challenges(&api)).into_response();
+    let answer = with_status(crate::explore::api::auth_api::admin_list_challenges(&api).await);
     finish(
         &state,
         Call::new(&session, DOMAIN, "explorer-api.challenges.list"),
@@ -870,9 +873,7 @@ pub async fn challenge_get(
         (Ok(a), Ok(id)) => (a, id),
         (Err(resp), _) | (_, Err(resp)) => return resp,
     };
-    let answer = with_status(crate::explore::api::auth_api::admin_get_challenge(
-        &api, &id,
-    ));
+    let answer = with_status(crate::explore::api::auth_api::admin_get_challenge(&api, &id).await);
     finish(
         &state,
         Call::new(&session, DOMAIN, "explorer-api.challenge.get")
@@ -893,9 +894,8 @@ pub async fn challenge_revoke(
         (Ok(a), Ok(id)) => (a, id),
         (Err(resp), _) | (_, Err(resp)) => return resp,
     };
-    let answer = with_status(crate::explore::api::auth_api::admin_revoke_challenge(
-        &api, &id,
-    ));
+    let answer =
+        with_status(crate::explore::api::auth_api::admin_revoke_challenge(&api, &id).await);
     finish(
         &state,
         Call::new(&session, DOMAIN, "explorer-api.challenge.revoke")
@@ -912,7 +912,7 @@ pub async fn identities_list(session: AdminSession, State(state): State<SharedSt
         Ok(a) => a,
         Err(resp) => return resp,
     };
-    let answer = Json(crate::explore::api::auth_api::admin_list_identities(&api)).into_response();
+    let answer = with_status(crate::explore::api::auth_api::admin_list_identities(&api).await);
     finish(
         &state,
         Call::new(&session, DOMAIN, "explorer-api.identities.list"),
@@ -931,9 +931,7 @@ pub async fn identity_revoke(
         (Ok(a), Ok(id)) => (a, id),
         (Err(resp), _) | (_, Err(resp)) => return resp,
     };
-    let answer = with_status(crate::explore::api::auth_api::admin_revoke_identity(
-        &api, &id,
-    ));
+    let answer = with_status(crate::explore::api::auth_api::admin_revoke_identity(&api, &id).await);
     finish(
         &state,
         Call::new(&session, DOMAIN, "explorer-api.identity.revoke")

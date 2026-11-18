@@ -1,0 +1,84 @@
+.frame {
+  position: relative;
+  width: 100%;
+}
+
+/* The Genesis City parcels keep the colours of the former Atlas. Two classes, so these win over the
+   kind colours of the ui3 map. The map has no colour of its own: the colour behind it shows between
+   the parcels. */
+.map.map {
+  --_taken: #3d3a46;
+  --_unowned: #09080a;
+  --_plaza: #70ac76;
+  --_road: #716c7a;
+  --_district: #5054d4;
+  height: 100%;
+  min-height: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.map.clickable,
+.map.clickable:active {
+  cursor: pointer;
+}
+
+.map.fixed,
+.map.fixed:active {
+  cursor: default;
+}
+
+.map :global(.shop-landmap__zoom) {
+  right: 20px;
+  bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border-radius: 6px;
+  box-shadow: 0 1px 8px rgb(0 0 0 / 30%);
+}
+
+/* The buttons use the default button font of the browser. */
+.map :global(.shop-landmap__zoom) button {
+  position: relative;
+  width: 40px;
+  min-width: 0;
+  height: 48px;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background-color: #736e7d;
+  color: rgb(214, 214, 214);
+  font: revert;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.map :global(.shop-landmap__zoom) button:first-child {
+  border-radius: 6px 6px 0 0;
+}
+
+.map :global(.shop-landmap__zoom) button:last-child {
+  border-radius: 0 0 6px 6px;
+}
+
+.map :global(.shop-landmap__zoom) button:hover:not(:disabled) {
+  color: white;
+}
+
+.map :global(.shop-landmap__zoom) button:disabled {
+  opacity: 1;
+  color: #969696;
+  cursor: default;
+}
+
+.map :global(.shop-landmap__zoom) button:last-child::before {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: 10%;
+  width: 80%;
+  height: 1px;
+  border-bottom: 1px solid #161419;
+  opacity: 0.4;
+}

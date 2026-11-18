@@ -108,6 +108,21 @@ impl Gate {
     }
 }
 async fn gate(state: &SharedState, conn: &mut PgConnection) -> Result<Gate, ApiError> {
+    // A credits trial (`CREDITS_TRIAL_MODE`) issues credits only through the authorize lane, to
+    // the buyers it names. A goal credit is signed by the same key for the same manager, but for
+    // any wallet that completes a goal, and it is never an authorization: the usage fold does not
+    // settle its spends and the revoker never sees it. So the program is off while a trial is
+    // configured, for its buyers too, whatever the flags say and even when they can't be read. A
+    // photo processed meanwhile gets a terminal receipt (`disabled`, or `no-season` outside a
+    // season) and is never counted later, and claiming a grant is refused (`claim`). Goal credits
+    // claimed before the trial stay spendable until they expire, and the reminder job, which reads
+    // this gate, sends nothing about them.
+    if state.settings.trial.is_some() {
+        return Ok(Gate {
+            disabled: true,
+            allowlist: None,
+        });
+    }
     let [mut dapps, mut explorer] = state.goal_flags.documents();
     let overrides = sqlx::query("SELECT app,name,value FROM explore_api.feature_flags_local WHERE app IN ('dapps','explorer')")
         .fetch_all(&mut *conn).await?;
@@ -144,7 +159,7 @@ async fn gate(state: &SharedState, conn: &mut PgConnection) -> Result<Gate, ApiE
     }
     let explorer = explorer
         .ok_or_else(|| ApiError::service_unavailable("credits explorer flags unavailable"))?;
-    let snapshot = crate::explore::api::feature_flags::Snapshot::from_document(explorer);
+    let snapshot = crate::shared::feature_flags::Snapshot::from_document(explorer);
     let allowlist = snapshot
         .variant_values("explorer", "alfa-marketplace-credits")
         .map(|list| {
@@ -357,18 +372,18 @@ fn goal_completed_notification(
     completed: &Completed<'_>,
     cdn_url: &str,
     now: NaiveDateTime,
-) -> Result<(String, catalyst_social::notifications::NewNotification), ApiError> {
+) -> Result<(String, crate::shared::notifications::NewNotification), ApiError> {
     let key = format!(
         "{address}-{}-{}-{}",
         completed.goal, completed.season.id, completed.week
     );
-    let image = catalyst_social::notifications::cdn_asset(
+    let image = crate::shared::notifications::cdn_asset(
         cdn_url,
         super::admin_store::CREDITS_NOTIFICATION_ICON_PATH,
     );
-    let notification = catalyst_social::notifications::NewNotification {
+    let notification = crate::shared::notifications::NewNotification {
         id: Uuid::new_v5(&NOTIFICATION_NAMESPACE, key.as_bytes()),
-        address: catalyst_social::Address::parse(address)
+        address: crate::shared::identity::Address::parse(address)
             .map_err(|_| ApiError::Internal("invalid goal owner".into()))?,
         kind: "credits_goal_completed".into(),
         occurred_at: now,
@@ -445,8 +460,7 @@ async fn grant(
         &state.settings.notifications_cdn_url,
         now,
     )?;
-    catalyst_social::notifications::store::insert_keyed_notification(conn, &key, &notification)
-        .await?;
+    crate::shared::notifications::insert_keyed_notification(conn, &key, &notification).await?;
     Ok(())
 }
 

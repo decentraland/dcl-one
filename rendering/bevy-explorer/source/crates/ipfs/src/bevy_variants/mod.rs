@@ -929,7 +929,12 @@ impl Plugin for BevyVariantsPlugin {
             .world()
             .contains_resource::<Events<AssetLoadFailedEvent<Image>>>()
         {
-            app.add_systems(Update, fall_back_from_failed_variants::<Image>);
+            // after the cache check, which skips a variant's failure only while it is marked served
+            app.add_systems(
+                Update,
+                fall_back_from_failed_variants::<Image>
+                    .after(crate::cache_heal::drop_failed_cached_entries),
+            );
         }
         if app
             .world()
@@ -938,7 +943,8 @@ impl Plugin for BevyVariantsPlugin {
             app.add_systems(
                 Update,
                 (
-                    fall_back_from_failed_variants::<Gltf>,
+                    fall_back_from_failed_variants::<Gltf>
+                        .after(crate::cache_heal::drop_failed_cached_entries),
                     finish_model_reloads.after(fall_back_from_failed_variants::<Gltf>),
                 ),
             );

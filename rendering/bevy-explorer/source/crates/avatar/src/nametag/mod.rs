@@ -1,6 +1,7 @@
-//! Nametags: the name over each player, with its badges and, when they write, their message.
+//! Nametags: the name over each player and scene avatar, with its badges and, when a player
+//! writes, their message.
 //!
-//! A tag is a child of its player with one mesh, drawn in the world by one shared material
+//! A tag is a child of its player or avatar with one mesh, drawn in the world by one shared material
 //! (nametag.wgsl). It stands on the player's nametag anchor; the shader turns it to the camera,
 //! keeps its size on screen and fades it with distance. A name that should not show is hidden,
 //! and its tag goes when its player does.
@@ -13,7 +14,6 @@ mod material;
 mod text;
 
 use alloy_core::primitives::Address;
-use ban_block::BanBlock;
 use bevy::{
     color::Mix, ecs::system::SystemParam, math::Vec3A, pbr::NotShadowCaster,
     platform::collections::HashSet, prelude::*, render::primitives::Aabb,
@@ -29,17 +29,26 @@ use common::{
 use comms::{
     global_crdt::ForeignPlayer,
     nearby_mutes::NearbyMutes,
-    profile::{CurrentUserProfile, UserProfile},
+    profile::{name_color::name_color, CurrentUserProfile, UserProfile},
     speaking::Speaking,
+    BlockedOrBanned,
 };
 use console::{AddDebugSection, DoAddConsoleCommand};
-use scene_runner::update_world::{
-    avatar_modifier_area::HiddenNametag,
-    text_shape::{GlyphAtlasMaintenance, GlyphAtlases, Page, Pending},
+use dcl_component::proto_components::sdk::components::PbAvatarShape;
+use scene_runner::{
+    initialize_scene::SuperUserScene,
+    update_world::{
+        avatar_modifier_area::HiddenNametag,
+        text_shape::{GlyphAtlasMaintenance, GlyphAtlases, Page, Pending},
+    },
+    SceneEntity,
 };
 use system_bridge::SystemApi;
 
-use crate::{dynamic_nametag::NametagsVisible, BeyondMaxAvatars};
+use crate::{
+    dynamic_nametag::{avatar_units, smallest_scale, NametagHeadOffset, NametagsVisible},
+    AvatarSelection, AvatarShape, BeyondMaxAvatars,
+};
 
 use self::{
     animation::{BubbleAnimation, BubblePhase, BubbleTarget, BUBBLE_LIFETIME},
@@ -56,6 +65,8 @@ use self::{
     text::{glyph_use, GlyphBudget, Shaped, Span, TextShaper},
 };
 
+/// The name of a scene's avatar that the scene gave none.
+const DEFAULT_SCENE_AVATAR_NAME: &str = "NPC";
 /// A name shows when its player is this far from the camera, in metres.
 const MIN_DISTANCE: f32 = 2.0;
 const MAX_DISTANCE: f32 = 40.0;
@@ -108,8 +119,8 @@ impl Plugin for NametagPlugin {
             Update,
             (
                 resolve_content,
+                resolve_scene_avatar_content,
                 resolve_voice,
-                mark_blocked,
                 show_tags,
                 retext_from_bridge,
                 show_chat_bubbles,
@@ -181,12 +192,13 @@ fn load_assets(
     });
 }
 
-/// On a player: what their nametag says.
+/// On a player or a scene avatar: what their nametag says.
 #[derive(Component, Clone, Debug, PartialEq)]
 #[require(NametagVoice)]
 pub struct NametagContent {
     pub name: String,
-    /// `#` and the end of the address after a name that isn't claimed; else empty.
+    /// `#` and the end of the address after a name that isn't claimed, or of a scene
+    /// avatar's id; else empty.
     pub suffix: String,
     pub color: Color,
     pub verified: bool,
@@ -220,6 +232,33 @@ impl NametagContent {
         }
     }
 
+    /// What a scene's avatar shows: its name and the end of its id. `None` for a name the
+    /// scene leaves unset or blank, which asks for no tag. As in a player's name, whatever
+    /// follows a `#` is dropped; a name with nothing before one reads `NPC`.
+    fn from_shape(shape: &PbAvatarShape) -> Option<Self> {
+        let given = shape
+            .name
+            .as_deref()
+            .filter(|name| !name.trim().is_empty())?;
+        let name = match given.split('#').next().unwrap_or_default().trim() {
+            "" => DEFAULT_SCENE_AVATAR_NAME,
+            name => name,
+        };
+        let name = capped(name, MAX_NAME_CHARS);
+        let suffix = match shape.id.char_indices().rev().nth(3) {
+            // never cut: `capped` is here to keep a control character off the tag
+            Some((last4, _)) => format!("#{}", capped(&shape.id[last4..], 4)),
+            None => "#0000".to_owned(),
+        };
+        Some(Self {
+            color: name_color(&name, &shape.id, false),
+            name,
+            suffix,
+            verified: false,
+            official: false,
+        })
+    }
+
     fn spans(&self) -> [Span; 2] {
         [
             Span::new(&self.name, self.color),
@@ -228,14 +267,16 @@ impl NametagContent {
     }
 }
 
-/// On a player: what their nametag's voice badge shows.
+/// On a scene's avatar whose [`AvatarShape`] was read for its nametag, until the shape changes.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SceneAvatarNametag {
+    /// The shape gives the avatar a [`NametagContent`]; a blank name gives none.
+    pub named: bool,
+}
+
+/// On a player or a scene avatar: what their nametag's voice badge shows.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NametagVoice(pub Voice);
-
-/// On a player: the local user blocked them or is blocked by them, or the scene's room banned
-/// them. Their name is not shown.
-#[derive(Component)]
-pub struct NametagBlocked;
 
 /// A player's tag, a child of the player, and what its mesh was last built from.
 #[derive(Component, Default)]
@@ -467,6 +508,85 @@ fn resolve_content(
     }
 }
 
+/// Names the avatars a scene made, while they have a body that is built: without one the tag
+/// would sit at their feet. A scene entity that only restyles a player has no
+/// [`AvatarSelection`] and gets no tag, and nor do the avatars the HUD previews, which a system
+/// scene makes. One the scene marks as talking is [`Speaking`], as in a call: a scene that
+/// turns nearby voice off leaves its bars up.
+#[allow(clippy::type_complexity)]
+fn resolve_scene_avatar_content(
+    mut commands: Commands,
+    avatars: Query<
+        (
+            Entity,
+            &SceneEntity,
+            Ref<AvatarShape>,
+            Option<&NametagContent>,
+            Option<&SceneAvatarNametag>,
+            Has<Speaking>,
+        ),
+        (
+            With<AvatarSelection>,
+            With<NametagHeadOffset>,
+            Without<ForeignPlayer>,
+            Without<PrimaryUser>,
+        ),
+    >,
+    system_scenes: Query<(), With<SuperUserScene>>,
+    dropped: Query<
+        Entity,
+        (
+            With<SceneAvatarNametag>,
+            Or<(
+                Without<AvatarShape>,
+                Without<AvatarSelection>,
+                Without<NametagHeadOffset>,
+            )>,
+        ),
+    >,
+) {
+    for (avatar, scene_entity, shape, current, marker, speaking) in &avatars {
+        if marker.is_some() && !shape.is_changed() {
+            continue;
+        }
+        let content = (!system_scenes.contains(scene_entity.root))
+            .then(|| NametagContent::from_shape(&shape.0))
+            .flatten();
+        // an avatar with no tag is marked too: its shape is not read again until it changes
+        let resolved = SceneAvatarNametag {
+            named: content.is_some(),
+        };
+        if marker != Some(&resolved) {
+            commands.entity(avatar).try_insert(resolved);
+        }
+        match content.is_some() && shape.0.talking == Some(true) {
+            true if !speaking => {
+                commands
+                    .entity(avatar)
+                    .try_insert(Speaking { in_call: true });
+            }
+            false if speaking => {
+                commands.entity(avatar).try_remove::<Speaking>();
+            }
+            _ => {}
+        }
+        match content {
+            Some(content) if current != Some(&content) => {
+                commands.entity(avatar).try_insert(content);
+            }
+            None if marker.is_some_and(|marker| marker.named) => {
+                commands.entity(avatar).try_remove::<NametagContent>();
+            }
+            _ => {}
+        }
+    }
+    for avatar in &dropped {
+        commands
+            .entity(avatar)
+            .try_remove::<(NametagContent, SceneAvatarNametag, Speaking)>();
+    }
+}
+
 fn forget_content(trigger: Trigger<OnRemove, UserProfile>, mut commands: Commands) {
     commands
         .entity(trigger.target())
@@ -539,7 +659,7 @@ fn resolve_voice(
             speaking.copied(),
             foreign.is_some_and(|player| mutes.is_muted(player.address)),
             is_local && mic.enabled,
-            mic.scene_blocked,
+            mic.scene_blocked(),
         );
         voice.set_if_neq(NametagVoice(badge));
     }
@@ -570,30 +690,6 @@ fn tag_scale(distance: f32, fov: f32) -> f32 {
     (fov * 0.5).tan() * SCREEN_SCALE * distance * UNIT
 }
 
-/// Mark the players whose names the local user's blocks and the scene's bans hide: the same
-/// reading that keeps their messages out of the chat.
-fn mark_blocked(
-    mut commands: Commands,
-    ban_block: BanBlock,
-    players: Query<(Entity, &ForeignPlayer, Has<NametagBlocked>), With<NametagContent>>,
-) {
-    let blocks = ban_block.blocks();
-    let room = ban_block.scene_room();
-    for (player, foreign, marked) in &players {
-        let blocked = blocks.is_blocked_either_way(foreign.address)
-            || room.is_addr_banned_in_scene(foreign.address);
-        match (blocked, marked) {
-            (true, false) => {
-                commands.entity(player).try_insert(NametagBlocked);
-            }
-            (false, true) => {
-                commands.entity(player).try_remove::<NametagBlocked>();
-            }
-            _ => {}
-        }
-    }
-}
-
 /// Decide which names show. One that doesn't is only hidden: its tag, and its message, stay.
 #[allow(clippy::type_complexity)]
 fn show_tags(
@@ -605,8 +701,9 @@ fn show_tags(
             Has<PrimaryUser>,
             Has<HiddenNametag>,
             Has<BeyondMaxAvatars>,
-            Has<NametagBlocked>,
+            Has<BlockedOrBanned>,
             Option<&PlayerModifiers>,
+            Option<&InheritedVisibility>,
         ),
         With<AttachPoints>,
     >,
@@ -623,11 +720,15 @@ fn show_tags(
     for (owner, mut nametag) in &mut tags {
         let shown = visible.0
             && players.get(owner.parent()).is_ok_and(
-                |(transform, is_local, hidden, beyond_max, blocked, modifiers)| {
+                |(transform, is_local, hidden, beyond_max, blocked, modifiers, drawn)| {
                     !hidden
                         && !beyond_max
                         && !blocked
                         && !modifiers.is_some_and(|modifiers| modifiers.hide)
+                        // a scene hides its avatars by their visibility, their parents' or a
+                        // scale of nothing
+                        && drawn.is_none_or(|drawn| drawn.get())
+                        && avatar_units(transform).is_some()
                         && view.shows(transform.translation(), is_local)
                 },
             );
@@ -1105,9 +1206,11 @@ fn tag_quads(
 
 /// Stand each tag on its player's anchor. The player's transform carries it from there, and
 /// the shader turns, sizes and fades it; its bounds cover it at its largest, when farthest.
+/// The shader leaves out a scene's scale of its avatar, which the bounds, the avatar's child,
+/// take: they are sized against it.
 fn place_tags(
     camera: Query<&Projection, With<PrimaryCamera>>,
-    owners: Query<&AttachPoints>,
+    owners: Query<(&AttachPoints, &GlobalTransform)>,
     anchors: Query<&Transform, Without<Nametag>>,
     mut tags: Query<(&ChildOf, &Nametag, &mut Transform, &mut Aabb)>,
 ) {
@@ -1117,17 +1220,20 @@ fn place_tags(
     let largest = tag_scale(MAX_DISTANCE, perspective.fov);
 
     for (owner, nametag, mut transform, mut aabb) in &mut tags {
-        let anchor = owners
-            .get(owner.parent())
-            .ok()
-            .and_then(|attach_points| anchors.get(attach_points.nametag).ok());
-        if let Some(anchor) = anchor {
+        let Ok((attach_points, owner_transform)) = owners.get(owner.parent()) else {
+            continue;
+        };
+        if let Ok(anchor) = anchors.get(attach_points.nametag) {
             if transform.translation != anchor.translation {
                 transform.translation = anchor.translation;
             }
         }
+        // an avatar scaled to nothing shows no tag
+        let Some(smallest) = smallest_scale(owner_transform) else {
+            continue;
+        };
         // a cube: the tag faces the camera whichever way its player does
-        let reach = Vec3A::splat(nametag.reach * largest);
+        let reach = Vec3A::splat(nametag.reach * largest / smallest);
         if aabb.half_extents != reach {
             *aabb = Aabb {
                 center: Vec3A::ZERO,

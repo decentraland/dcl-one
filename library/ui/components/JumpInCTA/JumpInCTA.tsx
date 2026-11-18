@@ -22,7 +22,7 @@ export type JumpInCTAProps = OwnProps & (NativeButton | NativeLink)
 const block = (event: MouseEvent<HTMLElement>) => event.preventDefault()
 
 /** decentraland-ui2 JumpInIcon, as decentraland.org draws it inside the CTA. */
-function JumpInIcon() {
+export function JumpInIcon() {
   return (
     <svg
       className={styles.icon}

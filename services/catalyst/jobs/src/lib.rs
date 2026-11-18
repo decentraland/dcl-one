@@ -251,7 +251,17 @@ impl Jobs {
             trace: trace.clone(),
             name: Arc::from(name.as_str()),
         };
-        let fut = body(ctx);
+        self.start(name, cancel, trace, Box::pin(body(ctx)))
+    }
+
+    /// Not generic, so the task harness and the outcome block compile once here.
+    fn start(
+        &self,
+        name: String,
+        cancel: CancellationToken,
+        trace: Arc<Mutex<Trace>>,
+        fut: JobFuture,
+    ) -> CancellationToken {
         let task_trace = trace.clone();
         let task_name = name.clone();
         let handle = tokio::spawn(async move {
@@ -298,16 +308,19 @@ impl Jobs {
     /// spawned with [`Jobs::spawn_scoped`] end with it. Cancellation does not
     /// interrupt the body: the job returns to standby only once the body
     /// returns, and another process may run the job meanwhile (see the module
-    /// docs on fencing). An `Err` releases the
+    /// docs on fencing). An `Err` or a panic releases the
     /// lease and retries after a backoff, so a fleet-wide job never stays
     /// dead while a process could run it; `Ok` finishes the job. Without
     /// leases the body runs once, as [`Jobs::spawn`] would run it.
-    pub fn spawn_leased<F, Fut>(&self, name: impl Into<String>, mut body: F) -> CancellationToken
+    pub fn spawn_leased<F, Fut>(&self, name: impl Into<String>, body: F) -> CancellationToken
     where
         F: FnMut(JobContext) -> Fut + Send + 'static,
         Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
     {
-        let name = name.into();
+        self.spawn_leased_boxed(name.into(), boxed_body(body))
+    }
+
+    fn spawn_leased_boxed(&self, name: String, mut body: JobBody) -> CancellationToken {
         let lease_name = name.clone();
         let leases = self.leases.clone();
         let fleet_jobs = self.fleet_jobs;
@@ -335,7 +348,14 @@ impl Jobs {
                     trace: ctx.trace.clone(),
                     name: ctx.name.clone(),
                 };
-                let fut = body(run_ctx);
+                use futures::FutureExt;
+                let fut = std::panic::AssertUnwindSafe(async { body(run_ctx).await })
+                    .catch_unwind()
+                    .map(|outcome| {
+                        outcome.unwrap_or_else(|panic| {
+                            Err(anyhow::anyhow!("panic: {}", panic_message(panic.as_ref())))
+                        })
+                    });
                 tokio::pin!(fut);
                 let lost = guard.lost.clone();
                 let outcome = tokio::select! {
@@ -371,7 +391,9 @@ impl Jobs {
                         tracing::warn!(job = %lease_name, "lease lost; stopping and standing by");
                         ctx.error("lease lost: the lease connection dropped");
                         ctx.progress("lease lost; stopping");
-                        let _ = fut.await;
+                        if let Err(err) = fut.await {
+                            tracing::warn!(job = %lease_name, error = %format!("{err:#}"), "run ended with an error after the lease was lost");
+                        }
                         drop(guard);
                     }
                 }
@@ -396,7 +418,15 @@ impl Jobs {
         F: FnMut(JobContext) -> Fut + Send + 'static,
         Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
     {
-        let name = name.into();
+        self.spawn_periodic_boxed(name.into(), cfg, boxed_body(task))
+    }
+
+    fn spawn_periodic_boxed(
+        &self,
+        name: String,
+        cfg: PeriodicCfg,
+        task: JobBody,
+    ) -> CancellationToken {
         let log_name = name.clone();
         let cfg = self.periodic_cfg(cfg);
         let task = Arc::new(tokio::sync::Mutex::new(task));
@@ -415,7 +445,16 @@ impl Jobs {
         F: FnMut(JobContext) -> Fut + Send + 'static,
         Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
     {
-        let name = name.into();
+        self.spawn_periodic_scoped_boxed(parent, name.into(), cfg, boxed_body(task))
+    }
+
+    fn spawn_periodic_scoped_boxed(
+        &self,
+        parent: &JobContext,
+        name: String,
+        cfg: PeriodicCfg,
+        task: JobBody,
+    ) -> CancellationToken {
         let log_name = name.clone();
         let cfg = self.periodic_cfg(cfg);
         let task = Arc::new(tokio::sync::Mutex::new(task));
@@ -437,13 +476,22 @@ impl Jobs {
         F: FnMut(JobContext) -> Fut + Send + 'static,
         Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
     {
-        let name = name.into();
+        self.spawn_periodic_leased_boxed(name.into(), cfg, boxed_body(task))
+    }
+
+    fn spawn_periodic_leased_boxed(
+        &self,
+        name: String,
+        cfg: PeriodicCfg,
+        task: JobBody,
+    ) -> CancellationToken {
         let log_name = name.clone();
         let cfg = self.periodic_cfg(cfg);
         let task = Arc::new(tokio::sync::Mutex::new(task));
-        self.spawn_leased(name, move |ctx| {
-            run_periodic(ctx, log_name.clone(), cfg.clone(), task.clone())
-        })
+        self.spawn_leased_boxed(
+            name,
+            boxed_body(move |ctx| run_periodic(ctx, log_name.clone(), cfg.clone(), task.clone())),
+        )
     }
 
     pub fn report(&self) -> Vec<JobReport> {
@@ -501,16 +549,24 @@ impl Jobs {
     }
 }
 
-async fn run_periodic<F, Fut>(
-    ctx: JobContext,
-    log_name: String,
-    cfg: PeriodicCfg,
-    task: Arc<tokio::sync::Mutex<F>>,
-) -> anyhow::Result<()>
+type JobFuture = std::pin::Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>;
+type JobBody = Box<dyn FnMut(JobContext) -> JobFuture + Send>;
+
+/// Erases a job body so the job machinery is compiled once, not per caller.
+fn boxed_body<F, Fut>(mut body: F) -> JobBody
 where
     F: FnMut(JobContext) -> Fut + Send + 'static,
     Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
 {
+    Box::new(move |ctx| Box::pin(body(ctx)))
+}
+
+async fn run_periodic(
+    ctx: JobContext,
+    log_name: String,
+    cfg: PeriodicCfg,
+    task: Arc<tokio::sync::Mutex<JobBody>>,
+) -> anyhow::Result<()> {
     let first_delay = if cfg.run_on_start {
         first_fire_jitter(&log_name, cfg.jitter)
     } else {
@@ -1424,7 +1480,16 @@ mod lease_tests {
         let Some(pool) = catalyst_db::scratch::pool(6).await else {
             return;
         };
-        let settings = settings("failover");
+        // The keeper waits one keepalive before its first check, so with a
+        // keepalive far beyond the 10 s `wait_until` bound it never checks
+        // during this test, and no lease statement or connect can time out
+        // under CI load. The lease-loss path is covered by the keeper tests
+        // below.
+        const KEEPALIVE_BEYOND_THE_WAITS: Duration = Duration::from_secs(300);
+        let settings = LeaseSettings {
+            keepalive: KEEPALIVE_BEYOND_THE_WAITS,
+            ..settings("failover")
+        };
         let a = Jobs::with_leases(pool.clone(), settings.clone());
         let b = Jobs::with_leases(pool.clone(), settings.clone());
         let (runs_a, runs_b) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
@@ -1587,6 +1652,94 @@ mod lease_tests {
                 .as_deref()
                 .unwrap_or("")
                 .contains("first pass fails"),
+            "{report:?}"
+        );
+        let aborted = jobs.shutdown(Duration::from_secs(5)).await;
+        assert!(aborted.is_empty(), "{aborted:?}");
+    }
+
+    #[tokio::test]
+    async fn a_panicking_leased_body_releases_the_lease_and_retries_after_a_backoff() {
+        let Some(pool) = catalyst_db::scratch::pool(6).await else {
+            return;
+        };
+        let settings = settings("panic");
+        let jobs = Jobs::with_leases(pool.clone(), settings.clone());
+        let runs = Arc::new(AtomicUsize::new(0));
+        let starts = Arc::new(Mutex::new(Vec::new()));
+        jobs.spawn_leased("panicky", {
+            let runs = runs.clone();
+            let starts = starts.clone();
+            move |ctx: JobContext| {
+                starts.lock().push(std::time::Instant::now());
+                let n = runs.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if n == 0 {
+                        panic!("first pass panics");
+                    }
+                    ctx.cancel.cancelled().await;
+                    Ok(())
+                }
+            }
+        });
+        wait_until("second run", || runs.load(Ordering::SeqCst) == 2).await;
+        let starts = starts.lock().clone();
+        assert!(
+            starts[1] - starts[0] >= settings.poll * 2,
+            "retried before the backoff: {:?}",
+            starts[1] - starts[0]
+        );
+        let report = jobs
+            .report()
+            .into_iter()
+            .find(|j| j.name == "panicky")
+            .unwrap();
+        assert_eq!(report.state, JobState::Running);
+        assert!(
+            report
+                .last_error
+                .as_deref()
+                .unwrap_or("")
+                .contains("panic: first pass panics"),
+            "{report:?}"
+        );
+        assert_eq!(jobs.leases().unwrap().held(), vec!["panicky".to_string()]);
+        let aborted = jobs.shutdown(Duration::from_secs(5)).await;
+        assert!(aborted.is_empty(), "{aborted:?}");
+    }
+
+    #[tokio::test]
+    async fn a_leased_body_that_panics_before_returning_its_future_is_retried() {
+        let Some(pool) = catalyst_db::scratch::pool(6).await else {
+            return;
+        };
+        let jobs = Jobs::with_leases(pool.clone(), settings("panic-sync"));
+        let runs = Arc::new(AtomicUsize::new(0));
+        jobs.spawn_leased("panicky-sync", {
+            let runs = runs.clone();
+            move |ctx: JobContext| {
+                if runs.fetch_add(1, Ordering::SeqCst) == 0 {
+                    panic!("closure panics");
+                }
+                async move {
+                    ctx.cancel.cancelled().await;
+                    Ok(())
+                }
+            }
+        });
+        wait_until("second run", || runs.load(Ordering::SeqCst) == 2).await;
+        let report = jobs
+            .report()
+            .into_iter()
+            .find(|j| j.name == "panicky-sync")
+            .unwrap();
+        assert_eq!(report.state, JobState::Running);
+        assert!(
+            report
+                .last_error
+                .as_deref()
+                .unwrap_or("")
+                .contains("panic: closure panics"),
             "{report:?}"
         );
         let aborted = jobs.shutdown(Duration::from_secs(5)).await;

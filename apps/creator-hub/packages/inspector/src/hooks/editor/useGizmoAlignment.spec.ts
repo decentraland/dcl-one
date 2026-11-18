@@ -1,6 +1,6 @@
 import { act } from 'react-dom/test-utils';
 import { renderHook } from '@testing-library/react';
-import mitt from 'mitt';
+import { createEmitter } from '../../lib/utils/emitter';
 import { CrdtMessageType } from '@dcl/ecs';
 import type { Entity } from '@dcl/ecs';
 
@@ -11,7 +11,7 @@ import { useSdk } from '../sdk/useSdk';
 import { useGizmoAlignment } from './useGizmoAlignment';
 
 // renderer.gizmos mock (the renderer-agnostic contract surface)
-const gizmoManagerEvents = mitt();
+const gizmoManagerEvents = createEmitter();
 const mockEntity = 0 as Entity;
 const gizmoManagerMock = {
   isWorldAligned: vi.fn().mockReturnValue(true),
@@ -34,7 +34,7 @@ useSdkMock.mockImplementation(cb => {
 
 // useChange mock
 vi.mock('../sdk/useChange');
-const engineEvents = mitt();
+const engineEvents = createEmitter();
 const useChangeMock = useChange as vi.MockedFunction<typeof useChange>;
 const mockEvent = {
   entity: mockEntity,

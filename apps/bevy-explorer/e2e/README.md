@@ -35,7 +35,9 @@ pnpm run gpu-probe                     # the GPU the browser gives, started as t
 pnpm run gpu-probe --adapter nvidia    # and once more on that adapter when the browser runs on another (Windows)
 ```
 
-The suite serves the web app on loopback (`driver/serve.ts`, with the isolation headers the app's
+The suite serves the web app on loopback at `http://localhost:<port>` (`driver/serve.ts`; the
+events and places services answer a signed read's CORS preflight for a `localhost` origin and not
+for `127.0.0.1`), with the isolation headers the app's
 own dev server sets per path: the shell plain, the app frame isolated on its own; and the bundled
 bridge scene's realm document with this origin's absolute content url, as Sites serves it, since
 the build's root-relative one is no url to the engine and the bridge scene would never load), starts Chrome
@@ -122,8 +124,10 @@ What the driver does for every scenario, so a spec need not:
   renders beside the rest on the one GPU.
 - **A rested HUD to start from.** Each scenario starts with Escape, a layer per press, until the
   rail's top button takes a click (a page hides the rail, a popup covers it), no panel beside the
-  rail reads pressed, the rail's settings popover is closed and no field holds the keys
-  (`/world_state`'s `keyboardClaimed`). The rail is read once it holds still (sliding in, it reads
+  rail reads pressed, none of the rail's lists of rows is open (Me, Discover, Shop, System, Volume,
+  Camera: each a dialog named as its button), the rail's settings popover is closed and no field
+  holds the keys (`/world_state`'s `keyboardClaimed`). The rail's Map button reads pressed while
+  the minimap shows, which is a HUD at rest. The rail is read once it holds still (sliding in, it reads
   as covered with nothing open). Each press waits for the HUD to show it took effect (a layer
   gone, the rail done sliding back in, and after leaving the chat input the engine told of it)
   before the next. A HUD already at rest gets no Escape; a client with no HUD (the standalone
@@ -181,27 +185,27 @@ adapter reported as a scene ban.
 ## Scenario map
 
 explorer-automation's 89 Explorer tests outside the sign-in flows, by fixture; the class of each
-test is in the spec file's header. Port 46, Partial 34, Gap 7, Drop 2.
+test is in the spec file's header. Port 48, Partial 35, Gap 4, Drop 2.
 
 | Fixture (tests) | Spec | Port | Partial | Gap | Drop | What changed |
 | --- | --- | --- | --- | --- | --- | --- |
-| ExplorePanel (7) | `explore-panel` | 6 | 1 | | | Pages instead of one panel; the top bar has no Communities tab |
+| ExplorePanel (7) | `explore-panel` | 6 | 1 | | | Pages instead of one panel, each opened by a row of the rail's Discover, Me or System panel; the top bar's Shop tab is not driven |
 | Shortcuts (7) | `shortcuts` | 6 | 1 | | | Gallery is `G`, not `K` |
-| Navbar (4) | `navbar` | | 2 | 2 | | A fixed rail set, no flags; no help menu or controls panel |
-| Minimap (5) | `minimap` | 2 | 1 | 2 | | No favourite heart or kebab menu; name and compass are unreadable text |
+| Navbar (4) | `navbar` | | 3 | 1 | | A fixed rail set, no flags, the other entries rows of the Me, Discover and System panels; the help rows are in the System panel, which has no controls row |
+| Minimap (5) | `minimap` | 4 | 1 | | | The rail's Map button shows the minimap; the dots menu adds the minimap's own settings; name and compass are unreadable text |
 | Navmap (1) | `navmap` | 1 | | | | `Sports`, not `Sport` |
 | Events (3) | `events` | 2 | 1 | | | The detail opens for the first event the service lists, when there is one |
-| Places (5) | `places` | | 4 | 1 | | Tabs and dropdowns without counters; a card jumps in, so no detail popup |
+| Places (5) | `places` | | 4 | 1 | | Tabs, category chips and Filter & Sort, without counters; a card opens the place's detail, which no scenario opens yet |
 | Communities (4) | `communities` | | 4 | | | No titles or counts; the invites view's titles only with something pending; the detail is a modal |
 | Chat (6) | `chat` | 2 | 4 | | | Escape leaves the input but keeps the panel; history checked through `/chat_history` |
 | EmoteWheel (3) | `emote-wheel` | 2 | 1 | | | The emote playing is asserted through `/avatar_state` |
-| Camera (3) | `camera` | 3 | | | | The camera and the capture are the engine's (`/photo_mode`, `/take_photo`); the HUD opens and closes photo mode (the C key, the rail's Camera button) and shows the overlay's Shoot and Close |
+| Camera (3) | `camera` | 3 | | | | The camera and the capture are the engine's (`/photo_mode`, `/take_photo`); the HUD opens and closes photo mode (the C key, the Take A Shot row of the rail's Camera panel) and shows the overlay's Shoot and Close |
 | Skybox (2) | `skybox` | | 2 | | | The slider has no name; the time is set with `/time` |
 | BackpackWearables (3) | `backpack-wearables` | 2 | 1 | | | An equip is a draft until the Backpack closes; then the profile version and `/avatar_state` |
 | BackpackEmotes (4) | `backpack-emotes` | | 4 | | | Slots read `<n> <emote>`; a base-only account has one page |
 | BackpackOutfits (4) | `backpack-outfits` | 2 | 2 | | | No delete confirmation; two closes to commit a look |
 | WearableVisibility (2) | `wearable-visibility` | | 2 | | | Thumbnails are not addressable; `rendered.wearables` by category instead |
-| Passport (5) | `passport` | 1 | 4 | | | Header and bio are plain text; name and address from `/get_user_data` |
+| Passport (5) | `passport` | 1 | 4 | | | Opens from the Profile row of the rail's Me panel; header and bio are plain text; name and address from `/get_user_data` |
 | SelfPreview (2) | `self-preview` | | | 2 | | No `--self-preview-wearables` launch option |
 | ViewSignalSmoke (2) | `view-signal` | | | | 2 | A Unity harness self-test |
 | Visual (17) | `visual/visual` | 17 | | | | The scenes at their own parcels; references recorded anew |
@@ -212,6 +216,17 @@ pressed `Chat in <name>` tab and the title bar its `Conversation options`, and a
 counts in `/community_state` and lands in `/dm_history community:<id>`. It needs an automation
 account that is a member of a community, whose card it finds under My Communities (VIEW ALL), and
 fails saying so otherwise.
+
+`specs/navbar.test.ts` also covers the Me panel's `Sign Out` row, which only an account on the web
+has: a session whose sign-in was an account, the suite's own sign-in included. The standalone and a
+guest have none (a guest's stored identity stays), so both scenarios are skipped on the standalone
+and neither signs in with `--guest`. The row opens
+a dialog named `Sign out?` over the open panel, and its `Cancel` button and Escape close the dialog
+with the panel still open and the session signed in. The dialog's own `Sign Out` button ends the
+session: the page loads again without the stored sign-in and without `position`, `realm` and
+`world` in its address, so it opens on the start screen and that screen's engine answers the
+console. Its scenario has a session of its own (`E2eSignOut`), waits until `/world_state` reads
+`signedIn` false, and closes that session.
 
 Specs with no explorer-automation counterpart, outside the counts above:
 
@@ -242,7 +257,9 @@ the scenes hide avatars, not the nametag over the hidden guest, whose name chang
 `/tree_wind false`: the trees and bushes sway in the wind, so no two frames of them agree),
 teleports to each scene, waits for its entities and its settle time, and compares the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
 differs when any RGB channel differs by more than 8, and the scene passes when at most 0.3% of the
-pixels differ (1.5% for `avatar-shape`), as explorer-automation compared.
+pixels differ (1.5% for `avatar-shape`), as explorer-automation compared. A last scenario turns
+the nametags back on at `avatar-shape` and reads `/nametag_state` until the scene's five avatars
+show their names (`sceneAvatar` true, no `player`, the suffix `#pc-1` to `#pc-5` from their ids).
 
 Build the scenes first with `apps/dcl-scene-cli`:
 
@@ -345,10 +362,11 @@ change on the left updates what is on the right in the same change, then runs th
 
 | Changed | Update | Check |
 | --- | --- | --- |
-| A HUD control's role, accessible name, placeholder, `aria-*` state or visibility; a page's heading or tablist (`library/ui/apps/hud`) | The selector in the spec (`specs/*.test.ts`, `specs/pages.ts`, `specs/backpack.ts`); the spec header's row and the scenario map above when a test's class changed | `pnpm run typecheck`; the scenarios in CI |
+| A HUD control's role, accessible name, placeholder, `aria-*` state or visibility; a page's heading or tablist (`library/ui/apps/hud`); a row added to or removed from a rail panel (Me, Discover, System), or the title of the question a row asks | `RAIL_ROWS` and the row's selectors in `specs/navbar.test.ts` for a rail row; the selector in the spec (`specs/*.test.ts`, `specs/pages.ts`, `specs/backpack.ts`); the spec header's row and the scenario map above when a test's class changed | `pnpm run typecheck`; the scenarios in CI |
 | A list region's `aria-busy` or what sets it (the Backpack's `Catalog` and `Saved outfits`, `Places results`), or a HUD control animated other than by CSS (which `hudAutomation.ts` cannot see moving) | `CATALOG` and `SAVED_OUTFITS` in `specs/backpack.ts`, `RESULTS` in `specs/places.test.ts`; the HUD tests that pin the state (`backpackStates`, `placesBrowser`, `hudAutomation`) | the HUD's tests; the scenarios in CI |
 | What `/world_state`'s `keyboardClaimed` reads (`InputPriorities`), or how the HUD relays a field's focus (`uiFocus`) | `keyboardTaken` and `keyboardReleased` in `driver/explorer.ts`, `closePage` in `specs/pages.ts`, `closeToRest` in `driver/harness.ts` and their tests | `cargo test world_state`; `pnpm test` |
 | A key binding | The keys in `specs/pages.ts`; the shortcuts spec's header | the same |
+| The lobby's default layout or its Landing card (`library/explorer-core/features/lobby/layout.ts`, `LobbyCards.tsx`), or the layout editor's controls (`LobbyEditor.tsx`: `Customize lobby layout`, `Reset to Default`, `SAVE`) | `enterWorld` in `driver/session.ts`, which presses the first button named exactly `Jump In`: only the Landing card carries that name. The web driver starts each run on a fresh browser profile, so the default layout is shown. A native run reads the layout the client stored; when the lobby shows no `Jump In` for `NO_LANDING_POLLS` polls, `enterWorld` resets it to the shipped layout through the editor and saves it, then jumps in | `pnpm test`; the scenarios in CI |
 | A console command's name, arguments or reply, in the engine or in `hudAutomation.ts`; what `/hud_login` and `/hud_logout` do with the session (`useEngineSession.ts`: the stored sign-in, the welcome page, the lobby's pick, the sign-out) | `driver/explorer.ts`, `driver/session.ts` and their tests; the Explorer readme's "Agents and tests" and `docs/guidelines/running.md` "Test commands" | `pnpm test`; the HUD's tests (`react-web`: `pnpm test`) |
 | `/hover_entity`, `/click_entity`, `/raycast_stats`, `/raycast_budget`, `/scene_logs` or the `pointer-targets` and `raycast-storm` scenes | `driver/explorer.ts`, `test/explorer.test.ts`, `specs/visual/pointer.test.ts`, `specs/visual/raycast-budget.test.ts`, `rendering/bevy-explorer/docs/guidelines/interaction.md`; `scenes/README.md` for a scene | `pnpm test`; the two scenarios, e.g. `pnpm run e2e --visual --filter 'the box behind the wall'` and `--filter 'a zero budget holds'` (the scenarios of `pointer.test.ts` and `raycast-budget.test.ts` have their own names; a pattern on a file name selects nothing). On the web these commands reach the engine through `engine_console_command` and write Bevy input events, not the page's trusted input |
 | `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `pnpm test`; the web driver's tests |

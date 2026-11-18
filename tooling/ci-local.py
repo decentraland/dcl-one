@@ -69,8 +69,7 @@ def workflow_paths(name, event='pull_request', source=None):
                 'rendering/bevy-explorer/source/.cargo/**', 'rendering/bevy-explorer/source/build.rs',
                 'rendering/bevy-explorer/source/src/**', 'rendering/bevy-explorer/source/crates/**',
                 'rendering/bevy-explorer/source/Cargo.*', 'rendering/bevy-explorer/source/deploy/headless/**',
-                'rendering/bevy-explorer/patches/**', 'rendering/bevy-explorer/vendor/**',
-                'tooling/patched-sources.py', '.github/actions/bevy-explorer-sources/**',
+                'rendering/bevy-explorer/vendor/**',
                 'apps/bevy-explorer/build-headless.py', 'apps/bevy-explorer/headless-packages.py',
                 'apps/bevy-explorer/install-*.py', 'apps/bevy-explorer/prepare-native-cache.py',
                 '.github/workflows/bevy-explorer-headless*.yml', 'tooling/ci-publication.py']
@@ -139,7 +138,7 @@ def pre_commit_steps(changed):
     if touches(changed, 'apps/dcl-scene-cli/*', 'library/*', '.cargo/*'):
         steps.append(Step('cargo check (sdk)', 'cd services/catalyst && cargo check --locked -p dcl-scene-cli --all-targets',
                           tools=('cargo',)))
-    if touches(changed, 'apps/ui3/*', 'library/catalyst-api/*', 'library/shop/*', 'library/ui/apps/hud/*', 'library/explorer-core/*'):
+    if touches(changed, 'apps/ui3/*', 'library/catalyst-api/*', 'library/shop/*', 'library/ui/apps/hud/*', 'library/ui/apps/shop/*', 'library/explorer-core/*'):
         steps += web_steps()
     elif touches(changed, 'apps/sites/*'):
         steps += web_steps(changed_ui3=False)

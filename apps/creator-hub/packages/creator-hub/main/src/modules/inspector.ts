@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
 import { app, type WebContents } from 'electron';
-import { createServer } from 'http-server';
 import log from 'electron-log';
 
 import type { Child } from './bin';
@@ -10,6 +10,7 @@ import { getRealm } from './bevy-realm';
 import { createLineBuffer } from './bevy-realm-build-events';
 import { usesRealmServer } from './cli';
 import { getAvailablePort } from './port';
+import { createStaticHandler } from './static-server';
 
 // One debugger per preview (keyed by scene path), fanning its output out to every window
 // that attached — the main window's inline console AND the detached console window (#1272)
@@ -31,7 +32,10 @@ function sendToTargets(state: DebuggerState, eventName: string, data: string) {
   }
 }
 
-let inspectorServer: ReturnType<typeof createServer> | null = null;
+// Loopback only: the app's windows are the only clients, and they use `http://localhost`.
+const INSPECTOR_HOST = '127.0.0.1';
+
+let inspectorServer: Server | null = null;
 
 export function killInspectorServer() {
   if (!inspectorServer) {
@@ -71,25 +75,36 @@ export async function start() {
 
   const origin = `localhost:${port}`;
 
-  inspectorServer = createServer({
-    root: inspectorPath,
-    // Cross-origin isolation headers. The Bevy engine (served same-origin from the
-    // inspector's public/bevy-engine) needs SharedArrayBuffer, which browsers only
-    // grant to a cross-origin-isolated context. These mirror what the inspector's
-    // dev build proxy sets (build.js) and what the engine's own service worker
-    // targets — COEP is `credentialless` (NOT `require-corp`) so the engine's own
-    // subresource loads aren't blocked. Harmless for the Babylon renderer, which
-    // doesn't rely on them.
-    headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'credentialless',
-      'Cross-Origin-Resource-Policy': 'cross-origin',
-    },
-    before: [serveBevyAgentAbout(inspectorPath, origin)],
+  // Cross-origin isolation headers. The Bevy engine (served same-origin from the
+  // inspector's public/bevy-engine) needs SharedArrayBuffer, which browsers only
+  // grant to a cross-origin-isolated context. These mirror what the inspector's
+  // dev build proxy sets (build.js) and what the engine's own service worker
+  // targets — COEP is `credentialless` (NOT `require-corp`) so the engine's own
+  // subresource loads aren't blocked. Harmless for the Babylon renderer, which
+  // doesn't rely on them.
+  const headers = {
+    'Cross-Origin-Opener-Policy': 'same-origin',
+    'Cross-Origin-Embedder-Policy': 'credentialless',
+    'Cross-Origin-Resource-Policy': 'cross-origin',
+  };
+  const serveStatic = createStaticHandler({ root: inspectorPath, headers });
+  const serveAbout = serveBevyAgentAbout(inspectorPath, origin, headers);
+
+  const server = createServer((req, res) => {
+    serveAbout(req, res)
+      .then(served => (served ? undefined : serveStatic(req, res)))
+      .catch(error => {
+        log.error('Inspector server request failed:', error);
+        res.destroy();
+      });
   });
-  inspectorServer.listen(port, () => {
+  server.on('error', error => {
+    log.error('Inspector server error:', error);
+  });
+  server.listen(port, INSPECTOR_HOST, () => {
     log.info(`Inspector running at http://localhost:${port}`);
   });
+  inspectorServer = server;
 
   return port;
 }
@@ -104,24 +119,34 @@ export async function start() {
 // served `/bevy-agent/` dir).
 const AGENT_ABOUT_PATH = '/bevy-agent/bevy-agent/about';
 
-function serveBevyAgentAbout(inspectorPath: string, origin: string) {
+// Resolves to false when the request is for the static handler.
+function serveBevyAgentAbout(
+  inspectorPath: string,
+  origin: string,
+  headers: Record<string, string>,
+) {
   const aboutFile = resolve(inspectorPath, 'bevy-agent', 'bevy-agent', 'about');
-  return (req: any, res: any) => {
+  return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const url = (req.url || '').split('?')[0];
-    if (url !== AGENT_ABOUT_PATH) {
-      res.emit('next');
-      return;
+    if ((req.method !== 'GET' && req.method !== 'HEAD') || url !== AGENT_ABOUT_PATH) {
+      return false;
     }
-    readFile(aboutFile, 'utf8')
-      .then(contents => {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(contents.replaceAll('__ORIGIN__', origin));
-      })
-      .catch(() => {
-        // Not exported (e.g. Bevy never built) — fall through to the static handler,
-        // which will 404 like any missing file.
-        res.emit('next');
-      });
+    let contents: string;
+    try {
+      contents = await readFile(aboutFile, 'utf8');
+    } catch {
+      // Not exported (e.g. Bevy never built) — fall through to the static handler,
+      // which will 404 like any missing file.
+      return false;
+    }
+    const body = Buffer.from(contents.replaceAll('__ORIGIN__', origin));
+    res.writeHead(200, {
+      ...headers,
+      'Content-Type': 'application/json',
+      'Content-Length': body.byteLength,
+    });
+    res.end(body);
+    return true;
   };
 }
 

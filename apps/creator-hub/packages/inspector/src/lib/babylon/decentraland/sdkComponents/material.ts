@@ -153,7 +153,7 @@ async function loadTexture(entity: EcsEntity, tx: TextureUnion['tex']): Promise<
         .getFile(tx.texture.src)
         .then(content => {
           if (!content) return null;
-          const textureBlob = new Blob([content]);
+          const textureBlob = new Blob([content as BlobPart]);
           const textureUrl = URL.createObjectURL(textureBlob);
           return createTextureFromUrl(textureUrl, tx.texture, entity.getScene());
         });

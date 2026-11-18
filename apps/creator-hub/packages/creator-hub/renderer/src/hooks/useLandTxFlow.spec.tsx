@@ -105,7 +105,7 @@ describe('useLandTxFlow', () => {
 
   describe('when the flow is reset while a step is pending', () => {
     let settle: (value: { hash: typeof HASH; status: 'confirmed' }) => void;
-    let refetch: Mock<[], Promise<void>>;
+    let refetch: Mock<() => Promise<void>>;
 
     async function resetDuring(txs: LandTransaction[]) {
       vi.mocked(sendLandTransaction).mockImplementationOnce(
@@ -145,7 +145,7 @@ describe('useLandTxFlow', () => {
 
   describe('when the first of two steps ends unconfirmed', () => {
     let flow: ReturnType<typeof renderFlow>;
-    let refetch: Mock<[], Promise<void>>;
+    let refetch: Mock<() => Promise<void>>;
 
     beforeEach(async () => {
       vi.mocked(sendLandTransaction).mockResolvedValueOnce({ hash: HASH, status: 'unconfirmed' });

@@ -1,6 +1,6 @@
 import { Color4 } from '@dcl/sdk/math';
 import { isMobile as detectIsMobile } from '@dcl/sdk/platform';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- ReactEcs is required for JSX factory
+// oxlint-disable-next-line no-unused-vars -- ReactEcs is required for JSX factory
 import ReactEcs, {
   Label,
   Button as DCLButton,

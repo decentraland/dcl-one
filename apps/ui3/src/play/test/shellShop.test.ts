@@ -12,7 +12,7 @@ import type { UsdCents } from '@shop/model/money'
 import type { GroupProgress } from '@shop/model/purchase'
 import { BOOK, creatorOrder, ITEM, storeMint } from '@shop/payment/fixtures'
 import type { StoredLogin } from '@explorer-core/features/auth/sso'
-import { SHOP_BUSY, SHOP_EVENT, SHOP_PROTOCOL, type ShopNamesMode, type ShopOperation, type ShopOperationEvent } from '../lib/shopProtocol'
+import { SHOP_BUSY, SHOP_EVENT, SHOP_PROTOCOL, type ShopNamesMode, type ShopOperation, type ShopOperationEvent } from '@dcl/one-ui/apps/shop/shopProtocol'
 import { claimLock, createShellShop, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices, type ShellShopWallet } from '../shell/shop/purchase'
 import { NAME_SIMULATION_MS } from '../shell/shop/namePurchase'
 import { createLedger, type OperationRecord } from '../shell/shop/ledger'
@@ -859,7 +859,7 @@ describe('the shell purchase', () => {
     expect(t.creditRecord).toHaveBeenCalledTimes(4)
     expect(t.creditRecord.mock.calls[0][1]).toEqual(['0x' + 'a1'.repeat(32)])
     const { view, handlers } = await t.until('failed')
-    expect(view).toMatchObject({ retry: false, message: expect.stringMatching(/never went through/) })
+    expect(view).toMatchObject({ retry: false, message: expect.stringMatching(/expired before its Credits were spent on chain/) })
     handlers.onClose()
     // The item can be bought again.
     const again = await t.buy()

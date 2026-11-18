@@ -14,18 +14,48 @@ jobs:
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
+      # Where the patch tool keeps the upstream commits. The directory is in the workspace: the cache
+      # action stores paths relative to the workspace, so a job on another system restores the archive
+      # to the same place.
+      DCL_PATCHED_SOURCES_CACHE: ${{ github.workspace }}/.cache/patched-sources
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Fails when a pinned commit is not on the ref its source names, or a source cannot be checked.
       - name: Check each pinned source against its upstream
         shell: bash
         run: python3 tooling/upstream-drift.py check | tee -a "$GITHUB_STEP_SUMMARY"
-      # Each build job proves the tree ids when it rebuilds the trees. This run proves them with no build.
-      - name: Prove each patch series against its upstream commit and tree ids
+      # This run rebuilds every source from its upstream commit and patch series and proves the tree
+      # and the `rev`. The upstream commits come from the Actions cache.
+      - name: Identify the upstream commits
+        id: bases
         if: ${{ !cancelled() }}
-        uses: ./.github/actions/bevy-explorer-sources
+        run: echo "key=$(grep -hE '^[[:space:]]*(upstream|commit|url)[[:space:]]*=' rendering/bevy-explorer/patches/*/source.toml | git hash-object --stdin)" >> "$GITHUB_OUTPUT"
+      # A changed pin has no exact match: the newest cache of the other upstream commits is restored
+      # and only the new commit is fetched.
+      - name: Restore the upstream commits
+        id: restore
+        if: ${{ !cancelled() }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          verify: true
+          path: .cache/patched-sources
+          key: bevy-explorer-patch-bases-${{ steps.bases.outputs.key }}
+          restore-keys: |
+            bevy-explorer-patch-bases-
+      - name: Prove each patch series against its upstream commit, tree and revision
+        id: verify
+        if: ${{ !cancelled() }}
+        run: python3 tooling/patched-sources.py verify
+      - name: Save the upstream commits
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' && steps.restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/patched-sources
+          key: ${{ steps.restore.outputs.cache-primary-key }}
+      # Read-only: fails when this repository has no ref for a pinned `rev`. The publish-sources workflow
+      # pushes them on each push to main; a failure here means it failed or did not run.
+      - name: Check that this repository has a ref for each pinned revision
+        if: ${{ !cancelled() }}
+        run: python3 tooling/patched-sources.py publish --check
       - name: Prove the in-tree crates against their public repositories
         if: ${{ !cancelled() }}
         run: python3 tooling/vendor-provenance.py
@@ -41,3 +71,29 @@ jobs:
           name: bevy-explorer-dependency-drift-site
           path: rendering/bevy-explorer/drift/
           retention-days: 30
+  # A failed run on main is reported in one issue: a comment on the open issue with this title, or a
+  # new issue. Only this job has a permission to write, and it runs no code of the repository.
+  report:
+    name: Report a failed run
+    needs: drift
+    if: ${{ failure() && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open the issue or add a comment to it
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TITLE: 'Bevy Explorer: the daily dependency drift run fails'
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          body="The daily run of the dependency drift workflow failed: $RUN_URL"
+          number=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number,title --jq '.[] | select(.title == env.TITLE) | .number' | head -n 1)
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "$body"
+          else
+            gh issue create --title "$TITLE" --body "$body"
+          fi

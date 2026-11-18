@@ -1,4 +1,4 @@
-//! Procedural trees on empty parcels. Placement is a per-parcel hash, heights follow the eased
+//! Procedural trees on empty parcels. Placement is a per-parcel hash, heights follow the
 //! terrain, and trunks are solid.
 
 use bevy::{
@@ -282,7 +282,7 @@ fn placement(
     })
 }
 
-/// Spawn and drop trees around the player's parcel, and keep them on the eased terrain.
+/// Spawn and drop trees around the player's parcel, and keep them on the terrain.
 fn update_trees(
     mut commands: Commands,
     surface: Res<TerrainSurface>,
@@ -355,7 +355,7 @@ fn update_trees(
     let resnap = |parcel: IVec2| {
         changes.relayout
             || changes.params
-            || changes.eased.is_some_and(|(min, max)| {
+            || changes.targets.is_some_and(|(min, max)| {
                 (min - 1).cmple(parcel).all() && (max + 1).cmpge(parcel).all()
             })
     };

@@ -4,13 +4,7 @@
 // scene, this app trusts its bundled bridge scene and Decentraland's own deployments.
 
 import { SERVICES, type ServiceDef } from '@explorer-core/engine/generated'
-import {
-  BASE_DOMAIN,
-  derivedServiceUrl,
-  hostBaseDomain,
-  isTrustedBaseDomain,
-  normaliseServiceUrl
-} from './baseDomain'
+import { BASE_DOMAIN, derivedServiceUrl, entryServiceUrl, hostBaseDomain, isTrustedBaseDomain } from './baseDomain'
 import { bootMode } from './bootMode'
 import { isTrustedSystemScene } from './systemScene'
 import { webParam } from '@explorer-core/lib/webParams'
@@ -93,7 +87,7 @@ function isTrustedServiceUrl(s: ServiceDef, value: string): boolean {
 for (const s of SERVICES) {
   GATES[s.name] = {
     warning: `Points the Explorer's "${s.name}" backend service at this server, with everything else looking normal. Whoever runs it would see the requests and choose the answers.`,
-    read: (native) => (native ? null : normaliseServiceUrl(s, new URLSearchParams(location.search).get(s.name))),
+    read: (native) => (native ? null : entryServiceUrl(s)),
     isTrusted: (value) => value === derivedServiceUrl(s.name) || isTrustedServiceUrl(s, value)
   }
 }

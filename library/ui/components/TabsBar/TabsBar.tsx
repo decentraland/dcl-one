@@ -2,13 +2,20 @@ import type { HTMLAttributes, KeyboardEvent, ReactNode } from 'react'
 import { useLayoutEffect, useRef, type AnchorHTMLAttributes, type ComponentType } from 'react'
 import { Tabs } from '../Tabs/Tabs'
 import styles from './TabsBar.module.css'
-import { isPlainLinkClick } from '../../link.helpers'
+import { assertNavigationEntries, isPlainLinkClick } from '../../link.helpers'
 
 type PanelTabsBarProps = {
   label: string
   children: ReactNode
   /** `underline` is the Figma bar (a bottom rule); `pill` spaces rounded tabs as decentraland.org's events page does. */
   variant?: 'underline' | 'pill'
+  /**
+   * The bar's inline padding. Without it the variant's own (the Figma 64px for `underline`, none for
+   * `pill`); `content` lines the first tab up with a page's content column: 16px, 32px from 1024px.
+   */
+  inset?: 'content'
+  /** Scrolls sideways instead of overflowing, with room inside the scroller for the tabs' focus ring. */
+  scrollable?: boolean
 } & Omit<HTMLAttributes<HTMLDivElement>, 'children' | 'role' | 'aria-label'>
 
 const KEYS = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End'])
@@ -18,6 +25,8 @@ function PanelTabsBar({
   label,
   children,
   variant = 'underline',
+  inset,
+  scrollable = false,
   className,
   onKeyDown,
   ...rest
@@ -45,7 +54,15 @@ function PanelTabsBar({
       {...rest}
       role="tablist"
       aria-label={label}
-      className={[styles.root, styles[variant], className].filter(Boolean).join(' ')}
+      className={[
+        styles.root,
+        styles[variant],
+        inset === 'content' && styles.insetContent,
+        scrollable && styles.scrollable,
+        className
+      ]
+        .filter(Boolean)
+        .join(' ')}
       onKeyDown={handleKeyDown}
     >
       {children}
@@ -105,19 +122,10 @@ function NavigationTabsBar({
   actions
 }: TabsBarNavigationProps) {
   if (!['create', 'shop', 'learn'].includes(page)) throw new Error('Unsupported TabsBar page')
-  const ids = new Set<string>()
-  for (const item of items) {
-    if (typeof item.id !== 'string' || !item.id.trim() || ids.has(item.id))
-      throw new Error('TabsBar item IDs must be unique non-empty strings')
-    if (
-      typeof item.label !== 'string' ||
-      !item.label.trim() ||
-      typeof item.href !== 'string' ||
-      !item.href.trim()
-    )
-      throw new Error('TabsBar routes require a non-empty label and href')
-    ids.add(item.id)
-  }
+  assertNavigationEntries(items, (href) => typeof href === 'string' && !!href.trim(), {
+    id: 'TabsBar item IDs must be unique non-empty strings',
+    entry: 'TabsBar routes require a non-empty label and href'
+  })
   const listRef = useRef<HTMLUListElement>(null)
   const routeLayout = JSON.stringify(
     items.map((item) => [item.id, item.label, item.href, !!item.hiddenOnMobile])

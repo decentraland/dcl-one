@@ -237,6 +237,17 @@
     flex: none;
     max-width: 100%;
   }
+  /* On a phone the web field takes the full width and its action sits under it, stretched to match. */
+  @media (max-width: 767.98px) {
+    .root[data-surface='web'] .fieldRow:has(> .action) {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .root[data-surface='web'] .action {
+      display: flex;
+      flex-direction: column;
+    }
+  }
   .hint {
     composes: text626f64792f736d from '../../foundations/typography/text-styles.module.css';
     display: flex;

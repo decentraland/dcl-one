@@ -41,6 +41,12 @@ interface WearableCardProps {
   /** Hover EQUIP/UNEQUIP click — the explicit equip action (persists). */
   onEquip?: () => void
   onHoverChange?: (hovered: boolean) => void
+  /** A tile to pick, not to equip (the gift picker): no hover panel or action, a ring while selected. */
+  pick?: boolean
+  /** How many copies are owned, shown as "xN" when more than one. */
+  count?: number
+  /** Covers the tile with a note, and it can't be picked. */
+  coverNote?: string
 }
 
 export function WearableCard({
@@ -58,24 +64,29 @@ export function WearableCard({
   onClick,
   onDoubleClick,
   onEquip,
-  onHoverChange
+  onHoverChange,
+  pick = false,
+  count,
+  coverNote
 }: WearableCardProps): React.JSX.Element {
   const [failed, setFailed] = useState(false)
-  const action = incompatible && !equipped ? null : equipped ? (unequippable ? 'UNEQUIP' : null) : 'EQUIP'
+  const action = pick ? null : incompatible && !equipped ? null : equipped ? (unequippable ? 'UNEQUIP' : null) : 'EQUIP'
+  const ringed = pick ? selected : equipped
   return (
     <button
       type="button"
-      className={`${styles.card} ${equipped ? styles.equipped : ''} ${incompatible ? styles.incompatible : ''}`.trim()}
+      className={[styles.card, ringed && styles.equipped, incompatible && styles.incompatible, pick && styles.pick].filter(Boolean).join(' ')}
       data-rarity={rarity}
       title={name}
       aria-label={name}
       aria-pressed={selected}
-      onClick={onClick}
+      aria-disabled={coverNote != null ? true : undefined}
+      onClick={coverNote != null ? undefined : onClick}
       onDoubleClick={onDoubleClick}
       onMouseEnter={onHoverChange && (() => onHoverChange(true))}
       onMouseLeave={onHoverChange && (() => onHoverChange(false))}
     >
-      <span className={styles.hoverPanel} aria-hidden="true" />
+      {!pick && <span className={styles.hoverPanel} aria-hidden="true" />}
       <span className={styles.body} style={{ backgroundImage: `url(${rarityTile(rarity)})` }}>
         {thumbnail && !failed && <img className={styles.thumb} src={thumbnail} alt="" onError={() => setFailed(true)} />}
         {categoryIcon != null && (
@@ -87,6 +98,12 @@ export function WearableCard({
         {isNew && <span className={styles.new}>NEW</span>}
         {isSmart && <span className={styles.smart}>SMART</span>}
         {slotNumber != null && <span className={styles.slotNumber}>{slotNumber}</span>}
+        {count != null && count > 1 && <span className={styles.count}>{`x${count}`}</span>}
+        {coverNote != null && (
+          <span className={styles.incompatibleCover}>
+            <span className={`${styles.incompatibleNote} ${styles.shownNote}`}>{coverNote}</span>
+          </span>
+        )}
         {incompatible && (
           <span className={styles.incompatibleCover}>
             <span className={styles.incompatibleNote}>Incompatible with body shape</span>

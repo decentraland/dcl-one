@@ -104,12 +104,21 @@ async function openSession(executable, { signal, startTimeoutMs = START_TIMEOUT_
   const profile = await mkdtemp(path.join(os.tmpdir(), 'dcl-visual-'))
   const redactStartup = startupRedactor()
   const output = startupOutput(redactStartup)
+  const launchedAt = performance.now()
+  let firstStderr = null
+  const recordStderr = (chunk) => {
+    firstStderr ??= Math.round(performance.now() - launchedAt)
+    output.write(chunk)
+  }
   const browser = spawn(executable, browserArgs(profile), { stdio: ['ignore', 'ignore', 'pipe'] })
-  browser.stderr?.on('data', output.write)
+  browser.stderr?.on('data', recordStderr)
   let phase = 'port-file'
   let portState = 'not-read'
   let lastFsError = null
   let validPortObserved = false
+  let polls = 0
+  let pollingStartedAt
+  let pollingEndedAt
   let socket
   let closing
   const pending = new Map()
@@ -135,13 +144,15 @@ async function openSession(executable, { signal, startTimeoutMs = START_TIMEOUT_
   }
   try {
     let port
-    const deadline = performance.now() + startTimeoutMs
+    pollingStartedAt = performance.now()
+    const deadline = pollingStartedAt + startTimeoutMs
     while (performance.now() < deadline) {
       signal?.throwIfAborted()
       if (startupError) throw startupError
       if (browser.exitCode !== null || browser.signalCode !== null)
         throw new Error('Capture browser exited during startup')
       try {
+        polls += 1
         const contents = await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')
         port = contents.split('\n')[0]
         lastFsError = null
@@ -155,14 +166,30 @@ async function openSession(executable, { signal, startTimeoutMs = START_TIMEOUT_
             : validPortObserved
               ? 'valid'
               : 'invalid'
-        break
+        if (validPortObserved) break
       } catch (error) {
         lastFsError = error?.code ?? 'UNKNOWN'
         portState = error?.code === 'ENOENT' ? 'missing' : 'unreadable'
-        await delay(100)
       }
+      await delay(100)
     }
-    if (!port) throw new Error('Capture browser did not start')
+    pollingEndedAt = performance.now()
+    signal?.throwIfAborted()
+    if (startupError) throw startupError
+    if (browser.exitCode !== null || browser.signalCode !== null)
+      throw new Error('Capture browser exited during startup')
+    if (!validPortObserved) {
+      const error = new Error('Capture browser did not start')
+      if (
+        portState === 'missing' &&
+        lastFsError === 'ENOENT' &&
+        browser.exitCode === null &&
+        browser.signalCode === null &&
+        !startupError
+      )
+        error.code = 'CAPTURE_BROWSER_PORT_MISSING'
+      throw error
+    }
     phase = 'endpoint'
     const tab = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, {
       method: 'PUT',
@@ -393,23 +420,32 @@ async function openSession(executable, { signal, startTimeoutMs = START_TIMEOUT_
     await session.send('Emulation.setDefaultBackgroundColorOverride', {
       color: { r: 0, g: 0, b: 0, a: 0 }
     })
-    browser.stderr?.off('data', output.write)
+    browser.stderr?.off('data', recordStderr)
     browser.stderr?.resume()
     browser.stderr?.unref()
     return session
   } catch (error) {
+    const failedAt = performance.now()
     const diagnostic = {
       executable: redactStartup(path.basename(executable)),
       phase,
       exitCode: browser.exitCode,
       signal: browser.signalCode,
-      port: { state: portState, lastFsError, validObserved: validPortObserved }
+      port: { state: portState, lastFsError, validObserved: validPortObserved },
+      polls,
+      timingMs: {
+        startup: Math.round(failedAt - launchedAt),
+        portPolling: Math.round((pollingEndedAt ?? failedAt) - pollingStartedAt),
+        firstStderr
+      }
     }
     const startup = output.finish()
-    browser.stderr?.off('data', output.write)
+    browser.stderr?.off('data', recordStderr)
     browser.stderr?.resume()
     browser.stderr?.unref()
+    const cleanupStartedAt = performance.now()
     await cleanupCapture(error, close)
+    diagnostic.timingMs.cleanup = Math.round(performance.now() - cleanupStartedAt)
     if (!signal?.aborted) {
       try {
         console.error(
