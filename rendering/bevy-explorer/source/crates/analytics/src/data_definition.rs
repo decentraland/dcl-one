@@ -151,6 +151,13 @@ pub struct SegmentEventPerformanceMetrics {
     pub hiccups_in_thousand_frames: u32,
     // Total time length of hiccups measured in seconds.
     pub hiccups_time: f32,
+    pub hiccup_count: u32,
+    pub hiccup_sample_count: u32,
+    pub hiccup_threshold_ms: f32,
+    pub hiccup_time_ms: f32,
+    pub hiccup_excess_time_ms: f32,
+    #[serde(flatten)]
+    pub gpu: Option<SegmentGpuFrameTimes>,
     // Minimum delta (difference) between frames in milliseconds
     pub min_frame_time: f32,
     // Maximum delta (difference) between frames in milliseconds
@@ -185,6 +192,28 @@ pub struct SegmentEventPerformanceMetrics {
     pub used_jsheap_size: i32,
     // Memory used only by the explorer in kilo bytes
     pub memory_usage: i32,
+}
+
+#[derive(Serialize)]
+pub struct SegmentGpuFrameTimes {
+    pub gpu_hiccup_count: u32,
+    pub gpu_hiccup_sample_count: u32,
+    pub gpu_hiccup_threshold_ms: f32,
+    pub gpu_hiccup_time_ms: f32,
+    pub gpu_hiccup_excess_time_ms: f32,
+    pub gpu_min_frame_time: f32,
+    pub gpu_max_frame_time: f32,
+    pub gpu_mean_frame_time: f32,
+    pub gpu_p1_frame_time: f32,
+    pub gpu_p5_frame_time: f32,
+    pub gpu_p10_frame_time: f32,
+    pub gpu_p20_frame_time: f32,
+    pub gpu_p50_frame_time: f32,
+    pub gpu_p75_frame_time: f32,
+    pub gpu_p80_frame_time: f32,
+    pub gpu_p90_frame_time: f32,
+    pub gpu_p95_frame_time: f32,
+    pub gpu_p99_frame_time: f32,
 }
 
 #[derive(Serialize)]

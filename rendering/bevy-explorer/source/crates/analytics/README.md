@@ -71,3 +71,28 @@ Two events answer the funnel's in-world questions (`in_world.rs`):
 - `time_spent_in_world` (`time_spent` seconds, `realm_name`): the desktop client's event, sent in
   chunks of up to 30 s and when the realm or the login changes, so the sum per session is the
   playtime. A page closed mid-chunk loses that chunk.
+
+## Performance Metrics
+
+Each completed performance snapshot produces one event covering 15 seconds of sampled play.
+CPU frame times measure elapsed time between frames. GPU frame times measure render graph
+execution for frames with a timestamp reading. The two sample counts can differ.
+
+| Property | Meaning |
+| --- | --- |
+| `hiccup_count`, `gpu_hiccup_count` | Number of frame times strictly above the corresponding threshold |
+| `hiccup_sample_count`, `gpu_hiccup_sample_count` | Number of CPU frames or GPU readings in the snapshot |
+| `hiccup_threshold_ms`, `gpu_hiccup_threshold_ms` | Threshold used for the corresponding sample, in milliseconds |
+| `hiccup_time_ms`, `gpu_hiccup_time_ms` | Sum of the full durations of frames over threshold, in milliseconds |
+| `hiccup_excess_time_ms`, `gpu_hiccup_excess_time_ms` | Sum of the time above threshold for those frames, in milliseconds |
+
+The CPU and GPU distributions report minimum, maximum, mean and percentiles 1, 5, 10, 20,
+50, 75, 80, 90, 95 and 99 in milliseconds (for example, `min_frame_time`, `p95_frame_time`,
+`gpu_min_frame_time` and `gpu_p95_frame_time`). The event omits all `gpu_` properties when
+the snapshot has no GPU readings. A measured sample with no hiccups reports zero counts and
+durations for hiccups. All these properties are JSON numbers.
+
+`samples` counts CPU frames, `total_time` is their total duration in milliseconds, and
+`median_frame_time` equals `p50_frame_time`. `hiccups_in_thousand_frames` is the CPU
+hiccup count scaled to 1,000 frames and rounded down. `hiccups_time` reports the full
+duration of CPU frames over threshold in **seconds**.
