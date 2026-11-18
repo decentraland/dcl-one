@@ -23,12 +23,6 @@
   border-bottom-left-radius: 0px;
 }
 
-.Toolbar .babylonjs-inspector svg {
-  width: 18px;
-  height: 18px;
-  transform: translateY(2px);
-}
-
 .Toolbar .edit-scene {
   margin: 0px;
 }

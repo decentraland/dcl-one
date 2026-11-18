@@ -9,8 +9,8 @@
     <script>
       // A stand-in for the app frame: `engine_console_command` answers a few commands the way the
       // engine does (a string, or a rejection with the error text), `/hud_wait` and `/hud_read`
-      // find the button at once, and `/hud_click` reports a real click on it through the DOM's
-      // `isTrusted`.
+      // find the button at once, `/hud_click` reports a real click on it through the DOM's
+      // `isTrusted`, and `/reload` loads the page again without answering.
       let clicks = 0
       let trusted = false
       document.getElementById('jump').addEventListener('click', (event) => {
@@ -43,7 +43,12 @@
             window.__dclTrustedInput(JSON.stringify({ id, op: 'click', x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, button: 'left' }))
           })
         },
-        '/fail': () => Promise.reject('failed to set location')
+        '/fail': () => Promise.reject('failed to set location'),
+        // loads the page again and never answers, as a confirmed sign-out does
+        '/reload': () => {
+          setTimeout(() => { top.location.href = new URL('/', location.href).href }, 0)
+          return new Promise(() => {})
+        }
       }
       window.engine_console_command = (line) => {
         const command = line.trim().split(/\s+/)[0]
