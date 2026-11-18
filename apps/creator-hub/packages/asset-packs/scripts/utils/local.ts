@@ -1,11 +1,12 @@
-import { hashV1 } from '@dcl/hashing';
-import type { AssetData, AssetPackData, Catalog } from '../../src/types';
+import hashing from '@dcl/hashing';
+import type { AssetData, AssetPackData, Catalog } from '../../src/types.ts';
 import {
   isAssetData,
   isAssetDataWithoutComposite,
   isAssetPackData,
   isLegacyAssetData,
-} from '../../src/types';
+} from '../../src/types.ts';
+import type { BuilderApiAsset, BuilderApiAssetPack } from './builder/types.ts';
 import {
   createDirectory,
   exists,
@@ -14,12 +15,15 @@ import {
   readBuffer,
   readJson,
   writeFile,
-} from './fs';
-import { slug } from './string';
-import type { BuilderApiAsset, BuilderApiAssetPack } from './builder/types';
+} from './fs.ts';
+import { slug } from './string.ts';
 
 export class LocalFileSystem {
-  constructor(public cwd: string) {}
+  cwd: string;
+
+  constructor(cwd: string) {
+    this.cwd = cwd;
+  }
 
   getAssetPackPath(assetPackName: string) {
     return `${this.cwd}/${slug(assetPackName)}`;
@@ -46,7 +50,7 @@ export class LocalFileSystem {
     }
     const thumbnailPath = `${path}/thumbnail.png`;
     const thumbnail = await readBuffer(thumbnailPath);
-    const hash = await hashV1(thumbnail);
+    const hash = await hashing.hashV1(thumbnail);
     return { ...data, thumbnail: hash };
   }
 
@@ -96,7 +100,7 @@ export class LocalFileSystem {
         continue;
       }
       const buffer = await readBuffer(filePath);
-      contents[file] = await hashV1(buffer);
+      contents[file] = await hashing.hashV1(buffer);
     }
     const data: AssetData = { ...dataWithoutComposite, composite };
     return { ...data, contents, path, composite };

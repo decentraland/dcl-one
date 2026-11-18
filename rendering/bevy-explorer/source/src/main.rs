@@ -26,6 +26,12 @@ use webgpu_build::{
     serialized_app_config, DecentralandApp, DecentralandAppConfig, DecentralandArguments,
 };
 
+// mimalloc; with the profiler, wrapped to count every allocation and its bytes
+#[cfg(feature = "performance-profiler")]
+#[global_allocator]
+static GLOBAL: webgpu_build::perf::allocation_counter::CountingAllocator<MiMalloc> =
+    webgpu_build::perf::allocation_counter::CountingAllocator(MiMalloc);
+#[cfg(not(feature = "performance-profiler"))]
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 static SESSION_LOG: OnceLock<String> = OnceLock::new();
@@ -62,12 +68,14 @@ fn main() {
                     .unwrap(),
             );
             Box::leak(guard.into());
-            Some(Box::new(
-                bevy::log::tracing_subscriber::fmt::layer()
-                    .with_writer(non_blocking)
-                    .with_ansi(false)
-                    .and_then(PerfLogLayer::new(&BENCHMARK_LOG)),
-            ))
+            let layer = bevy::log::tracing_subscriber::fmt::layer()
+                .with_writer(non_blocking)
+                .with_ansi(false)
+                .and_then(PerfLogLayer::new(&BENCHMARK_LOG));
+            #[cfg(feature = "performance-profiler")]
+            let layer =
+                layer.and_then(webgpu_build::perf::profiled_scopes::profiled_scopes_layer());
+            Some(Box::new(layer))
         },
         ..default()
     });
@@ -294,9 +302,7 @@ fn default_ui_scene() -> Option<String> {
         None
     }
     #[cfg(not(feature = "react-hud-cef"))]
-    Some(String::from(
-        "https://dcl-regenesislabs.github.io/bevy-ui-scene/BevyUiScene",
-    ))
+    None
 }
 
 #[inline(always)]

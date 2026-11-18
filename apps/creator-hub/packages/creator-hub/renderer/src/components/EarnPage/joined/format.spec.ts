@@ -1,6 +1,43 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatUsdc } from './format';
+import type { LocationMetrics } from '/@/lib/metricsApi';
+
+import { formatUsdc, totalPlaytimeSeconds30d } from './format';
+
+const location = (values: Record<string, number>): LocationMetrics => ({
+  x: 0,
+  y: 0,
+  location_key: '0,0',
+  builder_project_id: null,
+  metrics: Object.fromEntries(
+    Object.entries(values).map(([name, value]) => [
+      name,
+      [
+        { series: 'all', period: null, value },
+        { series: 'desktop', period: null, value: value / 2 },
+      ],
+    ]),
+  ),
+});
+
+describe('totalPlaytimeSeconds30d', () => {
+  it('should multiply the whole-population average playtime by the visits', () => {
+    expect(
+      totalPlaytimeSeconds30d(location({ avg_playtime_seconds_30d: 95.5, unique_visits_30d: 4 })),
+    ).toBe(382);
+  });
+
+  it.each([
+    ['the average', { unique_visits_30d: 4 }],
+    ['the visits', { avg_playtime_seconds_30d: 95.5 }],
+  ])('should be null without %s', (_, values) => {
+    expect(totalPlaytimeSeconds30d(location(values))).toBeNull();
+  });
+
+  it('should be null without metrics', () => {
+    expect(totalPlaytimeSeconds30d(undefined)).toBeNull();
+  });
+});
 
 describe('formatUsdc', () => {
   describe('when the amount is a decimal string', () => {

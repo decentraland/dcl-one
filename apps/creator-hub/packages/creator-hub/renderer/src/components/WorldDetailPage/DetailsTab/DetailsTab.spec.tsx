@@ -2,9 +2,8 @@ import type { ButtonHTMLAttributes } from 'react';
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import type { WorldSettings } from '/@/lib/worlds';
 import type * as WorldsModule from '/@/lib/worlds';
@@ -12,6 +11,7 @@ import { fetchWorldSettings as refetchWorldSettings } from '/@/modules/store/man
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 import { createTestStore } from '../../../../tests/utils/testStore';
 import { DetailShell } from '../../DetailShell';
 import { DetailsTab } from '.';
@@ -62,7 +62,7 @@ async function renderTab(settings: WorldSettings = saved) {
   render(
     <Provider store={store as never}>
       <MemoryRouter>
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <DetailShell
             title="Manage - Plaza"
             basePath="/manage/world/plaza.dcl.eth"
@@ -72,7 +72,7 @@ async function renderTab(settings: WorldSettings = saved) {
           >
             <DetailsTab worldName="plaza.dcl.eth" />
           </DetailShell>
-        </ThemeProvider>
+        </TestProviders>
       </MemoryRouter>
     </Provider>,
   );
@@ -301,7 +301,7 @@ describe('World DetailsTab', () => {
     it('should add the picked one, and save the new set', async () => {
       await renderTab();
       const field = categories();
-      fireEvent.mouseDown(field);
+      fireEvent.click(field);
       fireEvent.click(byText(within(screen.getByRole('listbox')).getAllByRole('option'), '🎨 Art'));
 
       expect(field.textContent).toBe('👥 Social, 🎶 Music, 🎨 Art');
@@ -317,19 +317,28 @@ describe('World DetailsTab', () => {
 
     it('should check the selected categories, keeping a checkmark slot on every row', async () => {
       await renderTab();
-      fireEvent.mouseDown(categories());
+      fireEvent.click(categories());
       const option = (name: string) =>
         within(screen.getByRole('listbox')).getByRole('option', { name });
 
-      expect(option('👥 Social').querySelector('[data-testid="CheckIcon"]')).not.toBeNull();
-      expect(option('🎶 Music').querySelector('[data-testid="CheckIcon"]')).not.toBeNull();
-      expect(option('🎨 Art').querySelector('[data-testid="CheckIcon"]')).toBeNull();
-      expect(option('🎨 Art').querySelector('.MenuGlyph')).not.toBeNull();
+      const tick = (name: string) => option(name).querySelector('svg');
+      const slotWidth = (slot: Element | null | undefined) => slot && getComputedStyle(slot).width;
+
+      expect(option('👥 Social').getAttribute('aria-selected')).toBe('true');
+      expect(option('🎶 Music').getAttribute('aria-selected')).toBe('true');
+      expect(option('🎨 Art').getAttribute('aria-selected')).toBe('false');
+      expect(tick('👥 Social')).not.toBeNull();
+      expect(tick('🎶 Music')).not.toBeNull();
+      expect(tick('🎨 Art')).toBeNull();
+      // The row with no tick keeps the 16px slot of a ticked row, so the labels stay in one column.
+      expect(slotWidth(tick('👥 Social')?.parentElement)).toBe('16px');
+      expect(slotWidth(option('🎨 Art').firstElementChild)).toBe('16px');
+      expect(option('🎨 Art').firstElementChild?.textContent).toBe('');
     });
 
     it('should not offer a fourth category', async () => {
       await renderTab({ ...saved, categories: ['social', 'music', 'art'] as never });
-      fireEvent.mouseDown(categories());
+      fireEvent.click(categories());
 
       expect(
         within(screen.getByRole('listbox'))

@@ -42,6 +42,8 @@ import {
 import { updateCanSave } from '../../../redux/app';
 import { getConfig } from '../../logic/config';
 import { withAssetDir } from '../../data-layer/host/fs-utils';
+import { isSdkTooOld } from '../../sdk/operations/add-asset/compatibility';
+import { getSdkRequirement } from '../../sdk/operations/add-asset/scene-sdk';
 import {
   fromSceneSpawnPoint,
   isSceneSpawnAxis,
@@ -531,6 +533,14 @@ export class SceneServer extends RPC<Method, Params, Result> {
         if (isFileOnly(asset)) {
           throw new Error(
             `"${asset.name}" is a file-only asset (e.g. an avatar animation) with no entity to place. Ask the user to drag it into the scene, which adds its files to the local assets, then reference the file from scene code.`,
+          );
+        }
+        // The same SDK check a drop from the catalog runs: the item's script needs components
+        // an older scene SDK doesn't have.
+        const sdkRequirement = await getSdkRequirement(asset.minSdkVersion);
+        if (isSdkTooOld(sdkRequirement)) {
+          throw new Error(
+            `"${asset.name}" needs @dcl/sdk ${sdkRequirement.required} or newer, and this scene has ${sdkRequirement.installed}. Ask the user to update the scene's SDK first, then place it again.`,
           );
         }
         const dataLayer = getDataLayerInterface();

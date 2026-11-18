@@ -7,7 +7,7 @@ import { DefaultModal, type ModalStep } from '../Modals/DefaultModal';
 import { AvatarWithInfo } from '../AvatarWithInfo';
 import type { Allowed } from './cursor';
 import { ParcelPickerMap } from './ParcelPickerMap';
-import { AtlasBlock, Count, Description } from './ParcelPicker.styled';
+import styles from './ParcelPicker.module.css';
 
 type Props = {
   open: boolean;
@@ -61,8 +61,8 @@ export function ParcelPickerModal({
       }}
     >
       <AvatarWithInfo value={walletAddress} />
-      <Description>{t('parcel_picker.description')}</Description>
-      <AtlasBlock>
+      <p className={styles.description}>{t('parcel_picker.description')}</p>
+      <div className={styles.atlasBlock}>
         <ParcelPickerMap
           label={t('parcel_picker.map_label', { name })}
           scenes={scenes}
@@ -71,13 +71,14 @@ export function ParcelPickerModal({
           onChange={setSelected}
           height={360}
         />
-        <Count
+        <p
+          className={styles.count}
           role="status"
           aria-live="polite"
         >
           {t('parcel_picker.count', { count: selected.size })}
-        </Count>
-      </AtlasBlock>
+        </p>
+      </div>
     </DefaultModal>
   );
 }

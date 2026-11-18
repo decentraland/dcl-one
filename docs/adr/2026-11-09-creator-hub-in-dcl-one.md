@@ -51,20 +51,24 @@ What else changes:
   the last released version of each (and `creator-hub@X.Y.Z` for the installers) is tagged on
   `main` before the import merges, since the merge itself starts the first release. A release on
   `main` fails when it finds no such tag, instead of publishing `0.1.0` as npm `latest`.
-- **Installers.** They keep publishing to `decentraland/creator-hub` releases, which becomes a
+- **Installers.** They are built for macOS, Windows and Linux (an x64 AppImage and deb, not
+  signed, for glibc 2.35 and later: the Linux build runs on Ubuntu 22.04 and fails if a native
+  module needs more). The AppImage needs no libfuse2 and registers its own sign-in link handler
+  for the user when it starts; the deb installs that handler. They keep publishing to
+  `decentraland/creator-hub` releases, which becomes a
   release-only repository: every installed app's updater reads them (`electron-builder.cjs`
   `publish`, `shared/urls.ts`), and GitHub has one "Latest" release per repository, which the
   updater follows. A GitHub App installed on that repository gives `creator-hub-desktop.yml` and
   `creator-hub-drop.yml` their token. The desktop workflow tags `creator-hub@X.Y.Z` here, from
-  which `semantic-version` (`change_path: apps/creator-hub`) computes the next version. That
-  repository is not archived: an archived repository takes no new releases.
+  which `semantic-version` (`change_path: apps/creator-hub apps/ui3/src/atoms`) computes the
+  next version. That repository is not archived: an archived repository takes no new releases.
 - **Promotion.** A merge publishes a pre-release, which no installed app sees, only when its pull
   request has the `release:creator-hub` label; a manual run of `creator-hub-ci.yml` on `main` with
   `release` set publishes one too. Every other run on `main` builds the unsigned test installers
   and publishes nothing. A person makes a pre-release Latest with `creator-hub-promote.yml` (`promote`), and `rollback` turns the current Latest
   back into a pre-release. Both run in the `creator-hub-promote` environment, which requires a
   reviewer. Promotion needs the `creator-hub@X.Y.Z` tag here, which the desktop workflow creates
-  only after both installers built and passed the signature check: the installers upload before
+  only after all installers built and passed the signature check: the installers upload before
   those checks end, so a pre-release alone may be half-built. A newer merge never cancels a
   release in progress on `main`, but GitHub keeps only one *queued* run per concurrency group: when
   several merges land during a release, only the newest of them runs, and it releases only if its
@@ -86,10 +90,18 @@ What else changes:
   `github.ref == 'refs/heads/main' && 'creator-hub-release' || ''`.
 - **Inspector previews.** These were GitHub Pages; they are now uploaded to the SDK bucket next to
   the branch's package tarballs.
-- **UI standards.** The Electron renderer is built on `decentraland-ui2`/MUI with `styled`, and
-  the inspector keeps one plain stylesheet per component, both against
-  [the UI standards](../ui-standards.md). `tooling/ui-standards-imported.txt` lists the 238 files
-  that broke the standard when they were imported. `tooling/ui_standards.py` passes them only as
+- **UI standards.** The Electron renderer builds its UI from the `apps/ui3` atoms, consumed as
+  source through the `@ui` alias like Sites does, on React 18. It installs no CSS-in-JS library,
+  and neither the renderer nor the inspector installs `decentraland-ui`, `decentraland-ui2` or MUI.
+  `renderer/src/themes/ui3-bridge.css` defines the tokens the atoms read and the renderer theme
+  does not. What the renderer needs beyond the looks other apps use is an opt-in variant of the
+  shared atom (for example the `text` and `outline` looks of `Button` and the `wide` ring of
+  `Spinner`), so a component that asks for none of them keeps its markup and looks in every other
+  app. The inspector uses the same spinner, the logomark and the
+  tooltip, and keeps one plain stylesheet per component, as part of the renderer's style sheets
+  still do, both against [the UI standards](../ui-standards.md).
+  `tooling/ui-standards-imported.txt` lists the files that broke the standard when they were
+  imported and still exist. `tooling/ui_standards.py` passes them only as
   files the change adds, so every later change to them is checked as usual. The check reads the
   list from the base revision and fails a change that adds to it or deletes it, so the list never
   grows.
@@ -107,10 +119,11 @@ What else changes:
 
 ## Follow-ups
 
-1. Move the renderer to `apps/ui3`, consumed as source like Sites does (`@ui/*`): React 19 first,
-   then ui3's tokens, a translation seam in ui3 (the app ships English, Spanish and Chinese), a
-   navigation seam, then one screen at a time. Remove `decentraland-ui2` and MUI at the end, and
-   with them the renderer's lines in `tooling/ui-standards-imported.txt`.
+1. Finish the move of the Creator Hub UI to the shared UI: React 19, the version `apps/ui3`
+   builds on; CSS Modules for the plain style sheets of the renderer and the inspector, which
+   removes their lines from `tooling/ui-standards-imported.txt`; variants on the atoms in place of
+   the renderer rules that select classes inside them; one set of Material icons in place of
+   the two the renderer imports; then the atoms the renderer imports in `library/ui`.
 2. Build `@dcl/sdk-commands` against `apps/creator-hub/packages/inspector` instead of a
    published version.
 3. Delete what only the Tauri shell used in Sites: the native sign-in relay

@@ -1,9 +1,9 @@
 import React, { useMemo } from 'react';
-import cx from 'classnames';
-import PinIcon from '@mui/icons-material/Place';
-import ParcelsIcon from '@mui/icons-material/GridViewRounded';
+import { cx } from '/@/lib/cx';
+import { PlaceIcon as PinIcon, GridViewRoundedIcon as ParcelsIcon } from '@ui/atoms/icons-material';
 import { ChainId } from '@dcl/schemas';
-import { Address, Typography } from 'decentraland-ui2';
+import Address from '@ui/atoms/Address';
+import Text from '@ui/atoms/Text';
 import { addBase64ImagePrefix } from '/@/modules/image';
 import { formatWorldSize } from '/@/modules/world';
 import { t } from '/@/modules/store/translation/utils';
@@ -99,8 +99,8 @@ const ProjectStepWrapper: React.FC<Props> = ({ isWorld, name, project, children,
             style={{ backgroundImage: `url(${addBase64ImagePrefix(project.thumbnail)})` }}
           />
           <div className="text">
-            <Typography variant="h6">{project.title}</Typography>
-            <Typography
+            <Text variant="h6">{project.title}</Text>
+            <Text
               variant="body2"
               className="parcels"
             >
@@ -108,7 +108,7 @@ const ProjectStepWrapper: React.FC<Props> = ({ isWorld, name, project, children,
               {t('modal.publish_project.deploy.scene_size', {
                 size: formatWorldSize({ width: project.layout.cols, height: project.layout.rows }),
               })}
-            </Typography>
+            </Text>
           </div>
         </div>
         <div className={cx('content', className)}>{children}</div>

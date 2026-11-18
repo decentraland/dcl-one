@@ -1,17 +1,10 @@
 import { useCallback } from 'react';
-import FolderIcon from '@mui/icons-material/Folder';
-import {
-  Box,
-  Button,
-  IconButton,
-  FormControlLabel,
-  Radio,
-  RadioGroup,
-  OutlinedInput,
-  Typography,
-  FormGroup,
-  InputAdornment,
-} from 'decentraland-ui2';
+import { FolderIcon } from '@ui/atoms/icons-material';
+import Button from '@ui/atoms/Button';
+import IconButton from '@ui/atoms/IconButton';
+import Radio, { RadioGroup } from '@ui/atoms/Radio';
+import Text from '@ui/atoms/Text';
+import TextField from '@ui/atoms/TextField';
 
 import { DEPENDENCY_UPDATE_STRATEGY } from '/shared/types/settings';
 import { t } from '/@/modules/store/translation/utils';
@@ -38,10 +31,10 @@ const ScenesTab: React.FC<ScenesTabProps> = ({
   );
 
   const handleChangeUpdateDependenciesStrategy = useCallback(
-    (event: React.ChangeEvent<HTMLInputElement>) => {
+    (value: string) => {
       const newSettings = {
         ...settings,
-        dependencyUpdateStrategy: event.target.value as DEPENDENCY_UPDATE_STRATEGY,
+        dependencyUpdateStrategy: value as DEPENDENCY_UPDATE_STRATEGY,
       };
       updateSettings(newSettings);
     },
@@ -49,27 +42,28 @@ const ScenesTab: React.FC<ScenesTabProps> = ({
   );
 
   return (
-    <Box className="FormContainer">
-      <FormGroup className="ScenesFolderFormControl">
-        <Typography variant="body1">
+    <div className="FormContainer">
+      <div className="FormGroup ScenesFolderFormControl">
+        <Text
+          variant="body1"
+          id="scenes-folder-label"
+        >
           {t('modal.app_settings.fields.scenes_folder.label')}
-        </Typography>
-        <Box className="ScenesFolderInputContainer">
-          <OutlinedInput
-            color="secondary"
+        </Text>
+        <div className="ScenesFolderInputContainer">
+          <TextField
+            tone="neutral"
+            aria-labelledby="scenes-folder-label"
             value={settings.scenesPath}
             onChange={handleChangeSceneFolder}
             error={!!error}
             fullWidth
             endAdornment={
-              <InputAdornment
-                position="end"
-                className="ScenesFolderInputAdornment"
-              >
+              <span className="ScenesFolderInputAdornment">
                 {isCustomScenesPath && (
                   <Button
                     variant="text"
-                    color="secondary"
+                    tone="neutral"
                     onClick={onResetScenesFolder}
                     className="ResetScenesFolderButton"
                   >
@@ -79,48 +73,57 @@ const ScenesTab: React.FC<ScenesTabProps> = ({
                 <IconButton
                   onClick={onOpenFolder}
                   edge="end"
+                  aria-label={t('modal.app_settings.fields.scenes_folder.change_button')}
                 >
                   <FolderIcon />
                 </IconButton>
-              </InputAdornment>
+              </span>
             }
           />
-        </Box>
+        </div>
         {error && (
-          <Typography
+          <Text
             variant="body1"
             className="error"
           >
             {error}
-          </Typography>
+          </Text>
         )}
-      </FormGroup>
-      <FormGroup className="DependencyUpdateFormGroup">
-        <Typography variant="body1">
+      </div>
+      <div className="FormGroup DependencyUpdateFormGroup">
+        <Text
+          variant="body1"
+          id="scene-dependencies-label"
+        >
           {t('modal.app_settings.fields.scene_editor_dependencies.label')}
-        </Typography>
+        </Text>
         <RadioGroup
+          className="SettingsRadioGroup"
+          aria-labelledby="scene-dependencies-label"
           value={settings.dependencyUpdateStrategy}
           onChange={handleChangeUpdateDependenciesStrategy}
         >
-          <FormControlLabel
+          <Radio
+            className="SettingsRadio"
             value={DEPENDENCY_UPDATE_STRATEGY.AUTO_UPDATE}
-            control={<Radio />}
-            label={t('modal.app_settings.fields.scene_editor_dependencies.options.auto_update')}
-          />
-          <FormControlLabel
+          >
+            {t('modal.app_settings.fields.scene_editor_dependencies.options.auto_update')}
+          </Radio>
+          <Radio
+            className="SettingsRadio"
             value={DEPENDENCY_UPDATE_STRATEGY.NOTIFY}
-            control={<Radio />}
-            label={t('modal.app_settings.fields.scene_editor_dependencies.options.notify')}
-          />
-          <FormControlLabel
+          >
+            {t('modal.app_settings.fields.scene_editor_dependencies.options.notify')}
+          </Radio>
+          <Radio
+            className="SettingsRadio"
             value={DEPENDENCY_UPDATE_STRATEGY.DO_NOTHING}
-            control={<Radio />}
-            label={t('modal.app_settings.fields.scene_editor_dependencies.options.do_nothing')}
-          />
+          >
+            {t('modal.app_settings.fields.scene_editor_dependencies.options.do_nothing')}
+          </Radio>
         </RadioGroup>
-      </FormGroup>
-    </Box>
+      </div>
+    </div>
   );
 };
 

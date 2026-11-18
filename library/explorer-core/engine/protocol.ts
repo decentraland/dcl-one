@@ -15,9 +15,11 @@ import type {
   PortableInfo,
   SatelliteView,
   SceneLoadingUi,
+  TextureOptimizationStatus,
   VoiceChatAction,
   VoiceChatState,
   WelcomeState,
+  WorldAccessVerdict,
 } from './generated'
 import type { AvatarLook } from './avatarEquip'
 
@@ -107,9 +109,12 @@ export interface ChatBubbleTextRequest {
   message: string
 }
 
-/** Reload the current scene(s) — the `/reload` chat command (scene calls SystemApi.reload). */
+/** Reload a scene: the one under the player (the `/reload` chat command), or `scene`, a live scene's
+ *  hash such as a preview's scene id (the texture optimization toast's Reload). The scene runs the
+ *  engine's `reload <hash>`, which drops the live scene as a preview file save does. */
 export interface ReloadSceneRequest {
   kind: 'reloadScene'
+  scene?: string
 }
 
 /** Run an engine console command (chat `/commands` → `help`, or any passed-through `/command`);
@@ -203,6 +208,7 @@ export type PageToScene =
   | SetNearbyMuteRequest
   | GetWearablesRequest
   | CatalogQueryRequest
+  | GiftingQueryRequest
   | EquipRequest
   | CommitAvatarRequest
   | RevertAvatarRequest
@@ -279,6 +285,9 @@ export type PageToScene =
   | EngineViewportRequest
   | InteractableAreaMessage
   | GetGalleryRequest
+  | QuitRequest
+  | GetPlaceRequest
+  | GetWorldAccessRequest
   | WatchMapPlayersRequest
   | SetPhotoModeRequest
   | TakePhotoRequest
@@ -325,6 +334,13 @@ export type SceneLoadingState = SceneLoadingUi
 export interface SceneLoadingMessage {
   kind: 'sceneLoading'
   state: SceneLoadingState
+}
+
+/** The preview server's background texture import status for a scene (preview mode only), as the
+ *  engine got it from the preview socket. `replay` marks the server's last status, replayed as the
+ *  socket (re)connected (library/ui/apps/hud/features/preview/textureOptimizationToast.ts). */
+export interface TextureOptimizationMessage extends TextureOptimizationStatus {
+  kind: 'textureOptimization'
 }
 
 /** Mirrors SystemApi ChatMessageDefinition (sender_address → sender). */
@@ -1203,6 +1219,10 @@ export interface EngineViewportRequest {
    *  what turns it into the physical pixels the scene should actually render — without it a
    *  render target has to assume the worst display and oversample everywhere else. */
   dpr?: number
+  /** A `LOBBY_STAGE_PRESETS` id; lobby region only. */
+  stagePreset?: string
+  /** Lobby region only: the pages that borrow the stage leave the avatar still. */
+  idleEmotes?: boolean
 }
 
 /**
@@ -1826,6 +1846,53 @@ export interface GalleryPhotoMeta {
   people?: GalleryPerson[]
 }
 
+/** Only a signed read carries the player's own votes and favourite. */
+export interface SignedPlace {
+  id: string
+  likes?: number
+  dislikes?: number
+  favorites?: number
+  like_rate?: number | string | null
+  user_like?: boolean
+  user_dislike?: boolean
+  user_favorite?: boolean
+  user_count?: number
+  user_visits?: number
+  updated_at?: string | null
+  creator_address?: string | null
+  connected_addresses?: string[] | null
+}
+
+export interface GetPlaceRequest {
+  kind: 'getPlace'
+  requestId: number
+  id: string
+}
+
+/** `place` is null when the read failed or the service no longer lists the place. */
+export interface PlaceMessage {
+  kind: 'place'
+  requestId: number
+  place: SignedPlace | null
+}
+
+export interface GetWorldAccessRequest {
+  kind: 'getWorldAccess'
+  requestId: number
+  world: string
+}
+
+export interface WorldAccessMessage {
+  kind: 'worldAccess'
+  requestId: number
+  access: WorldAccessVerdict
+}
+
+/** Native only: the web page has nothing to close. */
+export interface QuitRequest {
+  kind: 'quit'
+}
+
 /** One page of the local player's camera reel (signed, so private photos are included), newest
  *  first as the service orders them. `requestId` is echoed in the GalleryMessage that answers it. */
 export interface GetGalleryRequest {
@@ -1988,6 +2055,51 @@ export interface CatalogPageMessage {
   catalog: CatalogKind
   items: Wearable[]
   total: number
+  requestId: number
+}
+
+/** One owned token of a giftable item: its full urn (item urn + token id), its id, and when it last changed hands. */
+export interface GiftableToken {
+  urn: string
+  tokenId: string
+  /** Seconds since the epoch, as the owned catalog reports it; 0 when unknown. */
+  transferredAt: number
+}
+
+/** An owned on-chain wearable or emote the gift picker lists. */
+export interface GiftableItem {
+  /** The item urn (no token id). */
+  urn: string
+  name: string
+  rarity: string
+  category: string
+  thumbnail?: string
+  /** How many copies the player owns. */
+  amount: number
+  tokens: GiftableToken[]
+}
+
+/** A page of the player's owned on-chain wearables or emotes for the gift picker: newest first, filtered by name
+ *  on the server. */
+export interface GiftingQueryRequest {
+  kind: 'giftingQuery'
+  catalog: CatalogKind
+  /** 0-based page index. */
+  page: number
+  pageSize: number
+  search?: string
+  /** Echoed in the answer; the picker drops older ones. */
+  requestId: number
+}
+
+/** The answer to a GiftingQueryRequest. `equipped` lists the token urns the player's look wears. */
+export interface GiftingPageMessage {
+  kind: 'giftingPage'
+  catalog: CatalogKind
+  items: GiftableItem[]
+  total: number
+  equipped: string[]
+  failed: boolean
   requestId: number
 }
 
@@ -2336,6 +2448,8 @@ export interface AvatarClickMessage {
 
 export type SceneToPage =
   | BridgeReadyMessage
+  | PlaceMessage
+  | WorldAccessMessage
   | { kind: 'connectivity'; state: ConnectivitySnapshot }
   | { kind: 'connectivityRetry'; requestId: string; error?: string }
   | BridgeUnavailableMessage
@@ -2353,6 +2467,7 @@ export type SceneToPage =
   | AnalyticsEventMessage
   | LoginCodeMessage
   | SceneLoadingMessage
+  | TextureOptimizationMessage
   | ChatRelayMessage
   | ChatReactionMessage
   | ConsoleReplyMessage
@@ -2381,6 +2496,7 @@ export type SceneToPage =
   | MicMessage
   | WearablesMessage
   | CatalogPageMessage
+  | GiftingPageMessage
   | OutfitsMessage
   | OutfitHistoryMessage
   | CommunitiesMessage
@@ -2570,6 +2686,8 @@ export interface DiscoverPlace {
   /** Share of likes among the votes, 0..1; the service sends it as a number or a string. */
   like_rate?: number | string | null
   creator_address?: string | null
+  user_visits?: number
+  updated_at?: string | null
   /** The signed-in user's own vote and favourite (signed reads only). */
   user_like?: boolean
   user_dislike?: boolean

@@ -66,8 +66,9 @@ fn state_name(state: ImportState) -> &'static str {
 }
 
 /// The background texture import's status as JSON; `state` is `RUNNING`,
-/// `READY` or `FAILED`.
-pub fn texture_optimization_json(scene_id: &str, status: &ImportStatus) -> String {
+/// `READY` or `FAILED`. `replay` marks the last status sent again to a client
+/// as it connects.
+pub fn texture_optimization_json(scene_id: &str, status: &ImportStatus, replay: bool) -> String {
     json!({
         "type": "TEXTURE_OPTIMIZATION",
         "payload": {
@@ -79,6 +80,7 @@ pub fn texture_optimization_json(scene_id: &str, status: &ImportStatus) -> Strin
             "bytesBefore": status.bytes_before,
             "bytesAfter": status.bytes_after,
             "enabled": status.enabled,
+            "replay": replay,
         }
     })
     .to_string()
@@ -89,9 +91,13 @@ pub fn texture_optimization_json(scene_id: &str, status: &ImportStatus) -> Strin
 /// a scene update (the Unity explorer's preview socket) would reload on each
 /// status, and one that reads only binary frames never sees text, so the
 /// status rides on text alone. Reloads nothing by itself.
-pub fn texture_optimization_frames(scene_id: &str, status: &ImportStatus) -> Vec<ReloadFrame> {
+pub fn texture_optimization_frames(
+    scene_id: &str,
+    status: &ImportStatus,
+    replay: bool,
+) -> Vec<ReloadFrame> {
     vec![ReloadFrame::Text(texture_optimization_json(
-        scene_id, status,
+        scene_id, status, replay,
     ))]
 }
 
@@ -247,7 +253,7 @@ mod tests {
 
     #[test]
     fn texture_optimization_is_one_json_text_frame() {
-        let frames = texture_optimization_frames("scene-1", &status(ImportState::Running));
+        let frames = texture_optimization_frames("scene-1", &status(ImportState::Running), false);
         // no binary frame: a client that reads every binary frame as a scene update must not reload
         let [ReloadFrame::Text(text)] = frames.as_slice() else {
             panic!("one text frame: {frames:?}");
@@ -265,7 +271,8 @@ mod tests {
                     "failed": 1,
                     "bytesBefore": 300,
                     "bytesAfter": 200,
-                    "enabled": true
+                    "enabled": true,
+                    "replay": false
                 }
             })
         );
@@ -273,11 +280,11 @@ mod tests {
             (ImportState::Ready, "READY"),
             (ImportState::Failed, "FAILED"),
         ] {
-            let text = texture_optimization_json("x", &status(state));
+            let text = texture_optimization_json("x", &status(state), false);
             assert!(text.contains(&format!("\"state\":\"{name}\"")), "{text}");
         }
-        let failed = texture_optimization_json("x", &status(ImportState::Failed));
-        assert!(failed.contains("\"state\":\"FAILED\""), "{failed}");
+        let replayed = texture_optimization_json("x", &status(ImportState::Ready), true);
+        assert!(replayed.contains("\"replay\":true"), "{replayed}");
     }
 
     #[test]

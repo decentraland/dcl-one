@@ -7,6 +7,7 @@ pub mod broadcast_position;
 pub mod chat_reaction;
 pub mod community_chat;
 pub mod connectivity;
+mod gait;
 pub mod global_crdt;
 #[cfg(feature = "livekit")]
 pub mod livekit;

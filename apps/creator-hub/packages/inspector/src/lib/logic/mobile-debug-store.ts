@@ -230,7 +230,6 @@ export function pushEntries(raw: unknown[]) {
         changed = true;
       } else if (!seenUnknownOps.has(opName) && seenUnknownOps.size < MAX_UNKNOWN_DIAGNOSTICS) {
         seenUnknownOps.add(opName);
-        // eslint-disable-next-line no-console
         console.debug('[mobile-debug-store] unknown op_call_start op_name:', opName);
       }
     } else if (type === 'scene_lifecycle') {
@@ -248,7 +247,6 @@ export function pushEntries(raw: unknown[]) {
       seenUnknownTypes.size < MAX_UNKNOWN_DIAGNOSTICS
     ) {
       seenUnknownTypes.add(type);
-      // eslint-disable-next-line no-console
       console.debug('[mobile-debug-store] unknown entry type:', type, e);
     }
   }

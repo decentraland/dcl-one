@@ -426,7 +426,7 @@ export default function CreatorHubHome({
               {!signedIn ? <Button variant="secondary" onClick={onSignIn}>Sign in</Button> : null}
               <Button
                 variant={signedIn ? undefined : "secondary"}
-                onClick={() => window.location.assign("/landings/creator-hub-download")}
+                onClick={() => window.location.assign("/download/creator-hub")}
               >
                 Get the desktop app
               </Button>

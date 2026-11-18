@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 from hud_manifest_fixture import seal, SHARED
@@ -28,6 +29,39 @@ def producers(outcome='success'):
 
 
 class WorkflowTest(unittest.TestCase):
+
+    def test_avatar_preview_boot_contract_is_selected_for_its_inputs(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text()
+        patterns = re.findall(r"^ +- '?([^'\n]+)'?$", workflow, re.M)
+        for path in (
+            'rendering/avatar-preview/web/preview.js',
+            'rendering/avatar-preview/build.sh',
+            'rendering/avatar-preview/tools/preview-packaging.test.mjs',
+            'rendering/avatar-preview/Cargo.toml',
+            'rendering/bevy-explorer/source/Cargo.toml',
+            'rendering/avatar-preview/tools/preview-boot.test.mjs',
+            'rendering/bevy-explorer/source/deploy/web/engine/content_cache.js',
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns))
+        source = workflow.split('\n  source:\n', 1)[1].split('\n  changes:\n', 1)[0]
+        self.assertIn(
+            'run: node --experimental-vm-modules --test rendering/avatar-preview/tools/preview-*.test.mjs',
+            source,
+        )
+
+    def test_preview_patches_match_the_explorer_pins(self):
+        preview = tomllib.loads((ci.ROOT / 'rendering/avatar-preview/Cargo.toml').read_text())
+        explorer = tomllib.loads((ci.ROOT / 'rendering/bevy-explorer/source/Cargo.toml').read_text())
+        for source, crates in preview['patch'].items():
+            for name, pin in crates.items():
+                with self.subTest(source=source, crate=name):
+                    expected = explorer['patch'][source][name]
+                    self.assertEqual(
+                        (pin.get('git'), pin.get('rev')),
+                        (expected.get('git'), expected.get('rev')),
+                    )
+
     @staticmethod
     def upstream_commit_cache(job):
         """The key command of a job that restores the upstream commits, and the directory, key and fallback of the restore."""

@@ -1,7 +1,8 @@
 import { useCallback, useState } from 'react';
-import type { AvatarFaceProps } from 'decentraland-ui2/dist/components/AvatarFace/AvatarFace.types';
-import { AvatarFace } from 'decentraland-ui2/dist/components/AvatarFace/AvatarFace';
-import { Menu, MenuItem, Button, Tooltip } from 'decentraland-ui2';
+import AvatarFace from '@ui/atoms/AvatarFace';
+import Button from '@ui/atoms/Button';
+import { Menu, MenuItem } from '@ui/atoms/Menu';
+import Tooltip from '@ui/atoms/Tooltip';
 import { t } from '/@/modules/store/translation/utils';
 import type { Props } from './types';
 
@@ -11,7 +12,8 @@ export function UserMenu({ avatar, isSignedIn, onClickSignOut, onClickSignIn }: 
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const open = Boolean(anchorEl);
   const handleClick = useCallback((event: React.MouseEvent<HTMLElement, MouseEvent>) => {
-    setAnchorEl(event.currentTarget);
+    const target = event.currentTarget;
+    setAnchorEl(current => (current ? null : target));
   }, []);
 
   const handleClose = useCallback(() => {
@@ -21,11 +23,14 @@ export function UserMenu({ avatar, isSignedIn, onClickSignOut, onClickSignIn }: 
   return isSignedIn ? (
     <>
       <Tooltip
-        title={t('navbar.user_menu.account_tooltip')}
-        placement="bottom"
-        classes={{ tooltip: 'AccountTooltip' }}
+        label={t('navbar.user_menu.account_tooltip')}
+        side="bottom"
+        tipClassName="AccountTooltip"
+        portal
+        labelChild
       >
-        <Button
+        <button
+          type="button"
           id="AvatarButton"
           className="AvatarButton"
           data-testid="user-menu-avatar-button"
@@ -33,22 +38,22 @@ export function UserMenu({ avatar, isSignedIn, onClickSignOut, onClickSignIn }: 
           aria-haspopup="true"
           aria-expanded={open ? 'true' : undefined}
           onClick={handleClick}
-          disableRipple
         >
           <AvatarFace
             size="medium"
-            avatar={avatar as AvatarFaceProps['avatar']}
+            avatar={avatar}
           />
-        </Button>
+        </button>
       </Tooltip>
       <Menu
         id="UserMenu"
-        anchorEl={anchorEl}
+        className="UserMenu"
+        anchor={anchorEl}
         open={open}
         onClose={handleClose}
-        MenuListProps={{
-          'aria-labelledby': 'AvatarButton',
-        }}
+        offset={0}
+        modal
+        aria-labelledby="AvatarButton"
       >
         <MenuItem
           data-testid="user-menu-sign-out"
@@ -63,8 +68,7 @@ export function UserMenu({ avatar, isSignedIn, onClickSignOut, onClickSignIn }: 
       className="SignInButton"
       data-testid="user-menu-sign-in"
       onClick={onClickSignIn}
-      variant="contained"
-      disableRipple
+      variant="primary"
     >
       {t('navbar.user_menu.sign_in')}
     </Button>

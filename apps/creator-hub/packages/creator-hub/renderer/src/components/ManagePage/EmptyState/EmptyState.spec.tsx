@@ -1,14 +1,14 @@
 import type { ButtonHTMLAttributes } from 'react';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { misc } from '#preload';
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
 import { EmptyState } from '.';
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 
 vi.mock('../../Button', async importOriginal => ({
   ...(await importOriginal<object>()),
@@ -38,7 +38,7 @@ describe('EmptyState', () => {
 
     beforeEach(() => {
       render(
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <EmptyState
             icon="land"
             title="No LANDs to manage yet"
@@ -46,7 +46,7 @@ describe('EmptyState', () => {
             description="Rent or buy LAND to publish your scenes."
             action={{ label: 'Rent or Buy LAND', variant: 'primary', onClick: onAction }}
           />
-        </ThemeProvider>,
+        </TestProviders>,
       );
     });
 
@@ -105,9 +105,9 @@ describe('EmptyState', () => {
   describe('when it has only a title', () => {
     it('should render no icon, info, body or button', () => {
       render(
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <EmptyState title="No places to display" />
-        </ThemeProvider>,
+        </TestProviders>,
       );
 
       expect(screen.queryByRole('button')).toBeNull();

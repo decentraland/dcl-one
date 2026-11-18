@@ -103,6 +103,8 @@ impl TextShaper<'_> {
                 JustifyText::Left,
                 linebreak,
                 width,
+                // a nametag has no line limit
+                None,
                 font_size,
                 false,
                 &mut self.pipeline,

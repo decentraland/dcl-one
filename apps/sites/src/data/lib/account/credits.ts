@@ -30,6 +30,8 @@ function creditsPath(endpoint: Endpoint, identity: AuthIdentity, mode: ShopApiMo
 }
 
 const isNotFound = (error: unknown) => error instanceof CatalystError && error.status === 404;
+const isAlreadyUnregistered = (error: unknown) =>
+  error instanceof CatalystError && error.serverMessage && error.message === ALREADY_UNREGISTERED;
 
 /** A wallet the credits program has never seen answers 404, which is "not registered", not an error. */
 export async function fetchCreditsStatus(
@@ -46,12 +48,28 @@ export async function fetchCreditsStatus(
   }
 }
 
-/** Leaves the credits program. A wallet that was never registered is already out, so 404 succeeds. */
+const ALREADY_UNREGISTERED = "User already unregistered";
+
+/**
+ * Leaves the credits program. A wallet that was never registered (404) or already left, for
+ * example from another tab (400 `User already unregistered`), is already out, so both succeed.
+ */
 export async function optOutOfCredits(identity: AuthIdentity, opts: CreditsOptions = {}): Promise<void> {
   const path = creditsPath(ENDPOINTS.unregisterUser, identity, opts.mode);
   try {
     await postJSON<unknown>(path, undefined, { identity, method: "DELETE", signal: opts.signal });
   } catch (error) {
-    if (!isNotFound(error)) throw error;
+    if (isNotFound(error) || isAlreadyUnregistered(error)) return;
+    throw error;
   }
+}
+
+const CLAIMED_THIS_WEEK = "Cannot unregister with credits claimed this week";
+
+/** The opt-out's refusal, worded for the page; the server's own text is never shown. */
+export function optOutFailureMessage(error: unknown): string {
+  if (error instanceof CatalystError && error.serverMessage && error.message === CLAIMED_THIS_WEEK) {
+    return "You can't leave this week because you've already claimed credits. Please try again next week.";
+  }
+  return "Couldn't leave the program right now. Please try again.";
 }

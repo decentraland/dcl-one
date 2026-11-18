@@ -16379,6 +16379,15 @@ CREATE INDEX fed_seen_nonces_expires_idx ON shop.fed_seen_nonces (expires_at);
 -- by idempotency key BEFORE the broadcast; the reconciler settles it from
 -- receipts. `price_wei` is the execution-time MANA charge; the two usd
 -- columns keep a USD-pegged trade's signed amount and the oracle rate used.
+-- A leg's signed transaction (`signed_tx`, `forward_signed_tx`) is recorded
+-- with its hash before it is broadcast, so a resume re-sends those bytes and
+-- signs no second transaction for the leg unless a finalized transaction
+-- holds the recorded one's nonce, so it can never mine: two such looks at
+-- least ten minutes apart (the first kept in `dead_seen_at`) release the
+-- leg, and its hash is kept in `released_tx_hashes` (buy) or
+-- `released_forward_tx_hashes` (forward). `write_ahead` marks
+-- a claim made under that rule: only such a claim with no recorded
+-- transaction is ever bought afresh.
 CREATE TABLE shop.broker_purchases (
     id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     idempotency_key text,
@@ -16397,6 +16406,12 @@ CREATE TABLE shop.broker_purchases (
     chain_id bigint NOT NULL,
     mode text NOT NULL,
     status text NOT NULL DEFAULT 'sent',
+    signed_tx text,
+    forward_signed_tx text,
+    write_ahead boolean NOT NULL DEFAULT false,
+    dead_seen_at timestamp without time zone,
+    released_tx_hashes text[],
+    released_forward_tx_hashes text[],
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     CONSTRAINT broker_purchases_status_known

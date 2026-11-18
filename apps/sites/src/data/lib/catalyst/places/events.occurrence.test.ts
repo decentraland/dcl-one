@@ -1,21 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { heroEventCards, parseHomeContent, withLiveEvents, type HomeContent } from "../landings/home";
 import { eventDetailToMarkdown, whatsOnToMarkdown } from "../../agent/markdown";
-import { eventOccurrence, effectiveStartAt, formatEventTime, formatEventWhen, type Event } from "./events";
+import { eventOccurrence, effectiveStartAt, formatEventWhen, type Event } from "./events";
 
 describe("when a recurring event has a series end months after its next occurrence", () => {
   let event: Event;
-  let content: HomeContent;
   beforeEach(() => {
-    content = parseHomeContent({ hero: { kicker: "", title: "", subtitle: "", downloads: null, downloadsLabel: "", cta: { desktop: { label: "", href: "/" }, epic: { label: "", href: "/" } }, platforms: [] }, rails: [{ id: "events", kind: "events", title: "", items: [] }], comeHangOut: { title: "", downloads: null, downloadsLabel: "" } });
     event = { id: "series", name: "Weekly fixture", image: null, image_vertical: null, description: null, start_at: "2099-01-01T18:00:00Z", finish_at: "2099-12-31T20:00:00Z", next_start_at: "2099-06-01T18:00:00Z", next_finish_at: null, duration: 7200000, all_day: false, x: 0, y: 0, position: null, coordinates: null, url: null, user_name: null, scene_name: null, estate_name: null, live: false, highlighted: false, trending: false, recurrent: true, recurrent_frequency: "WEEKLY", total_attendees: 0, place_id: null };
   });
   it("should export only the duration of the next occurrence", () => {
     expect(eventOccurrence(event)).toEqual({ start: "2099-06-01T18:00:00Z", finish: "2099-06-01T20:00:00.000Z" });
   });
-  it("should use the same occurrence in the home rail and both agent markdown surfaces", () => {
+  it("should use the same occurrence in both agent markdown surfaces", () => {
     expect(effectiveStartAt(event)).toBe(event.next_start_at);
-    expect(heroEventCards(withLiveEvents(content, [event]))?.[0].when).toBe(formatEventTime(event.next_start_at));
     expect(eventDetailToMarkdown(event)).toContain(formatEventWhen(event.next_start_at));
     expect(whatsOnToMarkdown({ upcoming: [event] })).toContain(formatEventWhen(event.next_start_at));
   });

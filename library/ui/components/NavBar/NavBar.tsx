@@ -112,6 +112,10 @@ type NavBarCommonProps = {
    * page's locale so server and client agree.
    */
   locale?: string
+  /** Shown after the home link, for example a wordmark. */
+  brand?: ReactNode
+  /** Replace the component's own marks: the home link's logo, the menu button's icon and the notifications bell. */
+  icons?: { logo?: ReactNode; menu?: ReactNode; notifications?: ReactNode }
   /** Applied to the outer navigation frame, including caller positioning and stacking. */
   className?: string
 }
@@ -326,10 +330,12 @@ function Balances({
 function NotificationsButton({
   count,
   labels,
+  icon,
   onClick
 }: {
   count: number
   labels: NavBarLabels
+  icon?: ReactNode
   onClick: () => void
 }) {
   return (
@@ -342,7 +348,7 @@ function NotificationsButton({
         onClick()
       }}
     >
-      <GeneralBell size={24} aria-hidden="true" />
+      {icon ?? <GeneralBell size={24} aria-hidden="true" />}
       {count > 0 ? (
         <span className={styles.badge} aria-hidden="true">
           {count > BADGE_MAX ? `${BADGE_MAX}+` : count}
@@ -626,6 +632,8 @@ export function NavBar({
   linkComponent,
   labels: labelOverrides,
   locale = 'en-US',
+  brand,
+  icons,
   className
 }: NavBarProps) {
   // An override set to undefined (an i18n map with a missing key) keeps the default instead of replacing it.
@@ -715,8 +723,11 @@ export function NavBar({
             className: styles.logo,
             'aria-label': labels.home,
             onClick: drawerOpen ? dismissDrawer : undefined,
-            children: <GeneralDecentralandColor className={styles.logoMark} aria-hidden="true" />
+            children: icons?.logo ?? (
+              <GeneralDecentralandColor className={styles.logoMark} aria-hidden="true" />
+            )
           })}
+          {brand}
           <ul className={styles.sections} hidden={drawerOpen}>
             {sections.map((section, index) =>
               section.items ? (
@@ -749,6 +760,7 @@ export function NavBar({
             <NotificationsButton
               count={count}
               labels={labels}
+              icon={icons?.notifications}
               onClick={() => {
                 dismissDrawer()
                 notifications.onSelect()
@@ -785,21 +797,23 @@ export function NavBar({
               else requestDrawerExit()
             }}
           >
-            <svg
-              width={24}
-              height={24}
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-              focusable="false"
-            >
-              <path d="M3 6h18M3 12h18M3 18h18" />
-            </svg>
-            {drawerOpen ? <GeneralClose size={24} aria-hidden="true" /> : null}
+            {icons?.menu ?? (
+              <svg
+                width={24}
+                height={24}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path d="M3 6h18M3 12h18M3 18h18" />
+              </svg>
+            )}
+            {drawerOpen ? <GeneralClose size={30} aria-hidden="true" /> : null}
           </button>
         </div>
         {drawerOpen ? (
@@ -815,7 +829,7 @@ export function NavBar({
           >
             <ul className={styles.drawerSections}>
               {sections.map((section, index) => (
-                <li key={index}>
+                <li key={index} className={styles.drawerSection}>
                   {section.items ? (
                     <>
                       <p className={styles.drawerGroup}>{section.label}</p>
@@ -824,7 +838,7 @@ export function NavBar({
                           <li key={itemIndex}>
                             {renderLink({
                               href: item.href,
-                              className: styles.drawerLink,
+                              className: styles.drawerItemLink,
                               'aria-current': item.active ? 'page' : undefined,
                               onClick: closeDrawer,
                               children: item.label

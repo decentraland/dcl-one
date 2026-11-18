@@ -65,7 +65,7 @@
           default = pkgs.mkShell (environment // {
             packages = with pkgs; [
               rust nodejs_26 (pnpm.override { nodejs-slim = nodejs-slim_26; })
-              postgresql_18 process-compose watchexec livekit nats-server python3 bashInteractive
+              postgresql_18 process-compose watchexec livekit livekit-ingress valkey nats-server python3 bashInteractive
               gitMinimal git-lfs gh ripgrep libarchive pkg-config cmake clang protobuf curl jq ffmpeg-headless dev
             ];
             LOCALE_ARCHIVE = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "${pkgs.glibcLocales}/lib/locale/locale-archive";
