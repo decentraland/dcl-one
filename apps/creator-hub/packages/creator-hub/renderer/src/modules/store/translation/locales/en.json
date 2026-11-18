@@ -1847,7 +1847,7 @@
           "copy": "Copy wallet address",
           "edit": "Edit",
           "add": "Add wallet",
-          "unavailable": "Confirm your email to set up your payout wallet.",
+          "unavailable": "Verify your email to set up your payout wallet.",
           "notify_failed": "We couldn't email you about this change, so your wallet wasn't saved. Please try again."
         },
         "contact": {
@@ -1908,8 +1908,7 @@
           "email_verified": "Email verified"
         },
         "cancel": "Cancel",
-        "error": "Something went wrong while loading your payouts.",
-        "unavailable": "Unavailable"
+        "error": "Something went wrong while loading your payouts."
       }
     },
     "errors": {

@@ -11,7 +11,6 @@ import { CopyToClipboard } from '../../CopyToClipboard';
 import { CopyIcon, WarningIcon } from '../icons';
 
 import { InfoTip } from './InfoTip';
-import { ExplainedChip } from './parts';
 import { shortAddress } from './wallet';
 import styles from './PayoutsTab.module.css';
 
@@ -41,7 +40,8 @@ function CardTitle({
 
 /**
  * The payout wallet, the second setup step: its short address as a chip that copies it, and EDIT; ADD WALLET when
- * none is set. Locked until the email is verified, since every change is emailed to it.
+ * none is set. Locked until the email is verified, since every change is emailed to it: the buttons are disabled and
+ * a line beside them says why.
  * @param props.wallet - `undefined` while it loads.
  */
 export function WalletCard({
@@ -58,6 +58,8 @@ export function WalletCard({
   onChange: () => void;
 }) {
   const titleId = useId();
+  const hintId = useId();
+  const describedBy = locked ? hintId : undefined;
   return (
     <section
       className={styles.card}
@@ -73,14 +75,6 @@ export function WalletCard({
             text="earn.joined.payouts.wallet.info"
             href={GET_A_WALLET_URL}
           />
-          {locked && (
-            <span className={styles.headerChip}>
-              <ExplainedChip
-                status="unavailable"
-                title={t('earn.joined.payouts.wallet.unavailable')}
-              />
-            </span>
-          )}
         </div>
         {wallet && (
           <Button
@@ -88,37 +82,50 @@ export function WalletCard({
             className={styles.cornerButton}
             variant="outline"
             disabled={locked}
+            aria-describedby={describedBy}
             onClick={onChange}
           >
             {t('earn.joined.payouts.wallet.edit')}
           </Button>
         )}
       </div>
-      {wallet && (
-        <CopyToClipboard
-          className={styles.addressChip}
-          text={wallet.address}
-          label={t('earn.joined.payouts.wallet.copy')}
-          showPopup
-        >
-          <span
-            className={styles.address}
-            title={wallet.address}
-          >
-            {shortAddress(wallet.address)}
-          </span>
-          <CopyIcon />
-        </CopyToClipboard>
-      )}
-      {wallet === null && (
-        <Button
-          className={styles.addWalletButton}
-          variant="primary"
-          disabled={locked}
-          onClick={onAdd}
-        >
-          {t('earn.joined.payouts.wallet.add')}
-        </Button>
+      {wallet !== undefined && (
+        <div className={styles.setupRow}>
+          {wallet ? (
+            <CopyToClipboard
+              className={styles.addressChip}
+              text={wallet.address}
+              label={t('earn.joined.payouts.wallet.copy')}
+              showPopup
+            >
+              <span
+                className={styles.address}
+                title={wallet.address}
+              >
+                {shortAddress(wallet.address)}
+              </span>
+              <CopyIcon />
+            </CopyToClipboard>
+          ) : (
+            <Button
+              className={styles.setupButton}
+              variant="primary"
+              disabled={locked}
+              aria-describedby={describedBy}
+              onClick={onAdd}
+            >
+              {t('earn.joined.payouts.wallet.add')}
+            </Button>
+          )}
+          {locked && (
+            <p
+              id={hintId}
+              className={styles.setupHint}
+            >
+              {t('earn.joined.payouts.wallet.unavailable')}
+            </p>
+          )}
+        </div>
       )}
     </section>
   );
@@ -126,7 +133,8 @@ export function WalletCard({
 
 /**
  * The enrollment's name and read-only email, the first setup step, with VERIFY EMAIL until the email is verified.
- * Locked while none of the creator's places is in the program: the service sends no code then.
+ * Locked while none of the creator's places is in the program, since the service sends no code then: VERIFY EMAIL is
+ * disabled and a line under the values says why.
  */
 export function ContactCard({
   enrollment,
@@ -140,6 +148,7 @@ export function ContactCard({
   onVerify: () => void;
 }) {
   const titleId = useId();
+  const hintId = useId();
   const unverified = !!enrollment && !enrollment.email_verified_at;
   return (
     <section
@@ -156,20 +165,13 @@ export function ContactCard({
           >
             {t('earn.joined.payouts.contact.title')}
           </CardTitle>
-          {locked && (
-            <span className={styles.headerChip}>
-              <ExplainedChip
-                status="unavailable"
-                title={t('earn.joined.payouts.contact.unavailable')}
-              />
-            </span>
-          )}
         </div>
         {unverified && (
           <Button
-            className={styles.verifyEmailButton}
+            className={`${styles.setupButton} ${styles.verifyEmailButton}`}
             variant="primary"
             disabled={locked}
+            aria-describedby={locked ? hintId : undefined}
             onClick={onVerify}
           >
             {t('earn.joined.payouts.contact.verify')}
@@ -199,6 +201,14 @@ export function ContactCard({
             <span className={styles.contactText}>{enrollment.email}</span>
           </div>
         </div>
+      )}
+      {locked && (
+        <p
+          id={hintId}
+          className={styles.setupHint}
+        >
+          {t('earn.joined.payouts.contact.unavailable')}
+        </p>
       )}
     </section>
   );

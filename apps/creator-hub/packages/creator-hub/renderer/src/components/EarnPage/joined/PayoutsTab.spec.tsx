@@ -52,6 +52,7 @@ const ENROLLMENT: Enrollment = {
 const VERIFIED: Enrollment = { ...ENROLLMENT, email_verified_at: '2026-10-30T15:00:00Z' };
 
 const NO_ACTIVE_PLACE = 'You need to have 1 active place to set up your wallet.';
+const VERIFY_FIRST = 'Verify your email to set up your payout wallet.';
 
 const WALLET: PayoutWallet = {
   address: '0x000000000000000000000000000000000000dEaD',
@@ -93,8 +94,8 @@ const GET_A_WALLET_URL = 'https://docs.decentraland.org/blockchain-integration/g
 const walletInfo = async () =>
   (await walletCard()).findByRole('button', { name: 'About payout wallets' });
 const learnMore = () => screen.findByRole('link', { name: /Learn More/ });
-const unavailableChip = (card: ReturnType<typeof within>) =>
-  card.getByText('Unavailable').closest('[tabindex="0"]') as HTMLElement;
+/** The visible line that says why a setup step is locked; its button names it as its description. */
+const lockHint = (card: ReturnType<typeof within>, text: string) => card.getByText(text);
 const PAYOUT_RULES_URL =
   'https://docs.decentraland.org/creator/creator-fund/program-rules#payout-process';
 const openAddDialog = async () => {
@@ -879,25 +880,21 @@ describe('PayoutsTab', () => {
       const heading = screen.getByRole('heading', { level: 2, name: 'Contact Information' });
       await waitFor(() => expect(document.activeElement).toBe(heading));
       const wallet = await walletCard();
-      expect(wallet.queryByText('Unavailable')).toBeNull();
+      expect(wallet.queryByText(VERIFY_FIRST)).toBeNull();
       expect(wallet.getByRole('button', { name: 'Edit' }).hasAttribute('disabled')).toBe(false);
     });
 
-    it('should lock the payout wallet, with an Unavailable chip that says to confirm the email', async () => {
+    it('should lock the payout wallet, saying beside ADD WALLET to verify the email first', async () => {
       vi.mocked(api.getPayoutWallet).mockResolvedValue(fail(404));
       await renderTab();
       const wallet = await walletCard();
+      const add = await wallet.findByRole('button', { name: 'Add wallet' });
 
-      expect(
-        (await wallet.findByRole('button', { name: 'Add wallet' })).hasAttribute('disabled'),
-      ).toBe(true);
+      expect(add.hasAttribute('disabled')).toBe(true);
       expect(screen.getByTestId('payouts-wallet-card').hasAttribute('data-locked')).toBe(true);
-      act(() => unavailableChip(wallet).focus());
-
-      expect((await screen.findByRole('tooltip')).textContent).toBe(
-        'Confirm your email to set up your payout wallet.',
-      );
-      expect((await contactCard()).queryByText('Unavailable')).toBeNull();
+      expect(add.getAttribute('aria-describedby')).toBe(lockHint(wallet, VERIFY_FIRST).id);
+      expect(screen.queryByText('Unavailable')).toBeNull();
+      expect((await contactCard()).queryByText(NO_ACTIVE_PLACE)).toBeNull();
     });
 
     it('should keep a wallet set before the email was verified, with EDIT disabled', async () => {
@@ -905,7 +902,9 @@ describe('PayoutsTab', () => {
       const wallet = await walletCard();
 
       expect(await wallet.findByText('0x00000...00dEaD')).toBeTruthy();
-      expect(wallet.getByRole('button', { name: 'Edit' }).hasAttribute('disabled')).toBe(true);
+      const edit = wallet.getByRole('button', { name: 'Edit' });
+      expect(edit.hasAttribute('disabled')).toBe(true);
+      expect(edit.getAttribute('aria-describedby')).toBe(lockHint(wallet, VERIFY_FIRST).id);
     });
 
     it('should say an active place is needed when the service refuses the code for it, and lock the step', async () => {
@@ -920,7 +919,7 @@ describe('PayoutsTab', () => {
 
       expect((await within(dialog).findByRole('alert')).textContent).toBe(NO_ACTIVE_PLACE);
       const contact = await contactCard();
-      await waitFor(() => expect(contact.getByText('Unavailable')).toBeTruthy());
+      await waitFor(() => expect(lockHint(contact, NO_ACTIVE_PLACE)).toBeTruthy());
     });
 
     it('should keep Resend Code under an expired code and let it send a new one', async () => {
@@ -1059,14 +1058,13 @@ describe('PayoutsTab', () => {
       fireEvent.click(verify);
       expect(screen.queryByRole('dialog')).toBeNull();
       expect(api.postEmailVerification).not.toHaveBeenCalled();
-      fireEvent.mouseEnter(unavailableChip(contact));
-      expect((await screen.findByRole('tooltip')).textContent).toBe(NO_ACTIVE_PLACE);
+      expect(verify.getAttribute('aria-describedby')).toBe(lockHint(contact, NO_ACTIVE_PLACE).id);
     });
 
     it('should keep the payout wallet locked behind the email', async () => {
       await renderTab();
 
-      expect(unavailableChip(await walletCard())).toBeTruthy();
+      expect(lockHint(await walletCard(), VERIFY_FIRST)).toBeTruthy();
     });
 
     it('should not lock an email that is already verified, nor the wallet', async () => {
@@ -1074,7 +1072,8 @@ describe('PayoutsTab', () => {
       await renderTab();
       await walletCard();
 
-      expect(screen.queryByText('Unavailable')).toBeNull();
+      expect(screen.queryByText(NO_ACTIVE_PLACE)).toBeNull();
+      expect(screen.queryByText(VERIFY_FIRST)).toBeNull();
     });
   });
 
@@ -1088,7 +1087,7 @@ describe('PayoutsTab', () => {
       expect(
         (await contact.findByRole('button', { name: 'Verify email' })).hasAttribute('disabled'),
       ).toBe(false);
-      expect(contact.queryByText('Unavailable')).toBeNull();
+      expect(contact.queryByText(NO_ACTIVE_PLACE)).toBeNull();
       expect(screen.queryByRole('alert')).toBeNull();
     });
   });
