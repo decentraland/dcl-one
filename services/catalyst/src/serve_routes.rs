@@ -214,6 +214,15 @@ pub(super) fn build_routes(
         .merge(builder::root_router(builder.clone()))
         .nest("/builder-api", builder::router(builder))
         .nest("/camera-reel-service", camera_reel::router(camera_reel))
+        // The Cast presenter under upstream's host label (cast-presenter-service);
+        // its sessions live in this process and their bots in `cast-bot` processes.
+        .nest(
+            "/cast-presenter-service",
+            comms::cast_presenter::router(comms::cast_presenter::presenter(
+                config.social.cast_bot_bin.clone(),
+                config.social.max_concurrent_presentations,
+            )),
+        )
         // The player report intake (`gatekeeper::reports`). Reports and their
         // evidence are social rows and blobs, so the social writes switch gates them.
         .nest(

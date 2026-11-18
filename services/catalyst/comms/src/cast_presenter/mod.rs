@@ -1,0 +1,72 @@
+//! The Cast presenter: an in-world presentation, PDF slides published into
+//! the scene's LiveKit room as a video track and driven over the data
+//! channel, in place of upstream's Node service
+//! (`decentraland/cast-presenter-server` @ cae78612).
+//!
+//! `serve` mounts [`router`] under `/cast-presenter-service`, upstream's host
+//! label, so `POST <node>/cast-presenter-service/presentations` is the route
+//! (and the gateway's subdomain rule sends
+//! `cast-presenter-service.<domain>/presentations` there). The Admin Toolkit
+//! gets the bot's token from `POST /comms-gatekeeper/cast/presentation-bot-token`
+//! and posts it here with the file or its URL.
+//!
+//! What this node does:
+//! - `POST /presentations` with upstream's request forms (multipart upload or
+//!   JSON `url`), checks (extension, magic bytes, 100 MiB file, 1 MiB JSON
+//!   body, the download's SSRF guard), `MAX_CONCURRENT_PRESENTATIONS` (429)
+//!   and answers ([`http`]).
+//! - The bot connects with the given token before any rendering; a refused
+//!   token answers 401 on the JSON path (checked before the download) and
+//!   500 on the multipart path, as upstream.
+//! - PDF slides ([`render`] names the renderer and why), one SCREENSHARE
+//!   track, the commands `navigate`, `get-state`, `stop` and
+//!   `overlay:update` from the room's presenters, the state broadcast and
+//!   bot metadata ([`wire`]), and the idle reaper ([`session`]).
+//!
+//! Not yet: PPTX (answers 422), embedded video playback (`video:*` commands
+//! are ignored and `videoState` stays `idle`), client composition (no
+//! `slide` field, no `GET /presentations/:id/slides/:file`,
+//! `presenter:claim` ignored) and upstream's `/api/drive-video` and `/ping`.
+//!
+//! The LiveKit connection lives in a `cast-bot` process ([`bot`]); with no
+//! `CAST_BOT_BIN` configured the route answers 503.
+
+pub mod bot;
+pub mod files;
+pub mod http;
+pub mod render;
+pub mod session;
+pub mod ssrf;
+pub mod wire;
+
+#[cfg(test)]
+mod tests;
+
+use std::sync::Arc;
+
+use axum::Router;
+
+use crate::shared::routing::post;
+
+pub use session::Presenter;
+
+/// A presenter that starts `binary` for each session, or none without one.
+pub fn presenter(
+    binary: Option<std::path::PathBuf>,
+    max_concurrent: usize,
+) -> Option<Arc<Presenter>> {
+    let presenter = Presenter::new(
+        Arc::new(bot::ProcessLauncher { binary: binary? }),
+        max_concurrent,
+    );
+    presenter.spawn_reaper();
+    Some(presenter)
+}
+
+/// `POST /presentations`, with upstream's security headers.
+pub fn router(presenter: Option<Arc<Presenter>>) -> Router {
+    Router::new()
+        .route("/presentations", post(http::create_presentation))
+        .layer(axum::middleware::from_fn(http::security_headers))
+        .with_state(presenter)
+}

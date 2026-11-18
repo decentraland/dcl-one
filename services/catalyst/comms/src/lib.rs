@@ -24,6 +24,7 @@ pub(crate) use dcl_http as http;
 
 pub mod access;
 pub mod archipelago;
+pub mod cast_presenter;
 pub mod deny_list;
 pub mod gatekeeper;
 pub mod interfaces;
