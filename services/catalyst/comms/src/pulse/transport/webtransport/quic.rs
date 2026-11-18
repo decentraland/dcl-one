@@ -138,13 +138,13 @@ impl Host {
         let accept_peers = peers.clone();
 
         // Accept loop: assign sequential peer ids and serve each session on its own task.
-        runtime.spawn(async move {
+        crate::shared::task::spawn_on(runtime.handle(), async move {
             let mut server = server;
             let mut next_id: u64 = 1;
             while let Some(request) = server.accept().await {
                 let peer_id = next_id;
                 next_id += 1;
-                tokio::spawn(serve_connection(
+                crate::shared::task::spawn(serve_connection(
                     request,
                     peer_id,
                     events_tx.clone(),
@@ -275,9 +275,9 @@ async fn serve_connection(
     });
 
     // Unreliable datagrams in.
-    tokio::spawn(datagram_loop(session.clone(), peer_id, events_tx.clone()));
+    crate::shared::task::spawn(datagram_loop(session.clone(), peer_id, events_tx.clone()));
     // Reliable bidi stream: the peer opens it; we forward raw chunks and write queued bytes.
-    tokio::spawn(stream_loop(
+    crate::shared::task::spawn(stream_loop(
         session.clone(),
         peer_id,
         events_tx.clone(),
@@ -318,7 +318,7 @@ async fn stream_loop(
         Err(_) => return,
     };
 
-    let reader = tokio::spawn(async move {
+    let reader = crate::shared::task::spawn(async move {
         let mut buf = vec![0u8; STREAM_READ_BUF];
         while let Ok(Some(n)) = recv.read(&mut buf).await {
             let data = Bytes::copy_from_slice(&buf[..n]);

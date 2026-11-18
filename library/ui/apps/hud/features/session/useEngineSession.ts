@@ -463,7 +463,7 @@ export interface MapState {
   teleportToPlace: (x: number, y: number) => TravelOutcome
   /** Travel to a world/realm by name (e.g. `boedo.dcl.eth`). */
   changeRealm: (realm: string) => TravelOutcome
-  /** The home the engine holds: its realm (null for the default one) and parcel; null until it answers. */
+  /** The home: its realm (null for the default one) and parcel; the engine's answer, else the boot copy. */
   home: { realm: string | null; parcel: string } | null
   /** Make a parcel of `realm` home; shown at once, then confirmed by the engine. */
   setHome: (realm: string, parcel: { x: number; y: number }) => void
@@ -3327,7 +3327,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lobbyOpen, anyPanelOpenExceptLobby])
   // The engine's answer wins over the boot snapshot, so a home set in this session is the one used.
-  const homeScene = useCallback(() => home ?? driverRef.current?.homeScene?.() ?? null, [home])
+  // The boot snapshot keeps the saved realm URL, and is readable only once the engine is ready.
+  const homeScene = useCallback(() => {
+    if (home != null) return home
+    const boot = driverRef.current?.homeScene?.() ?? null
+    return boot != null && boot.realm === DEFAULT_REALM ? { ...boot, realm: null } : boot
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [home, engineReady])
   const setHomeScene = useCallback((realm: string, parcel: { x: number; y: number }) => {
     setHome({ realm: realm === DEFAULT_REALM ? null : realm, parcel: `${parcel.x},${parcel.y}` })
     driverRef.current?.send({ kind: 'setHomeScene', realm, parcel })
@@ -5020,10 +5026,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       teleport: (x: number, y: number): TravelOutcome => pick({ kind: 'parcel', x, y }) ?? (teleport(x, y), 'sent'),
       changeRealm: (realm: string): TravelOutcome => pick({ kind: 'world', realm }) ?? (changeRealm(realm), 'sent'),
       teleportToPlace: (x: number, y: number): TravelOutcome => pick({ kind: 'parcel', x, y }) ?? (teleportToPlace(x, y), 'sent'),
-      home,
+      home: homeScene(),
       setHome: setHomeScene
     }
-  }, [mapParcel, mapOpen, toggleMap, teleport, changeRealm, teleportToPlace, home, setHomeScene, pickDestination, closeAllPanels])
+  }, [mapParcel, mapOpen, toggleMap, teleport, changeRealm, teleportToPlace, homeScene, setHomeScene, pickDestination, closeAllPanels])
   const minimapSlice = useMemo(
     () => ({
       pose: poseRef,

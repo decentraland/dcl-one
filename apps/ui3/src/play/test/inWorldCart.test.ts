@@ -1,7 +1,7 @@
-// The in-world Shop's cart (features/shop/cartStore): what it keeps, how much of each, per account.
+// The in-world Shop's cart (library/ui/apps/shop/cartStore): what it keeps, how much of each, per account.
 import { describe, expect, it, vi } from 'vitest'
-import { createInWorldCart, type CartLock, type CartStorage, type InWorldCartInput } from '../features/shop/cartStore'
-import { MAX_PURCHASE_UNITS } from '../lib/shopProtocol'
+import { createInWorldCart, type CartLock, type CartStorage, type InWorldCartInput } from '@dcl/one-ui/apps/shop/cartStore'
+import { MAX_PURCHASE_UNITS } from '@dcl/one-ui/apps/shop/shopProtocol'
 
 const A = '0x' + 'aa'.repeat(20)
 const B = '0x' + 'bb'.repeat(20)

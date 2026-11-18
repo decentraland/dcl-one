@@ -22,10 +22,12 @@ not from the PR branch: a branch cut before a rule landed is still reviewed agai
 7. **Earlier review rounds.** On a re-review, check that each earlier finding, the bot's included,
    was fixed or answered. One left without either is a finding at its original severity.
 
-State what was built or run and what was only read, and whether the head merges cleanly with
-`main`: CI tests the merge, not the branch. Each finding gives the claim, `file:line`, the
-mechanism, a concrete fix and the rule it breaks. A PR over 100 files outgrows the GitHub file
-list; diff a fetched head against its merge base instead.
+State what was built or run and what was only read. Leave mergeability checks and merge-conflict
+enforcement to GitHub. Continue reviewing the diff. Mention a merge conflict only to explain
+why a specific verification step could not be completed.
+
+Each finding gives the claim, `file:line`, the mechanism, a concrete fix and the rule it breaks.
+A PR over 100 files outgrows the GitHub file list; diff a fetched head against its merge base instead.
 
 ## Severity
 

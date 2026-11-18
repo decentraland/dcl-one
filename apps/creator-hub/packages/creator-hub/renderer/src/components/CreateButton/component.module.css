@@ -18,7 +18,7 @@
   border-radius: 0;
   background-color: var(--brand);
   box-shadow: none;
-  color: var(--text-on-primary);
+  color: var(--palette-neutral-softWhite);
   font-size: 16px;
   font-weight: 600;
   line-height: 22px;
@@ -41,7 +41,7 @@
 
 .row .label.label:hover:not(:disabled),
 .row .toggle.toggle:hover:not(:disabled) {
-  background-color: var(--dcl-hover);
+  background-color: var(--primary-hover);
   box-shadow: none;
 }
 
