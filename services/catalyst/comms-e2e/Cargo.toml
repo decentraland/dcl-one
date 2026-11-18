@@ -1,0 +1,30 @@
+[package]
+name = "catalyst-comms-e2e"
+version.workspace = true
+edition = "2024"
+description = "End-to-end scenarios against a running comms stack: protocol bots, a fault link and the headless explorer"
+publish = false
+
+[[bin]]
+name = "comms-e2e"
+path = "src/main.rs"
+
+[dependencies]
+catalyst-comms = { path = "../comms" }
+dcl-auth.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+futures.workspace = true
+bytes.workspace = true
+prost.workspace = true
+url = { workspace = true, features = ["serde"] }
+toml.workspace = true
+sha2.workspace = true
+hex.workspace = true
+parking_lot.workspace = true
+reqwest.workspace = true
+rusty_enet.workspace = true
+tokio-tungstenite.workspace = true
