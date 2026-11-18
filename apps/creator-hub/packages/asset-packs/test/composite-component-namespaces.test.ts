@@ -1,8 +1,7 @@
-import { readFileSync } from 'fs';
+import { globSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { describe, it, expect } from 'vitest';
-import { globSync } from 'glob';
 
 /**
  * Coverage guard for runtime composite spawning.
@@ -28,7 +27,9 @@ const packsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'packs');
 
 describe('catalog composite component coverage', () => {
   it('every component in a shipped composite.json uses a known namespace', () => {
-    const files = globSync('**/composite.json', { cwd: packsDir, absolute: true });
+    const files = globSync('**/composite.json', { cwd: packsDir }).map(file =>
+      join(packsDir, file),
+    );
     expect(files.length).toBeGreaterThan(0);
 
     const offenders: Record<string, number> = {};

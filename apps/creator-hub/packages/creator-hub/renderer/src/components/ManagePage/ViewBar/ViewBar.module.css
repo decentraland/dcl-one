@@ -1,0 +1,157 @@
+/* The list of a ViewBar select: the surface and the rows of the kebab menus. */
+.menu.menu {
+  --overlay-surface: var(--palette-neutral-onyx);
+  --overlay-radius: 12px;
+  --overlay-shadow:
+    inset 0 0 0 1px var(--palette-whiteTransparent-subtle),
+    0 4px 8px var(--palette-blackTransparent-blurry);
+  padding: 10px 0;
+}
+
+.menu.menu [role='option'] {
+  justify-content: flex-start;
+  min-height: 38px;
+  margin: 0 10px;
+  padding: 0 10px;
+  gap: 10px;
+  border-radius: 8px;
+  background-color: transparent;
+  color: var(--palette-neutral-softWhite);
+}
+
+.menu.menu [role='option'] svg {
+  flex-shrink: 0;
+  color: var(--palette-neutral-softWhite);
+  font-size: 1rem;
+}
+
+.menu.menu [role='option']:hover,
+.menu.menu [role='option'][aria-selected='true'] {
+  background-color: var(--dark-gray);
+}
+
+.menu.menu [role='option']:active {
+  background-color: var(--dark-gray);
+  background-image: linear-gradient(
+    var(--palette-whiteTransparent-subtle),
+    var(--palette-whiteTransparent-subtle)
+  );
+}
+
+/* The row ring shows only after an arrow key moved the highlight. */
+.menu.menu:global(.ArrowKeyed) [role='option'][data-active] {
+  background-color: var(--dark-gray);
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: -2px;
+}
+
+/* Two classes: over the rules of FiltersBar, Search and Select. */
+.bar.bar {
+  height: 56px;
+  margin: 0;
+  padding: 0 10px;
+  gap: 16px;
+  align-items: center;
+  border-radius: 999px;
+  background-color: var(--palette-whiteTransparent-subtle);
+}
+
+.bar.bar > :global(.left) {
+  flex: 1 0 auto;
+  gap: 10px;
+  text-transform: none;
+}
+
+.bar.bar > :global(.right) {
+  flex: 0 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: 30px;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.fieldLabel {
+  color: var(--dcl-silver);
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.searchBox.searchBox {
+  width: 300px;
+  flex-shrink: 1;
+  min-width: 160px;
+  height: 39px;
+  gap: 10px;
+  padding: 10px 40px 10px 10px;
+  border-radius: 100px;
+  border: 1px solid var(--palette-whiteTransparent-blurry);
+  color: var(--palette-neutral-softWhite);
+}
+
+.searchBox.searchBox:hover,
+.searchBox.searchBox:focus-within,
+.searchBox.searchBox:has(input:not(:placeholder-shown)) {
+  border-color: var(--palette-neutral-softWhite);
+}
+
+.searchBox.searchBox input {
+  padding: 0;
+  font-size: 1rem;
+  font-weight: 400;
+  color: var(--palette-neutral-softWhite);
+}
+
+.searchBox.searchBox input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.searchBox.searchBox input::placeholder {
+  color: var(--palette-whiteTransparent-blurry);
+  opacity: 1;
+}
+
+.searchBox.searchBox svg {
+  font-size: 1.1875rem;
+  color: var(--palette-neutral-softWhite);
+}
+
+.viewSelect.viewSelect {
+  padding: 10px;
+  border-radius: 6px;
+}
+
+.viewSelect.viewSelect:hover,
+.viewSelect.viewSelect:focus-within {
+  background-color: var(--palette-whiteTransparent-subtle);
+}
+
+.viewSelect.viewSelect:has([role="combobox"]:focus-visible) {
+  box-shadow: inset 0 0 0 1px var(--palette-neutral-softWhite);
+}
+
+.viewSelect.viewSelect.viewSelect [role="combobox"] {
+  padding: 0 20px 0 0;
+  color: var(--palette-neutral-softWhite);
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.viewSelect.viewSelect.viewSelect [role="combobox"] > span {
+  min-height: 0;
+}
+
+/* The box of the chevron: the Select centers it. */
+.viewSelect.viewSelect.viewSelect > span[aria-hidden="true"] {
+  right: 10px;
+  color: var(--palette-neutral-softWhite);
+}

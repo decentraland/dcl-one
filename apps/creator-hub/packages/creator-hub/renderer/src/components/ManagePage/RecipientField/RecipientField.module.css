@@ -1,0 +1,15 @@
+.error {
+  margin-top: 8px;
+  color: var(--error);
+  font-size: 0.875rem;
+}
+
+.root {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.root > [role="status"] > * {
+  margin-top: 8px;
+}

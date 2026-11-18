@@ -94,6 +94,14 @@
   margin: 0 auto;
 }
 
+/* In the lobby's section modal the header's buttons step left, clear of its close button. */
+.compact .today {
+  right: 460px;
+}
+.compact .create {
+  right: 82px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .page,
   .header {

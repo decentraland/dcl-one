@@ -1,17 +1,20 @@
 import { useId } from 'react';
-import CheckIcon from '@mui/icons-material/Check';
-import SearchIcon from '@mui/icons-material/Search';
-import { MenuItem } from 'decentraland-ui2';
+import { cx } from '/@/lib/cx';
+import { SelectOption } from '@ui/atoms/Select';
+import { CheckIcon, SearchIcon } from '@ui/atoms/icons-material';
 
 import { t } from '/@/modules/store/translation/utils';
 import type { TranslationPath } from '/@/modules/store/translation/types';
 import { FilterBy, type ManageTab, SortBy } from '/shared/types/manage';
 
 import { ChevronDownIcon } from '../../Icons';
-import { menuSurfaceStyles } from '../../Dropdown/component.styled';
 import { useArrowKeyed } from '../../Dropdown/useArrowKeyed';
+import { Search } from '../../Search';
+import { ToolbarSelect } from '../../ToolbarSelect';
+import { Bar } from './Bar';
 import { ManageTabs } from './ManageTabs';
-import { Bar, Field, FieldLabel, SearchBox, selectRowStyles, ViewSelect } from './ViewBar.styled';
+
+import styles from './ViewBar.module.css';
 
 const ALL = 'all';
 
@@ -46,7 +49,8 @@ export function SearchField({
   onSearch: (query: string) => void;
 }) {
   return (
-    <SearchBox
+    <Search
+      className={styles.searchBox}
       type="search"
       placeholder={t('manage.search')}
       defaultValue={defaultValue}
@@ -70,32 +74,37 @@ export function SelectField<T extends string>({
   const labelOf = (selected: T) => t(options.find(option => option.value === selected)!.label);
 
   return (
-    <Field>
-      <FieldLabel id={labelId}>{t(label)}</FieldLabel>
-      <ViewSelect
-        labelId={labelId}
+    <div
+      className={styles.field}
+      onKeyDownCapture={onKeyDownCapture}
+    >
+      <span
+        id={labelId}
+        className={styles.fieldLabel}
+      >
+        {t(label)}
+      </span>
+      <ToolbarSelect
+        className={styles.viewSelect}
+        aria-labelledby={labelId}
         value={value}
-        IconComponent={ChevronDownIcon}
-        renderValue={selected => labelOf(selected as T)}
-        onChange={event => onChange(event.target.value as T)}
-        onOpen={resetArrowKeyed}
-        MenuProps={{
-          className: arrowKeyedClass,
-          onKeyDownCapture,
-          sx: [theme => menuSurfaceStyles({ theme }), theme => selectRowStyles({ theme })],
-        }}
+        icon={<ChevronDownIcon />}
+        renderValue={labelOf}
+        onChange={onChange}
+        onOpenChange={open => open && resetArrowKeyed()}
+        menuClassName={cx(styles.menu, arrowKeyedClass)}
       >
         {options.map(option => (
-          <MenuItem
+          <SelectOption
             key={option.value}
             value={option.value}
           >
             {option.value === value && <CheckIcon aria-hidden />}
             {t(option.label)}
-          </MenuItem>
+          </SelectOption>
         ))}
-      </ViewSelect>
-    </Field>
+      </ToolbarSelect>
+    </div>
   );
 }
 

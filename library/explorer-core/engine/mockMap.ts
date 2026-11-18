@@ -150,6 +150,7 @@ const placeById = (id: string): DiscoverPlace | undefined => PLACES.find((x) => 
 export function mockMapReply(msg: PageToScene): SceneToPage | null {
   switch (msg.kind) {
     case 'getPlacesAt':
+      if (msg.world != null) return { kind: 'placesAt', request: msg.request, places: PLACES.filter((p) => p.world_name === msg.world) }
       return { kind: 'placesAt', request: msg.request, places: PLACES.filter((p) => (p.world_name ?? '') === '' && covers(p, msg.positions)) }
     case 'searchPlaces':
       return { kind: 'placeSearch', request: msg.request, ...search(msg) }

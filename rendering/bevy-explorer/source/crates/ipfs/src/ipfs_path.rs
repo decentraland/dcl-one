@@ -71,8 +71,8 @@ impl IpfsAsset for bevy_kira_audio::AudioSource {
 /// The name an asset is cached under.
 #[derive(Debug, Clone)]
 pub enum CacheKey {
-    /// The content's own hash, taken from data a server gave us. The cache only takes bytes
-    /// that match it.
+    /// The content's own hash, taken from data a server gave us. A download whose bytes don't
+    /// match it fails, and the cache only takes bytes that match it.
     Content(String),
     /// A digest of the url, made here.
     Url(String),
@@ -622,9 +622,10 @@ impl IpfsPath {
         Ok(self.ipfs_type.context_free_hash()?.map(ToOwned::to_owned))
     }
 
+    /// Preview `b64-` ids and full urls (an entity registered inline maps its files to urls, which
+    /// may be `data:` or `blob:`) name no content, so nothing is cached under them.
     pub fn should_cache(&self, hash: &str) -> bool {
-        !hash.starts_with("b64-")
-        //        true // TODO only if hash is some and is not b64-
+        !hash.starts_with("b64-") && !is_url(hash)
     }
 
     pub fn base_url(&self) -> Option<&str> {

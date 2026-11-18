@@ -1448,6 +1448,14 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       setTimeout(() => reply({ kind: 'eventAttending', eventId: msg.eventId, attending: msg.attending }), 300)
       return
     }
+    if (msg.kind === 'getPlace') {
+      setTimeout(() => reply({ kind: 'place', requestId: msg.requestId, place: { id: msg.id, user_like: false, user_dislike: false, user_favorite: false, user_visits: 1234, updated_at: new Date().toISOString() } }), 300)
+      return
+    }
+    if (msg.kind === 'getWorldAccess') {
+      setTimeout(() => reply({ kind: 'worldAccess', requestId: msg.requestId, access: 'allowed' }), 300)
+      return
+    }
     if (msg.kind === 'getEventPlaces') {
       reply({ kind: 'eventPlaces', request: msg.request, places: mockEventPlaces(msg.placeIds) })
       return
@@ -1835,6 +1843,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       })
       return
     }
+    if (msg.kind === 'quit') return
     if (msg.kind === 'deleteGalleryPhoto') {
       const i = mockGallery.findIndex((p) => p.id === msg.id)
       if (i >= 0) mockGallery.splice(i, 1)

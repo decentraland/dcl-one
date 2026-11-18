@@ -7,6 +7,7 @@ use bevy::{
         hash::FixedHasher,
     },
     prelude::*,
+    render::camera::CameraUpdateSystem,
     transform::systems::{mark_dirty_trees, propagate_parent_transforms, sync_simple_transforms},
 };
 use common::{anim_last_system, sets::PostUpdateSets, util::ModifyComponentExt};
@@ -42,15 +43,21 @@ impl Plugin for TransformAndParentPlugin {
                 PostUpdateSets::PlayerUpdate,
                 PostUpdateSets::CameraUpdate,
                 PostUpdateSets::InverseKinematics,
+                PostUpdateSets::SpringBones,
                 PostUpdateSets::Nametag,
                 PostUpdateSets::AttachSync,
                 PostUpdateSets::Billboard,
+                PostUpdateSets::CameraFit,
             )
                 .chain()
                 .after(GltfLinkSet)
                 .after(anim_last_system!())
                 .before(TransformSystem::TransformPropagate)
                 .before(process_scene_lifecycle),
+        );
+        app.configure_sets(
+            PostUpdate,
+            PostUpdateSets::CameraFit.after(CameraUpdateSystem),
         );
 
         app.add_crdt_lww_interface::<DclTransformAndParent>(

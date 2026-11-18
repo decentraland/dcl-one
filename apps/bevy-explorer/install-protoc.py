@@ -34,8 +34,10 @@ def download(url):
                 return response.read()
         # URLError and TimeoutError are OSErrors; a body cut short while reading is an HTTPException.
         except (OSError, http.client.HTTPException) as error:
-            if isinstance(error, urllib.error.HTTPError) and error.code not in RETRYABLE_HTTP:
-                raise
+            if isinstance(error, urllib.error.HTTPError):
+                error.close()
+                if error.code not in RETRYABLE_HTTP:
+                    raise
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise

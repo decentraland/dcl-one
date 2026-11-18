@@ -75,9 +75,9 @@ mod tests;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
+use crate::shared::routing::{delete, erase, get, patch, post, put};
 use anyhow::{Context, anyhow};
 use axum::Router;
-use axum::routing::{delete, get, patch, post, put};
 use sqlx::PgPool;
 
 use crate::Address;
@@ -380,61 +380,63 @@ impl Settings {
     }
 }
 
-pub struct CommsState {
-    pub deny_list: Arc<crate::deny_list::DenyList>,
-    pub pool: PgPool,
-    /// The guarded client: the LAND operators and the lease authorizations
-    /// (user-influenced URLs).
-    pub http: Outbound,
-    pub settings: Settings,
-    pub livekit: LiveKit,
-    pub moderation: Moderation,
-    pub bans: Arc<dyn moderation::BanStatus>,
-    pub social: Arc<dyn crate::interfaces::SocialDirectory>,
-    metadata_cursor: Mutex<Option<String>>,
-    pub voice_db: VoiceDb,
-    /// The marketplace readers (ENS names, world-name ownership); `None`
-    /// answers empty names and refuses non-admin world moderation.
-    pub marketplace: Option<Arc<crate::chain_index::ChainIndex>>,
-    /// Shop's source-complete names owner reader for moderation writes.
-    pub name_owners: Option<Arc<dyn crate::interfaces::NameOwnerReader>>,
-    /// The worlds permission core: world access, protected wallets and
-    /// scene ownership; `serve` hands in the ONE instance the worlds routes
-    /// share.
-    pub policy: Arc<dyn AccessPolicy>,
-    /// The ONE room resolver: a world's deployed scenes and the world
-    /// mints' rooms.
-    pub scenes: Arc<dyn SceneIdentity>,
-    /// The live world presence the LiveKit webhook feeds and the world
-    /// mints' capacity check reads; `serve` shares it with worlds.
-    pub presence: Arc<crate::presence::Presence>,
-    /// Contract-wallet (EIP-1654) signature check for signed-fetch chains;
-    /// `None` refuses such chains.
-    pub eip1654: Option<Arc<dyn Eip1654Validator>>,
-    pub caches: admission::scene::SceneCaches,
-    /// Where the LiveKit webhook's participant events are also handed.
-    pub room_events: Option<Arc<dyn RoomEventSink>>,
-    /// Where every verified participant event is stored before it is acknowledged.
-    pub room_event_store: Option<Arc<dyn events::RoomEventStore>>,
-    webhooks: webhook::WebhookCoordinator,
-    /// The Pulse room authority, mounted when `PULSE_ROOM_AUTHORITY_KEY` is set.
-    pub relay_authority: Option<Arc<admission::relay_authority::RelayAuthority>>,
-    /// The world comms mints' throttle and capacity (`admission::world_mint`).
-    pub world_mint: admission::world_mint::MintState,
-    pub(crate) world_access_cursor: std::sync::Mutex<Option<String>>,
-    /// The island feed's settings (`admission::cluster`); the subscriber starts with
-    /// [`Self::start_island_feed`].
-    pub cluster: admission::cluster::ClusterConfig,
-    /// `serve`'s one NATS link (`NATS_URL`), whether or not the island subscriber runs: the
-    /// subscriber and the `/ws` connector both use it, and whichever starts first dials it.
-    pub bus: Arc<dyn bus::NatsBus>,
-    /// The realm-lane fence, with a v4 audience: `/island-refresh`, the
-    /// relay authority's island rooms and the subscriber's fenced path.
-    assignments: Option<Arc<admission::cluster::fence::PgAssignmentFence>>,
-    /// The island subscriber [`Self::start_island_feed`] started. Weak: its job owns it, and it
-    /// holds this state through its gateway.
-    island_feed: Mutex<Weak<admission::cluster::subscriber::ClusterSubscriber>>,
-    pub(crate) island_safety: admission::cluster::safety::SafetyStore,
+crate::shared::send_sync_once! {
+    pub struct CommsState {
+        pub deny_list: Arc<crate::deny_list::DenyList>,
+        pub pool: PgPool,
+        /// The guarded client: the LAND operators and the lease authorizations
+        /// (user-influenced URLs).
+        pub http: Outbound,
+        pub settings: Settings,
+        pub livekit: LiveKit,
+        pub moderation: Moderation,
+        pub bans: Arc<dyn moderation::BanStatus>,
+        pub social: Arc<dyn crate::interfaces::SocialDirectory>,
+        metadata_cursor: Mutex<Option<String>>,
+        pub voice_db: VoiceDb,
+        /// The marketplace readers (ENS names, world-name ownership); `None`
+        /// answers empty names and refuses non-admin world moderation.
+        pub marketplace: Option<Arc<crate::chain_index::ChainIndex>>,
+        /// Shop's source-complete names owner reader for moderation writes.
+        pub name_owners: Option<Arc<dyn crate::interfaces::NameOwnerReader>>,
+        /// The worlds permission core: world access, protected wallets and
+        /// scene ownership; `serve` hands in the ONE instance the worlds routes
+        /// share.
+        pub policy: Arc<dyn AccessPolicy>,
+        /// The ONE room resolver: a world's deployed scenes and the world
+        /// mints' rooms.
+        pub scenes: Arc<dyn SceneIdentity>,
+        /// The live world presence the LiveKit webhook feeds and the world
+        /// mints' capacity check reads; `serve` shares it with worlds.
+        pub presence: Arc<crate::presence::Presence>,
+        /// Contract-wallet (EIP-1654) signature check for signed-fetch chains;
+        /// `None` refuses such chains.
+        pub eip1654: Option<Arc<dyn Eip1654Validator>>,
+        pub caches: admission::scene::SceneCaches,
+        /// Where the LiveKit webhook's participant events are also handed.
+        pub room_events: Option<Arc<dyn RoomEventSink>>,
+        /// Where every verified participant event is stored before it is acknowledged.
+        pub room_event_store: Option<Arc<dyn events::RoomEventStore>>,
+        webhooks: webhook::WebhookCoordinator,
+        /// The Pulse room authority, mounted when `PULSE_ROOM_AUTHORITY_KEY` is set.
+        pub relay_authority: Option<Arc<admission::relay_authority::RelayAuthority>>,
+        /// The world comms mints' throttle and capacity (`admission::world_mint`).
+        pub world_mint: admission::world_mint::MintState,
+        pub(crate) world_access_cursor: std::sync::Mutex<Option<String>>,
+        /// The island feed's settings (`admission::cluster`); the subscriber starts with
+        /// [`Self::start_island_feed`].
+        pub cluster: admission::cluster::ClusterConfig,
+        /// `serve`'s one NATS link (`NATS_URL`), whether or not the island subscriber runs: the
+        /// subscriber and the `/ws` connector both use it, and whichever starts first dials it.
+        pub bus: Arc<dyn bus::NatsBus>,
+        /// The realm-lane fence, with a v4 audience: `/island-refresh`, the
+        /// relay authority's island rooms and the subscriber's fenced path.
+        assignments: Option<Arc<admission::cluster::fence::PgAssignmentFence>>,
+        /// The island subscriber [`Self::start_island_feed`] started. Weak: its job owns it, and it
+        /// holds this state through its gateway.
+        island_feed: Mutex<Weak<admission::cluster::subscriber::ClusterSubscriber>>,
+        pub(crate) island_safety: admission::cluster::safety::SafetyStore,
+    }
 }
 
 pub type SharedState = Arc<CommsState>;
@@ -854,14 +856,14 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/scene-admin",
             get(moderation::handlers::list_admins)
-                .post(moderation::handlers::add_admin)
-                .delete(moderation::handlers::remove_admin),
+                .post(erase(moderation::handlers::add_admin))
+                .delete(erase(moderation::handlers::remove_admin)),
         )
         .route(
             "/scene-bans",
             get(moderation::handlers::list_bans)
-                .post(moderation::handlers::ban_user)
-                .delete(moderation::handlers::unban_user),
+                .post(erase(moderation::handlers::ban_user))
+                .delete(erase(moderation::handlers::unban_user)),
         )
         .route(
             "/scene-bans/addresses",
@@ -874,13 +876,13 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/users/{address}/bans",
             get(moderation::handlers::get_user_ban_status)
-                .post(moderation::handlers::post_user_ban)
-                .delete(moderation::handlers::delete_user_ban),
+                .post(erase(moderation::handlers::post_user_ban))
+                .delete(erase(moderation::handlers::delete_user_ban)),
         )
         .route(
             "/users/{address}/warnings",
             get(moderation::handlers::get_user_warnings)
-                .post(moderation::handlers::post_user_warning),
+                .post(erase(moderation::handlers::post_user_warning)),
         )
         .route("/bans", get(moderation::handlers::list_all_bans))
         .route("/livekit-webhook", post(webhook::livekit_webhook))
@@ -930,11 +932,12 @@ pub fn router(state: SharedState) -> Router {
         )
         .route(
             "/community-voice-chat/{id}/users/{address}/speak-request",
-            post(voice::community_request_to_speak).delete(voice::community_reject_speak_request),
+            post(voice::community_request_to_speak)
+                .delete(erase(voice::community_reject_speak_request)),
         )
         .route(
             "/community-voice-chat/{id}/users/{address}/speaker",
-            post(voice::community_promote_speaker).delete(voice::community_demote_speaker),
+            post(voice::community_promote_speaker).delete(erase(voice::community_demote_speaker)),
         )
         .route(
             "/community-voice-chat/{id}/users/{address}/mute",
@@ -947,9 +950,9 @@ pub fn router(state: SharedState) -> Router {
         .route(
             streaming::PATH,
             get(streaming::scene_stream_access)
-                .post(streaming::scene_stream_access)
-                .put(streaming::scene_stream_access)
-                .delete(streaming::scene_stream_access),
+                .post(erase(streaming::scene_stream_access))
+                .put(erase(streaming::scene_stream_access))
+                .delete(erase(streaming::scene_stream_access)),
         )
         .route(
             "/cast/streamer-token",
@@ -971,7 +974,8 @@ pub fn router(state: SharedState) -> Router {
         .route("/cast/presenters", get(streaming::cast::list_presenters))
         .route(
             "/cast/presenters/{participant_identity}",
-            put(streaming::cast::promote_presenter).delete(streaming::cast::demote_presenter),
+            put(streaming::cast::promote_presenter)
+                .delete(erase(streaming::cast::demote_presenter)),
         )
         .route(
             admission::island_refresh::ISLAND_REFRESH_PATH,

@@ -109,6 +109,11 @@ impl SceneAdmission {
         }
     }
 
+    /// The gatekeeper refused the player as banned.
+    pub fn is_refused(&self) -> bool {
+        matches!(self.0, Admission::Refused { .. })
+    }
+
     pub fn scene_id(&self) -> Option<&str> {
         match &self.0 {
             Admission::Unknown => None,
@@ -127,8 +132,9 @@ pub struct SceneRoomModeration {
 
 /// Marks a remote player the local user must neither see nor hear: blocked either way, or banned
 /// from the current scene's room. `ban_block` keeps it current. While it is present the player's
-/// avatar, nametag and attachments are hidden; anything else that must leave the player out reads
-/// this marker rather than deciding again.
+/// avatar, nametag and attachments are hidden and their nearby voice is not subscribed (a call
+/// still carries them); anything else that must leave the player out reads this marker rather
+/// than deciding again.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BlockedOrBanned;
 

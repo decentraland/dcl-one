@@ -771,6 +771,34 @@ class InventoryTests(unittest.TestCase):
             self.assertNotIn("catalyst-test: failed", result.stdout + result.stderr)
             self.assertNotIn("::error", result.stdout + result.stderr)
 
+    def test_the_doc_tests_run_in_exactly_the_named_shard(self):
+        script = (ROOT / "tooling/catalyst-test.sh").read_text()
+        select = script[script.index('shard="${CATALYST_TEST_SHARD:-1/1}"'):script.index('cores=')]
+        decide = script[script.index('if [ "$doc" -eq "$index" ]; then'):]
+        decide = decide[:decide.index("fi\n") + 3].replace('cargo test --locked "$@" --doc', "echo doc")
+
+        def run(shard, doc):
+            with tempfile.TemporaryDirectory() as logs:
+                Path(logs, "binaries").write_text("tests/a.rs\ttest\t/target/a\n")
+                env = {**os.environ, "logs": logs, "CATALYST_TEST_SHARD": shard}
+                env.pop("CATALYST_TEST_DOC_SHARD", None)
+                if doc is not None:
+                    env["CATALYST_TEST_DOC_SHARD"] = doc
+                result = subprocess.run(["bash", "-euo", "pipefail", "-c", select + decide], env=env,
+                                        capture_output=True, text=True)
+                return result.returncode, result.stdout.split(), result.stderr
+
+        for doc, runs in [(None, [1, 2, 3]), ("", [1, 2, 3]), ("2", [2]), ("3", [3])]:
+            with self.subTest(doc=doc):
+                ran = [index for index in (1, 2, 3) if run(f"{index}/3", doc)[:2] == (0, ["doc"])]
+                self.assertEqual(ran, runs)
+                self.assertTrue(all(run(f"{index}/3", doc)[0] == 0 for index in (1, 2, 3)))
+        for doc in ("0", "4", "x"):
+            with self.subTest(doc=doc):
+                code, out, error = run("2/3", doc)
+                self.assertEqual((code, out), (1, []))
+                self.assertIn("CATALYST_TEST_DOC_SHARD must name one shard from 1 to 3", error)
+
     def test_the_shards_of_the_actual_test_script_run_every_binary_once(self):
         script = (ROOT / "tooling/catalyst-test.sh").read_text()
         select = script[script.index('shard="${CATALYST_TEST_SHARD:-1/1}"'):script.index('cores=')]
@@ -784,6 +812,7 @@ class InventoryTests(unittest.TestCase):
                 Path(logs, "binaries").write_text("".join(rows))
                 env = {**os.environ, "logs": logs, "LC_ALL": locale}
                 env.pop("CATALYST_TEST_SHARD", None)
+                env.pop("CATALYST_TEST_DOC_SHARD", None)
                 if value is not None:
                     env["CATALYST_TEST_SHARD"] = value
                 result = subprocess.run(["bash", "-euo", "pipefail", "-c", select], env=env,
@@ -843,6 +872,9 @@ class InventoryTests(unittest.TestCase):
                     script.replace('[ -z "$same" ] || ', ''),
                     script.replace('same=$(cut -f1,2 "$logs/binaries" | LC_ALL=C sort | LC_ALL=C uniq -d)\n', 'same=\n'),
                     script.replace('cargo test --locked "$@" --doc\n', ''),
+                    script.replace('${CATALYST_TEST_DOC_SHARD:-$index}', '${CATALYST_TEST_DOC_SHARD:-0}'),
+                    script.replace(' && [ "$doc" -le "$total" ]', ''),
+                    script.replace('if [ "$doc" -eq "$index" ]; then', 'if [ "$doc" -ne "$index" ]; then'),
                     script.replace('echo "$line" >> "$2/failures"; exit 1', 'echo "$line" >> "$2/failures"'),
                     script.replace('  cat "$log"\n', ''),
                     script.replace("cores=", "exit 0\ncores=")]:

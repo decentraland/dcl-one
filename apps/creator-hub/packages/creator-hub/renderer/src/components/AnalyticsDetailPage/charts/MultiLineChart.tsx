@@ -1,6 +1,6 @@
 import { useId } from 'react';
-import { Box, Typography } from 'decentraland-ui2';
-import { LineChart } from '@mui/x-charts';
+import LineChart from '@ui/atoms/LineChart';
+import Text from '@ui/atoms/Text';
 
 import type { TimeSeriesPoint } from '/shared/types/place-analytics';
 
@@ -14,13 +14,12 @@ import {
   CHART_HEIGHT,
   CHART_MARGIN,
   SERIES_COLOR,
-  chartSx,
   fortnightlyTicks,
   seriesPaint,
   tickDateFormat,
-  xAxisChrome,
-  yAxisChrome,
 } from './theme';
+
+import './styles.css';
 
 export type LineSeries = {
   key: string;
@@ -45,9 +44,14 @@ export function MultiLineChart({ series, formatValue, maxValue, height }: Props)
 
   if (dates.length === 0) {
     return (
-      <Box className="ChartEmpty">
-        <Typography variant="body2">{t('analytics.detail.charts.no_data')}</Typography>
-      </Box>
+      <div className="ChartEmpty">
+        <Text
+          variant="body2"
+          className="ChartEmptyText"
+        >
+          {t('analytics.detail.charts.no_data')}
+        </Text>
+      </div>
     );
   }
 
@@ -69,51 +73,50 @@ export function MultiLineChart({ series, formatValue, maxValue, height }: Props)
     })
     .filter(label => label !== null);
 
+  const formatPoint = (value: number | null) => (value === null ? '-' : formatValue(value));
+
   return (
     <LineChart
+      className="AnalyticsChart"
+      aria-label={series.map(entry => entry.label).join(', ')}
+      dates={dates}
       height={height ?? CHART_HEIGHT}
       margin={CHART_MARGIN}
-      sx={chartSx(gradientId)}
-      grid={{ horizontal: true }}
-      skipAnimation
-      axisHighlight={{ x: 'none', y: 'none' }}
-      tooltip={{ trigger: 'axis' }}
-      xAxis={[
-        {
-          ...xAxisChrome,
-          data: dates.map(date => new Date(date)),
-          scaleType: 'time',
-          tickInterval: fortnightlyTicks(dates),
-          valueFormatter: (date: Date) => tickDateFormat.format(date),
-        },
-      ]}
-      yAxis={[
-        {
-          ...yAxisChrome,
-          min: 0,
-          max: maxValue,
-          valueFormatter: (value: number) => formatValue(value),
-        },
-      ]}
+      yMin={0}
+      yMax={maxValue}
+      yTickCount={5}
+      xTicks={fortnightlyTicks(dates)}
+      formatX={date => tickDateFormat.format(date)}
+      formatY={formatValue}
       series={series.map((entry, index) => ({
         id: entry.key,
-        data: entry.points.map(point => point.value),
         label: entry.label,
         color: colorOf(index),
-        curve: 'linear',
-        showMark: false,
-        valueFormatter: (value: number | null) => (value === null ? '-' : formatValue(value)),
+        paint: isSingle ? seriesPaint(gradientId) : undefined,
+        data: entry.points.map(point => point.value),
       }))}
-      slots={{ axisContent: ChartTooltipContent }}
-      slotProps={{ legend: { hidden: true } }}
-    >
-      {gradientId && (
-        <SeriesGradient
-          id={gradientId}
-          values={series[0].points.map(point => point.value)}
+      renderTooltip={hover => (
+        <ChartTooltipContent
+          {...hover}
+          formatValue={formatPoint}
         />
       )}
-      <EndOfLineLabels labels={endLabels} />
+    >
+      {scales => (
+        <>
+          {gradientId && (
+            <SeriesGradient
+              id={gradientId}
+              values={series[0].points.map(point => point.value)}
+              scales={scales}
+            />
+          )}
+          <EndOfLineLabels
+            labels={endLabels}
+            scales={scales}
+          />
+        </>
+      )}
     </LineChart>
   );
 }

@@ -1,786 +1,835 @@
-/* Lobby cards, sized for the 1920-wide canvas. */
-.thumb {
+/* A card's clickable surface is its full-size cover button; its badges, Jump In and actions sit
+   over it. */
+
+.cover {
   position: absolute;
   inset: 0;
-  overflow: hidden;
-  border-radius: inherit;
-  background: var(--lobby-card);
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
 }
-.thumb img {
+.cover:focus-visible,
+.jumpIn:focus-visible,
+.action:focus-visible,
+.join:focus-visible,
+.view:focus-visible {
+  outline: 2px solid var(--lobby-snow);
+  outline-offset: 2px;
+}
+
+.zoomThumb,
+.landingThumb {
+  position: absolute;
+  inset: 0;
+  transition: transform var(--lobby-dur-thumb) ease-out;
+}
+.thumbImage {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  display: block;
-  animation: imgIn var(--dur-mid) linear;
 }
-@keyframes imgIn {
-  from {
-    opacity: 0;
-  }
+.thumbSkeleton {
+  position: absolute;
+  inset: 0;
+  background: var(--lobby-card-bone) linear-gradient(90deg, transparent 0%, var(--lobby-white-10) 50%, transparent 100%) no-repeat;
+  background-size: 200% 100%;
+  opacity: 0;
+  transition: opacity var(--lobby-dur-thumb) ease-out;
+  animation: shimmer 1.4s linear infinite;
 }
-.skeleton {
-  background: var(--lobby-skeleton) 0 0 / 200% 100%;
-  animation: shimmer var(--dur-shimmer) linear infinite;
+.thumbSkeletonShown {
+  opacity: 1;
+  transition: none;
 }
 @keyframes shimmer {
+  from {
+    background-position: 150% 0;
+  }
   to {
-    background-position: -200% 0;
+    background-position: -50% 0;
   }
 }
-/* over a card's picture: the dark foot its title is read on and its border, which each card sets */
-.shade {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-}
-.counter {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 26px;
-  padding: 0 6px;
-  border-radius: var(--r-sm);
-  background: var(--lobby-pill);
-  color: var(--lobby-ink);
-  font-size: var(--type-14);
-  font-weight: var(--fw-semibold);
-  box-sizing: border-box;
-}
-.onlineDot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--lobby-online);
-}
 
-.jump {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  height: 46px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--r-md);
-  background: var(--brand);
-  color: var(--text);
-  font: inherit;
-  font-size: var(--type-16);
-  font-weight: var(--fw-semibold);
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: background-color var(--dur-tap) linear;
-}
-.jump:hover {
-  background: var(--lobby-cta-hover);
-}
-.jump svg {
-  flex: none;
-}
-.jump:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.jump:disabled:hover {
-  background: var(--brand);
-}
-.landingOpen {
-  cursor: pointer;
-}
-.jump:focus-visible,
-.friend:focus-visible,
-.viewAll:focus-visible,
-.pagerArrow:focus-visible,
-.dot:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-/* inside its card, which clips what is drawn past its edge */
-.eventOpen:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
-/* Section title row, 32px high in every widget. */
-.head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: 32px;
-}
-.headTitle {
-  margin: 0;
-  color: var(--lobby-ink);
-  font-size: var(--type-22);
-  font-weight: var(--fw-semibold);
-  line-height: 28px;
-  text-shadow: 0 1px 2px var(--black-70);
-  white-space: nowrap;
-}
-/* VIEW ALL, 38px high in the 32px row: the label, then a 24px arrow that ends at the row's edge. */
-.viewAll {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex: none;
-  height: 38px;
-  margin-left: auto;
-  padding: 0 0 0 14px;
-  border: 0;
-  border-radius: var(--r-md);
-  background: none;
-  color: var(--lobby-ink);
-  font: inherit;
-  font-size: var(--type-14);
-  font-weight: var(--fw-semibold);
-  text-transform: uppercase;
-  text-shadow: 0 1px 2px var(--black-70);
-  cursor: pointer;
-}
-.viewAll:hover span {
-  text-decoration: underline;
-  text-underline-position: from-font;
-}
-.viewAllArrow {
-  flex: none;
-  color: var(--lobby-arrow);
-}
-
-/* A page of cards and its pager, a 32px row: a 40×14 pill for the page shown, 14px circles for the
-   others. While the pointer is anywhere on the widget, or the keyboard's focus is in the row, the
-   row is a dark pill with the Previous and Next arrows at its ends; a click leaves nothing lit once
-   the pointer has gone. A widget sets the gap above the row with --lobby-pager-gap. */
-.pages {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-.pageRow {
-  display: flex;
-  align-self: stretch;
-}
-.pager,
-.pagerSpace {
-  flex: none;
-  height: 32px;
-  margin-top: var(--lobby-pager-gap, 9px);
-}
-.pager {
-  display: flex;
-  align-items: center;
-  padding: 0 2px;
-  border-radius: var(--r-pill);
-  transition: background-color var(--dur-tap) linear;
-}
-section:hover > .pages > .pager,
-.pages:hover > .pager,
-.pager:has(:focus-visible) {
-  background: var(--black-60);
-}
-.pagerArrow {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--r-pill);
-  background: var(--white-10);
-  color: var(--text);
-  cursor: pointer;
-  /* hidden, not faded out: HUD automation and the keyboard find a control only while it shows */
-  visibility: hidden;
-}
-.pagerArrow svg {
-  margin: -2px;
-}
-section:hover > .pages > .pager > .pagerArrow,
-.pages:hover > .pager > .pagerArrow,
-.pager:has(:focus-visible) > .pagerArrow {
-  visibility: visible;
-}
-.pagerArrow:hover {
-  background: var(--divider-strong);
-}
-.pagerArrow:active {
-  background: var(--white-10);
-}
-.dots {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px;
-}
-.dot {
-  width: 14px;
-  height: 14px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--r-pill);
-  background: var(--lobby-dot);
-  cursor: pointer;
-}
-.dot:hover {
-  background: var(--ink-6);
-}
-.dotActive,
-.dotActive:hover {
-  width: 40px;
-  background: var(--brand);
-}
-
-/* Home card, as wide as its block (442) and 248 high, its title row and button 24px from its sides and foot. */
-.landing {
-  position: relative;
-  width: 100%;
-  height: 248px;
-  border-radius: var(--r-lg);
-  color: var(--text);
-}
-/* A 10% black veil on the picture, and the foot the title and button sit in: clear 48px down,
-   80% black from 175px. The card's border is the 2px line. */
-.landing > .shade {
-  background:
-    linear-gradient(to bottom, transparent 48px, var(--black-80) 175px),
-    var(--black-10);
-  box-shadow: inset 0 0 0 2px var(--white-10);
-}
-/* Hovered: a 4px ruby ring around the card, the veil turned white, the foot 4px higher. */
-.landing:not([aria-busy='true']):hover {
-  outline: 4px solid var(--brand);
-}
-.landing:not([aria-busy='true']):hover > .shade {
-  background:
-    linear-gradient(to bottom, transparent 48px, var(--black-80) 171px),
-    var(--white-10);
-}
-.landingBadges {
-  position: absolute;
-  top: 24px;
-  left: 24px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.landingTitle {
-  position: absolute;
-  left: 24px;
-  right: 24px;
-  top: 138px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: var(--type-20);
-  font-weight: var(--fw-semibold);
-  line-height: 24px;
-}
-.landingTitle svg {
-  flex: none;
-}
-.landingTitle span {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.landingJump {
-  position: absolute;
-  left: 24px;
-  right: 24px;
-  top: 178px;
-}
-
-/* Place card 256×146: the picture fills it, the online count sits 16px from its top left corner,
-   the name and the creator 16px from the sides and the foot. Hovered or focused, the picture dims
-   and JUMP IN takes the creator's line. */
-.place {
-  position: relative;
-  flex: none;
-  width: 256px;
-  height: 146px;
-  border-radius: var(--r-lg);
-  color: var(--text);
-  cursor: pointer;
-  /* clip, not hidden: focus on the button under the foot must not scroll the card */
-  overflow: clip;
-}
-/* The foot the name is read on, clear 61px down and 80% black from 90px, under the card's 1px line;
-   the veil that dims the picture is the layer under the foot. */
-.place > .shade {
-  background: linear-gradient(to bottom, transparent 61px, var(--black-80) 90px);
-  box-shadow: inset 0 0 0 1px var(--white-10);
-  transition: background-color var(--dur-mid) var(--ease-outquad);
-}
-.place:hover > .shade,
-.place:has(:focus-visible) > .shade {
-  background-color: var(--black-50);
-}
-.placeBadges {
-  position: absolute;
-  top: 16px;
-  left: 16px;
-}
-.placeText {
-  position: absolute;
-  left: 16px;
-  right: 16px;
-  bottom: 16px;
-}
-.placeTitle {
-  height: 23px;
-  font-size: var(--type-18);
-  font-weight: var(--fw-semibold);
-  line-height: 24px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* the creator's line, 17px, or the 46px button in its place */
-.placeFoot {
-  position: relative;
-  height: 17px;
-  margin-top: 5px;
-  transition: height var(--dur-mid) var(--ease-outquad), margin-top var(--dur-mid) var(--ease-outquad);
-}
-.placeFootBare {
-  height: 0;
-  margin-top: 0;
-}
-.placeCreator {
-  font-size: var(--type-14);
-  line-height: 17px;
-  color: var(--silver);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: opacity var(--dur-mid) var(--ease-outquad);
-}
-.placeJump {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--dur-mid) var(--ease-outquad);
-}
-.place:hover .placeFoot,
-.place:has(:focus-visible) .placeFoot {
-  height: 46px;
-  margin-top: 6px;
-}
-.place:hover .placeCreator,
-.place:has(:focus-visible) .placeCreator {
-  opacity: 0;
-}
-.place:hover .placeJump,
-.place:has(:focus-visible) .placeJump {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-/* Live event card 326×199: the picture fills it, the badges sit 16px from its top left corner, the
-   name and the host on the dark foot. Hovered or focused, the picture dims and JUMP IN takes the
-   host's line. */
-.liveCard {
-  position: relative;
-  flex: none;
-  width: 326px;
-  height: 199px;
-  border-radius: var(--r-lg);
-  background: var(--black);
-  color: var(--lobby-ink);
-  overflow: hidden;
-}
-/* the hairline, over the picture */
-.liveCard::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border: 1px solid var(--white-10);
-  border-radius: inherit;
-  pointer-events: none;
-}
-.liveCard .thumb {
-  background: none;
-}
-.liveCard .thumb img {
-  transition: opacity var(--dur-mid) var(--ease-outquad);
-}
-.liveCard:hover .thumb img,
-.liveCard:has(:focus-visible) .thumb img {
-  opacity: 0.5;
-}
-.liveBadges {
-  position: absolute;
-  left: 16px;
-  top: 16px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.liveBadge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 26px;
-  padding: 0 6px;
-  border-radius: var(--r-sm);
-  background: var(--lobby-live);
-  font-size: var(--type-14);
-  font-weight: var(--fw-semibold);
-  text-transform: uppercase;
-  box-sizing: border-box;
-}
-.liveBadge svg {
-  flex: none;
-}
-.liveFriends {
-  display: inline-flex;
-  --avatar-border: var(--lobby-avatar-ring);
-  --friends-more-size: var(--type-14);
-}
-.liveText {
+.gradient {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 32px 16px 16px;
-  /* the shade is the lowest 70px, whatever the foot holds */
-  background: linear-gradient(to bottom, transparent 15%, var(--black-80) 43.8%) bottom / 100% 70px no-repeat;
-}
-.liveTitle {
-  font-size: var(--type-18);
-  font-weight: var(--fw-semibold);
-  line-height: 22px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* the host's line, 17px, or the 46px button in its place */
-.liveFoot {
-  position: relative;
-  height: 17px;
-  margin-top: 6px;
-}
-.liveFootBare {
-  height: 0;
-  margin-top: 0;
-}
-.liveBy {
-  font-size: var(--type-14);
-  line-height: 17px;
-  color: var(--silver);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.liveJump {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  opacity: 0;
   pointer-events: none;
-}
-.liveCard:hover .liveFoot,
-.liveCard:has(:focus-visible) .liveFoot {
-  height: 46px;
-  margin-top: 6px;
-}
-.liveCard:hover .liveBy,
-.liveCard:has(:focus-visible) .liveBy {
-  visibility: hidden;
-}
-.liveCard:hover .liveJump,
-.liveCard:has(:focus-visible) .liveJump {
-  opacity: 1;
-  pointer-events: auto;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0,
+    rgba(0, 0, 0, 0.11) 8px,
+    rgba(0, 0, 0, 0.357) 16px,
+    rgba(0, 0, 0, 0.62) 24px,
+    rgba(0, 0, 0, 0.816) 32px,
+    rgba(0, 0, 0, 0.922) 40px,
+    rgba(0, 0, 0, 0.961) 48px,
+    rgba(0, 0, 0, 0.965) 52px,
+    rgba(0, 0, 0, 0.965) 100%
+  );
+  transition: height var(--lobby-dur-thumb) ease-out;
 }
 
-/* Upcoming event card 326×139: the name, the host and the time left of a square picture as high
-   as the card. The whole card opens the event; hovered or focused, Add to calendar and Share take
-   the host's line. */
-.event {
-  position: relative;
-  flex: none;
-  width: 326px;
-  height: 139px;
-  border: 1px solid var(--white-10);
-  border-radius: var(--r-lg);
-  background: var(--black-60);
-  color: var(--lobby-ink);
-  box-sizing: border-box;
-  overflow: hidden;
-}
-.eventOpen {
+.outline {
   position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  width: 100%;
-  /* the text ends 20px before the picture */
-  padding: 0 157px 0 20px;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
+  inset: -6px;
+  padding: 2px;
+  border-radius: 22px;
+  background: linear-gradient(to bottom, var(--lobby-accent), var(--lobby-outline-to));
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--lobby-dur-outline) ease-out;
 }
-.eventOpen:disabled {
+
+.badges {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  height: 26px;
+  pointer-events: none;
+}
+.badges > * {
+  pointer-events: auto;
+}
+.online {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  background: var(--lobby-shadow);
+}
+.onlineDot {
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-radius: 4px;
+  background: var(--lobby-online-green);
+}
+.onlineIcon {
+  margin-right: 4px;
+  color: var(--lobby-snow);
+}
+.onlineCount {
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  color: var(--lobby-snow);
+}
+.friendsRow {
+  display: flex;
+  align-items: center;
+  height: 26px;
+}
+.friendPicture {
+  box-sizing: border-box;
+  width: 26px;
+  height: 26px;
+  border: 2px solid var(--lobby-white-40);
+  border-radius: 13px;
+  background: var(--white) center / 140% no-repeat;
+}
+.overlapping {
+  margin-left: -8px;
+}
+.friendsOverflow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  min-width: 26px;
+  padding: 0 6px;
+  border-radius: 13px;
+  background: var(--lobby-shadow);
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  color: var(--lobby-snow);
+}
+
+.jumpIn {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: var(--lobby-accent);
+  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.05);
+  color: var(--lobby-snow);
+  font-family: inherit;
+  font-weight: var(--fw-bold, 700);
+  cursor: pointer;
+  transition: background-color var(--lobby-dur-press);
+}
+.jumpIn:hover {
+  background: var(--lobby-accent-hover);
+}
+.jumpIn:active {
+  background: var(--lobby-accent-pressed);
+}
+.jumpIn:disabled {
+  opacity: 0.5;
   cursor: default;
 }
-.eventTitle {
-  max-width: 100%;
+.jumpInLarge {
+  height: 46px;
+  font-size: var(--type-16);
+}
+.jumpInLarge .jumpInText {
+  margin-right: 8px;
+}
+.jumpInSmall {
+  height: 40px;
+  font-size: var(--type-14);
+}
+.jumpInSmall .jumpInText {
+  margin-right: 6px;
+}
+
+.landing {
+  position: relative;
+  width: 442px;
+  height: 248px;
+}
+.landing:hover .outline {
+  opacity: 1;
+}
+.landingBody {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--lobby-white-10);
+  border-radius: var(--r-lg);
+  background: var(--lobby-card-fill);
+  overflow: hidden;
+}
+.landingThumb {
+  filter: brightness(0.9);
+  transition:
+    transform var(--lobby-dur-thumb) ease-out,
+    filter var(--lobby-dur-thumb) ease-out;
+}
+.landing:hover .landingThumb {
+  transform: scale(1.05);
+  filter: none;
+}
+.static .landingBody {
+  background: var(--lobby-landing-static);
+}
+.static:hover .outline {
+  opacity: 0;
+}
+.static:hover .landingThumb {
+  transform: none;
+  filter: brightness(0.9);
+}
+.landingGradient {
+  height: 140px;
+}
+.landingBadges {
+  top: 20px;
+  left: 20px;
+}
+.landingFooter {
+  position: absolute;
+  left: 21px;
+  right: 21px;
+  bottom: 84px;
+  display: flex;
+  align-items: center;
+  height: 24px;
+  pointer-events: none;
+}
+.homeIcon {
+  margin-right: 10px;
+  color: var(--lobby-snow);
+}
+.landingTitle {
+  min-width: 0;
+  font-size: var(--type-20);
+  font-weight: var(--fw-semibold);
+  color: var(--lobby-snow);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.landingJumpIn {
+  left: 21px;
+  right: 21px;
+  bottom: 22px;
+}
+
+.place,
+.community {
+  position: relative;
+  box-sizing: border-box;
+  width: 256px;
+  height: 146px;
+  border: 1px solid var(--lobby-white-10);
+  border-radius: var(--r-lg);
+  background: var(--lobby-card-fill);
+  overflow: hidden;
+}
+.narrow {
+  width: 215px;
+}
+.place:hover .zoomThumb,
+.liveEvent:hover .zoomThumb,
+.upcoming:hover .zoomThumb,
+.community:hover .zoomThumb,
+.photo:hover .zoomThumb {
+  transform: scale(1.05);
+}
+.placeGradient {
+  height: 100px;
+}
+.place:hover .placeGradient {
+  height: 132px;
+}
+.placeBadges {
+  top: 12px;
+  left: 12px;
+}
+.placeFooter {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  height: 55px;
+  padding: 8px 10px 0;
+  pointer-events: none;
+  transition: height var(--lobby-dur-thumb) ease-out;
+}
+.place:hover .placeFooter {
+  height: 87px;
+}
+.placeTitle {
+  display: block;
+  height: 24px;
+  margin-bottom: 2px;
+  font-size: var(--type-18);
+  font-weight: var(--fw-semibold);
+  line-height: 24px;
+  color: var(--white);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.placeCreator {
+  display: block;
+  height: 16px;
+  font-size: var(--type-11);
+  line-height: 16px;
+  color: var(--lobby-subtitle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: opacity var(--lobby-dur-thumb) ease-out;
+}
+.place:hover .placeCreator {
+  opacity: 0;
+}
+.placeJumpIn {
+  left: 7px;
+  right: 7px;
+  bottom: 8px;
+  opacity: 0;
+  transition:
+    opacity var(--lobby-dur-thumb) ease-out,
+    background-color var(--lobby-dur-press);
+}
+.place:hover .placeJumpIn,
+.placeJumpIn:focus-visible {
+  opacity: 1;
+}
+
+.liveEvent {
+  position: relative;
+  width: 326px;
+  height: 199px;
+}
+.liveShadow {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--r-lg);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+}
+.liveBody {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--lobby-white-10);
+  border-radius: var(--r-lg);
+  background: var(--lobby-card-fill);
+  overflow: hidden;
+}
+.liveGradient {
+  height: 100px;
+}
+.liveEvent:hover .liveGradient {
+  height: 124px;
+}
+.liveBadges {
+  top: 16px;
+  left: 16px;
+}
+.liveBadge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  margin-right: 6px;
+  padding: 0 8px 0 6px;
+  border-radius: var(--r-sm);
+  background: var(--lobby-live-red);
+  font-size: var(--type-12);
+  font-weight: var(--fw-bold, 700);
+  color: var(--lobby-snow);
+}
+.liveTitle {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 42px;
+  height: 30px;
+  display: flex;
+  align-items: flex-end;
+  font-size: var(--type-18);
+  font-weight: var(--fw-semibold);
+  color: var(--white);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  transition: bottom var(--lobby-dur-thumb) ease-out;
+}
+.liveEvent:hover .liveTitle {
+  bottom: 66px;
+}
+.liveHost {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  height: 22px;
+  font-size: var(--type-14);
+  line-height: 22px;
+  color: var(--lobby-subtitle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  transition: opacity var(--lobby-dur-thumb) ease-out;
+}
+.liveEvent:hover .liveHost {
+  opacity: 0;
+}
+.liveJumpIn {
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  height: 40px;
+  opacity: 0;
+  transition:
+    opacity var(--lobby-dur-thumb) ease-out,
+    background-color var(--lobby-dur-press);
+}
+.liveEvent:hover .liveJumpIn,
+.liveJumpIn:focus-visible {
+  opacity: 1;
+}
+
+.upcoming {
+  position: relative;
+  box-sizing: border-box;
+  width: 326px;
+  height: 139px;
+  border: 1px solid var(--lobby-white-10);
+  border-radius: var(--r-lg);
+  background: var(--lobby-black-60);
+  overflow: hidden;
+}
+.upcomingThumbFrame {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 136px;
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+.upcoming .zoomThumb {
+  transition-duration: var(--lobby-dur-outline);
+}
+.upcomingInfo {
+  position: absolute;
+  left: 20px;
+  top: 31px;
+  width: 148px;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+}
+.upcomingTexts {
+  transition: transform var(--lobby-dur-outline) ease-out;
+}
+.upcoming:hover .upcomingTexts {
+  transform: translateY(-13px);
+}
+.upcomingTitle {
+  display: block;
+  height: 19px;
   font-size: var(--type-16);
   font-weight: var(--fw-semibold);
   line-height: 19px;
+  color: var(--lobby-snow);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.eventBy {
-  max-width: 100%;
+.upcomingHostRow {
+  display: flex;
+  align-items: center;
+  height: 14px;
   margin-top: 2px;
+  transition: opacity var(--lobby-dur-outline) ease-out;
+}
+.upcoming:hover .upcomingHostRow {
+  opacity: 0;
+}
+.upcomingHostPrefix,
+.upcomingHost {
   font-size: var(--type-13);
-  line-height: 16px;
-  color: var(--ink-7);
+  color: var(--lobby-white-70);
   white-space: nowrap;
+}
+.upcomingHostPrefix {
+  margin-right: 3px;
+}
+.upcomingHost {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.eventBy b {
-  font-weight: var(--fw-bold);
-}
-.eventWhen {
-  display: inline-flex;
+.schedule {
+  align-self: flex-start;
+  display: flex;
   align-items: center;
   gap: 4px;
+  box-sizing: border-box;
   height: 24px;
-  margin-top: 12px;
-  padding: 0 4px;
+  margin-top: 14px;
+  padding: 2px 4px;
   border-radius: var(--r-xs);
-  background: var(--white-10);
+  background: var(--lobby-white-10);
+  color: var(--lobby-snow);
+  transition: transform var(--lobby-dur-outline) ease-out;
+}
+.upcoming:hover .schedule {
+  transform: translateY(-33px);
+}
+.scheduleText {
   font-size: var(--type-14);
   font-weight: var(--fw-semibold);
-  white-space: nowrap;
 }
-.eventTitle + .eventWhen {
-  margin-top: 14px;
-}
-.eventWhen svg {
-  flex: none;
-}
-.eventImage {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 137px;
-  height: 137px;
-  border-radius: var(--r-lg);
-  background: var(--lobby-thumb);
-  overflow: hidden;
-  /* the card under it takes the click */
-  pointer-events: none;
-}
-.eventImage img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-/* Two 36px buttons under the time. Hidden, not faded out: HUD automation and the keyboard find a
-   control only while it shows. */
-.eventActions {
+.actions {
   position: absolute;
   left: 20px;
   bottom: 19px;
   display: flex;
   gap: 8px;
-  visibility: hidden;
+  opacity: 0;
+  transition: opacity var(--lobby-dur-outline) ease-out;
 }
-.eventAction {
+.upcoming:hover .actions,
+.actions:focus-within {
+  opacity: 1;
+}
+.action {
+  display: grid;
+  place-items: center;
   width: 36px;
   height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-control);
+  background: var(--lobby-white-10);
+  cursor: pointer;
+  transition: background-color var(--lobby-dur-press);
 }
-.event:hover .eventActions,
-.event:has(:focus-visible) .eventActions,
-.event[data-menu-open] .eventActions {
-  visibility: visible;
-}
-.event:hover .eventOpen,
-.event:has(:focus-visible) .eventOpen,
-.event[data-menu-open] .eventOpen {
-  padding-bottom: 46px;
-}
-.event:hover .eventBy,
-.event:has(:focus-visible) .eventBy,
-.event[data-menu-open] .eventBy {
-  display: none;
-}
-.event:hover .eventWhen,
-.event:has(:focus-visible) .eventWhen,
-.event[data-menu-open] .eventWhen {
-  margin-top: 10px;
+.action:hover {
+  background: var(--lobby-white-20);
 }
 
-/* Friends with no tile to show: a 117px card as wide as the row. */
-.friendsEmpty,
-.friendsNone {
+.friend {
   position: relative;
-  display: flex;
-  align-self: stretch;
-  align-items: center;
+  width: 103px;
   height: 117px;
-  box-sizing: border-box;
-  border: 1.5px solid var(--white-10);
-  border-radius: var(--r-lg);
-  background: var(--black-60);
-  overflow: hidden;
+  border-radius: var(--r-md);
+  background: var(--lobby-black-60);
+  transition: background-color var(--lobby-dur-press);
 }
-/* No friends yet: the picture, then the text, over three blurred glows. */
-.friendsEmpty {
-  gap: 20px;
-  padding: 12px 30px 12px 10px;
+.friend:hover {
+  background: var(--lobby-friend-hover);
 }
-.friendsEmptyGlow {
+.friendPictureLarge {
   position: absolute;
-  inset: -1.5px;
+  top: 12px;
+  left: 31px;
+  box-sizing: border-box;
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--lobby-white-40);
+  border-radius: 20px;
+  background: var(--white) center / cover no-repeat;
   pointer-events: none;
 }
-.friendsEmptyGlow::before,
-.friendsEmptyGlow::after {
-  content: '';
+.presence {
   position: absolute;
-  border-radius: 50%;
-  background: var(--slot-edge);
-  filter: blur(50px);
-}
-.friendsEmptyGlow::before {
-  left: -30px;
-  top: -40.5px;
-  width: 98px;
-  height: 98px;
-  box-shadow: -10px -20px 0 var(--connection-modal-glow);
-  /* the design stacks this circle twice */
-  filter: blur(50px) drop-shadow(0 0 0 var(--slot-edge));
-}
-.friendsEmptyGlow::after {
-  left: 410px;
-  top: 77.5px;
-  width: 60px;
-  height: 60px;
-}
-/* the picture is as tall as the card, so it runs over the card's padding and border */
-.friendsEmptyArt {
-  position: relative;
-  flex: none;
-  width: 102px;
-  height: 117px;
-  margin: -13.5px 0;
-}
-.friendsEmptyText {
-  position: relative;
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-}
-.friendsEmptyTitle {
-  color: var(--lobby-ink);
-  font-size: var(--type-16);
-  font-weight: var(--fw-semibold);
-  line-height: normal;
-}
-.friendsEmptyBody {
-  color: var(--lobby-ink-gray);
-  font-size: var(--type-12);
-  line-height: normal;
-  text-shadow: 0 1px 2px var(--black-70);
-}
-/* Friends, none online. */
-.friendsNone {
-  flex-direction: column;
-  justify-content: center;
-  gap: 5px;
-  color: var(--lobby-ink-gray);
-  font-size: var(--type-14);
-  font-weight: var(--fw-regular);
-  text-shadow: 0 1px 2px var(--black-70);
-}
-
-/* Friend tile, 117px high, four to the row: the portrait over the name and the place line. */
-.friend {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 6px;
-  width: calc((100% - 30px) / 4);
-  height: 117px;
-  padding: 12px 10px;
+  top: 10px;
+  left: 62px;
   box-sizing: border-box;
-  border: 0;
-  border-radius: var(--r-md);
-  background: var(--black-60);
-  font: inherit;
-  cursor: pointer;
-  overflow: hidden;
-  transition: background-color var(--dur-tap) linear;
-  --avatar-ring: var(--lobby-avatar-ring);
-  --avatar-ring-width: 3px;
-  --avatar-inset-x: 2.3px;
-  --avatar-inset-y: 2.3px;
-  --avatar-online: var(--lobby-online);
-  --avatar-dot-top: 1px;
-  /* the dot over the portrait's ring */
-  --avatar-dot-z: 1;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--lobby-shadow);
+  border-radius: 5px;
+  background: var(--lobby-silver);
+  pointer-events: none;
 }
-.friend:hover,
-.friend:focus-visible {
-  background: var(--lobby-card-hover);
+.presenceOnline .presence {
+  background: var(--lobby-status-online);
 }
-.friendText {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
+.presenceAway .presence {
+  background: var(--lobby-status-away);
 }
 .friendName {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  max-width: 90px;
-  height: 17px;
-  font-size: var(--type-14);
-  font-weight: var(--fw-semibold);
-  line-height: 17px;
-}
-.friendWhere {
+  position: absolute;
+  top: 58px;
+  left: 10px;
+  right: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  max-width: 86px;
-  height: 20px;
-  color: var(--lobby-ink-gray);
-  font-size: var(--type-12);
+  height: 17px;
+  overflow: hidden;
+  pointer-events: none;
 }
-.friendWhere svg {
-  flex: none;
-  color: var(--silver);
-}
-.friendName span,
-.friendWhere span {
+.friendNameText {
+  min-width: 0;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.walletTag {
+  flex: none;
+  margin-left: 2px;
+  font-size: var(--type-14);
+  color: var(--lobby-snow);
+}
+.verified {
+  flex: none;
+  margin-left: 2px;
+}
+.friendLocation {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 81px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  overflow: hidden;
+  pointer-events: none;
+}
+.locationIcon {
+  margin-right: 2px;
+  color: var(--lobby-silver);
+}
+.friendLocationText {
+  min-width: 0;
+  font-size: var(--type-12);
+  color: var(--lobby-subtitle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.join {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 12px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: var(--lobby-accent);
+  color: var(--lobby-snow);
+  cursor: pointer;
+  transition: background-color var(--lobby-dur-press);
+}
+.joinable:hover .join,
+.join:focus-visible {
+  display: flex;
+}
+.joinable:hover .friendLocation {
+  display: none;
+}
+.join:hover {
+  background: var(--lobby-accent-hover);
+}
+.join:active {
+  background: var(--lobby-accent-pressed);
+}
+.join:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.joinText {
+  font-size: var(--type-10);
+  font-weight: var(--fw-semibold);
+}
+
+.communityGradient {
+  height: 100px;
+}
+.community:hover .communityGradient {
+  height: 146px;
+}
+.communityFooter {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  height: 60px;
+  padding: 0 16px 16px;
+  pointer-events: none;
+  transition: height var(--lobby-dur-thumb) ease-out;
+}
+.community:hover .communityFooter {
+  height: 104px;
+}
+.communityTitle {
+  display: block;
+  height: 24px;
+  margin-bottom: 4px;
+  font-size: var(--type-18);
+  font-weight: var(--fw-semibold);
+  line-height: 24px;
+  color: var(--white);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.membersRow {
+  display: flex;
+  align-items: center;
+  height: 16px;
+}
+.visibilityIcon {
+  margin-right: 4px;
+  color: var(--lobby-subtitle);
+}
+.membersText {
+  flex: none;
+  font-size: var(--type-12);
+  color: var(--lobby-subtitle);
+}
+.members {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.separator {
+  flex: none;
+  width: 1px;
+  height: 10px;
+  margin: 0 6px;
+  background: var(--lobby-white-60);
+}
+.view {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--lobby-white-1);
+  color: var(--lobby-snow);
+  font-family: inherit;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--lobby-dur-thumb) ease-out,
+    background-color var(--lobby-dur-press);
+}
+.community:hover .view,
+.view:focus-visible {
+  opacity: 1;
+}
+.view:hover {
+  background: var(--lobby-white-10);
+}
+.view:active {
+  background: var(--lobby-white-2);
+}
+
+.photo {
+  position: relative;
+  width: 256px;
+  height: 146px;
+}
+.photoOutline {
+  border-radius: 0;
+}
+.photo:hover .photoOutline {
+  opacity: 1;
+}
+.photoBody {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--lobby-white-10);
+  background: var(--lobby-card-fill);
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zoomThumb,
+  .landingThumb,
+  .gradient,
+  .placeFooter,
+  .communityFooter,
+  .liveTitle,
+  .upcomingTexts,
+  .schedule,
+  .outline,
+  .thumbSkeleton {
+    transition: none;
+    animation: none;
+  }
 }

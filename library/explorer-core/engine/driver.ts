@@ -79,6 +79,9 @@ export interface LoginDriver {
   engineReady?(): boolean
   /** Tell the transport the bridge scene is now expected, so its absence can be reported. */
   expectBridge?(): void
+  /** Whether the bridge scene has answered the page's handshake. Optional — the mock has no
+   *  bridge to wait for. */
+  bridgeReady?(): boolean
   /** Real weighted boot progress (0–100) + active step id, surfaced from the engine loader for
    *  the login footer bar. Optional — the mock has no engine to download. */
   loadProgress?(): number

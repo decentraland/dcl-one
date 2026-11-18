@@ -210,7 +210,7 @@ fn update_foreign_audio_player_volume(
     {
         let (volume, panning) =
             pan.volume_and_panning(emitter_transform.translation(), render_layers);
-        let volume = if mic_state.scene_blocked || mutes.is_muted(player.address) {
+        let volume = if mic_state.scene_blocked() || mutes.is_muted(player.address) {
             0.0
         } else {
             volume * settings.voice()

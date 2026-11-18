@@ -8,6 +8,11 @@ edition = "2021"
 [features]
 default = ["ipfs_debug"]
 hot_reload = []
+web-worker = ["bevy/web-worker"]
+# The avatar preview's (through `avatar/avatar-preview`): on web, read the page's own `data:` and `blob:`
+# urls (the files of an item a page registers inline). Without it those urls go to the http
+# client, which refuses them, so the Explorer serves them to no scene, profile or page.
+avatar-preview = []
 ipfs_debug = ["bevy/bevy_ui_picking_backend"]
 
 [dependencies]

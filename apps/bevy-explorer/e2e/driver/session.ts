@@ -324,20 +324,37 @@ export async function arrive(explorer: Explorer, realm: string, position: string
 }
 
 /** Wait for the world, pressing the lobby's `Jump In` when it offers one (the standalone's). */
-export async function enterWorld(explorer: Explorer, timeoutMs = WORLD_TIMEOUT_MS): Promise<WorldState> {
+export const NO_LANDING_POLLS = 3
+
+/** A native client shows the layout it stored, which may have no Landing card and so no `Jump In`:
+ *  the editor then stores the shipped layout, which has one. */
+export async function enterWorld(explorer: Explorer, timeoutMs = WORLD_TIMEOUT_MS, intervalMs = 1000): Promise<WorldState> {
+  const jumpIn = { name: 'Jump In', role: 'button', index: 0 }
   let jumped = false
+  let reset = false
+  let missing = 0
   return until(
     async () => {
       const state = await explorer.worldState()
       if (state.inWorld || jumped) return state
-      const jump = await explorer.hud.find({ name: 'Jump In', role: 'button', index: 0 }).catch(() => undefined)
+      const jump = await explorer.hud.find(jumpIn).catch(() => undefined)
       if (jump?.actionable) {
-        await explorer.hud.click({ name: 'Jump In', role: 'button', index: 0 })
+        await explorer.hud.click(jumpIn)
         jumped = true
+        return state
+      }
+      if (jump != null || reset) return state
+      const customize = await explorer.hud.find({ name: 'Customize lobby layout', role: 'button' }).catch(() => undefined)
+      missing = customize?.actionable ? missing + 1 : 0
+      if (missing >= NO_LANDING_POLLS) {
+        await explorer.hud.click({ name: 'Customize lobby layout', role: 'button' })
+        await explorer.hud.click({ name: 'Reset to Default', role: 'button' })
+        await explorer.hud.click({ name: 'SAVE', role: 'button' })
+        reset = true
       }
       return state
     },
     (state) => state.inWorld,
-    { timeoutMs, intervalMs: 1000, what: 'the world after sign-in' }
+    { timeoutMs, intervalMs, what: 'the world after sign-in' }
   )
 }

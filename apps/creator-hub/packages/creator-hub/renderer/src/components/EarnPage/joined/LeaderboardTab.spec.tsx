@@ -1,8 +1,7 @@
 import { Provider } from 'react-redux';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { analytics, misc } from '#preload';
 import { en } from '/@/modules/store/translation/locales';
@@ -10,6 +9,7 @@ import { setCurrentLocale } from '/@/modules/store/translation/utils';
 import * as api from '/@/lib/creatorFundApi';
 import { Worlds } from '/@/lib/worlds';
 
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 import { createTestStore } from '../../../../tests/utils/testStore';
 import { watchFor } from '../../../../tests/utils/watchFor';
 import { CYCLES, LATEST_CLOSED, fail, leaderboard, ok } from './fixtures';
@@ -37,9 +37,9 @@ const NEWS = {
 const mountTab = (store: ReturnType<typeof createTestStore>) =>
   render(
     <Provider store={store}>
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <LeaderboardTab />
-      </ThemeProvider>
+      </TestProviders>
     </Provider>,
   );
 
@@ -56,7 +56,7 @@ const NEWS_ENTRY = (element: Element) =>
   element.childElementCount === 0 && element.textContent === 'Example news 6';
 
 async function chooseCycle(name: string) {
-  fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Cycle' }));
+  fireEvent.click(screen.getByRole('combobox', { name: 'Cycle' }));
   fireEvent.click(await screen.findByRole('option', { name }));
 }
 
@@ -114,7 +114,7 @@ describe('LeaderboardTab', () => {
       renderTab();
       await screen.findByText('Example Place 1');
 
-      fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Cycle' }));
+      fireEvent.click(screen.getByRole('combobox', { name: 'Cycle' }));
 
       expect((await screen.findAllByRole('option')).map(option => option.textContent)).toEqual([
         'Oct 16 - Oct 31, 2026',

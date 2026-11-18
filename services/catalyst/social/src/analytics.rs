@@ -92,7 +92,7 @@ impl Analytics {
         let payload = json!({"event":event,"body":properties,"context":self.0.context});
         let inner = self.0.clone();
         let event = event.to_owned();
-        tokio::spawn(async move {
+        crate::shared::task::spawn(async move {
             // The source timer covers fetch through response headers, not body
             // consumption. One deadline covers DNS and all redirect hops.
             let http = match inner.transport.get_or_init(|| {

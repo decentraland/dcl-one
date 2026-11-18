@@ -77,25 +77,6 @@ export type LandingsEvents = {
   jump_in_started: {
     place_id: string;
   };
-  landings_subscription_edited: {
-    enabled: boolean;
-    notification_type: string;
-  };
-  landings_subscription_error: {
-    kind: "subscribe" | "unsubscribe";
-    message?: string;
-  };
-  landings_subscription_signed_in: Record<string, never>;
-  landings_subscription_signin_required: Record<string, never>;
-  landings_subscription_started: Record<string, never>;
-  landings_subscription_submitting: {
-    enabled_count: number;
-  };
-  landings_subscription_subscribed: {
-    enabled_count: number;
-  };
-  landings_subscription_unsubscribed: Record<string, never>;
-  landings_subscription_unsubscribing: Record<string, never>;
   lp_blog_post_clicked: {
     slug: string;
   };
@@ -110,9 +91,6 @@ export type LandingsEvents = {
     stub: true;
   };
   lp_community_gate_viewed: Record<string, never>;
-  lp_community_private_gated: {
-    community_id: string;
-  };
   lp_community_review_reached: {
     places: number;
     privacy: "private" | "public";
@@ -125,12 +103,6 @@ export type LandingsEvents = {
   };
   lp_community_submit_failed: {
     error?: string;
-  };
-  lp_community_viewed: {
-    community_id: string;
-    members_count: null | number;
-    privacy: "private" | "public";
-    source: "fixture" | "live";
   };
   lp_creatorhub_download_clicked: {
     arch: string;

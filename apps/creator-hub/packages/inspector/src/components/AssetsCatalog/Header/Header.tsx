@@ -1,6 +1,6 @@
 import React from 'react';
 import { MdChevronLeft as BackIcon, MdChevronRight as ChevronIcon } from 'react-icons/md';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 import { AssetSearchField } from '../../AssetSearchField';
 import type { Props } from './types';
 
