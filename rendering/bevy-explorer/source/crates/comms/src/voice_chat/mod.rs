@@ -536,7 +536,8 @@ fn sound_clip(sound: Sound) -> Option<&'static str> {
         Sound::RingStart => "embedded://sounds/ui/voice_chat_call_tune.mp3",
         Sound::Join => "embedded://sounds/ui/voice_chat_join.wav",
         Sound::Leave | Sound::EndStream => "embedded://sounds/ui/voice_chat_leave.wav",
-        Sound::RaiseHand | Sound::StartStream => "embedded://sounds/ui/generic_button_press.wav",
+        Sound::RaiseHand => "embedded://sounds/ui/voice_chat_raise_hand.wav",
+        Sound::StartStream => "embedded://sounds/ui/generic_button_press.wav",
         Sound::RingStop => return None,
     })
 }

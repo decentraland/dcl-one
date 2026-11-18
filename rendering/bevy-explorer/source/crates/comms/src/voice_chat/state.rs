@@ -480,10 +480,9 @@ impl CallState {
                 }
             }
             Input::RequestToSpeak(raise) => {
+                // the sound plays when the raised hand comes back in the metadata, as for
+                // everyone else in the stream
                 if let Some(community_id) = self.in_community() {
-                    if raise {
-                        effects.push(Effect::Sound(Sound::RaiseHand));
-                    }
                     effects.push(Effect::Rpc(Rpc::RequestToSpeak {
                         community_id,
                         raise,
@@ -650,7 +649,8 @@ impl CallState {
                 metadata,
                 raised_hand,
             } => {
-                if raised_hand && self.local_role.is_moderator() {
+                // everyone in the stream hears a hand go up, the raiser included
+                if raised_hand {
                     effects.push(Effect::Sound(Sound::RaiseHand));
                 }
                 self.sync_local(address, &metadata, &mut effects);
@@ -1390,7 +1390,7 @@ mod tests {
     }
 
     #[test]
-    fn a_raised_hand_is_heard_by_a_moderator_only() {
+    fn a_raised_hand_is_heard_by_a_moderator() {
         let mut s = state();
         s.apply(Input::StartCommunity("c1".to_owned()), 0.0);
         s.apply(
@@ -1442,6 +1442,65 @@ mod tests {
                 address: addr(5)
             })]
         );
+    }
+
+    #[test]
+    fn a_raised_hand_is_heard_by_a_listener_and_by_the_raiser() {
+        let mut s = state();
+        s.apply(Input::JoinCommunity("c1".to_owned()), 0.0);
+        s.apply(
+            Input::Reply(Reply::JoinCommunity(
+                "c1".to_owned(),
+                s.attempt,
+                Ok("livekit:c".to_owned()),
+            )),
+            0.0,
+        );
+        s.apply(
+            Input::ParticipantMetadata {
+                address: me(),
+                metadata: Metadata::default(),
+                raised_hand: false,
+            },
+            0.0,
+        );
+        assert!(!s.local_role.is_moderator());
+
+        // another listener's hand
+        let effects = s.apply(
+            Input::ParticipantMetadata {
+                address: addr(5),
+                metadata: Metadata {
+                    is_requesting_to_speak: true,
+                    ..Default::default()
+                },
+                raised_hand: true,
+            },
+            0.0,
+        );
+        assert_eq!(effects, vec![Effect::Sound(Sound::RaiseHand)]);
+
+        // the user's own: the request alone plays nothing, its metadata plays the sound
+        let effects = s.apply(Input::RequestToSpeak(true), 0.0);
+        assert_eq!(
+            effects,
+            vec![Effect::Rpc(Rpc::RequestToSpeak {
+                community_id: "c1".to_owned(),
+                raise: true,
+            })]
+        );
+        let effects = s.apply(
+            Input::ParticipantMetadata {
+                address: me(),
+                metadata: Metadata {
+                    is_requesting_to_speak: true,
+                    ..Default::default()
+                },
+                raised_hand: true,
+            },
+            0.0,
+        );
+        assert_eq!(effects, vec![Effect::Sound(Sound::RaiseHand)]);
     }
 
     #[test]
