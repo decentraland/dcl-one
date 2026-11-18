@@ -237,9 +237,9 @@ State, in every build:
   capes): `enabled` (the Jiggle Bones setting, which an argument sets and saves),
   `simulated_avatars` of at most `max_simulated_avatars`, `simulated_chains`, and for the player's
   built avatar `player_simulated`, `chains`, `joints` (spring bones in them) and `longest_chain`,
-  each `null` with a reason in `unavailable` until the avatar is built. The player and preview
-  avatars are simulated first, then the avatars nearest the camera and in front of it. The Spring
-  bones debug section reads it.
+  each `null` with a reason in `unavailable` until the avatar is built. The player is simulated
+  first, then the avatars nearest the camera and in front of it. The Spring bones debug section
+  reads it.
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.

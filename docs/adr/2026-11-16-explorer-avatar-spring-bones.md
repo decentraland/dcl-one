@@ -50,8 +50,8 @@ is not simulated: the bones hold their pose, and the next frame starts them at r
 avatar then stands. The local player's teleport does the same. Only rotations are written, so
 bones never stretch.
 
-**At most ten avatars are simulated** (`MAX_SIMULATED_AVATARS`). The local player and preview
-avatars rank first, then avatars by squared distance from the primary camera. Avatars behind the
+**At most ten avatars are simulated** (`MAX_SIMULATED_AVATARS`). The local player ranks first,
+then avatars by squared distance from the primary camera. Avatars behind the
 camera, and those the avatar limit hides, are left out. An avatar that drops out has its bones
 put back at rest.
 
@@ -69,7 +69,9 @@ transforms use.
 
 - Motion does not depend on the frame rate: every frame at 30, 60 and 144 fps shows a point of
   the same swing (`spring_bones::sim` tests).
-- Below 15 fps every frame is longer than four steps, so spring bones hold still.
+- Below 15 fps every frame is longer than four steps, so spring bones hold the pose of the last
+  simulated frame, wherever in the swing that was, until a shorter frame starts them again at rest
+  in place. They are not put back at rest meanwhile: that would jump on a single long frame.
 - An eleventh avatar's hair is rigid. The cap bounds the cost whatever the crowd.
 - A wearable's own bones that hang off another of its own nodes, not a body bone, are now kept
   with the avatar; before, they were removed with the wearable's skeleton.

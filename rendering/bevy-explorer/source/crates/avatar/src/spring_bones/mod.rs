@@ -23,7 +23,7 @@ pub mod sim;
 use chains::{plan_chains, SkinJoint};
 use sim::{AnchorPose, ChainState, FramePlan, JointConfig, Shown, Stepper, TIP_LENGTH};
 
-use crate::{avatar_texture::BoothAvatar, AvatarProcessed};
+use crate::AvatarProcessed;
 
 /// Most avatars simulated at once. The rest keep their spring bones at rest.
 pub const MAX_SIMULATED_AVATARS: usize = 10;
@@ -34,6 +34,8 @@ impl Plugin for SpringBonesPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(diagnostics::SpringBonesDiagnosticsPlugin)
             .init_resource::<SpringStepper>()
+            // comms registers it in the Explorer; an app without comms still runs the system
+            .add_event::<PlayerTeleported>()
             .add_systems(
                 PostUpdate,
                 simulate_spring_bones.in_set(PostUpdateSets::SpringBones),
@@ -245,10 +247,10 @@ fn measure(
 
 /// Picks the avatars to simulate, steps their chains and writes the bones' rotations.
 ///
-/// The player and preview avatars come first, then other avatars by distance from the camera,
-/// leaving out those behind it and those hidden. An avatar that drops out gets its bones back at
-/// rest. Bone poses are computed here from local transforms: the stored globals predate this
-/// frame's movement and IK.
+/// The player comes first, then other avatars by distance from the camera, leaving out those
+/// behind it and those hidden. An avatar that drops out gets its bones back at rest. Bone poses
+/// are computed here from local transforms: the stored globals predate this frame's movement and
+/// IK.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn simulate_spring_bones(
     mut commands: Commands,
@@ -266,7 +268,7 @@ fn simulate_spring_bones(
         ),
         With<AvatarProcessed>,
     >,
-    owners: Query<(&GlobalTransform, Has<PrimaryUser>, Has<BoothAvatar>)>,
+    owners: Query<(&GlobalTransform, Has<PrimaryUser>)>,
     camera: Query<&GlobalTransform, With<PrimaryCamera>>,
     // poses are read for every avatar before any rotation is written
     mut transforms: ParamSet<(
@@ -286,10 +288,10 @@ fn simulate_spring_bones(
             if chains.0.is_empty() || !visibility.get() {
                 continue;
             }
-            let Ok((position, is_player, is_preview)) = owners.get(owner.parent()) else {
+            let Ok((position, is_player)) = owners.get(owner.parent()) else {
                 continue;
             };
-            if is_player || is_preview {
+            if is_player {
                 ranked.push((0.0, entity));
             } else if let Some(camera) = camera {
                 let offset = position.translation() - camera.translation();
@@ -781,6 +783,22 @@ mod tests {
         }
 
         #[test]
+        fn the_plugin_runs_in_an_app_without_comms() {
+            // nothing but the plugin registers the teleport event, as in the avatar preview
+            let mut app = App::new();
+            app.insert_resource(AppConfig::default())
+                .init_resource::<Time>()
+                .add_plugins((
+                    console::ConsolePlugin {
+                        add_bevy_console: false,
+                    },
+                    SpringBonesPlugin,
+                ));
+
+            app.update();
+        }
+
+        #[test]
         fn avatars_behind_the_camera_or_hidden_are_not_simulated() {
             let mut app = app();
             let behind = spawn_avatar(&mut app, Vec3::Z);
@@ -799,7 +817,7 @@ mod tests {
         }
 
         #[test]
-        fn the_player_and_previews_come_first_wherever_they_stand() {
+        fn the_player_comes_first_wherever_they_stand() {
             let mut app = app();
             let others: Vec<_> = (1..=MAX_SIMULATED_AVATARS)
                 .map(|ix| spawn_avatar(&mut app, Vec3::NEG_Z * ix as f32))
@@ -808,16 +826,13 @@ mod tests {
             app.world_mut()
                 .entity_mut(player.root)
                 .insert(PrimaryUser::default());
-            let preview = spawn_avatar(&mut app, Vec3::Z * 900.0);
-            app.world_mut().entity_mut(preview.root).insert(BoothAvatar);
 
             tick(&mut app, FRAME);
 
             assert!(simulated(&app, &player));
-            assert!(simulated(&app, &preview));
-            // they take two of the places
+            // and takes one of the places
             let simulated_others = others.iter().filter(|a| simulated(&app, a)).count();
-            assert_eq!(simulated_others, MAX_SIMULATED_AVATARS - 2);
+            assert_eq!(simulated_others, MAX_SIMULATED_AVATARS - 1);
             assert!(!simulated(&app, others.last().unwrap()));
         }
 
