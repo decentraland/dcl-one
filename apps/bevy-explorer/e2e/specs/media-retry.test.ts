@@ -13,7 +13,9 @@
 // scene with `/set_scene`, and reads the scene's `video <name> state=<VideoState>` lines through
 // `/scene_logs` and each player's reopen state through `/media_state`; the failure checks use
 // `retryFailures`, which does not depend on when the delay was set. The second scenario walks to
-// `broken` first, the third to `paused`, which the scene sets playing 1 s after it reports
+// `broken` first; it relies on `broken` failing its first open while it is not yet the nearest video
+// (one video plays at a time), so that failure reports `VS_ERROR` and the play after the walk
+// `VS_LOADING`. The third walks to `paused`, which the scene sets playing 1 s after it reports
 // `VS_ERROR`. Each scenario closes its client. Web only: on the standalone all three are todos.
 // Build the scene first: `pnpm run build-scenes video`.
 import assert from 'node:assert/strict'

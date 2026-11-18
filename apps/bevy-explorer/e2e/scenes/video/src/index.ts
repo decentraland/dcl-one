@@ -23,6 +23,18 @@ import { Vector3 } from '@dcl/sdk/math'
  * once all exist.
  */
 
+/** `VideoState`'s names: the SDK's enum is a `const enum`, which has no reverse mapping. */
+const STATE_NAMES: Record<VideoState, string> = {
+  [VideoState.VS_NONE]: 'VS_NONE',
+  [VideoState.VS_ERROR]: 'VS_ERROR',
+  [VideoState.VS_LOADING]: 'VS_LOADING',
+  [VideoState.VS_READY]: 'VS_READY',
+  [VideoState.VS_PLAYING]: 'VS_PLAYING',
+  [VideoState.VS_BUFFERING]: 'VS_BUFFERING',
+  [VideoState.VS_SEEKING]: 'VS_SEEKING',
+  [VideoState.VS_PAUSED]: 'VS_PAUSED'
+}
+
 function screen(name: string, src: string, x: number, z: number, playing: boolean, onState?: (state: VideoState) => void): Entity {
   const entity = engine.addEntity()
   Transform.create(entity, { position: Vector3.create(x, 2, z), scale: Vector3.create(4, 4, 1) })
@@ -30,7 +42,7 @@ function screen(name: string, src: string, x: number, z: number, playing: boolea
   VideoPlayer.create(entity, { src, playing, loop: true })
   Material.setBasicMaterial(entity, { texture: Material.Texture.Video({ videoPlayerEntity: entity }) })
   videoEventsSystem.registerVideoEventsEntity(entity, (event) => {
-    console.log(`video ${name} state=${VideoState[event.state]}`)
+    console.log(`video ${name} state=${STATE_NAMES[event.state]}`)
     onState?.(event.state)
   })
   return entity

@@ -49,17 +49,16 @@ pub enum RetryStep {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct MediaRetry {
     attempts: u32,
-    gave_up: bool,
     /// Playback since the last failure.
     played: Duration,
 }
 
 #[cfg(any(test, all(target_arch = "wasm32", feature = "html")))]
 impl MediaRetry {
-    /// Counts a failure of the source.
+    /// Counts a failure of the source: a reopen after its delay, or, past [`MAX_REOPENS`], giving
+    /// up.
     pub fn fail(&mut self, first_delay: Duration) -> RetryStep {
-        if self.gave_up || self.attempts >= MAX_REOPENS {
-            self.gave_up = true;
+        if self.attempts >= MAX_REOPENS {
             return RetryStep::GiveUp;
         }
         self.attempts += 1;
@@ -69,23 +68,14 @@ impl MediaRetry {
         }
     }
 
-    /// The source played for `step`; true when that restarted the count. A source that gave up
-    /// stays given up.
-    pub fn played(&mut self, step: Duration) -> bool {
-        if self.gave_up || self.attempts == 0 {
-            return false;
+    /// The source played for `step`; [`HEALTHY_PLAYBACK`] of it since the last failure restarts
+    /// the count.
+    pub fn played(&mut self, step: Duration) {
+        if self.attempts == 0 {
+            return;
         }
         self.played += step;
-        if self.played < HEALTHY_PLAYBACK {
-            return false;
-        }
-        self.restart();
-        true
-    }
-
-    /// The next failure starts the schedule again. A source that gave up stays given up.
-    fn restart(&mut self) {
-        if !self.gave_up {
+        if self.played >= HEALTHY_PLAYBACK {
             self.attempts = 0;
             self.played = Duration::ZERO;
         }
@@ -93,11 +83,6 @@ impl MediaRetry {
 
     pub fn attempts(&self) -> u32 {
         self.attempts
-    }
-
-    #[cfg(test)]
-    pub fn gave_up(&self) -> bool {
-        self.gave_up
     }
 }
 
@@ -142,7 +127,6 @@ mod tests {
                 RetryStep::GiveUp
             ]
         );
-        assert!(retry.gave_up());
         assert_eq!(retry.fail(FIRST), RetryStep::GiveUp);
     }
 
@@ -151,9 +135,9 @@ mod tests {
         let mut retry = MediaRetry::default();
         retry.fail(FIRST);
         retry.fail(FIRST);
-        assert!(!retry.played(HEALTHY_PLAYBACK - Duration::from_millis(250)));
+        retry.played(HEALTHY_PLAYBACK - Duration::from_millis(250));
         assert_eq!(retry.attempts(), 2);
-        assert!(retry.played(Duration::from_millis(250)));
+        retry.played(Duration::from_millis(250));
         assert_eq!(retry.attempts(), 0);
         assert_eq!(retry.fail(FIRST), reopen(2));
         assert_eq!(retry.attempts(), 1);
@@ -164,21 +148,19 @@ mod tests {
         let mut retry = MediaRetry::default();
         for _ in 0..MAX_REOPENS {
             retry.fail(FIRST);
-            assert!(!retry.played(HEALTHY_PLAYBACK / 2));
+            retry.played(HEALTHY_PLAYBACK / 2);
         }
         assert_eq!(retry.fail(FIRST), RetryStep::GiveUp);
     }
 
     #[test]
-    fn giving_up_is_final() {
+    fn every_failure_after_the_last_reopen_gives_up() {
         let mut retry = MediaRetry::default();
         for _ in 0..=MAX_REOPENS {
             retry.fail(FIRST);
         }
-        assert!(!retry.played(HEALTHY_PLAYBACK));
-        retry.restart();
-        assert!(retry.gave_up());
         assert_eq!(retry.fail(FIRST), RetryStep::GiveUp);
+        assert_eq!(retry.attempts(), MAX_REOPENS);
     }
 
     #[test]

@@ -277,7 +277,10 @@ pub fn update(state: &mut MediaSourceState, msg: MediaSourceMsg) -> MediaSourceC
         MediaSourceMsg::ScenePlayRequested => {
             state.scene_playback_intent = ScenePlaybackIntent::Play;
             match state.phase {
-                MediaSourcePhase::Open { .. } => MediaSourceCmd::StartPlayback { media_id },
+                // a `play()` before `canplay` is how some browsers start buffering
+                MediaSourcePhase::Opening { .. } | MediaSourcePhase::Open { .. } => {
+                    MediaSourceCmd::StartPlayback { media_id }
+                }
                 MediaSourcePhase::Failed {
                     reopen_timer: ReopenTimer::Elapsed,
                     resume_position_seconds,
@@ -356,7 +359,10 @@ fn element_observed(
     ) {
         return MediaSourceCmd::None;
     }
-    state.duration_seconds = snapshot.duration_seconds;
+    // NaN: no metadata yet
+    if !snapshot.duration_seconds.is_nan() {
+        state.duration_seconds = snapshot.duration_seconds;
+    }
     if snapshot.duration_seconds == f64::INFINITY {
         state.stream_kind = MediaStreamKind::Live;
     }
@@ -418,7 +424,7 @@ fn element_observed(
             {
                 *last_position_seconds = snapshot.position_seconds;
             }
-            // a seek or a loop is no playback
+            // a backward step (a seek or a loop) or a jump of 1 s or more is no playback
             if (0.0..1.0).contains(&step) {
                 state.retry.played(Duration::from_secs_f64(step));
             }
@@ -430,7 +436,7 @@ fn element_observed(
             state.scene_playback_intent = ScenePlaybackIntent::Pause;
             MediaSourceCmd::ClearScreen { media_id }
         }
-        (observation, MediaSourcePhase::Open { .. }) => {
+        (observation, _) => {
             let element_state = match observation {
                 ElementObservation::BecamePlayable => VideoState::VsReady,
                 ElementObservation::StartedPlaying => VideoState::VsPlaying,
@@ -441,7 +447,6 @@ fn element_observed(
             set_element_state(state, element_state);
             MediaSourceCmd::None
         }
-        (_, MediaSourcePhase::Failed { .. } | MediaSourcePhase::GaveUp) => MediaSourceCmd::None,
     }
 }
 
@@ -499,13 +504,16 @@ fn fail(
     }
 }
 
+/// Attaches the source again and plays it: a failed source reopens only while the scene plays it.
 fn reopen(state: &mut MediaSourceState, resume_position_seconds: Option<f64>) -> MediaSourceCmd {
+    let media_id = state.media_id;
     state.phase = MediaSourcePhase::Opening {
         resume_position_seconds,
     };
-    MediaSourceCmd::AttachSource {
-        media_id: state.media_id,
-    }
+    MediaSourceCmd::Multi(vec![
+        MediaSourceCmd::AttachSource { media_id },
+        MediaSourceCmd::StartPlayback { media_id },
+    ])
 }
 
 pub fn view(state: &MediaSourceState) -> MediaSourceView {
@@ -584,6 +592,13 @@ mod tests {
         MediaSourceCmd::AttachSource { media_id: ID }
     }
 
+    fn reopened() -> MediaSourceCmd {
+        MediaSourceCmd::Multi(vec![
+            MediaSourceCmd::AttachSource { media_id: ID },
+            MediaSourceCmd::StartPlayback { media_id: ID },
+        ])
+    }
+
     fn video_state(state: &MediaSourceState) -> VideoState {
         view(state).video_state
     }
@@ -624,11 +639,11 @@ mod tests {
     }
 
     #[test]
-    fn opening_hides_element_states_until_playable_then_plays() {
+    fn play_while_opening_starts_playback_and_element_states_wait_for_playable() {
         let (mut state, _) = init(ID, MediaReopenPolicy::Reopen);
         assert_eq!(
             update(&mut state, MediaSourceMsg::ScenePlayRequested),
-            MediaSourceCmd::None
+            MediaSourceCmd::StartPlayback { media_id: ID }
         );
         update(
             &mut state,
@@ -691,7 +706,7 @@ mod tests {
                 &mut state,
                 MediaSourceMsg::ReopenTimerFired { failure_count: 1 }
             ),
-            attach()
+            reopened()
         );
         assert_eq!(video_state(&state), VideoState::VsLoading);
         assert_eq!(view(&state).retry_status.next_delay, None);
@@ -718,7 +733,7 @@ mod tests {
                 &mut state,
                 MediaSourceMsg::ReopenTimerFired { failure_count: 2 }
             ),
-            attach()
+            reopened()
         );
     }
 
@@ -739,7 +754,7 @@ mod tests {
         );
         assert_eq!(
             update(&mut state, MediaSourceMsg::ScenePlayRequested),
-            attach()
+            reopened()
         );
         assert_eq!(video_state(&state), VideoState::VsLoading);
     }
@@ -760,7 +775,7 @@ mod tests {
                 &mut state,
                 MediaSourceMsg::ReopenTimerFired { failure_count: 1 }
             ),
-            attach()
+            reopened()
         );
     }
 
@@ -776,7 +791,7 @@ mod tests {
             update(&mut state, MediaSourceMsg::ScenePauseRequested),
             MediaSourceCmd::PausePlayback { media_id: ID }
         );
-        assert!(matches!(state.phase, MediaSourcePhase::Opening { .. }));
+        assert_eq!(video_state(&state), VideoState::VsLoading);
         assert_eq!(
             update(
                 &mut state,
@@ -784,6 +799,7 @@ mod tests {
             ),
             MediaSourceCmd::None
         );
+        assert_eq!(video_state(&state), VideoState::VsReady);
         assert_eq!(view(&state).retry_status.attempt, 1);
     }
 
@@ -1031,6 +1047,51 @@ mod tests {
         );
         assert_eq!(video_state(&state), VideoState::VsNone);
         assert_eq!(view(&state).retry_status.failures, 0);
+    }
+
+    #[test]
+    fn an_on_demand_seek_while_opening_applies_once_playable() {
+        let (mut state, _) = init(ID, MediaReopenPolicy::Reopen);
+        update(
+            &mut state,
+            MediaSourceMsg::SceneSeekRequested {
+                position_seconds: 7.0,
+            },
+        );
+        assert_eq!(
+            update(
+                &mut state,
+                observed(ElementObservation::BecamePlayable, snapshot(0.0))
+            ),
+            MediaSourceCmd::SeekTo {
+                media_id: ID,
+                position_seconds: 7.0
+            }
+        );
+    }
+
+    #[test]
+    fn a_failure_while_opening_keeps_the_pending_resume_position() {
+        let mut state = playing();
+        update(&mut state, failed(12.0));
+        update(
+            &mut state,
+            MediaSourceMsg::ReopenTimerFired { failure_count: 1 },
+        );
+        // the reopen fails before it can play, at position 0
+        update(&mut state, failed(0.0));
+        update(
+            &mut state,
+            MediaSourceMsg::ReopenTimerFired { failure_count: 2 },
+        );
+        let cmd = update(
+            &mut state,
+            observed(ElementObservation::BecamePlayable, snapshot(0.0)),
+        );
+        assert!(matches!(
+            cmd,
+            MediaSourceCmd::Multi(ref cmds) if cmds[0] == MediaSourceCmd::SeekTo { media_id: ID, position_seconds: 12.0 }
+        ));
     }
 
     #[test]

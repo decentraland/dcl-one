@@ -541,18 +541,19 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     paused.
   - *Failures during playback.* unity-explorer reopens only a source that failed to open; here an
     element error at any time starts the schedule, and a live stream that ends (its feed dropped)
-    counts as a failure rather than a normal end. A reopened source that is not live resumes
-    where it failed, or where the scene seeked meanwhile.
+    counts as a failure rather than a normal end, so a stream whose feed drops reconnects without a
+    scene reload. A reopened source that is not live resumes where it failed, or where the scene
+    seeked meanwhile.
   - *Count restart.* unity-explorer clears the count as soon as a reopen opens; here it restarts
     only after 5 s of playback since the last failure, so a source that keeps failing at the same
     point gives up.
-  - *Pause.* unity-explorer reopens a failed source whether or not it plays; here a failed source
-    is reopened only while the scene plays it. A failure while paused, or before the scene first
-    plays the source, counts and reports `VsError`. The next play reports `VsLoading` and reopens
-    once the current delay has passed since the failure, so toggling playback never reopens
-    faster than the schedule, and a pause keeps the count. A pause during a loading reopen lets it
-    load, as a paused first open does. A live stream resumes at its live edge, not at a saved
-    position.
+  - *Pause.* unity-explorer reopens a failed source whether or not it plays; here a failed source is
+    reopened only while the scene plays it, so a paused screen requests nothing. A failure while
+    paused, or before the scene first plays the source, counts and reports `VsError`. The next play
+    reports `VsLoading` and reopens once the current delay has passed since the failure, so toggling
+    playback never reopens faster than the schedule, and a pause keeps the count. A pause during a
+    loading reopen lets it load, as a paused first open does. A live stream resumes at its live
+    edge, not at a saved position.
   - *The screen.* unity-explorer renders black whenever a player is in `VsError` or `VsNone`; here
     the image turns black when the source gives up or a non-looping source ends, and keeps the
     last frame while a reopen is pending, so a short drop shows no black flash; the failed source

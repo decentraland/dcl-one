@@ -257,15 +257,21 @@ fn set_play_refusal(id: MediaId, play_refusal: PlayRefusal) {
     });
 }
 
-/// Calls `play()`; a rejected promise sets [`PlayRefusal::Refused`].
+/// Calls `play()`; a rejection by the autoplay policy (`NotAllowedError`) sets
+/// [`PlayRefusal::Refused`]. A play aborted by a pause, a reload or a removal is no refusal.
 fn try_play(id: MediaId, media: &HtmlMediaElement) {
     let Ok(promise) = media.play() else {
         return;
     };
     wasm_bindgen_futures::spawn_local(async move {
         if let Err(e) = JsFuture::from(promise).await {
-            debug!("play refused: {e:?}");
-            set_play_refusal(id, PlayRefusal::Refused);
+            let name = Reflect::get(&e, &"name".into())
+                .ok()
+                .and_then(|name| name.as_string());
+            debug!("play rejected: {e:?}");
+            if name.as_deref() == Some("NotAllowedError") {
+                set_play_refusal(id, PlayRefusal::Refused);
+            }
         }
     });
 }
