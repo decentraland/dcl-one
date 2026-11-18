@@ -242,7 +242,13 @@ impl Stack {
         }
     }
 
-    /// Every host this stack names.
+    /// Every host the stack file names: the servers, and every address of the explorer section
+    /// (the fronts and the real addresses behind them).
+    ///
+    /// This is what [`Self::ensure_safe_for`] checks, and it is only what the file says. It does
+    /// not cover an address a server hands back at run time: the LiveKit URL inside a connection
+    /// string the gatekeeper issues, a realm's `about` URLs, a redirect. A hostile scenario that
+    /// follows such an address goes where the server sent it.
     pub fn hosts(&self) -> Vec<String> {
         let mut hosts = vec![self.pulse_enet.ip().to_string()];
         if let Some(api) = &self.api {
@@ -259,6 +265,17 @@ impl Stack {
         }
         if let Some(target) = &self.livekit {
             hosts.push(host_of(&target.url));
+        }
+        if let Some(explorer) = &self.explorer {
+            hosts.push(explorer.api_front.ip().to_string());
+            hosts.push(explorer.pulse_front.ip().to_string());
+            for relay in [&explorer.livekit_signal, &explorer.livekit_media]
+                .into_iter()
+                .flatten()
+            {
+                hosts.push(relay.front.ip().to_string());
+                hosts.push(relay.real.ip().to_string());
+            }
         }
         hosts.sort();
         hosts.dedup();
@@ -349,6 +366,93 @@ mod tests {
         let stack =
             Stack::parse("api = \"http://127.0.0.1:1\"\npulse_enet = \"8.8.8.8:9000\"\n").unwrap();
         assert!(stack.ensure_safe_for(true, &[]).is_err());
+    }
+
+    /// A stack file in which every address is loopback, with `public` replacing one line.
+    fn stack_with_one_public(replaced: &str, public: &str) -> Stack {
+        let lines = [
+            "api = \"http://127.0.0.1:5210\"",
+            "pulse_enet = \"127.0.0.1:5217\"",
+            "pulse_metrics = \"http://127.0.0.1:5217/metrics\"",
+            "serve_metrics = \"http://127.0.0.1:5210/metrics\"",
+            "[pulse_webtransport]",
+            "url = \"https://127.0.0.1:5212/\"",
+            "[livekit]",
+            "url = \"http://127.0.0.1:5214\"",
+            "key_env = \"K\"",
+            "secret_env = \"S\"",
+            "[explorer]",
+            "binary = \"explorer\"",
+            "api_front = \"127.0.0.1:6210\"",
+            "pulse_front = \"127.0.0.1:6217\"",
+            "livekit_signal = { front = \"127.0.0.1:6214\", real = \"127.0.0.1:5214\" }",
+            "livekit_media = { front = \"127.0.0.1:6215\", real = \"127.0.0.1:5215\" }",
+        ];
+        let text = lines
+            .iter()
+            .map(|line| {
+                if line.starts_with(replaced) {
+                    // `replaced` is the start of the line; `public` is the whole new line
+                    public.to_owned()
+                } else {
+                    (*line).to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        Stack::parse(&text).unwrap_or_else(|error| panic!("{error:#}\n{text}"))
+    }
+
+    #[test]
+    fn a_public_address_in_any_field_refuses_a_hostile_run() {
+        let cases = [
+            ("api = ", "api = \"http://8.8.8.8:5210\""),
+            ("pulse_enet", "pulse_enet = \"8.8.8.8:5217\""),
+            ("url = \"https://", "url = \"https://8.8.8.8:5212/\""),
+            (
+                "pulse_metrics",
+                "pulse_metrics = \"http://8.8.8.8:5217/metrics\"",
+            ),
+            (
+                "serve_metrics",
+                "serve_metrics = \"http://8.8.8.8:5210/metrics\"",
+            ),
+            ("url = \"http://", "url = \"http://8.8.8.8:5214\""),
+            ("api_front", "api_front = \"8.8.8.8:6210\""),
+            ("pulse_front", "pulse_front = \"8.8.8.8:6217\""),
+            (
+                "livekit_signal",
+                "livekit_signal = { front = \"8.8.8.8:6214\", real = \"127.0.0.1:5214\" }",
+            ),
+            (
+                "livekit_signal",
+                "livekit_signal = { front = \"127.0.0.1:6214\", real = \"8.8.8.8:5214\" }",
+            ),
+            (
+                "livekit_media",
+                "livekit_media = { front = \"8.8.8.8:6215\", real = \"127.0.0.1:5215\" }",
+            ),
+            (
+                "livekit_media",
+                "livekit_media = { front = \"127.0.0.1:6215\", real = \"8.8.8.8:5215\" }",
+            ),
+        ];
+        // the all-loopback stack is the control: nothing here refuses it
+        stack_with_one_public("never matches", "")
+            .ensure_safe_for(true, &[])
+            .unwrap();
+        for (replaced, public) in cases {
+            let stack = stack_with_one_public(replaced, public);
+            let refusal = stack
+                .ensure_safe_for(true, &[])
+                .expect_err(public)
+                .to_string();
+            assert!(refusal.contains("8.8.8.8"), "{public}: {refusal}");
+            stack
+                .ensure_safe_for(true, &["8.8.8.8".to_owned()])
+                .unwrap_or_else(|error| panic!("{public}: {error}"));
+            stack.ensure_safe_for(false, &[]).unwrap();
+        }
     }
 
     #[test]
