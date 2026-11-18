@@ -371,3 +371,43 @@ async fn notes_survive_a_pass() {
     assert_eq!(report.results[0].notes[0].value, 3);
     assert!(report.render(10).contains("resyncs = 3"));
 }
+
+#[tokio::test]
+async fn each_scenario_and_repeat_dials_a_loopback_stack_from_its_own_address() {
+    let work = std::env::temp_dir();
+    let loopback = stack();
+    let first = Ctx::new(loopback.clone(), "run", "one", 0, 1, work.clone());
+    let again = Ctx::new(loopback.clone(), "run", "one", 0, 2, work.clone());
+    let repeat = Ctx::new(loopback.clone(), "run", "one", 1, 1, work.clone());
+    let other = Ctx::new(loopback.clone(), "run", "two", 0, 1, work.clone());
+    if cfg!(target_os = "macos") {
+        // one loopback address there: nothing to spread over
+        assert_eq!(first.source_address(), None);
+        return;
+    }
+    let address = first
+        .source_address()
+        .expect("a loopback stack gets an address");
+    let std::net::IpAddr::V4(v4) = address else {
+        panic!("a loopback address of the same family as the stack: {address}");
+    };
+    assert!(v4.is_loopback(), "{v4}");
+    assert_ne!(
+        v4.octets()[1],
+        0,
+        "never 127.0.x.x, where everything else on the machine is"
+    );
+    // every bot of one scenario and repeat shares the address, whatever the seed
+    assert_eq!(first.source_address(), again.source_address());
+    assert_ne!(first.source_address(), repeat.source_address());
+    assert_ne!(first.source_address(), other.source_address());
+
+    // a run may ask for the ordinary address
+    first.use_one_source_address();
+    assert_eq!(first.source_address(), None);
+
+    // a stack that is not on loopback is dialled from wherever the machine routes it
+    let remote = Arc::new(Stack::pulse_only("10.1.2.3:9000".parse().unwrap()));
+    let far = Ctx::new(remote, "run", "one", 0, 1, work);
+    assert_eq!(far.source_address(), None);
+}

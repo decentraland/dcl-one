@@ -189,14 +189,16 @@ async fn a_replayed_handshake_is_refused(transport: Transport) {
     let pulse = support::in_process_pulse_both().await;
     let ctx = pulse.ctx_on(transport, "replay");
     let identity = ctx.identity(0);
+    let first = PulseBot::dial(&ctx, "first", ConnectOptions::default())
+        .await
+        .unwrap();
+    // Signed once the transport is connected: a timestamp taken before the server has started
+    // serving can be older than the floor of its replay table, and is refused as too old.
     let timestamp = catalyst_comms_e2e::identity::now_ms();
     let options = HandshakeOptions {
         timestamp_ms: Some(timestamp),
         ..Default::default()
     };
-    let first = PulseBot::dial(&ctx, "first", ConnectOptions::default())
-        .await
-        .unwrap();
     assert_eq!(
         first
             .handshake(&ctx, &identity, options.clone())

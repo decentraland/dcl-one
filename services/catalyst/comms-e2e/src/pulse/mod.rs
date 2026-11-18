@@ -278,7 +278,20 @@ impl PulseBot {
     /// Dials Pulse on the transport of the run, at the address the stack file names or at
     /// `options.via` (a fault link in front of it), and waits for the transport to connect.
     /// Scenarios use this, so one scenario runs on either transport.
-    pub async fn dial(ctx: &Ctx, name: &str, options: ConnectOptions) -> Result<PulseBot> {
+    pub async fn dial(ctx: &Ctx, name: &str, mut options: ConnectOptions) -> Result<PulseBot> {
+        // Unless the scenario chose an address, dial from the one this scenario was given. On
+        // WebTransport a chosen address needs the pinned certificate, so without one the bot
+        // dials from the ordinary address.
+        if options.bind.is_none() {
+            let pinned = ctx
+                .stack()
+                .pulse_webtransport
+                .as_ref()
+                .is_some_and(|target| target.certificate_hash.is_some());
+            if ctx.transport() == crate::engine::Transport::Enet || pinned {
+                options.bind = ctx.source_address();
+            }
+        }
         match ctx.transport() {
             crate::engine::Transport::Enet => {
                 let target = options.via.unwrap_or(ctx.stack().pulse_enet);

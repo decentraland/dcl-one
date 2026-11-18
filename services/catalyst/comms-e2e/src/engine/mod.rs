@@ -115,6 +115,7 @@ struct CtxInner {
     repeat: u32,
     seed: u64,
     transport: Transport,
+    one_source_address: std::sync::atomic::AtomicBool,
     timeline: Timeline,
     seeded: Mutex<Seeded>,
     notes: Mutex<Vec<Note>>,
@@ -165,6 +166,7 @@ impl Ctx {
                 repeat,
                 seed,
                 transport,
+                one_source_address: std::sync::atomic::AtomicBool::new(false),
                 timeline: Timeline::new(),
                 seeded: Mutex::new(Seeded::new(seed)),
                 notes: Mutex::new(Vec::new()),
@@ -188,6 +190,49 @@ impl Ctx {
     /// The transport the Pulse bots of this run use.
     pub fn transport(&self) -> Transport {
         self.inner.transport
+    }
+
+    /// The loopback address the bots of this scenario and repeat dial from, when the stack is on
+    /// loopback. The servers count several budgets by source address (the replay table keeps
+    /// 256 handshakes per source), and a run makes hundreds of handshakes from one machine: with
+    /// one address for everything, scenarios would fail on each other's handshakes. So each
+    /// scenario and repeat gets an address of its own in `127.0.0.0/8`, and every bot of the
+    /// scenario shares it, which keeps "many actors on one address" meaning what it says.
+    /// `None` when the stack is not on loopback, on a platform whose loopback is one address, or
+    /// when the run asked for one address.
+    pub fn source_address(&self) -> Option<std::net::IpAddr> {
+        if self
+            .inner
+            .one_source_address
+            .load(std::sync::atomic::Ordering::Relaxed)
+            || cfg!(target_os = "macos")
+        {
+            return None;
+        }
+        let std::net::IpAddr::V4(pulse) = self.inner.stack.pulse_enet.ip() else {
+            return None;
+        };
+        if !pulse.is_loopback() {
+            return None;
+        }
+        let digest = <sha2::Sha256 as sha2::Digest>::digest(format!(
+            "{}/{}/{}",
+            self.inner.run_id, self.inner.scenario, self.inner.repeat
+        ));
+        // 127.1.0.1 to 127.250.255.254: never 127.0.0.x, where everything else on the machine is
+        Some(std::net::IpAddr::V4(std::net::Ipv4Addr::new(
+            127,
+            1 + digest[0] % 250,
+            digest[1],
+            1 + digest[2] % 254,
+        )))
+    }
+
+    /// Every bot dials from the machine's ordinary loopback address, as before.
+    pub fn use_one_source_address(&self) {
+        self.inner
+            .one_source_address
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn repeat(&self) -> u32 {
@@ -274,6 +319,8 @@ pub struct RunOptions {
     pub scenario_deadline: Duration,
     /// The transport Pulse bots use.
     pub transport: Transport,
+    /// Every bot dials from the ordinary loopback address instead of one address per scenario.
+    pub one_source_address: bool,
 }
 
 impl Default for RunOptions {
@@ -286,6 +333,7 @@ impl Default for RunOptions {
             work_dir: std::env::temp_dir().join("comms-e2e"),
             scenario_deadline: Duration::from_secs(300),
             transport: Transport::Enet,
+            one_source_address: false,
         }
     }
 }
@@ -359,6 +407,9 @@ pub async fn run_scenarios(
                     options.work_dir.join(&run_id),
                     options.transport,
                 );
+                if options.one_source_address {
+                    ctx.use_one_source_address();
+                }
                 ctx.record(
                     "runner",
                     "start",

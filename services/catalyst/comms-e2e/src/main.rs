@@ -70,6 +70,11 @@ enum Command {
         /// The transport Pulse bots use: enet or webtransport
         #[arg(long, value_name = "transport", default_value = "enet")]
         transport: String,
+        /// Dial from the ordinary loopback address in every scenario. By default each scenario
+        /// and repeat dials a loopback stack from its own address in 127.0.0.0/8, so the
+        /// per-address budgets of the servers are not spent across scenarios
+        #[arg(long)]
+        one_source_address: bool,
     },
     /// Check that every address in the stack file answers
     Doctor {
@@ -144,6 +149,7 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
             deadline,
             timeline,
             transport,
+            one_source_address,
         } => {
             let transport = match transport.as_str() {
                 "enet" => Transport::Enet,
@@ -162,6 +168,7 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
                 allowed_hosts,
                 scenario_deadline: Duration::from_secs(deadline),
                 transport,
+                one_source_address,
                 ..RunOptions::default()
             };
             if let Some(work_dir) = work_dir {
