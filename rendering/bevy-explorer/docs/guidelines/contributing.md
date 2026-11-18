@@ -130,7 +130,7 @@ this engine's design using its requirements and tests.
 ## Before pushing
 
 - Merge main first. CI tests the merge, not the branch.
-- `cargo fmt --all`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --all`. Clippy warnings
+- `cargo fmt --all`, `cargo clippy --locked --workspace --all-targets -- -D warnings`, `cargo test --all`. Clippy warnings
   are errors in CI.
 - The wasm build, only if the change has platform-sensitive code: `#[cfg]` branches,
   threading, atomics, blocking calls, timers, filesystem or network access, wasm-specific deps.

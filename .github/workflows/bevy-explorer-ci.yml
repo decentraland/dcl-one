@@ -791,7 +791,7 @@ jobs:
           restore-keys: ${{ steps.target-cache-key.outputs.restore-keys }}
       - name: Restore the path dependencies' cached file times
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
-      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
         shell: bash
       - name: Avatar crate without the explorer feature
         run: cargo check --locked -p avatar --no-default-features
