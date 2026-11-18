@@ -3,12 +3,14 @@
 pub mod connections;
 pub mod explorer;
 pub mod pulse;
+pub mod webtransport;
 
 use crate::engine::Scenario;
 
 /// All scenarios, in the order a full run takes them.
 pub fn registry() -> Vec<&'static Scenario> {
     let mut all = pulse::all();
+    all.extend(webtransport::all());
     all.extend(connections::all());
     all.extend(explorer::all());
     all
