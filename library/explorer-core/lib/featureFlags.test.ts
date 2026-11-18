@@ -15,7 +15,6 @@ import {
   parseFlagOverrides,
   primeFeatureFlags,
   setFlagOverrides,
-  shared,
   type Flag
 } from './featureFlags'
 import { getPref, PREF, setPref } from './prefs'
@@ -59,7 +58,7 @@ describe('parseFlagOverrides', () => {
       ['ab', 'v1.2_b-c']
     ])
     expect([...o.off]).toEqual([])
-    expect([...parseFlagOverrides('?ff=a,test').on]).toEqual([['test', null]])
+    expect([...parseFlagOverrides('?ff=a,bevy-test').on]).toEqual([['bevy-test', null]])
   })
 
   it('lets the last mention of a name win, and skips empty items', () => {
@@ -144,12 +143,12 @@ describe('the flags for analytics', () => {
   })
 
   it('are tracked once the read settles, with where they came from', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ flags: { 'explorer-bevy-a': true }, variants: {} })))
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ flags: { 'explorer-bevy-test': true, 'explorer-unlisted': true }, variants: {} })))
     await loadFeatureFlags(WEB)
     // The event's name and its two flag fields are the engine's too (crates/analytics/src/crash.rs
     // FEATURE_FLAGS_EVENT, FEATURE_FLAGS_FIELDS): a rename here needs the same one there.
     const resolved = pending().filter((e) => e.event === 'Feature Flags Resolved').at(-1)
-    expect(resolved?.properties).toMatchObject({ feature_flags: '-*,a', feature_flags_override: '', feature_flags_source: 'service' })
+    expect(resolved?.properties).toMatchObject({ feature_flags: '-*,bevy-test', feature_flags_override: '', feature_flags_source: 'service' })
   })
 
   it('leave out a variant that would not come back the same from a url', () => {
@@ -200,50 +199,50 @@ describe('the flags for analytics', () => {
 })
 
 describe('parseFeatureFlags', () => {
-  it('keeps a flag shared with the other client under its own name, only once FLAG lists it', () => {
-    const file = { flags: { 'explorer-shared-thing': true }, variants: { 'explorer-shared-thing': { name: 'v', enabled: true } } }
-    expect(parseFeatureFlags(file)).toEqual({ flags: {}, variants: {} })
-    // as ownFlag compares it: lowercase
-    shared('Shared-Thing')
-    expect(parseFeatureFlags(file)).toEqual({ flags: { 'shared-thing': true }, variants: { 'shared-thing': { name: 'v', enabled: true, payload: null } } })
-  })
+  // The flags a build lists, as parseFeatureFlags compares them.
+  const listed = new Set(['alfa-official-wallets', 'bevy-photo-mode', 'bevy-off', 'onboarding'])
 
-
-  it('keeps only explorer-bevy- flags and variants, the prefix dropped', () => {
-    const parsed = parseFeatureFlags({
-      flags: { 'explorer-bevy-photo-mode': true, 'Explorer-Bevy-voice': true, 'explorer-bevy-off': false, 'explorer-bevy-': true },
-      variants: { 'explorer-bevy-onboarding': { name: 'greetings', enabled: true, payload: { type: 'string', value: 'hi' } } }
-    })
-    expect(parsed.flags).toEqual({ 'photo-mode': true, voice: true, off: false })
+  it('keeps only the listed flags and variants, by their name without explorer-', () => {
+    const parsed = parseFeatureFlags(
+      {
+        flags: { 'explorer-alfa-official-wallets': true, 'Explorer-Bevy-Photo-Mode': true, 'explorer-bevy-off': false, 'explorer-alfa-camera-reel': true, 'explorer-': true },
+        variants: {
+          'explorer-onboarding': { name: 'greetings', enabled: true, payload: { type: 'string', value: 'hi' } },
+          'explorer-alfa-lobby-backgrounds': { name: 'v', enabled: true, payload: null }
+        }
+      },
+      listed
+    )
+    expect(parsed.flags).toEqual({ 'alfa-official-wallets': true, 'bevy-photo-mode': true, 'bevy-off': false })
     expect(parsed.variants).toEqual({ onboarding: { name: 'greetings', enabled: true, payload: { type: 'string', value: 'hi' } } })
   })
 
-  it('leaves out the other explorer flags in the file', () => {
-    const parsed = parseFeatureFlags({
-      flags: { 'explorer-alfa-camera-reel': true, 'explorer-bevy-a': true, 'dapps-x': true, bevy: true },
-      variants: { 'explorer-onboarding': { name: 'greetings', enabled: true, payload: null } }
-    })
-    expect(parsed).toEqual({ flags: { a: true }, variants: {} })
+  it('reads only FLAG\u2019s names when given no others', () => {
+    expect(parseFeatureFlags({ flags: { 'explorer-bevy-test': true, 'explorer-alfa-camera-reel': true } }).flags).toEqual({ 'bevy-test': true })
+  })
+
+  it('leaves out a key of another application, or with no prefix', () => {
+    expect(parseFeatureFlags({ flags: { 'dapps-onboarding': true, onboarding: true } }, listed)).toEqual({ flags: {}, variants: {} })
   })
 
   it('reads a flag on only where the file says true, and survives a malformed file', () => {
-    expect(parseFeatureFlags({ flags: { 'explorer-bevy-a': 'true', 'explorer-bevy-b': 1 } }).flags).toEqual({ a: false, b: false })
-    expect(parseFeatureFlags(null)).toEqual({ flags: {}, variants: {} })
-    expect(parseFeatureFlags({ flags: null, variants: { 'explorer-bevy-x': null } })).toEqual({ flags: {}, variants: {} })
+    expect(parseFeatureFlags({ flags: { 'explorer-onboarding': 'true', 'explorer-bevy-off': 1 } }, listed).flags).toEqual({ onboarding: false, 'bevy-off': false })
+    expect(parseFeatureFlags(null, listed)).toEqual({ flags: {}, variants: {} })
+    expect(parseFeatureFlags({ flags: null, variants: { 'explorer-onboarding': null } }, listed)).toEqual({ flags: {}, variants: {} })
   })
 
   it('keeps a variant without a usable payload, payload null', () => {
-    const parsed = parseFeatureFlags({ variants: { 'explorer-bevy-x': { name: 'disabled', enabled: false } } })
-    expect(parsed.variants.x).toEqual({ name: 'disabled', enabled: false, payload: null })
+    const parsed = parseFeatureFlags({ variants: { 'explorer-onboarding': { name: 'disabled', enabled: false } } }, listed)
+    expect(parsed.variants.onboarding).toEqual({ name: 'disabled', enabled: false, payload: null })
   })
 })
 
 describe('fetchFeatureFlags', () => {
   it('asks the base domain service for explorer.json with the debug and rollout-id headers', async () => {
-    const fetchMock = vi.fn(async () => Response.json({ flags: { 'explorer-bevy-a': true }, variants: {} }))
+    const fetchMock = vi.fn(async () => Response.json({ flags: { 'explorer-bevy-test': true }, variants: {} }))
     vi.stubGlobal('fetch', fetchMock)
     const flags = await fetchFeatureFlags(undefined, featureFlagsUrl('decentraland.zone'))
-    expect(flags.flags).toEqual({ a: true })
+    expect(flags.flags).toEqual({ 'bevy-test': true })
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
     expect(url).toBe('https://feature-flags.decentraland.zone/explorer.json')
     expect(init.headers).toEqual({ 'X-Debug': 'false', 'X-Address-Hash': featureFlagsUserId() })

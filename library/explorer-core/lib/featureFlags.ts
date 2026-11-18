@@ -1,11 +1,10 @@
 // The Explorer's rollout flags: the Unleash application `explorer` as Decentraland's feature-flags
 // service publishes it (`https://feature-flags.<base domain>/explorer.json`). The Unity Explorer reads
-// the same file; the service has no application of this client's own, so its flags are told apart
-// by name.
+// the same file, and a flag both clients list is one switch for both.
 //
-// - This client's flags are named `explorer-bevy-<flag>` in Unleash and read as `<flag>`. A flag
-//   both clients share keeps the Unity Explorer's name, `explorer-<flag>`, and is read only when
-//   FLAG lists it with `shared()`. Every other key in the file is ignored.
+// - FLAG lists the flags this client reads, each by its Unleash name without `explorer-`, the
+//   name the Unity Explorer reads it under. Only those are kept; every other key in the file is
+//   ignored. A flag only this client reads is named `bevy-<flag>` by convention.
 // - `X-Address-Hash` carries a stable anonymous id so gradual rollouts stick to the player: a
 //   random one minted here on first launch and kept in prefs. It is this client's alone: neither
 //   the sign-in address nor an id a link carries is sent, so a shared link cannot put its
@@ -19,7 +18,7 @@
 // - The entry url's `?ff=` overrides the answer, for testing and for running a reported session
 //   again: a comma list of `name` (forced on), `name:variant` (forced on with that variant) or
 //   `-name` (forced off); `-*` ignores the service entirely (nothing is fetched, every flag not
-//   forced on is off). `?ff=-*,photo-mode` runs with only that flag on. Only names in FLAG and
+//   forced on is off). `?ff=-*,bevy-test` runs with only that flag on. Only names in FLAG and
 //   short plain variants are kept, so a link cannot grow what analytics records. A link can set
 //   it: a flag hides or shows a feature, it is never a permission.
 // - Once the read settles the session's flags go to analytics as `Feature Flags Resolved`
@@ -34,23 +33,23 @@ import { BASE_DOMAIN, isNativeHud } from '@hud-host'
 import { track } from './analytics'
 import { getPref, PREF, setPref } from './prefs'
 
+/** The application's prefix on every key of the file. */
 const APP_PREFIX = 'explorer-'
-const FLAG_PREFIX = 'explorer-bevy-'
 
-/** The Unity Explorer's flags this client reads too, by their name without `explorer-`. */
-const SHARED = new Set<string>()
-
-/** Marks a FLAG entry as a flag shared with the Unity Explorer: `shared('x')` reads `explorer-x`. */
-export function shared<const T extends string>(name: T): T {
-  SHARED.add(name.toLowerCase())
-  return name
-}
-
-/** Every flag the HUD reads: a plain name is this client's own (`explorer-bevy-<name>`), a
- *  `shared()` one is the Unity Explorer's (`explorer-<name>`). */
+/**
+ * Every flag the HUD reads, by its Unleash name without `explorer-`:
+ *
+ *   officialWallets: 'alfa-official-wallets'   `explorer-alfa-official-wallets`, read by both clients
+ *   test: 'bevy-test'                          `explorer-bevy-test`, read only here
+ *
+ * A flag the Unity Explorer lists under the same name is one switch for both clients; `bevy-` is
+ * the convention for one only this client reads. To add a flag: create it in Unleash as
+ * `explorer-<name>`, add it here, and read it with `useFeatureFlag(FLAG.<key>)`. Unleash cannot
+ * rename a flag, so choose its name once.
+ */
 export const FLAG = {
   /** A flag with no feature behind it, for checking the read end to end. */
-  test: 'test'
+  test: 'bevy-test'
 } as const satisfies Record<string, string>
 
 export type Flag = (typeof FLAG)[keyof typeof FLAG]
@@ -167,30 +166,29 @@ export function featureFlagsUserId(): string {
   return minted
 }
 
-/** A key's flag name: this client's own without its prefix, a shared one without the application's,
- *  or null for a key this client does not read. */
-function ownFlag(key: string): string | null {
+/** A key's flag name, without the application's prefix, or null for a key not in `known`. */
+function ownFlag(key: string, known: ReadonlySet<string>): string | null {
   const lower = key.toLowerCase()
-  if (lower.startsWith(FLAG_PREFIX)) return lower.slice(FLAG_PREFIX.length) || null
   if (!lower.startsWith(APP_PREFIX)) return null
   const name = lower.slice(APP_PREFIX.length)
-  return SHARED.has(name) ? name : null
+  return known.has(name) ? name : null
 }
 
-/** This client's part of the service's file: each flag on only where it says `true`, each variant by its name. */
-export function parseFeatureFlags(body: unknown): FeatureFlags {
+/** This client's part of the service's file, the flags in `known` (FLAG's): each on only where the
+ *  file says `true`, each variant by its flag's name. */
+export function parseFeatureFlags(body: unknown, known: ReadonlySet<string> = knownFlags()): FeatureFlags {
   const file = (body != null && typeof body === 'object' ? body : {}) as { flags?: unknown; variants?: unknown }
   const flags: Record<string, boolean> = {}
   if (file.flags != null && typeof file.flags === 'object') {
     for (const [key, value] of Object.entries(file.flags)) {
-      const name = ownFlag(key)
+      const name = ownFlag(key, known)
       if (name != null) flags[name] = value === true
     }
   }
   const variants: Record<string, FlagVariant> = {}
   if (file.variants != null && typeof file.variants === 'object') {
     for (const [key, raw] of Object.entries(file.variants as Record<string, unknown>)) {
-      const name = ownFlag(key)
+      const name = ownFlag(key, known)
       const v = (raw ?? {}) as { name?: unknown; enabled?: unknown; payload?: { type?: unknown; value?: unknown } | null }
       if (name == null || typeof v.name !== 'string') continue
       const p = v.payload
