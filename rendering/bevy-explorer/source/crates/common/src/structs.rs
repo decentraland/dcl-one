@@ -1108,6 +1108,16 @@ pub const SUN_CASCADE_4_SPLITS: [f32; 3] = [0.102, 0.282, 0.474];
 pub const SPOT_SHADOW_MAX_DISTANCE: f32 = 20.0;
 pub const MIN_CASCADE: f32 = 0.1;
 
+/// A light with its own cascades (the lobby stage's key light): the shadow settings only turn its
+/// shadows on or off.
+#[derive(Component)]
+pub struct StageLight;
+
+/// The camera that shows the lobby stage, drawn with no post-processing: the bloom setting
+/// leaves it alone.
+#[derive(Component)]
+pub struct StageCamera;
+
 /// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows.
 pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShadowConfig> {
     if distance <= 0.0 {
@@ -2002,7 +2012,7 @@ pub struct Clips {
     pub named: HashMap<String, (AnimationNodeIndex, f32)>,
 }
 
-/// A remote player's avatar; comms spawns it beside `ForeignPlayer`. Avatar systems that
+/// A remote player's avatar; comms' `ForeignPlayer` requires it. Avatar systems that
 /// treat remote and local emotes differently read this instead of the comms type.
 #[derive(Component, Default, Debug, Clone, Copy)]
 pub struct ForeignAvatar;

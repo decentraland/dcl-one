@@ -159,9 +159,7 @@ describe("layer boundaries", () => {
         }
       }
     }
-    expect(found.sort()).toEqual([
-      "src/core/lib/landings/creator-hub-download.server.ts -> data",
-    ]);
+    expect(found.sort()).toEqual([]);
   });
 
   it("only the routes layer holds SSR entry points and route modules", () => {

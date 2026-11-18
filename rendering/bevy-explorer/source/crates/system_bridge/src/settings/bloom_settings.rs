@@ -1,6 +1,6 @@
 use super::SettingCategory;
 use bevy::{core_pipeline::bloom::Bloom, ecs::system::SystemParamItem, prelude::*};
-use common::structs::{scatter_bloom, AppConfig, BloomSetting};
+use common::structs::{scatter_bloom, AppConfig, BloomSetting, StageCamera};
 
 use super::{AppSetting, EnumAppSetting};
 
@@ -57,13 +57,27 @@ impl AppSetting for BloomSetting {
             return;
         };
 
-        match self {
-            BloomSetting::Off => cmds.remove::<Bloom>(),
-            BloomSetting::Low => cmds.try_insert(Bloom {
+        let bloom = match self {
+            BloomSetting::Off => None,
+            BloomSetting::Low => Some(Bloom {
                 intensity: 0.10,
                 ..Bloom::NATURAL
             }),
-            BloomSetting::High => cmds.try_insert(scatter_bloom()),
+            BloomSetting::High => Some(scatter_bloom()),
         };
+        // read when the command applies, so the stage's marker counts whichever system ran first
+        cmds.queue_silenced(move |mut camera: EntityWorldMut| {
+            if camera.contains::<StageCamera>() {
+                return;
+            }
+            match bloom {
+                Some(bloom) => {
+                    camera.insert(bloom);
+                }
+                None => {
+                    camera.remove::<Bloom>();
+                }
+            }
+        });
     }
 }

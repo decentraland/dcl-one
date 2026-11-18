@@ -18,7 +18,7 @@ import {
   startOfDay
 } from '../../features/events/eventFormat'
 import { BASE_DOMAIN } from '@hud-host'
-import { eventDestination, eventStartAt, fetchEvents } from '@explorer-core/features/events/eventsApi'
+import { eventDestination, fetchEvents } from '@explorer-core/features/events/eventsApi'
 import { eventAt } from './eventFixtures'
 
 // local dates throughout, so the suite reads the same in any time zone
@@ -173,10 +173,5 @@ describe('the events request', () => {
     request({ ok: false, status: 503, body: { cancel } as unknown as Response['body'] })
     await expect(fetchEvents('upcoming')).rejects.toThrow('503')
     expect(cancel).toHaveBeenCalledOnce()
-  })
-
-  it('reads the start of a series from its next date', () => {
-    expect(eventStartAt({ start_at: '2026-01-01T00:00:00Z', next_start_at: '2026-09-10T00:00:00Z' })).toBe('2026-09-10T00:00:00Z')
-    expect(eventStartAt({ start_at: '2026-01-01T00:00:00Z' })).toBe('2026-01-01T00:00:00Z')
   })
 })

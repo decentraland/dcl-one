@@ -608,6 +608,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Distance. Bevy has one sea plane, a single opaque quad that casts no shadows, so hiding it would
   save almost nothing, and the water material draws without fog, so nothing would soften it
   appearing and disappearing.
+- **No satellite floor.** unity-explorer lays the minimap's satellite images flat at 0.205 m under the
+  terrain in Genesis City; here the ground covers that plane everywhere, so the floor would never be
+  seen and is not shipped.
 
 ## Deliberate choices that look like mistakes
 
@@ -635,13 +638,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   downloaded again in every session. An entry under a content hash is never dropped this way: it
   was checked against the hash before it was written, so a bad one is the asset processor's
   output or disk damage, which belong to the processor and the disk, not to a retry.
-- **Engine content downloads carry no `X-IPFS` header on web.** The engine reads
-  `ipfs-path-cache-v2` itself before it queues a download (`crates/ipfs/src/lib.rs`, the variants
-  client), so the worker passes the request to the network untouched; a lookup there could only
-  repeat that miss. The worker still answers requests that carry the header from that cache, and
-  only the engine writes it. A hit missed in between (the same hash finishing under another url,
-  another tab), or one that appears before a retry (the engine reads the cache only before the
-  first attempt), costs one more download of the same bytes.
+- **The service worker does not answer content requests from the content cache.** The engine
+  reads `ipfs-path-cache-v2` itself before it queues a download (`crates/ipfs/src/lib.rs`, the
+  variants client), so a lookup in the worker could only repeat that miss; the worker only trims
+  the cache. A hit missed in between (the same hash finishing under another url, another tab), or
+  one that appears before a retry (the engine reads the cache only before the first attempt),
+  costs one more download of the same bytes (#726).
 - **Web-only engine switches are page params**, not `LaunchOptions` fields.
 - **`CommsApi.consumeMessages` resolves to a bare array** of `{ sender, data }`, not the
   protocol's `{ messages }`, because unity-explorer, the client scenes are tested on, returns
@@ -670,14 +672,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Collectible cache retention must be generic** across wearables and emotes, and an emote's
   ownership is its membership of the avatar's animation graph. A pruning PR that special-cases
   emotes (#1323) is parked for that reason.
-- **A missing content file stays missing until restart.** When a server answers 400, 404, 405,
-  410, 414 or 451 to a read of a content hash, later reads of that url by content hash are
-  answered from memory for the rest of the session. Any other read of the same url (by url, or
-  from a loopback content server, which is never keyed by hash) is answered from memory for 10 s
-  after the failure and then asked for again; other failures are answered from memory for 10 s;
-  preview mode asks again on every read. A later failure of another kind does not shorten a
-  session entry, and a successful download of the url clears its entry. At most 4096 urls are
-  held.
+- **Definitive failures on hash-keyed content reads are remembered for the session.** Outside
+  preview, a definitive failure (404 and similar) is remembered for that URL when read by hash.
+  A catalyst only activates an entity once it holds all of its files, so the answer is final.
+  Other reads and failures keep the 10 s retry. Preview asks again on every read (#727).
+- **A content download that does not match its hash fails the read**, so bytes that are not the
+  file the scene named never reach a loader. It is a failure like a dropped transfer, asked for
+  again after 10 s, not a missing file. A name the check cannot verify is read as before, uncached.
+  Measured first: no correct file of 4574 from live scenes, worlds, wearables and emotes failed it.
 - **Camera layers are identified by entity**, not by an explicit layer number; the cleanup in
   #1320 waits on the protocol change.
 - **`-logFile` with one dash is accepted** (rewritten to `--log-file` before clap, `main.rs`):
@@ -700,6 +702,26 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the frame also counts the render world's CPU time up to the submission, which on a CPU-bound
   frame is most of the sample (measurements (evidence supplied for the task)).
   See [GPU time](benchmark.md#gpu-time).
+- **The profiler is opt-in.** The
+  `performance-profiler` cargo feature (Bevy's `trace` spans, the scope profiler's layer, its
+  console commands and the Render and Profiler debug panel sections, the counting allocator,
+  Bevy's render and system-information diagnostics) is out of `default` and of the web build's features: those
+  inputs cost every frame even while nothing records (process CPU per frame +2.1% with recording
+  off, +9.8% with it on, native release on an Apple M4 Max), and a macOS build with the feature
+  renders incorrectly, recording or not ([profiling](profiling.md)). Tracy covers native
+  profiling. A build with the feature, native or web, profiles Bevy's systems. On the web,
+  Bevy's `tracing-wasm` layer marks and measures every span on the page's performance timeline,
+  entries nothing clears, so a web build with the feature grows the page's memory and main-thread
+  time over the session; Bevy keeps that layer, since only profiling builds pay for
+  it. Recording stays a runtime switch within a `performance-profiler` build. See
+  [profiling](profiling.md#profiler-profile_top-count---sort-metric-profile_enable-onoffreset).
+- **The analytics performance event reads the sampler's snapshot.** `PerformanceMetrics` counts
+  hiccups against the sampler's threshold (the larger of 50 ms and two target frames, so 66.7 ms
+  at a 30 FPS cap), takes real frame times with no 250 ms cap, and is sent once per 15 s sample,
+  in world and focused only, instead of once per 1000 frames of virtual time through loading
+  screens and unfocused windows. The old event's own sampling was removed rather than kept beside
+  the sampler. Dashboards comparing across this change see a step from the definitions; whether
+  the event gets a schema field or a fixed 50 ms count is the analytics owners' call.
 - **Bevy stays on the 0.16 fork for now.** Security-relevant dependencies (V8 and deno,
   libwebrtc, ffmpeg, wgpu) get bumped inside it. Whether to ever move the bevy version is an
   open discussion, not a decision.
@@ -749,3 +771,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   HUD does not have and reads as a fault; the control appears when its function exists. The
   Portable experiences button follows the same rule and shows only while an experience is
   active.
+- **The embedded assets stay in plain git, not Git LFS.** `crates/assets/build.rs` embeds whatever
+  is on disk, so an LFS pointer would compile and be wrong at runtime, and an LFS checkout would
+  have to be pulled by every Explorer build and matched by every check that hashes the build's
+  inputs. The build fails on a file that is an LFS pointer. Revisit if the landscape folder
+  (`crates/assets/src/assets/landscape`) reaches tens of MB.
