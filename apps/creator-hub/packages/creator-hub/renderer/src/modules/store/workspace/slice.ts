@@ -219,6 +219,16 @@ export const slice = createSlice({
           state.projects[projectIdx] = { ...state.projects[projectIdx], status: 'failed' };
         }
       })
+      // The publish modal opened from the deploy snackbar reads the project from this list.
+      .addCase(thunks.saveAndGetThumbnail.fulfilled, (state, { meta, payload: thumbnail }) => {
+        const project = state.projects.find($ => $.path === meta.arg.path);
+        if (project) project.thumbnail = thumbnail;
+      })
+      // A publish writes the world and parcels it chose straight to scene.json.
+      .addCase(thunks.updateSceneJson.fulfilled, (state, { meta }) => {
+        const project = state.projects.find($ => $.path === meta.arg.path);
+        if (project) Object.assign(project, meta.arg.updates);
+      })
       .addCase(deployment.executeDeployment.fulfilled, (state, payload) => {
         const path = payload.meta.arg;
         const projectIdx = state.projects.findIndex($ => $.path === path);
