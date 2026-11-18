@@ -798,10 +798,7 @@ describe('PayoutsTab', () => {
       expect(api.putEmailVerification).toHaveBeenCalledWith({ code: '000000' });
       expect(screen.queryByText('Unverified')).toBeNull();
       expect((await contactCard()).queryByRole('button', { name: 'Verify email' })).toBeNull();
-      const heading = screen.getByRole('heading', {
-        level: 2,
-        name: 'Step 1: Contact Information',
-      });
+      const heading = screen.getByRole('heading', { level: 2, name: 'Contact Information' });
       await waitFor(() => expect(document.activeElement).toBe(heading));
       const wallet = await walletCard();
       expect(wallet.queryByText('Unavailable')).toBeNull();
@@ -943,24 +940,20 @@ describe('PayoutsTab', () => {
       expect((await screen.findByRole('alert')).textContent).toBe(
         'Something went wrong while loading your payouts.',
       );
-      expect(screen.queryByRole('heading', { name: 'Step 2: Payout Wallet' })).toBeNull();
+      expect(screen.queryByRole('heading', { name: 'Payout Wallet' })).toBeNull();
       fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-      expect(await screen.findByRole('heading', { name: 'Step 2: Payout Wallet' })).toBeTruthy();
+      expect(await screen.findByRole('heading', { name: 'Payout Wallet' })).toBeTruthy();
     });
   });
 
   describe('when the setup steps show', () => {
-    it('should put the email first and the payout wallet second, each with its step number', async () => {
+    it('should put the email first and the payout wallet second', async () => {
       await renderTab();
       await walletCard();
 
       expect(
         [...document.querySelectorAll(CARDS)].map(card => card.getAttribute('data-testid')),
       ).toEqual(['payouts-contact-card', 'payouts-wallet-card']);
-      expect(
-        screen.getByRole('heading', { level: 2, name: 'Step 1: Contact Information' }),
-      ).toBeTruthy();
-      expect(screen.getByRole('heading', { level: 2, name: 'Step 2: Payout Wallet' })).toBeTruthy();
     });
 
     it('should ask for the places with no cycle, the view the service checks', async () => {

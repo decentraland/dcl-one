@@ -10,8 +10,6 @@ import { t } from '/@/modules/store/translation/utils';
 
 import { CopyToClipboard } from '../../CopyToClipboard';
 
-import modal from '../EarnModal.module.css';
-
 import { CopyIcon, InfoIcon, WarningIcon } from '../icons';
 
 import { EARN_TOOLTIP, ExplainedChip } from './parts';
@@ -89,43 +87,30 @@ function WalletInfo() {
   );
 }
 
-/**
- * The setup step a card is, as a circled number. Screen readers hear it as the start of the title.
- */
+/** A Payouts card's title; `titleRef` makes it a focus target after a modal closes. */
 function CardTitle({
-  step,
   id,
   titleRef,
   children,
 }: {
-  step: 1 | 2;
   id: string;
   titleRef?: React.Ref<HTMLHeadingElement>;
   children: React.ReactNode;
 }) {
   return (
-    <>
-      <span
-        className={styles.step}
-        aria-hidden
-      >
-        {step}
-      </span>
-      <h2
-        className={styles.cardTitle}
-        id={id}
-        ref={titleRef}
-        tabIndex={titleRef ? -1 : undefined}
-      >
-        <span className={modal.visuallyHidden}>{t('earn.joined.payouts.step', { step })} </span>
-        {children}
-      </h2>
-    </>
+    <h2
+      className={styles.cardTitle}
+      id={id}
+      ref={titleRef}
+      tabIndex={titleRef ? -1 : undefined}
+    >
+      {children}
+    </h2>
   );
 }
 
 /**
- * The payout wallet, step 2: its short address as a chip that copies it, and EDIT; ADD WALLET when
+ * The payout wallet, the second setup step: its short address as a chip that copies it, and EDIT; ADD WALLET when
  * none is set. Locked until the email is verified, since every change is emailed to it.
  * @param props.wallet - `undefined` while it loads.
  */
@@ -152,12 +137,7 @@ export function WalletCard({
     >
       <div className={styles.cardTop}>
         <div className={styles.cardHeader}>
-          <CardTitle
-            step={2}
-            id={titleId}
-          >
-            {t('earn.joined.payouts.wallet.title')}
-          </CardTitle>
+          <CardTitle id={titleId}>{t('earn.joined.payouts.wallet.title')}</CardTitle>
           <WalletInfo />
           {locked && (
             <span className={styles.headerChip}>
@@ -211,7 +191,7 @@ export function WalletCard({
 }
 
 /**
- * The enrollment's name and read-only email, step 1, with VERIFY EMAIL until the email is verified.
+ * The enrollment's name and read-only email, the first setup step, with VERIFY EMAIL until the email is verified.
  * Locked while none of the creator's places is in the program: the service sends no code then.
  */
 export function ContactCard({
@@ -237,7 +217,6 @@ export function ContactCard({
       <div className={styles.cardTop}>
         <div className={styles.cardHeader}>
           <CardTitle
-            step={1}
             id={titleId}
             titleRef={titleRef}
           >

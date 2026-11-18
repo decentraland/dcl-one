@@ -1908,7 +1908,6 @@
         },
         "cancel": "Cancel",
         "error": "Something went wrong while loading your payouts.",
-        "step": "Step {step}:",
         "unavailable": "Unavailable"
       }
     },

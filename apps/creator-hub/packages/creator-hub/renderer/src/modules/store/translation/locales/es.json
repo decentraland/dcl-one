@@ -1908,7 +1908,6 @@
         },
         "cancel": "Cancelar",
         "error": "Algo salió mal al cargar tus pagos.",
-        "step": "Paso {step}:",
         "unavailable": "No disponible"
       }
     },
