@@ -12,6 +12,7 @@ export type ChromeAuth = {
   onSignIn?: () => void;
   onSignOut?: () => void;
   onSwitchAccount?: () => void;
+  notificationsReady?: boolean;
   fetchNotifications?: (signal?: AbortSignal) => Promise<unknown>;
 };
 

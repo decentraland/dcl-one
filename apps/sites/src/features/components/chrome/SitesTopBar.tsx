@@ -1,8 +1,20 @@
-import { type CSSProperties, useEffect, useMemo, useState } from "react";
+import {
+  type CSSProperties,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useLocation } from "react-router";
 import {
   decentralandNavSections,
   NavBar,
+  GeneralLock,
+  GeneralLogout,
+  GeneralWallet,
+  GeneralSecondaryBarSettingsOutline,
+  GeneralSecondaryBarWearables,
+  MenusEditProfile,
   type NavBarLinkProps,
 } from "@dcl/one-ui";
 import type { DclTopBarProps } from "@ui/web/frames/DclTopBar";
@@ -14,10 +26,13 @@ import {
   notificationLink,
   notificationTitle,
   relativeTime,
+  unreadCount,
 } from "@ui/data/catalyst/notificationsView";
 import SitesNotificationsDialog from "@dcl/one-ui/apps/sites/chrome/SitesNotificationsDialog";
 import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
 import wordmark from "@dcl/one-ui/apps/sites/assets/dcl_name.svg?url";
+import { SitesLocaleContext } from "@ui/web/frames/sites-locale";
+import { homeCopy } from "../../home/locale";
 import { useChromeNotifications } from "./useChromeNotifications";
 import styles from "./SitesTopBar.module.css";
 
@@ -33,13 +48,34 @@ const SITE_ICONS = {
       fill="none"
       aria-hidden="true"
     >
-      <path d="M3 6H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      <path d="M3 12H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      <path d="M3 18H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path
+        d="M3 6H21"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M3 12H21"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M3 18H21"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
     </svg>
   ),
   notifications: (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
       <path
         d="M12 21.75C13.1 21.75 14 20.85 14 19.75H10C10 20.85 10.89 21.75 12 21.75ZM18 15.75V10.75C18 7.68 16.36 5.11 13.5 4.43V3.75C13.5 2.92 12.83 2.25 12 2.25C11.17 2.25 10.5 2.92 10.5 3.75V4.43C7.63 5.11 6 7.67 6 10.75V15.75L4 17.75V18.75H20V17.75L18 15.75Z"
         fill="currentColor"
@@ -72,6 +108,8 @@ export default function SitesTopBar({
   const auth = useChromeAuth();
   const layout = useSiteLayout();
   const { pathname } = useLocation();
+  const landing = pathname === "/";
+  const locale = useContext(SitesLocaleContext)?.locale ?? "en";
   const isIn = signedIn ?? auth.signedIn;
   const address = account ?? auth.account;
   const signIn = onSignIn ?? auth.onSignIn;
@@ -84,42 +122,114 @@ export default function SitesTopBar({
           signIn();
         }
       : undefined);
-  const [notificationAccount, setNotificationAccount] = useState<string | null>(
-    null,
-  );
+  const [notificationOwner, setNotificationOwner] = useState<{
+    account: string;
+    pathname: string;
+  } | null>(null);
   const identity = isIn && address ? address.toLowerCase() : null;
   const notificationsOpen =
-    identity !== null && notificationAccount === identity;
+    identity !== null &&
+    notificationOwner?.account === identity &&
+    notificationOwner.pathname === pathname;
   const load = fetchNotifications ?? auth.fetchNotifications;
   useEffect(() => {
-    setNotificationAccount(null);
-  }, [identity]);
+    setNotificationOwner(null);
+  }, [identity, pathname]);
+
   const notifications = useChromeNotifications(
     identity,
     notificationsOpen,
     load,
+    landing && auth.notificationsReady !== false,
   );
   const rows = notifications.data;
   const actions = useMemo(
     () => [
       {
-        label: "My profile",
+        label: landing ? "View Profile" : "My profile",
+        icon: landing ? (
+          <MenusEditProfile size={24} aria-hidden="true" />
+        ) : undefined,
         href: `/profile/${encodeURIComponent(address.toLowerCase())}`,
       },
-      { label: "My assets", href: "/shop/my-items" },
-      ...(switchAccount
-        ? [{ label: "Switch account", onSelect: switchAccount }]
+      {
+        label: landing ? "My Assets" : "My assets",
+        href: "/shop/my-items",
+        icon: landing ? (
+          <GeneralSecondaryBarWearables size={24} aria-hidden="true" />
+        ) : undefined,
+      },
+      ...(landing
+        ? [
+            {
+              label: "Marketplace Authorizations",
+              href: "/shop/authorizations",
+              icon: <GeneralLock size={24} aria-hidden="true" />,
+            },
+            {
+              label: "Account Settings",
+              href: "/account",
+              icon: (
+                <GeneralSecondaryBarSettingsOutline
+                  size={24}
+                  aria-hidden="true"
+                />
+              ),
+            },
+          ]
         : []),
-      ...(signOut ? [{ label: "Log out", onSelect: signOut }] : []),
+      ...(switchAccount
+        ? [
+            {
+              label: "Switch account",
+              onSelect: switchAccount,
+              icon: landing ? (
+                <GeneralWallet size={24} aria-hidden="true" />
+              ) : undefined,
+            },
+          ]
+        : []),
+      ...(signOut
+        ? [
+            {
+              label: "Log out",
+              onSelect: signOut,
+              icon: landing ? (
+                <GeneralLogout size={24} aria-hidden="true" />
+              ) : undefined,
+            },
+          ]
+        : []),
     ],
-    [address, switchAccount, signOut],
+    [address, landing, switchAccount, signOut],
   );
+  const panel = notificationsOpen ? (
+    <SitesNotificationsDialog
+      presentation={landing ? "popover" : "modal"}
+      onClose={() => setNotificationOwner(null)}
+      state={
+        notifications.isPending
+          ? "loading"
+          : notifications.isError
+            ? "error"
+            : "ready"
+      }
+      rows={(rows ?? []).slice(0, 10).map((row) => ({
+        id: row.id,
+        title: notificationTitle(row),
+        description: notificationBody(row),
+        href: notificationLink(row) ?? undefined,
+        time: relativeTime(row.timestamp, Date.now()),
+        unread: !row.read,
+      }))}
+      Link={NavigationLink}
+    />
+  ) : null;
   const sections = mobileNavigation ?? layout?.sections;
   const profileMatches =
     identity !== null && auth.account.toLowerCase() === identity;
   // The landing page's nav, as decentraland.org's Layout derives it from the path: signed out it is
   // bare (logo, wordmark, Sign in); signed out or in, the desktop bar floats transparent over the hero.
-  const landing = pathname === "/";
   const bare = landing && !isIn;
   const avatarColor = profileMatches ? auth.avatarColor : undefined;
   return (
@@ -166,42 +276,37 @@ export default function SitesTopBar({
           balanceAction={isIn ? balances : undefined}
           accountControl={accountControl}
           accountActions={actions}
+          accountMenuAppearance={landing ? "sites" : "default"}
+          labels={landing ? homeCopy[locale].account : undefined}
           mobileSecondaryNavigation={
             sections ? ({ closeDrawer }) => sections(closeDrawer) : undefined
           }
           notifications={
             identity
               ? {
-                  ...(rows
-                    ? { count: rows.filter((row) => !row.read).length }
-                    : {}),
-                  onSelect: () => setNotificationAccount(identity),
+                  count: unreadCount(rows),
+                  ...(landing ? { expanded: notificationsOpen } : {}),
+                  panel: landing ? panel : null,
+                  onSelect: () => {
+                    if (notificationsOpen) {
+                      setNotificationOwner(null);
+                      return;
+                    }
+                    setNotificationOwner({ account: identity, pathname });
+                    if (
+                      landing &&
+                      notifications.isStale &&
+                      !notifications.isFetching
+                    ) {
+                      void notifications.refetch();
+                    }
+                  },
                 }
               : undefined
           }
         />
       </header>
-      {notificationsOpen ? (
-        <SitesNotificationsDialog
-          onClose={() => setNotificationAccount(null)}
-          state={
-            notifications.isPending
-              ? "loading"
-              : notifications.isError
-                ? "error"
-                : "ready"
-          }
-          rows={(rows ?? []).slice(0, 10).map((row) => ({
-            id: row.id,
-            title: notificationTitle(row),
-            description: notificationBody(row),
-            href: notificationLink(row) ?? undefined,
-            time: relativeTime(row.timestamp, Date.now()),
-            unread: !row.read,
-          }))}
-          Link={NavigationLink}
-        />
-      ) : null}
+      {landing ? null : panel}
     </>
   );
 }

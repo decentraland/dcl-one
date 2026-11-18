@@ -4679,6 +4679,10 @@
         {
           "name": "SettingsPanel.tsx",
           "kind": "regular"
+        },
+        {
+          "name": "askBeforeLeaving.ts",
+          "kind": "regular"
         }
       ]
     },
@@ -5984,7 +5988,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/host.ts",
-      "sha256": "5a819859a98146654c1caacfaca2ff6bcb06f03c0678f29ccfe5eec0d5a0e51d"
+      "sha256": "e047d9127b835446fdb9b6909a1c505e6dcd55683e9d8a2c7b935b2bbac8e668"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts",
@@ -6733,7 +6737,7 @@
     },
     {
       "path": "library/explorer-core/hostContract.ts",
-      "sha256": "fe97d0005c7d85164b982e333e055f5704b5e2bc7e7098fc5f34f0ab51fdb645"
+      "sha256": "744359036ccaafe4af04d9d1b7a3c83f0906b1dc8c9507bd31e25c7ef3d65548"
     },
     {
       "path": "library/explorer-core/lib/analytics.ts",
@@ -6821,7 +6825,7 @@
     },
     {
       "path": "library/explorer-core/lib/prefs.ts",
-      "sha256": "65825817d6157a2f3ebe519bfdc57868a6bca17eff5d70090764d5ce81b22f5b"
+      "sha256": "99a0d74d5f633124edbb7aa5a939fdbcd5cca20ac94430e941653d0979c6cbc6"
     },
     {
       "path": "library/explorer-core/lib/realmCheck.ts",
@@ -9965,7 +9969,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "d77236f27760316c596bd46b1713672fbce3166614a9689443b2fc4ae3be7890"
+      "sha256": "1e6ff1dd98f4a6b48e15fc1bdcd1c63f3578fad3246eecbbb7977098804218ef"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -9989,7 +9993,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
-      "sha256": "9a67d8eadd399baad79aa445575509a9fc48225fcd8219e2f930d2ce44584fd6"
+      "sha256": "2c6ffbee2a7351667d70b8b09dcd0fcb27827c6f3b5326954113de064ed14666"
+    },
+    {
+      "path": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
+      "sha256": "17b1d9a8faa6390db9698efd5d7fd2d992a231a5af3e0b64708e703ac216eaf0"
     },
     {
       "path": "library/ui/apps/hud/features/shop/ShopPage.module.css",
@@ -10297,7 +10305,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
-      "sha256": "d6d184c7ce55e33562c75572a8bedc0a45ef53ba74bdb176218f4216d3381656"
+      "sha256": "8c5a59a88937991538dc821ae908c74465936326a75fd327825023a3f07b8425"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/analytics.session.test.tsx",
@@ -10501,7 +10509,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/inWorldConversion.test.tsx",
-      "sha256": "160151e579fed4d0168e89e6f4145e8515d76e29032dc16d35abbc4b2dd31df3"
+      "sha256": "30d6508eb307569092de1fdf3ad9246d5e14a21caae7c836a80f2825668a74f4"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
@@ -10657,7 +10665,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.clicks.test.tsx",
-      "sha256": "187d50d44dee935ea3da8853be60f093966948841a718171f87f788105155d71"
+      "sha256": "aee6ec81ac2bf8da0ac22c012c1efd025d1eb0b7f484378c614bdff12ec8f9a3"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/settings.test.tsx",
@@ -33533,6 +33541,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "to": "library/ui/apps/hud/features/voiceChat/streamHere.ts",
       "kind": "native:runtime"
     },
@@ -33859,6 +33882,36 @@
     {
       "from": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
       "to": "library/ui/apps/hud/features/settings/SettingsPanel.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
+      "to": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
+      "to": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
+      "to": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
+      "to": "library/explorer-core/lib/prefs.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
+      "to": "library/explorer-core/lib/prefs.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
+      "to": "library/explorer-core/lib/prefs.ts",
       "kind": "test:runtime"
     },
     {
@@ -40028,6 +40081,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/inWorldConversion.test.tsx",
+      "to": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/inWorldConversion.test.tsx",
+      "to": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/inWorldConversion.test.tsx",
+      "to": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/inWorldConversion.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
       "kind": "native:runtime"
     },
@@ -42259,6 +42327,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/rewardPopup.test.tsx",
       "to": "library/ui/apps/hud/features/rewards/RewardPopup.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/settings.clicks.test.tsx",
+      "to": "library/explorer-core/lib/prefs.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/settings.clicks.test.tsx",
+      "to": "library/explorer-core/lib/prefs.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/settings.clicks.test.tsx",
+      "to": "library/explorer-core/lib/prefs.ts",
       "kind": "test:runtime"
     },
     {
@@ -46774,6 +46857,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
       "kind": "type"
     },
     {
