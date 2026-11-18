@@ -479,6 +479,7 @@ pub(super) async fn comms_states(
         peer_state_max: config.worlds.cluster_peer_state_max,
         peer_state_ttl_ms: config.worlds.cluster_peer_state_ttl_ms,
         control_v4_audience: non_empty(&config.worlds.archipelago_control_v4_audience),
+        recovery_deadline_ms: comms::gatekeeper::admission::cluster::DEFAULT_RECOVERY_DEADLINE_MS,
     })
     .context("ARCHIPELAGO_CONTROL_V4_AUDIENCE and NATS_URL configuration")?
     .with_max_users_per_world(config.worlds.max_users_per_world)

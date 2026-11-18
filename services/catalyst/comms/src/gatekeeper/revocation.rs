@@ -334,7 +334,8 @@ mod completion_tests {
         };
         let world = format!("locked-{}.dcl.eth", uuid::Uuid::new_v4());
         let revision = queue(&pool, &world).await;
-        let schedule: chrono::NaiveDateTime = sqlx::query_scalar("UPDATE social.world_access_rechecks SET next_attempt_at=timezone('UTC',clock_timestamp())+interval '10 seconds' WHERE world_name=$1 RETURNING next_attempt_at")
+        // Long enough to observe the lock wait before the lease expires.
+        let schedule: chrono::NaiveDateTime = sqlx::query_scalar("UPDATE social.world_access_rechecks SET next_attempt_at=timezone('UTC',clock_timestamp())+interval '2 seconds' WHERE world_name=$1 RETURNING next_attempt_at")
             .bind(&world).fetch_one(&pool).await.unwrap();
         let mut blocker = pool.begin().await.unwrap();
         sqlx::query(

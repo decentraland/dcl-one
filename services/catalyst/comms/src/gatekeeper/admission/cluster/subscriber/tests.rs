@@ -2017,7 +2017,7 @@ async fn repeated_connects_coalesce_and_a_stalled_mint_has_a_recovery_deadline()
         h.subscriber.announce_connect(WALLET, SESSION_A);
     }
     assert_eq!(h.subscriber.in_flight.load(Ordering::SeqCst), 1);
-    tokio::time::advance(RECOVERY_DEADLINE).await;
+    tokio::time::advance(Duration::from_millis(config().recovery_deadline_ms)).await;
     h.subscriber.settle().await;
     assert!(h.delivered().is_empty());
     assert_eq!(h.subscriber.queue.tracked_wallets(), 0);
@@ -3011,143 +3011,155 @@ async fn wait_durable_sql_barrier(pool: &sqlx::PgPool, fragment: &str) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn durable_soft_invalidation_preserves_exact_commit_rpc_and_positive_settlement() {
+async fn durable_soft_invalidation_preserves_exact_commit_and_positive_settlement() {
+    durable_soft_invalidation_case("commit").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn durable_soft_invalidation_preserves_exact_rpc_and_positive_settlement() {
+    durable_soft_invalidation_case("rpc").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn durable_soft_invalidation_preserves_exact_settlement() {
+    durable_soft_invalidation_case("settle").await;
+}
+
+async fn durable_soft_invalidation_case(phase: &str) {
     assert!(
         std::env::var("CATALYST_TEST_DATABASE_URL").is_ok(),
         "real PostgreSQL required"
     );
-    for phase in ["commit", "rpc", "settle"] {
-        let (pool, admin, db_name) = liveness_isolated_pool().await;
-        let wallet = format!("0x00000000{}", uuid::Uuid::new_v4().simple());
-        let store = super::super::safety::SafetyStore::new(pool.clone());
-        let (_broker, client, subscriber, gateway, source, sockets, responder, completions) =
-            durable_nats_subscriber(store.clone(), &wallet).await;
-        let release = Arc::new(Notify::new());
-        *gateway.remove_pause.lock().unwrap() = Some(release.clone());
-        let mut lock = None;
-        if phase == "commit" {
+    let (pool, admin, db_name) = liveness_isolated_pool().await;
+    let wallet = format!("0x00000000{}", uuid::Uuid::new_v4().simple());
+    let store = super::super::safety::SafetyStore::new(pool.clone());
+    let (_broker, client, subscriber, gateway, source, sockets, responder, completions) =
+        durable_nats_subscriber(store.clone(), &wallet, config()).await;
+    let release = Arc::new(Notify::new());
+    *gateway.remove_pause.lock().unwrap() = Some(release.clone());
+    let mut lock = None;
+    if phase == "commit" {
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE social.island_cleanup_dispatches IN SHARE MODE")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        lock = Some(tx);
+    }
+    subscriber.announce_connect(&wallet, SESSION_B);
+    if phase == "commit" {
+        wait_durable_sql_barrier(&pool, "INSERT INTO social.island_cleanup_dispatches").await;
+    } else {
+        tokio::time::timeout(Duration::from_secs(2), gateway.remove_entered.notified())
+            .await
+            .unwrap();
+        if phase == "settle" {
             let mut tx = pool.begin().await.unwrap();
-            sqlx::query("LOCK TABLE social.island_cleanup_dispatches IN SHARE MODE")
-                .execute(&mut *tx)
-                .await
-                .unwrap();
-            lock = Some(tx);
-        }
-        subscriber.announce_connect(&wallet, SESSION_B);
-        if phase == "commit" {
-            wait_durable_sql_barrier(&pool, "INSERT INTO social.island_cleanup_dispatches").await;
-        } else {
-            tokio::time::timeout(Duration::from_secs(2), gateway.remove_entered.notified())
-                .await
-                .unwrap();
-            if phase == "settle" {
-                let mut tx = pool.begin().await.unwrap();
-                sqlx::query(
-                    "SELECT wallet FROM social.island_admission_fences WHERE wallet=$1 FOR UPDATE",
-                )
-                .bind(&wallet)
-                .execute(&mut *tx)
-                .await
-                .unwrap();
-                lock = Some(tx);
-                release.notify_one();
-                wait_durable_sql_barrier(&pool, "SELECT generation,token_floor").await;
-            }
-        }
-        // Keep the authoritative old operation valid: only the actual NATS
-        // ticket invalidation may suppress stale completion/retry here.
-        assert!(source.lock().unwrap().is_some());
-        client
-            .publish(
-                format!("peer.{wallet}.cluster_change"),
-                change("next", SESSION_C).encode_to_vec().into(),
+            sqlx::query(
+                "SELECT wallet FROM social.island_admission_fences WHERE wallet=$1 FOR UPDATE",
             )
+            .bind(&wallet)
+            .execute(&mut *tx)
             .await
             .unwrap();
-        client.flush().await.unwrap();
-        tokio::time::timeout(Duration::from_secs(1), async {
-            loop {
-                if subscriber.queue.outstanding_work() >= 2 {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("real NATS event invalidated ticket and queued same-wallet work");
-        assert!(
-            subscriber.queue.running_work() > 0,
-            "critical work remains owned/accounted"
-        );
-        if let Some(tx) = lock {
-            tx.rollback().await.unwrap();
-        }
-        if phase != "settle" {
+            lock = Some(tx);
             release.notify_one();
+            wait_durable_sql_barrier(&pool, "SELECT generation,token_floor").await;
         }
-        tokio::time::timeout(Duration::from_secs(3), subscriber.settle())
-            .await
-            .unwrap();
-        let rows: Vec<(String, Option<chrono::NaiveDateTime>)> = sqlx::query_as(
-            "SELECT state,settled_at FROM social.island_cleanup_dispatches WHERE wallet=$1",
+    }
+    // Keep the authoritative old operation valid: only the actual NATS
+    // ticket invalidation may suppress stale completion/retry here.
+    assert!(source.lock().unwrap().is_some());
+    client
+        .publish(
+            format!("peer.{wallet}.cluster_change"),
+            change("next", SESSION_C).encode_to_vec().into(),
         )
-        .bind(&wallet)
-        .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(rows.len(), 1, "{phase}: one immutable attempt only");
-        assert_eq!(
-            rows[0].0, "confirmed",
-            "{phase}: soft cancellation must preserve positive result"
-        );
-        assert!(rows[0].1.is_some());
-        assert_eq!(gateway.removals().len(), 1);
-        assert!(gateway.minted().is_empty());
-        assert!(sockets.0.lock().unwrap().is_empty());
-        assert_eq!(
-            completions.load(Ordering::SeqCst),
-            0,
-            "stale work cannot acknowledge Pulse"
-        );
-        assert_eq!(subscriber.queue.outstanding_work(), 0);
-        // Only after exact settlement may a fresh recovery complete the same
-        // retained operation, without issuing another destructive RPC.
+    client.flush().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if subscriber.queue.outstanding_work() >= 2 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("real NATS event invalidated ticket and queued same-wallet work");
+    assert!(
+        subscriber.queue.running_work() > 0,
+        "critical work remains owned/accounted"
+    );
+    if let Some(tx) = lock {
+        tx.rollback().await.unwrap();
+    }
+    if phase != "settle" {
+        release.notify_one();
+    }
+    tokio::time::timeout(Duration::from_secs(3), subscriber.settle())
+        .await
+        .unwrap();
+    let rows: Vec<(String, Option<chrono::NaiveDateTime>)> = sqlx::query_as(
+        "SELECT state,settled_at FROM social.island_cleanup_dispatches WHERE wallet=$1",
+    )
+    .bind(&wallet)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1, "{phase}: one immutable attempt only");
+    assert_eq!(
+        rows[0].0, "confirmed",
+        "{phase}: soft cancellation must preserve positive result"
+    );
+    assert!(rows[0].1.is_some());
+    assert_eq!(gateway.removals().len(), 1);
+    assert!(gateway.minted().is_empty());
+    assert!(sockets.0.lock().unwrap().is_empty());
+    assert_eq!(
+        completions.load(Ordering::SeqCst),
+        0,
+        "stale work cannot acknowledge Pulse"
+    );
+    assert_eq!(subscriber.queue.outstanding_work(), 0);
+    // Only after exact settlement may a fresh recovery complete the same
+    // retained operation, without issuing another destructive RPC.
+    subscriber.announce_connect(&wallet, SESSION_B);
+    tokio::time::timeout(Duration::from_secs(12), subscriber.settle())
+        .await
+        .unwrap();
+    if gateway.minted().is_empty() {
+        assert_eq!(completions.load(Ordering::SeqCst), 1);
         subscriber.announce_connect(&wallet, SESSION_B);
         tokio::time::timeout(Duration::from_secs(12), subscriber.settle())
             .await
             .unwrap();
-        if gateway.minted().is_empty() {
-            assert_eq!(completions.load(Ordering::SeqCst), 1);
-            subscriber.announce_connect(&wallet, SESSION_B);
-            tokio::time::timeout(Duration::from_secs(12), subscriber.settle())
-                .await
-                .unwrap();
-        }
-        assert_eq!(gateway.removals().len(), 1);
-        assert_eq!(gateway.minted().len(), 1);
-        assert_eq!(sockets.0.lock().unwrap().len(), 1);
-        assert!(
-            source
-                .lock()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .pending_takeovers
-                .is_empty()
-        );
-        assert!(
-            sqlx::query_scalar::<_, bool>(
-                "SELECT acknowledged FROM social.island_takeover_receipts WHERE wallet=$1"
-            )
-            .bind(&wallet)
-            .fetch_one(&pool)
-            .await
-            .unwrap()
-        );
-        subscriber.stop().await;
-        responder.abort();
-        liveness_drop_pool(&pool, &admin, &db_name).await;
     }
+    assert_eq!(gateway.removals().len(), 1);
+    assert_eq!(gateway.minted().len(), 1);
+    assert_eq!(sockets.0.lock().unwrap().len(), 1);
+    assert!(
+        source
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .pending_takeovers
+            .is_empty()
+    );
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT acknowledged FROM social.island_takeover_receipts WHERE wallet=$1"
+        )
+        .bind(&wallet)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    );
+    subscriber.stop().await;
+    responder.abort();
+    liveness_drop_pool(&pool, &admin, &db_name).await;
 }
 
 async fn liveness_isolated_pool() -> (sqlx::PgPool, sqlx::PgPool, String) {
@@ -3240,6 +3252,7 @@ type DurableNatsSource = Arc<Mutex<Option<PeerClusterSnapshot>>>;
 async fn durable_nats_subscriber(
     store: super::super::safety::SafetyStore,
     wallet: &str,
+    mut cfg: ClusterConfig,
 ) -> (
     LivenessBroker,
     async_nats::Client,
@@ -3304,7 +3317,6 @@ async fn durable_nats_subscriber(
         safety: Some(store),
         ..Default::default()
     });
-    let mut cfg = config();
     cfg.drain_timeout_ms = 50;
     let subscriber = ClusterSubscriber::new(
         bus.clone(),
@@ -3338,63 +3350,78 @@ async fn durable_nats_subscriber(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn durable_soft_deadline_records_positive_result_but_hard_stop_retains_unknown() {
+async fn durable_soft_deadline_records_a_late_positive_result() {
+    durable_deadline_case(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn durable_hard_stop_retains_an_unknown_result() {
+    durable_deadline_case(true).await;
+}
+
+async fn durable_deadline_case(hard: bool) {
     assert!(
         std::env::var("CATALYST_TEST_DATABASE_URL").is_ok(),
         "real PostgreSQL required"
     );
-    for hard in [false, true] {
-        let (pool, admin, name) = liveness_isolated_pool().await;
-        let store = super::super::safety::SafetyStore::new(pool.clone());
-        let wallet = format!("0x00000000{}", uuid::Uuid::new_v4().simple());
-        let (_broker, _client, subscriber, gateway, source, sockets, responder, completions) =
-            durable_nats_subscriber(store.clone(), &wallet).await;
-        let release = Arc::new(Notify::new());
-        *gateway.remove_pause.lock().unwrap() = Some(release.clone());
-        subscriber.announce_connect(&wallet, SESSION_B);
-        tokio::time::timeout(Duration::from_secs(2), gateway.remove_entered.notified())
+    // Long enough for the cleanup to be dispatched (and marked critical) first.
+    let cfg = ClusterConfig {
+        recovery_deadline_ms: 2_000,
+        ..config()
+    };
+    let (pool, admin, name) = liveness_isolated_pool().await;
+    let store = super::super::safety::SafetyStore::new(pool.clone());
+    let wallet = format!("0x00000000{}", uuid::Uuid::new_v4().simple());
+    let (_broker, _client, subscriber, gateway, source, sockets, responder, completions) =
+        durable_nats_subscriber(store.clone(), &wallet, cfg.clone()).await;
+    let release = Arc::new(Notify::new());
+    *gateway.remove_pause.lock().unwrap() = Some(release.clone());
+    subscriber.announce_connect(&wallet, SESSION_B);
+    tokio::time::timeout(Duration::from_secs(2), gateway.remove_entered.notified())
+        .await
+        .unwrap();
+    let id:uuid::Uuid=sqlx::query_scalar("SELECT dispatch_id FROM social.island_cleanup_dispatches WHERE wallet=$1 AND state='dispatched'").bind(&wallet).fetch_one(&pool).await.unwrap();
+    assert!(source.lock().unwrap().is_some());
+    if hard {
+        // Existing drain grace then owner cancellation; no extra lifetime.
+        tokio::time::timeout(Duration::from_secs(3), subscriber.stop())
+            .await
+            .expect("bounded hard stop");
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT state FROM social.island_cleanup_dispatches WHERE dispatch_id=$1"
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            "dispatched"
+        );
+    } else {
+        tokio::time::sleep(Duration::from_millis(cfg.recovery_deadline_ms + 100)).await;
+        assert_eq!(
+            subscriber.queue.running_work(),
+            1,
+            "soft deadline cannot release committed cleanup lane"
+        );
+        // Release past the dispatch's cutoff, so the positive result settles late.
+        sqlx::query("SELECT pg_sleep(GREATEST(0, cutoff - extract(epoch FROM timezone('UTC',clock_timestamp())))) FROM social.island_cleanup_dispatches WHERE dispatch_id=$1")
+            .bind(id).execute(&pool).await.unwrap();
+        release.notify_one();
+        tokio::time::timeout(Duration::from_secs(3), subscriber.settle())
             .await
             .unwrap();
-        let id:uuid::Uuid=sqlx::query_scalar("SELECT dispatch_id FROM social.island_cleanup_dispatches WHERE wallet=$1 AND state='dispatched'").bind(&wallet).fetch_one(&pool).await.unwrap();
-        assert!(source.lock().unwrap().is_some());
-        if hard {
-            // Existing drain grace then owner cancellation; no extra lifetime.
-            tokio::time::timeout(Duration::from_secs(3), subscriber.stop())
-                .await
-                .expect("bounded hard stop");
-            assert_eq!(
-                sqlx::query_scalar::<_, String>(
-                    "SELECT state FROM social.island_cleanup_dispatches WHERE dispatch_id=$1"
-                )
-                .bind(id)
-                .fetch_one(&pool)
-                .await
-                .unwrap(),
-                "dispatched"
-            );
-        } else {
-            tokio::time::sleep(RECOVERY_DEADLINE + Duration::from_millis(100)).await;
-            assert_eq!(
-                subscriber.queue.running_work(),
-                1,
-                "soft deadline cannot release committed cleanup lane"
-            );
-            release.notify_one();
-            tokio::time::timeout(Duration::from_secs(3), subscriber.settle())
-                .await
-                .unwrap();
-            assert_eq!(sqlx::query_as::<_,(String,bool)>("SELECT state,settled_at IS NOT NULL FROM social.island_cleanup_dispatches WHERE dispatch_id=$1").bind(id).fetch_one(&pool).await.unwrap(),("settled_late".into(),true));
-            subscriber.stop().await;
-        }
-        assert_eq!(gateway.removals().len(), 1);
-        assert!(gateway.minted().is_empty());
-        assert!(sockets.0.lock().unwrap().is_empty());
-        assert_eq!(completions.load(Ordering::SeqCst), 0);
-        assert_eq!(subscriber.queue.outstanding_work(), 0);
-        assert!(store.snapshot(&wallet).await.is_err());
-        responder.abort();
-        liveness_drop_pool(&pool, &admin, &name).await;
+        assert_eq!(sqlx::query_as::<_,(String,bool)>("SELECT state,settled_at IS NOT NULL FROM social.island_cleanup_dispatches WHERE dispatch_id=$1").bind(id).fetch_one(&pool).await.unwrap(),("settled_late".into(),true));
+        subscriber.stop().await;
     }
+    assert_eq!(gateway.removals().len(), 1);
+    assert!(gateway.minted().is_empty());
+    assert!(sockets.0.lock().unwrap().is_empty());
+    assert_eq!(completions.load(Ordering::SeqCst), 0);
+    assert_eq!(subscriber.queue.outstanding_work(), 0);
+    assert!(store.snapshot(&wallet).await.is_err());
+    responder.abort();
+    liveness_drop_pool(&pool, &admin, &name).await;
 }
 
 #[tokio::test]
@@ -3403,7 +3430,7 @@ async fn durable_hard_queue_expiry_keeps_unknown_and_releases_original_owned_lan
     let store = super::super::safety::SafetyStore::new(pool.clone());
     let wallet = format!("0x00000000{}", uuid::Uuid::new_v4().simple());
     let (_broker, _client, subscriber, gateway, _source, sockets, responder, completions) =
-        durable_nats_subscriber(store.clone(), &wallet).await;
+        durable_nats_subscriber(store.clone(), &wallet, config()).await;
     let release = Arc::new(Notify::new());
     *gateway.remove_pause.lock().unwrap() = Some(release);
     subscriber.announce_connect(&wallet, SESSION_B);

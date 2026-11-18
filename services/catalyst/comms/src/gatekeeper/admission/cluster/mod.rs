@@ -45,6 +45,8 @@ pub const DEFAULT_TAKEOVER_RETRY_DELAY_MS: u64 = 100;
 /// Long enough for a mint and the lookups around it to finish, short enough that one request with
 /// no timeout of its own cannot hold shutdown open.
 pub const DEFAULT_DRAIN_TIMEOUT_MS: u64 = 5_000;
+/// Soft deadline for one reconnect recovery; committed cleanup still runs to settlement.
+pub const DEFAULT_RECOVERY_DEADLINE_MS: u64 = 10_000;
 
 #[derive(Debug, Clone)]
 pub struct ClusterConfig {
@@ -65,6 +67,8 @@ pub struct ClusterConfig {
     /// `ARCHIPELAGO_CONTROL_V4_AUDIENCE`: the realm-lane fence's audience (the old
     /// `COMMS_CONTROL_V4_AUDIENCE`, one value now that comms and archipelago share a process).
     pub control_v4_audience: Option<String>,
+    /// [`DEFAULT_RECOVERY_DEADLINE_MS`]; no environment variable sets it.
+    pub recovery_deadline_ms: u64,
 }
 
 impl Default for ClusterConfig {
@@ -78,6 +82,7 @@ impl Default for ClusterConfig {
             peer_state_max: peer_state::DEFAULT_PEER_STATE_MAX,
             peer_state_ttl_ms: peer_state::DEFAULT_PEER_STATE_TTL_MS,
             control_v4_audience: None,
+            recovery_deadline_ms: DEFAULT_RECOVERY_DEADLINE_MS,
         }
     }
 }
@@ -98,6 +103,9 @@ impl ClusterConfig {
         }
         if self.peer_state_ttl_ms == 0 {
             self.peer_state_ttl_ms = d.peer_state_ttl_ms;
+        }
+        if self.recovery_deadline_ms == 0 {
+            self.recovery_deadline_ms = d.recovery_deadline_ms;
         }
         self.nats_url = self
             .nats_url
@@ -219,6 +227,7 @@ mod config_tests {
             island_token_ttl_seconds: 600,
             peer_state_max: 0,
             nats_url: Some(" ".into()),
+            recovery_deadline_ms: 0,
             ..ClusterConfig::default()
         }
         .normalized();
@@ -227,6 +236,12 @@ mod config_tests {
             MAX_ISLAND_TOKEN_TTL_SECONDS
         );
         assert_eq!(config.peer_state_max, peer_state::DEFAULT_PEER_STATE_MAX);
+        assert_eq!(config.recovery_deadline_ms, 10_000);
         assert_eq!(config.nats_url, None);
+    }
+
+    #[test]
+    fn production_recovery_deadline_is_ten_seconds() {
+        assert_eq!(ClusterConfig::default().recovery_deadline_ms, 10_000);
     }
 }
