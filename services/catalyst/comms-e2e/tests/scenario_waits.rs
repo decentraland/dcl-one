@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use catalyst_comms_e2e::engine::Ctx;
-use catalyst_comms_e2e::scenarios::waits::holds_for_async;
+use catalyst_comms_e2e::engine::holds_for_async;
 use catalyst_comms_e2e::stack::Stack;
 
 fn ctx() -> Ctx {

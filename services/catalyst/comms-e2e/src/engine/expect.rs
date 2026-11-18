@@ -109,6 +109,44 @@ pub async fn holds_for(
     Ok(())
 }
 
+/// [`holds_for`] for a probe that has to ask something (an HTTP route, the console of the
+/// explorer), looked at every `tick`. The same failure text.
+pub async fn holds_for_async<F, Fut>(
+    ctx: &Ctx,
+    what: &str,
+    window: Duration,
+    tick: Duration,
+    mut probe: F,
+) -> Result<()>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<(), String>>,
+{
+    let started = Instant::now();
+    while started.elapsed() < window {
+        if let Err(reason) = probe().await {
+            let reason = redact_text(&reason);
+            ctx.record(
+                "expect",
+                "broken",
+                serde_json::json!({ "what": what, "after_ms": started.elapsed().as_millis() as u64, "reason": reason }),
+            );
+            bail!(
+                "expected for {} ms: {what}; broken after {} ms: {reason}",
+                window.as_millis(),
+                started.elapsed().as_millis()
+            );
+        }
+        tokio::time::sleep(tick).await;
+    }
+    ctx.record(
+        "expect",
+        "held",
+        serde_json::json!({ "what": what, "for_ms": window.as_millis() as u64 }),
+    );
+    Ok(())
+}
+
 fn not_met(ctx: &Ctx, what: &str, started: Instant, reason: &str) -> anyhow::Error {
     let waited = started.elapsed().as_millis() as u64;
     // every failure text of a wait passes here (or through `holds_for`): no secret leaves it

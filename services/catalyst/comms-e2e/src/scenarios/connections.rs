@@ -6,10 +6,10 @@ use anyhow::{Result, anyhow, bail};
 use catalyst_comms::pulse::hardening::DisconnectReason;
 
 use super::connections_support::*;
-use super::waits::holds_for_async;
 use crate::archipelago::{
     ArchipelagoBot, ArchipelagoOptions, ArchipelagoOutcome, KICKED_NEW_SESSION, socket_url,
 };
+use crate::engine::holds_for_async;
 use crate::engine::{Ctx, Needs, Scenario, ScenarioFuture, expect_async, expect_or, together};
 use crate::fault::FaultLink;
 use crate::gatekeeper::Gatekeeper;

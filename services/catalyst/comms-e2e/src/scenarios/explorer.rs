@@ -7,12 +7,12 @@ use anyhow::{Result, anyhow, bail};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use crate::engine::holds_for_async;
 use crate::engine::{Ctx, Needs, Scenario, expect_async, expect_or};
 use crate::explorer::{Explorer, ExplorerOptions, Fronts};
 use crate::fault::{Direction, Fault};
 use crate::pulse::PulseBot;
 use crate::scenarios::connections_support::{RealmDescription, realm_description};
-use crate::scenarios::waits::holds_for_async;
 
 /// The scenarios of this group, in the order a run takes them.
 pub fn all() -> Vec<&'static Scenario> {

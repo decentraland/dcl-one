@@ -19,7 +19,7 @@ use parking_lot::Mutex;
 use crate::identity::Identity;
 use crate::stack::Stack;
 pub use concurrency::{Seeded, together};
-pub use expect::{expect_async, expect_or, expect_within, holds_for};
+pub use expect::{expect_async, expect_or, expect_within, holds_for, holds_for_async};
 pub use report::{Note, Outcome, Report, ScenarioResult};
 pub use timeline::{Entry, Timeline};
 
