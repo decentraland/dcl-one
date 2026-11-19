@@ -159,18 +159,19 @@ pub(super) struct Resolved {
     base_position: String,
     world_name: Option<String>,
     content_rating: Option<String>,
+    active: bool,
 }
 
 const RESOLVE_COLUMNS: &str = "id, world, disabled, raw->>'disabled_reason' AS disabled_reason, \
-     title, base_position, world_name, content_rating";
+     title, base_position, world_name, content_rating, true AS active";
 
 /// A world-scene place as a world-backed row, disabled by its own overlay.
 const WORLD_SCENE_RESOLVE: &str = "SELECT p.identity::text AS id, true AS world, \
      COALESCE(m.disabled, false) AS disabled, m.reason AS disabled_reason, \
      COALESCE(NULLIF(btrim(s.entity #>> '{metadata,display,title}'), ''), w.title) AS title, \
      COALESCE(s.entity #>> '{metadata,scene,base}', p.parcels[1]) AS base_position, \
-     p.world_name, COALESCE(m.content_rating, wm.content_rating, w.content_rating) AS content_rating \
-     FROM explore.world_scene_place p \
+     p.world_name, COALESCE(m.content_rating, wm.content_rating, w.content_rating) AS content_rating, \
+     p.active FROM explore.world_scene_place p \
      LEFT JOIN worlds.world_scenes s ON p.active AND s.world_name = p.world_name AND s.entity_id = p.entity_id \
      LEFT JOIN worlds.worlds w ON w.name = p.world_name \
      LEFT JOIN explore.place_moderation m ON m.place_id = p.identity::text \
@@ -287,6 +288,7 @@ pub async fn apply_with(
         Decision::Rating(r) => (None, None, Some(r.clone()), None),
     };
     let mut tx = pool.begin().await?;
+    super::ranking::lock_world_scenes(&mut tx, std::slice::from_ref(&id)).await?;
     if written {
         sqlx::query(OVERLAY)
             .bind(&id)
@@ -336,7 +338,8 @@ pub async fn apply_with(
         .execute(&mut *tx)
         .await?;
     }
-    if let Some(base) = ctx.notify {
+    // A retired world-scene identity takes the decision without a notice.
+    if let Some(base) = ctx.notify.filter(|_| row.active) {
         let notice = match decision {
             // `notifyDisablePlaces` on a disable (`updateDisabled.ts:69-71`).
             Decision::Disabled { disabled: true, .. } => Some(("disabled", disabled_message(&row))),
@@ -525,6 +528,7 @@ mod tests {
             base_position: "-3,-2".into(),
             world_name: None,
             content_rating: Some("RP".into()),
+            active: true,
         };
         let disabled = disabled_message(&row);
         assert_eq!(
@@ -560,6 +564,7 @@ mod tests {
             base_position: "0,0".into(),
             world_name: Some("MetadyneLabs.dcl.eth".into()),
             content_rating: Some("T".into()),
+            active: true,
         };
         assert_eq!(
             disabled_message(&world)["blocks"][0]["text"]["text"],

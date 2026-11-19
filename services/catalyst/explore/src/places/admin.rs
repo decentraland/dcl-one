@@ -714,11 +714,11 @@ async fn set_ranking(
         row.ranking = ranking;
         return Ok(());
     }
-    if row.scene_place {
+    if is_admin_token(headers, admin) {
         // A world-scene place has no catalogue row: the overlay is the write.
-        ranking::set_ranking(&state.pool, &row.id, ranking, actor).await?;
-    } else if is_admin_token(headers, admin) {
-        if ranking::set_ranking(&state.pool, &row.id, ranking, actor).await? == 0 {
+        if ranking::set_ranking(&state.pool, &row.id, ranking, actor).await? == 0
+            && !row.scene_place
+        {
             return Err(ApiError::service_unavailable(RANKING_NOT_WRITABLE));
         }
     } else {
@@ -799,6 +799,7 @@ async fn set_exclusion(
     places_route: bool,
 ) -> Result<(), ApiError> {
     // `rankingExclusion.ts:46-57` through `updatePlace`: silent on a disabled place.
+    // The scene check stays last: the call is the write for a world-scene place.
     if !silently_skipped(row, places_route)
         && ranking::set_exclusion(&state.pool, &row.id, exclude, ADMIN_TOKEN_ACTOR).await? == 0
         && !row.scene_place
@@ -2581,9 +2582,7 @@ mod tests {
         }
     }
 
-    /// A world-scene place (`explore.world_scene_place`) takes every admin
-    /// write on the places routes through its overlays, a disabled one
-    /// included, and the ranking writes answer their success.
+    /// A world-scene place takes every admin write through its overlays; once disabled, only `PATCH` reaches it.
     #[tokio::test]
     async fn world_scene_places_take_every_admin_write() {
         let Some(pool) = crate::db::scratch::pool(2).await else {
@@ -2691,6 +2690,19 @@ mod tests {
         );
         let (status, _) = call(&app, "GET", &place, None, None).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "a disabled scene is hidden");
+        let (status, _) = call(
+            &app,
+            "PUT",
+            &format!("{place}/rating"),
+            Some("signed"),
+            Some(json!({ "content_rating": "A" })),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "the signed routes read it first"
+        );
         let (status, body) = call(
             &app,
             "PATCH",
@@ -2732,6 +2744,102 @@ mod tests {
             .unwrap()
             .unwrap();
             assert_eq!(applied.written, written, "{reason}");
+        }
+    }
+
+    /// The data team cannot rank an excluded world-scene place, and a retired
+    /// identity takes a decision without a notice.
+    #[tokio::test]
+    async fn world_scene_curation_holds_for_the_data_team_and_retired_ids_stay_quiet() {
+        let _outbox = crate::moderation_hooks::TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let (active, retired) = (
+            uuid::Uuid::new_v4().to_string(),
+            uuid::Uuid::new_v4().to_string(),
+        );
+        sqlx::query("INSERT INTO worlds.worlds (name) VALUES ('curated.dcl.eth')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size) VALUES ('curated.dcl.eth', 'scene', '[]', $1, '0xaa', ARRAY['1,1'], 1)")
+            .bind(json!({"metadata": {"scene": {"base": "1,1"}}}))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO explore.world_scene_place (world_name, identity, parcels, entity_id, active) VALUES ('curated.dcl.eth', $1::uuid, ARRAY['1,1'], 'scene', true), ('curated.dcl.eth', $2::uuid, ARRAY['2,2'], NULL, false)")
+            .bind(&active)
+            .bind(&retired)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let app = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            Settings {
+                operator_writes_enabled: true,
+                places_admin_token: Some("admin".into()),
+                data_team_token: Some("data".into()),
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        let place = format!("/api/places/{active}");
+        let (status, body) = call(
+            &app,
+            "PUT",
+            &format!("{place}/ranking-exclusion"),
+            Some("admin"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let (status, body) = call(
+            &app,
+            "PUT",
+            &format!("{place}/ranking"),
+            Some("data"),
+            Some(json!({ "ranking": 3 })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        let ranking: Value = sqlx::query_scalar(
+            "SELECT overlay->'ranking' FROM explore.place_ranking WHERE place_id = $1",
+        )
+        .bind(&active)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(ranking, json!(0), "the pinned ranking stays");
+        // The score path re-reads the scene's curation under its lock.
+        assert_eq!(
+            ranking::set_ranking_from_score(&pool, &active, Some(3.0), "data")
+                .await
+                .unwrap(),
+            ScoreRankingOutcome::RefusedCurated
+        );
+
+        for (id, notices) in [(&active, 1), (&retired, 0)] {
+            let disable = Decision::Disabled {
+                disabled: true,
+                reason: Some("moderation".into()),
+            };
+            let ctx = moderation::Context {
+                comment: None,
+                notify: Some("https://places.example.org"),
+            };
+            moderation::apply_with(&pool, Target::Place(id), &disable, ADMIN_TOKEN_ACTOR, ctx)
+                .await
+                .unwrap()
+                .unwrap();
+            let queued: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM explore.moderation_hooks WHERE subject = $1",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(queued, notices, "{id}");
         }
     }
 

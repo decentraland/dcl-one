@@ -175,6 +175,24 @@ fn now() -> chrono::NaiveDateTime {
     chrono::Utc::now().naive_utc()
 }
 
+/// Locks the world-scene identities among `ids`, which serializes their curation and ranking writes.
+pub(super) async fn lock_world_scenes(
+    conn: &mut PgConnection,
+    ids: &[String],
+) -> Result<(), ApiError> {
+    let identities: Vec<uuid::Uuid> = ids
+        .iter()
+        .filter_map(|id| uuid::Uuid::parse_str(id).ok())
+        .collect();
+    if !identities.is_empty() {
+        sqlx::query("SELECT 1 FROM explore.world_scene_place WHERE identity = ANY($1) ORDER BY identity FOR UPDATE")
+            .bind(&identities)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}
+
 /// Records `overlays` (catalogue id, raw keys decided) and merges them into
 /// both legs' `raw`. Returns the number of catalogue rows written.
 async fn write_overlays(
@@ -186,6 +204,7 @@ async fn write_overlays(
         return Ok(0);
     }
     let ids: Vec<String> = overlays.iter().map(|(id, _)| id.clone()).collect();
+    lock_world_scenes(conn, &ids).await?;
     let docs: Vec<Value> = overlays.iter().map(|(_, v)| v.clone()).collect();
     sqlx::query(
         "INSERT INTO explore.place_ranking (place_id, overlay, set_by, updated_at)
@@ -240,6 +259,15 @@ pub async fn set_ranking(
     Ok(written)
 }
 
+/// A world-scene place's curation as its projection reads it, its identity locked.
+const SCENE_CURATION_SQL: &str = "SELECT COALESCE(m.highlighted, wm.highlighted, false) \
+     OR COALESCE(r.overlay->'exclude_from_ranking' = 'true'::jsonb, false) \
+     FROM explore.world_scene_place p \
+     LEFT JOIN explore.place_moderation m ON m.place_id = p.identity::text \
+     LEFT JOIN explore.place_moderation wm ON wm.place_id = p.world_name \
+     LEFT JOIN explore.place_ranking r ON r.place_id = p.identity::text \
+     WHERE p.identity = $1 FOR UPDATE OF p";
+
 fn curation_sql(table: &str) -> String {
     format!(
         "SELECT highlighted, {EXCLUDE_FROM_RANKING_SQL} AS excluded FROM {table} WHERE id = $1 FOR UPDATE"
@@ -264,6 +292,14 @@ pub async fn set_ranking_from_score(
             curated = Some(row.get::<bool, _>("highlighted") || row.get::<bool, _>("excluded"));
             break;
         }
+    }
+    if curated.is_none()
+        && let Ok(identity) = uuid::Uuid::parse_str(id)
+    {
+        curated = sqlx::query_scalar(SCENE_CURATION_SQL)
+            .bind(identity)
+            .fetch_optional(&mut *tx)
+            .await?;
     }
     let outcome = match curated {
         None => ScoreRankingOutcome::NotWritable,
