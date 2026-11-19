@@ -743,15 +743,18 @@ impl MarketplaceState {
     }
 
     /// The endpoint the committee walk reads (Polygon only): the
-    /// `TRADE_RPC_URLS` 137 entry, else `RPC_ENDPOINT_POLYGON`; the walk
-    /// checks the endpoint serves chain 137 before each pass.
+    /// `TRADE_RPC_URLS` 137 entry, else on mainnet `RPC_ENDPOINT_POLYGON`
+    /// (off mainnet it serves another chain); the walk checks the endpoint
+    /// serves chain 137 before each pass.
     pub fn committee_rpc_url(&self, net: chain_walk::ChainNet) -> Option<String> {
-        (net == chain_walk::ChainNet::Matic)
-            .then(|| {
-                self.chain_rpc_url(net)
-                    .or_else(|| self.settings.polygon_rpc_url.clone())
-            })
-            .flatten()
+        if net != chain_walk::ChainNet::Matic {
+            return None;
+        }
+        self.chain_rpc_url(net).or_else(|| {
+            (self.settings.eth_network.trim() == "mainnet")
+                .then(|| self.settings.polygon_rpc_url.clone())
+                .flatten()
+        })
     }
 
     fn rpc_url_for(&self, net: chain_walk::ChainNet, chain_id: i64) -> Option<String> {
@@ -843,10 +846,17 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
             .filter(|n| rpc_url(state, *n).is_some())
             .collect();
         if nets.is_empty() {
-            tracing::warn!(
-                job,
-                "marketplace chain index enabled but no JSON-RPC endpoint is configured (TRADE_RPC_URLS 1= / 137=, or ETH_RPC_URL): it stays off"
-            );
+            if committee {
+                tracing::warn!(
+                    job,
+                    "committee index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=, or RPC_ENDPOINT_POLYGON on mainnet): it stays off"
+                );
+            } else {
+                tracing::warn!(
+                    job,
+                    "marketplace chain index enabled but no JSON-RPC endpoint is configured (TRADE_RPC_URLS 1= / 137=, or ETH_RPC_URL): it stays off"
+                );
+            }
             continue;
         }
         let state = state.clone();

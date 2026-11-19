@@ -2029,8 +2029,8 @@ admit `BUILDER_ADMIN_ADDRESSES` and the current members of the Polygon
 curation committee. Shop's `committee` index
 (`MARKETPLACE_COMMITTEE_INDEX_ENABLED`) walks the two Committee contracts'
 `MemberSet` logs from the first one's deployment into `shop.committee_event`
-over the `TRADE_RPC_URLS` 137 entry, else `RPC_ENDPOINT_POLYGON`, once the
-endpoint answers chain id 137 (tens of rows, appended with the cursor advance in `shop.chain_cursor`,
+over the `TRADE_RPC_URLS` 137 entry, else on mainnet `RPC_ENDPOINT_POLYGON`,
+once the endpoint answers chain id 137 (tens of rows, appended with the cursor advance in `shop.chain_cursor`,
 deleted past a reorg rewind). Builder reads, never writes, both tables by
 shared SQL in one statement: a wallet is a member when its latest event
 (block, log index) at or below the published block (`folded_block`) set it,
