@@ -7,7 +7,7 @@ import { hoverKey, proximityKey } from '@explorer-core/engine/pointerKeys'
 import type { LoginDriver, NewAccountPick } from '@explorer-core/engine/driver'
 import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
 import { recordVisit } from '@explorer-core/features/lobby/lobbyApi'
-import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
+import type { ItemPurchaseState, PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import { PLATFORM_BANNED_REFUSAL, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
@@ -117,6 +117,7 @@ import type {
   PermissionRuleValue,
   PermissionUsedMessage,
   WorldPasswordRequestMessage,
+  ItemPurchaseRequestMessage,
   ProximityTip,
   Profile,
   ProfileEdit,
@@ -765,6 +766,14 @@ export interface WorldPasswordState {
   resolve: (password: string | null) => void
 }
 
+export interface ItemPurchaseRequests {
+  /** A scene's request to open the purchase confirmation, until its first report. */
+  pending: ItemPurchaseRequestMessage | null
+  /** Report on request `id`: `accepted` or `unavailable` first (either takes it off `pending`),
+   *  then an accepted request's outcome. */
+  report: (id: number, state: ItemPurchaseState) => void
+}
+
 export interface PortablesState {
   /** The portables the engine lists, tagged by kind: never the HUD's own scene or a startup portable. */
   list: PortableInfo[]
@@ -1169,6 +1178,7 @@ export interface EngineSession {
   permissions: PermissionsState
   /** The password prompt for a password-protected world being travelled to. */
   worldPassword: WorldPasswordState
+  itemPurchase: ItemPurchaseRequests
   /** The portable experiences running beside the scene (smart wearables, scene-spawned portables). */
   portables: PortablesState
   editor: EditorHostState
@@ -1655,6 +1665,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // dismissed prompt asks again; an "Always …" answer is the engine's stored rule from here on).
   const answeredPermissions = useRef(new Map<string, boolean | null>())
   const [worldPassword, setWorldPassword] = useState<WorldPasswordRequestMessage | null>(null)
+  const [itemPurchase, setItemPurchase] = useState<ItemPurchaseRequestMessage | null>(null)
   const [portables, setPortables] = useState<PortableInfo[]>([])
   // Each portable's last reported state, for the change toasts (null: no list yet). Toasts start
   // once the player is in world from a known baseline: the list the player arrived with, or the
@@ -2634,6 +2645,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'worldPasswordWithdrawn':
           setWorldPassword(null)
           break
+        case 'itemPurchaseRequest':
+          setItemPurchase(msg)
+          break
         case 'platformBan':
           setPlatformBan(msg.ban.banned ? msg.ban : null)
           break
@@ -3466,6 +3480,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       driverRef.current?.send({ kind: 'worldPasswordResolve', password })
       return null
     })
+  }, [])
+  const reportItemPurchase = useCallback((id: number, state: ItemPurchaseState) => {
+    setItemPurchase((p) => (p?.id === id ? null : p))
+    driverRef.current?.send({ kind: 'itemPurchaseState', id, state })
   }, [])
   // Runs the login captured at Jump In, once the engine is up.
   const runPendingLogin = useCallback((driver: NonNullable<typeof driverRef.current>): void => {
@@ -5213,6 +5231,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       resolve: resolvePermission
     },
     worldPassword: { pending: worldPassword, resolve: resolveWorldPassword },
+    itemPurchase: { pending: itemPurchase, report: reportItemPurchase },
     portables: { list: portables, stop: stopPortable, restart: restartSmartWearable },
     editor: { mode: editorMode, setMode: setEditorMode },
     mic: { enabled: mic.enabled, available: mic.available, sceneBlocked: mic.sceneBlocked, refusals: mic.refusals, toggle: toggleMic },

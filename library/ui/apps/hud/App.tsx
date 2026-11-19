@@ -38,6 +38,7 @@ import { openPermissionDialog } from './features/permissions/PermissionDialog'
 import { openWorldPasswordDialog } from './features/worldAccess/WorldPasswordDialog'
 import { PopupHost, ToastHost, showDialog } from './design'
 import { SessionProvider } from './features/session/SessionContext'
+import { answerItemPurchase, type PurchaseSceneItem } from './features/itemPurchase/answer'
 import { bootMode, hostEntryParams, isNativeHud, unrecognisedEntryParams, untrustedLaunchParams } from '@hud-host'
 import { FpsMeter } from './features/debug/FpsMeter'
 import { DebugPanelHost } from './features/debug/DebugPanel'
@@ -146,6 +147,9 @@ export interface HudAppHost {
   createBridgeClient(): LoginDriver
   /** The host's Shop page. */
   ShopPage: ComponentType<HudShopProps>
+  /** Opens the host's purchase confirmation for one collection item a scene asked to sell, and
+   *  resolves with how it ended. Absent where the host cannot buy: such a request is unavailable. */
+  purchaseSceneItem?: PurchaseSceneItem
   /** After the Shop surface crashed, before it opens again. */
   onShopCrash?(): void
   /** Providers around the whole HUD (/play's query client). */
@@ -334,6 +338,13 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
     return openWorldPasswordDialog(worldPasswordPrompt, session.worldPassword.resolve)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-open only when the prompt changes
   }, [worldPasswordPrompt])
+
+  // A scene asked to open the purchase confirmation for an item: answered at once (./features/itemPurchase/answer).
+  const itemPurchase = session.itemPurchase.pending
+  useEffect(() => {
+    if (itemPurchase != null) answerItemPurchase(itemPurchase, session.itemPurchase.report, host.purchaseSceneItem)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- answer each request once
+  }, [itemPurchase])
 
   // A refused in-world travel (destination missing/unreachable): the player stays put and is told why.
   const travelError = session.travelError

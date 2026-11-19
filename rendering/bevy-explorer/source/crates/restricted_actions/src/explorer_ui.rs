@@ -4,8 +4,10 @@
 //! `SystemAction`. An accepted request synthesizes that action's press/release edge on the
 //! system-action stream, so the HUD opens the page exactly as it would for the bound key. The HUD
 //! reports the page it shows back as `SystemApi::SetUiFocus { menu }`; that report both
-//! answers `WAS_ALREADY_OPEN` and drives the `opened` / `closed` events, which (as in unity) go
+//! answers `WAS_ALREADY_OPEN` and drives the `opened` / `closed` events, which go
 //! only to the scene whose request opened the page.
+//!
+//! `EU_ITEM_PURCHASE` is not a menu page: `item_purchase` handles it.
 
 use bevy::prelude::*;
 use common::{
@@ -42,7 +44,7 @@ fn panel(ui: ExplorerUi) -> Option<HudPanel> {
         ExplorerUi::EuCommunities => Some(HudPanel::Communities),
         ExplorerUi::EuPlaces => Some(HudPanel::Places),
         ExplorerUi::EuEvents => Some(HudPanel::Events),
-        // No item-purchase modal (the explorer-shop flow) in this client.
+        // a confirmation over the world, not a menu page: see `item_purchase`
         ExplorerUi::EuItemPurchase => None,
     }
 }
@@ -51,6 +53,8 @@ pub struct SceneOpen {
     scene: Entity,
     /// raw `ExplorerUi` value, echoed into the events
     ui: i32,
+    /// the request's `request_id`, echoed into the events
+    request_id: u32,
     panel: HudPanel,
 }
 
@@ -83,12 +87,22 @@ pub fn open_explorer_ui(
     mut state: ResMut<ExplorerUiState>,
     time: Res<Time>,
 ) {
-    for (scene, ui, response) in events.read().filter_map(|ev| match (&ev.origin, &ev.call) {
-        (RpcOrigin::Scene { entity: scene, .. }, RpcCall::OpenExplorerUi { ui, response }) => {
-            Some((*scene, *ui, response.clone()))
-        }
-        _ => None,
-    }) {
+    for (scene, ui, request_id, response) in
+        events.read().filter_map(|ev| match (&ev.origin, &ev.call) {
+            (
+                RpcOrigin::Scene { entity: scene, .. },
+                RpcCall::OpenExplorerUi {
+                    ui,
+                    request_id,
+                    response,
+                    ..
+                },
+            ) if *ui != ExplorerUi::EuItemPurchase as i32 => {
+                Some((*scene, *ui, *request_id, response.clone()))
+            }
+            _ => None,
+        })
+    {
         let in_scene = player
             .single()
             .is_ok_and(|p| containing_scene.get(p).contains(&scene));
@@ -118,7 +132,15 @@ pub fn open_explorer_ui(
         perms.check(
             PermissionType::OpenExplorerUi,
             scene,
-            (SceneOpen { scene, ui, panel }, response),
+            (
+                SceneOpen {
+                    scene,
+                    ui,
+                    request_id,
+                    panel,
+                },
+                response,
+            ),
             None,
             // the current-scene gate above already applied
             true,
@@ -166,14 +188,16 @@ pub fn track_explorer_ui(
             .is_some_and(|t| open != Some(t.panel))
         {
             let closed = state.tracked.take().unwrap();
-            write_event(&mut scenes, &closed, UiEvent::Closed(UiClosed {}));
+            closed.write(&mut scenes, UiEvent::Closed(UiClosed {}));
         }
         // a pending request is OPENED only if the HUD shows the page it asked for; any other
         // page means the edge was superseded (the user opened something first, and that page is
         // what is open now); nothing showing means the edge was swallowed, keep waiting
         if let Some(pending) = state.pending.take() {
             if open == Some(pending.open.panel) {
-                write_event(&mut scenes, &pending.open, UiEvent::Opened(UiOpened {}));
+                pending
+                    .open
+                    .write(&mut scenes, UiEvent::Opened(UiOpened {}));
                 pending.response.send(OpenExplorerUiResult::Opened);
                 state.tracked = Some(pending.open);
             } else if open.is_some() {
@@ -197,21 +221,30 @@ pub fn track_explorer_ui(
     }
 }
 
-fn write_event(scenes: &mut Query<&mut RendererSceneContext>, open: &SceneOpen, event: UiEvent) {
-    // the scene may have unloaded while its page was showing
-    let Ok(mut context) = scenes.get_mut(open.scene) else {
-        return;
-    };
+impl SceneOpen {
+    fn write(&self, scenes: &mut Query<&mut RendererSceneContext>, event: UiEvent) {
+        // the scene may have unloaded while its page was showing
+        if let Ok(mut context) = scenes.get_mut(self.scene) {
+            write_event(&mut context, self.ui, self.request_id, event);
+        }
+    }
+}
+
+pub(crate) fn write_event(
+    context: &mut RendererSceneContext,
+    ui: i32,
+    request_id: u32,
+    event: UiEvent,
+) {
     let timestamp = context.tick_number;
     context.update_crdt(
         SceneComponentId::EXPLORER_UI_EVENTS_RESULT,
         CrdtType::GO_ENT,
         SceneEntityId::ROOT,
         &PbExplorerUiEventsResult {
-            ui: open.ui,
+            ui,
             timestamp,
-            // OpenExplorerUiRequest.request_id is not threaded through yet; 0 means none.
-            request_id: 0,
+            request_id,
             event: Some(event),
         },
     );

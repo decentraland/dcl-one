@@ -181,6 +181,9 @@ pub enum SystemApi {
     Quit,
     GetPermissionRequestStream(RpcStreamSender<PermissionRequestEvent>),
     SetSinglePermission(SetSinglePermission),
+    /// Scene requests to open the item purchase confirmation, sent as they are accepted.
+    GetItemPurchaseRequestStream(RpcStreamSender<ItemPurchaseRequest>),
+    SetItemPurchaseState(SetItemPurchaseState),
     SetPermanentPermission(SetPermanentPermission),
     GetPermissionUsedStream(RpcStreamSender<PermissionUsed>),
     GetPermanentPermissions(

@@ -417,6 +417,28 @@ owns the mode as a surface. Expectations:
   (the overlay's buttons, bindings, notice and effect); the e2e camera scenarios
   (`apps/bevy-explorer/e2e/specs/camera.test.ts`) drive the real engine.
 
+## Scene item purchase
+
+A scene's request to open the purchase confirmation for one item (`openExplorerUi` with
+`EU_ITEM_PURCHASE`; bridge `domains/itemPurchase.ts`, `features/itemPurchase`). The engine applies
+the gates and parses the item; the HUD draws nothing of its own. Expectations:
+
+- **Answered on receipt.** The engine holds the scene's call until the HUD says `accepted` or
+  `unavailable`, and gives up after two seconds, so the answer never waits on a read or a render
+  beyond the effect in `App.tsx`.
+- **Availability is the host's.** A host that can buy passes `purchaseSceneItem` to `HudApp`
+  (`/play` in the web shell, with the in-world Shop on); without it every request is
+  `unavailable`. This host passes none.
+- **One outcome.** An accepted request is reported once more: `purchased`, `dismissed` or
+  `failed`. A request with no item is `accepted` then `failed` with nothing opened. A purchase
+  that throws is `failed`.
+- **The confirmation is the shell's** purchase dialog, over the HUD frame; there is no HUD page,
+  popup or screenshot for this domain.
+- Tests: `library/ui/apps/hud/test/hosted/itemPurchase.test.tsx` (the session contract and the
+  answers above); `apps/ui3/src/play/test/scenePurchase.test.ts` (what the shell is asked and how
+  its operation's states map to the outcome); the engine's gates and request lifecycle in
+  `crates/restricted_actions/src/item_purchase.rs`.
+
 ## Preview texture optimization
 
 A scene preview served by `dcl-scene-cli start` reports its background texture import on the

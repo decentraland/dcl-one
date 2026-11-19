@@ -25,6 +25,8 @@ import type {
   FriendStatusData,
   HoverAction,
   HoverEvent,
+  ItemPurchaseRequest,
+  SetItemPurchaseState,
   HomeScene,
   LiveSceneInfo,
   LobbyStage,
@@ -221,6 +223,10 @@ export type BevyApiInterface = {
   getAvatarModifiers: () => Promise<AvatarModifierState[]>
   getPermissionRequestStream: () => Promise<AsyncIterable<PermissionRequestRaw>>
   setSinglePermission: (body: SetSinglePermission) => void
+  /** Scene requests to open the item purchase confirmation. Optional: absent on runtimes whose
+   *  SystemApi predates it. */
+  getItemPurchaseRequestStream?: () => Promise<AsyncIterable<ItemPurchaseRequest>>
+  setItemPurchaseState?: (body: SetItemPurchaseState) => void
   /** Password prompts for a world being entered (and their withdrawal). Optional: absent on
    *  runtimes whose SystemApi predates it. */
   getWorldAccessStream?: () => Promise<AsyncIterable<WorldAccessEvent>>

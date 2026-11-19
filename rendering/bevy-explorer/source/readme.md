@@ -281,7 +281,8 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   scene moderation lists; Nearby chat and reactions from an address the scene room bans are
   dropped, and nearby voice is not subscribed from an address blocked either way or banned by the
   connected scene room, while calls still carry it; `/ban_block_refresh` re-checks the platform
-  ban), `/entity_screen_position <entity>
+  ban), `/item_purchase_state` (the scene item purchase request in flight and how the last one
+  ended; `/item_purchase_cancel` drops the one in flight), `/entity_screen_position <entity>
   [--bounds]`, `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or
   close it) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a refusal
   names why), plus the older `/player_position`, `/get_user_data`, `/connected_players`, `/time`

@@ -339,6 +339,32 @@ pub async fn op_read_permission_used_stream(
 }
 
 #[wasm_bindgen]
+pub async fn op_get_item_purchase_request_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_item_purchase_request_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_item_purchase_request_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_item_purchase_request_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
+pub fn op_set_item_purchase_state(
+    state: &WorkerContext,
+    id: u32,
+    purchase_state: JsValue,
+) -> Result<(), WasmError> {
+    // map_err rather than serde_parse!'s unwrap: an unknown state throws in JS, as on Deno.
+    let purchase_state = serde_wasm_bindgen::from_value(purchase_state)
+        .map_err(|e| WasmError::from(anyhow::anyhow!("{e}")))?;
+    dcl_js::system_api::op_set_item_purchase_state(state.rc(), id, purchase_state);
+    Ok(())
+}
+
+#[wasm_bindgen]
 pub fn op_set_single_permission(state: &WorkerContext, id: usize, allow: bool) {
     dcl_js::system_api::op_set_single_permission(state.rc(), id, allow);
 }
