@@ -1829,6 +1829,11 @@ Invariants:
 - `cancel_reason` is NULL unless the status is `cancelled` (a row `CHECK`).
 - A cancellation with no recorded cause keeps NULL. Rows imported from
   signatures-server, which records no cause, are of this kind.
+- A reopening never makes a second open listing of an asset
+  (`rentals_open_asset_key`). The fold writes reopenings after its other
+  verdicts, reopens only the newest listing of an asset, and only while no
+  other listing of that asset is open. A blocked listing keeps its stored
+  status and reason.
 - The fold reopens a cancelled listing only when its reason is `nonce`. Any
   reason gives way to a rent of the listing: an incremental fold also
   revisits a cancelled listing whose own `rented` log is past its block, one
