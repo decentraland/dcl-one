@@ -168,7 +168,7 @@ impl<T: DeserializeOwned + Send + 'static> IpcEndpoint for IpcResultCallback<T> 
                     let _ = sx.send(val);
                 }
             }
-            // dropping the sender closes the waiting receiver
+            // drop the sender: the channel closes without a value
             Err(e) => {
                 error!("dropping undecodable ipc result: {e}");
                 self.sender = None;

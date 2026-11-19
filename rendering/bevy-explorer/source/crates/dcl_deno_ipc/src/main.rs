@@ -126,8 +126,8 @@ async fn scene_ipc_in(
     while let Ok(len) = stream.read_u64_le().await {
         let mut buffer = vec![0u8; len as usize];
         stream.read_exact(&mut buffer).await.unwrap();
-        // the length prefix keeps the stream framed; a reply channel or scene state carried by
-        // the lost message may not recover
+        // the whole frame was read by its length prefix: dropping it leaves the stream at the
+        // next frame
         let msg: EngineToScene = match rmp_serde::from_slice(&buffer) {
             Ok(msg) => msg,
             Err(e) => {

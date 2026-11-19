@@ -77,7 +77,7 @@ pub fn v8_value_to_json(v8: &cef::V8Value) -> Option<serde_json::Value> {
             v8.int_value(),
         )))
     } else if v8.is_double().is_positive() {
-        // NaN and the infinities have no JSON number; `JSON.stringify` writes them as null
+        // NaN and the infinities have no JSON number, so they map to null
         Some(
             serde_json::Number::from_f64(v8.double_value())
                 .map_or(serde_json::Value::Null, serde_json::Value::Number),
