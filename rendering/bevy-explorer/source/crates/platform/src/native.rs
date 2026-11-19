@@ -100,10 +100,14 @@ pub fn write_config_file<T: Serialize>(config: &T) {
             return;
         }
     }
-    if let Err(e) = write_atomically(
-        &config_file,
-        serde_json::to_string(config).unwrap().as_bytes(),
-    ) {
+    let json = match serde_json::to_string(config) {
+        Ok(json) => json,
+        Err(e) => {
+            bevy::log::error!("can't serialize {}: {e}", config_file.display());
+            return;
+        }
+    };
+    if let Err(e) = write_atomically(&config_file, json.as_bytes()) {
         bevy::log::error!("can't write {}: {e}", config_file.display());
     }
 }

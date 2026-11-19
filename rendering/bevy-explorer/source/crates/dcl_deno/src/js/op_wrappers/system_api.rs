@@ -251,7 +251,7 @@ pub async fn op_set_avatar(
 
 #[op2(async)]
 #[string]
-pub async fn op_native_input(state: Rc<RefCell<OpState>>) -> String {
+pub async fn op_native_input(state: Rc<RefCell<OpState>>) -> Result<String, anyhow::Error> {
     dcl_js::system_api::op_native_input(state).await
 }
 

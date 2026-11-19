@@ -125,7 +125,7 @@
   },
   "apps/sites/src/features/social/report/ReportForm.module.css": {
     "primitives": 0,
-    "tokens": 77
+    "tokens": 69
   },
   "apps/sites/src/features/social/report/ReportSuccess.module.css": {
     "primitives": 0,
