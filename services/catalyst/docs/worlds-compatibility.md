@@ -227,8 +227,8 @@ difference not listed here is a gap, not a decision.
   sets it. Without it a DCL NAME world has no owner for writes: publishes,
   the owner-gated permission, settings, undeploy and storage routes, and
   the owner's scene-admin rights (admins, bans, stream key, Cast) are
-  refused (upstream falls back to the stored `worlds.owner`, which keeps
-  naming a former holder until a publish replaces it). The reads still
+  refused (upstream reads the stored owner first, which keeps naming a
+  former holder until a publish replaces it). The reads still
   use the stored owner then: `GET /world/{name}/permissions`, `/limits`,
   owner admission, the ban-protected set and the quota pass. A node with
   `WORLDS_WRITES_ENABLED=true` refuses to start without the URL, before it
