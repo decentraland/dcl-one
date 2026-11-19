@@ -17,9 +17,8 @@
 //! caller's send gate treat an owed repeat as a reason to send, which puts the repeats on the next
 //! regular sends.
 //!
-//! Each movement send consumes a repeat even when no transport carries the animation packet.
-//! An active clip is announced again at the next keepalive. A clear has only its initial send
-//! and its repeats.
+//! If the transport misses a change and its repeats, the next keepalive it delivers restores an
+//! active clip. A clear has no keepalive.
 //!
 //! A pure object, like the Pulse pacer: its times are `f64` seconds on the caller's clock and it
 //! knows nothing of Bevy or the connection, so a test drives it without an app.
@@ -62,8 +61,9 @@ impl ClipAnnouncer {
         self.current.as_ref() != current
     }
 
-    /// Call once per movement send at `now`, even if no animation transport can carry the packet.
-    /// `current` is the active clip. `keepalive` is the interval for re-announcing an unchanged clip.
+    /// Returns the announcement for a movement send at `now` with `current` active. Call this even
+    /// when the packet cannot go out so the send gate can clear the change and spend its repeats.
+    /// `keepalive` is the interval for re-announcing an unchanged clip.
     pub fn announce<'a>(
         &mut self,
         now: f64,
