@@ -17,9 +17,10 @@ export function OsIcon({ os, className }: { os: DownloadOption["osKey"]; classNa
   return <Icon size={20} className={className} aria-hidden="true" />;
 }
 
-/** A Mac build is named by its chip; Windows has one build. */
-export const buildName = (option: DownloadOption) =>
-  option.osKey === "macos" ? `${option.os} (${option.archLabel})` : option.os;
+/** A Mac build is named by its chip; Windows has one build, and a releases-page placeholder is no build yet. */
+const byChip = (option: DownloadOption) => option.osKey === "macos" && Boolean(option.fileName);
+
+export const buildName = (option: DownloadOption) => (byChip(option) ? `${option.os} (${option.archLabel})` : option.os);
 
 export const downloadFor = (option: DownloadOption) => copy.downloadFor(buildName(option));
 
@@ -36,7 +37,7 @@ export default function OtherBuilds({ options, onDownload, className }: Props) {
     <div className={className ? `${styles.row} ${className}` : styles.row}>
       {copy.alsoAvailableOn}
       {options.map((option) => (
-        <Tooltip key={`${option.osKey}-${option.arch}`} label={downloadFor(option)} side="top">
+        <Tooltip key={`${option.osKey}-${option.arch}`} label={downloadFor(option)} side="top" labelChild>
           <a
             className={styles.build}
             href={option.url}
@@ -46,7 +47,7 @@ export default function OtherBuilds({ options, onDownload, className }: Props) {
             onClick={(event) => onDownload(option, event)}
           >
             <OsIcon os={option.osKey} />
-            {option.osKey === "macos" && <span>{option.archLabel}</span>}
+            {byChip(option) && <span>{option.archLabel}</span>}
           </a>
         </Tooltip>
       ))}

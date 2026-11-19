@@ -27,7 +27,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     sid,
     version: resolved.version,
     overridden: resolved.overridden,
-    archChosen: resolved.archOverridden,
+    macChipUnknown: resolved.macChipUnknown,
     detectedOs: resolved.detectedOs,
     detectedArch: resolved.detectedArch,
     primary: resolved.installable ? resolved.primary : null,

@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 
+import Tooltip from "@ui/atoms/Tooltip";
+
 import type { HeroDownloads } from "@/data/lib/download/creator-hub.server";
-import { detectMacChip, preferChip } from "@/data/lib/download/mac-chip";
+import { detectMacChip, isTouchMac, preferChip } from "@/data/lib/download/mac-chip";
 import { useCreatorHubDownloadClick } from "../download/creator-hub-click";
 import OtherBuilds, { downloadFor, OsIcon } from "../download/OtherBuilds";
 
@@ -12,8 +14,8 @@ export const CREATOR_HUB_DOWNLOAD = "/download/creator-hub";
 
 /** An iPad names itself a Mac and has no installer; elsewhere the build for this Mac's chip comes first. */
 function forThisDevice(downloads: HeroDownloads): HeroDownloads | null {
-  if (downloads.primary.osKey === "macos" && navigator.maxTouchPoints > 1) return null;
-  return downloads.primary.osKey === "macos" ? preferChip(detectMacChip(), downloads.primary, downloads.others) : downloads;
+  if (downloads.primary.osKey !== "macos") return downloads;
+  return isTouchMac() ? null : preferChip(detectMacChip(), downloads.primary, downloads.others);
 }
 
 type Props = {
@@ -39,17 +41,18 @@ export default function HeroDownload({ downloads, sid }: Props) {
   const { primary, others } = offered;
   return (
     <>
-      <a
-        className={`${styles.cta} ${styles.ctaDesktop}`}
-        href={primary.url}
-        title={downloadFor(primary)}
-        data-os={primary.osKey}
-        data-arch={primary.arch}
-        onClick={(event) => onDownload(primary, "primary", event)}
-      >
-        <span className={styles.ctaLabel}>{copy.downloadCreatorHub}</span>
-        <OsIcon os={primary.osKey} className={styles.osIcon} />
-      </a>
+      <Tooltip label={downloadFor(primary)} side="top" className={styles.desktopOnly}>
+        <a
+          className={`${styles.cta} ${styles.ctaDesktop}`}
+          href={primary.url}
+          data-os={primary.osKey}
+          data-arch={primary.arch}
+          onClick={(event) => onDownload(primary, "primary", event)}
+        >
+          <span className={styles.ctaLabel}>{copy.downloadCreatorHub}</span>
+          <OsIcon os={primary.osKey} className={styles.osIcon} />
+        </a>
+      </Tooltip>
       <OtherBuilds
         options={others}
         className={styles.desktopOnly}

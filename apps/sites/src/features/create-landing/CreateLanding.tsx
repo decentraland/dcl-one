@@ -26,8 +26,6 @@ import discordIcon from "./assets/discord.svg?url";
 import dclLogo from "./assets/dcl-logo.svg?url";
 import styles from "./CreateLanding.module.css";
 
-export { CREATOR_HUB_DOWNLOAD } from "./HeroDownload";
-
 /** decentraland.org /create, the Creator Hub's marketing landing. */
 type CreateLandingProps = {
   /** The Creator Hub installers for the visitor's system; without them the hero links to the download page. */

@@ -35,7 +35,7 @@ const onMac: ComponentProps<typeof CreatorHubDownloadPage> = {
   sid: "s1",
   version: "1.2.3",
   overridden: false,
-  archChosen: false,
+  macChipUnknown: true,
   detectedOs: "macos",
   detectedArch: "arm64",
   primary: appleSilicon,
@@ -44,7 +44,8 @@ const onMac: ComponentProps<typeof CreatorHubDownloadPage> = {
 
 const assign = vi.fn();
 const user = () => userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-const main = () => screen.getByRole("link", { name: "Download for macOS" });
+// The main button comes before the other builds.
+const main = () => screen.getAllByRole("link", { name: /^Download for/ })[0]!;
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -80,10 +81,27 @@ it("puts the Intel build first on an Intel Mac, and reports the page and the dow
   );
 });
 
-it("keeps the chip a link names first", () => {
+it("keeps the build a link names first, and checks no chip on a computer that is not a Mac", () => {
   vi.mocked(detectMacChip).mockReturnValue("intel");
-  render(<CreatorHubDownloadPage {...onMac} overridden archChosen />);
+  render(<CreatorHubDownloadPage {...onMac} overridden macChipUnknown={false} />);
   expect(main()).toHaveProperty("href", appleSilicon.url);
+  expect(main().textContent).toBe("Download for macOS (Apple Silicon)");
+});
+
+it("offers no installer on an iPad, which names itself a Mac", () => {
+  vi.stubGlobal("navigator", { ...window.navigator, maxTouchPoints: 5 });
+  render(<CreatorHubDownloadPage {...onMac} />);
+  expect(screen.queryByRole("link", { name: /^Download for/ })).toBeNull();
+});
+
+it("leaves the releases page to load when no release could be read", async () => {
+  const releases = "https://github.com/decentraland/creator-hub/releases/latest";
+  const placeholder = (build: DownloadOption) => ({ ...build, fileName: "", url: releases });
+  render(<CreatorHubDownloadPage {...onMac} primary={placeholder(appleSilicon)} secondary={[placeholder(windows)]} />);
+  expect(main().textContent).toBe("Download for macOS");
+  await user().click(main());
+  act(() => vi.advanceTimersByTime(3000));
+  expect(assign).not.toHaveBeenCalled();
 });
 
 it("still picks the build for this Mac when a link names only the system", () => {

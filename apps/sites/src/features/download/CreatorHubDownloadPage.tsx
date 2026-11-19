@@ -5,25 +5,22 @@ import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
 import SitesChrome from "@ui/web/frames/SitesChrome";
 
 import type { DownloadOption, OsKey } from "@/data/lib/download/creator-hub.server";
-import { detectMacChip, preferChip } from "@/data/lib/download/mac-chip";
+import { detectMacChip, isTouchMac, preferChip } from "@/data/lib/download/mac-chip";
 import { track } from "@/core/lib/telemetry/track";
 
 import { CREATOR_HUB_DOWNLOAD_STORY, useCreatorHubDownloadClick } from "./creator-hub-click";
-import OtherBuilds, { OsIcon } from "./OtherBuilds";
+import OtherBuilds, { downloadFor, OsIcon } from "./OtherBuilds";
 import styles from "./CreatorHubDownloadPage.module.css";
 
-const copy = {
-  title: "Decentraland Creator Hub",
-  downloadFor: (os: string) => `Download for ${os}`,
-};
+const copy = { title: "Decentraland Creator Hub" };
 
 type Props = {
   sid: string;
   version: string;
   /** The link named a system or a chip. */
   overridden: boolean;
-  /** The link named a chip, which then stays first whatever this Mac's chip is. */
-  archChosen: boolean;
+  /** A Mac named only by its User-Agent: the browser picks the build for its chip. */
+  macChipUnknown: boolean;
   detectedOs: OsKey;
   detectedArch: string;
   /** None on phones, tablets and Linux, which then see the title and banner only. */
@@ -36,7 +33,7 @@ export default function CreatorHubDownloadPage({
   sid,
   version,
   overridden,
-  archChosen,
+  macChipUnknown,
   detectedOs,
   detectedArch,
   primary,
@@ -47,7 +44,12 @@ export default function CreatorHubDownloadPage({
   const viewed = useRef<string | null>(null);
 
   useEffect(() => {
-    const next = primary?.osKey === "macos" && !archChosen ? preferChip(detectMacChip(), primary, secondary) : { primary, others: secondary };
+    const next =
+      primary?.osKey !== "macos" || !macChipUnknown
+        ? { primary, others: secondary }
+        : isTouchMac()
+          ? { primary: null, others: [] }
+          : preferChip(detectMacChip(), primary, secondary);
     setOffered(next);
     const os = next.primary?.osKey ?? detectedOs;
     const arch = next.primary?.arch ?? detectedArch;
@@ -55,7 +57,7 @@ export default function CreatorHubDownloadPage({
     if (viewed.current === key) return;
     viewed.current = key;
     track("lp_creatorhub_download_viewed", { os, arch, version, overridden }, { sid, story: CREATOR_HUB_DOWNLOAD_STORY });
-  }, [primary, secondary, archChosen, detectedOs, detectedArch, version, overridden, sid]);
+  }, [primary, secondary, macChipUnknown, detectedOs, detectedArch, version, overridden, sid]);
 
   const main = offered.primary;
   return (
@@ -75,7 +77,7 @@ export default function CreatorHubDownloadPage({
                   data-arch={main.arch}
                   onClick={(event) => onDownload(main, "primary", event)}
                 >
-                  <span className={styles.ctaLabel}>{copy.downloadFor(main.os)}</span>
+                  <span className={styles.ctaLabel}>{downloadFor(main)}</span>
                   <OsIcon os={main.osKey} className={styles.btnIcon} />
                 </a>
                 <OtherBuilds options={offered.others} onDownload={(option, event) => onDownload(option, "secondary", event)} />

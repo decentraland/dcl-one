@@ -64,7 +64,8 @@ it("links to the download page when there is no installer to offer in place", ()
 it("offers the installer for the visitor's system, and the other builds under it", () => {
   render(<HeroDownload downloads={onWindows} sid="s1" />);
   expect(main()).toHaveProperty("href", windows.url);
-  expect(main().title).toBe("Download for Windows");
+  expect(main().getAttribute("title")).toBeNull();
+  expect(screen.getAllByRole("tooltip").map((tip) => tip.textContent)).toContain("Download for Windows");
   expect(screen.getByRole("link", { name: "Download for macOS (Apple Silicon)" })).toHaveProperty("href", appleSilicon.url);
   expect(screen.getByRole("link", { name: "Download for macOS (Intel)" })).toHaveProperty("href", intel.url);
 });

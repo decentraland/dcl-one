@@ -150,8 +150,8 @@ function normalizeArch(v: string | null | undefined): ArchKey | undefined {
 type ResolvedDownload = {
   version: string;
   overridden: boolean;
-  /** The link named a chip. */
-  archOverridden: boolean;
+  /** The User-Agent names a Mac and the link names no chip: only the browser can tell which build fits. */
+  macChipUnknown: boolean;
   /** False when neither an override nor the User-Agent names Windows or macOS: the page offers no installer. */
   installable: boolean;
   detectedOs: OsKey;
@@ -199,7 +199,7 @@ export function resolveDownload(
   return {
     version: release.version,
     overridden: osOverride !== undefined || archOverride !== undefined,
-    archOverridden: archOverride !== undefined,
+    macChipUnknown: uaOs === "macos" && archOverride === undefined,
     installable: (osOverride ?? uaOs) !== undefined,
     detectedOs,
     detectedArch,

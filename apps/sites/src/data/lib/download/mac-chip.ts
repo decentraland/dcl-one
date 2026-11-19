@@ -29,6 +29,11 @@ export function detectMacChip(): MacChip {
   return macChipFromRenderer(renderer);
 }
 
+/** An iPad names itself a Mac in its User-Agent; its touch screen gives it away. */
+export function isTouchMac(): boolean {
+  return navigator.maxTouchPoints > 1;
+}
+
 type Build = { osKey: string; arch: string };
 
 /**

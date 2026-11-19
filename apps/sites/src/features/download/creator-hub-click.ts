@@ -37,8 +37,9 @@ export function useCreatorHubDownloadClick(sid: string) {
         { os: option.osKey, arch: option.arch, file_name: option.fileName || null, kind },
         { sid, story: CREATOR_HUB_DOWNLOAD_STORY },
       );
-      // A click that opens the file elsewhere (a new tab or window) leaves this page where it is.
-      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      // A click that opens the file elsewhere (a new tab or window) leaves this page where it is. Before a release
+      // is read the link opens the releases page here, and nothing is downloading yet.
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || !option.fileName) return;
       if (timer.current !== null) clearTimeout(timer.current);
       timer.current = setTimeout(() => window.location.assign(successPath(option.osKey, option.arch)), SUCCESS_DELAY_MS);
     },
