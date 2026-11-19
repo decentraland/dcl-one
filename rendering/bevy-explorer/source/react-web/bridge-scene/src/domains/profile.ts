@@ -400,8 +400,8 @@ export function registerProfile(ctx: Ctx): void {
     }
 
     try {
-      // setAvatar confirms the deploy, or the local update for guests. A queue expiry or
-      // engine rejection rolls back the HUD's optimistic change so the player can retry.
+      // setAvatar confirms the deployment for persisted profiles and applies throwaway guest
+      // edits locally. A queue expiry or engine rejection rolls back the optimistic HUD change.
       await session.run(async () => await BevyApi.setAvatar(data), 'passport')
     } catch (e) {
       if (signedOut()) return

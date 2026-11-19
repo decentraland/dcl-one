@@ -226,10 +226,10 @@ describe("when the view changes", () => {
     serve({ browse: [destination()] });
     const { user } = renderPage();
     await user.click(await screen.findByRole("button", { name: "Favourites" }));
-    expect(location()).toBe("/places?tab=favourites");
+    await waitFor(() => expect(location()).toBe("/places?tab=favourites"));
     expect(screen.getByRole("button", { name: "Favourites" }).getAttribute("aria-pressed")).toBe("true");
     await user.click(screen.getByRole("button", { name: "Explore all" }));
-    expect(location()).toBe("/places");
+    await waitFor(() => expect(location()).toBe("/places"));
   });
 
   it("should put the category in ?category, filter the feed and clear it from the chip", async () => {

@@ -5414,6 +5414,10 @@
           "kind": "regular"
         },
         {
+          "name": "giftGuestRecipient.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "giftPicker.test.tsx",
           "kind": "regular"
         },
@@ -5961,7 +5965,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/notifications.ts",
-      "sha256": "2c2d94fc3d80405bc59d582d127325d47dfdb43c9939d558c8794dc3910e8d19"
+      "sha256": "b1046f7d7a2fd9ca7cecd6c7e28b500f2bd0c7fdfc06302d97273c7b616fffac"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/outfits.ts",
@@ -5973,7 +5977,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/profile.ts",
-      "sha256": "5718dfb340046c3e9e193481c2762281a34e78e98b4cdb914ad039a7d821c584"
+      "sha256": "38f9c2fde772d1b0c977bbc7a1f2987cd5e3f45a886082c529da543cb838bcc4"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/randomizer.ts",
@@ -6197,7 +6201,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeNotifications.test.ts",
-      "sha256": "30326d780c236079477b53f50e6f09f33a3c7e8d1f206bdd52ad03847b217cc9"
+      "sha256": "67c35f2ec7a063c94cee44874a49df0288f1f5322d314742e68c85b9437d70f8"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
@@ -10004,7 +10008,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/Passport.tsx",
-      "sha256": "dfd274d9199c7a21b74089faca416ce18e5a30261b788a2f5b58847b343f18c0"
+      "sha256": "247b872acc380b3170c3c82231606573e79625e83b5a1231b8eeb09c5ce6deee"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfileEditForm.module.css",
@@ -10032,7 +10036,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
-      "sha256": "5bf9945042a5ff8c7f80432e3a090ae900c9faa976272b89cb36510a9ba68009"
+      "sha256": "89f2a300c4f4d65dc70eed5a8651d597c025931152de18200a25c999321d5d4f"
     },
     {
       "path": "library/ui/apps/hud/features/rewards/RewardPopup.module.css",
@@ -10124,7 +10128,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/inviteLink.ts",
-      "sha256": "503e1f192002b9d25c6272fc94ba1fcdeb8c014b35fc428256ac3f51b37493df"
+      "sha256": "9c7ee94c1acb1af60bb54f50a5146c307f3407fdbf6baffd32e896aea4c3d2c5"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/panels/DiscoverPanel.tsx",
@@ -10609,6 +10613,10 @@
     {
       "path": "library/ui/apps/hud/test/hosted/giftEntryPoints.test.tsx",
       "sha256": "73213bf269529ecea4b033e6f12c29584de6fd72fd80c986b84feadf6299085d"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
+      "sha256": "a7e3bc93cb1c17b32fee40ffb5d9994f9c2680c83c0e77f4059a1e4c9b0c6dc5"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/giftPicker.test.tsx",
@@ -40327,6 +40335,96 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
+      "to": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
+      "to": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
+      "to": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
+      "to": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/hosted/giftPicker.test.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
@@ -47949,6 +48047,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/giftEntryPoints.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/giftGuestRecipient.test.tsx",
       "kind": "type"
     },
     {
