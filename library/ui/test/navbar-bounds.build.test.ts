@@ -320,6 +320,33 @@ describe('when the public Sites navigation runs with browser input', () => {
     }, 60_000)
   }
 
+  it('should keep all four section titles aligned while switching between Discover and Shop', async () => {
+    await openCase('out-solid-0', 485, true, 926)
+    const panel = '[data-testid="navbar-panel"]'
+    const finishAnimations = () =>
+      evaluate(
+        `Promise.all(document.querySelector('${panel}').getAnimations({subtree:true}).map(a=>a.finished))`
+      )
+    const titleGeometry = () =>
+      evaluate<number[][]>(
+        `Array.from(document.querySelectorAll('${panel} > ul > li > button'),button=>{const b=button.getBoundingClientRect(),label=document.createRange();label.selectNode(button.firstChild);return[b.height,label.getBoundingClientRect().top-b.top]})`
+      )
+    await click('button[aria-label="Open menu"]')
+    await finishAnimations()
+    const before = await titleGeometry()
+    expect(before).toHaveLength(4)
+    expect(before.every((row) => row.join() === before[0]?.join())).toBe(true)
+    for (const section of [1, 2, 1]) {
+      const toggle = `${panel} > ul > li:nth-child(${section}) > button`
+      await click(toggle)
+      await finishAnimations()
+      expect(
+        await evaluate(`document.querySelector('${toggle}').getAttribute('aria-expanded')`)
+      ).toBe('true')
+      expect(await titleGeometry()).toEqual(before)
+    }
+  }, 60_000)
+
   it('should scroll all the way to the final row inside a short viewport', async () => {
     await openCase('out-solid-0', 485, true, 320)
     const panel = '[data-testid="navbar-panel"]'

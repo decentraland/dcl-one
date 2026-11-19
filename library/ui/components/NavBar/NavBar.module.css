@@ -567,10 +567,6 @@
     cursor: pointer;
   }
 
-  .drawerSection[data-expanded] .drawerToggle {
-    padding-block-end: var(--dcl-space-8);
-  }
-
   .drawerDisclosure {
     display: grid;
     grid-template-rows: 0fr;
@@ -592,9 +588,6 @@
   }
 
   @media (prefers-reduced-motion: no-preference) {
-    .drawerToggle {
-      transition: padding-block-end 220ms ease-in-out;
-    }
     .drawerDisclosure {
       transition:
         grid-template-rows 220ms ease-in-out,
