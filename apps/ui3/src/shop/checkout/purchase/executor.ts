@@ -144,6 +144,8 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
     dispatchSafe(store, keyId, { type: "observed" });
   };
   const chainId = group.key.chainId;
+  // The fee-free way was tried and couldn't run, so the wallet's own transaction is its fallback.
+  let fellBack = false;
   try {
     let settled = false;
     if (ctx.gasless ?? gaslessEnabled()) {
@@ -154,6 +156,7 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
       } catch (e) {
         const canFallBack = isGaslessUnavailable(e) && e.reason !== "relayer-unreachable" && canPayGasItself(ctx.walletKind) && txHash === null;
         if (!canFallBack) throw e;
+        fellBack = true;
         if (handedOff) {
           // The relay parsed our request and refused it: provably not broadcast. The direct rail is a new hand-off.
           handedOff = false;
@@ -188,6 +191,7 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
     if (isWrongNetworkError(e)) {
       failure.message = friendlyError(e, FALLBACK);
       failure.switchTo = e.required;
+      if (fellBack) failure.feeFreeUnavailable = true;
     }
     dispatchSafe(store, keyId, { type: "failed", failure });
     return { status: "failed", failure, released: await release(deps, [creditId]) };

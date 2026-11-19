@@ -105,10 +105,12 @@ export type GroupFailure = {
   kind: "rejected" | "refused" | "reverted" | "error";
   message: string;
   /**
-   * The network the buyer's own wallet must be on to send the purchase: set when the relay refused it and
-   * the wallet's own transaction then found the wallet on another network.
+   * The network the buyer's own wallet must be on to send the purchase: set when the wallet's own
+   * transaction found the wallet on another network.
    */
   switchTo?: number;
+  /** With `switchTo`: the fee-free (relayed) way was tried first and couldn't run, so the wallet's own was its fallback. */
+  feeFreeUnavailable?: boolean;
 };
 
 /** One confirmation group's progress inside a checkout. */

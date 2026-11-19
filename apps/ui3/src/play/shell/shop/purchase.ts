@@ -397,19 +397,25 @@ const PART_FAILED = 'one of its transactions didn’t go through.'
 const REVERTED_PART = 'one of its transactions failed on-chain; the Credits it held come back on their own.'
 const REVERTED_ALONE = 'The transaction failed on-chain. Nothing was bought; the Credits it held come back on their own.'
 /**
- * The relay refused the purchase (provably unsent), so the buyer's own wallet would have to send it, and pay
- * its network fee, from the purchase's network. A wallet that can is offered the switch with this; one that
- * can't is told, without any talk of networks, that it didn't go out.
+ * The buyer's own wallet would send the purchase, on another network than the one it is on. A self-custody
+ * wallet holding the fee money is offered the switch: saying that the fee-free way is unavailable when it was
+ * tried first, plainly on a checkout that only sends from the wallet. Any other wallet is told the purchase didn't
+ * go out: a managed one, never told of networks or fees, and one short of the fee money, or whose balance can't be
+ * read in time.
  */
-const switchText = (chainId: number): string =>
-  `This time it couldn’t go out without a network fee, so your wallet has to send it on ${chainLabel(chainId)} and pay that fee. Nothing was bought.`
-const NOT_SENT_LATER = 'This time it couldn’t go out. Nothing was bought; try again in a few minutes.'
+const switchAfterFeeFree = (chainId: number): string =>
+  `Fee-free checkout is unavailable right now. You can switch to ${chainLabel(chainId)} and pay the network fee with your wallet. Nothing was bought.`
+const switchDirect = (chainId: number): string => `Your wallet is on another network. Switch it to ${chainLabel(chainId)} to send this purchase. Nothing was bought.`
+const FEE_FREE_UNAVAILABLE = 'Fee-free checkout is unavailable right now. Nothing was bought. Try again later.'
+const NOT_SENT_LATER = 'This purchase couldn’t go out. Nothing was bought. Try again later.'
 /**
- * The least of the network's own currency (0.05) a wallet holds for the switch to be offered, as the web Shop
- * offers its gas-paying fallback: a wallet with less would switch, sign and fail on the fee. A fixed floor, not
- * an estimate, which reverts for reasons that aren't the fee.
+ * The least of the network's own currency (0.05) a wallet holds to be offered the switch, as the web Shop offers its
+ * fee-paying fallback. A threshold for the offer, not an estimate of the fee, which varies: an estimate reverts for
+ * reasons that aren't the fee.
  */
-const GAS_FLOOR_WEI = 50_000_000_000_000_000n
+const FEE_OFFER_FLOOR_WEI = 50_000_000_000_000_000n
+/** How long the balance read may take before the offer is left out: it decides an offer, never the purchase. */
+export const FEE_BALANCE_TIMEOUT_MS = 4000
 
 /**
  * A confirmed purchase of several groups, as its dialog shows them together: still in progress while any
@@ -545,19 +551,39 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       onSwitchNetwork: () => {
         if (switching) return
         switching = true
-        requestChainSwitch(wallet, chainId).then(
-          () => {
-            if (slot.holds(op)) again()
-          },
-          (e: unknown) => {
-            switching = false
-            if (!slot.holds(op) || isRejection(e)) return
-            fail(op, `Your wallet didn’t move to ${chainLabel(chainId)}. Switch it there yourself, then try again.`, again)
-          }
-        )
+        requestChainSwitch(wallet, chainId)
+          // A wallet may add the network and stay on the one it was on (EIP-3085): only a wallet now on the
+          // purchase's network tries again, and any other keeps the offer for another press.
+          .then(() => wallet.request({ method: 'eth_chainId' }))
+          .then(
+            (current) => {
+              if (slot.holds(op) && Number(current) === chainId) again()
+              else switching = false
+            },
+            (e: unknown) => {
+              switching = false
+              if (!slot.holds(op) || isRejection(e)) return
+              fail(op, `Your wallet didn’t move to ${chainLabel(chainId)}. Switch it there yourself, then try again.`, again)
+            }
+          )
       }
     })
   }
+  /** Whether `buyer` holds the fee money the switch is offered for on `chainId`: false on a failed or slow read. */
+  const feeMoney = (chainId: number, buyer: string): Promise<boolean> =>
+    new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), FEE_BALANCE_TIMEOUT_MS)
+      Promise.resolve()
+        .then(() => svc.reader().balance(chainId, buyer))
+        .then(
+          (wei) => wei >= FEE_OFFER_FLOOR_WEI,
+          () => false
+        )
+        .then((funded) => {
+          clearTimeout(timer)
+          resolve(funded)
+        })
+    })
   const showPending = (op: Operation): void => show(op, { step: 'pending' }, { onClose: () => hide(op) })
   /** The signed-in login that can buy here: its key held, and a wallet here that signs for its account. */
   const usable = (): { login: StoredLogin; buyer: string } | null => {
@@ -1278,20 +1304,16 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       case 'failed': {
         // The balance fell short between the quote and the authorization: Insufficient Funds after all.
         if (result.topUp) return refused(result.failure.message, 'your Credits balance didn’t cover the rest of it.', null, creditsFloor(result.topUp.balanceCents as UsdCents))
-        // The relay refused it, and the wallet's own transaction found the wallet on another network. Only a
-        // wallet that can pay that network's fee is offered the switch; an unreadable balance counts as short.
+        // The wallet's own transaction found the wallet on another network. Only a self-custody wallet holding
+        // the fee money is offered the switch (a managed one's balance isn't even read).
         const required = result.failure.switchTo
         if (required != null) {
-          const funded = await svc
-            .reader()
-            .balance(required, quote.buyer)
-            .then(
-              (wei) => wei >= GAS_FLOOR_WEI,
-              () => false
-            )
-          return funded
-            ? refused(switchText(required), `the rest of it needs your wallet on ${chainLabel(required)} to pay the network fee.`, 'failed', undefined, required)
-            : refused(NOT_SENT_LATER, NEVER_WENT, 'failed')
+          const feeFree = result.failure.feeFreeUnavailable === true
+          const funded = quote.kind === 'web3' && (await feeMoney(required, quote.buyer))
+          if (funded) {
+            return refused(feeFree ? switchAfterFeeFree(required) : switchDirect(required), `the rest of it needs your wallet on ${chainLabel(required)} to pay the network fee.`, 'failed', undefined, required)
+          }
+          return refused(feeFree ? FEE_FREE_UNAVAILABLE : NOT_SENT_LATER, NEVER_WENT, 'failed')
         }
         // A failed group handed nothing off, or its transaction reverted: either way this attempt is over.
         return refused(result.failure.message, result.failure.kind === 'reverted' ? REVERTED_PART : result.failure.message, result.failure.kind !== 'refused' ? 'failed' : null)
