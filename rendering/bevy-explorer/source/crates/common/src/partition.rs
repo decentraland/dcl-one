@@ -193,9 +193,9 @@ pub fn point_partition(origin: Vec3, camera: Option<(Vec3, Vec3)>, point: Vec3) 
 
 /// The content hashes behind a set of collectible urns, each once, sorted: `resolve` gives a
 /// urn's hash once its pointer is known. What an avatar's downloads are filed under.
-pub fn resolved_hashes<'a>(
-    urns: impl IntoIterator<Item = &'a str>,
-    resolve: impl FnMut(&'a str) -> Option<String>,
+pub fn resolved_hashes<U>(
+    urns: impl IntoIterator<Item = U>,
+    resolve: impl FnMut(U) -> Option<String>,
 ) -> Vec<String> {
     let mut hashes: Vec<String> = urns.into_iter().filter_map(resolve).collect();
     hashes.sort();
