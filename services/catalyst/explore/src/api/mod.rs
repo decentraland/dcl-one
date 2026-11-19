@@ -225,6 +225,10 @@ pub struct Settings {
     pub onboarding_api_key: Option<String>,
     /// `HTTP_TRUSTED_PROXY_CIDRS`: peers whose `X-Real-IP` names the client.
     pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
+    /// `REQUIRE_IDENTITY_VERIFIER`: the pickup of an identity bound to a
+    /// deep-link request needs its verifier (401 without one); off, a pickup
+    /// without one falls back to the IP check.
+    pub require_identity_verifier: bool,
 }
 
 impl Settings {
@@ -341,6 +345,7 @@ impl Settings {
                 .clone()
                 .filter(|k| !k.trim().is_empty()),
             trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
+            require_identity_verifier: config.explore.require_identity_verifier,
         }
     }
 
@@ -382,6 +387,7 @@ impl Settings {
             },
             onboarding_api_key: None,
             trusted_proxy_cidrs: Vec::new(),
+            require_identity_verifier: false,
         }
     }
 

@@ -2056,9 +2056,15 @@ identities (100 per network). No production rate is measured.
   the backups, which keep it after the row is deleted for as long as they
   are retained. A copy of the key signs for the identity's account until the
   expiration in its auth chain.
-  The pickup consumes it with `DELETE ... RETURNING` in the transaction that
-  writes its tombstone, so exactly one pickup gets it; a concurrent one waits
-  on the row, finds it gone and reads the tombstone.
+  A deep-link create may bind it to the client's `authRequestId`
+  (`auth_request_id`, lowercase), which the client derives from a verifier it
+  presents on pickup (`x-identity-verifier`). The pickup locks the row
+  (`SELECT ... FOR UPDATE`), decides, and deletes it in the transaction that
+  writes its tombstone only when it is served, expired or refused for its IP
+  without a binding, so exactly one pickup gets it; a concurrent one waits on
+  the row, finds it gone and reads the tombstone. A wrong verifier, a missing
+  one while `REQUIRE_IDENTITY_VERIFIER` is on (both 401), or a bound
+  identity's IP mismatch without one (403) leaves the row parked.
 - `auth_identity_tombstones`: why an identity is gone (`consumed`, `expired`,
   `ip_mismatch`, or NULL while parked and once evicted by the sweep or an
   operator's revoke), for the 404 bodies, kept 14 days and at most 50,000

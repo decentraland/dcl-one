@@ -577,7 +577,14 @@ function AuthRequestPage({ loaded }: { loaded: LoadedRequest }) {
         createIdentity: (sender) =>
           createIdentityFor(sender, { expirationMs: DEEPLINK_IDENTITY_EXPIRATION_MS }),
         postIdentity: (identity) =>
-          handoffWithDeadline((opts) => postIdentityHandoff(identity, loaded.authApiUrl, opts)),
+          handoffWithDeadline((opts) =>
+            postIdentityHandoff(identity, loaded.authApiUrl, {
+              ...opts,
+              // The deep link echoes this id; the requesting app derives it
+              // from the verifier it presents when it fetches the identity.
+              authRequestId: loaded.deepLinkIdValid ? loaded.id : undefined,
+            }),
+          ),
         isUserRejection,
       });
 
@@ -601,7 +608,7 @@ function AuthRequestPage({ loaded }: { loaded: LoadedRequest }) {
           return;
       }
     });
-  }, [phase, loaded.loginMethod, loaded.authApiUrl]);
+  }, [phase, loaded.loginMethod, loaded.authApiUrl, loaded.deepLinkIdValid, loaded.id]);
 
   const onRetryClientLogin = useCallback(() => {
     if (loaded.deepLinkIdValid) {
