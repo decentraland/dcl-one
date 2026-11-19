@@ -12,6 +12,7 @@ import type {
   CommunityVoiceStatus,
   ConnectivitySnapshot,
   HomeScene,
+  MapPinInfo,
   OutfitData,
   OutfitSlotData,
   OutfitsData,
@@ -1118,6 +1119,13 @@ export interface PermissionUsedMessage {
 export interface PortablesMessage {
   kind: 'portables'
   portables: PortableInfo[]
+}
+
+/** The map pins of portable experiences (scene → page, from getMapPinsStream): the whole list
+ *  on subscribe and on every change. */
+export interface MapPinsMessage {
+  kind: 'mapPins'
+  pins: MapPinInfo[]
 }
 
 /** The engine needs a password to enter the world the player is travelling to (scene → page).
@@ -2568,6 +2576,7 @@ export type SceneToPage =
   | PlatformBanMessage
   | EditorSceneResultMessage
   | PortablesMessage
+  | MapPinsMessage
 
 // ---- events ----------------------------------------------------------------
 

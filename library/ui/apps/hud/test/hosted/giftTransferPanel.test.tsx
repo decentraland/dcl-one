@@ -1,22 +1,47 @@
 // The gift's transfer panel (features/gifting/GiftTransferPanel), as the /play shell draws it.
-import { describe, it, expect, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, it, expect, vi } from 'vitest'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { ARM_MS } from '../../design'
 import { GiftTransferPanel, type GiftTransferHandlers } from '../../features/gifting/GiftTransferPanel'
 
 const RECIPIENT = { address: '0x' + 'b'.repeat(40), name: 'Bob', nameColor: '#ff0000' }
+const ITEM = { name: 'Cool Hat', rarity: 'epic' }
 const handlers = (): GiftTransferHandlers => ({ onClose: vi.fn(), onConfirm: vi.fn(), onRetry: vi.fn(), onActivity: vi.fn(), onSupport: vi.fn() })
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('the gift transfer panel', () => {
   it('asks the player to confirm the item and the recipient, with their address, before anything is signed', () => {
+    vi.useFakeTimers()
     const h = handlers()
-    render(<GiftTransferPanel view={{ step: 'confirm', recipient: RECIPIENT, item: { name: 'Cool Hat', rarity: 'epic' } }} handlers={h} />)
+    render(<GiftTransferPanel view={{ step: 'confirm', recipient: RECIPIENT, item: ITEM }} handlers={h} />)
     expect(screen.getByText('Send Gift to')).toBeTruthy()
     expect(screen.getByText(RECIPIENT.address)).toBeTruthy()
     expect(screen.getByText('Gifting an item cannot be undone.')).toBeTruthy()
+    act(() => vi.advanceTimersByTime(ARM_MS))
     fireEvent.click(screen.getByRole('button', { name: 'SEND GIFT' }))
     expect(h.onConfirm).toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'CANCEL' }))
     expect(h.onClose).toHaveBeenCalled()
+  })
+
+  it('sends nothing on a click that lands before SEND GIFT has been up a moment, as the second click of the press that opened it', () => {
+    vi.useFakeTimers()
+    const h = handlers()
+    const { rerender } = render(<GiftTransferPanel view={{ step: 'loading' }} handlers={h} />)
+    rerender(<GiftTransferPanel view={{ step: 'confirm', recipient: RECIPIENT, item: ITEM }} handlers={h} />)
+    const send = screen.getByRole('button', { name: 'SEND GIFT' })
+    expect(send.getAttribute('aria-disabled')).toBe('true')
+    fireEvent.click(send)
+    act(() => vi.advanceTimersByTime(ARM_MS - 1))
+    fireEvent.click(send)
+    expect(h.onConfirm).not.toHaveBeenCalled()
+    act(() => vi.advanceTimersByTime(1))
+    expect(send.getAttribute('aria-disabled')).toBeNull()
+    fireEvent.click(send)
+    expect(h.onConfirm).toHaveBeenCalledTimes(1)
   })
 
   it('prepares the gift for the recipient with the item, and after a while links to the delivery status', () => {

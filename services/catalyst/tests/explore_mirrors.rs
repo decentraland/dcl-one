@@ -1326,8 +1326,12 @@ async fn upsert_real_page_is_idempotent_and_serves() {
         "upsert is idempotent"
     );
 
-    let component =
-        EventsComponent::new(pool.clone(), None, "https://events.decentraland.org".into());
+    let component = EventsComponent::new(
+        pool.clone(),
+        None,
+        None,
+        "https://events.decentraland.org".into(),
+    );
     let sample_id = events[0]["id"].as_str().unwrap();
     let rec = component
         .get(sample_id)
@@ -2250,8 +2254,12 @@ async fn the_viewers_attendance_rides_in_the_list_and_get_statements() {
     .execute(&pool)
     .await
     .unwrap();
-    let component =
-        EventsComponent::new(pool.clone(), None, "https://events.decentraland.org".into());
+    let component = EventsComponent::new(
+        pool.clone(),
+        None,
+        None,
+        "https://events.decentraland.org".into(),
+    );
 
     let filters = EventListFilters {
         limit: 200,
@@ -2637,6 +2645,7 @@ async fn a_local_rsvp_outside_the_upstream_preview_keeps_the_signed_delta_estima
     events_mirror::upsert_event(&db.pool, &event).await.unwrap();
     let component = EventsComponent::new(
         db.pool.clone(),
+        None,
         None,
         "https://events.decentraland.org".into(),
     );

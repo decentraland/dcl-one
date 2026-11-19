@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod asset_source;
 mod extended_image_loader;
 
@@ -197,7 +199,6 @@ fn load_frame(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn process_frame(
     mut commands: Commands,
     q: Query<(Entity, &FrameProcess, &SceneEntity)>,
@@ -255,7 +256,6 @@ fn process_frame(
 #[derive(Component)]
 pub struct NftLoading(Handle<Nft>);
 
-#[allow(clippy::too_many_arguments)]
 fn load_nft(
     mut commands: Commands,
     q: Query<(Entity, &SceneEntity, &NftLoading)>,

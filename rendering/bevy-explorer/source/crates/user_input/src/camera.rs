@@ -10,8 +10,9 @@ use avatar::animate::{is_emoting, ActiveEmote, MaskedEmote};
 use common::{
     inputs::{Action, SystemAction, CAMERA_SET, CAMERA_ZOOM, POINTER_SET},
     structs::{
-        AppConfig, AvatarDynamicState, CameraOverride, CursorLocks, HeadSync, MoveKind, PhotoMode,
-        PrimaryCamera, PrimaryUser, PLAYER_CAMERA_FOV,
+        AppConfig, AvatarDynamicState, CameraOverride, ClientWindowFocus, CursorLocks, HeadSync,
+        MoveKind, PhotoMode, PrimaryCamera, PrimaryUser, RequestClientWindowFocus,
+        PLAYER_CAMERA_FOV,
     },
     terrain::PlayerTerrainHeight,
     util::ModifyComponentExt,
@@ -23,14 +24,12 @@ use tween::SystemTween;
 
 use crate::TRANSITION_TIME;
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub struct CinematicInitialData {
     base_yaw: f32,
     base_pitch: f32,
     base_roll: f32,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn update_camera(
     time: Res<Time>,
     mut camera: Query<(&Transform, &mut PrimaryCamera), Without<PhotoMode>>,
@@ -136,7 +135,6 @@ pub fn update_camera(
     }
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn update_camera_position(
     mut commands: Commands,
     mut camera: Query<
@@ -338,32 +336,32 @@ pub fn update_camera_position(
 }
 
 pub fn update_cursor_lock(
+    mut commands: Commands,
     locks: Res<CursorLocks>,
+    focus: Res<ClientWindowFocus>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut prev: Local<bool>,
 ) {
     let lock = !locks.0.is_empty();
 
     if lock {
-        for mut window in &mut windows {
-            if !window.focused {
-                if !*prev {
-                    // new right-click while not focussed - try to focus
-                    window.focused = true;
-                    // and skip updating window fields until focus is processed
-                    return;
-                } else {
-                    continue;
-                }
-            }
-
-            if window.cursor_options.grab_mode == CursorGrabMode::None {
-                window.cursor_options.grab_mode = CursorGrabMode::Locked;
+        if *focus == ClientWindowFocus::NoFocus {
+            if !*prev {
+                // new right-click while not focussed - try to focus
+                commands.trigger(RequestClientWindowFocus);
+                // and skip updating window fields until focus is processed
                 return;
             }
+        } else {
+            for mut window in &mut windows {
+                if window.cursor_options.grab_mode == CursorGrabMode::None {
+                    window.cursor_options.grab_mode = CursorGrabMode::Locked;
+                    return;
+                }
 
-            if window.cursor_options.visible {
-                window.cursor_options.visible = false;
+                if window.cursor_options.visible {
+                    window.cursor_options.visible = false;
+                }
             }
         }
     } else {

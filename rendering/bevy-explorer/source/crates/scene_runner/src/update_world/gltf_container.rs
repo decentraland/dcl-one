@@ -357,7 +357,6 @@ pub fn scene_gltf_loader_settings(
     }
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_gltf(
     mut commands: Commands,
     mut commands2: Commands,
@@ -1172,7 +1171,6 @@ impl NodeProcessing<'_, '_> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn update_ready_gltfs(
     mut commands: Commands,
     mut models: Query<UnprocessedGltf, Without<GltfProcessed>>,
@@ -1456,7 +1454,7 @@ fn check_gltfs_ready(
 }
 
 // debug show the gltf graph
-#[allow(clippy::type_complexity, deprecated)]
+#[allow(deprecated)]
 fn _node_graph(
     scene_entity_query: &Query<(
         Entity,
@@ -2185,7 +2183,7 @@ fn expose_gltfs(
                             active: None,
                             intensity: Some(point.intensity / (4.0 * PI)),
                             shadow: Some(true),
-                            color: Some(point.color.convert_linear_rgb()),
+                            color: Some(point.color.convert_srgb()),
                             r#type: Some(pb_light_source::Type::Point(pb_light_source::Point {})),
                             range: Some(point.range),
                             shadow_mask_texture: None,
@@ -2221,7 +2219,7 @@ fn expose_gltfs(
                             active: None,
                             intensity: Some(spot.intensity / (4.0 * PI)),
                             shadow: Some(true),
-                            color: Some(spot.color.convert_linear_rgb()),
+                            color: Some(spot.color.convert_srgb()),
                             r#type: Some(pb_light_source::Type::Spot(pb_light_source::Spot {
                                 inner_angle: Some(spot.inner_angle * 360.0 / TAU),
                                 outer_angle: Some(spot.outer_angle * 360.0 / TAU),

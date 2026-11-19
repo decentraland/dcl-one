@@ -29,6 +29,7 @@ import type {
   OutfitsData,
   LiveSceneInfo,
   LobbyStage,
+  MapPinInfo,
   WorldAccessVerdict,
   PermanentPermissionItem,
   PermissionRequestEvent,
@@ -236,6 +237,8 @@ export type BevyApiInterface = {
   /** The portables the player can see and stop, tagged by kind: the whole list on subscribe and on
    *  every change (never the HUD's own scene or a startup portable). */
   getPortablesStream: () => Promise<AsyncIterable<PortableInfo[]>>
+  /** The map pins of portable experiences: the whole list on subscribe and on every change. */
+  getMapPinsStream: () => Promise<AsyncIterable<MapPinInfo[]>>
   /** Live scenes, for resolving a permission request's scene name (hash → title) and the current
    *  scene to reload — `/reload` uses `parcels`/`isSuper` to target the scene the player stands in,
    *  never the bridge. */

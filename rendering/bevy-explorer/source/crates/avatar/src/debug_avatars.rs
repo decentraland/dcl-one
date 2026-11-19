@@ -352,7 +352,6 @@ fn forget_displayed_profile(
 #[derive(Component)]
 struct MissingProfile(Address);
 
-#[allow(clippy::type_complexity)]
 fn look_command(
     mut cmd: ConsoleCommand<LookCommand>,
     mut commands: Commands,

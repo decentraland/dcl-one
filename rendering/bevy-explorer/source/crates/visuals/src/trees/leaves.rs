@@ -145,7 +145,9 @@ mod tests {
         let bytes = image.data.unwrap();
         assert_eq!(bytes.len(), 349_524);
         let leaf_area: Vec<_> = bytes[..SIZE * SIZE * 4]
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .enumerate()
             .filter(|(i, _)| i % SIZE < SIZE * 7 / 8)
             .collect();

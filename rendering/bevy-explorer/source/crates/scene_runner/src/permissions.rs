@@ -49,7 +49,6 @@ impl PermissionManager {
     }
 }
 
-#[allow(clippy::type_complexity)]
 #[derive(SystemParam)]
 pub struct Permission<'w, 's, T: Send + Sync + 'static> {
     pub success: Local<'s, Vec<(T, PermissionType, Option<String>, Entity)>>,

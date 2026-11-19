@@ -625,14 +625,12 @@ def testnet_env():
         'ETH_RPC_URL': 'https://rpc.decentraland.org/sepolia',
         'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/amoy',
         'TRADE_RPC_URLS': '80002=https://rpc.decentraland.org/amoy,11155111=https://rpc.decentraland.org/sepolia',
-        # Gasless approvals and cancels: the local relay admits Amoy's Decentraland contracts (the bundled
-        # contract-addresses list under `amoy`) and forwards to the .zone transactions API, which pays testnet
-        # gas. COLLECTIONS_CHAIN_ID also keys the chain the relay verifies signatures and collections on.
+        # Gasless approvals, cancels and Credits purchases: the local relay admits Amoy's Decentraland contracts
+        # (the contract-addresses list under `amoy`) and pays testnet gas through the .zone transactions API, or
+        # through a relayer key of the stack's own; relayer_env picks which, and the list with it.
+        # COLLECTIONS_CHAIN_ID also keys the chain the relay verifies signatures and collections on.
         'COLLECTIONS_CHAIN_ID': '80002',
         'CONTRACT_ADDRESSES_CHAIN_KEY': 'amoy',
-        # The published list: the bundled copy predates MarketplaceV5, the off-chain V3 marketplace whose
-        # cancelSignature the Shop relays.
-        'CONTRACT_ADDRESSES_URL': 'https://contracts.decentraland.org/addresses.json',
         'TRANSACTIONS_UPSTREAM_URL': 'https://transactions-api.decentraland.zone',
         # Cancels and executions on chain close local trades: the trade-events index on the testnets,
         # through TRADE_RPC_URLS' 80002 and 11155111 entries (it checks each endpoint's eth_chainId).
@@ -660,10 +658,10 @@ def testnet_env():
         # it is refused at authorization). The usage index reads its CreditUsed events over RPC_ENDPOINT_POLYGON
         # on COLLECTIONS_CHAIN_ID; POST /credits/authorize signs only while that index is ready. Mock card
         # top-ups grant test credits with no charge.
-        # The relay doesn't admit this manager yet: it takes the contracts CONTRACT_ADDRESSES_URL lists (Amoy's
-        # entry is the shared one) and verified collections. So a self-custody wallet buys with Credits through
-        # its own transaction (the checkout falls back to it, paying its own gas); an in-app (managed) wallet,
-        # which can only relay, can't buy with Credits on this profile until the relay admits the manager.
+        # Without a relayer key the relay refuses this manager itself (the published list doesn't carry it, and the
+        # .zone transactions API wouldn't relay it either), marked as not sent: a self-custody wallet then buys
+        # with Credits through its own transaction, paying its own gas, and an in-app (managed) wallet, which can
+        # only relay, can't. With one (relayer_env) the relay admits it and the stack signs and pays the purchase.
         'CREDITS_MANAGER_CONTRACT': '0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c',
         # The same manager, for the Sites build: the in-world Shop's shell refuses a credit signed for any other.
         'VITE_SHOP_CREDITS_MANAGER': '0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c',
@@ -675,7 +673,43 @@ def testnet_env():
         # MANA only. This profile sets the mock card on Amoy alone, and the stack listens on 127.0.0.1.
         'CREDITS_MOCK_CARD': 'true',
         **credits_signer_env(),
+        **relayer_env(),
         **name_simulation_env(),
+    }
+
+
+# The highest fee per gas the stack's own relayer signs on Amoy: 200 gwei (Amoy's gas price read 30 gwei on
+# 2026-11-18). With the relay's 1.5M gas cap (MAX_GAS_LIMIT) one transaction costs it at most 0.3 test POL.
+TESTNET_RELAYER_MAX_FEE_PER_GAS_WEI = '200000000000'
+
+
+# The dApps' published contract map, whose `amoy` entry never carries dcl-one's own CreditsManager.
+PUBLISHED_CONTRACT_ADDRESSES_URL = 'https://contracts.decentraland.org/addresses.json'
+
+
+def relayer_env():
+    """Who pays the testnet relay's gas, and the contract list that goes with it (testnet only).
+
+    Without a relayer key the relay forwards to the .zone transactions API and admits the published list, which
+    lacks dcl-one's Amoy CreditsManager: the relay refuses that manager itself, marked as not sent, so a
+    self-custody wallet falls back to its own transaction instead of a forward .zone would reject unmarked.
+
+    With one (relayer.key in the gitignored stack state: a testnet-only key, funded with Amoy POL) the relay's
+    direct signer takes every meta-transaction it admits (purchases, approvals, cancels) instead of the forward,
+    capped at TESTNET_RELAYER_MAX_FEE_PER_GAS_WEI, and admits the bundled `amoy` entry, which carries the manager
+    (CONTRACT_ADDRESSES_URL unset). The key signs on Amoy alone: NAMES_SIGNER_ENABLED=false keeps it off the NAMEs
+    chain, whose ETH_RPC_URL is Sepolia's here while NAMES_CHAIN_ID stays mainnet's."""
+    key = STATE / 'relayer.key'
+    # An empty file reads as no key on the server, so it must not turn the signer on.
+    if not key.is_file() or not key.read_text().strip():
+        return {'CONTRACT_ADDRESSES_URL': PUBLISHED_CONTRACT_ADDRESSES_URL}
+    if key.stat().st_mode & 0o077:
+        print(f'Warning: {key} is readable by other users; chmod 600 it.', file=sys.stderr)
+    return {
+        'META_TX_BROADCAST_ENABLED': 'true',
+        'RELAYER_PRIVATE_KEY_FILE': str(key),
+        'RELAYER_MAX_FEE_PER_GAS_WEI': TESTNET_RELAYER_MAX_FEE_PER_GAS_WEI,
+        'NAMES_SIGNER_ENABLED': 'false',
     }
 
 
