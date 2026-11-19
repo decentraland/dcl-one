@@ -96,6 +96,8 @@ export type NavBarLabels = {
 /** Slot content owns its labels, loading state and events. Controls remount when moved between header and drawer. */
 type NavBarCommonProps = {
   sections: readonly NavBarSection[]
+  /** Drawer disclosures, when supplied. Other callers reuse sections as expanded groups. */
+  mobileSections?: readonly NavBarSection[]
   /** Defaults to `/`. */
   logoHref?: string
   /** Numeric balances move into the lower panel while the mobile menu is open. */
@@ -217,31 +219,55 @@ const linkRenderer =
     LinkComponent && isInternalHref(props.href) ? <LinkComponent {...props} /> : <a {...props} />
 
 /** Closes an open popup on Escape (returning focus to its trigger), on an outside press and when focus leaves it. */
-function usePopup(
+function usePopupDismissal(
   rootRef: RefObject<HTMLElement | null>,
-  triggerRef: RefObject<HTMLButtonElement | null>
+  triggerRef: RefObject<HTMLButtonElement | null>,
+  open: boolean,
+  close: () => void,
+  closeOutsideOnEscape = false
 ) {
-  const [open, setOpen] = useState(false)
   useEffect(() => {
     if (!open) return
     const onPointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+      if (!rootRef.current?.contains(event.target as Node)) close()
+    }
+    const onOutsideKey = (event: KeyboardEvent) => {
+      if (
+        event.key === 'Escape' &&
+        !event.defaultPrevented &&
+        !rootRef.current?.contains(event.target as Node)
+      )
+        close()
     }
     document.addEventListener('pointerdown', onPointerDown)
-    return () => document.removeEventListener('pointerdown', onPointerDown)
-  }, [open, rootRef])
+    if (closeOutsideOnEscape) document.addEventListener('keydown', onOutsideKey)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onOutsideKey)
+    }
+  }, [close, closeOutsideOnEscape, open, rootRef])
   const onKeyDown = (event: ReactKeyboardEvent) => {
     if (event.defaultPrevented || event.key !== 'Escape' || !open) return
     event.stopPropagation()
-    setOpen(false)
+    close()
     triggerRef.current?.focus()
   }
   const onBlur = (event: ReactFocusEvent) => {
     // Only focus moving elsewhere closes: a null relatedTarget is a click on non-focusable content (or Safari not
     // focusing a clicked link), and outside presses are the pointerdown handler's.
     const next = event.relatedTarget as Node | null
-    if (next && !event.currentTarget.contains(next)) setOpen(false)
+    if (next && !event.currentTarget.contains(next)) close()
   }
+  return { onKeyDown, onBlur }
+}
+
+function usePopup(
+  rootRef: RefObject<HTMLElement | null>,
+  triggerRef: RefObject<HTMLButtonElement | null>
+) {
+  const [open, setOpen] = useState(false)
+  const close = useCallback(() => setOpen(false), [])
+  const { onKeyDown, onBlur } = usePopupDismissal(rootRef, triggerRef, open, close)
   const toggle = () => {
     triggerRef.current?.focus({ preventScroll: true })
     setOpen((value) => !value)
@@ -249,20 +275,50 @@ function usePopup(
   return { open, setOpen, toggle, onKeyDown, onBlur }
 }
 
+type SectionActivation = 'hover' | 'pressed'
+
 function SectionDropdown({
   section,
-  renderLink
+  renderLink,
+  compact,
+  activation,
+  onOpen,
+  onClose
 }: {
   section: Extract<NavBarSection, { items: readonly NavBarLink[] }>
   renderLink: LinkRenderer
+  compact: boolean
+  activation: SectionActivation | undefined
+  onOpen: (activation: SectionActivation) => void
+  onClose: () => void
 }) {
   const rootRef = useRef<HTMLLIElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const listId = useId()
-  const { open, setOpen, toggle, onKeyDown, onBlur } = usePopup(rootRef, triggerRef)
+  const open = activation !== undefined
+  const { onKeyDown, onBlur } = usePopupDismissal(
+    rootRef,
+    triggerRef,
+    open,
+    onClose,
+    activation === 'hover'
+  )
   const active = section.active || section.items.some((item) => item.active)
   return (
-    <li ref={rootRef} className={styles.section} onKeyDown={onKeyDown} onBlur={onBlur}>
+    <li
+      ref={rootRef}
+      className={styles.section}
+      onKeyDown={onKeyDown}
+      onBlur={onBlur}
+      onPointerEnter={(event) => {
+        if (event.pointerType === 'mouse' && !open) onOpen('hover')
+      }}
+      onPointerLeave={(event) => {
+        if (event.pointerType !== 'mouse' || activation !== 'hover') return
+        const focused = event.currentTarget.contains(document.activeElement)
+        if (!focused || document.activeElement === triggerRef.current) onClose()
+      }}
+    >
       <button
         ref={triggerRef}
         type="button"
@@ -270,25 +326,99 @@ function SectionDropdown({
         data-active={active || undefined}
         aria-expanded={open}
         aria-controls={listId}
-        onClick={toggle}
+        onClick={(event) => {
+          event.currentTarget.focus({ preventScroll: true })
+          if (activation === 'pressed') onClose()
+          else onOpen('pressed')
+        }}
       >
         {section.label}
         <GeneralDownArrow className={styles.chevron} size={20} aria-hidden="true" />
       </button>
-      <ul id={listId} className={styles.dropdown} hidden={!open} tabIndex={-1}>
+      <ul
+        id={listId}
+        className={styles.dropdown}
+        data-compact={compact || undefined}
+        hidden={!open}
+        tabIndex={-1}
+      >
         {section.items.map((item, index) => (
           <li key={index}>
             {renderLink({
               href: item.href,
               className: styles.dropdownLink,
               'aria-current': item.active ? 'page' : undefined,
-              onClick: () => setOpen(false),
+              onClick: onClose,
               children: item.label
             })}
           </li>
         ))}
       </ul>
     </li>
+  )
+}
+
+function DrawerSection({
+  section,
+  renderLink,
+  expanded,
+  onToggle,
+  onNavigate
+}: {
+  section: Extract<NavBarSection, { items: readonly NavBarLink[] }>
+  renderLink: LinkRenderer
+  expanded: boolean
+  onToggle?: () => void
+  onNavigate: () => void
+}) {
+  const listId = useId()
+  const items = (
+    <ul className={styles.drawerItems}>
+      {section.items.map((item, index) => (
+        <li key={index}>
+          {renderLink({
+            href: item.href,
+            className: styles.drawerItemLink,
+            'aria-current': item.active ? 'page' : undefined,
+            onClick: onNavigate,
+            children: item.label
+          })}
+        </li>
+      ))}
+    </ul>
+  )
+  if (!onToggle)
+    return (
+      <>
+        <p className={styles.drawerGroup}>{section.label}</p>
+        {items}
+      </>
+    )
+
+  return (
+    <>
+      <button
+        type="button"
+        className={styles.drawerToggle}
+        aria-expanded={expanded}
+        aria-controls={listId}
+        onClick={(event) => {
+          event.currentTarget.focus({ preventScroll: true })
+          onToggle()
+        }}
+      >
+        {section.label}
+        <GeneralDownArrow className={styles.chevron} size={20} aria-hidden="true" />
+      </button>
+      <div
+        id={listId}
+        className={styles.drawerDisclosure}
+        inert={!expanded}
+        aria-hidden={!expanded || undefined}
+      >
+        <div className={styles.drawerDisclosureClip}>{items}</div>
+      </div>
+    </>
   )
 }
 
@@ -520,7 +650,10 @@ function AccountMenu({
   )
 }
 
+type DrawerExitFrame = { clipPath: string; opacity: string }
+
 function Drawer({
+  compact,
   closingFrom,
   panelRef,
   onExited,
@@ -531,7 +664,8 @@ function Drawer({
   onDesktop,
   children
 }: {
-  closingFrom: string | null
+  compact: boolean
+  closingFrom: DrawerExitFrame | null
   panelRef: RefObject<HTMLDivElement | null>
   onExited: () => void
   scopeRef: RefObject<HTMLDivElement | null>
@@ -665,16 +799,22 @@ function Drawer({
       <div
         ref={panelRef}
         className={styles.drawer}
+        data-compact={compact || undefined}
         inert={closingFrom !== null}
         data-exiting={closingFrom !== null || undefined}
         style={
           closingFrom === null
             ? undefined
-            : ({ '--drawer-exit-from': closingFrom } as CSSProperties)
+            : ({
+                '--drawer-exit-from': closingFrom.clipPath,
+                '--drawer-exit-opacity': closingFrom.opacity
+              } as CSSProperties)
         }
         data-testid="navbar-panel"
         data-entry-revealed={entryRevealed || undefined}
-        onFocusCapture={() => setEntryRevealed(true)}
+        onFocusCapture={(event) => {
+          if (!compact || event.target.matches(':focus-visible')) setEntryRevealed(true)
+        }}
         onAnimationEnd={(event) => {
           if (event.target === event.currentTarget) setEntryRevealed(true)
         }}
@@ -687,6 +827,7 @@ function Drawer({
 
 export function NavBar({
   sections,
+  mobileSections,
   logoHref = '/',
   account,
   signIn: signInAction,
@@ -715,7 +856,12 @@ export function NavBar({
   const format = useMemo(() => numberFormat(locale), [locale])
   const renderLink = linkRenderer(linkComponent)
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [drawerClosingFrom, setDrawerClosingFrom] = useState<string | null>(null)
+  const [expandedDrawerSection, setExpandedDrawerSection] = useState<number>()
+  const [desktopSection, setDesktopSection] = useState<{
+    index: number
+    activation: SectionActivation
+  }>()
+  const [drawerClosingFrom, setDrawerClosingFrom] = useState<DrawerExitFrame | null>(null)
   const drawerPanelRef = useRef<HTMLDivElement>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const drawerId = useId()
@@ -723,13 +869,18 @@ export function NavBar({
   const count = unreadCount(notifications?.count)
   const navRef = useRef<HTMLElement>(null)
   const dismissDrawer = useCallback(() => {
+    setExpandedDrawerSection(undefined)
     setDrawerClosingFrom(null)
     setDrawerOpen(false)
   }, [])
   const requestDrawerExit = useCallback(() => {
     const panel = drawerPanelRef.current
-    const clip = panel ? getComputedStyle(panel).clipPath : 'none'
-    setDrawerClosingFrom((current) => current ?? (clip === 'none' ? 'inset(0)' : clip))
+    const style = panel ? getComputedStyle(panel) : undefined
+    const clip = style?.clipPath
+    const opacity = style?.opacity || '1'
+    setDrawerClosingFrom(
+      (current) => current ?? { clipPath: !clip || clip === 'none' ? 'inset(0)' : clip, opacity }
+    )
     menuButtonRef.current?.focus({ preventScroll: true })
   }, [])
   const closeDrawer = useCallback(() => {
@@ -800,7 +951,19 @@ export function NavBar({
           <ul className={styles.sections} hidden={drawerOpen}>
             {sections.map((section, index) =>
               section.items ? (
-                <SectionDropdown key={index} section={section} renderLink={renderLink} />
+                <SectionDropdown
+                  key={index}
+                  section={section}
+                  renderLink={renderLink}
+                  compact={mobileSections !== undefined}
+                  activation={
+                    desktopSection?.index === index ? desktopSection.activation : undefined
+                  }
+                  onOpen={(activation) => setDesktopSection({ index, activation })}
+                  onClose={() =>
+                    setDesktopSection((current) => (current?.index === index ? undefined : current))
+                  }
+                />
               ) : (
                 <li key={index} className={styles.section}>
                   {renderLink({
@@ -870,8 +1033,10 @@ export function NavBar({
             aria-haspopup={drawerOpen ? undefined : 'dialog'}
             onClick={(event) => {
               event.currentTarget.focus({ preventScroll: true })
-              if (!drawerOpen) setDrawerOpen(true)
-              else if (drawerClosingFrom !== null) setDrawerClosingFrom(null)
+              if (!drawerOpen) {
+                setDesktopSection(undefined)
+                setDrawerOpen(true)
+              } else if (drawerClosingFrom !== null) setDrawerClosingFrom(null)
               else requestDrawerExit()
             }}
           >
@@ -896,6 +1061,7 @@ export function NavBar({
         </div>
         {drawerOpen ? (
           <Drawer
+            compact={mobileSections !== undefined}
             closingFrom={drawerClosingFrom}
             panelRef={drawerPanelRef}
             onExited={dismissDrawer}
@@ -906,25 +1072,29 @@ export function NavBar({
             onDesktop={closeDrawerOnDesktop}
           >
             <ul className={styles.drawerSections}>
-              {sections.map((section, index) => (
-                <li key={index} className={styles.drawerSection}>
+              {(mobileSections ?? sections).map((section, index) => (
+                <li
+                  key={index}
+                  className={styles.drawerSection}
+                  data-expanded={
+                    Boolean(section.items && expandedDrawerSection === index) || undefined
+                  }
+                >
                   {section.items ? (
-                    <>
-                      <p className={styles.drawerGroup}>{section.label}</p>
-                      <ul className={styles.drawerItems}>
-                        {section.items.map((item, itemIndex) => (
-                          <li key={itemIndex}>
-                            {renderLink({
-                              href: item.href,
-                              className: styles.drawerItemLink,
-                              'aria-current': item.active ? 'page' : undefined,
-                              onClick: closeDrawer,
-                              children: item.label
-                            })}
-                          </li>
-                        ))}
-                      </ul>
-                    </>
+                    <DrawerSection
+                      section={section}
+                      renderLink={renderLink}
+                      expanded={mobileSections === undefined || expandedDrawerSection === index}
+                      onToggle={
+                        mobileSections === undefined
+                          ? undefined
+                          : () =>
+                              setExpandedDrawerSection((current) =>
+                                current === index ? undefined : index
+                              )
+                      }
+                      onNavigate={closeDrawer}
+                    />
                   ) : (
                     renderLink({
                       href: section.href,

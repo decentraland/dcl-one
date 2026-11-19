@@ -1256,3 +1256,94 @@ describe('when the mobile menu lists sections with and without items', () => {
     expect(links.map((link) => link.getAttribute('aria-current'))).toEqual([null, 'page'])
   })
 })
+
+describe('when the desktop navigation is used with a mouse', () => {
+  let user: ReturnType<typeof userEvent.setup>
+  let discover: HTMLElement
+  let learn: HTMLElement
+
+  beforeEach(() => {
+    user = userEvent.setup()
+    render(<NavBar sections={sections} signIn={{ href: '/sign-in' }} />)
+    discover = screen.getByRole('button', { name: 'Discover' })
+    learn = screen.getByRole('button', { name: 'Learn' })
+  })
+
+  it('should keep the disclosure open when clicking its hovered trigger', async () => {
+    await user.hover(discover)
+    expect(discover).toHaveAttribute('aria-expanded', 'true')
+    await user.click(discover)
+    expect(discover).toHaveAttribute('aria-expanded', 'true')
+    await user.unhover(discover)
+    expect(discover).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('should keep the disclosure open as the pointer enters a nested link', async () => {
+    await user.hover(discover)
+    await user.hover(screen.getByRole('link', { name: 'Jump in' }))
+    expect(discover).toHaveAttribute('aria-expanded', 'true')
+    await user.unhover(discover)
+    expect(discover).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('should dismiss a hover disclosure by Escape without moving keyboard focus', async () => {
+    const home = screen.getByRole('link', { name: 'Decentraland home' })
+    home.focus()
+    await user.hover(discover)
+    expect(discover).toHaveAttribute('aria-expanded', 'true')
+    await user.keyboard('{Escape}')
+    expect(discover).toHaveAttribute('aria-expanded', 'false')
+    expect(home).toHaveFocus()
+  })
+
+  it('should open only the hovered section after another section was clicked', async () => {
+    await user.click(discover)
+    await user.hover(learn)
+    expect(discover).toHaveAttribute('aria-expanded', 'false')
+    expect(learn).toHaveAttribute('aria-expanded', 'true')
+  })
+})
+
+describe('when the public drawer has its own navigation', () => {
+  let user: ReturnType<typeof userEvent.setup>
+  let dialog: HTMLElement
+  let discover: HTMLElement
+  let learn: HTMLElement
+
+  beforeEach(async () => {
+    user = userEvent.setup()
+    render(
+      <NavBar
+        sections={[{ label: 'Learn', href: '/blog' }]}
+        mobileSections={sections}
+        signIn={{ href: '/sign-in' }}
+      />
+    )
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
+    dialog = screen.getByRole('dialog', { name: 'Menu' })
+    discover = within(dialog).getByRole('button', { name: 'Discover' })
+    learn = within(dialog).getByRole('button', { name: 'Learn' })
+  })
+
+  it('should open collapsed and expand one group at a time', async () => {
+    expect(within(dialog).queryByRole('link', { name: 'Jump in' })).toBeNull()
+    await user.click(discover)
+    expect(within(dialog).getByRole('link', { name: 'Jump in' })).toBeVisible()
+    await user.click(learn)
+    expect(discover).toHaveAttribute('aria-expanded', 'false')
+    expect(within(dialog).queryByRole('link', { name: 'Jump in' })).toBeNull()
+    expect(within(dialog).getByRole('link', { name: 'Blog' })).toBeVisible()
+  })
+
+  it('should close on selection and reset the expanded group on reopen', async () => {
+    await user.click(discover)
+    await user.click(within(dialog).getByRole('link', { name: 'Jump in' }))
+    const trigger = screen.getByRole('button', { name: 'Open menu' })
+    expect(trigger).toHaveFocus()
+    await user.click(trigger)
+    expect(screen.getByRole('button', { name: 'Discover' })).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    )
+  })
+})

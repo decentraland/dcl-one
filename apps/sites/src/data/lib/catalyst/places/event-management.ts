@@ -24,16 +24,44 @@ export async function loadEventProfile(identity: AuthIdentity, signal?: AbortSig
   return profile;
 }
 
-export async function loadManagedEvents(identity: AuthIdentity, options: { own: boolean; offset: number; limit: number; search?: string }, signal?: AbortSignal) {
+export async function loadOwnedEvents(identity: AuthIdentity, options: { offset: number; limit: number; search?: string }, signal?: AbortSignal) {
   const raw = await signedGetJSON("/events/api/events", {
     identity, signal,
-    query: { list: options.own ? "all" : "active", owner: options.own || undefined, limit: options.limit + 1, offset: options.offset, search: options.search || undefined, order: "desc", ...(!options.own ? { approved: false, rejected: false, deleted: false } : {}) },
+    query: { list: "all", owner: true, limit: options.limit + 1, offset: options.offset, search: options.search || undefined, order: "desc" },
   });
+  return eventPage(raw, options.offset, options.limit);
+}
+
+function eventPage(raw: unknown, offset: number, limit: number) {
   const envelope = EventList.parse(raw);
   const rows = Array.isArray(envelope.data) ? envelope.data : envelope.data.events;
-  const events = rows.slice(0, options.limit);
+  const events = rows.slice(0, limit);
   const total = Array.isArray(envelope.data) ? envelope.total : envelope.data.total;
-  return { events, hasMore: total === undefined ? rows.length > options.limit : options.offset + events.length < total };
+  return { events, hasMore: total === undefined ? rows.length > limit : offset + events.length < total };
+}
+
+export async function loadModerationEvents(identity: AuthIdentity, signal?: AbortSignal) {
+  const limit = 100;
+  const catalogue = new Map<string, ManagedEvent>();
+  for (let offset = 0; ; offset += limit) {
+    // Wallet-signed lists include the pending rows but reserve approval filters for the admin bearer.
+    const raw = await signedGetJSON("/events/api/events", {
+      identity, signal, query: { list: "active", order: "asc", offset, limit: limit + 1 },
+    });
+    const { events, hasMore } = eventPage(raw, offset, limit);
+    const previousCount = catalogue.size;
+    for (const event of events) catalogue.set(event.id, event);
+    if (!hasMore || events.length === 0) break;
+    if (catalogue.size === previousCount) throw new Error("The moderation catalogue did not advance. Retry to reload the queue.");
+  }
+  const now = Date.now();
+  const cutoff = now - 24 * 60 * 60_000;
+  const active = [...catalogue.values()].filter(event => !event.rejected && !event.deleted_by_user && !event.deleted_by_admin);
+  return {
+    events: active.filter(event => !event.approved && Date.parse(event.next_finish_at ?? event.finish_at ?? "") > now),
+    recentlyApproved: active.filter(event => event.approved && Date.parse(event.updated_at ?? "") >= cutoff),
+    hasMore: false,
+  };
 }
 
 export async function moderateEvent(identity: AuthIdentity, id: string, action: "approve" | "reject", reason?: string): Promise<void> {

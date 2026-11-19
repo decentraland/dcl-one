@@ -29,7 +29,7 @@ pub enum Service {
     AuthApi,
     /// The sign-in web page the browser is sent to
     AuthPage,
-    /// Asset-bundle generator CDN: Bevy variants
+    /// Asset-bundle generator CDN: Bevy variants and the scenes' near-LOD descriptors
     AbgenCdn,
     /// World storage (storage delegation signing)
     Storage,
@@ -222,7 +222,7 @@ pub struct ServiceOverrides {
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
     pub auth_page: Option<String>,
 
-    /// Asset-bundle generator CDN (Bevy variants); absent =
+    /// Asset-bundle generator CDN (Bevy variants, the scenes' near-LOD descriptors); absent =
     /// `https://abgen-cdn.<base>`
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
     pub abgen_cdn: Option<String>,

@@ -1,4 +1,4 @@
-import { queryOptions, type DehydratedState } from "@tanstack/react-query";
+import { queryOptions, type DehydratedState, type QueryClient } from "@tanstack/react-query";
 
 import { CatalystError, type GetOptions } from "../client";
 import { isEnsRealm, parsePosition, type JumpPlaceRecord } from "../jump/jump";
@@ -34,6 +34,10 @@ export const eventsPageKeys = {
   place: (target: PlaceTarget) =>
     ["events", "place", "world" in target ? `world:${target.world}` : `position:${target.position.join(",")}`] as const,
 };
+
+export function invalidateEventsAfterWrite(client: QueryClient) {
+  return client.invalidateQueries({ queryKey: eventsPageKeys.all });
+}
 
 export type LiveNowData = { events: Event[]; places: Place[] };
 
