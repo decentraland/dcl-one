@@ -788,7 +788,6 @@ fn spawn_containers(
 /// container under the stand-in's root; stopping despawns them, hides the root and empties its
 /// resource lookup, so the scene materials go and, once no live scene holds them, the glTFs with
 /// their textures and meshes. The colliders part stays.
-#[allow(clippy::type_complexity)]
 fn update_lod_visuals(
     mut commands: Commands,
     mut lods: Query<(

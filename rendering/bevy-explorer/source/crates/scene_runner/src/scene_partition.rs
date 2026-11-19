@@ -75,7 +75,6 @@ pub(crate) fn camera_facing(
         .map(|camera| (camera.translation(), camera.forward().as_vec3()))
 }
 
-#[allow(clippy::type_complexity)]
 pub fn update_scene_partitions(
     camera: Query<&GlobalTransform, (With<PrimaryCamera>, With<Camera>)>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,

@@ -68,6 +68,7 @@ import panelSearch from '../../assets/map/panel/search.png'
 import panelShare from '../../assets/map/panel/share.png'
 import panelTwitter from '../../assets/map/panel/twitter.png'
 import panelWarning from '../../assets/map/panel/warning.png'
+import questPin from '../../assets/map/quest/quest-pin.png'
 
 export const CAT_ICONS: Record<string, string> = {
   all: catAll, art: catArt, business: catBusiness, education: catEducation, fashion: catFashion,
@@ -94,7 +95,8 @@ export const MARKER_ART = {
   home: markersHome,
   live: markersLive,
   parcelSelector: markersParcelSelector,
-  poi: markersPoi
+  poi: markersPoi,
+  quest: questPin
 } as const
 
 export const MAP_ICONS = {
@@ -102,6 +104,7 @@ export const MAP_ICONS = {
   centerPlayer: iconsCenterPlayer,
   layerLive: iconsLayerLive,
   layerPoi: iconsLayerPoi,
+  layerQuest: questPin,
   layers: iconsLayers,
   parcelsView: iconsParcelsView,
   plus: iconsPlus,

@@ -432,6 +432,21 @@ describe("profile route, creations and assets", () => {
     expect(screen.getByText("Alice", { selector: "article *" })).toBeTruthy();
   });
 
+  it("opens another profile's creations on the default category", async () => {
+    const B = "0x1111111111111111111111111111111111111111";
+    net.fetchProfile.mockResolvedValue(avatar("Alice"));
+    net.fetchProfileCreations.mockResolvedValue({ items: [hat], received: 1, total: 1 });
+    const router = mount(`/profile/${A}/creations`);
+    await screen.findByRole("link", { name: "Billyjuice" });
+    await act(async () => screen.getByRole("tab", { name: "Emotes" }).click());
+    expect(screen.getByRole("tab", { name: "Emotes" }).getAttribute("aria-selected")).toBe("true");
+
+    await act(async () => router.navigate(`/profile/${B}/creations`));
+
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Wearables" }).getAttribute("aria-selected")).toBe("true"));
+    expect(net.fetchProfileCreations).toHaveBeenLastCalledWith(B, expect.objectContaining({ category: "wearable" }), expect.anything());
+  });
+
   it("shows the owner's assets on their own profile", async () => {
     auth.state = { isConnected: true, address: A, identity };
     net.fetchProfile.mockResolvedValue(avatar("Alice"));

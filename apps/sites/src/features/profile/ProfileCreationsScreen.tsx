@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Button, ShopCard, ShopCardPrice, type ShopCardCreator } from "@dcl/one-ui";
 import { BackpackUpperBody, GeneralSecondaryBarEmotes } from "@dcl/one-ui/foundations/icons";
 
-import { assetPage } from "@/core/lib/shop/redirects";
+import { accountPage, assetPage } from "@/core/lib/shop/redirects";
 import { shortAddress } from "@/data/lib/catalyst/format/address";
 import type { CreationsCategory, ProfileCreation } from "@/data/lib/catalyst/marketplace/profile-collectibles";
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
@@ -38,7 +38,7 @@ export type ProfileCreationsScreenProps = {
 
 /** The Shop page listing everything a creator has published, the source's "View all". */
 export function creatorShopHref(address: string): string {
-  return `/shop/accounts/${encodeURIComponent(address.toLowerCase())}`;
+  return accountPage(address);
 }
 
 /** The profile's name, or its short address while it has none. */

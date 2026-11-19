@@ -29,7 +29,7 @@ import CategoryFlap from "./CategoryFlap";
 import PriceTag, { formatCredits, formatCreditsFull } from "./PriceTag";
 import SaleTag from "./SaleTag";
 import { useShopQuery } from "../query";
-import { publicThumbnail, publicThumbnailSet } from "../../../data/thumbnail";
+import { publicThumbnail, publicThumbnailSet, useThumbnailPublicBase } from "../../../data/thumbnail";
 import coin from "./assets/credits-coin.svg?url";
 import "./assetcard.css";
 
@@ -142,10 +142,11 @@ export function CardCreator({ address, name }: { address: string; name?: string 
 }
 
 export default function AssetCard({ item, mode = "shop", source = "grid", position, creatorName }: AssetCardProps) {
+  const thumbnailBase = useThumbnailPublicBase();
   const { session } = useShopWallet();
   const lines = useCart((s) => s.lines);
   const [thumbFailures, setThumbFailures] = useState(0);
-  const thumbSource = item.thumbnail ? (thumbFailures ? item.thumbnail : publicThumbnail(item.thumbnail, 320)) : undefined;
+  const thumbSource = item.thumbnail ? (thumbFailures ? item.thumbnail : publicThumbnail(item.thumbnail, 320, thumbnailBase)) : undefined;
   const early = position !== undefined && position < 10;
   // A browse card, in either mode (a creator's unlisted items and the off-catalogue grids are view cards), says
   // NOT FOR SALE for a mint with no copies left, as upstream's AssetCard: to a buyer the two mean the same.
@@ -237,7 +238,7 @@ export default function AssetCard({ item, mode = "shop", source = "grid", positi
         {thumbSource && thumbFailures < 2 ? (
           <img className="shop-card__img" src={thumbSource} alt="" loading={early ? "eager" : "lazy"} decoding="async"
             fetchPriority={early && source === "grid" && position! < 5 ? "high" : undefined}
-            srcSet={thumbFailures ? undefined : publicThumbnailSet(item.thumbnail, [320, 640])} sizes="(max-width: 640px) 45vw, 240px"
+            srcSet={thumbFailures ? undefined : publicThumbnailSet(item.thumbnail, [320, 640], thumbnailBase)} sizes="(max-width: 640px) 45vw, 240px"
             onError={() => setThumbFailures(n => (thumbSource === item.thumbnail ? 2 : n + 1))} />
         ) : null}
       </div>

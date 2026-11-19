@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 #[cfg(feature = "tween_debug")]
 mod tween_debug;
 
@@ -595,7 +597,6 @@ fn set_perspective_fov(projection: &mut Option<Mut<Projection>>, fov: Option<f32
     }
 }
 
-#[allow(clippy::type_complexity)]
 pub fn update_system_tween(
     mut commands: Commands,
     mut q: Query<(

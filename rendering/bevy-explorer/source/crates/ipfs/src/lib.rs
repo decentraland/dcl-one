@@ -801,7 +801,6 @@ pub struct InFlightRealmChange {
     result: RpcResultReceiver<Result<(), String>>,
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn change_realm(
     mut change_realm_requests: EventReader<ChangeRealmEvent>,
     ipfs: Res<IpfsResource>,
@@ -2517,6 +2516,13 @@ fn b64_split_at_key<'a>(decoded: &'a str, key: &str) -> Option<(&'a str, &'a str
     Some((&decoded[..idx], &decoded[idx + marker.len()..]))
 }
 
+/// Follows the max downloads setting
+fn apply_max_downloads(config: Option<Res<common::structs::AppConfig>>, ipfs: Res<IpfsResource>) {
+    if let Some(config) = config.filter(|config| config.is_changed()) {
+        ipfs.set_concurrent_remote_count(config.max_concurrent_remotes);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -2877,12 +2883,5 @@ mod tests {
         ] {
             assert_eq!(map.hash(src).as_deref(), Some(expected), "{src}");
         }
-    }
-}
-
-/// Follows the max downloads setting
-fn apply_max_downloads(config: Option<Res<common::structs::AppConfig>>, ipfs: Res<IpfsResource>) {
-    if let Some(config) = config.filter(|config| config.is_changed()) {
-        ipfs.set_concurrent_remote_count(config.max_concurrent_remotes);
     }
 }

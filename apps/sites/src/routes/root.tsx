@@ -29,6 +29,7 @@ import SyncEngineBridge from "@/features/components/creator-hub/SyncEngineBridge
 import NotFoundPage from "@/features/not-found/NotFoundPage";
 import StatusPage from "@ui/components/StatusPage";
 import { EMBED_BOOT_SCRIPT } from "@ui/web/frames/embed";
+import { ThumbnailPublicBase } from "@ui/data/thumbnail";
 import type { ShouldRevalidateFunctionArgs } from "react-router";
 import { pageSid, parseCookies, publicResponseContext, sessionMiddleware } from "@/core/lib/telemetry/session";
 import { SitesLocaleContext, sitesLanguage, type SitesLocale } from "@ui/web/frames/sites-locale";
@@ -54,10 +55,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const commitHash = (typeof process !== "undefined" && process.env.COMMIT_HASH) || "";
   const pulseServer = (typeof process !== "undefined" && process.env.PUBLIC_PULSE_SERVER) || "";
   const catalystBase = browserCatalystBase();
+  const requestUrl = new URL(request.url);
+  const forwardedScheme = request.headers.get("x-forwarded-proto");
+  if (forwardedScheme === "http" || forwardedScheme === "https") requestUrl.protocol = forwardedScheme + ":";
   const shopApiMode = serverShopApiMode();
   const wallet = readWallet(request);
   // Only the Creator Hub reads the committee seat: other pages do not ask the node for the curation committee.
-  const committee = wallet && isCreatorPath(new URL(request.url).pathname)
+  const committee = wallet && isCreatorPath(requestUrl.pathname)
     ? await isCommitteeMember(wallet, request.signal).catch(() => false)
     : false;
   return {
@@ -70,6 +74,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     commitHash,
     pulseServer,
     catalystBase,
+    thumbnailBase: catalystBase || requestUrl.origin,
     shopApiMode,
     wallet,
     locale: context.get(publicResponseContext)
@@ -122,7 +127,7 @@ export function meta(_args: Route.MetaArgs) {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData("root") as
-    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; commitHash?: string; pulseServer?: string; catalystBase?: string; shopApiMode?: string; locale?: SitesLocale }
+    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; commitHash?: string; pulseServer?: string; catalystBase?: string; thumbnailBase?: string; shopApiMode?: string; locale?: SitesLocale }
     | undefined;
   const [selectedLocale, setLocale] = useState<SitesLocale>();
   const homeData = useRouteLoaderData("routes/_index") as { locale?: SitesLocale } | undefined;
@@ -172,7 +177,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </head>
       <body>
         <SitesLocaleContext.Provider value={{ locale, onSelect: setLocale }}>
-          {children}
+          <ThumbnailPublicBase.Provider value={data?.thumbnailBase ?? ""}>
+            {children}
+          </ThumbnailPublicBase.Provider>
         </SitesLocaleContext.Provider>
         <ScrollRestoration />
         <Scripts />
