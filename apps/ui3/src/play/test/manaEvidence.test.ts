@@ -2,7 +2,8 @@
 // to a signed send ends it as bought, and only a consumed nonce with no possible match ends it as not bought.
 import { describe, expect, it, vi } from 'vitest'
 import { encodeAbiParameters, encodeEventTopics, keccak256, parseAbiItem, type Hex } from 'viem'
-import { createManaEvidence, decodeExecution, resolveMana, type ManaEvidence, type ManaExecution } from '../shell/shop/manaEvidence'
+import { boundedReader, createManaEvidence, decodeExecution, resolveMana, type ManaEvidence, type ManaExecution } from '../shell/shop/manaEvidence'
+import { createRpcReader } from '../../shop/checkout/chain/rpc'
 import type { ManaAttemptRecord } from '../shell/shop/manaPurchase'
 
 const STORE = '0x214ffc0f0103735728dc66b61a22e4f163e275ae'
@@ -37,7 +38,6 @@ function chain(opts: { now?: bigint; executions?: ManaExecution[] | Error; unlog
   const all = [...new Map([...logged, ...(opts.unlogged ?? [])].map((e) => [`${e.blockNumber}:${e.logIndex}`, e])).values()]
   const evidence: ManaEvidence = {
     finalized: vi.fn(async () => F),
-    latest: vi.fn(async () => F + 3n),
     nonceAt: vi.fn(async (_c, _v, user, block) => (opts.now ?? 7n) - BigInt(all.filter((e) => e.user === user && e.blockNumber > block).length)),
     executions: vi.fn(async (_c, _v, from, to) => {
       if (opts.executions instanceof Error) throw opts.executions
@@ -73,9 +73,9 @@ describe('a MANA sale on chain', () => {
   it('ends not bought when the execution that consumed the nonce is another call', async () => {
     const evidence = chain({ now: 8n, executions: [execution({ user: '0x' + '22'.repeat(20) }), execution({ call: '0xbeef', logIndex: 1 })] })
     expect(await resolve(record(), evidence)).toEqual({ kind: 'failed' })
-    // The nonce read at F and from the checkpoint on; the logs of the one block that consumed N, never the range.
+    // The nonce read at F and at the checkpoint; the logs of the one block that consumed N, never the range.
     expect(evidence.nonceAt).toHaveBeenCalledWith(137, { address: STORE, metaTx: 'functionSignature' }, BUYER, F)
-    expect(evidence.nonceAt).toHaveBeenCalledWith(137, { address: STORE, metaTx: 'functionSignature' }, BUYER, 99n)
+    expect(evidence.nonceAt).toHaveBeenCalledWith(137, { address: STORE, metaTx: 'functionSignature' }, BUYER, 100n)
     expect(evidence.executions).toHaveBeenCalledWith(137, STORE, 200n, 200n)
     expect(evidence.executions).toHaveBeenCalledTimes(1)
   })
@@ -119,17 +119,19 @@ describe('a MANA sale on chain', () => {
     expect(out).toEqual({ kind: 'waiting', retry: false })
   })
 
-  it('finds the execution that consumed N before the checkpoint, reaching back past it', async () => {
-    // N went at block 98, before the checkpoint at 100 (another call while the wallet's prompt was open); ours at 98 too.
-    for (const [call, out] of [['0xbeef', { kind: 'failed' }], [CALL, { kind: 'succeeded', txHash: HASH }]] as const) {
+  it('ends not bought when N was consumed by the checkpoint, even by this very call: no send of this sale was out yet', async () => {
+    // N went at block 98, before the checkpoint at 100 (another call while the wallet's prompt was open, or the same mint
+    // bought before, read from a lagging node).
+    for (const call of ['0xbeef', CALL] as const) {
       const evidence = chain({ now: 8n, executions: [execution({ call, blockNumber: 98n })] })
-      expect(await resolve(record(), evidence)).toEqual(out)
-      expect(evidence.executions).toHaveBeenCalledWith(137, STORE, 98n, 98n)
+      expect(await resolve(record(), evidence)).toEqual({ kind: 'failed' })
+      expect(evidence.nonceAt).toHaveBeenCalledWith(137, { address: STORE, metaTx: 'functionSignature' }, BUYER, 100n)
+      expect(evidence.executions).not.toHaveBeenCalled()
     }
-    // And far back, in as few reads as halving takes.
-    const far = chain({ now: 8n, executions: [execution({ call: '0xbeef', blockNumber: 3n })] })
-    expect(await resolve(record({ fromBlock: '400' }), far)).toEqual({ kind: 'failed' })
-    expect((far.nonceAt as ReturnType<typeof vi.fn>).mock.calls.length).toBeLessThan(30)
+    // At the checkpoint block itself too: it was final before the first request left.
+    expect(await resolve(record(), chain({ now: 8n, executions: [execution({ blockNumber: 100n })] }))).toEqual({ kind: 'failed' })
+    // Just past it, this call is the sale.
+    expect(await resolve(record(), chain({ now: 8n, executions: [execution({ blockNumber: 101n })] }))).toEqual({ kind: 'succeeded', txHash: HASH })
   })
 
   it('keeps waiting, with no RETRY, on a nonce read below the sale’s (a lagging node)', async () => {
@@ -153,6 +155,22 @@ describe('a MANA sale on chain', () => {
     const evidence = createManaEvidence({ url: () => 'https://rpc.test', fetchImpl: stalled as unknown as typeof fetch, reader, readMs: 20 })
     await expect(evidence.finalized(137)).rejects.toThrow()
     await expect(evidence.receipt(137, HASH)).rejects.toThrow(/too long/)
+  })
+
+  it('aborts a bounded read past its deadline, so its request doesn’t stay open', async () => {
+    const aborted: string[] = []
+    const stalled = (_url: string, init?: RequestInit) =>
+      new Promise<Response>((_, reject) =>
+        init?.signal?.addEventListener('abort', () => {
+          aborted.push(JSON.parse(String(init.body)).method)
+          reject(new DOMException('aborted', 'AbortError'))
+        })
+      )
+    const rpc = createRpcReader({ url: () => 'https://rpc.test', fetchImpl: stalled as unknown as typeof fetch })
+    await expect(boundedReader(rpc, 20).call(137, STORE, '0x')).rejects.toThrow()
+    const evidence = createManaEvidence({ url: () => 'https://rpc.test', fetchImpl: stalled as unknown as typeof fetch, reader: rpc, readMs: 20 })
+    await expect(evidence.receipt(137, HASH)).rejects.toThrow()
+    await vi.waitFor(() => expect(aborted).toEqual(['eth_call', 'eth_getTransactionReceipt']))
   })
 
   it('never ends a sale as not bought at a venue whose evidence isn’t verified', async () => {

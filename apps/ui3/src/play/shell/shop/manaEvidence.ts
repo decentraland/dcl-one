@@ -15,14 +15,16 @@
 // It settles only on evidence read through one finalized block F:
 //  - succeeded: at a pinned venue, the execution that consumed N is this call; or a successful receipt, at or before
 //    F, of a transaction whose input is exactly the signed execution this page sent;
-//  - failed: at a pinned venue, the execution that consumed N is another call. Then no send of this sale can ever run;
+//  - failed: at a pinned venue, N was consumed by the checkpoint, or the execution that consumed it past the checkpoint
+//    is another call. Then no send of this sale can ever run;
 //  - waiting: anything else. N not consumed yet (the sale may still run), a nonce read below N (a lagging node), a
 //    finalized block below the checkpoint, a block read that isn't whole, a read that fails, or a record without what
 //    this needs. At a venue not pinned, only a transaction that is exactly the signed execution ends it, as bought.
 //
-// The block that consumed N is found from the nonce alone (it only grows), by halving between the checkpoint kept
-// before the first dispatch and F, and reaching back past the checkpoint when N was consumed before it (another call
-// ran at N while the wallet's prompt was open, or N was read from a lagging node).
+// No send of the sale can be in a block at or before the checkpoint: that block was finalized before the first relay
+// request left. So N consumed by then (another call ran at N while the wallet's prompt was open, or N was read from a
+// lagging node) ends it as not bought, whatever call consumed it. Past the checkpoint, the block that consumed N is
+// found from the nonce alone (it only grows), by halving between the checkpoint and F.
 
 import { decodeAbiParameters, decodeEventLog, keccak256, parseAbiItem, type Hex } from 'viem'
 import type { ChainId } from '@shop/model/chain'
@@ -45,7 +47,6 @@ export interface ManaExecution {
 /** The chain reads this needs, each through an explicit block where it matters. */
 export interface ManaEvidence {
   finalized(chainId: number): Promise<bigint>
-  latest(chainId: number): Promise<bigint>
   /** The venue's meta-transaction nonce for `user`, as of `block`. */
   nonceAt(chainId: number, venue: { address: string; metaTx: MetaTxStyle }, user: string, block: bigint): Promise<bigint>
   /** Every MetaTransactionExecuted of `venue` in [from, to], complete or a throw. */
@@ -58,8 +59,6 @@ export interface ManaEvidence {
 const EXECUTED = parseAbiItem('event MetaTransactionExecuted(address indexed userAddress, address indexed relayerAddress, bytes functionData)')
 /** keccak256("MetaTransactionExecuted(address,address,bytes)"): the same topic whether the addresses are indexed or not. */
 const EXECUTED_TOPIC = '0x5845892132946850460bff5a0083f71031bc5bf9aadcd40f1de79423eac9b10b'
-/** How far back past the checkpoint the block that consumed N is looked for: a step this long (in blocks) ends the reach. */
-const MAX_REACH_BACK = 1n << 24n
 /** Blocks per log request: under what the configured RPCs take in one range. */
 const LOG_SPAN = 5000n
 
@@ -68,7 +67,7 @@ const LOG_SPAN = 5000n
  * is the verified source's: Sourcify reports an exact match for every one but Amoy's OffChainMarketplaceV3, whose code
  * differs from Polygon's (exact match) only inside that source's immutable slots. Checked on 19 Nov 2026.
  */
-export const VERIFIED_VENUES: Readonly<Record<number, readonly string[]>> = {
+const VERIFIED_VENUES: Readonly<Record<number, readonly string[]>> = {
   137: [
     '0x214ffc0f0103735728dc66b61a22e4f163e275ae', // CollectionStore
     '0xe38ef22abe871513555cba89adfe45ab4f548ada', // OffChainMarketplaceV3
@@ -134,14 +133,15 @@ export function deadline<T>(promise: Promise<T>, ms: number, what = 'A chain rea
 
 /**
  * `reader` with each read bounded by `ms`: a read that stalls rejects, and whoever polls (the rails' receipt wait) reads
- * again or gives up on its own deadline, instead of waiting on it forever.
+ * again or gives up on its own deadline, instead of waiting on it forever. The read is also aborted then (its `signal`),
+ * so a reader that honours it lets the request go rather than holding it open.
  */
 export function boundedReader(reader: ChainReader, ms: number): ChainReader {
   return {
-    call: (chainId, to, data) => deadline(reader.call(chainId, to, data), ms),
-    receipt: (chainId, hash) => deadline(reader.receipt(chainId, hash), ms),
-    balance: (chainId, address) => deadline(reader.balance(chainId, address), ms),
-    code: (chainId, address) => deadline(reader.code(chainId, address), ms)
+    call: (chainId, to, data) => deadline(reader.call(chainId, to, data, AbortSignal.timeout(ms)), ms),
+    receipt: (chainId, hash) => deadline(reader.receipt(chainId, hash, AbortSignal.timeout(ms)), ms),
+    balance: (chainId, address) => deadline(reader.balance(chainId, address, AbortSignal.timeout(ms)), ms),
+    code: (chainId, address) => deadline(reader.code(chainId, address, AbortSignal.timeout(ms)), ms)
   }
 }
 
@@ -172,7 +172,6 @@ export function createManaEvidence(opts: { url?: (chainId: ChainId) => string | 
   const hex = (n: bigint): string => `0x${n.toString(16)}`
   return {
     finalized: async (chainId) => BigInt((await rpc<{ number: Hex }>(chainId, 'eth_getBlockByNumber', ['finalized', false])).number),
-    latest: async (chainId) => BigInt(await rpc<Hex>(chainId, 'eth_blockNumber', [])),
     nonceAt: async (chainId, venue, user, block) => {
       // The Shop's own nonce read, asked at the block: the reader's call is redirected through it.
       const atBlock: ChainReader = { ...opts.reader, call: (c, to, data) => rpc<Hex>(c, 'eth_call', [{ to, data }, hex(block)]) }
@@ -192,11 +191,11 @@ export function createManaEvidence(opts: { url?: (chainId: ChainId) => string | 
       const tx = await rpc<{ to: string | null; input: Hex } | null>(chainId, 'eth_getTransactionByHash', [hash])
       return tx ? { to: tx.to, input: tx.input } : null
     },
-    receipt: (chainId, hash) => deadline(opts.reader.receipt(chainId as ChainId, hash), readMs)
+    receipt: (chainId, hash) => deadline(opts.reader.receipt(chainId as ChainId, hash, AbortSignal.timeout(readMs)), readMs)
   }
 }
 
-export type ManaResolution =
+type ManaResolution =
   | { kind: 'succeeded'; txHash: Hex }
   | { kind: 'failed' }
   /**
@@ -233,19 +232,11 @@ export async function resolveMana(
   const call = keccak256(attempt.data)
   const verified = verifiedVenue(chainId, venue)
   const finalized = await evidence.finalized(chainId)
-  /**
-   * The first block whose nonce reads past N, given that F's does: halving between `from` and `to`, after reaching back
-   * from `from` in doubling steps while the block before it already reads past N.
-   */
-  const consumingBlock = async (from: bigint, to: bigint): Promise<bigint> => {
-    // Kept: nonceAt(hi) > N; and once the reach back stops, nonceAt(lo − 1) <= N.
-    let lo = from
+  /** The first block in (`after`, `to`] whose nonce reads past N, given that `after`'s doesn't and `to`'s does: by halving. */
+  const consumingBlock = async (after: bigint, to: bigint): Promise<bigint> => {
+    // Kept: nonceAt(lo − 1) <= N < nonceAt(hi).
+    let lo = after + 1n
     let hi = to
-    for (let step = 1n; lo > 0n && (await evidence.nonceAt(chainId, ctx.venue, buyer, lo - 1n)) > nonce; step *= 2n) {
-      if (step > MAX_REACH_BACK) throw new Error('The block that consumed the nonce is too far back to look for')
-      hi = lo - 1n
-      lo = lo > step ? lo - step : 0n
-    }
     while (lo < hi) {
       const mid = (lo + hi) / 2n
       if ((await evidence.nonceAt(chainId, ctx.venue, buyer, mid)) > nonce) hi = mid
@@ -288,6 +279,8 @@ export async function resolveMana(
   // N was consumed by F. At a verified venue, the execution that consumed it decides: this call is the sale, bought;
   // any other means none of these sends can ever run.
   if (verified) {
+    // Consumed by the checkpoint, before any send of the sale left: never by this sale, so it can never run.
+    if ((await evidence.nonceAt(chainId, ctx.venue, buyer, fromBlock)) > nonce) return { kind: 'failed' }
     const block = await consumingBlock(fromBlock, finalized)
     const at = await consumedN(block, block)
     if (!at) return { kind: 'waiting', retry: false }

@@ -344,7 +344,7 @@ const LIVE: ShellShopServices = {
   },
   namesMode: () => namesModeFor(nameBuild(), { settles: settlementChainId(), ethereum: ethereumChainId() }),
   manaInWorld: () => hostOr('manaInWorld', remoteFlag(REMOTE_FLAG.manaInWorld)) === true,
-  manaBalance: (buyer, chainId) => readManaBalanceWei(buyer, chainId, shopChainReader()),
+  manaBalance: (buyer, chainId) => readManaBalanceWei(buyer, chainId, boundedReader(shopChainReader(), MANA_BALANCE_TIMEOUT_MS)),
   manaGuard: manaGuardedProvider,
   manaEvidence: () => createManaEvidence({ reader: shopChainReader() }),
   manaTimeouts: () => ({ sendMs: SEND_MS, readMs: EVIDENCE_READ_MS })
@@ -493,7 +493,7 @@ const FEE_OFFER_FLOOR_WEI = 50_000_000_000_000_000n
 /** How long the balance read may take before the offer is left out: it decides an offer, never the purchase. */
 export const FEE_BALANCE_TIMEOUT_MS = 4000
 /** How long the buyer's MANA may take to read before MANA is left out of the purchase dialog. */
-export const MANA_BALANCE_TIMEOUT_MS = 4000
+const MANA_BALANCE_TIMEOUT_MS = 4000
 
 /**
  * A confirmed purchase of several groups, as its dialog shows them together: still in progress while any
@@ -1708,16 +1708,23 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
 
   /**
    * Writes `op`'s MANA attempt and reads it back: true only when storage holds exactly the record given. A checkpoint a
-   * send depends on (`latch`, the default) also refuses once any write for the operation failed this page's lifetime;
-   * the watch's tidying of a record (dropping what can't be evidence) needs only this write to stick.
+   * send depends on (`latch`, the default) also refuses once any write for the operation failed this page's lifetime,
+   * and then writes nothing: storage never says a send went that this page refused. The watch's tidying of a record
+   * (dropping what can't be evidence) needs only this write to stick.
    */
   const keeper =
     (op: Operation, opts: { latch?: boolean } = {}) =>
     (record: ManaAttemptRecord): boolean => {
+      const latched = (): boolean => opts.latch !== false && ledger.failed(op.id)
+      if (latched()) return false
       const before = op.mana
       op.mana = record
-      const kept = keep(op) && (opts.latch === false || !ledger.failed(op.id)) && JSON.stringify(ledger.saved(op.buyer ?? '', op.id)?.mana) === JSON.stringify(record)
-      if (!kept) op.mana = before
+      const kept = keep(op) && !latched() && JSON.stringify(ledger.saved(op.buyer ?? '', op.id)?.mana) === JSON.stringify(record)
+      if (!kept) {
+        op.mana = before
+        // Refused after it was written (a write failed meanwhile): what was kept before goes back.
+        if (JSON.stringify(ledger.saved(op.buyer ?? '', op.id)?.mana) === JSON.stringify(record)) keep(op)
+      }
       return kept
     }
 
@@ -1793,7 +1800,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     try {
       // Only while the chain still reads the sale's nonce: past it, the signed execution can never run.
       const timeouts = svc.manaTimeouts()
-      const read = await deadline(readMetaTxNonce(svc.reader(), { address: venue.address as `0x${string}`, chainId: chainId as Parameters<ChainReader['receipt']>[0], metaTx }, buyer), timeouts.readMs)
+      const read = await readMetaTxNonce(boundedReader(svc.reader(), timeouts.readMs), { address: venue.address as `0x${string}`, chainId: chainId as Parameters<ChainReader['receipt']>[0], metaTx }, buyer)
       // The sign-in may have changed while the nonce was read: then nothing goes.
       if (read === nonce && sameBuyer()) {
         attempt.retry()

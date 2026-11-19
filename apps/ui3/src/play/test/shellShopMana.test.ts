@@ -115,7 +115,6 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
     unlogged: [] as ManaExecution[],
     fail: false,
     finalized: 1000n,
-    latest: 1000n,
     receiptBlock: 900n,
     foreignHash: false,
     /** Holds every finalized-block read after the first (the pre-dispatch checkpoint) until released. */
@@ -133,7 +132,6 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
       if (onChain.hold && onChain.finalizedReads > 1) await onChain.hold
       return onChain.finalized
     },
-    latest: async () => onChain.latest,
     nonceAt: async (_c, venue, user, block) => {
       const now = chain.nonces.get(`${venue.address.toLowerCase()}:${user.toLowerCase()}`) ?? 0n
       const after = [...onChain.executions, ...onChain.unlogged].filter((e) => e.user === user.toLowerCase() && e.blockNumber > block)
@@ -643,21 +641,21 @@ describe('the in-world purchase with MANA', () => {
       w.relay.state.mode = 'down'
       await p.payMana()
       const pending = await p.until('pending')
+      // N went to another call at 1060, then N+1 to this call, signed elsewhere.
       w.chain.nonces.set(NONCE_KEY, 2n)
-      w.onChain.fail = true
-      pending.handlers.onCheckAgain?.()
-      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', check: 'ready' }))
-      // N went to another call at 1060, but the node's log read of that block leaves it out and returns only N+1 (this
-      // call, signed elsewhere): the read holds one execution where the nonce moved twice, so it decides nothing, and
-      // offers no RETRY (N is gone).
-      w.onChain.fail = false
       w.onChain.unlogged = [{ user: BUYER, call: '0xbeef', txHash: ('0x' + 'cd'.repeat(32)) as Hex, blockNumber: 1060n, logIndex: 0 }]
       w.onChain.executions = [{ user: BUYER, call: decodeCall((w.relay.posts[0] as { transactionData: { params: [string, Hex] } }).transactionData.params[1]), txHash: ('0x' + 'ab'.repeat(32)) as Hex, blockNumber: 1060n, logIndex: 1 }]
       w.onChain.finalized = 1100n
+      // The block's logs can't be read.
+      w.onChain.fail = true
+      pending.handlers.onCheckAgain?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', check: 'ready' }))
+      // Read, they leave out the execution at N and return only N+1: one execution where the nonce moved twice, so it
+      // decides nothing, and offers no RETRY (N is gone).
+      w.onChain.fail = false
       w.clock.now += RETRY_AFTER_MS
       p.shown.at(-1)!.handlers.onCheckAgain?.()
-      await new Promise((r) => setTimeout(r, 30))
-      expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', check: 'ready' })
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', check: 'ready' }))
       expect(p.events.at(-1)).toMatchObject({ state: 'pending' })
     })
 
@@ -826,7 +824,6 @@ describe('the in-world purchase with MANA', () => {
     it('finds a sale that landed below the head it was sent at (a reorg), from the finalized checkpoint', async () => {
       const w = world({ allowance: maxUint256 })
       // Sent while the head was at 1010 and the finalized block at 1000; it lands at 1005 after a reorg.
-      w.onChain.latest = 1010n
       w.relay.state.mode = 'down'
       const p = page(w)
       await p.payMana()
@@ -1481,6 +1478,22 @@ describe('the in-world purchase with MANA', () => {
       const keys = [...Array(w.storage.length).keys()].map((i) => w.storage.key(i)!)
       expect(keys).toContain(`dcl-inworld-shop:record:mana-v1:${BUYER}:${op}`)
       expect(keys.some((k) => k.startsWith(`dcl-inworld-shop:record:v1:${BUYER}:`) && k.endsWith(op))).toBe(false)
+    })
+
+    it('never keeps a send as gone once a write for the purchase failed: storage holds what this page did', async () => {
+      const w = world({ allowance: maxUint256 })
+      // The checkout's progress write right before the relay request fails, after the signature was kept. Every record
+      // write is watched: a page that died right after any of them must not find a send kept as gone.
+      const dispatchedWrites: string[] = []
+      const storage = memoryStorage((key, value) => {
+        if (key.includes(':record:') && value.includes('"stage":"dispatched"')) dispatchedWrites.push(key)
+        return key.includes(':operation:v1:') && value.includes('"submitted"')
+      })
+      const p = page(w, { storage })
+      await p.payMana()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view.step).toBe('failed'))
+      expect(w.relay.posts).toHaveLength(0)
+      expect(dispatchedWrites).toEqual([])
     })
 
     it('sends nothing when the purchase’s copy under the Credits key can’t be removed as it becomes a MANA purchase', async () => {
