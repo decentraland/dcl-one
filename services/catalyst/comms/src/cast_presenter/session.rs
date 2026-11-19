@@ -17,11 +17,14 @@
 //! uploads being read hold an upload permit, as many as there are slots.
 //!
 //! The PDF load and each render run on [`RENDER_THREADS`] blocking threads
-//! at most, with a deadline ([`RENDER_TIMEOUT`]) that includes the wait for
-//! one. hayro cannot be interrupted, so a timed-out render keeps its thread
-//! until it returns, and that thread stays one of the [`RENDER_THREADS`]: the
-//! creation or the session fails at once and releases its slot, while stuck
-//! renders take render capacity, never more of tokio's shared blocking pool.
+//! at most. A render waits up to [`RENDER_WAIT`] for a thread; with none
+//! free it is busy: a creation answers 503, a slide change is dropped and the
+//! session stays on its slide. Once it holds a thread, the render has
+//! [`RENDER_TIMEOUT`]. hayro cannot be interrupted, so a timed-out render
+//! keeps its thread until it returns, and that thread stays one of the
+//! [`RENDER_THREADS`]: the creation or that render's session fails at once
+//! and releases its slot, while stuck renders take render capacity, never
+//! more of tokio's shared blocking pool.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -40,8 +43,10 @@ use super::wire::{
 pub const IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 pub const IDLE_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 const OVERLAY_BROADCAST_INTERVAL: Duration = Duration::from_millis(250);
-/// The PDF load, and each slide render.
+/// The PDF load, and each slide render, from when it holds a thread.
 pub const RENDER_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a load or render waits for one of the [`RENDER_THREADS`].
+pub const RENDER_WAIT: Duration = Duration::from_secs(10);
 /// The blocking threads PDF loads and renders take at once, timed-out ones
 /// included.
 pub const RENDER_THREADS: usize = 4;
@@ -75,6 +80,9 @@ pub enum CreateError {
     /// not answer.
     #[error("{0}")]
     Unavailable(String),
+    /// 503: no render thread came free within [`RENDER_WAIT`].
+    #[error("No render thread available")]
+    Busy,
 }
 
 /// The node's own LiveKit: the only server a presentation joins, and the
@@ -253,7 +261,10 @@ impl Drop for Slot {
 /// Why a render did not give a slide.
 pub(super) enum RenderError {
     Failed(String),
+    /// The render held a thread for [`RENDER_TIMEOUT`] without a result.
     TimedOut,
+    /// No thread came free within [`RENDER_WAIT`]; nothing ran.
+    Busy,
 }
 
 impl RenderError {
@@ -264,6 +275,7 @@ impl RenderError {
                 "Failed to render slide {index}: no result in {}s",
                 RENDER_TIMEOUT.as_secs()
             ),
+            RenderError::Busy => "No render thread available".to_string(),
         }
     }
 }
@@ -272,33 +284,36 @@ impl RenderError {
 /// held until its work returns, whether or not anyone still waits for it.
 pub(super) struct RenderPool {
     threads: Arc<Semaphore>,
+    wait: Duration,
     timeout: Duration,
 }
 
 impl RenderPool {
-    pub(super) fn new(threads: usize, timeout: Duration) -> Self {
+    pub(super) fn new(threads: usize, wait: Duration, timeout: Duration) -> Self {
         Self {
             threads: Arc::new(Semaphore::new(threads)),
+            wait,
             timeout,
         }
     }
 
-    /// `work` on one of the pool's threads, or [`RenderError::TimedOut`]
-    /// when it gave no result within the deadline, the wait for a thread
-    /// included.
+    /// `work` on one of the pool's threads: [`RenderError::Busy`] when no
+    /// thread came free within `wait`, [`RenderError::TimedOut`] when the
+    /// work gave no result within `timeout` of starting.
     pub(super) async fn run<T: Send + 'static>(
         &self,
         work: impl FnOnce() -> T + Send + 'static,
     ) -> Result<T, RenderError> {
-        let threads = self.threads.clone();
-        let running = async move {
-            let thread = threads.acquire_owned().await.expect("never closed");
-            tokio::task::spawn_blocking(move || {
-                let _thread = thread;
-                work()
-            })
-            .await
+        let Ok(thread) =
+            tokio::time::timeout(self.wait, self.threads.clone().acquire_owned()).await
+        else {
+            return Err(RenderError::Busy);
         };
+        let thread = thread.expect("never closed");
+        let running = tokio::task::spawn_blocking(move || {
+            let _thread = thread;
+            work()
+        });
         match tokio::time::timeout(self.timeout, running).await {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(e)) => Err(RenderError::Failed(e.to_string())),
@@ -317,17 +332,19 @@ impl RenderPool {
             Err(RenderError::Failed(e)) => Err(RenderError::Failed(format!(
                 "Failed to render slide {index}: {e}"
             ))),
-            Err(RenderError::TimedOut) => Err(RenderError::TimedOut),
+            Err(e) => Err(e),
         }
     }
 
-    async fn load(&self, file: Vec<u8>) -> Result<PdfDocument, String> {
+    async fn load(&self, file: Vec<u8>) -> Result<PdfDocument, CreateError> {
         match self.run(move || PdfDocument::load(file)).await {
-            Ok(result) => result,
-            Err(RenderError::Failed(e)) => Err(e),
-            Err(RenderError::TimedOut) => {
-                Err(format!("PDF did not load in {}s", self.timeout.as_secs()))
-            }
+            Ok(result) => result.map_err(CreateError::Internal),
+            Err(RenderError::Failed(e)) => Err(CreateError::Internal(e)),
+            Err(RenderError::TimedOut) => Err(CreateError::Internal(format!(
+                "PDF did not load in {}s",
+                self.timeout.as_secs()
+            ))),
+            Err(RenderError::Busy) => Err(CreateError::Busy),
         }
     }
 }
@@ -347,8 +364,19 @@ impl Presenter {
             sessions: Mutex::new(HashMap::new()),
             in_flight: AtomicUsize::new(0),
             uploads: max_concurrent.map(|max| Arc::new(Semaphore::new(max))),
-            renders: Arc::new(RenderPool::new(RENDER_THREADS, RENDER_TIMEOUT)),
+            renders: Arc::new(RenderPool::new(RENDER_THREADS, RENDER_WAIT, RENDER_TIMEOUT)),
         })
+    }
+
+    /// Every render thread, held until the permit drops.
+    #[cfg(test)]
+    pub(super) async fn hold_render_threads(&self) -> OwnedSemaphorePermit {
+        self.renders
+            .threads
+            .clone()
+            .acquire_many_owned(RENDER_THREADS as u32)
+            .await
+            .expect("never closed")
     }
 
     pub fn livekit(&self) -> &LiveKitTarget {
@@ -509,21 +537,15 @@ impl Presenter {
         bot.update_metadata(wire::bot_metadata(id, None))
             .await
             .map_err(|e| CreateError::Internal(e.to_string()))?;
-        let doc = Arc::new(
-            self.renders
-                .load(file)
-                .await
-                .map_err(CreateError::Internal)?,
-        );
+        let doc = Arc::new(self.renders.load(file).await?);
         let slide_count = doc.page_count();
         if slide_count == 0 {
             return Err(CreateError::Internal("PDF contains no pages".into()));
         }
-        let (frame, slide_videos) = self
-            .renders
-            .render(&doc, 0)
-            .await
-            .map_err(|e| CreateError::SlideRender(e.message(0)))?;
+        let (frame, slide_videos) = self.renders.render(&doc, 0).await.map_err(|e| match e {
+            RenderError::Busy => CreateError::Busy,
+            e => CreateError::SlideRender(e.message(0)),
+        })?;
         bot.publish_video(frame.width, frame.height)
             .await
             .map_err(|e| CreateError::Internal(e.to_string()))?;
@@ -729,8 +751,9 @@ impl Session {
         wire::parse_command(&incoming.message)
     }
 
-    /// Handles a command; `false` when the session must stop (a render that
-    /// timed out).
+    /// Handles a command; `false` when the session must stop (its own render
+    /// timed out). A slide change with no render thread free is dropped: the
+    /// session stays on its slide and broadcasts that state.
     async fn handle(&self, command: Command) -> bool {
         match command {
             Command::GetState => self.broadcast_state().await,
@@ -742,6 +765,9 @@ impl Session {
                 }
                 Err(RenderError::Failed(e)) => {
                     tracing::warn!(presentation = %self.id, "navigate failed: {e}");
+                }
+                Err(RenderError::Busy) => {
+                    tracing::warn!(presentation = %self.id, "navigate dropped: no render thread free");
                 }
             },
             Command::Unsupported(kind) => {

@@ -153,6 +153,13 @@ fn create_failure(e: CreateError) -> Response {
             tracing::error!("Failed to create presentation: {message}");
             internal()
         }
+        CreateError::Busy => {
+            tracing::warn!("Failed to create presentation: no render thread free");
+            error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Presentation service busy, try again later",
+            )
+        }
     }
 }
 
