@@ -206,19 +206,26 @@ fn handle_json_request(
         .values()
         .map(move |info| info.get_json_metadata(&host))
         .collect::<Vec<_>>();
-    http::Response::builder()
-        .status(http::StatusCode::OK)
-        .header(http::header::CONTENT_TYPE, "application/json")
-        .body(serde_json::to_string(&data).unwrap().into())
+    json_response(&data)
 }
 
 fn handle_json_version_request(
     version_response: Value,
 ) -> http::Result<http::Response<hyper::Body>> {
-    http::Response::builder()
-        .status(http::StatusCode::OK)
-        .header(http::header::CONTENT_TYPE, "application/json")
-        .body(serde_json::to_string(&version_response).unwrap().into())
+    json_response(&version_response)
+}
+
+/// `200` with `body` as JSON, or `500` with the error text when `body` doesn't serialize.
+fn json_response(body: &impl serde::Serialize) -> http::Result<http::Response<hyper::Body>> {
+    match serde_json::to_string(body) {
+        Ok(json) => http::Response::builder()
+            .status(http::StatusCode::OK)
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(json.into()),
+        Err(e) => http::Response::builder()
+            .status(http::StatusCode::INTERNAL_SERVER_ERROR)
+            .body(e.to_string().into()),
+    }
 }
 
 async fn server(

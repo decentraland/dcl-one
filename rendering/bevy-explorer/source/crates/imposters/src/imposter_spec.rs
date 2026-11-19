@@ -58,9 +58,15 @@ where
     D: Deserializer<'de>,
 {
     let string_map = HashMap::<String, ImposterSpec>::deserialize(d)?;
-    Ok(HashMap::from_iter(string_map.into_iter().map(
-        |(key, value)| (IVec2Arg::from_str(&key).unwrap().0, value),
-    )))
+    string_map
+        .into_iter()
+        .map(|(key, value)| match IVec2Arg::from_str(&key) {
+            Ok(parcel) => Ok((parcel.0, value)),
+            Err(e) => Err(<D::Error as serde::de::Error>::custom(format!(
+                "parcel key {key:?}: {e}"
+            ))),
+        })
+        .collect()
 }
 
 impl BakedScene {}

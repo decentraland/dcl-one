@@ -145,13 +145,9 @@ pub struct HoverText;
 fn format_button_label(input_map: &InputMap, info: &Info) -> String {
     input_map
         .get_input(info.button().to_common())
-        .map(|b| {
-            let button_str = serde_json::to_string(&b).unwrap();
-            let button_str = button_str.strip_prefix("\"").unwrap_or(&button_str);
-            button_str
-                .strip_suffix("\"")
-                .unwrap_or(button_str)
-                .to_owned()
+        .and_then(|b| match serde_json::to_value(&b) {
+            Ok(serde_json::Value::String(label)) => Some(label),
+            _ => None,
         })
         .unwrap_or_else(|| {
             if info.button() == InputAction::IaAny {

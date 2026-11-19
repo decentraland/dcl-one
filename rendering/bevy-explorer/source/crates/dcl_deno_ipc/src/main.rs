@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bevy::{
     log::{
-        debug, info,
+        debug, error, info,
         tracing_subscriber::{self, EnvFilter},
         warn,
     },
@@ -126,7 +126,14 @@ async fn scene_ipc_in(
     while let Ok(len) = stream.read_u64_le().await {
         let mut buffer = vec![0u8; len as usize];
         stream.read_exact(&mut buffer).await.unwrap();
-        let msg: EngineToScene = rmp_serde::from_slice(&buffer).unwrap();
+        // the length prefix keeps the stream framed, so an undecodable message is skipped alone
+        let msg: EngineToScene = match rmp_serde::from_slice(&buffer) {
+            Ok(msg) => msg,
+            Err(e) => {
+                error!("dropping undecodable engine message: {e}");
+                continue;
+            }
+        };
 
         match msg {
             EngineToScene::NewScene(id, new_scene_info) => {

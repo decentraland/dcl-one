@@ -245,7 +245,7 @@ pub async fn op_set_avatar(
     rx.await?.map_err(|e| anyhow::anyhow!(e))
 }
 
-pub async fn op_native_input(state: Rc<RefCell<impl State>>) -> String {
+pub async fn op_native_input(state: Rc<RefCell<impl State>>) -> Result<String, anyhow::Error> {
     let (sx, rx) = RpcResultSender::channel();
 
     state
@@ -255,13 +255,10 @@ pub async fn op_native_input(state: Rc<RefCell<impl State>>) -> String {
         .unwrap();
 
     let identifier = rx.await.unwrap();
-    serde_json::to_string(&identifier)
-        .unwrap()
-        .strip_prefix("\"")
-        .unwrap()
-        .strip_suffix("\"")
-        .unwrap()
-        .to_owned()
+    match serde_json::to_value(&identifier)? {
+        serde_json::Value::String(label) => Ok(label),
+        other => Err(anyhow::anyhow!("input identifier is not a string: {other}")),
+    }
 }
 
 #[derive(Serialize, Deserialize)]

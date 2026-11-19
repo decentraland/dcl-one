@@ -217,12 +217,15 @@ pub fn op_send_batch(state: &mut impl State) -> Vec<Event> {
         let current = player_language(&*state);
         if current != last {
             if let Some(locale) = current.clone() {
-                results.push(Event {
-                    generic: EventGeneric {
-                        event_id: "localeChanged".to_owned(),
-                        event_data: serde_json::to_string(&LocaleChangedBody { locale }).unwrap(),
-                    },
-                });
+                match serde_json::to_string(&LocaleChangedBody { locale }) {
+                    Ok(event_data) => results.push(Event {
+                        generic: EventGeneric {
+                            event_id: "localeChanged".to_owned(),
+                            event_data,
+                        },
+                    }),
+                    Err(e) => warn!("dropping localeChanged event: {e}"),
+                }
             }
             state.put(LastLocale(current));
         }

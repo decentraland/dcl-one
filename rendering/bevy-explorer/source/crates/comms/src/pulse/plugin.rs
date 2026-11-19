@@ -2160,7 +2160,8 @@ async fn build_auth_chain(wallet: &Wallet, server_id: &str) -> Result<Vec<u8>, S
         .map_err(|e| e.to_string())?;
 
     let mut dict = serde_json::Map::new();
-    for (key, value) in auth_chain.headers() {
+    for header in auth_chain.headers() {
+        let (key, value) = header.map_err(|e| e.to_string())?;
         dict.insert(key, serde_json::Value::String(value));
     }
     dict.insert(

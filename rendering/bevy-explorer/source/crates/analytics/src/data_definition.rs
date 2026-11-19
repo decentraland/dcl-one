@@ -300,7 +300,7 @@ pub fn build_segment_event_batch_item(
     event_data: &SegmentEvent,
     queued_at: DateTime<Utc>,
     message_id: String,
-) -> SegmentMetricEventBody {
+) -> Result<SegmentMetricEventBody, serde_json::Error> {
     let mut timestamp = queued_at.to_rfc3339_opts(SecondsFormat::Millis, true);
     let override_position = match event_data {
         SegmentEvent::ExplorerMoveToParcel(current_position, _) => Some(current_position.clone()),
@@ -320,7 +320,7 @@ pub fn build_segment_event_batch_item(
             .expect("the engine's events are named above"),
     };
 
-    let mut properties = serde_json::to_value(common).unwrap();
+    let mut properties = serde_json::to_value(common)?;
     // merge specific event properties with common properties
     for (k, v) in event_properties.as_object().unwrap().iter() {
         properties[k] = v.clone();
@@ -330,14 +330,14 @@ pub fn build_segment_event_batch_item(
         properties["position"] = serde_json::Value::String(position);
     }
 
-    SegmentMetricEventBody {
+    Ok(SegmentMetricEventBody {
         r#type: "track".to_string(),
         event: event_name,
         user_id,
         timestamp,
         message_id,
         properties,
-    }
+    })
 }
 
 /// Photo mode opened, from the key or a button.

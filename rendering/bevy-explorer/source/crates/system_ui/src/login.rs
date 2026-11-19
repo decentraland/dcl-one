@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use alloy_core::primitives::{Address, B256};
+use alloy_core::primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
 use analytics::segment_system::SegmentConfig;
 use bevy::{
@@ -681,8 +681,14 @@ fn process_login_bridge(
                             }
                         };
 
-                    let local_wallet =
-                        PrivateKeySigner::from_bytes(&B256::from_slice(&ephemeral_key)).unwrap();
+                    let local_wallet = match PrivateKeySigner::from_slice(&ephemeral_key) {
+                        Ok(local_wallet) => local_wallet,
+                        Err(e) => {
+                            rpc_result_sender
+                                .send(Err(format!("Previous login has an invalid key: {e}")));
+                            return Err(());
+                        }
+                    };
 
                     Ok((
                         previous_login.root_address,
