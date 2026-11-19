@@ -13,7 +13,7 @@ export function GenerateStreamKey({
   onGenerate,
 }: {
   engine: IEngine;
-  onGenerate: () => void;
+  onGenerate: (streamingUrl: string) => void;
 }) {
   const [loading, setLoading] = ReactEcs.useState<boolean>(false);
   const [error, setError] = ReactEcs.useState<string>('');
@@ -59,7 +59,7 @@ export function GenerateStreamKey({
                 } else if (data) {
                   const videoControl = VideoControlState.getMutable(state.adminToolkitUiEntity);
                   videoControl.endsAt = data.endsAt;
-                  onGenerate();
+                  onGenerate(data.streamingUrl);
                 }
               }}
             />
