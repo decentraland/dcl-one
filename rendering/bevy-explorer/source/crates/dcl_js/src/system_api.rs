@@ -254,7 +254,7 @@ pub async fn op_native_input(state: Rc<RefCell<impl State>>) -> Result<String, a
         .send(SystemApi::GetNativeInput(sx))
         .unwrap();
 
-    let identifier = rx.await.unwrap();
+    let identifier = rx.await?;
     match serde_json::to_value(&identifier)? {
         serde_json::Value::String(label) => Ok(label),
         other => Err(anyhow::anyhow!("input identifier is not a string: {other}")),

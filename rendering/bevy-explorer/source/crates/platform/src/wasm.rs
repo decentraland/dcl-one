@@ -152,7 +152,7 @@ pub fn compat<F>(f: F) -> F {
 pub fn project_directories() -> Option<directories::ProjectDirs> {
     None
 }
-pub fn write_config_file<T: Serialize + Clone + 'static>(config: &T) {
+pub fn write_config_file<T: Serialize>(config: &T) {
     use futures_lite::io::AsyncWriteExt;
     let json = match serde_json::to_string(config) {
         Ok(json) => json,
