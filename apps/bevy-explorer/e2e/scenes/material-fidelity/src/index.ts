@@ -2,6 +2,8 @@ import {
   AvatarModifierArea,
   AvatarModifierType,
   Entity,
+  GltfContainer,
+  GltfNodeModifiers,
   InputAction,
   MainCamera,
   Material,
@@ -24,12 +26,14 @@ import { Color3, Color4, Quaternion, Vector2, Vector3 } from '@dcl/sdk/math'
 /**
  * material-fidelity: charts of the SDK material for comparing two clients.
  *
- * Seven boards stand in a row, 20 m apart, each tilted 45 degrees towards the sky and holding a
+ * Eight boards stand in a row, 20 m apart, each tilted 45 degrees towards the sky and holding a
  * 6 by 6 grid of spheres. A row varies one material value across its six columns and holds the
  * rest; the first two boards are metallic by roughness charts. The line under a row names what
  * it varies, left to right. Board 7 holds the cases that need their own texture or another
  * shape: which way up a texture sits, samplers on an image used once, bumps on every shape, the
- * emissive rules, and grey ramps.
+ * emissive rules, and grey ramps. Board 8 turns bumped shapes to bring each axis of the normal map
+ * under the sun, and holds glTF cubes: with SDK materials put on them, and with emissive
+ * materials of their own.
  *
  * Each board has a virtual camera on its normal, so two clients at the same board render the
  * same frame. E goes to the next board and F to the previous one; after the last board comes
@@ -52,7 +56,7 @@ const COL_SPACING = 2
 const ROW_SPACING = 1.9
 const RADIUS = 0.55
 const STATION_SPACING = 20
-const FIRST_STATION_X = 12
+const FIRST_STATION_X = 10
 const BOARD_CENTRE_Y = 4.9
 const BOARD_CENTRE_Z = 9.5
 const BOARD_TILT = 45
@@ -62,8 +66,16 @@ type Pbr = Partial<PBMaterial_PbrMaterial>
 type Unlit = Partial<PBMaterial_UnlitMaterial>
 /** `planeUvs` is a plane with its four corners' UVs given, the same picture as the default. */
 type Shape = 'sphere' | 'box' | 'plane' | 'cylinder' | 'cone' | 'planeUvs'
-/** What one cell wears: a PBR material, an unlit one, or no Material component at all. */
-type Cell = { pbr: Pbr; shape?: Shape } | { unlit: Unlit; shape?: Shape } | 'none'
+/**
+ * What one cell wears: a PBR material, an unlit one, or no Material component at all. `turn`
+ * rolls the shape about the board's normal, in degrees. A `gltf` cell is a model, as it is or
+ * with `modifier` put on all its nodes.
+ */
+type Cell =
+  | { pbr: Pbr; shape?: Shape; turn?: number }
+  | { unlit: Unlit; shape?: Shape }
+  | { gltf: string; modifier?: Pbr }
+  | 'none'
 type Row = { label: string; cells: Cell[] }
 type Station = { title: string; rows: Row[]; tiles?: boolean }
 
@@ -110,6 +122,9 @@ const REFLECTIVITY: Color3[] = [
 const REFLECTIVITY_LABEL = 'white · grey · black · red · green · blue'
 const DIRECT = [0, 0.5, 1, 2, 4, 8]
 
+// Unit cubes with normals and uvs and no tangents (assets/cube-*.glb).
+const cube = (name: string) => `assets/cube-${name}.glb`
+const BUMPED: Pbr = { albedoColor: WHITE, metallic: 0, roughness: 0.4, bumpTexture: tex(BUMPS) }
 const SHAPES: Shape[] = ['sphere', 'box', 'plane', 'cylinder', 'cone', 'planeUvs']
 const SHAPES_LABEL = 'sphere · box · plane · cylinder · cone · plane with uvs'
 const GREYS = [0, 0.1, 0.25, 0.5, 0.75, 1]
@@ -332,6 +347,39 @@ const STATIONS: Station[] = [
       unlitRow(`unlit grey ${GREYS.join(' · ')}`, GREYS.map((v) => ({ diffuseColor: grey(v) }))),
     ],
   },
+  {
+    title: '8 · Turned bumps and glTF cubes',
+    rows: [
+      {
+        label: 'bumpTexture · plane turned 0 · 90 · 180 · 270 · sphere turned 90 · box turned 90',
+        cells: [
+          { pbr: BUMPED, shape: 'plane', turn: 0 },
+          { pbr: BUMPED, shape: 'plane', turn: 90 },
+          { pbr: BUMPED, shape: 'plane', turn: 180 },
+          { pbr: BUMPED, shape: 'plane', turn: 270 },
+          { pbr: BUMPED, shape: 'sphere', turn: 90 },
+          { pbr: BUMPED, shape: 'box', turn: 90 },
+        ],
+      },
+      {
+        label: 'glTF cube · as it is · red · bumpTexture · bump, metal · albedo texture · emissive orange',
+        cells: [
+          { gltf: cube('plain') },
+          { gltf: cube('plain'), modifier: { albedoColor: RED, metallic: 0, roughness: 0.5 } },
+          { gltf: cube('plain'), modifier: BUMPED },
+          { gltf: cube('plain'), modifier: { ...BUMPED, metallic: 1, roughness: 0.2 } },
+          { gltf: cube('plain'), modifier: { texture: tex(ORIENTATION), metallic: 0, roughness: 1 } },
+          { gltf: cube('plain'), modifier: { albedoColor: BLACK, emissiveColor: Color3.create(1, 0.5, 0), emissiveIntensity: 1 } },
+        ],
+      },
+      {
+        label: 'glTF emissive, black base · factor 0.25 · 0.5 · 1 · orange · texture · strength 4',
+        cells: ['emissive-025', 'emissive-05', 'emissive-1', 'emissive-orange', 'emissive-texture', 'emissive-strength'].map(
+          (name) => ({ gltf: cube(name) }),
+        ),
+      },
+    ],
+  },
 ]
 
 export function main() {
@@ -345,7 +393,8 @@ export function main() {
   Transform.create(slab, {
     parent: backing,
     position: Vector3.create(0, 0, 0.1),
-    scale: Vector3.create(STATIONS.length * STATION_SPACING, 13.2, 0.2),
+    // a little short of the scene, whose edge fades what touches it
+    scale: Vector3.create(STATIONS.length * STATION_SPACING - 2, 13.2, 0.2),
   })
   MeshRenderer.setBox(slab)
   Material.setPbrMaterial(slab, { albedoColor: Color4.create(0.08, 0.08, 0.08, 1), metallic: 0, roughness: 1 })
@@ -353,7 +402,7 @@ export function main() {
   const hideAvatars = engine.addEntity()
   Transform.create(hideAvatars, { position: Vector3.create(centreX, 8, 8) })
   AvatarModifierArea.create(hideAvatars, {
-    area: Vector3.create(144, 16, 16),
+    area: Vector3.create(160, 16, 16),
     modifiers: [AvatarModifierType.AMT_HIDE_AVATARS, AvatarModifierType.AMT_DISABLE_PASSPORTS],
     excludeIds: [],
   })
@@ -387,15 +436,29 @@ function buildStation(station: Station, index: number, tilt: Quaternion): Entity
     row.cells.forEach((cell, c) => {
       const x = (c - (COLS - 1) / 2) * COL_SPACING
       if (station.tiles) tiles(root, x, y)
-      const shape = cell === 'none' ? 'sphere' : (cell.shape ?? 'sphere')
       const subject = engine.addEntity()
-      Transform.create(subject, {
-        parent: root,
-        position: Vector3.create(x, y, -RADIUS),
-        scale: Vector3.create(2 * RADIUS, 2 * RADIUS, 2 * RADIUS),
-        // A plane faces the camera; a box and a cylinder turn to show a side as well.
-        rotation: shape === 'box' || shape === 'cylinder' || shape === 'cone' ? SOLID_TURN : Quaternion.Identity(),
-      })
+      const place = (rotation: Quaternion, scale: number) =>
+        Transform.create(subject, {
+          parent: root,
+          position: Vector3.create(x, y, -RADIUS),
+          scale: Vector3.create(scale, scale, scale),
+          rotation,
+        })
+      if (cell !== 'none' && 'gltf' in cell) {
+        place(SOLID_TURN, 1.4 * RADIUS)
+        GltfContainer.create(subject, { src: cell.gltf })
+        if (cell.modifier) {
+          GltfNodeModifiers.create(subject, {
+            modifiers: [{ path: '', material: { material: { $case: 'pbr', pbr: cell.modifier } } }],
+          })
+        }
+        return
+      }
+      const shape = cell === 'none' ? 'sphere' : (cell.shape ?? 'sphere')
+      // A plane faces the camera; a box and a cylinder turn to show a side as well.
+      const solid = shape === 'box' || shape === 'cylinder' || shape === 'cone'
+      const roll = Quaternion.fromEulerDegrees(0, 0, cell !== 'none' && 'turn' in cell ? (cell.turn ?? 0) : 0)
+      place(solid ? Quaternion.multiply(roll, SOLID_TURN) : roll, 2 * RADIUS)
       setMesh(subject, shape)
       if (cell === 'none') return
       if ('pbr' in cell) Material.setPbrMaterial(subject, cell.pbr)
