@@ -9,7 +9,7 @@ import {
   GeneralSecondaryBarEmotes,
 } from "@dcl/one-ui/foundations/icons";
 
-import { assetPage } from "@/core/lib/shop/redirects";
+import { assetPage, SHOP_BASE } from "@/core/lib/shop/redirects";
 import type { AssetCategory, ProfileAsset } from "@/data/lib/catalyst/marketplace/profile-collectibles";
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 
@@ -35,7 +35,7 @@ import { EmptyMessage } from "./EmptyMessage";
 import { ProfileShell, type ProfileShellTab } from "./ProfileShell";
 
 /** Where the owner's empty Assets sends them: the Shop. */
-export const SHOP_HREF = "/shop";
+export const SHOP_HREF = SHOP_BASE;
 /** NAMEs are managed under Create; the source's Builder `/names/:name` redirects there. */
 export const MANAGE_NAMES_HREF = "/create/names";
 

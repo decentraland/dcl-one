@@ -50,17 +50,17 @@ let
   # that rendering/bevy-explorer/patches/client-sdk-rust/source.toml names. With its hash crane
   # fetches that commit alone instead of every ref of the repository. The commit holds only the
   # patched source's `paths` while its root Cargo.toml still lists upstream's members, so its
-  # crates are vendored without loading that workspace (git-crates.nix, as bevy-explorer.nix
-  # does for the same commit). They are copied from the plain git fetch (`fetched.src`): building
+  # crates are vendored without loading that workspace (patched-source.nix `vendoredCrates`, as
+  # bevy-explorer.nix and cast-bot.nix do for the same commit). They are copied from the plain git fetch (`fetched.src`): building
   # crane's own checkout (`fetched`) runs `cargo metadata` on that workspace and fails.
   # `catalyst` does not compile them; the vendor directory only has to hold them. scene-cli.nix
   # vendors the same lock with these arguments.
-  gitCrates = import ./git-crates.nix { inherit pkgs; };
+  patchedSource = import ./patched-source.nix { inherit pkgs; };
   vendorGit = {
     outputHashes."git+https://github.com/decentraland/dcl-one?rev=b2f8bc84000333ea843578959c9d11caccaa9474#b2f8bc84000333ea843578959c9d11caccaa9474" =
       "sha256-pu+EoXyqMEQ/N5Wx9r4x2K/3o6HGBhZtDcg7GTP26Vk=";
     overrideVendorGitCheckout = crates: fetched:
-      gitCrates.checkout { inherit (craneLib) craneUtils; tree = fetched.src; inherit crates fetched; };
+      patchedSource.vendoredCrates craneLib.craneUtils fetched fetched.src crates;
   };
   cargoVendorDir = craneLib.vendorCargoDeps (common // vendorGit);
   cargoArtifacts = craneLib.buildDepsOnly (common // { inherit cargoVendorDir; });

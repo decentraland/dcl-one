@@ -124,6 +124,22 @@ pub struct PortableInfo {
     pub source: Option<SmartWearableSource>,
 }
 
+/// A map pin (`MapPin`) of a portable experience whose scene.json declares
+/// `isPortableExperience: true`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MapPinInfo {
+    /// `<scene hash>:<scene entity>`.
+    pub id: String,
+    pub x: i32,
+    pub y: i32,
+    /// At most 100 characters.
+    pub title: String,
+    /// A file of the scene's content; `None` draws the default pin.
+    pub icon: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

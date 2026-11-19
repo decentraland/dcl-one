@@ -8,9 +8,11 @@ import { clusterMarkers, type Cluster } from '@explorer-core/features/map/cluste
 import { PARCEL_UNITS, parcelCenter, parcelKey, playerMarkerPosition, type Vec2 } from '@explorer-core/features/map/mapCoords'
 import type { MapLayer } from '@explorer-core/features/map/mapLayersStore'
 import type { EventMarker, PlaceMarker } from '@explorer-core/features/map/mapMarkers'
+import type { PinMarker } from '@explorer-core/features/map/mapPins'
 import type { CategoryKey } from '@explorer-core/features/map/navmap'
 import type { PlayerPose } from '../session/useEngineSession'
 import { CAT_PINS, MARKER_ART, SEA_ART, SEA_SIZE } from './mapArt'
+import { QuestPinIcon } from './QuestPinIcon'
 import type { MapCamera } from './useMapCamera'
 import styles from './MapCanvas.module.css'
 
@@ -216,6 +218,26 @@ function PinLayer<T extends { id: string; key: Vec2; position: Vec2; title: stri
   )
 }
 
+const QuestPin = memo(function QuestPin({ pin, onPick }: { pin: PinMarker; onPick: (parcel: Vec2) => void }): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      className={`${styles.marker} ${styles.quest}`}
+      style={at(pin.position)}
+      data-marker="pins"
+      aria-label={pin.title.trim() !== '' ? pin.title : `Pin at ${pin.key.x}, ${pin.key.y}`}
+      onClick={(e) => {
+        e.stopPropagation()
+        onPick(pin.key)
+      }}
+    >
+      <span className={styles.scaler}>
+        <QuestPinIcon icon={pin.icon} className={styles.pinIcon} />
+      </span>
+    </button>
+  )
+})
+
 function PlayerMarker({ pose, active }: { pose: { current: PlayerPose }; active: boolean }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -258,6 +280,7 @@ export interface MapCanvasProps {
   categoryLayer: boolean
   /** Other players, as map positions. */
   people: readonly Vec2[]
+  pins: readonly PinMarker[]
   /** The home parcel, when home is in Genesis City. */
   home: Vec2 | null
   /** `layer:id` of the marker last clicked. */
@@ -418,6 +441,13 @@ export function MapCanvas(props: MapCanvasProps): React.JSX.Element {
           onPick={pickPoi}
           onCluster={zoomIn}
         />
+      )}
+      {layers.has('pins') && (
+        <div className={styles.layer}>
+          {props.pins.map((pin) => (
+            <QuestPin key={pin.id} pin={pin} onPick={props.onParcel} />
+          ))}
+        </div>
       )}
       {props.children}
       {props.home != null && (

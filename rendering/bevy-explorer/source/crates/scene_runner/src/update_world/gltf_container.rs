@@ -2185,7 +2185,7 @@ fn expose_gltfs(
                             active: None,
                             intensity: Some(point.intensity / (4.0 * PI)),
                             shadow: Some(true),
-                            color: Some(point.color.convert_linear_rgb()),
+                            color: Some(point.color.convert_srgb()),
                             r#type: Some(pb_light_source::Type::Point(pb_light_source::Point {})),
                             range: Some(point.range),
                             shadow_mask_texture: None,
@@ -2221,7 +2221,7 @@ fn expose_gltfs(
                             active: None,
                             intensity: Some(spot.intensity / (4.0 * PI)),
                             shadow: Some(true),
-                            color: Some(spot.color.convert_linear_rgb()),
+                            color: Some(spot.color.convert_srgb()),
                             r#type: Some(pb_light_source::Type::Spot(pb_light_source::Spot {
                                 inner_angle: Some(spot.inner_angle * 360.0 / TAU),
                                 outer_angle: Some(spot.outer_angle * 360.0 / TAU),

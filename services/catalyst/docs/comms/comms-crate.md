@@ -32,6 +32,7 @@ separate from the current runtime described here.
 | `gatekeeper::message_router` | `serve` | the message router's join token, `POST /internal/message-router/token/v1` |
 | `gatekeeper::moderation`, `removal`, `removed_places` | `serve` | bans, warnings, scene admins, durable ban kicks, disabled-place cleanup (reading Explore's removal feed by shared SQL, `DATABASE.md` "Place removal feed"), room metadata repair |
 | `gatekeeper::voice`, `streaming`, `streaming_jobs`, `streaming::cast` | `serve` | private and community voice; stream access, LiveKit Ingress, streaming expiry; Cast 2.0 (`/cast/*`): stream links, streamer, watcher and presentation-bot tokens over the same stream credential, presenters in the scene room's metadata |
+| `cast_presenter` | `serve`, one `cast-bot` process per session | Cast presentations at `/cast-presenter-service/presentations`: PDF slides rendered in `serve` and published into the scene room by a `cast-bot` process (`services/catalyst/cast-bot`, the only LiveKit participant code outside the Explorer), commands from the room's presenters over the data channel, sessions in memory |
 | `gatekeeper::reports` | `serve` | the player report intake at `/report-user` (`/api/reports/players/presign`, the evidence `PUT`s, `/api/reports/players`); the moderator token reads `/api/reports` |
 | `gatekeeper::webhook`, `events` | `serve` | the one LiveKit webhook; a typed nine-field `RoomEvent` to `RoomEventSink` and `RoomEventStore` |
 | `gatekeeper::bus` | `serve` | `serve`'s one NATS link |

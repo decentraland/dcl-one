@@ -4,7 +4,7 @@ let
   root = ../..;
   explorerDir = "rendering/bevy-explorer";
   workspaceDir = "${explorerDir}/source";
-  patchesDir = root + "/${explorerDir}/patches";
+  inherit (patchedSource) patchesDir;
   workspace = root + "/${workspaceDir}";
   manifestText = builtins.readFile (workspace + /Cargo.toml);
   lockText = builtins.readFile (workspace + /Cargo.lock);
@@ -33,37 +33,10 @@ let
   ];
   repoFiles = lib.fileset.toSource { inherit root; fileset = lib.fileset.unions ownFiles; };
 
-  # One derivation per patched source: a fetch of the upstream commit, then the
-  # tool applies the patch series offline. The tool fails when the result is not
-  # the `tree` of source.toml.
-  patchTool = root + /tooling/patched-sources.py;
-  checkout = url: rev: hash: pkgs.fetchgit { inherit url rev hash; fetchSubmodules = false; };
-  # Where the tool writes the tree of a source, below the repository root.
-  treeDir = name: "${explorerDir}/${if name == "bevy" then name else "forks/${name}"}";
-  patched = name:
-    let
-      inputs = patchesDir + "/${name}";
-      spec = builtins.fromTOML (builtins.readFile (inputs + /source.toml));
-      base = checkout spec.upstream spec.commit spec.nix_hash;
-      submodules = spec.submodule or [ ];
-    in lib.nameValuePair (treeDir name) (pkgs.runCommand "patched-${name}" {
-      nativeBuildInputs = [ pkgs.gitMinimal pkgs.python3 ];
-      passthru = { inherit base; inherit (spec) rev; };
-    } ''
-      mkdir -p repo/tooling repo/${explorerDir}/patches bases
-      cp ${patchTool} repo/tooling/patched-sources.py
-      cp -r ${inputs} repo/${explorerDir}/patches/${name}
-      ${if submodules == [ ] then "ln -s ${base} bases/${name}" else ''
-        cp -r ${base} bases/${name}
-        chmod -R u+w bases/${name}
-        ${lib.concatMapStrings (submodule: ''
-          cp -r ${checkout submodule.url submodule.commit submodule.nix_hash}/. bases/${name}/${submodule.path}/
-        '') submodules}
-      ''}
-      python3 repo/tooling/patched-sources.py materialise ${name} --offline --base-dir bases --dest-root dest
-      rm dest/${treeDir name}/.patched-stamp.json
-      mv dest/${treeDir name} $out
-    '');
+  # One derivation per patched source (patched-source.nix).
+  patchedSource = import ./patched-source.nix { inherit pkgs; };
+  inherit (patchedSource) treeDir;
+  patched = name: lib.nameValuePair (treeDir name) (patchedSource.patched name);
   patchedSources = lib.listToAttrs (map patched (lib.attrNames (lib.filterAttrs
     (name: type: type == "directory" && builtins.pathExists (patchesDir + "/${name}/source.toml"))
     (builtins.readDir patchesDir))));
@@ -160,7 +133,6 @@ let
   bevySrc = assemble dummyRepo inTree;
   src = repoFiles;
 
-  gitCrates = import ./git-crates.nix { inherit pkgs; };
   hashOfUnpatchedGitSource."git+https://github.com/gltf-rs/gltf?rev=50d65229#50d65229477fe5f785c2c90df21eb59c93ea2261" =
     "sha256-nSlREMX9EKNpBFAXMA9PUj2FeLEr9Yh8UayEzrJIUBQ=";
   vendor = checkoutsByRev: packages: crane.vendorCargoDeps {
@@ -172,7 +144,7 @@ let
         src = checkoutsByRev.${commitOf package} or null;
       in if src == null then lib.throwIfNot (hashOfUnpatchedGitSource ? ${package.source})
         "${package.name}: ${package.source} is not the rev of a patched source and has no hash in hashOfUnpatchedGitSource" fetched
-      else gitCrates.checkout { inherit (crane) craneUtils; tree = src; inherit crates fetched; };
+      else patchedSource.vendoredCrates crane.craneUtils fetched src crates;
   };
   earlyVendor = vendor (byRev patchedSources) earlyPackages;
   lateVendor = vendor latePatchedByRev (lib.filter inLatePatched lock.package);

@@ -310,6 +310,7 @@ mod log_order_tests {
             DiagnosticsPlugin,
             crate::world_state::ArrivalsPlugin,
             RunControlPlugin,
+            crate::client_window_focus::ClientWindowFocusPlugin,
             PerformanceMeasurementPlugin,
         ))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1)))

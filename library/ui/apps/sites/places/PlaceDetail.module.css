@@ -5,12 +5,19 @@
    and only .chatEmpty matches a text style (body/md) in size, weight and line-height. Sizes (icons,
    boxes) are the reference's: the foundations have no size tokens. */
 .page {
-  --panel: radial-gradient(47.39% 84.22% at 42.4% 26.48%, #6e31a7 0%, var(--dcl-background-web-dark) 100%);
-  --header-pad: clamp(10px, 0.833vw, var(--dcl-space-16)) clamp(var(--dcl-space-16), 1.25vw, var(--dcl-space-24));
+  --panel: radial-gradient(
+    47.39% 84.22% at 42.4% 26.48%,
+    #6e31a7 0%,
+    var(--dcl-background-web-dark) 100%
+  );
+  --header-pad: clamp(10px, 0.833vw, var(--dcl-space-16))
+    clamp(var(--dcl-space-16), 1.25vw, var(--dcl-space-24));
   --text-size: clamp(var(--dcl-font-size-button-sm), 0.833vw, var(--dcl-font-size-body-md));
   min-height: 100vh;
   padding-top: var(--dcl-space-64);
-  background: #2b0a3b radial-gradient(65% 130% at 50% 28%, #8b38b2 0%, #6b2a8c 30%, #45155f 60%, #2b0a3b 100%) no-repeat;
+  background: #2b0a3b
+    radial-gradient(65% 130% at 50% 28%, #8b38b2 0%, #6b2a8c 30%, #45155f 60%, #2b0a3b 100%)
+    no-repeat;
 }
 
 :where(.page),
@@ -190,7 +197,9 @@ button.creatorName:focus-visible {
 }
 
 .launch[style] {
-  background-image: linear-gradient(0deg, var(--dcl-transparencies-black-20), var(--dcl-transparencies-black-20)), var(--cover);
+  background-image:
+    linear-gradient(0deg, var(--dcl-transparencies-black-20), var(--dcl-transparencies-black-20)),
+    var(--cover);
 }
 
 .frame {
@@ -432,7 +441,8 @@ button.creatorName:focus-visible {
   gap: var(--dcl-space-12);
   width: 100%;
   border-radius: clamp(var(--dcl-radius-lg), 1.25vw, var(--dcl-radius-xl));
-  padding: clamp(var(--dcl-space-16), 1.25vw, var(--dcl-space-24)) clamp(20px, 1.667vw, var(--dcl-space-32));
+  padding: clamp(var(--dcl-space-16), 1.25vw, var(--dcl-space-24))
+    clamp(20px, 1.667vw, var(--dcl-space-32));
   background: var(--panel);
 }
 
@@ -472,7 +482,9 @@ button.creatorName:focus-visible {
   padding: var(--dcl-space-8) var(--dcl-space-32) var(--dcl-space-8) var(--dcl-space-12);
   border: 1px solid var(--dcl-transparencies-white-40);
   border-radius: var(--dcl-radius-sm);
-  background: var(--dcl-transparencies-black-40) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'><path d='M1 1l4 4 4-4' stroke='%23FCFCFC' stroke-width='1.5' stroke-linecap='round'/></svg>") no-repeat right var(--dcl-space-12) center;
+  background: var(--dcl-transparencies-black-40)
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'><path d='M1 1l4 4 4-4' stroke='%23FCFCFC' stroke-width='1.5' stroke-linecap='round'/></svg>")
+    no-repeat right var(--dcl-space-12) center;
   font: inherit;
   font-size: var(--dcl-font-size-body-sm);
   color: var(--dcl-neutrals-snow);
@@ -564,7 +576,12 @@ button.creatorName:focus-visible {
 .heroFade {
   position: absolute;
   inset: 0;
-  background: linear-gradient(0deg, var(--dcl-neutrals-black) 0%, rgba(0, 0, 0, 0.8) 30%, rgba(0, 0, 0, 0) 106%);
+  background: linear-gradient(
+    0deg,
+    var(--dcl-neutrals-black) 0%,
+    rgba(0, 0, 0, 0.8) 30%,
+    rgba(0, 0, 0, 0) 106%
+  );
   display: none;
 }
 

@@ -56,7 +56,7 @@ secret.
   commit even though `catalyst` never compiles it. The commit holds only the patched source's
   published paths while its root manifest lists upstream's members, so
   `infra/packages/catalyst.nix` vendors its crates without loading that workspace
-  (`infra/packages/git-crates.nix`, shared with `bevy-explorer.nix`).
+  (`vendoredCrates` in `infra/packages/patched-source.nix`, shared with `bevy-explorer.nix` and `cast-bot.nix`).
 - A deployment runs the binary beside `serve`, with the same `MESSAGE_ROUTER_KEY` on both and
   `MESSAGE_ROUTER_IDENTITY_PREFIX` on `serve`; no image carries it yet. The process exits
   non-zero when it cannot stay in the room, so its supervisor must restart it on exit.

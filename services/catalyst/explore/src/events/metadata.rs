@@ -214,7 +214,8 @@ mod tests {
         settings.network = "ethereum-sepolia".into();
         settings.land_registry = format!("0x{:040x}", uuid::Uuid::new_v4().as_u128());
         settings.estate_registry = format!("0x{:040x}", uuid::Uuid::new_v4().as_u128());
-        let places = crate::places::PlacesComponent::new(pool.clone(), "https://content.example");
+        let places =
+            crate::places::PlacesComponent::new(pool.clone(), "https://content.example", None);
         places.set_land_authz(std::sync::Arc::new(crate::land_authz::LandAuthzState::new(
             pool.clone(),
             crate::http::Outbound::for_tests(),
