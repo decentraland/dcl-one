@@ -1021,33 +1021,42 @@ mod tests {
         let Some(pool) = crate::db::scratch::pool(2).await else {
             return;
         };
+        let token = uuid::Uuid::new_v4().simple().to_string();
         let (kept, excluded) = (
             uuid::Uuid::new_v4().to_string(),
             uuid::Uuid::new_v4().to_string(),
         );
         for (id, pointer, raw) in [
-            (&kept, "1,2", json!({"positions": ["1,2"]})),
+            (&kept, "-150,-150", json!({"positions": ["-150,-150"]})),
             (
                 &excluded,
-                "3,4",
-                json!({"positions": ["3,4"], "exclude_from_ranking": true}),
+                "-150,-151",
+                json!({"positions": ["-150,-151"], "exclude_from_ranking": true}),
             ),
         ] {
-            sqlx::query("INSERT INTO explore.place (id, base_position, title, raw) VALUES ($1, $2, 'ranked', $3)")
-                .bind(id).bind(pointer).bind(raw).execute(&pool).await.unwrap();
+            sqlx::query(
+                "INSERT INTO explore.place (id, base_position, title, raw) VALUES ($1, $2, $3, $4)",
+            )
+            .bind(id)
+            .bind(pointer)
+            .bind(&token)
+            .bind(raw)
+            .execute(&pool)
+            .await
+            .unwrap();
         }
         let state = Arc::new(crate::ExploreState::new(
             pool.clone(),
             crate::Settings::for_tests(),
             None,
         ));
-        let all = response(state.clone(), "/api/places").await;
+        let all = response(state.clone(), &format!("/api/places?search={token}")).await;
         assert_eq!(all["total"], 2, "{all}");
-        for uri in [
-            "/api/places?only_excluded_from_ranking=true",
-            "/api/places?only_excluded_from_ranking=true&order_by=most_active",
-        ] {
-            let body = response(state.clone(), uri).await;
+        for order in ["like_score", "most_active"] {
+            let uri = format!(
+                "/api/places?search={token}&order_by={order}&only_excluded_from_ranking=true"
+            );
+            let body = response(state.clone(), &uri).await;
             assert_eq!(body["total"], 1, "{uri}: {body}");
             assert_eq!(body["data"][0]["id"], excluded, "{uri}");
         }
