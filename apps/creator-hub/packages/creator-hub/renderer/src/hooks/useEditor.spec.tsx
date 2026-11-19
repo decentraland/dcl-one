@@ -32,6 +32,8 @@ const PROJECT: Project = {
   info: { id: 'test-project', skipPublishWarning: false },
 };
 
+const CAPTURED_THUMBNAIL = 'captured-scene-picture';
+
 const DEPLOYMENT = {
   publishedAt: 1,
   deploymentHash: 'bafy-test',
@@ -67,6 +69,14 @@ describe('when the editor writes scene.json after the project changed', () => {
       }),
     );
 
+    // Publishing captures the scene before the editor saves scene.json.
+    store.dispatch(
+      workspaceActions.saveAndGetThumbnail.fulfilled(CAPTURED_THUMBNAIL, 'id', {
+        path: PROJECT.path,
+        thumbnail: CAPTURED_THUMBNAIL,
+      }),
+    );
+
     // The publish's record reaches only the workspace entry.
     store.dispatch(
       workspaceActions.recordDeployment.fulfilled(
@@ -99,6 +109,10 @@ describe('when the editor writes scene.json after the project changed', () => {
     expect(store.getState().workspace.projects[0].info.deployments).toEqual({
       'world:my-world.dcl.eth:0,0': DEPLOYMENT,
     });
+  });
+
+  it('should keep the picture captured for the publish screens', () => {
+    expect(store.getState().editor.project?.thumbnail).toBe(CAPTURED_THUMBNAIL);
   });
 
   it('should keep the world the publish recorded', () => {
