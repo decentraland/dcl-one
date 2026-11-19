@@ -21,8 +21,9 @@
 // The intent is pinned when the guard is made: the buyer, the chain and a copy of the terms; only `current` and
 // `handOff` stay live. Before each signature or transaction it checks the login is still the one confirmed and the
 // wallet's selected account is the buyer's; a direct send reads the wallet's chain last, after every other await. A
-// sale is forwarded only once the host has kept its attempt (`handOff`): the host holds one outstanding sale per
-// confirmation, and an approve never counts as one. What reaches the wallet is what was checked: a typed-data text
+// sale is forwarded only once the host has kept its attempt (`handOff`, told the rail and, for a meta-transaction, the
+// nonce the checked signature names): the host holds one outstanding sale per confirmation, and an approve never
+// counts as one. What reaches the wallet is what was checked: a typed-data text
 // parsed once and its checked data serialized again for the pinned buyer, or a transaction snapshot built from the
 // checked fields, its fees from the rails' own policy (amoyGasOverrides) and its chain bound. Anything else is
 // refused before it reaches the wallet.
@@ -66,10 +67,15 @@ export interface ManaPurchaseIntent {
   current(): boolean
   /**
    * Keeps the sale's attempt before its signature or transaction is forwarded, and holds it as this confirmation's one
-   * outstanding sale. False refuses it: the attempt couldn't be kept, or another one is still outstanding.
+   * outstanding sale. False refuses it: the attempt couldn't be kept, or another one is still outstanding. `attempt`
+   * says which way it goes: as the venue's meta-transaction (`relay`, with the nonce the checked signature names) or
+   * sent from the buyer's wallet (`direct`, whose nonce the wallet picks).
    */
-  handOff(): boolean
+  handOff(attempt: ManaHandOff): boolean
 }
+
+/** A sale's attempt, as the guard hands it off: what the host keeps before forwarding it. */
+export type ManaHandOff = { rail: 'relay'; nonce: bigint } | { rail: 'direct' }
 
 const APPROVE = getAbiItem({ abi: ERC20_ABI, name: 'approve' })
 const STORE_BUY = getAbiItem({ abi: COLLECTION_STORE_ABI, name: 'buy' })
@@ -196,7 +202,7 @@ type Checked = { sale: boolean }
  * its exact EIP-712 schema and nothing more. Returns the typed data as checked, for the wallet to sign that and not
  * the text it was read from, and whether it is the sale.
  */
-export function checkMetaTransaction(from: unknown, data: unknown, intent: Pick<ManaPurchaseIntent, 'buyer' | 'chainId' | 'sale'>): Checked & { typed: unknown } {
+export function checkMetaTransaction(from: unknown, data: unknown, intent: Pick<ManaPurchaseIntent, 'buyer' | 'chainId' | 'sale'>): Checked & { typed: unknown; nonce: bigint } {
   if (lower(from) !== lower(intent.buyer)) refuse('The Shop signs only for the account you signed in with.')
   const { mana, venue } = registryFor(intent)
   let typed: unknown
@@ -223,12 +229,13 @@ export function checkMetaTransaction(from: unknown, data: unknown, intent: Pick<
     /^\d{1,78}$/.test(String(message.nonce)) &&
     lower(message.from) === lower(intent.buyer)
   if (!ok) refuse('The Shop only signs its own purchases.')
+  const nonce = BigInt(String(message.nonce))
   if (target === mana) {
     checkApprove(message[field], intent)
-    return { typed, sale: false }
+    return { typed, sale: false, nonce }
   }
   checkSale(message[field], intent)
-  return { typed, sale: true }
+  return { typed, sale: true, nonce }
 }
 
 /** A value field that is absent or exactly zero, in a shape a wallet reads one way. */
@@ -294,7 +301,7 @@ export function manaGuardedProvider(provider: Eip1193Provider, source: ManaPurch
     chainId: source.chainId,
     sale: structuredClone(source.sale),
     current: () => source.current(),
-    handOff: () => source.handOff()
+    handOff: (attempt) => source.handOff(attempt)
   }
   // The confirmed terms are checked once, before the wallet is asked anything.
   checkManaTerms(intent)
@@ -308,8 +315,8 @@ export function manaGuardedProvider(provider: Eip1193Provider, source: ManaPurch
     await assertWalletAccount(provider, intent.buyer)
     stillCurrent()
   }
-  const handOff = (): void => {
-    if (!intent.handOff()) refuse("This purchase can't be sent right now: it couldn't be kept, or it is already on its way.")
+  const handOff = (attempt: ManaHandOff): void => {
+    if (!intent.handOff(attempt)) refuse("This purchase can't be sent right now: it couldn't be kept, or it is already on its way.")
   }
   return {
     async request({ method, params }) {
@@ -345,7 +352,7 @@ export function manaGuardedProvider(provider: Eip1193Provider, source: ManaPurch
           const checked = checkMetaTransaction(args[0], text, intent)
           const signed = JSON.stringify(checked.typed)
           await session()
-          if (checked.sale) handOff()
+          if (checked.sale) handOff({ rail: 'relay', nonce: checked.nonce })
           return provider.request({ method, params: [intent.buyer, signed] })
         }
         case 'eth_sendTransaction': {
@@ -356,7 +363,7 @@ export function manaGuardedProvider(provider: Eip1193Provider, source: ManaPurch
           // there and leave the purchase pending. The login is checked again after it.
           if (lower(await provider.request({ method: 'eth_chainId' })) !== chainHex) refuse('Your wallet is on another network. Switch it to the Shop’s and try again.')
           stillCurrent()
-          if (checked.sale) handOff()
+          if (checked.sale) handOff({ rail: 'direct' })
           return provider.request({ method, params: [checked.snapshot] })
         }
         default:

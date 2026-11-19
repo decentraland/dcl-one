@@ -15,6 +15,7 @@
 import { CART_KEY_PREFIX, CHECKOUT_KEY_PREFIX, createCartStore, type CartStorage, type CartStore } from '../../../shop/cart/store'
 import type { GroupProgress, GroupStatus } from '@shop/model/purchase'
 import { MAX_PURCHASE_UNITS, OPERATION_STATES, parseLines, TERMINAL_STATES, type ShopLine, type ShopOperationState } from '@dcl/one-ui/apps/shop/shopProtocol'
+import { isManaAttempt, type ManaAttemptRecord } from './manaPurchase'
 
 /** What a purchase's dialog shows of one item it buys (one per unit: two of an item are two). */
 export interface PurchaseDisplay {
@@ -43,6 +44,8 @@ export interface OperationRecord {
   progress?: GroupProgress
   /** One per unit it buys, in order. */
   displays?: PurchaseDisplay[]
+  /** Paid in MANA: how far its sale got on each way it was sent (./manaPurchase). A Credits purchase has none. */
+  mana?: ManaAttemptRecord
   createdAt: number
   updatedAt: number
 }
@@ -128,6 +131,7 @@ function isRecord(v: unknown, buyer: string): v is OperationRecord {
     (v.chainId === undefined || isChain(v.chainId)) &&
     (v.progress === undefined || isProgress(v.progress)) &&
     (v.displays === undefined || (Array.isArray(v.displays) && v.displays.length <= MAX_DISPLAYS && v.displays.every(isDisplay))) &&
+    (v.mana === undefined || isManaAttempt(v.mana)) &&
     isTime(v.createdAt) &&
     isTime(v.updatedAt)
   )
