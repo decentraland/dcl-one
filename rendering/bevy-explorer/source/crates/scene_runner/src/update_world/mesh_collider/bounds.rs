@@ -27,19 +27,9 @@ struct Limits {
 impl ColliderBounds {
     /// The limits of a scene of `parcels` parcels in `regions`.
     pub(super) fn new(regions: &[BoundRegion], parcels: usize) -> Self {
-        if regions.is_empty() {
+        let Some(((min, max), height)) = BoundRegion::enclosing(regions) else {
             return Self(None);
-        }
-
-        let mut min = IVec2::MAX;
-        let mut max = IVec2::MIN;
-        let mut height = 0.0f32;
-        for region in regions {
-            let (region_min, region_max) = region.cells();
-            min = min.min(region_min);
-            max = max.max(region_max);
-            height = height.max(region.height);
-        }
+        };
         // one limit for the whole scene: that of its parcel count, or a higher one its regions
         // carry
         let height = height.max(BoundRegion::height_for_parcels(parcels as u32));

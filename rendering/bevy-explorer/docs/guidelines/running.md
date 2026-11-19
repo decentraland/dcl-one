@@ -459,6 +459,8 @@ of the contract.
   by LAN address, `--realm http://$(ipconfig getifaddr en0):<port>`. Colliders follow the same
   switch: a run that shows out-of-bounds geometry keeps its colliders on, and any other run turns
   off a collider that leaves the bounds and counts it in the debug panel's Scene Content section.
+  A local scene server is always a preview run, so it keeps those colliders on while a client
+  pointed at the LAN address does not.
 - **The bridge scene's build output is not what the engine loads.** After any bridge-scene
   source change run `pnpm run export-native` (native) or `pnpm run bundle` (web) from
   `react-web/bridge-scene/`, or the client runs the stale scene from the exported folder.
