@@ -138,6 +138,22 @@ async fn seed_place(pool: &PgPool, id: &str, raw: serde_json::Value, base_positi
         .unwrap();
 }
 
+/// A lease authorizations document granting `holder` the `plot`; returns its URL.
+async fn lease_document(holder: &str, plot: &str) -> (String, tokio::task::JoinHandle<()>) {
+    let doc = serde_json::json!([{ "addresses": [holder], "plots": [plot] }]);
+    let lease = axum::Router::new().route(
+        "/authorizations.json",
+        axum::routing::get(move || async move { Json(doc) }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!(
+        "http://{}/authorizations.json",
+        listener.local_addr().unwrap()
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, lease).await.unwrap() });
+    (url, server)
+}
+
 async fn seed_world_scene(pool: &PgPool, world: &str, entity_id: &str, parcels: &[&str]) {
     sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1) ON CONFLICT DO NOTHING")
         .bind(world)

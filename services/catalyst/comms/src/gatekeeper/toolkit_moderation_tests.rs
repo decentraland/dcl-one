@@ -882,19 +882,7 @@ async fn toolkit_ban_listings_need_the_scene_owner_or_an_admin() {
 #[tokio::test]
 async fn toolkit_ban_listings_admit_extended_holders() {
     let holder = address_of(KEY);
-    let lease = axum::Router::new().route(
-        "/authorizations.json",
-        axum::routing::get({
-            let holder = holder.clone();
-            move || async move { Json(json!([{ "addresses": [holder], "plots": ["42,42"] }])) }
-        }),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let lease_url = format!(
-        "http://{}/authorizations.json",
-        listener.local_addr().unwrap()
-    );
-    let server = tokio::spawn(async move { axum::serve(listener, lease).await.unwrap() });
+    let (lease_url, server) = lease_document(&holder, "42,42").await;
     let app = |policy: StubPolicy, lease_url: Option<String>| {
         let settings = Settings {
             lease_authorizations_url: lease_url,
@@ -917,14 +905,6 @@ async fn toolkit_ban_listings_admit_extended_holders() {
         protected: Ok([Address::parse(&holder).unwrap()].into_iter().collect()),
         ..StubPolicy::default()
     };
-    let operator = StubPolicy {
-        land: Ok(Some(Arc::new(Some(LandOperators {
-            owner: "0x000000000000000000000000000000000000dead".into(),
-            operator: Some(holder.clone()),
-            ..Default::default()
-        })))),
-        ..StubPolicy::default()
-    };
     let land = |doc: LandOperators| StubPolicy {
         land: Ok(Some(Arc::new(Some(LandOperators {
             owner: "0x000000000000000000000000000000000000dead".into(),
@@ -932,6 +912,10 @@ async fn toolkit_ban_listings_admit_extended_holders() {
         })))),
         ..StubPolicy::default()
     };
+    let operator = land(LandOperators {
+        operator: Some(holder.clone()),
+        ..Default::default()
+    });
     let update_operator = land(LandOperators {
         update_operator: Some(holder.clone()),
         ..Default::default()
