@@ -25,6 +25,10 @@ REPORT_EVIDENCE_CAP = "5m"
 # multipart body) plus 1 MiB, so its own JSON 413 is the one a client meets; a
 # gateway test pins it.
 CAST_PRESENTATION_CAP = "101m"
+# A camera reel multipart upload: the app's `MAX_MULTIPART_IMAGE_BYTES` (5 MiB)
+# plus 1 MiB for the metadata field and framing, so its own error is the one a
+# client meets; a gateway test pins it. The 15 MiB JSON upload keeps the 1m cap.
+CAMERA_REEL_UPLOAD_CAP = "6m"
 # The content server's `POST /entities` route limit at the default field
 # count (`max_deployment_body_bytes`: 200 MiB of files and fields plus
 # multipart framing), rounded up, so its own 413 is the one a client meets.
@@ -333,6 +337,15 @@ def render(table, cfg, mime):
     # nginx buffers it, so concurrent uploads are capped as on the deploy routes.
     locations += location('~ "^/cast-presenter-service/presentations/*$"', proxy("apis",
         f"client_max_body_size {CAST_PRESENTATION_CAP}; client_body_timeout 300s; {uploads}"))
+    # A camera reel photo upload, on its prefix and its host (rewritten under it). The app
+    # reads the signature after nginx buffers the body, so concurrent uploads are capped as
+    # on the deploy routes.
+    camera_upload = f"client_max_body_size {CAMERA_REEL_UPLOAD_CAP}; {uploads}"
+    locations += location('~ "^/camera-reel-service/api/images/*$"', proxy("apis", camera_upload))
+    # The root alias is `^~ /camera-reel/`, which skips regex locations; an exact match wins.
+    locations += location("= /camera-reel/api/images",
+                          "rewrite ^/camera-reel/(.*)$ /camera-reel-service/$1 break;\n"
+                          + proxy("apis", camera_upload))
     # Both badges host forms reach this already rewritten under /badges. The admin
     # check is a bearer token the app reads after nginx buffers the body, so
     # concurrent uploads are capped as on the deploy routes.
