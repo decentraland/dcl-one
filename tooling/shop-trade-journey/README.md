@@ -144,6 +144,13 @@ install -m 600 <key file outside the repo> .cache/dev/relayer.key
 foundation-dev down && foundation-dev up
 ```
 
+Elsewhere the key does little on this profile: the node knows no Decentraland MANA or store contracts on Amoy,
+so `/v1/payments/config` names the relayer as `payTo` but answers disabled, and the broker buy refuses the
+chain. The relay pays for at most 100 free calls a day across every address (approvals, cancels, anything that
+is no sale or credits spend); sales and credits purchases are bounded only by the per-address quota, and
+addresses cost nothing to make. So the stack refuses to start with a relayer key behind
+`FOUNDATION_DEV_PUBLIC_ORIGIN`: keep it on loopback, as for the credits signer, or remove the key.
+
 ## The wallet
 
 It signs in the way a MetaMask user does: the Shop's Sign in opens the login page, and the provider reports
