@@ -9,6 +9,32 @@ import { CURRENCY } from "@shop/checkout/lib/currency";
 
 type ErrLike = { code?: unknown; status?: number; message?: string; name?: string };
 
+/** A relay refusal's own word, as both relay clients keep it (GaslessUnavailableError, MetaTransactionError). */
+type Refused = { refusal?: { error?: unknown; retryAt?: unknown; quota?: unknown } };
+
+/** When a spent quota frees its next slot, as the buyer reads it: a time today or tomorrow, else within a day. */
+function quotaWhen(retryAt: unknown, now: Date): string {
+  const at = typeof retryAt === "number" ? new Date(retryAt * 1000) : null;
+  // The relay's window is a day: a time already past, or over a day out, says nothing reliable.
+  if (!at || at.getTime() <= now.getTime() || at.getTime() - now.getTime() > 25 * 60 * 60 * 1000) return "within 24 hours";
+  const time = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(at);
+  return at.toDateString() === now.toDateString() ? `at ${time}` : `tomorrow at ${time}`;
+}
+
+/**
+ * The relay's own daily limits, as the buyer reads them: the account's fee-free quota is spent (and when it frees
+ * up), or the relay has paused fee-free transactions for the day. Null for any other refusal.
+ */
+export function relayLimitText(e: unknown, now: Date = new Date()): string | null {
+  const refusal = e && typeof e === "object" ? (e as Refused).refusal : undefined;
+  if (refusal?.error === "quota_reached") {
+    const quota = typeof refusal.quota === "number" ? `all ${refusal.quota} of` : "all of";
+    return `You've used ${quota} today's fee-free transactions for this account. You can buy fee-free again ${quotaWhen(refusal.retryAt, now)}.`;
+  }
+  if (refusal?.error === "relay_budget_spent") return "Fee-free checkout is paused for today.";
+  return null;
+}
+
 /** The buyer bailed out: a wallet rejection (4001), an aborted fetch, or a reject/deny/cancel message. */
 export function isRejection(e: unknown): boolean {
   const err = (e ?? {}) as ErrLike;
@@ -40,6 +66,8 @@ export function wrongNetworkText(current: number, required: number): string {
  */
 export function friendlyError(e: unknown, fallback: string, opts: { sale?: boolean } = {}): string {
   if (isRejection(e)) return ERROR_COPY.rejected;
+  const limit = relayLimitText(e);
+  if (limit) return limit;
   if (isWrongNetworkError(e)) return wrongNetworkText(e.current, e.required);
   if (isWalletUnauthorizedError(e)) return ERROR_COPY.walletUnauthorized;
   if (opts.sale) {

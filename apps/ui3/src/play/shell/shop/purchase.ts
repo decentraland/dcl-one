@@ -401,10 +401,11 @@ const REVERTED_ALONE = 'The transaction failed on-chain. Nothing was bought; the
  * wallet holding the fee money is offered the switch: saying that the fee-free way is unavailable when it was
  * tried first, plainly on a checkout that only sends from the wallet. Any other wallet is told the purchase didn't
  * go out: a managed one, never told of networks or fees, and one short of the fee money, or whose balance can't be
- * read in time.
+ * read in time. When the relay said why the fee-free way couldn't run (its daily limits: the failure's
+ * `feeFreeNote`), that reason is said in place of "Fee-free checkout is unavailable right now".
  */
-const switchAfterFeeFree = (chainId: number): string =>
-  `Fee-free checkout is unavailable right now. You can switch to ${chainLabel(chainId)} and pay the network fee with your wallet. Nothing was bought.`
+const switchAfterFeeFree = (chainId: number, note?: string): string =>
+  `${note ?? 'Fee-free checkout is unavailable right now.'} You can switch to ${chainLabel(chainId)} and pay the network fee with your wallet. Nothing was bought.`
 const switchDirect = (chainId: number): string => `Your wallet is on another network. Switch it to ${chainLabel(chainId)} to send this purchase. Nothing was bought.`
 const FEE_FREE_UNAVAILABLE = 'Fee-free checkout is unavailable right now. Nothing was bought. Try again later.'
 const NOT_SENT_LATER = 'This purchase couldn’t go out. Nothing was bought. Try again later.'
@@ -1311,9 +1312,10 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           const feeFree = result.failure.feeFreeUnavailable === true
           const funded = quote.kind === 'web3' && (await feeMoney(required, quote.buyer))
           if (funded) {
-            return refused(feeFree ? switchAfterFeeFree(required) : switchDirect(required), `the rest of it needs your wallet on ${chainLabel(required)} to pay the network fee.`, 'failed', undefined, required)
+            return refused(feeFree ? switchAfterFeeFree(required, result.failure.feeFreeNote) : switchDirect(required), `the rest of it needs your wallet on ${chainLabel(required)} to pay the network fee.`, 'failed', undefined, required)
           }
-          return refused(feeFree ? FEE_FREE_UNAVAILABLE : NOT_SENT_LATER, NEVER_WENT, 'failed')
+          const note = result.failure.feeFreeNote
+          return refused(feeFree ? (note != null ? `${note} Nothing was bought.` : FEE_FREE_UNAVAILABLE) : NOT_SENT_LATER, NEVER_WENT, 'failed')
         }
         // A failed group handed nothing off, or its transaction reverted: either way this attempt is over.
         return refused(result.failure.message, result.failure.kind === 'reverted' ? REVERTED_PART : result.failure.message, result.failure.kind !== 'refused' ? 'failed' : null)

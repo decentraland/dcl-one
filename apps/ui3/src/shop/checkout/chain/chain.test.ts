@@ -25,6 +25,7 @@ import {
   normalizeSignature,
   refusedBeforeBroadcast,
   relayMetaTransaction,
+  relayRefusal,
   SignatureDeclinedError,
 } from "./metatx";
 import { createRpcReader, waitForReceipt, type ChainReader } from "./rpc";
@@ -275,6 +276,24 @@ describe("relaying a meta-transaction", () => {
     await expect(
       relayMetaTransaction({ provider, reader: fakeReader({ code: async () => "0x6080" }), target, from, functionData: "0x12" }),
     ).rejects.toBeInstanceOf(GaslessUnavailableError);
+  });
+
+  it("keeps the relay's own word for a refusal: its error code, and when a spent quota frees up", async () => {
+    const provider = { request: async () => `0x${"22".repeat(65)}` };
+    const answering = (status: number, body: unknown) => (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
+    const relay = (fetchImpl: typeof fetch) => relayMetaTransaction({ provider, reader: fakeReader(), target, from, functionData: "0x12", fetchImpl });
+    const quota = { ok: false, error: "quota_reached", message: "Max amount of transactions reached for address. Quota: 30", not_sent: true, retryAt: 1_767_230_000, quota: 30 };
+    await expect(relay(answering(429, quota))).rejects.toMatchObject({ reason: "relayer-rejected", refusal: { error: "quota_reached", retryAt: 1_767_230_000, quota: 30 } });
+    await expect(relay(answering(429, { ok: false, error: "relay_budget_spent", message: "spent", not_sent: true }))).rejects.toMatchObject({ refusal: { error: "relay_budget_spent" } });
+    // Each field only in its own shape: no code without a string, no time or count but a positive whole number.
+    const odd = { ok: false, error: 7, retryAt: "soon", quota: -1, not_sent: true };
+    await expect(relay(answering(429, odd))).rejects.toMatchObject({ refusal: {} });
+    expect(relayRefusal({ error: "", retryAt: 1.5, quota: 0 })).toEqual({});
+    // The code from `code` (upstream's, and dcl-one's relay too), else `error` (dcl-one's, before it answered `code`).
+    expect(relayRefusal({ code: "quota_reached" })).toEqual({ error: "quota_reached" });
+    expect(relayRefusal({ code: "quota_reached", error: "invalid_transaction" })).toEqual({ error: "quota_reached" });
+    expect(relayRefusal({ code: "", error: "relay_budget_spent" })).toEqual({ error: "relay_budget_spent" });
+    expect(relayRefusal(null)).toEqual({});
   });
 
   it("only the relay's explicit evidence proves nothing was sent", async () => {

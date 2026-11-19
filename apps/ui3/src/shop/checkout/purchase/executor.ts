@@ -28,7 +28,7 @@ import { gaslessEnabled } from "../chain/config";
 import { isGaslessUnavailable, isSignatureDeclined } from "../chain/metatx";
 import { isPendingTxError, isRevertedTxError } from "../chain/wallet";
 import { AuthorizationKind, getAuthorizationStatus, needsApprovalStep, ensureAuthorization, type ShopAuthorization } from "../lib/authorizations";
-import { friendlyError, isRejection } from "../lib/errors";
+import { friendlyError, isRejection, relayLimitText } from "../lib/errors";
 import { isWrongNetworkError } from "../lib/network";
 import { canPayGasItself } from "../lib/wallet-kind";
 import { requireContracts } from "../chain/contracts";
@@ -146,6 +146,8 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
   const chainId = group.key.chainId;
   // The fee-free way was tried and couldn't run, so the wallet's own transaction is its fallback.
   let fellBack = false;
+  // Why it couldn't run, when the relay said (its daily limits), for the buyer to read beside the fallback's failure.
+  let feeFreeNote: string | null = null;
   try {
     let settled = false;
     if (ctx.gasless ?? gaslessEnabled()) {
@@ -157,6 +159,7 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
         const canFallBack = isGaslessUnavailable(e) && e.reason !== "relayer-unreachable" && canPayGasItself(ctx.walletKind) && txHash === null;
         if (!canFallBack) throw e;
         fellBack = true;
+        feeFreeNote = relayLimitText(e);
         if (handedOff) {
           // The relay parsed our request and refused it: provably not broadcast. The direct rail is a new hand-off.
           handedOff = false;
@@ -191,7 +194,10 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
     if (isWrongNetworkError(e)) {
       failure.message = friendlyError(e, FALLBACK);
       failure.switchTo = e.required;
-      if (fellBack) failure.feeFreeUnavailable = true;
+      if (fellBack) {
+        failure.feeFreeUnavailable = true;
+        if (feeFreeNote) failure.feeFreeNote = feeFreeNote;
+      }
     }
     dispatchSafe(store, keyId, { type: "failed", failure });
     return { status: "failed", failure, released: await release(deps, [creditId]) };
