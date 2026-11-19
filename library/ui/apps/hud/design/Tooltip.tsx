@@ -4,7 +4,6 @@
 
 import styles from './Tooltip.module.css'
 
-
 interface TooltipBase {
   label: string
   /** Single-key shortcut shown dimmed, e.g. 'L' → "Friends [L]". */
