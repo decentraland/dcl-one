@@ -20,12 +20,16 @@ import {
   GeneralCopy,
   GeneralDecentralandColor,
   GeneralDownArrow,
+  GeneralMana,
   GeneralManaColour,
   GeneralPolygonMana
 } from '../../foundations/icons/general'
+import { MenusCopy } from '../../foundations/icons/menus'
 import { ShopCredits } from '../../foundations/icons/shop'
 import { breakpoints } from '../../foundations/layout/layout'
+import { CopyFeedback } from '../CopyFeedback/CopyFeedback'
 import styles from './NavBar.module.css'
+import profileStyles from './NavBar.profile.module.css'
 
 export type NavBarLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }
 
@@ -35,6 +39,7 @@ export type NavBarLinkComponent = ComponentType<NavBarLinkProps>
 export type NavBarLink = {
   label: string
   href: string
+  target?: '_blank'
   /** Marks the link as the current page. */
   active?: boolean
 }
@@ -49,6 +54,8 @@ export type NavBarAccount = {
   name?: string
   /** The account's face image; the Decentraland mark is shown without one. */
   avatarUrl?: string
+  /** The full-body snapshot in the desktop profile panel. */
+  bodyUrl?: string
 }
 
 /** Balances are shown only when defined; nothing is shown for a missing value. */
@@ -58,7 +65,7 @@ export type NavBarBalances = {
   polygonMana?: number
 }
 
-export type NavBarAccountAction = { label: string; icon?: ReactNode } & (
+export type NavBarAccountAction = { label: string; icon?: ReactNode; separated?: boolean } & (
   { href: string; onSelect?: undefined } | { onSelect: () => void; href?: undefined }
 )
 
@@ -83,6 +90,7 @@ export type NavBarLabels = {
   account: (name: string) => string
   userId: string
   copyUserId: string
+  addressCopied?: string
   userIdCopied: string
   copyUserIdError: string
   openMenu: string
@@ -114,7 +122,10 @@ type NavBarCommonProps = {
   notifications?: NavBarNotifications
   /** Signed in: the account menu's entries, for example profile links and sign out. */
   accountActions?: readonly NavBarAccountAction[]
-  accountMenuAppearance?: 'default' | 'sites'
+  accountMenuAppearance?: 'default' | 'sites' | 'profile'
+  /** Optional balances and network control inside the profile panel. */
+  accountMenuBalances?: NavBarBalances
+  accountMenuNetwork?: ReactNode
   linkComponent?: NavBarLinkComponent
   labels?: Partial<NavBarLabels>
   /**
@@ -215,8 +226,10 @@ type LinkRenderer = (props: NavBarLinkProps) => ReactNode
 
 const linkRenderer =
   (LinkComponent: NavBarLinkComponent | undefined): LinkRenderer =>
-  (props) =>
-    LinkComponent && isInternalHref(props.href) ? <LinkComponent {...props} /> : <a {...props} />
+  (props) => {
+    const Link = LinkComponent && isInternalHref(props.href) ? LinkComponent : 'a'
+    return <Link {...props} rel={props.target === '_blank' ? 'noopener noreferrer' : props.rel} />
+  }
 
 /** Closes an open popup on Escape (returning focus to its trigger), on an outside press and when focus leaves it. */
 function usePopupDismissal(
@@ -346,6 +359,7 @@ function SectionDropdown({
           <li key={index}>
             {renderLink({
               href: item.href,
+              target: item.target,
               className: styles.dropdownLink,
               'aria-current': item.active ? 'page' : undefined,
               onClick: onClose,
@@ -378,6 +392,7 @@ function DrawerSection({
         <li key={index}>
           {renderLink({
             href: item.href,
+            target: item.target,
             className: styles.drawerItemLink,
             'aria-current': item.active ? 'page' : undefined,
             onClick: onNavigate,
@@ -439,15 +454,22 @@ function Avatar({ account }: { account: NavBarAccount }) {
 function Balances({
   balances,
   labels,
-  format
+  format,
+  profile = false
 }: {
   balances: NavBarBalances
   labels: NavBarLabels
   format: Intl.NumberFormat
+  profile?: boolean
 }) {
   const entries = [
     { key: 'credits', value: balances.credits, label: labels.credits, Icon: ShopCredits },
-    { key: 'mana', value: balances.mana, label: labels.mana, Icon: GeneralManaColour },
+    {
+      key: 'mana',
+      value: balances.mana,
+      label: labels.mana,
+      Icon: profile ? GeneralMana : GeneralManaColour
+    },
     {
       key: 'polygonMana',
       value: balances.polygonMana,
@@ -508,21 +530,23 @@ function AccountActionList({
   actions,
   renderLink,
   onDone,
-  className
+  className,
+  itemClassName = styles.menuItem
 }: {
   actions: readonly NavBarAccountAction[]
   renderLink: LinkRenderer
   onDone: () => void
   className: string | undefined
+  itemClassName?: string
 }) {
   return (
     <ul className={className}>
       {actions.map((action, index) => (
-        <li key={index}>
+        <li key={index} data-separated={action.separated || undefined}>
           {action.href !== undefined ? (
             renderLink({
               href: action.href,
-              className: styles.menuItem,
+              className: itemClassName,
               onClick: onDone,
               children: (
                 <>
@@ -534,7 +558,7 @@ function AccountActionList({
           ) : (
             <button
               type="button"
-              className={styles.menuItem}
+              className={itemClassName}
               onClick={() => {
                 onDone()
                 action.onSelect()
@@ -556,7 +580,10 @@ function AccountMenu({
   labels,
   renderLink,
   onDone,
-  appearance
+  appearance,
+  balances,
+  network,
+  format
 }: {
   account: NavBarAccount
   actions: readonly NavBarAccountAction[]
@@ -564,26 +591,23 @@ function AccountMenu({
   renderLink: LinkRenderer
   onDone?: () => void
   appearance?: NavBarCommonProps['accountMenuAppearance']
+  balances?: NavBarBalances
+  network?: ReactNode
+  format: Intl.NumberFormat
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuId = useId()
   const { open, setOpen, toggle, onKeyDown, onBlur } = usePopup(rootRef, triggerRef)
   const displayName = account.name || shortAddress(account.address)
-  const sites = appearance === 'sites'
-  const [copyStatus, setCopyStatus] = useState('')
-  const copyAddress = async () => {
-    try {
-      await navigator.clipboard.writeText(account.address)
-      setCopyStatus(labels.userIdCopied)
-    } catch {
-      setCopyStatus(labels.copyUserIdError)
-    }
-  }
+  const profile = appearance === 'profile'
+  const sites = profile || appearance === 'sites'
+  const [failedBodyUrl, setFailedBodyUrl] = useState<string>()
+  const bodyUrl = account.bodyUrl === failedBodyUrl ? undefined : account.bodyUrl
   return (
     <div
       ref={rootRef}
-      className={styles.account}
+      className={profile ? `${styles.account} ${profileStyles.account}` : styles.account}
       data-appearance={appearance}
       onKeyDown={onKeyDown}
       onBlur={onBlur}
@@ -595,56 +619,91 @@ function AccountMenu({
         aria-label={labels.account(displayName)}
         aria-expanded={open}
         aria-controls={menuId}
-        onClick={() => {
-          setCopyStatus('')
-          toggle()
-        }}
+        onClick={toggle}
       >
         <Avatar account={account} />
       </button>
-      <div id={menuId} className={styles.accountMenu} hidden={!open} tabIndex={-1}>
-        <div className={styles.accountHeader}>
-          {sites ? (
-            <div className={styles.accountMenuAvatar}>
-              <Avatar account={account} />
-            </div>
-          ) : null}
-          <div className={styles.accountDetails}>
-            <p className={styles.accountName}>{displayName}</p>
-            {sites ? (
-              <div className={styles.accountIdentity}>
-                <span>{labels.userId}</span>
-                <span title={account.address}>{shortAddress(account.address)}</span>
-                <button
-                  type="button"
-                  aria-label={labels.copyUserId}
-                  className={styles.iconButton}
-                  onClick={() => void copyAddress()}
-                >
-                  <GeneralCopy size={16} aria-hidden="true" />
-                </button>
-                <span role="status" className={styles.visuallyHidden}>
-                  {copyStatus}
-                </span>
-              </div>
-            ) : account.name ? (
-              <p className={styles.accountAddress} title={account.address}>
-                {shortAddress(account.address)}
-              </p>
+      <div
+        id={menuId}
+        className={profile ? `${styles.accountMenu} ${profileStyles.panel}` : styles.accountMenu}
+        hidden={!open}
+        tabIndex={-1}
+      >
+        {profile && bodyUrl ? (
+          <div className={profileStyles.portrait}>
+            {open ? (
+              <img src={bodyUrl} alt="" loading="lazy" onError={() => setFailedBodyUrl(bodyUrl)} />
             ) : null}
           </div>
-        </div>
-        {actions.length > 0 ? (
-          <AccountActionList
-            actions={actions}
-            renderLink={renderLink}
-            onDone={() => {
-              setOpen(false)
-              onDone?.()
-            }}
-            className={styles.menuList}
-          />
         ) : null}
+        <div className={profile ? profileStyles.content : undefined}>
+          <div className={profile ? `${styles.accountHeader} ${profileStyles.header}` : styles.accountHeader}>
+            {sites ? (
+              <div className={profile ? profileStyles.face : styles.accountMenuAvatar}>
+                <Avatar account={account} />
+              </div>
+            ) : null}
+            <div className={styles.accountDetails}>
+              <p className={profile ? profileStyles.name : styles.accountName}>{displayName}</p>
+              {sites ? (
+                <div className={profile ? profileStyles.identity : styles.accountIdentity}>
+                  <span className={profile ? profileStyles.identityLabel : undefined}>{labels.userId}</span>
+                  {!profile ? (
+                    <span title={account.address}>{shortAddress(account.address)}</span>
+                  ) : null}
+                  {open ? (
+                    <CopyFeedback
+                      value={account.address}
+                      inlineValue={profile ? (
+                        <span title={account.address}>{shortAddress(account.address)}</span>
+                      ) : undefined}
+                      copiedLabel={profile ? labels.addressCopied ?? 'Address copied!' : undefined}
+                      successAnnouncement={labels.userIdCopied}
+                      errorAnnouncement={labels.copyUserIdError}
+                    >
+                      {(copy) => (
+                        <button
+                          type="button"
+                          aria-label={labels.copyUserId}
+                          className={styles.iconButton}
+                          onClick={copy}
+                        >
+                          {profile ? (
+                            <MenusCopy size={16} aria-hidden="true" />
+                          ) : (
+                            <GeneralCopy size={16} aria-hidden="true" />
+                          )}
+                        </button>
+                      )}
+                    </CopyFeedback>
+                  ) : null}
+                </div>
+              ) : account.name ? (
+                <p className={styles.accountAddress} title={account.address}>
+                  {shortAddress(account.address)}
+                </p>
+              ) : null}
+              {profile && balances ? (
+                <div className={profileStyles.balances}>
+                  <Balances balances={balances} labels={labels} format={format} profile />
+                </div>
+              ) : null}
+              {profile && open && network ? <div className={profileStyles.network}>{network}</div> : null}
+            </div>
+          </div>
+          {actions.length > 0 ? (
+            <AccountActionList
+              actions={actions}
+              renderLink={renderLink}
+              onDone={() => {
+                setOpen(false)
+                onDone?.()
+              }}
+              className={profile ? profileStyles.actions : styles.menuList}
+              itemClassName={profile ? `${styles.menuItem} ${profileStyles.action}` : undefined}
+            />
+          ) : null}
+        </div>
       </div>
     </div>
   )
@@ -839,6 +898,8 @@ export function NavBar({
   notifications,
   accountActions = [],
   accountMenuAppearance,
+  accountMenuBalances,
+  accountMenuNetwork,
   linkComponent,
   labels: labelOverrides,
   locale = 'en-US',
@@ -968,6 +1029,7 @@ export function NavBar({
                 <li key={index} className={styles.section}>
                   {renderLink({
                     href: section.href,
+                    target: section.target,
                     className: styles.tab,
                     'aria-current': section.active ? 'page' : undefined,
                     children: section.label
@@ -1015,6 +1077,9 @@ export function NavBar({
               key={account.address}
               account={account}
               appearance={accountMenuAppearance}
+              balances={accountMenuBalances ?? balances}
+              network={accountMenuNetwork}
+              format={format}
               actions={accountActions}
               labels={labels}
               renderLink={renderLink}
@@ -1098,6 +1163,7 @@ export function NavBar({
                   ) : (
                     renderLink({
                       href: section.href,
+                      target: section.target,
                       className: styles.drawerLink,
                       'aria-current': section.active ? 'page' : undefined,
                       onClick: closeDrawer,
