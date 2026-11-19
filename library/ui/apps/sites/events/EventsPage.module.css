@@ -1,13 +1,8 @@
-/* Source's backdrop: a radial purple glow (token mixes nearest source's design values) under a
-   black fade, with source's 700px top photo from tablet up. Source draws the photo from the top of the
-   document under its translucent header; the Sites header (72px) is opaque, so the photo starts under
-   it, skips the 72px the header would cover and still ends 700px down the document. The page runs the
-   full width with source's side margins: 64px from desktop, 32px on tablets, and phones edge to edge. */
 .root {
   position: relative;
   min-height: 100vh;
   overflow: hidden;
-  padding: var(--dcl-space-32) var(--dcl-space-64) 0;
+  padding: calc(var(--site-header-h, 0px) + var(--dcl-space-32)) var(--dcl-space-64) 0;
   background: radial-gradient(
     61.64% 109.58% at 50% 54.49%,
     color-mix(in srgb, var(--dcl-brand-lavender) 60%, var(--dcl-brand-purple)) 0%,
@@ -37,9 +32,8 @@
   display: none;
   width: 100%;
   max-width: none;
-  height: calc(700px - 72px);
+  height: 700px;
   object-fit: cover;
-  object-position: 50% -72px;
   transform: translateX(-50%);
   pointer-events: none;
   user-select: none;
@@ -59,7 +53,7 @@
 
 @media (max-width: 767px) {
   .root {
-    padding: 0;
+    padding: var(--site-header-h, 0px) 0 0;
   }
 }
 

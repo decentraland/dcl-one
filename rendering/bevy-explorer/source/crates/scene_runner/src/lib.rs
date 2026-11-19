@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::{collections::VecDeque, marker::PhantomData, time::Duration};
 
 use dcl_types::TryRecvError;
@@ -12,6 +14,7 @@ use bevy::{
     prelude::*,
     scene::scene_spawner_system,
     time::common_conditions::on_real_timer,
+    utils::synccell::SyncCell,
     window::PrimaryWindow,
     winit::WinitWindows,
 };
@@ -83,6 +86,7 @@ pub mod permissions;
 pub mod portables;
 pub mod primary_entities;
 pub mod renderer_context;
+pub mod scene_lod;
 pub mod scene_partition;
 pub mod scene_spawn_slice;
 mod scene_traffic;
@@ -96,7 +100,8 @@ pub mod util;
 #[derive(Resource)]
 pub struct SceneUpdates {
     pub sender: TaggedSceneResponseSender,
-    receiver: SceneResponseReceiver,
+    // on wasm this is std's mpsc Receiver, which is !Sync; SyncCell only hands it out through &mut
+    receiver: SyncCell<SceneResponseReceiver>,
     pub jobs_in_flight: HashSet<Entity>,
     pub update_deadline: SystemTime,
     pub eligible_jobs: usize,
@@ -118,14 +123,9 @@ pub struct SceneUpdates {
     pub priority_scenes: HashMap<&'static str, Entity>,
 }
 
-// safety: struct is sync except for the receiver.
-// receiver is only accessible via &mut handle
-unsafe impl Sync for SceneUpdates {}
-unsafe impl Send for SceneUpdates {}
-
 impl SceneUpdates {
     pub fn receiver(&mut self) -> &mut SceneResponseReceiver {
-        &mut self.receiver
+        self.receiver.get()
     }
 }
 
@@ -384,7 +384,7 @@ impl Plugin for SceneRunnerPlugin {
         let (sender, receiver) = scene_response_channel();
         app.insert_resource(SceneUpdates {
             sender,
-            receiver,
+            receiver: SyncCell::new(receiver),
             jobs_in_flight: Default::default(),
             update_deadline: web_time::SystemTime::now(),
             eligible_jobs: 0,
@@ -461,6 +461,7 @@ impl Plugin for SceneRunnerPlugin {
             app.add_systems(Update, scene_traffic::track_parcel.in_set(SceneSets::Input));
             app.add_plugins(debug_panel::SceneDebugPanelPlugin);
             app.add_plugins(LightsPlugin);
+            app.add_plugins(scene_lod::SceneLodPlugin);
         }
         app.add_plugins(AssetPreloadPlugin);
         app.add_plugins(scene_spawn_slice::SceneSpawnSlicePlugin);

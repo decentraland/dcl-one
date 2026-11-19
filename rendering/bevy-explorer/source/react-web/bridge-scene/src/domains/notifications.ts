@@ -103,8 +103,9 @@ export function registerNotifications(ctx: Ctx): void {
 
   ctx.push((dt) => {
     const player = getPlayer()
-    if (player == null || player.isGuest) {
-      // Logged out (the engine clears the player) or a guest, who has no notifications.
+    if (player == null) {
+      // Logged out (the engine clears the player). A guest is read like anyone, as in
+      // unity-explorer: a guest account has notifications, a throwaway guest just gets none.
       if (armed) disarm()
       return
     }

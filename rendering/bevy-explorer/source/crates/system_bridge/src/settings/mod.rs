@@ -44,6 +44,7 @@ use language_setting::LanguageSetting;
 use load_distance::{LoadDistanceSetting, UnloadDistanceSetting};
 use max_avatars::MaxAvatarsSetting;
 use max_downloads::MaxDownloadsSetting;
+use max_lods::MaxNearLodsSetting;
 use oob_setting::OobSetting;
 use player_settings::{JumpSetting, RunSpeedSetting, WalkSpeedSetting};
 use scene_threads::SceneThreadsSetting;
@@ -75,6 +76,7 @@ pub mod language_setting;
 pub mod load_distance;
 pub mod max_avatars;
 pub mod max_downloads;
+pub mod max_lods;
 pub mod oob_setting;
 pub mod parcel_grass_settings;
 pub mod player_settings;
@@ -212,6 +214,7 @@ impl Plugin for SettingBridgePlugin {
         if !is_preview {
             add_int_setting::<LoadDistanceSetting>(app, &mut settings, &mut schedule, &config);
             add_int_setting::<UnloadDistanceSetting>(app, &mut settings, &mut schedule, &config);
+            add_int_setting::<MaxNearLodsSetting>(app, &mut settings, &mut schedule, &config);
         }
 
         add_enum_setting::<FpsTargetSetting>(app, &mut settings, &mut schedule, &config);

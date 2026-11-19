@@ -8,6 +8,8 @@
   background: var(--dcl-bg-surface);
   color: var(--dcl-text-primary);
   font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 .dialog::backdrop {
   background: var(--dcl-bg-backdrop);

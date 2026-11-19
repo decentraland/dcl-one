@@ -109,11 +109,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   ([ADR](../../../../docs/adr/2026-11-09-explorer-scene-streaming.md)).
 - **Voice chat (private calls and community streams)** keeps the call statuses and guards, the
   3 × 2000 ms re-dial budget, the 1 s hang-up-before-join delay and the server's 60 s ring.
-  - Don't bind the mic to `T`: it opens the chat. The `Microphone` key (`V`) drives the call mic
-    while a call is connected and the nearby mic otherwise, as Unity's `T` does. Nearby, a press
-    opens the mic and its release closes it. In a call, a press shorter than 0.5 s leaves the mic
-    open and a longer one is push-to-talk. A press while the mic is open closes it on release. A
-    community listener's `V` does nothing, since a listener can't speak.
+  - The `Microphone` key is `T`, Unity's `Talk` key. The chat opens with `Enter`, so the chat
+    panel has no default key. The `Microphone` key drives the call mic while a call is connected
+    and the nearby mic otherwise, as Unity's `T` does. Nearby, a press opens the mic and its
+    release closes it. In a call, a press shorter than 0.5 s leaves the mic open and a longer one
+    is push-to-talk. A press while the mic is open closes it on release. A community listener's
+    `T` does nothing, since a listener can't speak.
   - Don't start a call's mic from a stored setting. It goes up on the call's first connect for
     whoever may speak (both sides of a private call, a stream's speakers). Don't turn it back on
     after a re-dial: what the user chose since then stands.
@@ -417,6 +418,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   what both servers allow for them, and keeps only the latest teleport and the latest emote command
   while that is spent. Overrunning the servers' budget ends the session for good, and a scene that
   repositions the player every frame would do it; unity-explorer has no limiter (`pacing.rs`).
+- **The client never sends what the Pulse server refuses for good.** A one-shot emote longer than
+  60 s goes out without a duration and ends with an explicit stop, and inputs and teleports from
+  outside the parcel grid are not sent (`lib.rs`, `pulse/mod.rs`).
+- **A second device on the same wallet takes over; Pulse tells the old one.** Pulse ends the older
+  session with `DuplicateSession` and the gatekeeper removes it from its island room; on
+  `DuplicateSession` a player ends its island connection for good: the realm's rooms end in the
+  identity-conflict state, which nothing retries, and a realm change starts them again, as it ends
+  Pulse's terminal stop. A removal from the island room on its own stays a transient failure. The
+  archipelago leaves the older socket open and sends it nothing more: it replaces, and tells with
+  `Kicked`, only this device's own stale socket (same session key). `already_connected` is set in
+  both cases, so it is only logged. A newer device that never reaches Pulse tells the older one
+  nothing through Pulse (`archipelago.rs`, `pulse/plugin.rs`).
+- **The scene-room request always signs as the explorer.** The engine's own gatekeeper requests
+  carry `signer: dcl:explorer` and the comms-handshake intent; only fetches a scene makes sign as
+  `decentraland-kernel-scene` (`lib.rs`, `restricted_actions`).
 - **IPv6 when no IPv4 address resolves.** The native driver connects to the first IPv4 address and
   falls back to the first IPv6 one, on an IPv6 socket, only when there is none. unity-explorer
   fails without an IPv4 address, and the servers bind IPv4 by default.
@@ -546,9 +562,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Where Gift is offered.** The profile card of chat names, nametags and the friend row (after
   View Profile), the community member menu (after Call; greyed for a blocked member either way),
   and another player's passport options (before Block; the picker replaces the passport). The
-  voice-stream panel's menu has none, as in unity-explorer. It is not offered to a guest
-  recipient either (unity-explorer doesn't check): a guest's account is a throwaway key on one
-  device, so an item sent there would be lost with it. A picker error is a toast and the
+  voice-stream panel's menu has none, as in unity-explorer. As there, a guest recipient is offered
+  Gift too. A picker error is a toast and the
   picker stays open; unity-explorer closes its picker on SEND before it can show the error.
 - **Gifting's analytics events and popup sounds are not ported.** unity-explorer reports sent,
   successful, failed and cancelled gifts and plays a sound with the sent and received popups; this
@@ -696,8 +711,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   nothing is shown, as there. The profile card offers the jump after View Profile, since its rows
   already follow a different order from unity-explorer's user menu.
 - **INVITE FRIENDS is for a signed-in player only.** unity-explorer's copy runs for any
-  identity it holds. Here a guest gets no button, since a guest's address is never kept and a referral
-  to it could not be credited. As there, it copies the deployment site's `/invite/<address>`
+  identity it holds. Here neither kind of guest gets the button: not the throwaway guest, and not a
+  guest account. As there, it copies the deployment site's `/invite/<address>`
   and says "Link copied!"; the panel stays open.
 - **A new referral tier opens the site's Referral Rewards tab.** unity-explorer opens
   `profile/accounts/<address>/referral`, which this site does not serve; its profile names the

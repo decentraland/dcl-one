@@ -629,6 +629,10 @@ pub struct AppConfig {
     pub scene_threads: usize,
     pub scene_load_distance: f32,
     pub scene_unload_extra_distance: f32,
+    /// How many loading scenes may draw a near LOD (their own models) at once, in view and
+    /// behind the camera together: the nearest in view start first, and with none free one
+    /// behind the camera makes way for one in view. A near LOD's colliders take no place.
+    pub max_near_lods: usize,
     pub scene_imposter_distances: Vec<f32>,
     pub scene_imposter_multisample: bool,
     pub scene_imposter_multisample_amount: f32,
@@ -684,7 +688,7 @@ pub const SETTINGS_GENERATION: u32 = 4;
 
 /// bump to run one-time migrations of saved input binding tables
 /// (see [`AppConfig::migrate_inputs`])
-pub const INPUTS_GENERATION: u32 = 1;
+pub const INPUTS_GENERATION: u32 = 2;
 
 /// bump when the terms of use change, so every install accepts them again
 pub const TERMS_VERSION: u32 = 1;
@@ -703,6 +707,7 @@ impl Default for AppConfig {
             scene_threads: 4,
             scene_load_distance: 10.0,
             scene_unload_extra_distance: 10.0,
+            max_near_lods: 12,
             scene_imposter_distances: vec![100.0, 200.0, 400.0, 800.0, 1600.0, 99999.0],
             scene_imposter_multisample: false,
             scene_imposter_multisample_amount: 0.0,
@@ -816,6 +821,7 @@ impl AppConfig {
         self.graphics.spring_bones = default.graphics.spring_bones;
         self.scene_load_distance = default.scene_load_distance;
         self.scene_unload_extra_distance = default.scene_unload_extra_distance;
+        self.max_near_lods = default.max_near_lods;
         self.scene_imposter_distances = default.scene_imposter_distances.clone();
         self.scene_imposter_multisample = default.scene_imposter_multisample;
         self.scene_imposter_multisample_amount = default.scene_imposter_multisample_amount;
@@ -825,11 +831,12 @@ impl AppConfig {
     }
 
     /// migrate saved input tables: replace bindings still on changed old defaults
-    /// (RollLeft/RollRight KeyT/KeyG freed for ChatPanel/Gallery, quick emotes moved off
-    /// the Action 3-6 digits onto the numpad), and add defaults for any actions the saved
-    /// table doesn't mention
+    /// (generation 1: RollLeft/RollRight KeyT/KeyG freed for ChatPanel/Gallery, quick emotes
+    /// moved off the Action 3-6 digits onto the numpad; generation 2: the microphone moved
+    /// from KeyV to KeyT and ChatPanel lost KeyT), and add
+    /// defaults for any actions the saved table doesn't mention
     pub fn migrate_inputs(&mut self) {
-        if self.inputs_generation < INPUTS_GENERATION {
+        if self.inputs_generation < 1 {
             for (action, bindings) in self.inputs.0.iter_mut() {
                 let (old_default, new_default) = match action {
                     Action::System(SystemAction::RollLeft) => (KeyCode::KeyT, None),
@@ -870,8 +877,47 @@ impl AppConfig {
                     *bindings = new_default.map(InputIdentifier::Key).into_iter().collect();
                 }
             }
-            self.inputs_generation = INPUTS_GENERATION;
         }
+        if self.inputs_generation < 2 {
+            let t = InputIdentifier::Key(KeyCode::KeyT);
+            let v = InputIdentifier::Key(KeyCode::KeyV);
+            let is = |action: &Action, system: SystemAction| *action == Action::System(system);
+            let bindings_of = |system: SystemAction| {
+                self.inputs
+                    .0
+                    .iter()
+                    .find(|(action, _)| is(action, system))
+                    .map(|(_, bindings)| bindings.as_slice())
+            };
+            // the microphone takes T when it is still on its old default (or has no row yet, so
+            // the default merges in below) and no action other than the chat panel's old default
+            // holds T; otherwise one press would fire both
+            let chat_panel_on_t = bindings_of(SystemAction::ChatPanel) == Some(&[t][..]);
+            let mic_on_old_default = bindings_of(SystemAction::Microphone).is_none_or(|b| b == [v]);
+            // the rows that may hold T after the move: the microphone's, and the chat panel's old
+            // default, which gives it up
+            let gives_way = |action: &Action| {
+                is(action, SystemAction::Microphone)
+                    || (is(action, SystemAction::ChatPanel) && chat_panel_on_t)
+            };
+            let t_taken = self
+                .inputs
+                .0
+                .iter()
+                .any(|(action, bindings)| !gives_way(action) && bindings.contains(&t));
+            // the chat panel gives up T only for the microphone: a player who moved the
+            // microphone elsewhere keeps T on the chat panel
+            if mic_on_old_default && !t_taken {
+                for (action, bindings) in self.inputs.0.iter_mut() {
+                    if is(action, SystemAction::ChatPanel) && *bindings == [t] {
+                        bindings.clear();
+                    } else if is(action, SystemAction::Microphone) {
+                        *bindings = vec![t];
+                    }
+                }
+            }
+        }
+        self.inputs_generation = self.inputs_generation.max(INPUTS_GENERATION);
         // ShowProfile is legacy (see the SystemAction variant): drop saved rows so the dead
         // action neither lingers in tables nor resurfaces anywhere.
         self.inputs
@@ -2898,6 +2944,97 @@ mod tests {
             get(&config, SystemAction::RollLeft),
             Some(vec![InputIdentifier::Key(KeyCode::KeyT)])
         );
+    }
+
+    #[test]
+    fn migrate_inputs_moves_the_microphone_to_t() {
+        fn table(rows: &[(SystemAction, Option<KeyCode>)]) -> AppConfig {
+            AppConfig {
+                inputs: InputMapSerialized(
+                    rows.iter()
+                        .map(|(action, key)| {
+                            (
+                                Action::System(*action),
+                                key.map(InputIdentifier::Key).into_iter().collect(),
+                            )
+                        })
+                        .collect(),
+                    Default::default(),
+                ),
+                inputs_generation: 1,
+                ..Default::default()
+            }
+        }
+        fn get(config: &AppConfig, action: SystemAction) -> Vec<InputIdentifier> {
+            config
+                .inputs
+                .0
+                .iter()
+                .find(|(a, _)| *a == Action::System(action))
+                .map(|(_, bindings)| bindings.clone())
+                .unwrap()
+        }
+        let t = InputIdentifier::Key(KeyCode::KeyT);
+        let v = InputIdentifier::Key(KeyCode::KeyV);
+
+        // both on the old defaults: the microphone takes T, ChatPanel is left unbound
+        let mut config = table(&[
+            (SystemAction::Microphone, Some(KeyCode::KeyV)),
+            (SystemAction::ChatPanel, Some(KeyCode::KeyT)),
+        ]);
+        config.migrate_inputs();
+        assert_eq!(get(&config, SystemAction::Microphone), vec![t]);
+        assert_eq!(get(&config, SystemAction::ChatPanel), vec![]);
+        assert_eq!(config.inputs_generation, INPUTS_GENERATION);
+
+        // rebinds are kept
+        let mut config = table(&[
+            (SystemAction::Microphone, Some(KeyCode::KeyB)),
+            (SystemAction::ChatPanel, Some(KeyCode::KeyY)),
+        ]);
+        config.migrate_inputs();
+        assert_eq!(
+            get(&config, SystemAction::Microphone),
+            vec![InputIdentifier::Key(KeyCode::KeyB)]
+        );
+        assert_eq!(
+            get(&config, SystemAction::ChatPanel),
+            vec![InputIdentifier::Key(KeyCode::KeyY)]
+        );
+
+        // the microphone moved elsewhere by the player: the chat panel keeps T
+        let mut config = table(&[
+            (SystemAction::Microphone, Some(KeyCode::KeyB)),
+            (SystemAction::ChatPanel, Some(KeyCode::KeyT)),
+        ]);
+        config.migrate_inputs();
+        assert_eq!(
+            get(&config, SystemAction::Microphone),
+            vec![InputIdentifier::Key(KeyCode::KeyB)]
+        );
+        assert_eq!(get(&config, SystemAction::ChatPanel), vec![t]);
+
+        // no microphone row yet: the chat panel gives up T and the default merges in on T
+        let mut config = table(&[(SystemAction::ChatPanel, Some(KeyCode::KeyT))]);
+        config.migrate_inputs();
+        assert_eq!(get(&config, SystemAction::Microphone), vec![t]);
+        assert_eq!(get(&config, SystemAction::ChatPanel), vec![]);
+
+        // T given to another action: the microphone stays on V, the chat panel keeps T
+        let mut config = table(&[
+            (SystemAction::Microphone, Some(KeyCode::KeyV)),
+            (SystemAction::ChatPanel, Some(KeyCode::KeyY)),
+            (SystemAction::RollLeft, Some(KeyCode::KeyT)),
+        ]);
+        config.migrate_inputs();
+        assert_eq!(get(&config, SystemAction::Microphone), vec![v]);
+        assert_eq!(get(&config, SystemAction::RollLeft), vec![t]);
+
+        // a deliberate rebind of the microphone back to V after the migration stays
+        let mut config = table(&[(SystemAction::Microphone, Some(KeyCode::KeyV))]);
+        config.inputs_generation = INPUTS_GENERATION;
+        config.migrate_inputs();
+        assert_eq!(get(&config, SystemAction::Microphone), vec![v]);
     }
 
     #[test]
