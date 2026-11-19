@@ -109,7 +109,6 @@ pub static SAME_WALLET_RACE: Scenario = Scenario {
         "Pulse 3164f21",
         "Pulse 007fe24",
         "Pulse fa0aa4c",
-        "unity-explorer #10460",
         "dcl-one #201",
     ],
     summary: "Two devices of one wallet handshake within 100 ms of each other: the connection the server handles last survives (the older is ended with DuplicateSession), observers hold one subject for the wallet, the survivor never sees itself join",
@@ -149,7 +148,7 @@ pub static CHURN: Scenario = Scenario {
 pub static REALM_ROUND_TRIP: Scenario = Scenario {
     name: "pulse-realm-round-trip",
     tags: &["pulse", "realms"],
-    guards: &["Pulse #50", "Pulse #31", "unity-explorer d2f314d081"],
+    guards: &["Pulse #50", "Pulse #31"],
     summary: "A traveller teleports from realm A to B and back with an observer in each: each observer sees one leave and one join at the right time, and the movement after the return is seen in A",
     needs: Needs::NONE,
     hostile: false,
