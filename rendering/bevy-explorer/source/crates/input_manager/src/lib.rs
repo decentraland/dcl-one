@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 // input settings
 
 use bevy_console::{clap, ConsoleCommand};

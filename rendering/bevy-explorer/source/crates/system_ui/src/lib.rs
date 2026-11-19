@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod change_realm;
 pub mod chat;
 pub mod crash_report;

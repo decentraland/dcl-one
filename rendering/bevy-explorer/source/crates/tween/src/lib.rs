@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 #[cfg(feature = "tween_debug")]
 mod tween_debug;
 
