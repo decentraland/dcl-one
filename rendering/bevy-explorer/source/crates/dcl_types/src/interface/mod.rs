@@ -72,7 +72,7 @@ impl CrdtStore {
     }
 
     /// Advances the timestamp for last-write-wins components. Grow-only components use
-    /// value-set semantics and always return zero, even when the payload is already retained.
+    /// value-set semantics, require a payload and return zero even for an already retained value.
     pub fn force_update(
         &mut self,
         component_id: SceneComponentId,
@@ -172,6 +172,7 @@ impl CrdtStore {
         lww + go
     }
 
+    /// Moves all grow-only entries into the returned batch. The next batch starts with an empty set.
     pub fn take_updates(&mut self) -> CrdtStore {
         let mut lww = HashMap::new();
         for (component_id, state) in self.lww.iter_mut() {
@@ -611,10 +612,17 @@ mod test {
             false,
             false,
         );
-        let writers = CrdtComponentInterfaces::default();
-        let component = SceneComponentId(1);
+        let recognized = SceneComponentId(1);
+        let filtered = SceneComponentId(2);
+        let mut writers = CrdtComponentInterfaces::default();
+        writers.0.insert(recognized, CrdtType::GO_ANY);
         for (payload, retained_bytes) in [(b"A", 1), (b"B", 2), (b"A", 2)] {
-            let frame = crate::crdt::append_component(&entity(1), &component, payload);
+            let mut frame = crate::crdt::append_component(&entity(1), &recognized, payload);
+            frame.extend(crate::crdt::append_component(
+                &entity(1),
+                &filtered,
+                payload,
+            ));
             store.process_message_stream(
                 &mut context,
                 &writers,
@@ -623,7 +631,7 @@ mod test {
                 Some(&mut sidecar),
                 None,
             );
-            assert_eq!(store.take_updates().retained_data_bytes(), 0);
+            assert_eq!(store.take_updates().retained_data_bytes(), payload.len());
             assert_eq!(sidecar.retained_data_bytes(), retained_bytes);
         }
     }
