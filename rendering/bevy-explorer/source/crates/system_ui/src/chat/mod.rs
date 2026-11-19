@@ -310,6 +310,10 @@ fn setup_chat_popup(mut commands: Commands, root: Res<SystemUiRoot>, dui: Res<Du
         ChatboxContainer,
         On::<Click>::new(
             |mut commands: Commands, q: Query<Entity, With<ChatInput>>| {
+                #[allow(
+                    clippy::unwrap_used,
+                    reason = "the chat template spawns the ChatInput with the chatbox; a missing input is a template bug"
+                )]
                 commands.entity(q.single().unwrap()).try_insert(Focus);
             },
         ),
