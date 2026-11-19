@@ -504,6 +504,84 @@ fn unique_address() -> String {
     format!("{:#x}", PrivateKeySigner::random().address())
 }
 
+/// A spent free-call budget says when the next free call is admitted, counted over every free
+/// call (not the refused address's): the first whole second after the budget-th newest one
+/// leaves the window. A sale in the window is no free call and moves nothing.
+#[tokio::test]
+async fn a_spent_free_call_budget_says_when_the_next_one_is_admitted() {
+    // Its own database, so no other test's free calls count, and one connection: the refusal
+    // holds the budget lock on it, so the read must not wait for a second one.
+    let Some(pool) = crate::db::scratch::isolated_pool(1).await else {
+        return;
+    };
+    let tc = component(pool.clone());
+    let t0 = chrono::NaiveDate::from_ymd_opt(2101, 1, 1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    let at = |secs: i64| t0 + chrono::Duration::seconds(secs);
+    let unix = |secs: i64| at(secs).and_utc().timestamp();
+    let window = super::QUOTA_WINDOW_SECS;
+    let addrs = [unique_address(), unique_address(), unique_address()];
+    let free = |a: &str, budget: i64, clock| {
+        let (tc, a) = (&tc, a.to_string());
+        async move {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                tc.reserve_free_call(
+                    10,
+                    budget,
+                    &sender(&a),
+                    &Uuid::new_v4().to_string(),
+                    137,
+                    COLLECTION,
+                    clock,
+                ),
+            )
+            .await
+            .expect("answers without waiting for a second connection")
+        }
+    };
+    free(&addrs[0], 2, at(0)).await.expect("first free call");
+    free(&addrs[1], 2, at(10)).await.expect("second free call");
+    tc.reserve_quota(
+        10,
+        &sender(&addrs[2]),
+        &Uuid::new_v4().to_string(),
+        137,
+        COLLECTION,
+        at(15),
+    )
+    .await
+    .expect("a sale");
+    let err = free(&addrs[2], 2, at(20)).await.unwrap_err();
+    assert!(
+        matches!(err, ApiError::RelayBudgetSpent { retry_at: Some(t), .. } if t == unix(window) + 1),
+        "the older free call has to leave: {err:?}"
+    );
+    assert_eq!(
+        axum::response::IntoResponse::into_response(err).status(),
+        axum::http::StatusCode::TOO_MANY_REQUESTS
+    );
+    let err = free(&addrs[2], 1, at(20)).await.unwrap_err();
+    assert!(
+        matches!(err, ApiError::RelayBudgetSpent { retry_at: Some(t), .. } if t == unix(10 + window) + 1),
+        "under a lowered budget the newer one has to leave: {err:?}"
+    );
+    assert!(free(&addrs[2], 2, at(window)).await.is_err());
+    let retry = chrono::DateTime::from_timestamp(unix(window) + 1, 0)
+        .unwrap()
+        .naive_utc();
+    free(&addrs[2], 2, retry)
+        .await
+        .expect("admitted at retryAt");
+    sqlx::query("DELETE FROM economy.transactions WHERE user_address = ANY($1)")
+        .bind(addrs.iter().map(|a| a.to_lowercase()).collect::<Vec<_>>())
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn the_free_call_budget_never_holds_back_a_sale() {
     use axum::response::IntoResponse;
@@ -535,7 +613,16 @@ async fn the_free_call_budget_never_holds_back_a_sale() {
     free(&addrs[0], 2).await.expect("first free call");
     free(&addrs[1], 2).await.expect("second free call");
     let err = free(&addrs[2], 2).await.unwrap_err();
-    assert!(matches!(err, ApiError::RelayBudgetSpent(_)), "got {err:?}");
+    assert!(
+        matches!(
+            err,
+            ApiError::RelayBudgetSpent {
+                retry_at: Some(_),
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
     assert_eq!(
         err.into_response().status(),
         axum::http::StatusCode::TOO_MANY_REQUESTS
@@ -694,7 +781,7 @@ async fn reserve_enforces_daily_limit_and_release_refunds_a_slot() {
         .await
         .expect_err("over quota");
     assert!(
-        matches!(err, ApiError::QuotaReached(_)),
+        matches!(err, ApiError::QuotaReached { quota: MAX, .. }),
         "expected QuotaReached, got {err:?}"
     );
     assert_eq!(row_count(&pool, &addr).await, MAX);
@@ -720,6 +807,130 @@ async fn reserve_enforces_daily_limit_and_release_refunds_a_slot() {
     )
     .await
     .expect("the quota counts the day before the bound clock, not now()");
+    cleanup_user(&pool, &addr).await;
+}
+
+/// A refused address learns its cap and when its next relay is admitted: the first whole second
+/// after the relay that has to leave the window does so (the oldest at the cap, a later one when
+/// the cap is under the count). The second before is still refused; that one is admitted.
+#[tokio::test]
+async fn a_quota_refusal_says_when_the_next_relay_is_admitted() {
+    use chrono::Timelike;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let tc = component(pool.clone());
+    let addr = unique_address();
+    const MAX: i64 = 3;
+    let t0 = now().with_nanosecond(0).unwrap() - chrono::Duration::hours(1);
+    let at = |secs: i64| t0 + chrono::Duration::seconds(secs);
+    let unix = |secs: i64| at(secs).and_utc().timestamp();
+    let window = super::QUOTA_WINDOW_SECS;
+    for i in 0..MAX {
+        tc.reserve_quota(
+            MAX,
+            &sender(&addr),
+            &Uuid::new_v4().to_string(),
+            137,
+            COLLECTION,
+            at(10 * i),
+        )
+        .await
+        .expect("reserve within budget");
+    }
+    let refused = |cap: i64, clock| {
+        let (tc, addr) = (&tc, &addr);
+        async move {
+            tc.reserve_quota(
+                cap,
+                &sender(addr),
+                &Uuid::new_v4().to_string(),
+                137,
+                COLLECTION,
+                clock,
+            )
+            .await
+        }
+    };
+
+    let err = refused(MAX, at(30)).await.expect_err("over quota");
+    let frees = unix(window) + 1;
+    assert!(
+        matches!(err, ApiError::QuotaReached { quota: MAX, retry_at: Some(t), .. } if t == frees),
+        "{err:?}"
+    );
+    let err = refused(MAX - 1, at(30))
+        .await
+        .expect_err("over a lowered cap");
+    assert!(
+        matches!(err, ApiError::QuotaReached { quota: 2, retry_at: Some(t), .. } if t == unix(10 + window) + 1),
+        "the second oldest has to leave for 2 to fit: {err:?}"
+    );
+    assert!(
+        matches!(
+            refused(0, at(30)).await,
+            Err(ApiError::QuotaReached {
+                quota: 0,
+                retry_at: None,
+                ..
+            })
+        ),
+        "a cap of 0 never frees"
+    );
+
+    assert!(
+        refused(MAX, at(window)).await.is_err(),
+        "a relay exactly a window old still counts"
+    );
+    let retry = chrono::DateTime::from_timestamp(frees, 0)
+        .unwrap()
+        .naive_utc();
+    refused(MAX, retry).await.expect("admitted at retryAt");
+    cleanup_user(&pool, &addr).await;
+}
+
+/// The next opening counts from the newest relay, so a reservation released between the refusal
+/// and the read never makes it later: with relays at t0, t0+10 and t0+20 and a cap of 2, once
+/// t0's is released the opening is when t0+10's leaves, and with fewer relays than the cap there
+/// is none to wait for.
+#[tokio::test]
+async fn the_next_quota_opening_follows_a_released_reservation() {
+    use chrono::Timelike;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let tc = component(pool.clone());
+    let addr = unique_address();
+    let t0 = now().with_nanosecond(0).unwrap() - chrono::Duration::hours(1);
+    let at = |secs: i64| t0 + chrono::Duration::seconds(secs);
+    let window = super::QUOTA_WINDOW_SECS;
+    let mut sessions = Vec::new();
+    for i in 0..3 {
+        let session = Uuid::new_v4().to_string();
+        tc.reserve_quota(3, &sender(&addr), &session, 137, COLLECTION, at(10 * i))
+            .await
+            .expect("reserve within budget");
+        sessions.push(session);
+    }
+    let window_start = at(30) - chrono::Duration::seconds(window);
+    let opening =
+        |cap| super::transaction::next_slot_at(&pool, Some(addr.as_str()), window_start, cap);
+    assert_eq!(
+        opening(2).await.unwrap(),
+        Some(at(10 + window).and_utc().timestamp() + 1)
+    );
+    tc.release_reservation(&sessions[0]).await.expect("release");
+    assert_eq!(
+        opening(2).await.unwrap(),
+        Some(at(10 + window).and_utc().timestamp() + 1),
+        "releasing the oldest never moves the opening later"
+    );
+    tc.release_reservation(&sessions[1]).await.expect("release");
+    assert_eq!(
+        opening(2).await.unwrap(),
+        None,
+        "under the cap there is no opening to wait for"
+    );
     cleanup_user(&pool, &addr).await;
 }
 
@@ -753,7 +964,7 @@ async fn concurrent_reservations_never_exceed_the_limit() {
     for task in tasks {
         match task.await.expect("task") {
             Ok(()) => reserved += 1,
-            Err(ApiError::QuotaReached(msg)) => {
+            Err(ApiError::QuotaReached { message: msg, .. }) => {
                 assert!(msg.ends_with(&format!("Quota: {MAX}")), "{msg}");
                 refused += 1;
             }
@@ -822,7 +1033,7 @@ async fn reservations_are_isolated_per_user() {
             now()
         )
         .await,
-        Err(ApiError::QuotaReached(_))
+        Err(ApiError::QuotaReached { .. })
     ));
     for _ in 0..MAX {
         tc.reserve_quota(
