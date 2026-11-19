@@ -16,13 +16,15 @@
 // `broken` once `broken` has failed its first open, while it is not yet the nearest video (one
 // video plays at a time), so that failure reports `VS_ERROR` and the play after the walk
 // `VS_LOADING`. The third walks to `paused`, which the scene sets playing 1 s after it reports
-// `VS_ERROR`. Each scenario closes its client. Web only: on the standalone all three are todos.
+// `VS_ERROR`. Each scenario keeps its realm's requests in its report (`realm-requests.jsonl`)
+// and closes its client. Web only: on the standalone all three are todos.
 // Build the scene first: `pnpm run build-scenes video`.
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { after } from 'node:test'
 import { buildScene, contentHash, readTarget, serveRealm, spec, until, type BuiltScene, type Explorer, type MediaPlayerRow, type RealmServer, type ScenarioOptions } from '../driver/index.ts'
+import type { ScenarioReport } from '../driver/report.ts'
 import { SCENES_DIR } from '../driver/paths.ts'
 
 const scenario = spec(import.meta.url)
@@ -81,7 +83,8 @@ const PAUSED = await realmFor('paused')
 /** A scenario's budget: `prepare` (the scene's boot), its main wait and the rest. */
 const SCENARIO_TIMEOUT_MS = 2 * GIVE_UP_TIMEOUT_MS + RESTART_TIMEOUT_MS + 30_000
 
-async function prepare(explorer: Explorer): Promise<void> {
+async function prepare(explorer: Explorer, report: ScenarioReport, server: RealmServer): Promise<void> {
+  report.attach('realm-requests.jsonl', () => server.requests.map((request) => `${JSON.stringify(request)}\n`).join(''))
   if (sceneError) throw sceneError
   const published = new Set(scene!.entity.content.map((entry) => entry.hash))
   assert.ok(published.has(recoverHash) && published.has(brokenHash) && published.has(pausedHash), 'the realm does not publish the scene\'s media files')
@@ -104,9 +107,9 @@ async function player(explorer: Explorer, source: string): Promise<MediaPlayerRo
 
 scenario(
   'a video whose source fails twice plays after two reopens',
-  async ({ explorer, restore }) => {
+  async ({ explorer, report, restore }) => {
     restore(() => explorer.setScene())
-    await prepare(explorer)
+    await prepare(explorer, report, RECOVER.server)
     // checks the outcome only: a VS_ERROR logged before VS_PLAYING is allowed
     await until(() => explorer.sceneLogs(100), (lines) => stateLines(lines, 'recover').some((line) => line.endsWith('state=VS_PLAYING')), {
       timeoutMs: GIVE_UP_TIMEOUT_MS,
@@ -130,9 +133,9 @@ scenario(
 
 scenario(
   'a video whose source always fails gives up after five reopens',
-  async ({ explorer, restore }) => {
+  async ({ explorer, report, restore }) => {
     restore(() => explorer.setScene())
-    await prepare(explorer)
+    await prepare(explorer, report, BROKEN.server)
     // broken's first failure, while it is not the nearest video
     await until(() => explorer.mediaState(), (state) => (state.players.find((row) => row.source === 'assets/broken.webm')?.retryFailures ?? 0) >= 1, {
       timeoutMs: GIVE_UP_TIMEOUT_MS,
@@ -163,9 +166,9 @@ scenario(
 
 scenario(
   'a paused video whose source fails reports VS_ERROR and plays after play',
-  async ({ explorer, restore }) => {
+  async ({ explorer, report, restore }) => {
     restore(() => explorer.setScene())
-    await prepare(explorer)
+    await prepare(explorer, report, PAUSED.server)
     await explorer.walkTo(BASE.x + 2, 0, BASE.z + 12)
     const logs = await until(() => explorer.sceneLogs(200), (lines) => stateLines(lines, 'paused').some((line) => line.endsWith('state=VS_PLAYING')), {
       timeoutMs: GIVE_UP_TIMEOUT_MS,

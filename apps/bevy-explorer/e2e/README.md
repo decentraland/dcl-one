@@ -93,7 +93,9 @@ the page's last 200 console lines; a failed restore adds the same as `restore-pa
 boot, has its credentials replaced as the engine's own benchmark log does
 (`crates/perf_output/src/scrub.rs`: an `access_token`, a named key or signature, an identity),
 and a `Bearer` token. A failed visual scenario adds `frame.png`, `reference.png` and
-`diff.png`. A client that fails to boot, at the open, at the
+`diff.png`. A media retry scenario adds `realm-requests.jsonl`: each request its loopback realm
+received, with the entity file a content hash names, the status, the duration and whether the
+answer finished; a request still open has no duration. A client that fails to boot, at the open, at the
 console's coming or on the way into the world, leaves `boot-failures/boot-<n>.console.txt`, what
 the page said, and `boot-<n>.jpg`, how it looked; it is booted once more for the next scenario,
 and after a second failure every later scenario fails at once with that error, which the run logs
