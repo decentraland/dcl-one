@@ -9,13 +9,13 @@ use std::time::{Duration, Instant};
 
 use super::*;
 use crate::protocol::pulse::decentraland::pulse::HandshakeRequest;
+use crate::pulse::metrics::ENET_SOCKET_ERRORS;
 use crate::pulse::transport::host::SocketFaults;
 
 type Client = rusty_enet::Host<std::net::UdpSocket>;
 type Running = Pin<Box<dyn Future<Output = anyhow::Result<()>>>>;
 
 const DEADLINE: Duration = Duration::from_secs(10);
-const METRIC: &str = "pulse_enet_socket_errors_total";
 
 /// An error Windows returns for a socket that is not one any more (WSAENOTSOCK), and its Unix
 /// counterpart (EBADF, 9 on Linux and macOS alike).
@@ -153,7 +153,7 @@ impl Rig {
 fn counted(rendered: &str, operation: &str, kind: &str) -> u64 {
     rendered
         .lines()
-        .filter(|line| line.starts_with(METRIC))
+        .filter(|line| line.starts_with(ENET_SOCKET_ERRORS))
         .filter(|line| line.contains(&format!("operation=\"{operation}\"")))
         .filter(|line| line.contains(&format!("kind=\"{kind}\"")))
         .map(|line| line.rsplit(' ').next().unwrap().parse::<u64>().unwrap())
@@ -191,11 +191,6 @@ fn per_datagram_errors() -> Vec<(Operation, Error, &'static str)> {
             Operation::Receive,
             Error::from(ErrorKind::NetworkUnreachable),
             "NetworkUnreachable",
-        ),
-        (
-            Operation::Receive,
-            Error::from(ErrorKind::Interrupted),
-            "Interrupted",
         ),
         // No route to one peer's address (Linux ENETUNREACH, Windows WSAENETUNREACH).
         (
@@ -274,6 +269,34 @@ async fn an_error_about_one_datagram_costs_that_datagram_and_both_clients_stay_s
             metrics.render()
         );
     }
+}
+
+/// An interrupted `recvfrom` read nothing, so nothing is lost: the socket is read again and the
+/// interruption is not counted as a lost datagram.
+#[tokio::test]
+async fn an_interrupted_receive_is_read_again_and_not_counted() {
+    let recorder = crate::metrics::prometheus_builder()
+        .unwrap()
+        .build_recorder();
+    let metrics = recorder.handle();
+    let _recording = ::metrics::set_default_local_recorder(&recorder);
+    let faults = SocketFaults::default();
+    let host = Host::bind_with_faults(host_config(), faults.clone())
+        .await
+        .unwrap();
+    let mut rig = Rig::start(host).await;
+
+    faults.fail_next_receive(Error::from(ErrorKind::Interrupted));
+    rig.run_until_returned(&faults).await;
+    rig.handshake_is_answered(0).await;
+    rig.handshake_is_answered(1).await;
+
+    assert_eq!(
+        counted(&metrics.render(), "receive", "Interrupted"),
+        0,
+        "{}",
+        metrics.render()
+    );
 }
 
 #[tokio::test]

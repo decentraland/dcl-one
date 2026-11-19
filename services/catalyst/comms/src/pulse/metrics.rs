@@ -37,6 +37,7 @@ const VISIBLE_SUBJECTS: &str = "pulse_scene_listener_visible_subjects";
 const PARCELS: &str = "pulse_scene_listener_parcels";
 const RESYNC_SEQ_GAP: &str = "pulse_resync_seq_gap";
 const HANDSHAKES: &str = "pulse_handshakes_total";
+pub(crate) const ENET_SOCKET_ERRORS: &str = "pulse_enet_socket_errors_total";
 
 const CLUSTER_COUNT: &str = "pulse_clusters";
 const CLUSTER_PASSES: &str = "pulse_cluster_passes_total";
@@ -56,7 +57,7 @@ pub fn handshake(protocol: &'static str, outcome: &'static str) {
 /// A send or receive on the ENet UDP socket failed and cost one datagram; the server kept serving.
 /// `operation` is `send` or `receive`; `kind` is the error's `std::io::ErrorKind`, a closed set.
 pub fn enet_socket_error(operation: &'static str, kind: std::io::ErrorKind) {
-    counter!("pulse_enet_socket_errors_total", "operation" => operation, "kind" => format!("{kind:?}"))
+    counter!(ENET_SOCKET_ERRORS, "operation" => operation, "kind" => format!("{kind:?}"))
         .increment(1);
 }
 

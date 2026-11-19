@@ -150,6 +150,8 @@ impl enet::Socket for ReadySocket {
                     return Ok(Some((address, enet::PacketReceived::Complete(len))));
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
+                // Interrupted before it read anything: nothing is lost, so read again.
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(error) if reports_one_datagram(&error) => self.lost("receive", &error),
                 Err(error) => {
                     tracing::error!(%error, "ENet socket failed; Pulse stops");
@@ -164,16 +166,15 @@ impl enet::Socket for ReadySocket {
 
 /// A receive error that reports on one datagram, not on the socket: the ICMP answer to an earlier
 /// datagram (a peer's closed port or unreachable address: Windows reports it by default, Linux
-/// only to a connected socket or one with IP_RECVERR), an interrupted call, and on Windows a
-/// datagram larger than the buffer (WSAEMSGSIZE; Linux truncates it instead) or an expired TTL
-/// (WSAENETRESET).
+/// only to a connected socket or one with IP_RECVERR), and on Windows a datagram larger than the
+/// buffer (WSAEMSGSIZE; Linux truncates it instead) or an expired TTL (WSAENETRESET).
 fn reports_one_datagram(error: &std::io::Error) -> bool {
     use std::io::ErrorKind::{
-        ConnectionRefused, ConnectionReset, HostUnreachable, Interrupted, NetworkUnreachable,
+        ConnectionRefused, ConnectionReset, HostUnreachable, NetworkUnreachable,
     };
     if matches!(
         error.kind(),
-        ConnectionReset | ConnectionRefused | HostUnreachable | NetworkUnreachable | Interrupted
+        ConnectionReset | ConnectionRefused | HostUnreachable | NetworkUnreachable
     ) {
         return true;
     }
