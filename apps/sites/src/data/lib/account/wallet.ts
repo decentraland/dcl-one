@@ -61,17 +61,28 @@ async function readThroughRelay(network: WalletNetwork, call: EthCall, signal?: 
  * The same read through the member's own wallet. It answers only for the account it lists and the
  * chain it is on, and it is never asked to connect or to switch: each request here is silent.
  */
-async function readThroughOwnWallet(wallet: OwnWallet, account: string, network: WalletNetwork, call: EthCall) {
+async function readThroughOwnWallet(
+  wallet: OwnWallet,
+  account: string,
+  network: WalletNetwork,
+  call: EthCall,
+  signal?: AbortSignal,
+) {
+  signal?.throwIfAborted();
   const accounts = await wallet.request({ method: "eth_accounts" });
+  signal?.throwIfAborted();
   const listed =
     Array.isArray(accounts) &&
     accounts.some((entry) => typeof entry === "string" && entry.toLowerCase() === account.toLowerCase());
   if (!listed) throw new Error("The wallet does not list this account");
   const chain = await wallet.request({ method: "eth_chainId" });
+  signal?.throwIfAborted();
   if (Number.parseInt(String(chain), 16) !== WALLET_NETWORKS[network].chainId) {
     throw new Error("The wallet is on another network");
   }
-  return weiOf(await wallet.request({ method: "eth_call", params: [call, "latest"] }));
+  const result = await wallet.request({ method: "eth_call", params: [call, "latest"] });
+  signal?.throwIfAborted();
+  return weiOf(result);
 }
 
 /** The browser wallet of a recorded web3 sign-in as `identity`; null for a managed session or none here. */
@@ -95,12 +106,13 @@ export async function fetchManaBalance(
   try {
     return await readThroughRelay(network, call, opts.signal);
   } catch (relayError) {
-    if (opts.signal?.aborted) throw relayError;
+    opts.signal?.throwIfAborted();
     const wallet = opts.ownWallet?.();
     if (!wallet) throw relayError;
     try {
-      return await readThroughOwnWallet(wallet, account, network, call);
+      return await readThroughOwnWallet(wallet, account, network, call, opts.signal);
     } catch {
+      opts.signal?.throwIfAborted();
       throw relayError;
     }
   }
@@ -154,6 +166,7 @@ export async function fetchManaTransfers(
   if (!ADDRESS.test(account)) throw new RangeError("Not a wallet address");
   const self = account.toLowerCase();
   const raw = await getJSON<unknown>("/marketplace-api/v1/mana/transfers", {
+    readErrorBody: true,
     query: {
       network: WALLET_NETWORKS[network].index,
       address: self,
@@ -182,7 +195,12 @@ export async function fetchManaTransfers(
 
 /** The index answers 503 while the operator has it off or it has not reached the chain's head. */
 export function isHistoryUnavailable(error: unknown): boolean {
-  return error instanceof CatalystError && error.status === 503;
+  return (
+    error instanceof CatalystError &&
+    error.status === 503 &&
+    error.serverMessage &&
+    error.message === "MANA transfer history is synchronizing"
+  );
 }
 
 const WEI_PER_HUNDREDTH = 10n ** 16n;

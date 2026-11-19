@@ -1,19 +1,31 @@
 import { useState } from "react";
 import { WalletTransactions as WalletTransactionsView } from "@dcl/one-ui/apps/sites/account/WalletTransactions";
-import { explorerTxUrl } from "@ui/shop/checkout/chain/config";
+import type { WalletNetworkDisplay } from "@dcl/one-ui/apps/sites/account/WalletsPanel";
+import { explorerAddressUrl, explorerTxUrl } from "@ui/shop/checkout/chain/config";
 
 import { formatManaAmount, isHistoryUnavailable, WALLET_NETWORKS, type WalletNetwork } from "@/data/lib/account/wallet";
 
+import { shortAddress } from "@/data/lib/catalyst/format/address";
+
 import { useManaTransfers } from "./useWallet";
 
-export function WalletTransactions({ account, network }: { account: string; network: WalletNetwork }) {
+type WalletTransactionsProps = {
+  account: string;
+  network: WalletNetwork;
+  display: WalletNetworkDisplay;
+};
+
+export function WalletTransactions({ account, network, display }: WalletTransactionsProps) {
   const [open, setOpen] = useState(false);
   const transfers = useManaTransfers(account, network, open);
+  const { chainId } = WALLET_NETWORKS[network];
   const rows = transfers.data?.pages.flatMap((page) =>
     page.transfers.map((transfer) => ({
       ...transfer,
       amount: formatManaAmount(transfer.amount),
-      href: explorerTxUrl(WALLET_NETWORKS[network].chainId, transfer.hash),
+      href: explorerTxUrl(chainId, transfer.hash),
+      counterpartyLabel: shortAddress(transfer.counterparty),
+      counterpartyHref: explorerAddressUrl(chainId, transfer.counterparty),
     })),
   );
   const error = transfers.isError
@@ -24,11 +36,12 @@ export function WalletTransactions({ account, network }: { account: string; netw
 
   return (
     <WalletTransactionsView
-      network={network}
+      display={display}
       open={open}
       onToggle={() => setOpen((shown) => !shown)}
       rows={rows}
       error={error}
+      fetching={transfers.isFetching}
       onRetry={() => void transfers.refetch()}
       more={
         transfers.hasNextPage

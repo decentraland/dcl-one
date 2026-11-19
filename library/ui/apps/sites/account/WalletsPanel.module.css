@@ -45,7 +45,7 @@
   color: var(--dcl-text-primary);
 }
 
-.card[data-network='polygon'] .networkIcon {
+.networkIcon[data-tone='purple'] {
   background: var(--dcl-bg-surface-brand);
 }
 
@@ -64,7 +64,7 @@
   flex: none;
 }
 
-.card[data-network='ethereum'] .mana {
+.mana[data-accent='true'] {
   color: var(--dcl-action-primary);
 }
 
@@ -95,4 +95,13 @@
   .card {
     padding: calc(var(--dcl-space-16) + var(--dcl-space-4));
   }
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

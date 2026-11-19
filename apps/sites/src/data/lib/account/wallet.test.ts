@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CatalystError } from "../catalyst/client";
 import { accountKeys } from "./queries";
@@ -104,6 +104,35 @@ describe("fetchManaBalance", () => {
     expect(own.request.mock.calls.some(([args]) => args.method === "eth_requestAccounts")).toBe(false);
   });
 
+  describe("when the read is cancelled during the wallet fallback", () => {
+    let controller: AbortController;
+    let own: ReturnType<typeof wallet>;
+
+    beforeEach(() => {
+      controller = new AbortController();
+      own = wallet([ACCOUNT], 1);
+      stubFetch(() => json({ jsonrpc: "2.0", id: 1, error: { message: "unsupported network" } }));
+    });
+
+    it.each([
+      ["eth_accounts", [ACCOUNT], 1],
+      ["eth_chainId", "0x1", 2],
+      ["eth_call", ONE_MANA, 3],
+    ] as const)("should stop after %s and reject the cancelled result", async (method, result, callCount) => {
+      const request = own.request.getMockImplementation()!;
+      own.request.mockImplementation(async (args) => {
+        if (args.method !== method) return request(args);
+        controller.abort();
+        return result;
+      });
+
+      await expect(
+        fetchManaBalance(ACCOUNT, "ethereum", { signal: controller.signal, ownWallet: () => own }),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(own.request).toHaveBeenCalledTimes(callCount);
+    });
+  });
+
   it("refuses a value that is not an address before any request", async () => {
     const fetchMock = stubFetch(() => json({}));
 
@@ -180,6 +209,18 @@ describe("fetchManaTransfers", () => {
     await expect(fetchManaTransfers(ACCOUNT, "ethereum")).rejects.toSatisfy(isHistoryUnavailable);
     expect(isHistoryUnavailable(new CatalystError("boom", "u", 500))).toBe(false);
     expect(isHistoryUnavailable(new Error("offline"))).toBe(false);
+  });
+
+  describe("when the transfer endpoint returns an unclassified 503", () => {
+    beforeEach(() => {
+      stubFetch(() => new Response(null, { status: 503 }));
+    });
+
+    it("should classify it as a retryable request failure", async () => {
+      await expect(fetchManaTransfers(ACCOUNT, "ethereum")).rejects.toSatisfy(
+        (error: unknown) => error instanceof CatalystError && error.status === 503 && !isHistoryUnavailable(error),
+      );
+    });
   });
 
   it("rejects a reply that is not the index's shape", async () => {

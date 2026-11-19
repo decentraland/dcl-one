@@ -1,15 +1,9 @@
 import { useId } from 'react'
 import { Button } from '../../../components/Button/Button'
 import { Skeleton } from '../../../components/Skeleton/Skeleton'
-import {
-  GeneralDownArrow,
-  GeneralDownload,
-  GeneralMana,
-  GeneralPolygonMana,
-  GeneralUpload
-} from '../../../foundations/icons'
+import { GeneralDownArrow, GeneralDownload, GeneralUpload } from '../../../foundations/icons'
 import { linkHref, secureRel } from '../../../link.helpers'
-import { walletNetworkLabel, type WalletNetwork } from './WalletsPanel'
+import type { WalletNetworkDisplay } from './WalletsPanel'
 import styles from './WalletTransactions.module.css'
 
 export type WalletTransferRow = {
@@ -18,16 +12,19 @@ export type WalletTransferRow = {
   href: string | null
   direction: 'sent' | 'received'
   counterparty: string
+  counterpartyLabel: string
+  counterpartyHref: string | null
   amount: string
   at: number
 }
 
 type TransactionsProps = {
-  network: WalletNetwork
+  display: WalletNetworkDisplay
   open: boolean
   onToggle: () => void
   rows?: readonly WalletTransferRow[]
   error?: string
+  fetching: boolean
   onRetry: () => void
   more?: { pending: boolean; failed: boolean; onLoad: () => void }
 }
@@ -36,24 +33,43 @@ const WHEN = new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle:
 
 function TransferRow({
   transfer,
-  network
+  display: { Mana, accent }
 }: {
   transfer: WalletTransferRow
-  network: WalletNetwork
+  display: WalletNetworkDisplay
 }) {
   const sent = transfer.direction === 'sent'
   const Direction = sent ? GeneralUpload : GeneralDownload
-  const Mana = network === 'ethereum' ? GeneralMana : GeneralPolygonMana
   const href = linkHref(transfer.href)
+  const counterpartyHref = linkHref(transfer.counterpartyHref)
+  const counterpartyPrefix = sent ? 'To' : 'From'
+  const externalRel = secureRel('_blank', undefined)
 
   return (
     <li className={styles.row}>
-      <span className={styles.kind} title={`${sent ? 'To' : 'From'} ${transfer.counterparty}`}>
+      <div className={styles.kind}>
         <span className={styles.directionIcon}>
           <Direction size={16} aria-hidden="true" />
         </span>
-        {sent ? 'Sent' : 'Received'}
-      </span>
+        <div className={styles.party}>
+          {sent ? 'Sent' : 'Received'}
+          {counterpartyHref ? (
+            <a
+              className={styles.partyAddress}
+              href={counterpartyHref}
+              target="_blank"
+              rel={externalRel}
+              aria-label={`${counterpartyPrefix} ${transfer.counterparty}`}
+            >
+              {counterpartyPrefix} {transfer.counterpartyLabel}
+            </a>
+          ) : (
+            <span className={styles.partyAddress}>
+              {counterpartyPrefix} {transfer.counterpartyLabel}
+            </span>
+          )}
+        </div>
+      </div>
       <time className={styles.time} dateTime={new Date(transfer.at).toISOString()}>
         {WHEN.format(transfer.at)}
       </time>
@@ -62,7 +78,7 @@ function TransferRow({
           className={styles.hash}
           href={href}
           target="_blank"
-          rel={secureRel('_blank', undefined)}
+          rel={externalRel}
           title={transfer.hash}
         >
           {transfer.hash}
@@ -73,8 +89,8 @@ function TransferRow({
         </span>
       )}
       <span className={styles.confirmed}>Confirmed</span>
-      <span className={styles.amount} data-network={network}>
-        <Mana size={16} className={styles.mana} aria-hidden="true" />
+      <span className={styles.amount}>
+        <Mana size={16} className={styles.mana} data-accent={accent} aria-hidden="true" />
         <span>
           {transfer.amount}
           <span className={styles.unit}> MANA</span>
@@ -85,16 +101,19 @@ function TransferRow({
 }
 
 export function WalletTransactions({
-  network,
+  display,
   open,
   onToggle,
   rows,
   error,
+  fetching,
   onRetry,
   more
 }: TransactionsProps) {
   const panelId = useId()
-  const name = `Transactions, ${walletNetworkLabel(network)}`
+  const name = `Transactions, ${display.label}`
+  const initialError = rows === undefined ? error : undefined
+  const loading = open && rows === undefined && initialError === undefined
 
   return (
     <div className={styles.root}>
@@ -120,7 +139,7 @@ export function WalletTransactions({
               <p className={styles.listTitle}>Latest transactions</p>
               <ul className={styles.list} aria-label={name}>
                 {rows.map((transfer) => (
-                  <TransferRow key={transfer.id} transfer={transfer} network={network} />
+                  <TransferRow key={transfer.id} transfer={transfer} display={display} />
                 ))}
               </ul>
               {more?.failed ? (
@@ -142,22 +161,23 @@ export function WalletTransactions({
               ) : null}
             </>
           )
-        ) : error ? (
-          <div className={styles.unavailable}>
-            <p className={styles.note} role="status">
-              {error}
-            </p>
-            <Button variant="secondary" size="sm" onClick={onRetry}>
-              Try again
-            </Button>
-          </div>
-        ) : (
-          <div className={styles.loading} aria-busy="true">
+        ) : loading ? (
+          <div className={styles.loading} aria-hidden="true">
             {[0, 1, 2].map((row) => (
               <Skeleton key={row} tone="neutral" className={styles.skeleton} />
             ))}
           </div>
-        )}
+        ) : null}
+        <div className={initialError ? styles.unavailable : styles.srOnly}>
+          <p className={styles.note} role="status">
+            {initialError ?? (loading ? 'Loading transactions…' : null)}
+          </p>
+          {initialError ? (
+            <Button variant="secondary" size="sm" loading={fetching} onClick={onRetry}>
+              Try again
+            </Button>
+          ) : null}
+        </div>
       </div>
     </div>
   )

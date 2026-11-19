@@ -1,84 +1,85 @@
-import { useId, type ReactNode } from 'react'
+import { useId, type ComponentType, type ReactNode } from 'react'
 import { Button } from '../../../components/Button/Button'
 import { Skeleton } from '../../../components/Skeleton/Skeleton'
-import {
-  GeneralEthereum,
-  GeneralMana,
-  GeneralPolygonMana,
-  GeneralPolygonMatic
-} from '../../../foundations/icons'
+import type { IconProps } from '../../../foundations/icons'
 import styles from './WalletsPanel.module.css'
 
-const NETWORKS = {
-  ethereum: { label: 'Ethereum MANA', Icon: GeneralEthereum, Mana: GeneralMana },
-  polygon: { label: 'Polygon MANA', Icon: GeneralPolygonMatic, Mana: GeneralPolygonMana }
-} as const
-
-export type WalletNetwork = keyof typeof NETWORKS
+export type WalletNetworkDisplay = {
+  label: string
+  Icon: ComponentType<IconProps>
+  Mana: ComponentType<IconProps>
+  tone: 'blue' | 'purple'
+  accent: boolean
+}
 
 export function WalletsPanel({ label, children }: { label: string; children: ReactNode }) {
+  const titleId = useId()
   return (
-    <section className={styles.panel} aria-label={label}>
+    <section className={styles.panel} aria-labelledby={titleId}>
+      <h2 id={titleId} className={styles.srOnly}>
+        {label}
+      </h2>
       {children}
     </section>
   )
 }
 
 type WalletBalanceProps = {
-  network: WalletNetwork
+  display: WalletNetworkDisplay
   amount?: string
   pending: boolean
   unavailable: boolean
+  fetching: boolean
   onRetry: () => void
   children: ReactNode
 }
 
 export function WalletBalance({
-  network,
+  display: { label, Icon, Mana, tone, accent },
   amount,
   pending,
   unavailable,
+  fetching,
   onRetry,
   children
 }: WalletBalanceProps) {
   const titleId = useId()
-  const { label, Icon, Mana } = NETWORKS[network]
 
   return (
-    <section className={styles.card} aria-labelledby={titleId} data-network={network}>
+    <section className={styles.card} aria-labelledby={titleId}>
       <div className={styles.balance}>
-        <h2 id={titleId} className={styles.network}>
-          <span className={styles.networkIcon}>
+        <h3 id={titleId} className={styles.network}>
+          <span className={styles.networkIcon} data-tone={tone}>
             <Icon size={14} aria-hidden="true" />
           </span>
           {label}
-        </h2>
+        </h3>
         {amount !== undefined ? (
           <p className={styles.amount}>
-            <Mana size={32} className={styles.mana} aria-hidden="true" />
+            <Mana size={32} className={styles.mana} data-accent={accent} aria-hidden="true" />
             <span>{amount}</span>
           </p>
         ) : pending ? (
-          <div aria-busy="true">
+          <div aria-hidden="true">
             <Skeleton tone="neutral" className={styles.skeleton} />
           </div>
         ) : null}
-        {unavailable ? (
-          <div className={styles.unavailable}>
-            <p className={styles.note} role="status">
-              Balance not available. This node cannot read this network right now.
-            </p>
-            <Button variant="secondary" size="sm" onClick={onRetry}>
+        <div className={unavailable ? styles.unavailable : styles.srOnly}>
+          <p className={styles.note} role="status">
+            {unavailable
+              ? 'Balance not available. This node cannot read this network right now.'
+              : pending
+                ? 'Loading balance…'
+                : null}
+          </p>
+          {unavailable ? (
+            <Button variant="secondary" size="sm" loading={fetching} onClick={onRetry}>
               Try again
             </Button>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
       </div>
       {children}
     </section>
   )
-}
-
-export function walletNetworkLabel(network: WalletNetwork) {
-  return NETWORKS[network].label
 }

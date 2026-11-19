@@ -101,7 +101,7 @@ describe("WalletsSettings", () => {
     show();
 
     const ethereum = card("Ethereum MANA");
-    expect((await within(ethereum).findByRole("status")).textContent).toContain("Balance not available");
+    expect(await within(ethereum).findByText(/^Balance not available/)).toBeTruthy();
     expect(within(ethereum).queryByText("0")).toBeNull();
     expect(await within(card("Polygon MANA")).findByText("5")).toBeTruthy();
 
@@ -109,7 +109,7 @@ describe("WalletsSettings", () => {
     await user.click(within(ethereum).getByRole("button", { name: "Try again" }));
 
     expect(await within(ethereum).findByText("7")).toBeTruthy();
-    expect(within(ethereum).queryByRole("status")).toBeNull();
+    expect(within(ethereum).getByRole("status").textContent).toBe("");
   });
 
   it("keeps an amount already shown and says it is not available when a later read fails", async () => {
@@ -122,7 +122,7 @@ describe("WalletsSettings", () => {
     balances({ ethereum: new Error("rpc down"), polygon: "5000000000000000000" });
     await act(() => client.refetchQueries({ queryKey: accountKeys.manaBalance(SIGNER, "ethereum") }));
 
-    expect((await within(ethereum).findByRole("status")).textContent).toContain("Balance not available");
+    expect(await within(ethereum).findByText(/^Balance not available/)).toBeTruthy();
     expect(within(ethereum).getByText("7")).toBeTruthy();
     expect(within(ethereum).getByRole("button", { name: "Try again" })).toBeTruthy();
   });
@@ -175,6 +175,9 @@ describe("WalletsSettings", () => {
     expect(rows[0]!.textContent).toContain("Sent");
     expect(rows[0]!.textContent).toContain("2.5 MANA");
     expect(within(rows[0]!).getByText("Confirmed")).toBeTruthy();
+    expect(within(rows[0]!).getByRole("link", { name: `To ${OTHER}` }).getAttribute("href")).toBe(
+      `https://etherscan.io/address/${OTHER}`,
+    );
     expect(within(rows[0]!).getByRole("link", { name: transfer(1).hash }).getAttribute("href")).toBe(
       `https://etherscan.io/tx/${transfer(1).hash}`,
     );
@@ -182,6 +185,7 @@ describe("WalletsSettings", () => {
     expect(rows[1]!.textContent).toContain("Received");
     expect(rows[1]!.textContent).toContain("< 0.01 MANA");
     expect(within(rows[1]!).getByText("Confirmed")).toBeTruthy();
+    expect(within(rows[1]!).getByRole("link", { name: `From ${OTHER}` })).toBeTruthy();
     expect(within(card("Ethereum MANA")).getByText("Latest transactions")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
@@ -214,6 +218,7 @@ describe("WalletsSettings", () => {
 
   it.each([
     [new CatalystError("MANA transfer history is synchronizing", "u", 503, true), "Transaction history is not available on this node."],
+    [new CatalystError("HTTP 503", "u", 503), "We couldn't load your transactions. Please try again later."],
     [new Error("offline"), "We couldn't load your transactions. Please try again later."],
   ])("says the history could not be read (%s), not that it is empty, and reads it again on Try again", async (failure, message) => {
     const user = userEvent.setup();
@@ -231,6 +236,28 @@ describe("WalletsSettings", () => {
     await user.click(within(ethereum).getByRole("button", { name: "Try again" }));
 
     expect(await screen.findByRole("list", { name: "Transactions, Ethereum MANA" })).toBeTruthy();
+  });
+
+  describe("when retrying history after a temporary failure", () => {
+    let finishHistory: (page: { transfers: ManaTransfer[]; next: null }) => void;
+
+    beforeEach(() => {
+      balances({});
+      const response = new Promise<{ transfers: ManaTransfer[]; next: null }>((resolve) => {
+        finishHistory = resolve;
+      });
+      api.fetchManaTransfers.mockRejectedValueOnce(new Error("offline")).mockReturnValueOnce(response);
+    });
+
+    it("should announce progress and then render the recovered history", async () => {
+      show();
+      await userEvent.click(screen.getByRole("button", { name: "Transactions, Ethereum MANA" }));
+      await userEvent.click(await within(card("Ethereum MANA")).findByRole("button", { name: "Try again" }));
+
+      expect(await screen.findByText("Loading transactions…")).toBeTruthy();
+      finishHistory({ transfers: [transfer(1)], next: null });
+      expect(await screen.findByRole("list", { name: "Transactions, Ethereum MANA" })).toBeTruthy();
+    });
   });
 
   it("adds the next page from Load more, and keeps the rows shown when that read fails", async () => {

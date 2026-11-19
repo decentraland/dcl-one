@@ -79,6 +79,24 @@
 
 .kind {
   grid-area: kind;
+  min-width: 0;
+}
+
+.party {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.partyAddress {
+  composes: text626f64792f7873 from '../../../foundations/typography/text-styles.module.css';
+  color: var(--dcl-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+a.partyAddress:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
 }
 
 .directionIcon {
@@ -99,7 +117,8 @@
   overflow-wrap: anywhere;
 }
 
-.unit {
+.unit,
+.srOnly {
   position: absolute;
   clip-path: inset(50%);
   width: 1px;
@@ -112,16 +131,7 @@
   flex: none;
 }
 
-.amount[data-network='ethereum'] .unit {
-  position: absolute;
-  clip-path: inset(50%);
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.mana {
+.mana[data-accent='true'] {
   color: var(--dcl-action-primary);
 }
 

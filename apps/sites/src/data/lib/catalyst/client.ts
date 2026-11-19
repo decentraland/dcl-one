@@ -73,6 +73,8 @@ export type GetOptions = {
   query?: Query;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
+  /** Retain the server message for endpoints with a structured error contract. */
+  readErrorBody?: boolean;
   cache?: RequestCache;
   headers?: Record<string, string>;
 };
@@ -85,6 +87,7 @@ async function fetchText(
   url: string,
   init: RequestInit,
   doFetch: typeof fetch,
+  readErrorBody: boolean,
 ): Promise<Fetched> {
   let res: Response;
   try {
@@ -96,6 +99,7 @@ async function fetchText(
     );
   }
   if (!res.ok) {
+    if (readErrorBody) throw await errorFromResponse(res, url);
     await res.body?.cancel().catch(() => {});
     throw new CatalystError(
       `Catalyst returned ${res.status} ${res.statusText}`,
@@ -120,18 +124,19 @@ function fetchShared(
   init: RequestInit,
   doFetch: typeof fetch,
   signal: AbortSignal | undefined,
+  readErrorBody: boolean,
 ): Promise<Fetched> {
-  if (!signal) return fetchText(url, init, doFetch);
+  if (!signal) return fetchText(url, init, doFetch, readErrorBody);
   let perRequest = inflightByRequest.get(signal);
   if (!perRequest) {
     perRequest = new Map();
     inflightByRequest.set(signal, perRequest);
   }
-  const key = `${url}\0${init.cache ?? ""}\0${JSON.stringify(init.headers ?? {})}`;
+  const key = `${url}\0${init.cache ?? ""}\0${JSON.stringify(init.headers ?? {})}\0${readErrorBody}`;
   const pending = perRequest.get(key);
   if (pending) return pending;
   const map = perRequest;
-  const p = fetchText(url, init, doFetch).finally(() => {
+  const p = fetchText(url, init, doFetch, readErrorBody).finally(() => {
     map.delete(key);
   });
   map.set(key, p);
@@ -153,6 +158,7 @@ export async function getJSON<T>(path: string, opts: GetOptions = {}): Promise<T
     },
     doFetch,
     opts.signal,
+    opts.readErrorBody ?? false,
   );
 
   try {
