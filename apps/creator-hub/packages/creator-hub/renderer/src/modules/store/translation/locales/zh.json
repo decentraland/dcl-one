@@ -320,6 +320,7 @@
       "more": "更多"
     },
     "earn_not_joined": "EARN，尚未加入",
+    "earn_payout_pending": "EARN，付款设置未完成",
     "feedback": "给我们反馈",
     "user_menu": {
       "sign_in": "登录",
@@ -1735,7 +1736,8 @@
         "my_places": "我的地点",
         "leaderboard": "排行榜",
         "payouts": "付款",
-        "home": "首页"
+        "home": "首页",
+        "payouts_pending": "付款，设置未完成"
       },
       "title_prefix": "赚取",
       "title": "Creator Fund",

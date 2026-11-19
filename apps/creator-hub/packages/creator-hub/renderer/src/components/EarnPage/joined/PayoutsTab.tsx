@@ -5,7 +5,7 @@ import { Toast } from '@ui/atoms/Toast';
 
 import { analytics } from '#preload';
 import { useDispatch, useSelector } from '#store';
-import { actions } from '/@/modules/store/creatorFund';
+import { actions, selectors } from '/@/modules/store/creatorFund';
 import type { TranslationPath } from '/@/modules/store/translation/types';
 import { t } from '/@/modules/store/translation/utils';
 
@@ -44,6 +44,7 @@ export function PayoutsTab() {
   const payouts = useSelector(state => state.creatorFund.payouts);
   const wallet = useSelector(state => state.creatorFund.payoutWallet);
   const hasActivePlace = useSelector(state => state.creatorFund.hasActivePlace);
+  const noActivePlace = useSelector(selectors.isPayoutSetupLocked);
   const [loaded, setLoaded] = useState(() =>
     [payouts, wallet, enrollment, hasActivePlace].every(
       resource => resource.status === 'succeeded',
@@ -100,7 +101,6 @@ export function PayoutsTab() {
   const failed = [payouts, wallet, enrollment].some(resource => resource.status === 'failed');
   const empty = loaded && !failed && payouts.data?.payouts.length === 0;
   const emailVerified = !!enrollment.data?.email_verified_at;
-  const noActivePlace = hasActivePlace.data === false;
   let walletLock: WalletLock | null = null;
   if (!emailVerified) walletLock = 'unverified_email';
   else if (noActivePlace) walletLock = 'no_active_place';

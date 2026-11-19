@@ -678,4 +678,95 @@ describe('creatorFund slice', () => {
       expect(selectors.getFirstPayoutCycle(store.getState())).toEqual(expected);
     });
   });
+
+  describe('when telling whether the payout setup is pending', () => {
+    const VERIFIED = { ...ENROLLMENT, email_verified_at: '2026-11-02T10:00:00Z' };
+    const WALLET = { address: '0x0000000000000000000000000000000000000002', updated_at: '' };
+    const never = () => new Promise<never>(() => {});
+
+    type Setup = {
+      flag?: boolean;
+      enrollment?: Promise<unknown>;
+      wallet?: Promise<unknown>;
+      places?: Promise<unknown>;
+    };
+
+    async function load({
+      flag = true,
+      enrollment = Promise.resolve(ok(ENROLLMENT)),
+      wallet = Promise.resolve(fail(404)),
+      places: placesAnswer = Promise.resolve(ok(places(RUNNING, [place('a')]))),
+    }: Setup) {
+      store.dispatch(
+        fetchFeatureFlags.fulfilled(
+          { flags: { [FeatureFlag.CREATOR_FUND_PAYOUT]: flag }, variants: {} },
+          '',
+        ),
+      );
+      vi.mocked(api.getEnrollment).mockReturnValue(enrollment as any);
+      vi.mocked(api.getPayoutWallet).mockReturnValue(wallet as any);
+      vi.mocked(api.getPlaces).mockReturnValue(placesAnswer as any);
+      void store.dispatch(actions.fetchEnrollment());
+      void store.dispatch(actions.fetchPayoutWallet());
+      void store.dispatch(actions.fetchHasActivePlace());
+      await new Promise(resolve => setTimeout(resolve, 0));
+      return selectors.isPayoutSetupPending(store.getState());
+    }
+
+    const NO_PLACE_IN_PROGRAM = Promise.resolve(
+      ok(places(RUNNING, [place('a', { status: 'not_eligible' })])),
+    );
+
+    it.each<[string, Setup]>([
+      ['the email is not verified', {}],
+      [
+        'the email is not verified and the places cannot be read',
+        { places: Promise.resolve(fail(500)) },
+      ],
+      [
+        'the email is verified and there is no payout wallet',
+        { enrollment: Promise.resolve(ok(VERIFIED)) },
+      ],
+      [
+        'the email is verified, there is no payout wallet and the places cannot be read',
+        { enrollment: Promise.resolve(ok(VERIFIED)), places: Promise.resolve(fail(500)) },
+      ],
+    ])('should be pending when %s', async (_name, setup) => {
+      expect(await load(setup)).toBe(true);
+    });
+
+    it.each<[string, Setup]>([
+      ['the payout flag is off', { flag: false }],
+      [
+        'the creator is not enrolled',
+        { enrollment: Promise.resolve(fail(404, { message: 'not enrolled' })) },
+      ],
+      [
+        'the enrollment is suspended',
+        { enrollment: Promise.resolve(ok({ ...ENROLLMENT, status: 'suspended' })) },
+      ],
+      ['the enrollment is loading', { enrollment: never() }],
+      ['the enrollment failed to load', { enrollment: Promise.resolve(fail(500)) }],
+      ['the places are loading', { places: never() }],
+      ['no place is in the program and the email is not verified', { places: NO_PLACE_IN_PROGRAM }],
+      [
+        'no place is in the program and there is no payout wallet',
+        { enrollment: Promise.resolve(ok(VERIFIED)), places: NO_PLACE_IN_PROGRAM },
+      ],
+      [
+        'the email is verified and the wallet is loading',
+        { enrollment: Promise.resolve(ok(VERIFIED)), wallet: never() },
+      ],
+      [
+        'the email is verified and the wallet failed to load',
+        { enrollment: Promise.resolve(ok(VERIFIED)), wallet: Promise.resolve(fail(500)) },
+      ],
+      [
+        'the email is verified and there is a payout wallet',
+        { enrollment: Promise.resolve(ok(VERIFIED)), wallet: Promise.resolve(ok(WALLET)) },
+      ],
+    ])('should not be pending when %s', async (_name, setup) => {
+      expect(await load(setup)).toBe(false);
+    });
+  });
 });

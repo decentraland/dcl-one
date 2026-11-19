@@ -32,7 +32,7 @@ import { fetchMetrics, type LocationMetrics, type MetricLocation } from '/@/lib/
 import { Worlds } from '/@/lib/worlds';
 import type { AppState } from '/@/modules/store';
 import { accountChanged } from '/@/modules/store/account';
-import { getCreatorFundStart } from '/@/modules/store/featureFlags';
+import { FeatureFlag, getCreatorFundStart } from '/@/modules/store/featureFlags';
 import { createAsyncThunk as createAppAsyncThunk } from '/@/modules/store/thunk';
 
 import { formatCycleLabel } from './utils';
@@ -403,6 +403,22 @@ const getCycleLabel = createSelector(
   },
 );
 
+/** No place of the creator's is in the program, so both Payouts setup steps lock; a failed read is not a known no. */
+const isPayoutSetupLocked = (state: AppState) => state.creatorFund.hasActivePlace.data === false;
+
+const isSettled = (resource: Resource<unknown>) =>
+  resource.status === 'succeeded' || resource.status === 'failed';
+
+/** A Payouts setup step the enrolled creator can take now: verify the email, then add the payout wallet. */
+const isPayoutSetupPending = (state: AppState) => {
+  const { enrollment, payoutWallet, hasActivePlace } = state.creatorFund;
+  if (state.featureFlags.flags[FeatureFlag.CREATOR_FUND_PAYOUT] !== true) return false;
+  if (enrollment.status !== 'succeeded' || enrollment.data?.status !== 'active') return false;
+  if (!isSettled(hasActivePlace) || isPayoutSetupLocked(state)) return false;
+  if (!enrollment.data.email_verified_at) return true;
+  return payoutWallet.status === 'succeeded' && payoutWallet.data === null;
+};
+
 export const selectors = {
   getCreatorFund,
   needsReaccept,
@@ -413,6 +429,8 @@ export const selectors = {
   getDefaultPlacesCycle,
   getFirstPayoutCycle,
   getCycleLabel,
+  isPayoutSetupLocked,
+  isPayoutSetupPending,
 };
 export const actions = {
   ...slice.actions,

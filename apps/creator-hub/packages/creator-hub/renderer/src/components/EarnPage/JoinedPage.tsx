@@ -9,6 +9,8 @@ import { FeatureFlag } from '/@/modules/store/featureFlags';
 import type { TranslationPath } from '/@/modules/store/translation/types';
 import { t } from '/@/modules/store/translation/utils';
 
+import { NotificationDot } from '../NotificationDot';
+
 import { EarnHeader } from './joined/EarnHeader';
 import { LeaderboardTab } from './joined/LeaderboardTab';
 import { MyPlacesTab } from './joined/MyPlacesTab';
@@ -41,6 +43,7 @@ export function JoinedPage({
   const id = useId();
   const payoutEnabled = useFeatureFlags().isEnabled(FeatureFlag.CREATOR_FUND_PAYOUT);
   const hasClosedCycle = useSelector(state => !!selectors.getLatestClosedCycle(state));
+  const payoutSetupPending = useSelector(selectors.isPayoutSetupPending);
   const fillsWindow = useSelector(state =>
     tab === 'leaderboard'
       ? state.creatorFund.cycles.status === 'succeeded' && !selectors.getLatestClosedCycle(state)
@@ -88,15 +91,23 @@ export function JoinedPage({
         }}
         aria-label={t('earn.joined.sections')}
       >
-        {TABS.map(({ id: tabId, label }) => (
-          <Tab
-            key={tabId}
-            value={tabId}
-            label={t(tabId === 'leaderboard' && !hasClosedCycle ? 'earn.joined.tabs.home' : label)}
-            id={`${id}-${tabId}`}
-            aria-controls={`${id}-panel`}
-          />
-        ))}
+        {TABS.map(({ id: tabId, label }) => {
+          const dotted = tabId === 'payouts' && payoutSetupPending && tab !== 'payouts';
+          return (
+            <Tab
+              key={tabId}
+              value={tabId}
+              id={`${id}-${tabId}`}
+              aria-controls={`${id}-panel`}
+              aria-label={dotted ? t('earn.joined.tabs.payouts_pending') : undefined}
+            >
+              <span className={styles.tabLabel}>
+                {t(tabId === 'leaderboard' && !hasClosedCycle ? 'earn.joined.tabs.home' : label)}
+                {dotted && <NotificationDot />}
+              </span>
+            </Tab>
+          );
+        })}
       </Tabs>
       <div
         className={styles.tabPanel}
