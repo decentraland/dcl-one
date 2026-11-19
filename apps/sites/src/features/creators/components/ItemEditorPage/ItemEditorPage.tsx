@@ -308,15 +308,16 @@ const ItemEditorPage = () => {
     if (validationSource) keys.push(modelValidationKey(validationSource, validationCtx))
     if (thumbnailSource) keys.push(thumbnailValidationKey(thumbnailSource))
     const issues = await rerunValidation(keys)
-    track('Item Validation Rerun', {
-      itemId: selectedId,
+    track('bd_item_validation_rerun', {
+      item_id: selectedId,
       trigger: 'details',
-      previousStatus: validationStatus,
-      newStatus: getValidationStatus(issues, false)
+      previous_status: validationStatus,
+      new_status: getValidationStatus(issues, false)
     })
   }, [rerunValidation, validationSource, validationCtx, thumbnailSource, selectedId, validationStatus])
   const onValidationOpen = useCallback(
-    () => track('Item Validation Details Opened', { itemId: selectedId, status: validationStatus, trigger: 'editor' }),
+    () =>
+      track('bd_item_validation_details_opened', { item_id: selectedId, status: validationStatus, trigger: 'editor' }),
     [selectedId, validationStatus]
   )
 
@@ -440,7 +441,7 @@ const ItemEditorPage = () => {
     repairAttemptedRef.current.add(selected.id)
     const itemId = selected.id
     if (!(editable && isDraftCollection && !selected.isPublished && isLinkedItemDraft && !form.isDirty)) {
-      track('Item metrics repaired', { itemId, saved: false })
+      track('bd_item_metrics_repaired', { item_id: itemId, saved: false })
       return
     }
     // A failed save is reported by the query client's mutation handler.
@@ -449,9 +450,9 @@ const ItemEditorPage = () => {
         queryClient.setQueryData<Item[]>(allCollectionItemsKey(address, collectionId ?? undefined), current =>
           current?.map(candidate => (candidate.id === saved.id ? saved : candidate))
         )
-        track('Item metrics repaired', { itemId, saved: true })
+        track('bd_item_metrics_repaired', { item_id: itemId, saved: true })
       },
-      () => track('Item metrics repaired', { itemId, saved: false })
+      () => track('bd_item_metrics_repaired', { item_id: itemId, saved: false })
     )
   }, [
     selected,

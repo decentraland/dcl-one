@@ -26,10 +26,10 @@ function renderModal(props: Partial<React.ComponentProps<typeof Modal>> = {}) {
 describe('Modal', () => {
   it('reports the dialog opening and closing under its name', () => {
     const { view } = renderModal({ testId: 'publish-collection-modal' })
-    expect(track).toHaveBeenCalledWith('Open modal', { name: 'publish-collection-modal' })
+    expect(track).toHaveBeenCalledWith('bd_modal_opened', { name: 'publish-collection-modal' })
 
     view.unmount()
-    expect(track).toHaveBeenCalledWith('Close modal', { name: 'publish-collection-modal' })
+    expect(track).toHaveBeenCalledWith('bd_modal_closed', { name: 'publish-collection-modal' })
   })
 
   it('renders the title, body and an accessible dialog', () => {

@@ -123,13 +123,13 @@ const CurationPage = () => {
   }
 
   function changeFilter(filter: string, value: string | null) {
-    track('Curation filter changed', { filter, value: value ?? ALL })
+    track('bd_curation_filter_changed', { filter, value: value ?? ALL })
     changeParams({ [filter]: value })
   }
 
   // The defaults are left out of the URL, so a plain /curation link always opens the standard view.
   function changeMultiFilter(filter: 'status' | 'assignee', values: string[], defaults: string[]) {
-    track('Curation filter changed', { filter, value: values.join(',') || ALL })
+    track('bd_curation_filter_changed', { filter, value: values.join(',') || ALL })
     changeParams({ [filter]: toMultiParam(values, defaults) })
   }
 

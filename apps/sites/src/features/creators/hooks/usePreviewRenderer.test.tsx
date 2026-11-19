@@ -36,7 +36,7 @@ describe('usePreviewRenderer', () => {
     const { result } = renderHook(() => usePreviewRenderer(), { wrapper })
     expect(result.current).toBeUndefined()
     await waitFor(() => expect(result.current).toBe(PreviewRenderer.UNITY))
-    expect(track).toHaveBeenCalledWith('Preview Renderer Picked', {
+    expect(track).toHaveBeenCalledWith('bd_preview_renderer_picked', {
       renderer: PreviewRenderer.UNITY,
       reason: 'connection-ok',
       measured_mbps: 48.3
@@ -49,7 +49,7 @@ describe('usePreviewRenderer', () => {
     const { result } = renderHook(() => usePreviewRenderer(), { wrapper })
     await waitFor(() => expect(result.current).toBe(PreviewRenderer.BABYLON))
     expect(track).toHaveBeenCalledWith(
-      'Preview Renderer Picked',
+      'bd_preview_renderer_picked',
       expect.objectContaining({ reason: 'slow-connection' })
     )
   })
@@ -59,7 +59,7 @@ describe('usePreviewRenderer', () => {
     const { result } = renderHook(() => usePreviewRenderer(), { wrapper })
     await waitFor(() => expect(result.current).toBe(PreviewRenderer.BABYLON))
     expect(measureDownlinkMbps).not.toHaveBeenCalled()
-    expect(track).toHaveBeenCalledWith('Preview Renderer Picked', expect.objectContaining({ reason: 'flag-off' }))
+    expect(track).toHaveBeenCalledWith('bd_preview_renderer_picked', expect.objectContaining({ reason: 'flag-off' }))
   })
 
   it("does not spend a data-saver user's data on a probe", async () => {

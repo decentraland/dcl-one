@@ -57,7 +57,7 @@ export async function loadGltf(url: string, mappings: Record<string, string>): P
   const loader = new GLTFLoader(manager)
   return new Promise<GLTF>((resolve, reject) => {
     loader.load(url, resolve, undefined, error => {
-      // Surface the real parse failure for debugging/Sentry; the user still gets friendly copy.
+      // Surface the real parse failure for debugging and the error report; the user still gets friendly copy.
       console.error('GLTF load failed:', error)
       reject(
         missingResources.length > 0

@@ -31,8 +31,17 @@ export function EditorPreviewLaunch({ collectionId, itemCount, reviewing }: Prop
         void previewCollection(collectionId)
           .then(launched =>
             reviewing
-              ? track('Review Preview In World', { collectionId, itemCount, launched })
-              : track('Preview In World', { collectionId, itemCount, launched, trigger: 'editor' })
+              ? track('bd_review_preview_in_world_opened', {
+                  collection_id: collectionId,
+                  item_count: itemCount,
+                  launched
+                })
+              : track('bd_preview_in_world_opened', {
+                  collection_id: collectionId,
+                  item_count: itemCount,
+                  launched,
+                  trigger: 'editor'
+                })
           )
           .finally(() => setLaunching(false))
       }}

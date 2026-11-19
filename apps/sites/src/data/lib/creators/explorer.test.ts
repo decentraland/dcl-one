@@ -89,9 +89,9 @@ describe('previewCollectionFromDetail', () => {
     previewCollectionFromDetail('col-1', 4)
     expect(openProtocolLink).toHaveBeenCalledTimes(1)
     await vi.runAllTimersAsync()
-    expect(track).toHaveBeenCalledWith('Preview In World', {
-      collectionId: 'col-1',
-      itemCount: 4,
+    expect(track).toHaveBeenCalledWith('bd_preview_in_world_opened', {
+      collection_id: 'col-1',
+      item_count: 4,
       launched: false,
       trigger: 'detail'
     })

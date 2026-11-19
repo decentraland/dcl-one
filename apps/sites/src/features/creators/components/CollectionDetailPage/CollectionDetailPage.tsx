@@ -10,7 +10,12 @@ import {
   useCollectionStatus,
   useSaveCollection
 } from '../../hooks/useCollection'
-import { BuilderServerError, ValidationLimitError, isCollectionBusy, isValidationRunning } from '@/data/lib/creators/builder'
+import {
+  BuilderServerError,
+  ValidationLimitError,
+  isCollectionBusy,
+  isValidationRunning
+} from '@/data/lib/creators/builder'
 import { isSocialLogin } from '@/data/lib/creators/auth'
 import { FeatureFlag } from '@/data/lib/creators/featureFlags'
 import { getValidationStatus } from '@/data/lib/creators/validation'
@@ -62,7 +67,11 @@ import {
 import { useFeatureFlag } from '../../hooks/useFeatureFlag'
 import { useMediaQuery } from '../../hooks/useMediaQuery'
 import { useItemSyncs } from '../../hooks/useItemSync'
-import { useCollectionValidation, useRerunItemValidation, type ItemValidation } from '../../hooks/useCollectionValidation'
+import {
+  useCollectionValidation,
+  useRerunItemValidation,
+  type ItemValidation
+} from '../../hooks/useCollectionValidation'
 import {
   ItemSyncStatus,
   getItemRowStatus,
@@ -70,7 +79,13 @@ import {
   hasUpdatesSinceRejection,
   showsItemStatusColumn
 } from '@/data/lib/creators/itemSync'
-import { ReviewStage, canPushChanges, getReviewStage, hasReviewConversation, isRejectedStage } from '@/data/lib/creators/curation'
+import {
+  ReviewStage,
+  canPushChanges,
+  getReviewStage,
+  hasReviewConversation,
+  isRejectedStage
+} from '@/data/lib/creators/curation'
 import { useCommittee } from '../../hooks/useCommittee'
 import { useCollectionCuration, usePushCuration } from '../../hooks/useCuration'
 import { useCollectionEvents } from '../../hooks/useCollectionEvents'
@@ -167,7 +182,7 @@ const CollectionDetailPage = () => {
     setSearchParams(prev => stripTopUpReturn(prev), { replace: true })
     if (!resume || resume.collectionId !== collectionId || resume.orderId !== topUpReturn.orderId) return
     if (topUpReturn.canceled) {
-      track('Credits checkout canceled', { collectionId, orderId: topUpReturn.orderId })
+      track('bd_credits_checkout_canceled', { collection_id: collectionId, order_id: topUpReturn.orderId })
       void cancelCreditsOrder(session.address, topUpReturn.orderId)
     }
     setPublishResume({
@@ -295,7 +310,7 @@ const CollectionDetailPage = () => {
   const openDiscount = useCallback(
     (trigger: 'header' | 'menu') => {
       // Not `source`: that prop is reserved for the app discriminator and would overwrite this one.
-      if (collection) track(DISCOUNT_OPENED_EVENT, { collectionId: collection.id, trigger })
+      if (collection) track(DISCOUNT_OPENED_EVENT, { collection_id: collection.id, trigger })
       setDiscountOpen(true)
     },
     [collection]
@@ -425,8 +440,8 @@ const CollectionDetailPage = () => {
   const showValidation = useCallback(
     (item: Item) => {
       setValidationItem(item)
-      track('Item Validation Details Opened', {
-        itemId: item.id,
+      track('bd_item_validation_details_opened', {
+        item_id: item.id,
         status: rowValidation(item)?.status ?? 'idle',
         trigger: 'row'
       })

@@ -10,7 +10,7 @@ export const MetaTransactionErrorCode = {
   USER_DENIED: 'user_denied'
 } as const
 
-// `cause` keeps the wallet's own error (its 4001 code) reachable by isWalletRejection and the Sentry tags.
+// `cause` keeps the wallet's own error (its 4001 code) reachable by isWalletRejection and the error report.
 export class MetaTransactionError extends Error {
   cause?: unknown
 

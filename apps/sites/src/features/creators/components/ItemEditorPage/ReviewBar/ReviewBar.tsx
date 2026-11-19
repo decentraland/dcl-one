@@ -170,12 +170,12 @@ export function ReviewBar({ session, collection, items, onSelectItem }: Props) {
   useEffect(() => {
     if (validationStatus === 'loading' || validationStatus === 'idle' || reported.current) return
     reported.current = true
-    track('Review Validation Result', {
-      collectionId: collection.id,
-      itemCount: validationItems.length,
+    track('bd_review_validation_result', {
+      collection_id: collection.id,
+      item_count: validationItems.length,
       ...countIssues(validationIssues),
-      itemsWithIssues: validationResults.length,
-      durationMs: Date.now() - startedAt.current
+      items_with_issues: validationResults.length,
+      duration_ms: Date.now() - startedAt.current
     })
   }, [validationStatus, collection.id, validationItems.length, validationIssues, validationResults.length])
 
@@ -224,7 +224,9 @@ export function ReviewBar({ session, collection, items, onSelectItem }: Props) {
           status={validationStatus}
           results={validationResults}
           scope="collection"
-          onOpen={() => track('Review Validation Opened', { collectionId: collection.id, status: validationStatus })}
+          onOpen={() =>
+            track('bd_review_validation_opened', { collection_id: collection.id, status: validationStatus })
+          }
           testId="review-validation"
         />
       </div>

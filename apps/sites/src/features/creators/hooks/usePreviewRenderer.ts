@@ -21,7 +21,7 @@ async function decide(): Promise<RendererDecision> {
     decision = pickRenderer({ override: null, unityEnabled, measuredMbps })
   }
   try {
-    track('Preview Renderer Picked', {
+    track('bd_preview_renderer_picked', {
       renderer: decision.renderer,
       reason: decision.reason,
       measured_mbps: measuredMbps === null ? null : Math.round(measuredMbps * 10) / 10

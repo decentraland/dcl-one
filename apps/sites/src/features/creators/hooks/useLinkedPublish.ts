@@ -105,12 +105,12 @@ export function usePublishLinkedItems(session: Session, collection: Collection) 
   const chainId = getMaticChainId()
   const { address } = session
   const published = (variables: PublishLinkedVariables, txHash: string | null | undefined) => {
-    track('Publish TP Items', {
-      collectionId: collection.id,
-      thirdPartyId: variables.thirdParty.id,
+    track('bd_linked_items_published', {
+      collection_id: collection.id,
+      third_party_id: variables.thirdParty.id,
       items: variables.itemsToPublish.length,
       pushed: variables.itemsToPush.length,
-      txHash: txHash ?? undefined
+      tx_hash: txHash ?? undefined
     })
     void queryClient.invalidateQueries({ queryKey: thirdPartyKey(address, variables.thirdParty.id) })
     void queryClient.invalidateQueries({ queryKey: thirdPartySlotsKey(address, variables.thirdParty.id) })
@@ -146,7 +146,7 @@ export function usePublishLinkedItems(session: Session, collection: Collection) 
     },
     onError: (error, variables) => {
       const step = error instanceof LinkedPublishError ? error.step : 'unknown'
-      track('Publish TP Items error', { collectionId: collection.id, step, error: errorCode(error) })
+      track('bd_linked_items_publish_failed', { collection_id: collection.id, step, error: errorCode(error) })
       // From the payment on, the creator may have paid: a failure there needs someone to look, a payment that never
       // confirms included. A rejected wallet prompt or a reverted transaction charged nothing.
       if (
@@ -213,7 +213,11 @@ export function usePushLinkedChanges(session: Session, collection: Collection) {
       return pushChanges(address, toPush, curations, onProgress)
     },
     onSuccess: (result, { items }) => {
-      track('Push TP Changes', { collectionId: collection.id, items: items.length, failed: result.failed.length })
+      track('bd_linked_changes_pushed', {
+        collection_id: collection.id,
+        items: items.length,
+        failed: result.failed.length
+      })
       if (result.failed.length > 0) {
         captureError(new Error(`${result.failed.length} linked items could not be pushed`), {
           flow: 'linked_push',
@@ -224,7 +228,11 @@ export function usePushLinkedChanges(session: Session, collection: Collection) {
       invalidateCollectionItems(queryClient, collection.id)
     },
     onError: (error, { items }) => {
-      track('Push TP Changes error', { collectionId: collection.id, items: items.length, error: errorCode(error) })
+      track('bd_linked_changes_push_failed', {
+        collection_id: collection.id,
+        items: items.length,
+        error: errorCode(error)
+      })
       captureError(error, { flow: 'linked_push', collectionId: collection.id })
       invalidateCollectionItems(queryClient, collection.id)
     }

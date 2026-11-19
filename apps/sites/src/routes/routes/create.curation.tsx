@@ -14,6 +14,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   return wrap({ sid });
 }
 
-export default function CreateCurationRoute() {
-  return <CreatorsShell page="curation" />;
+export default function CreateCurationRoute({ loaderData }: Route.ComponentProps) {
+  return <CreatorsShell page="curation" sid={loaderData.sid} />;
 }

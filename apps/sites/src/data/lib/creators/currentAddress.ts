@@ -1,4 +1,4 @@
-// Who is signed in, for the cross-cutting concerns that stamp it on what they send (analytics, Sentry).
+// Who is signed in, for the cross-cutting concerns that stamp it on what they send (telemetry, error reports).
 // They can't read the wallet store directly: the store imports THEM, and a cycle between the two is
 // fragile at module-init time. The store registers a reader instead, and reads stay lazy so an event
 // fired before sign-in still picks up the address once there is one.

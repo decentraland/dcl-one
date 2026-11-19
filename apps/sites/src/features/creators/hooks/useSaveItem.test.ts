@@ -127,7 +127,7 @@ describe('useSaveItem size guard', () => {
     await save.current.mutateAsync({ item, background: true })
     expect(track).not.toHaveBeenCalled()
     await save.current.mutateAsync({ item })
-    expect(track).toHaveBeenCalledWith('Save item', { itemId: item.id })
+    expect(track).toHaveBeenCalledWith('bd_item_editor_saved', { item_id: item.id })
   })
 
   it('refuses a change of category that moves an item to a lower limit it is over', async () => {

@@ -24,7 +24,12 @@ import {
 import { isContractInUseError } from '@/data/lib/creators/linkedContract'
 import type { Mappings } from '@/data/lib/creators/mappings'
 import { getMaticChainId } from '@/data/lib/creators/publishCollection'
-import { RelinkCancelledError, loadRelinkFrom, relinkCollection, type RelinkStep } from '@/data/lib/creators/relinkCollection'
+import {
+  RelinkCancelledError,
+  loadRelinkFrom,
+  relinkCollection,
+  type RelinkStep
+} from '@/data/lib/creators/relinkCollection'
 import { isWalletRejection, isWalletStateError } from '@/data/lib/creators/walletErrors'
 import errorArt from '../../../assets/modal-error.png'
 import { ConfirmModal } from '../../ConfirmModal'
@@ -192,8 +197,8 @@ export function LinkedCollectionView({ collection, thirdParty, session, page, on
   useEffect(() => {
     if (tracked.current || !itemsPage.data) return
     tracked.current = true
-    track('View linked collection', {
-      collectionId: collection.id,
+    track('bd_linked_collection_viewed', {
+      collection_id: collection.id,
       item_count: itemsPage.data.total,
       network
     })
@@ -314,7 +319,7 @@ export function LinkedCollectionView({ collection, thirdParty, session, page, on
       const selectable = all.filter(item => isLinkedItemSelectable(item, curationMap.get(item.id) ?? null))
       setSelected(new Map(selectable.map(item => [item.id, item])))
       setAllAcrossSelected(true)
-      track('Select all linked items', { collectionId: collection.id, filter, count: selectable.length })
+      track('bd_linked_items_all_selected', { collection_id: collection.id, filter, count: selectable.length })
     } catch (error) {
       captureError(error, { flow: 'linked_select_all', collectionId: collection.id })
       showToast(t('linked_collection.select_all_error'), { type: 'error' })
@@ -325,7 +330,7 @@ export function LinkedCollectionView({ collection, thirdParty, session, page, on
 
   async function copyContract() {
     if (!contractAddress) return
-    track('Copy linked contract address', { collectionId: collection.id, network })
+    track('bd_linked_contract_copied', { collection_id: collection.id, network })
     if (await copyToClipboard(contractAddress)) showToast(t('linked_collection.contract_copied'))
     else showToast(t('collection_detail_page.actions.copy_failed'), { type: 'error' })
   }
@@ -366,7 +371,14 @@ export function LinkedCollectionView({ collection, thirdParty, session, page, on
         },
         { chainId, collection, thirdParty, from, to: next }
       )
-      track('Edit TP Collection Contract', { collectionId: collection.id, from, to: next, items: linked })
+      track('bd_linked_collection_contract_edited', {
+        collection_id: collection.id,
+        from_network: from?.network ?? null,
+        from_address: from?.address ?? null,
+        to_network: next.network,
+        to_address: next.address,
+        items: linked
+      })
       void curations.refetch()
       show({ kind: 'success', linked })
     } catch (error) {
@@ -396,7 +408,7 @@ export function LinkedCollectionView({ collection, thirdParty, session, page, on
     const next = withCollectionUrnSuffix(collection, suffix)
     saveCollection.mutate(next, {
       onSuccess: () => {
-        track('Change TP Collection URN', { oldURN: collection.urn, newURN: next.urn })
+        track('bd_linked_collection_urn_changed', { old_urn: collection.urn, new_urn: next.urn })
         // builder-server rebuilds every item URN from the collection's, so the cached items carry the old one.
         invalidateCollectionItems(queryClient, collection.id)
         closeUrn()
@@ -413,9 +425,9 @@ export function LinkedCollectionView({ collection, thirdParty, session, page, on
     (item: Item, mappings: Mappings) =>
       saveItemPatch(item, { mappings })
         .then(saved => {
-          track('Edit Item Mapping', {
-            itemId: item.id,
-            mappingType: Object.values(mappings)[0]?.[contractAddress?.toLowerCase() ?? '']?.[0]?.type
+          track('bd_linked_item_mapping_edited', {
+            item_id: item.id,
+            mapping_type: Object.values(mappings)[0]?.[contractAddress?.toLowerCase() ?? '']?.[0]?.type
           })
           return saved
         })

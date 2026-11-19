@@ -10,7 +10,10 @@ import type { SaleableCollection } from '@/data/lib/creators/saleableCollection'
 import { makeSession } from '../SellItemFlow/testUtils'
 
 const track = vi.fn()
-vi.mock('@/data/lib/creators/analytics', () => ({ track: (...args: unknown[]) => track(...args), errorCode: () => 'unknown' }))
+vi.mock('@/data/lib/creators/analytics', () => ({
+  track: (...args: unknown[]) => track(...args),
+  errorCode: () => 'unknown'
+}))
 const openExternal = vi.fn()
 vi.mock('@/data/lib/creators/navigation', () => ({ openExternal: (url: string) => openExternal(url) }))
 vi.mock('../../CollectionMosaic', () => ({ CollectionMosaic: () => null }))
@@ -156,13 +159,13 @@ describe('when a creator discounts a collection from the builder', () => {
     const { onClose } = open()
     fireEvent.click(screen.getByTestId('creator-sale-continue'))
     expect(track).toHaveBeenCalledWith(
-      'Review collection discount',
-      expect.objectContaining({ collectionId: 'c1', discountPct: 20, durationDays: 3, capped: false })
+      'bd_discount_reviewed',
+      expect.objectContaining({ collection_id: 'c1', discount_pct: 20, duration_days: 3, capped: false })
     )
     fireEvent.click(screen.getByLabelText('Cancel'))
-    expect(track).toHaveBeenCalledWith('Abandon collection discount', {
-      collectionId: 'c1',
-      lastStep: 'review'
+    expect(track).toHaveBeenCalledWith('bd_discount_abandoned', {
+      collection_id: 'c1',
+      last_step: 'review'
     })
     expect(onClose).toHaveBeenCalled()
   })
@@ -261,7 +264,7 @@ describe('when a creator discounts a collection from the builder', () => {
     fireEvent.click(screen.getByTestId('creator-sale-continue'))
     fireEvent.click(screen.getByTestId('creator-sale-back'))
     fireEvent.click(screen.getByTestId('creator-sale-continue'))
-    expect(track.mock.calls.filter(([event]) => event === 'Review collection discount')).toHaveLength(1)
+    expect(track.mock.calls.filter(([event]) => event === 'bd_discount_reviewed')).toHaveLength(1)
   })
 
   it('should take keyboard focus, keep Tab inside it and hand focus back when it closes', () => {
@@ -290,7 +293,7 @@ describe('when a creator discounts a collection from the builder', () => {
     await act(async () => fireEvent.click(screen.getByTestId('creator-sale-submit')))
     fireEvent.click(screen.getByTestId('creator-sale-pending-cancel'))
     fireEvent.click(screen.getByLabelText('Cancel'))
-    expect(track.mock.calls.filter(([event]) => event === 'Abandon collection discount')).toHaveLength(0)
+    expect(track.mock.calls.filter(([event]) => event === 'bd_discount_abandoned')).toHaveLength(0)
   })
 
   // StrictMode mounts twice in development: the success has to show there too, not leave the review signable.

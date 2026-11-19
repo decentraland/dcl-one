@@ -2,7 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { useSaveCollection } from '../../../../hooks/useCollection'
 import { useItemCurations } from '../../../../hooks/useLinkedCollection'
-import { useLinkedSlots, usePublishLinkedItems, useSignSlotsCheque, useThirdPartyPrice } from '../../../../hooks/useLinkedPublish'
+import {
+  useLinkedSlots,
+  usePublishLinkedItems,
+  useSignSlotsCheque,
+  useThirdPartyPrice
+} from '../../../../hooks/useLinkedPublish'
 import { useProfile } from '../../../../hooks/useProfile'
 import { useBeforeUnloadGuard } from '../../../../hooks/useBeforeUnloadGuard'
 import { track } from '@/data/lib/creators/analytics'
@@ -127,9 +132,9 @@ export function PublishLinkedItemsModal({
   useBeforeUnloadGuard(isRunning)
 
   useEffect(() => {
-    track('Publish TP Items started', {
-      collectionId: collection.id,
-      thirdPartyId: thirdParty.id,
+    track('bd_linked_items_publish_started', {
+      collection_id: collection.id,
+      third_party_id: thirdParty.id,
       items: selectedToPublish.length,
       pushed: itemsToPush.length
     })
@@ -154,7 +159,11 @@ export function PublishLinkedItemsModal({
       { thirdPartyId: thirdParty.id, qty: itemsToPublish.length },
       {
         onSuccess: signed => {
-          track('Sign TP cheque', { collectionId: collection.id, thirdPartyId: thirdParty.id, qty: signed.qty })
+          track('bd_linked_cheque_signed', {
+            collection_id: collection.id,
+            third_party_id: thirdParty.id,
+            qty: signed.qty
+          })
           setCheque(signed)
           forward()
         }

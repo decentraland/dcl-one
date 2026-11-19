@@ -93,6 +93,13 @@ export function previewCollectionFromDetail(collectionId: string, itemCount: num
   if (launching.has(collectionId)) return
   launching.add(collectionId)
   void previewCollection(collectionId)
-    .then(launched => track('Preview In World', { collectionId, itemCount, launched, trigger: 'detail' }))
+    .then(launched =>
+      track('bd_preview_in_world_opened', {
+        collection_id: collectionId,
+        item_count: itemCount,
+        launched,
+        trigger: 'detail'
+      })
+    )
     .finally(() => launching.delete(collectionId))
 }

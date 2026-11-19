@@ -100,7 +100,7 @@ export function useLiveBridge(bridgeUrl: string): LiveBridge {
       const longPoll = !forced && Date.now() - startedAt >= LONG_POLL_FALLBACK_MS
       if (!announcedRef.current && !forced) {
         announcedRef.current = true
-        track('Live preview connect', { long_poll: longPoll })
+        track('bd_live_preview_connected', { long_poll: longPoll })
       }
 
       const changed = next.version !== previousVersion
@@ -130,7 +130,7 @@ export function useLiveBridge(bridgeUrl: string): LiveBridge {
       const now = Date.now()
       setLastUpdateAt(now)
       setPushCount(count => count + 1)
-      track('Live preview model', {
+      track('bd_live_preview_model_received', {
         item_type: next.type ?? (next.category ? 'wearable' : undefined),
         category: next.category || undefined,
         since_last_ms: lastPushAtRef.current === null ? undefined : now - lastPushAtRef.current
@@ -158,7 +158,7 @@ export function useLiveBridge(bridgeUrl: string): LiveBridge {
         setErrorCode(code)
         if (lastErrorRef.current !== code) {
           lastErrorRef.current = code
-          track('Live preview connect error', { error: code })
+          track('bd_live_preview_connect_failed', { error: code })
         }
       }
     } finally {

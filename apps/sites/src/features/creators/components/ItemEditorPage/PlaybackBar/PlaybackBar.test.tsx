@@ -103,12 +103,12 @@ describe('PlaybackBar', () => {
     await userEvent.click(screen.getByTestId('playback-bar-select'))
     await userEvent.click(screen.getByTestId('playback-bar-select-option-wave'))
 
-    expect(track).toHaveBeenCalledWith('Play Emote', {
-      EMOTE_PLAYED_BASE: true,
-      EMOTE_PLAYED_ITEM_ID: null,
-      EMOTE_PLAYED_NAME: 'wave',
-      PREVIEWED_WEARABLE_ITEM_ID: '7',
-      PREVIEWED_WEARABLE_NAME: 'Party Hat'
+    expect(track).toHaveBeenCalledWith('bd_emote_played', {
+      emote_played_base: true,
+      emote_played_item_id: null,
+      emote_played_name: 'wave',
+      previewed_wearable_item_id: '7',
+      previewed_wearable_name: 'Party Hat'
     })
   })
 
@@ -119,12 +119,12 @@ describe('PlaybackBar', () => {
     await userEvent.click(screen.getByTestId('playback-bar-select'))
     await userEvent.click(screen.getByTestId('playback-bar-select-option-dance-item'))
 
-    expect(track).toHaveBeenCalledWith('Play Emote', {
-      EMOTE_PLAYED_BASE: false,
-      EMOTE_PLAYED_ITEM_ID: null,
-      EMOTE_PLAYED_NAME: 'dance-item',
-      PREVIEWED_WEARABLE_ITEM_ID: null,
-      PREVIEWED_WEARABLE_NAME: null
+    expect(track).toHaveBeenCalledWith('bd_emote_played', {
+      emote_played_base: false,
+      emote_played_item_id: null,
+      emote_played_name: 'dance-item',
+      previewed_wearable_item_id: null,
+      previewed_wearable_name: null
     })
   })
 

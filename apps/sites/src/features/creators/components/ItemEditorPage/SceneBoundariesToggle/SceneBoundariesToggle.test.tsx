@@ -29,10 +29,10 @@ describe('SceneBoundariesToggle', () => {
     expect(useAvatarPreview.getState().showSceneBoundaries).toBe(true)
     expect(button).toHaveAttribute('aria-pressed', 'true')
     expect(button).toHaveAccessibleName('Hide scene boundaries')
-    expect(track).toHaveBeenCalledWith('Toggle scene boundaries', { visible: true, trigger: 'editor' })
+    expect(track).toHaveBeenCalledWith('bd_scene_boundaries_toggled', { visible: true, trigger: 'editor' })
 
     await userEvent.click(button)
     expect(useAvatarPreview.getState().showSceneBoundaries).toBe(false)
-    expect(track).toHaveBeenLastCalledWith('Toggle scene boundaries', { visible: false, trigger: 'editor' })
+    expect(track).toHaveBeenLastCalledWith('bd_scene_boundaries_toggled', { visible: false, trigger: 'editor' })
   })
 })

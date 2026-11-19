@@ -111,7 +111,7 @@ export function ReviewFlow({
   const open = useCallback(
     (next: ReviewModal) => {
       setModal(next)
-      track('Review Modal Opened', { collectionId: collection.id, stage, modal: next })
+      track('bd_review_modal_opened', { collection_id: collection.id, stage, modal: next })
     },
     [collection.id, stage]
   )

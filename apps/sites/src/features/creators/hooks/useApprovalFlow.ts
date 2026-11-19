@@ -159,7 +159,7 @@ export function useApprovalFlow(
       if (isWalletRejection(error) && step !== 'prepare' && step !== 'changed') {
         return setView({ kind: 'step', step, phase: IDLE })
       }
-      track('Approval flow error', { collectionId: collection.id, step, error: errorCode(error) })
+      track('bd_approval_flow_failed', { collection_id: collection.id, step, error: errorCode(error) })
       if (isWalletStateError(error)) return setView({ kind: 'error', step, detail: null, failed, wallet: true })
       captureError(error, { flow: 'curation_approve', step, collectionId: collection.id })
       setView({ kind: 'error', step, detail: errorDetail(error), failed })
@@ -253,10 +253,10 @@ export function useApprovalFlow(
           void queryClient.invalidateQueries({ queryKey: key })
           throw error
         }
-        track('Approve curation', { collectionId: collection.id, has_note: !!approvalNote.current.trim() })
+        track('bd_curation_approved', { collection_id: collection.id, has_note: !!approvalNote.current.trim() })
       }
       refresh()
-      track('Approval flow completed', { collectionId: collection.id, mode })
+      track('bd_approval_flow_completed', { collection_id: collection.id, mode })
       set(token, { kind: 'success' })
     },
     [queryClient, address, collection.id, curation, mode, refresh, set]
@@ -278,7 +278,7 @@ export function useApprovalFlow(
   const start = useCallback(async () => {
     const token = ++run.current
     setView({ kind: 'loading' })
-    track('Approval flow started', { collectionId: collection.id, mode })
+    track('bd_approval_flow_started', { collection_id: collection.id, mode })
     if (mode === 'enable') {
       const steps: ApprovalStep[] = ['approve']
       setPlan({ steps, rescue: [], deploy: [] })
@@ -360,10 +360,10 @@ export function useApprovalFlow(
           queryClient.setQueryData<Item[]>(allCollectionItemsKey(address, collection.id), current =>
             current?.map(item => (hashes.has(item.id) ? { ...item, blockchainContentHash: hashes.get(item.id) } : item))
           )
-          track('Rescue items', { collectionId: collection.id, item_count: plan.rescue.length })
+          track('bd_items_rescued', { collection_id: collection.id, item_count: plan.rescue.length })
           await goTo(token, plan.steps, 'rescue')
         } catch (error) {
-          track('Rescue items error', { collectionId: collection.id, error: errorCode(error) })
+          track('bd_items_rescue_failed', { collection_id: collection.id, error: errorCode(error) })
           fail(token, 'rescue', error)
         }
       }),
@@ -385,10 +385,10 @@ export function useApprovalFlow(
         try {
           const result = await deployItems(collection, items, deps, uploading)
           if (result.failed.length > 0) {
-            track('Deploy entities failure', { collectionId: collection.id, item_count: result.failed.length })
+            track('bd_entities_deploy_failed', { collection_id: collection.id, item_count: result.failed.length })
             return fail(token, 'deploy', new Error('Some entities failed to deploy'), result.failed)
           }
-          track('Deploy entities', { collectionId: collection.id, item_count: items.length })
+          track('bd_entities_deployed', { collection_id: collection.id, item_count: items.length })
           await goTo(token, plan.steps, 'deploy')
         } catch (error) {
           fail(token, 'deploy', error)
@@ -406,7 +406,10 @@ export function useApprovalFlow(
             sendTransaction: txSender(token, 'approve', 1),
             waitForTransaction: wait
           })
-          track(mode === 'enable' ? 'Enable collection' : 'Approve collection', { collectionId: collection.id, txHash })
+          track(mode === 'enable' ? 'bd_collection_enabled' : 'bd_collection_approved', {
+            collection_id: collection.id,
+            tx_hash: txHash
+          })
           // Success waits for builder-server, which reads `is_approved` from a lagging subgraph, so a reload right
           // after it shows the collection approved. Past the timeout the cache carries the on-chain result instead.
           const indexed = await waitForIndexer(
@@ -417,8 +420,8 @@ export function useApprovalFlow(
           queryClient.setQueryData<Collection>(privateKey(address, 'collection', collection.id), indexed)
           await complete(token)
         } catch (error) {
-          track(mode === 'enable' ? 'Enable collection error' : 'Approve collection error', {
-            collectionId: collection.id,
+          track(mode === 'enable' ? 'bd_collection_enable_failed' : 'bd_collection_approve_failed', {
+            collection_id: collection.id,
             error: errorCode(error)
           })
           fail(token, 'approve', error)

@@ -54,9 +54,9 @@ describe('useLiveBridge', () => {
     expect(result.current.state).toMatchObject({ version: 1, category: 'hat' })
     expect(result.current.glb?.size).toBe(3)
     expect(result.current.pushCount).toBe(1)
-    expect(track).toHaveBeenCalledWith('Live preview connect', expect.objectContaining({ long_poll: false }))
+    expect(track).toHaveBeenCalledWith('bd_live_preview_connected', expect.objectContaining({ long_poll: false }))
     expect(track).toHaveBeenCalledWith(
-      'Live preview model',
+      'bd_live_preview_model_received',
       expect.objectContaining({ item_type: 'wearable', category: 'hat' })
     )
   })
@@ -100,7 +100,7 @@ describe('useLiveBridge', () => {
     await settle()
     expect(result.current.status).toBe('error')
     expect(result.current.errorCode).toBe('unreachable')
-    expect(track).toHaveBeenCalledWith('Live preview connect error', { error: 'unreachable' })
+    expect(track).toHaveBeenCalledWith('bd_live_preview_connect_failed', { error: 'unreachable' })
 
     const before = fetchMock.mock.calls.length
     await act(async () => {

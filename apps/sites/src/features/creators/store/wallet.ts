@@ -26,7 +26,7 @@ export const useWallet = createStore<WalletState>((set, get) => {
     session: null,
     restored: false,
     signIn: () => {
-      track('Login')
+      track('bd_sign_in_opened', {})
       openSignIn()
     },
     restore: () => {

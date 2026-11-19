@@ -28,9 +28,9 @@ describe('EditorPreviewLaunch', () => {
     fireEvent.click(screen.getByTestId('editor-preview'))
     expect(state.previewCollection).toHaveBeenCalledWith('c1')
     await waitFor(() =>
-      expect(state.track).toHaveBeenCalledWith('Review Preview In World', {
-        collectionId: 'c1',
-        itemCount: 3,
+      expect(state.track).toHaveBeenCalledWith('bd_review_preview_in_world_opened', {
+        collection_id: 'c1',
+        item_count: 3,
         launched: true
       })
     )
@@ -41,9 +41,9 @@ describe('EditorPreviewLaunch', () => {
     renderLaunch()
     fireEvent.click(screen.getByTestId('editor-preview'))
     await waitFor(() =>
-      expect(state.track).toHaveBeenCalledWith('Preview In World', {
-        collectionId: 'c1',
-        itemCount: 3,
+      expect(state.track).toHaveBeenCalledWith('bd_preview_in_world_opened', {
+        collection_id: 'c1',
+        item_count: 3,
         launched: false,
         trigger: 'editor'
       })

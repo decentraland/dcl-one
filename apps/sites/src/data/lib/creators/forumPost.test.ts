@@ -75,7 +75,10 @@ describe('openForumPost', () => {
   it('opens the topic and records where it was opened from', () => {
     openForumPost(collection('c1', { forumLink: LINK }), 'curation_list')
     expect(navigation.openExternal).toHaveBeenCalledWith(LINK)
-    expect(analytics.track).toHaveBeenCalledWith('Forum post opened', { collectionId: 'c1', surface: 'curation_list' })
+    expect(analytics.track).toHaveBeenCalledWith('bd_forum_post_opened', {
+      collection_id: 'c1',
+      surface: 'curation_list'
+    })
   })
 })
 
@@ -140,8 +143,8 @@ describe('postCollectionToForum', () => {
 
     expect(deps.createPost).toHaveBeenCalledTimes(1)
     expect(deps.onPosted).toHaveBeenCalledWith(LINK)
-    expect(analytics.track).toHaveBeenCalledWith('Create forum post', {
-      collectionId: 'p1',
+    expect(analytics.track).toHaveBeenCalledWith('bd_forum_post_created', {
+      collection_id: 'p1',
       trigger: 'publish',
       existing: false
     })
@@ -164,8 +167,8 @@ describe('postCollectionToForum', () => {
       .fn()
       .mockRejectedValue(new BuilderServerError('Forum post already exists', 409, { forum_link: LINK }))
     await postCollectionToForum(collection('p3'), 'publish', postDeps({ createPost }))
-    expect(analytics.track).toHaveBeenCalledWith('Create forum post', {
-      collectionId: 'p3',
+    expect(analytics.track).toHaveBeenCalledWith('bd_forum_post_created', {
+      collection_id: 'p3',
       trigger: 'publish',
       existing: true
     })
@@ -235,6 +238,9 @@ describe('postAssigneeToForum', () => {
   it('reports a failed reply without throwing', async () => {
     const createReply = vi.fn().mockRejectedValue(new Error('forum down'))
     await postAssigneeToForum(collection('a2', { forumLink: LINK }), null, { claimedName: vi.fn(), createReply })
-    expect(analytics.track).toHaveBeenCalledWith('Assignee forum post error', { collectionId: 'a2', error: 'unknown' })
+    expect(analytics.track).toHaveBeenCalledWith('bd_forum_assignee_post_failed', {
+      collection_id: 'a2',
+      error: 'unknown'
+    })
   })
 })

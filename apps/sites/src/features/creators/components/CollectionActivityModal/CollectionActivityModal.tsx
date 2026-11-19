@@ -34,7 +34,7 @@ export function CollectionActivityModal({ collection, address, items = [], comme
   const isError = query.isError && !isFetchNextPageError
 
   useEffect(() => {
-    track('Open activity', { collectionId: collection.id })
+    track('bd_activity_opened', { collection_id: collection.id })
   }, [collection.id])
 
   const composer = commentAs && isAvailable && (

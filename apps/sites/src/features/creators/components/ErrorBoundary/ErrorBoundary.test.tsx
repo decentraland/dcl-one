@@ -38,9 +38,9 @@ describe('ErrorBoundary', () => {
     expect(track).not.toHaveBeenCalled()
   })
 
-  it('reports the crash screen under the same event name as the legacy builder', () => {
+  it('reports the crash screen', () => {
     renderBoundary(<Boom />)
-    expect(track).toHaveBeenCalledWith('Error page')
+    expect(track).toHaveBeenCalledWith('bd_error_page_shown', {})
   })
 
   it('shows the fallback with a reload CTA when a child throws', async () => {

@@ -68,7 +68,7 @@ export function TransferCard({
   /** A pasted list: every new address joins the transfer, and a toast says how many did (or why none could). */
   function addRecipients(text: string): string | null {
     const { added, invalid, repeated, cut } = parseRecipientList(text, transfer.recipients)
-    track('Paste recipients', { collectionId, added: added.length, invalid, repeated, cut })
+    track('bd_recipients_pasted', { collection_id: collectionId, added: added.length, invalid, repeated, cut })
     if (added.length === 0) {
       if (invalid > 0) return t('sell_item_modal.beneficiary.invalid')
       // Only repeats, dropped like a typed one: the field clears and a toast says why.

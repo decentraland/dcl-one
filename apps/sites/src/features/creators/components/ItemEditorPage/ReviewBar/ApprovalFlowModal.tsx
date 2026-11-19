@@ -17,7 +17,12 @@ import { Tooltip } from '../../Tooltip'
 import { ProgressModal } from '../../ProgressModal'
 import { PendingModal } from '../../PendingModal'
 import { useCatalystItemSizes } from '../../../hooks/useItemSize'
-import { useApprovalFlow, type ApprovalMode, type ApprovalPlan, type ApprovalStep } from '../../../hooks/useApprovalFlow'
+import {
+  useApprovalFlow,
+  type ApprovalMode,
+  type ApprovalPlan,
+  type ApprovalStep
+} from '../../../hooks/useApprovalFlow'
 import { useBeforeUnloadGuard } from '../../../hooks/useBeforeUnloadGuard'
 import { track } from '@/data/lib/creators/analytics'
 import { isSocialLogin, type Session } from '@/data/lib/creators/auth'
@@ -340,7 +345,7 @@ function ErrorDetail({ text, collectionId }: { text: string; collectionId: strin
             data-testid="approval-error-copy"
             onClick={() => {
               void copyToClipboard(text).then(setCopied)
-              track('Approval error details copied', { collectionId })
+              track('bd_approval_error_copied', { collection_id: collectionId })
             }}
           >
             {copied ? <CheckIcon fontSize="small" /> : <ContentCopyIcon fontSize="small" />}

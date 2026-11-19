@@ -72,13 +72,13 @@ export function useSaveItem(address: string | undefined) {
       return saveItem(address, built.item, built.blobs, { previousVideo: variables.previousVideo })
     },
     onSuccess: (item, { background }) => {
-      if (!background) track('Save item', { itemId: item.id })
+      if (!background) track('bd_item_editor_saved', { item_id: item.id })
       if (item.collectionId) invalidateCollectionItems(queryClient, item.collectionId)
     },
     onError: (error, { item, background }) => {
       if (background) return
-      track('Save item error', {
-        itemId: item.id,
+      track('bd_item_editor_save_failed', {
+        item_id: item.id,
         error: isItemTooBigError(error) ? 'size_exceeded' : errorCode(error)
       })
     }

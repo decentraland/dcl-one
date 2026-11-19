@@ -5,7 +5,12 @@ import { usePreviewRenderer } from '../../hooks/usePreviewRenderer'
 import { track } from '@/data/lib/creators/analytics'
 import { captureError } from '@/data/lib/creators/monitoring'
 import { ItemType, hasEmptyModelMetrics, type ItemMetrics } from '@/data/lib/creators/items'
-import { isPreviewEmpty, retryWhilePreviewReloads, toEmoteWithBlobs, toWearableWithBlobs } from '@/data/lib/creators/preview'
+import {
+  isPreviewEmpty,
+  retryWhilePreviewReloads,
+  toEmoteWithBlobs,
+  toWearableWithBlobs
+} from '@/data/lib/creators/preview'
 import { renderPosedThumbnail } from '@/data/lib/creators/renderPosedThumbnail'
 import { getThumbnailPose, isAutoThumbnailStale } from '@/data/lib/creators/thumbnailPose'
 import type { PreviewDraft, PreviewResult } from '@/data/lib/creators/draftPreview'
@@ -28,7 +33,7 @@ export type PreviewFailure = 'timeout' | 'error'
 
 type Props = {
   draft: PreviewDraft
-  /** Tags the Sentry report and the analytics event. */
+  /** Tags the error report and the telemetry event. */
   flow: 'add_items' | 'item_file_change'
   /** Files in the batch the draft belongs to. */
   batchSize?: number
@@ -100,7 +105,7 @@ export function DraftProcessor({ draft, flow, batchSize = 1, onResult, onError }
   if (bootedRef.current.iframeKey !== iframeKey) bootedRef.current = { iframeKey, booted: false }
 
   const report = (run: Run, outcome: 'ok' | PreviewFailure) => {
-    track('Item preview processed', {
+    track('bd_item_preview_processed', {
       flow,
       renderer: renderer ?? null,
       item_type: draft.type,

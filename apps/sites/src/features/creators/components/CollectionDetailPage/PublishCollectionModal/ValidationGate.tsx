@@ -4,7 +4,13 @@ import { useRerunItemValidation } from '../../../hooks/useCollectionValidation'
 import { useCatalystItemSizes } from '../../../hooks/useItemSize'
 import { track } from '@/data/lib/creators/analytics'
 import { formatItemSize, isOverSizeLimit } from '@/data/lib/creators/itemSize'
-import { ValidationSeverity, countIssues, getValidationStatus, hasErrors, type ValidationIssue } from '@/data/lib/creators/validation'
+import {
+  ValidationSeverity,
+  countIssues,
+  getValidationStatus,
+  hasErrors,
+  type ValidationIssue
+} from '@/data/lib/creators/validation'
 import { PendingModal } from '../../PendingModal'
 import type { ItemCheck } from '@/data/lib/creators/validation'
 import { ValidationIssuesView } from './ValidationIssuesView'
@@ -44,7 +50,7 @@ export function ValidationGate({ collectionId, flow, validation, blockOnErrors, 
   const [flaggedIds, setFlaggedIds] = useState<string[]>([])
 
   useEffect(() => {
-    track('Publish Validation Started', { collectionId, flow, itemCount: validation.results.length })
+    track('bd_publish_validation_started', { collection_id: collectionId, flow, item_count: validation.results.length })
     // Once per opening.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -86,15 +92,15 @@ export function ValidationGate({ collectionId, flow, validation, blockOnErrors, 
     if (decided || validation.isValidating || sizes.isMeasuring) return
     const flagged = checks.filter(check => check.issues.length > 0)
     const { errors, warnings } = totals(flagged)
-    track('Publish Validation Result', {
-      collectionId,
+    track('bd_publish_validation_result', {
+      collection_id: collectionId,
       flow,
       errors,
       warnings,
-      itemsWithIssues: flagged.length,
-      oversizedItems: oversizedCount,
+      items_with_issues: flagged.length,
+      oversized_items: oversizedCount,
       blocking: blocking && errors > 0,
-      durationMs: Date.now() - openedAt.current
+      duration_ms: Date.now() - openedAt.current
     })
     setDecided(true)
     if (flagged.length === 0) {
@@ -138,7 +144,7 @@ export function ValidationGate({ collectionId, flow, validation, blockOnErrors, 
     [rerunItemValidation, flow, sizes]
   )
   function resolveIssues(action: 'continue' | 'back') {
-    track('Publish Validation Resolved', { collectionId, flow, action, ...totals(flaggedChecks) })
+    track('bd_publish_validation_resolved', { collection_id: collectionId, flow, action, ...totals(flaggedChecks) })
     if (action === 'continue') onPass()
     else onClose()
   }

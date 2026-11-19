@@ -75,7 +75,7 @@ export function LinkedItemActionsMenu({
     setUrnSave('saving')
     saveItemPatch(item, { urn }).then(
       () => {
-        track('Change TP Item URN', { oldURN: item.urn, newURN: urn })
+        track('bd_linked_item_urn_changed', { old_urn: item.urn, new_urn: urn })
         closeDialog()
         showToast(t('linked_collection.urn_saved'))
       },

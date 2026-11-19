@@ -153,8 +153,8 @@ describe('ReviewFlow', () => {
     expect(screen.getByTestId('automated-issues-title')).toHaveTextContent('Some items need your attention')
     expect(screen.getByTestId('automated-issues-i1-issues')).toHaveTextContent('Too many triangles')
     expect(screen.queryByTestId('automated-issues-i2-card')).toBeNull()
-    expect(mocks.track).toHaveBeenCalledWith('Review Modal Opened', {
-      collectionId: 'c1',
+    expect(mocks.track).toHaveBeenCalledWith('bd_review_modal_opened', {
+      collection_id: 'c1',
       stage: 'rejected_by_validator',
       modal: 'issues'
     })

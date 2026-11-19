@@ -659,11 +659,11 @@ describe('ReviewBar', () => {
       state.syncs = pending('i1', 'i2')
       state.issues = new Map([['i1', [error('Too many triangles'), warning('Big texture')]]])
       renderBar()
-      const results = state.track.mock.calls.filter(([event]) => event === 'Review Validation Result')
+      const results = state.track.mock.calls.filter(([event]) => event === 'bd_review_validation_result')
       expect(results).toEqual([
         [
-          'Review Validation Result',
-          expect.objectContaining({ collectionId: 'c1', itemCount: 2, errors: 1, warnings: 1, itemsWithIssues: 1 })
+          'bd_review_validation_result',
+          expect.objectContaining({ collection_id: 'c1', item_count: 2, errors: 1, warnings: 1, items_with_issues: 1 })
         ]
       ])
     })

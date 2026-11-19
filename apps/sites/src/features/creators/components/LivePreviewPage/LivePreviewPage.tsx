@@ -285,7 +285,7 @@ const LivePreviewPage = () => {
       const key = `${String(state?.version)}:${control}`
       if (tunedRef.current.has(key)) return
       tunedRef.current.add(key)
-      track('Live preview tune', { control, item_type: isEmote ? 'emote' : 'wearable' })
+      track('bd_live_preview_tuned', { control, item_type: isEmote ? 'emote' : 'wearable' })
     },
     [state?.version, isEmote]
   )
@@ -295,7 +295,7 @@ const LivePreviewPage = () => {
   const session = useWallet(s => s.session)
   const addToCollection = useCallback(() => {
     if (!glb || !state) return
-    track('Live preview add to collection', {
+    track('bd_live_preview_added_to_collection', {
       item_type: isEmote ? 'emote' : 'wearable',
       push_count: bridge.pushCount,
       signed_in: !!session

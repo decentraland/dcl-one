@@ -14,7 +14,12 @@ import {
 import type { Collection } from '@/data/lib/creators/collections'
 import { collectionCurationKey, collectionEventsKey, refreshReview } from './useCuration'
 import { useFeatureFlag } from './useFeatureFlag'
-import { getValidationAttemptsLeft, isValidationInProgress, type CollectionEvent, type ReviewParty } from '@/data/lib/creators/events'
+import {
+  getValidationAttemptsLeft,
+  isValidationInProgress,
+  type CollectionEvent,
+  type ReviewParty
+} from '@/data/lib/creators/events'
 import { FeatureFlag } from '@/data/lib/creators/featureFlags'
 import { captureError } from '@/data/lib/creators/monitoring'
 
@@ -134,11 +139,14 @@ export function useRequestValidation(address: string | undefined) {
       return requestCollectionValidation(address, collection.id)
     },
     onSuccess: (_, { collection, events }) => {
-      track('Request validation', { collectionId: collection.id, attempts_left: getValidationAttemptsLeft(events) - 1 })
+      track('bd_validation_requested', {
+        collection_id: collection.id,
+        attempts_left: getValidationAttemptsLeft(events) - 1
+      })
       refresh(collection.id)
     },
     onError: (error, { collection }) => {
-      track('Request validation error', { collectionId: collection.id, error: errorCode(error) })
+      track('bd_validation_request_failed', { collection_id: collection.id, error: errorCode(error) })
       const expected = error instanceof ValidationLimitError || isReviewConflict(error) || isCollectionBusy(error)
       if (expected) refresh(collection.id)
       else captureError(error, { flow: 'curation_validate', collectionId: collection.id })
@@ -159,11 +167,11 @@ export function useAppealCuration(address: string | undefined) {
         : appealCollectionCuration(address, collection.id)
     },
     onSuccess: (_, { collection, note }) => {
-      track('Appeal curation', { collectionId: collection.id, has_note: !!note })
+      track('bd_curation_appealed', { collection_id: collection.id, has_note: !!note })
       refresh(collection.id)
     },
     onError: (error, { collection }) => {
-      track('Appeal curation error', { collectionId: collection.id, error: errorCode(error) })
+      track('bd_curation_appeal_failed', { collection_id: collection.id, error: errorCode(error) })
       if (isReviewConflict(error) || isCollectionBusy(error)) refresh(collection.id)
       else captureError(error, { flow: 'curation_appeal', collectionId: collection.id })
     }
@@ -187,11 +195,16 @@ export function usePostComment(address: string | undefined) {
       return postCollectionComment(address, collection.id, itemId ? { message, itemId } : { message })
     },
     onSuccess: (_, { collection, role, itemId, message }) => {
-      track('Post review comment', { collectionId: collection.id, role, has_item: !!itemId, length: message.length })
+      track('bd_review_comment_posted', {
+        collection_id: collection.id,
+        role,
+        has_item: !!itemId,
+        length: message.length
+      })
       refresh(collection.id)
     },
     onError: (error, { collection, role }) => {
-      track('Post review comment error', { collectionId: collection.id, role, error: errorCode(error) })
+      track('bd_review_comment_post_failed', { collection_id: collection.id, role, error: errorCode(error) })
       // A 409 is the review closing under the writer (approved meanwhile): fresh state hides the composer.
       if (isCollectionBusy(error) || isReviewConflict(error)) refresh(collection.id)
       else captureError(error, { flow: 'curation_comment', collectionId: collection.id })

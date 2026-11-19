@@ -14,6 +14,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   return wrap({ sid });
 }
 
-export default function CreateCollectionsRoute() {
-  return <CreatorsShell page="collections" />;
+export default function CreateCollectionsRoute({ loaderData }: Route.ComponentProps) {
+  return <CreatorsShell page="collections" sid={loaderData.sid} />;
 }

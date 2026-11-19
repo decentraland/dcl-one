@@ -108,8 +108,8 @@ describe('ValidationGate', () => {
     expect(screen.queryByTestId('publish-validation-clean-card')).not.toBeInTheDocument()
     expect(screen.queryByTestId('publish-validation-continue')).not.toBeInTheDocument()
     expect(track).toHaveBeenCalledWith(
-      'Publish Validation Result',
-      expect.objectContaining({ oversizedItems: 1, blocking: true })
+      'bd_publish_validation_result',
+      expect.objectContaining({ oversized_items: 1, blocking: true })
     )
   })
 
@@ -243,12 +243,12 @@ describe('ValidationGate', () => {
     await userEvent.click(screen.getByTestId('publish-validation-continue'))
     const events = vi
       .mocked(track)
-      .mock.calls.filter(([name]) => name.startsWith('Publish Validation'))
+      .mock.calls.filter(([name]) => name.startsWith('bd_publish_validation'))
       .map(([name, props]) => [name, (props as { flow: string }).flow])
     expect(events).toEqual([
-      ['Publish Validation Started', 'push_changes'],
-      ['Publish Validation Result', 'push_changes'],
-      ['Publish Validation Resolved', 'push_changes']
+      ['bd_publish_validation_started', 'push_changes'],
+      ['bd_publish_validation_result', 'push_changes'],
+      ['bd_publish_validation_resolved', 'push_changes']
     ])
   })
 })

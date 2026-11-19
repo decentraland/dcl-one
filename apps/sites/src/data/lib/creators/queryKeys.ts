@@ -11,3 +11,9 @@ export function privateDomain(domain: string, matches: (query: Query) => boolean
     predicate: (query: Query) => query.queryKey[0] === 'private' && query.queryKey[2] === domain && matches(query)
   }
 }
+
+/** The domain a key belongs to, in either shape. It carries no id, address or search term. */
+export function domainOf(key: readonly unknown[] | undefined): string | undefined {
+  const domain = key?.[0] === 'private' ? key[2] : key?.[0]
+  return typeof domain === 'string' ? domain : undefined
+}

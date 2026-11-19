@@ -170,7 +170,7 @@ export function PaymentStep({
   }
 
   function openBuyCredits() {
-    track('Open buy credits', { collectionId: collection.id, shortfall: creditsShortfall })
+    track('bd_credits_buy_opened', { collection_id: collection.id, shortfall: creditsShortfall })
     setBuyingCredits(true)
   }
 
@@ -185,15 +185,15 @@ export function PaymentStep({
       termsAccepted: accepted,
       email
     })
-    track('Start credits checkout', {
-      collectionId: collection.id,
-      orderId: checkout.orderId,
-      packId: selection.packId,
+    track('bd_credits_checkout_started', {
+      collection_id: collection.id,
+      order_id: checkout.orderId,
+      pack_id: selection.packId,
       quantity: selection.quantity,
       credits: totals.credits,
       usd: totals.usd,
       shortfall: creditsShortfall,
-      resumeSaved
+      resume_saved: resumeSaved
     })
     redirectExternal(checkout.url)
   }

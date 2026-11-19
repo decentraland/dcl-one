@@ -84,10 +84,10 @@ export function useDeleteItem(address: string | undefined) {
       return item
     },
     onSuccess: item => {
-      track('Delete item', { itemId: item.id })
+      track('bd_item_deleted', { item_id: item.id })
       if (item.collectionId) invalidateCollectionItems(queryClient, item.collectionId)
     },
-    onError: (error, item) => track('Delete item error', { itemId: item.id, error: errorCode(error) })
+    onError: (error, item) => track('bd_item_delete_failed', { item_id: item.id, error: errorCode(error) })
   })
 }
 
@@ -132,14 +132,14 @@ export function usePublishCollection(session: Session | null) {
     onSuccess: ({ collection, txHash }, { collection: submitted, paymentMethod, fee }) => {
       // Legacy prop names (txHash, collectionId, usedCredits, creditsAmount) so the event lines up with
       // the same one from the old builder; `isFiat` is always false here — this app has no fiat publish.
-      track('Publish collection', {
-        collectionId: collection.id,
-        txHash,
-        isFiat: false,
-        usedCredits: paymentMethod === 'credits',
-        creditsAmount: paymentMethod === 'credits' ? fee.total.credits : 0,
+      track('bd_publish_collection_submitted', {
+        collection_id: collection.id,
+        tx_hash: txHash,
+        is_fiat: false,
+        used_credits: paymentMethod === 'credits',
+        credits_amount: paymentMethod === 'credits' ? fee.total.credits : 0,
         item_count: fee.itemCount,
-        isRetry: isCollectionLocked(submitted)
+        is_retry: isCollectionLocked(submitted)
       })
       const address = session?.address
       queryClient.setQueryData(privateKey(address, 'collection', collection.id), collection)
@@ -163,10 +163,10 @@ export function usePublishCollection(session: Session | null) {
           console.error('Collection consolidation failed', error)
           const reverted = error instanceof PublishTransactionRevertedError
           if (reverted) {
-            track('Publish collection reverted', {
-              collectionId: collection.id,
-              txHash,
-              usedCredits: paymentMethod === 'credits'
+            track('bd_publish_collection_reverted', {
+              collection_id: collection.id,
+              tx_hash: txHash,
+              used_credits: paymentMethod === 'credits'
             })
           }
           // The modal is long gone: a lasting toast is the only way the creator learns the publish did not land.
@@ -184,11 +184,11 @@ export function usePublishCollection(session: Session | null) {
         })
     },
     onError: (error, { collection, paymentMethod }) => {
-      track('Publish collection error', {
-        collectionId: collection.id,
-        isFiat: false,
-        usedCredits: paymentMethod === 'credits',
-        isRetry: isCollectionLocked(collection),
+      track('bd_publish_collection_failed', {
+        collection_id: collection.id,
+        is_fiat: false,
+        used_credits: paymentMethod === 'credits',
+        is_retry: isCollectionLocked(collection),
         error: errorCode(error)
       })
       // Every publish needs the ToS record, so a failure to write it blocks creators until someone looks.

@@ -119,11 +119,11 @@ export function ItemsSidebar({
   function onRowClick(item: Item) {
     if (item.id !== selectedId) {
       // Legacy builder prop names, so the event lines up with the same one from the old item editor.
-      track('Preview Item', {
-        ITEM_ID: item.tokenId ?? null,
-        ITEM_TYPE: item.type,
-        ITEM_NAME: item.name,
-        ITEM_IS_THIRD_PARTY: isLinkedCollection(collection)
+      track('bd_item_previewed', {
+        item_id: item.tokenId ?? null,
+        item_type: item.type,
+        item_name: item.name,
+        item_is_third_party: isLinkedCollection(collection)
       })
     }
     if (item.type === ItemType.EMOTE && item.id === selectedId && dressedIds.includes(item.id)) {

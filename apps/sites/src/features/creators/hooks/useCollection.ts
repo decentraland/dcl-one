@@ -71,12 +71,12 @@ export function useSaveCollection(address: string | undefined) {
       return saveCollection(address, collection, data)
     },
     onSuccess: saved => {
-      track('Save collection', { collectionId: saved.id, item_count: saved.itemCount })
+      track('bd_collection_saved', { collection_id: saved.id, item_count: saved.itemCount })
       queryClient.setQueryData(privateKey(address, 'collection', saved.id), saved)
       void queryClient.invalidateQueries(privateDomain('collections'))
     },
     onError: (error, collection) =>
-      track('Save collection error', { collectionId: collection.id, error: errorCode(error) })
+      track('bd_collection_save_failed', { collection_id: collection.id, error: errorCode(error) })
   })
 }
 
@@ -89,7 +89,7 @@ export function useDeleteCollection(address: string | undefined) {
       return collectionId
     },
     onSuccess: async collectionId => {
-      track('Delete collection', { collectionId })
+      track('bd_collection_deleted', { collection_id: collectionId })
       queryClient.removeQueries({ queryKey: privateKey(address, 'collection', collectionId) })
       queryClient.removeQueries({ queryKey: privateKey(address, 'collection-preview', collectionId) })
       // The lists keep their previous data on screen while they refetch: drop the deleted collection from them
@@ -101,6 +101,7 @@ export function useDeleteCollection(address: string | undefined) {
       )
       void queryClient.invalidateQueries(privateDomain('collections'))
     },
-    onError: (error, collectionId) => track('Delete collection error', { collectionId, error: errorCode(error) })
+    onError: (error, collectionId) =>
+      track('bd_collection_delete_failed', { collection_id: collectionId, error: errorCode(error) })
   })
 }

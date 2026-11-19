@@ -10,11 +10,22 @@ import { useMeasuredBytes } from '../../../hooks/useItemSize'
 import { useThumbnailEditor } from '../../../hooks/useThumbnailEditor'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { errorCode, track } from '@/data/lib/creators/analytics'
-import { applyPreviewResult, imageThumbnailPatch, needsPreviewData, type PreviewDraft } from '@/data/lib/creators/draftPreview'
+import {
+  applyPreviewResult,
+  imageThumbnailPatch,
+  needsPreviewData,
+  type PreviewDraft
+} from '@/data/lib/creators/draftPreview'
 import { pickFile } from '@/data/lib/creators/filePicker'
 import { toFileChangeSaveable, type ItemFileChange } from '@/data/lib/creators/itemDraft'
 import type { BuiltItem } from '@/data/lib/creators/itemFactory'
-import { ITEM_EXTENSIONS, ItemFileError, THUMBNAIL_PATH, getExtension, isImageFile } from '@/data/lib/creators/itemFiles'
+import {
+  ITEM_EXTENSIONS,
+  ItemFileError,
+  THUMBNAIL_PATH,
+  getExtension,
+  isImageFile
+} from '@/data/lib/creators/itemFiles'
 import {
   buildModelUpdate,
   getDefaultBodyShape,
@@ -26,7 +37,13 @@ import {
   needsNewCategory,
   type LoadedItemModel
 } from '@/data/lib/creators/itemModelImport'
-import { formatItemSize, getItemSizeLimit, isItemTooBigError, isOverSizeLimit, type ItemSize } from '@/data/lib/creators/itemSize'
+import {
+  formatItemSize,
+  getItemSizeLimit,
+  isItemTooBigError,
+  isOverSizeLimit,
+  type ItemSize
+} from '@/data/lib/creators/itemSize'
 import {
   BodyShapeType,
   IMAGE_WEARABLE_METRICS,
@@ -148,7 +165,10 @@ export function ChangeFileModal({ item, lockedBodyShape, linked = false, onSave,
     const key = err instanceof ItemFileError ? err.messageKey : 'invalid_model_file'
     const params = err instanceof ItemFileError ? err.messageParams : undefined
     if (!(err instanceof ItemFileError)) captureError(err, { flow: 'item_file_change' })
-    track('Change item file error', { itemId: item.id, error: err instanceof ItemFileError ? key : errorCode(err) })
+    track('bd_item_file_change_failed', {
+      item_id: item.id,
+      error: err instanceof ItemFileError ? key : errorCode(err)
+    })
     setError(t(`add_items_modal.file_error.${key}`, params))
   }
 
@@ -238,12 +258,12 @@ export function ChangeFileModal({ item, lockedBodyShape, linked = false, onSave,
       }
       return
     }
-    track('Change item file', {
-      itemId: item.id,
-      bodyShape,
+    track('bd_item_file_changed', {
+      item_id: item.id,
+      body_shape: bodyShape,
       mode,
-      fileKind: (picked && getExtension(picked.name)?.slice(1)) ?? 'unknown',
-      thumbnailRegenerated: thumbnail !== null
+      file_kind: (picked && getExtension(picked.name)?.slice(1)) ?? 'unknown',
+      thumbnail_regenerated: thumbnail !== null
     })
     onClose()
   }
@@ -434,7 +454,7 @@ export function ChangeFileModal({ item, lockedBodyShape, linked = false, onSave,
             onError={(_id, reason) => {
               setDraft(null)
               setLoaded(null)
-              // A timeout is already reported to Sentry by the processor.
+              // A timeout is already reported by the processor.
               reportError(
                 reason === 'timeout'
                   ? new ItemFileError('preview_timeout')

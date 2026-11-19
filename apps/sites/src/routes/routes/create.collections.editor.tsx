@@ -14,6 +14,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   return wrap({ sid });
 }
 
-export default function CreateItemeditorRoute() {
-  return <CreatorsShell page="editor" />;
+export default function CreateItemeditorRoute({ loaderData }: Route.ComponentProps) {
+  return <CreatorsShell page="editor" sid={loaderData.sid} />;
 }

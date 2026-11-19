@@ -115,17 +115,17 @@ export function useLinkedApprovalFlow(
       if (isWalletRejection(error) && step !== 'prepare') return setView({ kind: 'step', step, phase: IDLE })
       // The creator changing items mid-review is expected, not a failure to report: the curator reviews again.
       if (error instanceof ApprovalError && error.reason === 'changed') {
-        track('Approve TP Collection error', { collectionId: collection.id, step: 'changed' })
+        track('bd_linked_collection_approve_failed', { collection_id: collection.id, step: 'changed' })
         // Bring the new content to the editor, so reviewing it again is what unblocks the approval.
         refresh()
         return setView({ kind: 'error', step: 'changed', failed })
       }
       // Only the creator can fix these: by submitting the edit again, or uploading the items without their video.
       if (error instanceof ApprovalError && (error.reason === 'unsubmitted' || error.reason === 'has_video')) {
-        track('Approve TP Collection error', { collectionId: collection.id, step: error.reason })
+        track('bd_linked_collection_approve_failed', { collection_id: collection.id, step: error.reason })
         return setView({ kind: 'error', step: error.reason, failed, items: error.items })
       }
-      track('Approve TP Collection error', { collectionId: collection.id, step, error: errorCode(error) })
+      track('bd_linked_collection_approve_failed', { collection_id: collection.id, step, error: errorCode(error) })
       if (isWalletStateError(error)) return setView({ kind: 'error', step, failed, wallet: true })
       captureError(error, { flow: 'linked_curation_approve', step, collectionId: collection.id })
       setView({ kind: 'error', step, failed })
@@ -136,7 +136,7 @@ export function useLinkedApprovalFlow(
   const start = useCallback(async () => {
     const token = ++run.current
     setView({ kind: 'loading' })
-    track('Approve TP Collection started', { collectionId: collection.id, thirdPartyId: thirdParty.id })
+    track('bd_linked_collection_approve_started', { collection_id: collection.id, third_party_id: thirdParty.id })
     try {
       const prepared = await prepareLinkedApproval(
         collection,
@@ -190,7 +190,11 @@ export function useLinkedApprovalFlow(
         fetchRegistryRoot: async () => (await fetchRegisteredThirdParty(chainId, thirdParty.id)).root
       })
       saveSentRoot(scope, undefined)
-      track('Set TP Merkle root', { collectionId: collection.id, thirdPartyId: thirdParty.id, txHash })
+      track('bd_linked_merkle_root_set', {
+        collection_id: collection.id,
+        third_party_id: thirdParty.id,
+        tx_hash: txHash
+      })
       void queryClient.invalidateQueries({ queryKey: thirdPartyKey(address, thirdParty.id) })
       set(token, { kind: 'step', step: 'deploy', phase: IDLE })
     } catch (error) {
@@ -233,14 +237,18 @@ export function useLinkedApprovalFlow(
           collectionId: collection.id,
           failures: result.failed.map(failure => `${failure.item.id} (${failure.stage}): ${failure.message}`)
         })
-        track('Approve TP Collection error', {
-          collectionId: collection.id,
+        track('bd_linked_collection_approve_failed', {
+          collection_id: collection.id,
           step: 'deploy',
           items: result.failed.length
         })
         return set(token, { kind: 'error', step: 'deploy', failed: result.failed })
       }
-      track('Approve TP Collection', { collectionId: collection.id, thirdPartyId: thirdParty.id, items: total })
+      track('bd_linked_collection_approved', {
+        collection_id: collection.id,
+        third_party_id: thirdParty.id,
+        items: total
+      })
       set(token, { kind: 'success' })
     } catch (error) {
       refresh()
@@ -277,7 +285,7 @@ export function useRejectLinkedItems(address: string | undefined, collection: Co
       return toReject.length
     },
     onSuccess: count => {
-      track('Reject TP Collection', { collectionId: collection.id, items: count })
+      track('bd_linked_collection_rejected', { collection_id: collection.id, items: count })
       invalidateCollectionItems(queryClient, collection.id)
       void queryClient.invalidateQueries({ queryKey: itemCurationsKey(address, collection.id) })
       void queryClient.invalidateQueries({ queryKey: pendingLinkedItemsKey(address, collection.id) })
@@ -285,7 +293,7 @@ export function useRejectLinkedItems(address: string | undefined, collection: Co
     onError: error => {
       invalidateCollectionItems(queryClient, collection.id)
       void queryClient.invalidateQueries({ queryKey: itemCurationsKey(address, collection.id) })
-      track('Reject TP Collection error', { collectionId: collection.id, error: errorCode(error) })
+      track('bd_linked_collection_reject_failed', { collection_id: collection.id, error: errorCode(error) })
       captureError(error, { flow: 'linked_curation_reject', collectionId: collection.id })
     }
   })
@@ -316,14 +324,17 @@ export function useReviewThirdParty(session: Session | null) {
       return { txHash, indexed }
     },
     onSuccess: ({ txHash, indexed }, { thirdParty, approved }) => {
-      track(approved ? 'Enable third party' : 'Disable third party', { thirdPartyId: thirdParty.id, txHash })
+      track(approved ? 'bd_third_party_enabled' : 'bd_third_party_disabled', {
+        third_party_id: thirdParty.id,
+        tx_hash: txHash
+      })
       if (!session) return
       queryClient.setQueryData(thirdPartyKey(session.address, thirdParty.id), indexed)
       void queryClient.invalidateQueries(privateDomain('curation-collections'))
     },
     onError: (error, { thirdParty, approved }) => {
-      track(approved ? 'Enable third party error' : 'Disable third party error', {
-        thirdPartyId: thirdParty.id,
+      track(approved ? 'bd_third_party_enable_failed' : 'bd_third_party_disable_failed', {
+        third_party_id: thirdParty.id,
         error: errorCode(error)
       })
       if (!isExpectedWalletError(error))

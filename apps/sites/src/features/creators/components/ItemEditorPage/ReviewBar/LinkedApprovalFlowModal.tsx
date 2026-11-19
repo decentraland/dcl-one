@@ -42,7 +42,7 @@ export function LinkedApprovalFlowModal({ session, collection, thirdParty, revie
   const { t } = useTranslation()
   const flow = useLinkedApprovalFlow(session, collection, thirdParty, review)
   const { view, plan, steps, start, stop } = flow
-  // Each failed item with the step it stopped at, in plain words; the raw errors go to Sentry, not to the screen.
+  // Each failed item with the step it stopped at, in plain words; the raw errors are reported, not shown.
   const failedText = useMemo(
     () =>
       view.kind === 'error'

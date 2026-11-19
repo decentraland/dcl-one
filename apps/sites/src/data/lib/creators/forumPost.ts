@@ -24,7 +24,7 @@ export function isForumPostRelevant(collection: Collection, status: CollectionDi
 /** Opens the collection's topic in a new tab. */
 export function openForumPost(collection: Collection, surface: ForumPostSurface): void {
   if (!collection.forumLink) return
-  track('Forum post opened', { collectionId: collection.id, surface })
+  track('bd_forum_post_opened', { collection_id: collection.id, surface })
   openExternal(collection.forumLink)
 }
 
@@ -102,11 +102,11 @@ export async function postCollectionToForum(
       const current = await deps.fetchForumLink(collection.id)
       if (current) return deps.onPosted(current)
       const { link, existing } = await createForumTopic(collection.id, deps.createPost, RETRIES, deps.retryDelayMs)
-      track('Create forum post', { collectionId: collection.id, trigger: source, existing })
+      track('bd_forum_post_created', { collection_id: collection.id, trigger: source, existing })
       deps.onPosted(link)
     })
   } catch (error) {
-    track('Create forum post error', { collectionId: collection.id, trigger: source, error: errorCode(error) })
+    track('bd_forum_post_create_failed', { collection_id: collection.id, trigger: source, error: errorCode(error) })
     captureError(error, { flow: 'forum_post', collectionId: collection.id, source })
   } finally {
     posting.delete(collection.id)
@@ -166,7 +166,7 @@ export async function postAssigneeToForum(
     const name = assignee ? await deps.claimedName(assignee).catch(() => undefined) : undefined
     await deps.createReply(collection.id, buildAssigneeReply(assignee, name))
   } catch (error) {
-    track('Assignee forum post error', { collectionId: collection.id, error: errorCode(error) })
+    track('bd_forum_assignee_post_failed', { collection_id: collection.id, error: errorCode(error) })
     captureError(error, { flow: 'forum_post', collectionId: collection.id, step: 'assignee' })
   }
 }

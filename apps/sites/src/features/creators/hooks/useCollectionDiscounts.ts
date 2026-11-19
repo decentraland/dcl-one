@@ -43,11 +43,11 @@ import { readSignatureIndexes } from '@/data/lib/creators/trades'
 import { useFeatureFlag } from './useFeatureFlag'
 import { captureError } from '@/data/lib/creators/monitoring'
 
-export const DISCOUNT_OPENED_EVENT = 'Open create collection discount'
-const DISCOUNT_CREATED_EVENT = 'Create collection discount'
-const DISCOUNT_FAILED_EVENT = 'Create collection discount error'
-const DISCOUNT_ENDED_EVENT = 'End collection discount'
-const DISCOUNT_END_FAILED_EVENT = 'End collection discount error'
+export const DISCOUNT_OPENED_EVENT = 'bd_discount_opened'
+const DISCOUNT_CREATED_EVENT = 'bd_discount_created'
+const DISCOUNT_FAILED_EVENT = 'bd_discount_create_failed'
+const DISCOUNT_ENDED_EVENT = 'bd_discount_ended'
+const DISCOUNT_END_FAILED_EVENT = 'bd_discount_end_failed'
 
 // The last discount this tab created per collection, so a dialog reopened during a create can tell it went through.
 const createdFor = new Map<string, string>()
@@ -252,11 +252,11 @@ export type CreateDiscountVariables = Omit<DiscountTerms, 'collections'> & {
 
 function discountProps(variables: CreateDiscountVariables) {
   return {
-    collectionId: variables.collection.id,
-    discountPct: variables.discountPct,
-    durationDays: Math.round((variables.endsAtMs - (variables.startsAtMs ?? Date.now())) / 86_400_000),
+    collection_id: variables.collection.id,
+    discount_pct: variables.discountPct,
+    duration_days: Math.round((variables.endsAtMs - (variables.startsAtMs ?? Date.now())) / 86_400_000),
     capped: variables.uses !== undefined,
-    discountedCount: variables.discountedCount
+    discounted_count: variables.discountedCount
   }
 }
 
@@ -328,7 +328,7 @@ export function useCreateDiscount(session: Session | null) {
       }
     },
     onSuccess: (discount, variables) => {
-      track(DISCOUNT_CREATED_EVENT, { ...discountProps(variables), discountId: discount.id })
+      track(DISCOUNT_CREATED_EVENT, { ...discountProps(variables), discount_id: discount.id })
       createdFor.set(variables.collection.id, discount.id)
       if (session) {
         updateDiscounts(queryClient, session.address, current => [
@@ -384,7 +384,7 @@ export function useEndDiscount(session: Session | null) {
       })
     },
     onSuccess: (_, { discount, collection }) => {
-      track(DISCOUNT_ENDED_EVENT, { collectionId: collection.id, discountId: discount.id })
+      track(DISCOUNT_ENDED_EVENT, { collection_id: collection.id, discount_id: discount.id })
       if (session) {
         // Kept, as ended, until the server stops reporting it running: a reload must not offer End again.
         const recorded = pendingEndOf(session.address, discount.id)
@@ -415,8 +415,8 @@ export function useEndDiscount(session: Session | null) {
         captureError(error, { flow: 'end_collection_discount', collectionId: collection.id, discountId: discount.id })
       }
       track(DISCOUNT_END_FAILED_EVENT, {
-        collectionId: collection.id,
-        discountId: discount.id,
+        collection_id: collection.id,
+        discount_id: discount.id,
         error: errorCode(error)
       })
     }

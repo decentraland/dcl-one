@@ -128,18 +128,18 @@ export function PlaybackBar({
     // which emits one event per wearable on the avatar. With a bare avatar legacy emits nothing at
     // all; here that case is one event with no wearable, so a pick is never invisible.
     const emoteProps = {
-      EMOTE_PLAYED_BASE: !collectionEmote,
-      EMOTE_PLAYED_ITEM_ID: collectionEmote?.tokenId ?? null,
-      EMOTE_PLAYED_NAME: collectionEmote ? collectionEmote.name : value
+      emote_played_base: !collectionEmote,
+      emote_played_item_id: collectionEmote?.tokenId ?? null,
+      emote_played_name: collectionEmote ? collectionEmote.name : value
     }
     if (previewedWearables.length === 0) {
-      track('Play Emote', { ...emoteProps, PREVIEWED_WEARABLE_ITEM_ID: null, PREVIEWED_WEARABLE_NAME: null })
+      track('bd_emote_played', { ...emoteProps, previewed_wearable_item_id: null, previewed_wearable_name: null })
     }
     for (const wearable of previewedWearables) {
-      track('Play Emote', {
+      track('bd_emote_played', {
         ...emoteProps,
-        PREVIEWED_WEARABLE_ITEM_ID: wearable.tokenId ?? null,
-        PREVIEWED_WEARABLE_NAME: wearable.name
+        previewed_wearable_item_id: wearable.tokenId ?? null,
+        previewed_wearable_name: wearable.name
       })
     }
     if (collectionEmote) {

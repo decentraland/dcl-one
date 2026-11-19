@@ -35,7 +35,7 @@ export function useCollectionByContractLink(address: string | undefined): { isRe
     // Re-checked here: a builder-server without the contract filter answers with the first collection instead.
     const match = isValid && collections.data ? findCollectionByContract(collections.data, contract) : undefined
     const outcome: Outcome = match ? 'found' : !isValid ? 'invalid' : collections.isError ? 'error' : 'not_found'
-    track('Open collection by contract', { outcome, ...(match && { collectionId: match.id }) })
+    track('bd_collection_opened_by_contract', { outcome, ...(match && { collection_id: match.id }) })
     if (match) {
       navigate(`/create/collections/${match.id}`, { replace: true })
       return

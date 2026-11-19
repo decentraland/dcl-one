@@ -17,12 +17,8 @@ export function setErrorForwarder(fn: ((error: unknown, context: ErrorContext) =
 }
 
 /**
- * A thrown value Sentry can put a NAME on, derived from one it cannot.
- *
- * Wallet and JSON-RPC failures arrive as plain objects — `{ code, message, data }` — not Errors, and
- * Sentry titles those after the frame that captured them, which is its own minified `captureException`.
- * The original stack is transplanted when there is one: a fresh Error's stack points here, so without it
- * every wallet failure in the app groups into a single meaningless issue.
+ * An Error for a thrown value that is not one. Wallet and JSON-RPC failures arrive as plain objects
+ * (`{ code, message, data }`); the original stack is kept when there is one, since a fresh Error's points here.
  */
 export function toReportable(value: unknown): unknown {
   if (value instanceof Error || !value || typeof value !== 'object') return value
@@ -39,9 +35,8 @@ export function toReportable(value: unknown): unknown {
 /**
  * The machine-readable facts inside a wallet/RPC failure, under names of our own.
  *
- * Provider messages get scrubbed (by Sentry's server-side filters, or by ours) and then the event says
- * nothing at all. These two are numbers nothing scrubs, and they are low-cardinality, so `tagsFrom`
- * promotes them to tags — "how many publishes died on an RPC 401 this week" becomes answerable.
+ * Provider messages get redacted and then the report says nothing at all; these two are numbers nothing
+ * redacts, and they are low-cardinality.
  */
 export function rpcFactsFrom(value: unknown): ErrorContext {
   const facts: ErrorContext = {}
@@ -108,7 +103,10 @@ let reported = 0
 /** The context as one short line of its plain values, without the sensitive keys. */
 function describeContext(context: ErrorContext): string {
   const facts = Object.entries(context)
-    .filter(([key, value]) => key !== 'flow' && !SENSITIVE_KEY.test(key) && ['string', 'number', 'boolean'].includes(typeof value))
+    .filter(
+      ([key, value]) =>
+        key !== 'flow' && !SENSITIVE_KEY.test(key) && ['string', 'number', 'boolean'].includes(typeof value)
+    )
     .map(([key, value]) => `${key}=${redact(String(value))}`)
   return facts.length > 0 ? ` [${facts.join(' ')}]` : ''
 }

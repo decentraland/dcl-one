@@ -14,6 +14,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   return wrap({ sid });
 }
 
-export default function CreateLivepreviewRoute() {
-  return <CreatorsShell page="livePreview" />;
+export default function CreateLivepreviewRoute({ loaderData }: Route.ComponentProps) {
+  return <CreatorsShell page="livePreview" sid={loaderData.sid} />;
 }

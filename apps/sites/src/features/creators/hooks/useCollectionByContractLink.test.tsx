@@ -56,7 +56,10 @@ describe('when a signed-in creator opens a contract link', () => {
 
     await waitFor(() => expect(result.current.url).toBe('/create/collections/hats-1'))
     expect(api.fetchCollections).toHaveBeenCalledWith(OWNER, { contractAddress: CONTRACT, page: 1, limit: 1 })
-    expect(track).toHaveBeenCalledWith('Open collection by contract', { outcome: 'found', collectionId: 'hats-1' })
+    expect(track).toHaveBeenCalledWith('bd_collection_opened_by_contract', {
+      outcome: 'found',
+      collection_id: 'hats-1'
+    })
   })
 
   it('stays on the list, keeping the other params, when none of their collections is at that address', async () => {
@@ -65,7 +68,7 @@ describe('when a signed-in creator opens a contract link', () => {
 
     await waitFor(() => expect(result.current.url).toBe('/create/collections?status=draft'))
     expect(result.current.isResolving).toBe(false)
-    expect(track).toHaveBeenCalledWith('Open collection by contract', { outcome: 'not_found' })
+    expect(track).toHaveBeenCalledWith('bd_collection_opened_by_contract', { outcome: 'not_found' })
   })
 
   it('does not open another collection when builder-server ignores the contract filter', async () => {
@@ -73,7 +76,7 @@ describe('when a signed-in creator opens a contract link', () => {
     const { result } = renderLink(OWNER)
 
     await waitFor(() => expect(result.current.url).toBe('/create/collections'))
-    expect(track).toHaveBeenCalledWith('Open collection by contract', { outcome: 'not_found' })
+    expect(track).toHaveBeenCalledWith('bd_collection_opened_by_contract', { outcome: 'not_found' })
   })
 
   it('stays on the list when their collections cannot be read', async () => {
@@ -81,7 +84,7 @@ describe('when a signed-in creator opens a contract link', () => {
     const { result } = renderLink(OWNER)
 
     await waitFor(() => expect(result.current.url).toBe('/create/collections'), { timeout: 3000 })
-    expect(track).toHaveBeenCalledWith('Open collection by contract', { outcome: 'error' })
+    expect(track).toHaveBeenCalledWith('bd_collection_opened_by_contract', { outcome: 'error' })
   })
 
   it('drops a value that is not a contract address without reading their collections', async () => {
@@ -90,7 +93,7 @@ describe('when a signed-in creator opens a contract link', () => {
     await waitFor(() => expect(result.current.url).toBe('/create/collections?status=draft'))
     expect(result.current.isResolving).toBe(false)
     expect(api.fetchCollections).not.toHaveBeenCalled()
-    expect(track).toHaveBeenCalledWith('Open collection by contract', { outcome: 'invalid' })
+    expect(track).toHaveBeenCalledWith('bd_collection_opened_by_contract', { outcome: 'invalid' })
   })
 
   it('looks the contract up again when an older answer, read before the collection was deployed, is cached', async () => {

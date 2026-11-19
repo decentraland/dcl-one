@@ -70,12 +70,12 @@ export function useEnableSales(session: Session | null) {
       return withSalesEnabled(collection, chainId)
     },
     onSuccess: collection => {
-      track('Enable sales', { collectionId: collection.id })
+      track('bd_sales_enabled', { collection_id: collection.id })
       enabledInSession.add(collection.id)
       queryClient.setQueryData(privateKey(session?.address, 'collection', collection.id), collection)
     },
     onError: (error, { collection }) =>
-      track('Enable sales error', { collectionId: collection.id, error: errorCode(error) })
+      track('bd_sales_enable_failed', { collection_id: collection.id, error: errorCode(error) })
   })
 }
 
@@ -129,13 +129,13 @@ export function useSellItem(session: Session | null) {
 
 // The legacy builder's put-on-sale event, reused so old and new UI are comparable; the mechanism differs
 // (off-chain trades here, an on-chain price + beneficiary there), so the props are ours.
-const LISTING_EVENT = 'Set price and beneficiary'
-const LISTING_FAILURE_EVENT = 'Set price and beneficiary failure'
+const LISTING_EVENT = 'bd_item_listing_set'
+const LISTING_FAILURE_EVENT = 'bd_item_listing_set_failed'
 
 function listingProps(collection: Collection, item: Item, price: SalePrice) {
   return {
-    collectionId: collection.id,
-    itemId: item.id,
+    collection_id: collection.id,
+    item_id: item.id,
     price_kind: price.kind,
     is_giveaway: price.kind === 'free'
   }
@@ -186,11 +186,15 @@ export function useRemoveListing(session: Session | null) {
       )
     },
     onSuccess: (_, { collection, item, listing }) => {
-      track('Remove item listing', { collectionId: collection.id, itemId: item.id })
+      track('bd_item_listing_removed', { collection_id: collection.id, item_id: item.id })
       removeListingFromCache(queryClient, collection, listing.itemId)
     },
     onError: (error, { collection, item }) =>
-      track('Remove item listing error', { collectionId: collection.id, itemId: item.id, error: errorCode(error) })
+      track('bd_item_listing_remove_failed', {
+        collection_id: collection.id,
+        item_id: item.id,
+        error: errorCode(error)
+      })
   })
 }
 
@@ -266,7 +270,7 @@ export function useSendItems(session: Session | null) {
     },
     onSuccess: (_, { collection, transfers }) => {
       const copies = copiesPerItem(transfers)
-      track('Mint items', { collectionId: collection.id, ...sendBatchSize(transfers) })
+      track('bd_items_sent', { collection_id: collection.id, ...sendBatchSize(transfers) })
       queryClient.setQueryData<Item[]>(allCollectionItemsKey(session?.address, collection.id), current =>
         current?.map(item =>
           copies[item.id] ? { ...item, totalSupply: (item.totalSupply ?? 0) + copies[item.id] } : item
@@ -276,7 +280,7 @@ export function useSendItems(session: Session | null) {
     onError: (error, { collection, transfers }) => {
       const size = sendBatchSize(transfers)
       const code = errorCode(error)
-      track('Mint items error', { collectionId: collection.id, error: code, ...size })
+      track('bd_items_send_failed', { collection_id: collection.id, error: code, ...size })
       // A wallet cancel or a wallet on the wrong account is the creator's; anything else (revert, relayer refusal,
       // RPC) is ours to see.
       if (!isExpectedWalletError(error))

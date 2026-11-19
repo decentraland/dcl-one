@@ -137,12 +137,12 @@ export function useAssignCurator(address: string | undefined) {
         : pushCollectionCuration(address, collection.id, assignee)
     },
     onSuccess: (curation, { collection, assignee }) => {
-      track(assignee ? 'Assign curator' : 'Unassign curator', { collectionId: collection.id, assignee })
+      track(assignee ? 'bd_curator_assigned' : 'bd_curator_unassigned', { collection_id: collection.id, assignee })
       store(curation)
       if (address) void postAssignee(queryClient, address, collection, assignee)
     },
     onError: (error, { collection }) => {
-      track('Assign curator error', { collectionId: collection.id, error: errorCode(error) })
+      track('bd_curator_assign_failed', { collection_id: collection.id, error: errorCode(error) })
       captureError(error, { flow: 'curation_assign', collectionId: collection.id })
     }
   })
@@ -176,8 +176,8 @@ export function useRejectCuration(address: string | undefined) {
       return updateCollectionCuration(address, current.collectionId, { status: 'rejected', ...decision })
     },
     onSuccess: (curation, { collection, curation: previous, decision }) => {
-      track('Reject curation', {
-        collectionId: collection.id,
+      track('bd_curation_rejected', {
+        collection_id: collection.id,
         first_review: !previous,
         reasons: decision?.rejectionReasons ?? []
       })
@@ -187,7 +187,7 @@ export function useRejectCuration(address: string | undefined) {
       // The request may have been opened before the rejection failed; a retry must PATCH it, not POST again.
       void queryClient.invalidateQueries({ queryKey: collectionCurationKey(address, collection.id) })
       void queryClient.invalidateQueries({ queryKey: privateKey(address, 'curations') })
-      track('Reject curation error', { collectionId: collection.id, error: errorCode(error) })
+      track('bd_curation_reject_failed', { collection_id: collection.id, error: errorCode(error) })
       captureError(error, { flow: 'curation_reject', collectionId: collection.id })
     }
   })
@@ -211,11 +211,15 @@ export function usePushCuration(address: string | undefined) {
         : pushCollectionCuration(address, collection.id)
     },
     onSuccess: (curation, { collection, note }) => {
-      track('Push curation', { collectionId: collection.id, first_review: !collection.isApproved, has_note: !!note })
+      track('bd_curation_pushed', {
+        collection_id: collection.id,
+        first_review: !collection.isApproved,
+        has_note: !!note
+      })
       store(curation)
     },
     onError: (error, { collection }) => {
-      track('Push curation error', { collectionId: collection.id, error: errorCode(error) })
+      track('bd_curation_push_failed', { collection_id: collection.id, error: errorCode(error) })
       // A running review, the daily limit and a busy collection are answers the creator acts on, not failures.
       const expected = error instanceof ValidationLimitError || isValidationRunning(error) || isCollectionBusy(error)
       if (!expected) {
@@ -251,13 +255,13 @@ export function useDisableCollection(session: Session | null) {
     },
     onSuccess: ({ txHash, indexed }, { collection }) => {
       // The legacy builder named the on-chain disable "Reject collection".
-      track('Reject collection', { collectionId: collection.id, txHash })
+      track('bd_collection_rejected', { collection_id: collection.id, tx_hash: txHash })
       if (!session) return
       queryClient.setQueryData<Collection>(privateKey(session.address, 'collection', collection.id), indexed)
       void queryClient.invalidateQueries(privateDomain('curation-collections'))
     },
     onError: (error, { collection }) => {
-      track('Reject collection error', { collectionId: collection.id, error: errorCode(error) })
+      track('bd_collection_reject_failed', { collection_id: collection.id, error: errorCode(error) })
       if (!isExpectedWalletError(error)) {
         captureError(error, { flow: 'curation_disable', collectionId: collection.id })
       }

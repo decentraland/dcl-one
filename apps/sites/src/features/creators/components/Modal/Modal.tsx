@@ -95,7 +95,7 @@ export function Modal({
     if (entry) openDialogs.push(entry)
     dialog?.focus()
 
-    track('Open modal', { name: testId })
+    track('bd_modal_opened', { name: testId })
 
     function onKeyDown(event: KeyboardEvent) {
       if (topmostDialog() !== dialog) return
@@ -133,7 +133,7 @@ export function Modal({
       releaseScrollLock()
       // Hand focus back to the dialog underneath, if any.
       topmostDialog()?.focus()
-      track('Close modal', { name: testId })
+      track('bd_modal_closed', { name: testId })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

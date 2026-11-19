@@ -1,13 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
-import {
-  AddIcon,
-  FormatListBulletedIcon,
-  GridViewIcon,
-  LinkIcon,
-  PersonOutlineIcon,
-  SearchIcon
-} from '../Icons'
+import { AddIcon, FormatListBulletedIcon, GridViewIcon, LinkIcon, PersonOutlineIcon, SearchIcon } from '../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
 import { clearTopUpResume, parseTopUpReturn, readTopUpResume, stripTopUpReturn } from '@/data/lib/creators/creditsTopUp'
 import { openExternal } from '@/data/lib/creators/navigation'
@@ -134,12 +127,12 @@ const CollectionsPage = () => {
     saveCollection.mutate(collection, {
       onSuccess: saved => {
         // Legacy event and prop names, so the funnel lines up with the old builder's.
-        track('Create TP Collection', {
-          collectionId: saved.id,
-          thirdPartyId: getThirdPartyId(saved),
-          linkedContractAddress: contract.address.toLowerCase(),
-          linkedContractNetwork: contract.network,
-          collectionName: name
+        track('bd_linked_collection_created', {
+          collection_id: saved.id,
+          third_party_id: getThirdPartyId(saved),
+          linked_contract_address: contract.address.toLowerCase(),
+          linked_contract_network: contract.network,
+          collection_name: name
         })
         navigate(`/create/collections/${saved.id}`)
       },
@@ -282,7 +275,7 @@ const CollectionsPage = () => {
                 data-active={status === LINKED_FILTER || undefined}
                 data-testid={`status-filter-${LINKED_FILTER}`}
                 onClick={() => {
-                  track('Filter linked collections', { count: linkedTotal })
+                  track('bd_linked_collections_filtered', { count: linkedTotal })
                   changeParams({ status: LINKED_FILTER })
                 }}
               >

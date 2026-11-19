@@ -86,10 +86,10 @@ export function PublishCollectionModal({
     setEmail(details.email)
     // Tracked once the step is actually left, so a failed rename retried N times counts once.
     const advance = () => {
-      track('Publish details confirmed', {
-        collectionId: collection.id,
-        nameChanged: name !== collection.name,
-        emailSource: !profileEmail ? 'typed' : details.email === profileEmail ? 'profile' : 'edited'
+      track('bd_publish_collection_started', {
+        collection_id: collection.id,
+        name_changed: name !== collection.name,
+        email_source: !profileEmail ? 'typed' : details.email === profileEmail ? 'profile' : 'edited'
       })
       setStep(Step.Items)
     }

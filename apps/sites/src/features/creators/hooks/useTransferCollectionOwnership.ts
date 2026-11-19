@@ -35,7 +35,7 @@ export function useTransferCollectionOwnership(session: Session | null) {
       return { ...collection, owner: newOwner.toLowerCase() }
     },
     onSuccess: collection => {
-      track('Transfer collection ownership', { collectionId: collection.id, newOwner: collection.owner })
+      track('bd_collection_ownership_transferred', { collection_id: collection.id, new_owner: collection.owner })
       if (!session) return
       const address = session.address
       queryClient.setQueryData(privateKey(address, 'collection', collection.id), collection)
@@ -50,6 +50,6 @@ export function useTransferCollectionOwnership(session: Session | null) {
         .finally(() => void queryClient.invalidateQueries(privateDomain('collections')))
     },
     onError: (error, { collection }) =>
-      track('Transfer collection ownership error', { collectionId: collection.id, error: errorCode(error) })
+      track('bd_collection_ownership_transfer_failed', { collection_id: collection.id, error: errorCode(error) })
   })
 }

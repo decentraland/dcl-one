@@ -51,8 +51,8 @@ const DAY_MS = 24 * HOUR_MS
 /** The longest a sale can run, so the calendar never offers a day the terms would then refuse. */
 const MAX_DAYS = 30
 const WHEN_TRIGGER = '[data-sale-when-trigger]'
-const DISCOUNT_REVIEWED_EVENT = 'Review collection discount'
-const DISCOUNT_ABANDONED_EVENT = 'Abandon collection discount'
+const DISCOUNT_REVIEWED_EVENT = 'bd_discount_reviewed'
+const DISCOUNT_ABANDONED_EVENT = 'bd_discount_abandoned'
 /** Roughly what the calendar needs under its trigger, presets stacked above the month on a phone. */
 const CALENDAR_ROOM = 460
 
@@ -315,8 +315,8 @@ export function CreatorSaleModal({
     // With a wallet prompt still open the discount may yet be created: that is not a drop-off.
     if (!created && !unsettled.current) {
       track(DISCOUNT_ABANDONED_EVENT, {
-        collectionId: current.collectionId,
-        lastStep: blocked ? 'blocked' : step
+        collection_id: current.collectionId,
+        last_step: blocked ? 'blocked' : step
       })
     }
     closeModal()
@@ -1063,12 +1063,12 @@ export function CreatorSaleModal({
                 if (!reviewTracked.current) {
                   reviewTracked.current = true
                   track(DISCOUNT_REVIEWED_EVENT, {
-                    collectionId: current.collectionId,
-                    discountPct: terms.discountPct,
-                    durationDays: Math.round((window.endsAtMs - (window.startsAtMs ?? now)) / DAY_MS),
+                    collection_id: current.collectionId,
+                    discount_pct: terms.discountPct,
+                    duration_days: Math.round((window.endsAtMs - (window.startsAtMs ?? now)) / DAY_MS),
                     scheduled: window.startsAtMs !== undefined,
                     capped: window.uses !== undefined,
-                    manaItems: review.listed.filter(i => i.mana).length
+                    mana_items: review.listed.filter(i => i.mana).length
                   })
                 }
               }

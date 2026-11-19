@@ -84,11 +84,11 @@ export function useRerunItemValidation() {
   return useCallback(
     async (item: Item, trigger: 'details' | 'publish' | 'push_changes', previousStatus: ValidationStatus) => {
       const issues = await rerun(itemValidationKeys(item))
-      track('Item Validation Rerun', {
-        itemId: item.id,
+      track('bd_item_validation_rerun', {
+        item_id: item.id,
         trigger,
-        previousStatus,
-        newStatus: getValidationStatus(issues, false)
+        previous_status: previousStatus,
+        new_status: getValidationStatus(issues, false)
       })
       return issues
     },

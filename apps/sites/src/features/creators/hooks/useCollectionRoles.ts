@@ -29,10 +29,6 @@ export function useRoleAddresses(session: Session, collection: Collection, kind:
 }
 
 // The legacy builder's event names: senders are the contract's minters, collaborators its managers.
-function roleEvent(kind: RoleKind): string {
-  return kind === 'senders' ? 'Set minters' : 'Set collaborators'
-}
-
 export type SetRolesVariables = {
   collection: Collection
   kind: RoleKind
@@ -57,12 +53,18 @@ export function useSetCollectionRoles(session: Session | null) {
       return withRoles(collection, kind, next, chainId)
     },
     onSuccess: (collection, { kind, next }) => {
-      track(roleEvent(kind), { collectionId: collection.id, count: next.length })
+      track(kind === 'senders' ? 'bd_collection_senders_set' : 'bd_collection_collaborators_set', {
+        collection_id: collection.id,
+        count: next.length
+      })
       if (!session) return
       savedInSession.set(sessionKey(session.address, collection, kind), next)
       queryClient.setQueryData(privateKey(session.address, 'collection', collection.id), collection)
     },
     onError: (error, { collection, kind }) =>
-      track(`${roleEvent(kind)} error`, { collectionId: collection.id, error: errorCode(error) })
+      track(kind === 'senders' ? 'bd_collection_senders_set_failed' : 'bd_collection_collaborators_set_failed', {
+        collection_id: collection.id,
+        error: errorCode(error)
+      })
   })
 }

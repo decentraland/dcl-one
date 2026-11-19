@@ -180,8 +180,8 @@ describe('SendItemsFlow', () => {
     expect(screen.getAllByTestId('transfer-1-recipient-selected')).toHaveLength(3)
     expect(screen.queryByTestId('transfer-1-recipient-input')).not.toBeInTheDocument()
     expect(screen.getByTestId('toast')).toHaveTextContent('2 recipients added, 1 skipped: invalid or already added.')
-    expect(vi.mocked(track)).toHaveBeenCalledWith('Paste recipients', {
-      collectionId: collection.id,
+    expect(vi.mocked(track)).toHaveBeenCalledWith('bd_recipients_pasted', {
+      collection_id: collection.id,
       added: 2,
       invalid: 0,
       repeated: 1,
@@ -393,12 +393,7 @@ describe('SendItemsFlow', () => {
     await userEvent.click(screen.getByTestId('send-submit'))
     send.isPending = true
     view.rerender(
-      <SendItemsFlow
-        collection={collection}
-        items={items}
-        session={makeSession('managed')}
-        onClose={vi.fn()}
-      />
+      <SendItemsFlow collection={collection} items={items} session={makeSession('managed')} onClose={vi.fn()} />
     )
     expect(screen.getByTestId('send-submit')).toHaveAttribute('aria-busy', 'true')
     expect(screen.queryByTestId('send-items-pending')).not.toBeInTheDocument()

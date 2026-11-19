@@ -18,7 +18,7 @@ export function SceneBoundariesToggle({ trigger, testId = 'scene-boundaries-togg
   const label = t(visible ? 'item_editor.scene_boundaries.hide' : 'item_editor.scene_boundaries.show')
 
   function onClick() {
-    track('Toggle scene boundaries', { visible: !visible, trigger })
+    track('bd_scene_boundaries_toggled', { visible: !visible, trigger })
     toggle()
   }
 

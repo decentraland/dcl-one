@@ -34,7 +34,7 @@ export function TopUpOutcome({ address, orderId, onDone }: Props) {
 
   useEffect(() => {
     if (status === 'confirming') return
-    track('Credits checkout settled', { orderId, status, credits: creditsGranted ?? null })
+    track('bd_credits_checkout_settled', { order_id: orderId, status, credits: creditsGranted ?? null })
     // The card was charged in every settled state but these two: the balance is worth re-reading.
     if (status !== 'abandoned' && status !== 'initiated') {
       void queryClient.invalidateQueries({ queryKey: privateKey(address, 'credits-balance') })

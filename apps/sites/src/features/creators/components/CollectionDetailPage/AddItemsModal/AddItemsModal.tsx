@@ -337,7 +337,7 @@ export function AddItemsModal({ collection, address, files, prefill, onClose, up
     const allIds = draftsToUpload.map(draft => draft.id)
     const payloads = draftsToUpload.map(toPayload)
     if (findDuplicateUrns(payloads).length > 0) {
-      track('Add items error', { collectionId: collection.id, item_count: allIds.length, error: 'duplicate_urn' })
+      track('bd_items_add_failed', { collection_id: collection.id, item_count: allIds.length, error: 'duplicate_urn' })
       return dispatch({ type: 'uploadFailed', failureReason: 'duplicate_urn', failedDraftIds: allIds })
     }
     try {
@@ -348,14 +348,14 @@ export function AddItemsModal({ collection, address, files, prefill, onClose, up
       // reads here as `item_count` (see docs/TRACKING_SPEC.md).
       if (updateOnly) {
         // Legacy event name, so bulk edits line up with the old builder's.
-        track('Edit TP Items', {
-          collectionId: collection.id,
+        track('bd_linked_items_edited', {
+          collection_id: collection.id,
           item_count: result.savedDraftIds.length,
           failed_count: result.failedDraftIds.length
         })
       } else
-        track('Add items', {
-          collectionId: collection.id,
+        track('bd_items_added', {
+          collection_id: collection.id,
           origin: prefill ? 'live_preview' : 'collection',
           item_count: result.savedDraftIds.length,
           failed_count: result.failedDraftIds.length,
@@ -389,7 +389,7 @@ export function AddItemsModal({ collection, address, files, prefill, onClose, up
         onClose()
       }
     } catch (error) {
-      track('Add items error', { collectionId: collection.id, item_count: allIds.length, error: errorCode(error) })
+      track('bd_items_add_failed', { collection_id: collection.id, item_count: allIds.length, error: errorCode(error) })
       dispatch({ type: 'uploadFailed', failureReason: 'generic', failedDraftIds: allIds })
     }
   }

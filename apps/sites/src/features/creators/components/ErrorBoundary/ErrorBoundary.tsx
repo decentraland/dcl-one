@@ -17,7 +17,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: unknown, info: ErrorInfo) {
     captureError(error, { flow: 'render', component_stack: info.componentStack })
-    track('Error page')
+    track('bd_error_page_shown', {})
   }
 
   render() {

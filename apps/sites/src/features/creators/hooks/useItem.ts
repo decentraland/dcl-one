@@ -18,12 +18,12 @@ export function useMoveItem(address: string | undefined) {
     },
     // Both collections change, so every collection query is refetched rather than the two by id.
     onSuccess: (_, { item, collectionId }) => {
-      track('Move item', { itemId: item.id, collectionId })
+      track('bd_item_moved', { item_id: item.id, collection_id: collectionId })
       void queryClient.invalidateQueries(privateDomain('collection-items-all'))
       void queryClient.invalidateQueries(privateDomain('collection'))
       void queryClient.invalidateQueries(privateDomain('collections'))
     },
-    onError: (error, { item }) => track('Move item error', { itemId: item.id, error: errorCode(error) })
+    onError: (error, { item }) => track('bd_item_move_failed', { item_id: item.id, error: errorCode(error) })
   })
 }
 
@@ -45,11 +45,11 @@ export function useResetItem(address: string | undefined) {
       return saveItem(address, reset, Object.fromEntries(entries))
     },
     onSuccess: item => {
-      track('Reset changes', { itemId: item.id })
+      track('bd_item_changes_reset', { item_id: item.id })
       if (item.collectionId) invalidateCollectionItems(queryClient, item.collectionId)
       void queryClient.invalidateQueries({ queryKey: ['item-entities'] })
     },
-    onError: (error, { item }) => track('Reset changes error', { itemId: item.id, error: errorCode(error) })
+    onError: (error, { item }) => track('bd_item_changes_reset_failed', { item_id: item.id, error: errorCode(error) })
   })
 }
 
