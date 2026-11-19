@@ -9,7 +9,8 @@ import { useAuth } from "@/data/lib/auth/context";
 import { eventsQuery } from "@/data/lib/community/queries";
 
 import { openSignIn } from "../../components/auth/signin-store";
-import { creatorWallets, eventHref, upcomingCardProps, type Zone } from "../../events/view";
+import type { Zone } from "../../components/event-schedule";
+import { creatorWallets, eventHref, upcomingCardProps } from "../../events/view";
 import { useCreatorProfiles } from "../../events/useCreatorProfiles";
 import { REMIND_FAILED, useEventReminders } from "../../events/useEventReminders";
 import styles from "./CommunityLists.module.css";

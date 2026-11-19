@@ -41,7 +41,7 @@
   },
   "apps/sites/src/features/create-landing/CreateLanding.module.css": {
     "primitives": 0,
-    "tokens": 198
+    "tokens": 199
   },
   "apps/sites/src/features/creator-hub/scene-editor-place-items/device-preview.css": {
     "primitives": 7,
@@ -411,9 +411,17 @@
     "primitives": 11,
     "tokens": 0
   },
+  "apps/sites/src/features/download/CreatorHubDownloadPage.module.css": {
+    "primitives": 0,
+    "tokens": 13
+  },
   "apps/sites/src/features/download/DownloadPage.module.css": {
     "primitives": 0,
     "tokens": 31
+  },
+  "apps/sites/src/features/download/OtherBuilds.module.css": {
+    "primitives": 0,
+    "tokens": 10
   },
   "apps/sites/src/features/explorer/event-management/EventManagement.module.css": {
     "primitives": 12,
@@ -538,10 +546,6 @@
   "apps/ui3/src/web/pages/StCastNotFound.module.css": {
     "primitives": 0,
     "tokens": 24
-  },
-  "apps/ui3/src/web/pages/StCreatorHubDownload.module.css": {
-    "primitives": 0,
-    "tokens": 18
   },
   "apps/ui3/src/web/pages/siteshome.css": {
     "primitives": 22,
