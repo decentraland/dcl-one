@@ -179,11 +179,11 @@ function wallet(chain = CHAIN) {
   }
 }
 
-function guarded(sale: ManaSaleTerms, opts: { chain?: number; handOff?: () => boolean; current?: () => boolean } = {}) {
-  const w = wallet(opts.chain)
+function guarded(sale: ManaSaleTerms, opts: { chain?: number; chainId?: number; handOff?: () => boolean; current?: () => boolean } = {}) {
+  const w = wallet(opts.chain ?? opts.chainId)
   const handOff = vi.fn(opts.handOff ?? (() => true))
-  const intent: ManaPurchaseIntent = { buyer: BUYER, chainId: CHAIN, sale, current: opts.current ?? (() => true), handOff }
-  return { w, handOff, provider: manaGuardedProvider(w, intent) }
+  const intent: ManaPurchaseIntent = { buyer: BUYER, chainId: opts.chainId ?? CHAIN, sale, current: opts.current ?? (() => true), handOff }
+  return { w, handOff, intent, provider: manaGuardedProvider(w, intent) }
 }
 const reached = (w: ReturnType<typeof wallet>, method: string) => w.requests.filter((r) => r.method === method)
 
@@ -232,7 +232,81 @@ describe('the MANA guard’s provider', () => {
     }
     await g.provider.request({ method: 'eth_sendTransaction', params: [tx] })
     const [sent] = reached(g.w, 'eth_sendTransaction')
-    expect(sent!.params).toEqual([{ from: BUYER, to: MARKETPLACE, data: encodeMarketplaceCall([manaListing()], BUYER) }])
+    expect(sent!.params).toEqual([{ from: BUYER, to: MARKETPLACE, data: encodeMarketplaceCall([manaListing()], BUYER), chainId: '0x89' }])
+  })
+
+  it('holds the terms as confirmed when the guard was made, whatever is done to the intent after', async () => {
+    const g = guarded(mints(PRICE, { units: ONE_UNIT.map((u) => ({ ...u })) }))
+    // The caller raises the cap and swaps the units after the guard was made.
+    ;(g.intent.sale as Extract<ManaSaleTerms, { kind: 'mints' }>).maxWei = PRICE * 100n
+    ;(g.intent.sale as Extract<ManaSaleTerms, { kind: 'mints' }>).units[0]!.contract = OTHER
+    const dearer: StoreItemToBuy = { ...item, priceWei: (PRICE * 50n).toString() }
+    await expect(g.provider.request({ method: 'eth_signTypedData_v4', params: [BUYER, JSON.stringify(typed(STORE_DOMAIN, encodeStoreBuy([dearer], BUYER)))] })).rejects.toThrow(/more MANA/)
+    await g.provider.request({ method: 'eth_signTypedData_v4', params: [BUYER, JSON.stringify(typed(STORE_DOMAIN, encodeStoreBuy([item], BUYER)))] })
+    expect(reached(g.w, 'eth_signTypedData_v4')).toHaveLength(1)
+  })
+
+  it('signs what it checked for the pinned buyer, whatever the caller changes in its request while the wallet is read', async () => {
+    const g = guarded(listings())
+    const data = typed(MANA_DOMAIN, approve())
+    const params: unknown[] = [BUYER, data]
+    const original = g.w.request
+    g.w.request = async (args) => {
+      if (args.method === 'eth_accounts') {
+        // The caller turns the approve toward another spender and names another account.
+        ;(data.message as Record<string, unknown>).functionSignature = approve(OTHER)
+        params[0] = OTHER
+      }
+      return original(args)
+    }
+    await g.provider.request({ method: 'eth_signTypedData_v4', params })
+    const [signed] = reached(g.w, 'eth_signTypedData_v4')
+    expect(signed!.params![0]).toBe(BUYER)
+    expect(JSON.parse(signed!.params![1] as string)).toEqual(typed(MANA_DOMAIN, approve()))
+  })
+
+  it('sends the rails’ own fees: none named on Polygon, Amoy’s priority fee there, and refuses a request naming others', async () => {
+    const polygon = guarded(listings())
+    await polygon.provider.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: MANA, data: approve() }] })
+    expect(reached(polygon.w, 'eth_sendTransaction')[0]!.params).toEqual([{ from: BUYER, to: MANA, data: approve(), chainId: '0x89' }])
+    for (const fees of [{ maxFeePerGas: '0x1' }, { maxPriorityFeePerGas: '0x3b9aca00' }, { gas: '0x5208' }, { maxFeePerGas: 'lots' }]) {
+      await expect(polygon.provider.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: MANA, data: approve(), ...fees }] }), JSON.stringify(fees)).rejects.toThrow(WalletRefusal)
+    }
+
+    const AMOY = 80002
+    const AMOY_MANA = '0x7ad72b9f944ea9793cf4055d88f81138cc2c63a0'
+    const AMOY_STORE = '0xe36abc9ec616c83caaa386541380829106149d68'
+    const policy = { maxPriorityFeePerGas: '0x6fc23ac00', maxFeePerGas: '0x12a05f2000' }
+    const amoy = guarded(mints(PRICE, { venue: AMOY_STORE }), { chainId: AMOY })
+    await amoy.provider.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: AMOY_MANA, data: approve(AMOY_STORE) }] })
+    await amoy.provider.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: AMOY_STORE, data: encodeStoreBuy([item], BUYER), ...policy }] })
+    expect(reached(amoy.w, 'eth_sendTransaction').map((r) => r.params)).toEqual([
+      [{ from: BUYER, to: AMOY_MANA, data: approve(AMOY_STORE), chainId: '0x13882', ...policy }],
+      [{ from: BUYER, to: AMOY_STORE, data: encodeStoreBuy([item], BUYER), chainId: '0x13882', ...policy }]
+    ])
+    await expect(amoy.provider.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: AMOY_STORE, data: encodeStoreBuy([item], BUYER), maxFeePerGas: '0x1' }] })).rejects.toThrow(WalletRefusal)
+    // The same fees written another way are the policy's, and what is sent is the policy's own form.
+    await amoy.provider.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: AMOY_MANA, data: approve(AMOY_STORE), maxFeePerGas: '80000000000', maxPriorityFeePerGas: 30_000_000_000 }] })
+    expect(reached(amoy.w, 'eth_sendTransaction').at(-1)!.params).toEqual([{ from: BUYER, to: AMOY_MANA, data: approve(AMOY_STORE), chainId: '0x13882', ...policy }])
+  })
+
+  it('reads the chain last: a wallet that moves to another network while its account is read gets no hand-off and no send', async () => {
+    const g = guarded(listings())
+    let chain = CHAIN
+    const original = g.w.request
+    g.w.request = async (args) => {
+      if (args.method === 'eth_accounts') chain = 1
+      if (args.method === 'eth_chainId') return `0x${chain.toString(16)}`
+      return original(args)
+    }
+    await expect(g.provider.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: MARKETPLACE, data: encodeMarketplaceCall([manaListing()], BUYER) }] })).rejects.toThrow(/another network/)
+    expect(g.handOff).not.toHaveBeenCalled()
+    expect(reached(g.w, 'eth_sendTransaction')).toHaveLength(0)
+  })
+
+  it('buys with MANA on Polygon and Amoy only: a listing valid on a NAMEs chain’s registry is refused', () => {
+    const ETHEREUM_MARKETPLACE = '0x0f11d0d1671519683bd48abf3dbe779e300941cd'
+    expect(() => guarded(listings(undefined, { venue: ETHEREUM_MARKETPLACE }), { chainId: 1 })).toThrow(/doesn’t buy with MANA on this network/)
   })
 
   it('refuses a direct send on another network, and anything once the login or the wallet’s account changed', async () => {

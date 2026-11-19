@@ -16,10 +16,16 @@
 //    - as the venue's meta-transaction or sent from the buyer, with no value. A sale already allowed (an allowance
 //      granted before) needs no approve at all; either way it is checked in full.
 //
-// Before each signature or transaction it checks the login is still the one confirmed and the wallet's selected
-// account is the buyer's. A sale is forwarded only once the host has kept its attempt (`handOff`): the host holds
-// one outstanding sale per confirmation, and an approve never counts as one. A direct send forwards the checked
-// snapshot, never the object the caller still holds. Anything else is refused before it reaches the wallet.
+// Phase 1 buys with MANA on Polygon (and Amoy, its testnet) only.
+//
+// The intent is pinned when the guard is made: the buyer, the chain and a copy of the terms; only `current` and
+// `handOff` stay live. Before each signature or transaction it checks the login is still the one confirmed and the
+// wallet's selected account is the buyer's; a direct send reads the wallet's chain last, after every other await. A
+// sale is forwarded only once the host has kept its attempt (`handOff`): the host holds one outstanding sale per
+// confirmation, and an approve never counts as one. What reaches the wallet is what was checked: a typed-data text
+// parsed once and its checked data serialized again for the pinned buyer, or a transaction snapshot built from the
+// checked fields, its fees from the rails' own policy (amoyGasOverrides) and its chain bound. Anything else is
+// refused before it reaches the wallet.
 
 import { decodeAbiParameters, decodeFunctionData, getAbiItem, maxUint256, toFunctionSelector, type Hex } from 'viem'
 import type { Eip1193Provider } from '../../../data/auth/wallet'
@@ -27,7 +33,8 @@ import { COLLECTION_STORE_ABI, ERC20_ABI, MARKETPLACE_ABI } from '@shop/checkout
 import { requireContracts, type ContractInfo } from '../../../shop/checkout/chain/contracts'
 import { chainIdSalt, DOMAIN_TYPE, metaTxType } from '../../../shop/checkout/chain/metatx'
 import { ASSET_TYPE } from '../../../shop/checkout/purchase/encoding'
-import type { ChainId } from '@shop/model/chain'
+import { amoyGasOverrides } from '../../../shop/checkout/chain/wallet'
+import { CHAIN, type ChainId } from '@shop/model/chain'
 import { AMOY_ADD_PARAMS } from '../../../shop/wallet/chain'
 import { assertWalletAccount, sameFields, sameKeys, sameUnits, WalletRefusal } from './walletGuard'
 
@@ -73,6 +80,8 @@ const SELECTOR = {
   approve: toFunctionSelector(APPROVE)
 }
 const TX_FIELDS = new Set(['from', 'to', 'data', 'value', 'gas', 'maxFeePerGas', 'maxPriorityFeePerGas'])
+/** The chains phase 1 buys with MANA on: Polygon, and Amoy, its testnet. */
+const MANA_CHAINS: readonly number[] = [CHAIN.POLYGON, CHAIN.AMOY]
 
 const lower = (v: unknown): string => (typeof v === 'string' ? v.toLowerCase() : '')
 const isHex = (v: unknown): v is Hex => typeof v === 'string' && /^0x[0-9a-fA-F]*$/.test(v)
@@ -83,6 +92,7 @@ function refuse(why: string): never {
 
 /** The chain's MANA and the sale's venue, from the chain's registry: a venue it doesn't list for that sale is refused. */
 export function registryFor(intent: Pick<ManaPurchaseIntent, 'chainId' | 'sale'>): { mana: ContractInfo; venue: ContractInfo } {
+  if (!MANA_CHAINS.includes(intent.chainId)) refuse('The Shop doesn’t buy with MANA on this network.')
   let book
   try {
     book = requireContracts(intent.chainId as ChainId)
@@ -230,9 +240,23 @@ function zeroValue(value: unknown): boolean {
   return false
 }
 
+/** A fee field as a number, whatever well-formed shape a wallet reads it in; null for anything else. */
+function feeOf(value: unknown): bigint | null {
+  try {
+    if (typeof value === 'bigint') return value
+    if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return BigInt(value)
+    if (typeof value === 'string' && /^(0x[0-9a-f]+|\d+)$/i.test(value)) return BigInt(value)
+  } catch {
+    // not a number
+  }
+  return null
+}
+
 /**
  * The same calls sent from the buyer's wallet: MANA's approve to MANA, or the sale to its venue, with no value and no
- * unknown fields. Returns the snapshot to send, built from the checked fields alone.
+ * unknown fields. Returns the snapshot to send, built from the checked fields alone: its fees are the rails' own
+ * policy (amoyGasOverrides: Amoy's priority fee, none elsewhere, the gas left to the wallet), and a request naming
+ * other fees, or a gas limit, is refused.
  */
 export function checkTransaction(tx: unknown, intent: Pick<ManaPurchaseIntent, 'buyer' | 'chainId' | 'sale'>): Checked & { snapshot: Record<string, unknown> } {
   if (tx == null || typeof tx !== 'object' || Array.isArray(tx) || Object.keys(tx).some((k) => !TX_FIELDS.has(k))) refuse('The Shop only sends its own purchases.')
@@ -252,24 +276,40 @@ export function checkTransaction(tx: unknown, intent: Pick<ManaPurchaseIntent, '
   } else {
     refuse('The Shop only sends its own purchases.')
   }
-  const snapshot: Record<string, unknown> = { from: lower(intent.buyer), to, data }
-  for (const k of ['gas', 'maxFeePerGas', 'maxPriorityFeePerGas'] as const) if (t[k] !== undefined) snapshot[k] = t[k]
+  const policy = amoyGasOverrides(intent.chainId as ChainId) as Record<string, Hex | undefined>
+  if (t.gas !== undefined) refuse('The Shop only sends its own purchases.')
+  for (const k of ['maxFeePerGas', 'maxPriorityFeePerGas'] as const) {
+    if (t[k] === undefined) continue
+    const asked = feeOf(t[k])
+    if (asked === null || policy[k] === undefined || asked !== BigInt(policy[k])) refuse('The Shop only sends its own purchases.')
+  }
+  const snapshot: Record<string, unknown> = { from: lower(intent.buyer), to, data, chainId: `0x${intent.chainId.toString(16)}`, ...policy }
   return { sale, snapshot }
 }
 
-export function manaGuardedProvider(provider: Eip1193Provider, intent: ManaPurchaseIntent): Eip1193Provider {
+export function manaGuardedProvider(provider: Eip1193Provider, source: ManaPurchaseIntent): Eip1193Provider {
+  // Pinned here: the buyer, the chain and a copy of the terms. Only the login check and the hand-off stay live.
+  const intent: ManaPurchaseIntent = {
+    buyer: lower(source.buyer),
+    chainId: source.chainId,
+    sale: structuredClone(source.sale),
+    current: () => source.current(),
+    handOff: () => source.handOff()
+  }
   // The confirmed terms are checked once, before the wallet is asked anything.
   checkManaTerms(intent)
   const chainHex = `0x${intent.chainId.toString(16)}`
   const stillCurrent = (): void => {
     if (!intent.current()) refuse('Your sign-in changed meanwhile. Open the item again to buy it.')
   }
-  /** The login, then the wallet's account (awaited), then the login again; for the sale, its attempt kept last. */
-  const ready = async (sale: boolean): Promise<void> => {
+  /** The login, then the wallet's account (awaited), then the login again. */
+  const session = async (): Promise<void> => {
     stillCurrent()
     await assertWalletAccount(provider, intent.buyer)
     stillCurrent()
-    if (sale && !intent.handOff()) refuse("This purchase can't be sent right now: it couldn't be kept, or it is already on its way.")
+  }
+  const handOff = (): void => {
+    if (!intent.handOff()) refuse("This purchase can't be sent right now: it couldn't be kept, or it is already on its way.")
   }
   return {
     async request({ method, params }) {
@@ -294,17 +334,24 @@ export function manaGuardedProvider(provider: Eip1193Provider, intent: ManaPurch
         }
         case 'eth_signTypedData_v4': {
           if (args.length !== 2) refuse('The Shop only signs its own purchases.')
-          const checked = checkMetaTransaction(args[0], args[1], intent)
-          const text = JSON.stringify(checked.typed)
-          await ready(checked.sale)
-          return provider.request({ method, params: [args[0], text] })
+          // The rails hand over JSON text: it is parsed once, here, into data of the guard's own. An object is
+          // serialized first, so what is checked is exactly what is forwarded.
+          const text = typeof args[1] === 'string' ? args[1] : JSON.stringify(args[1])
+          const checked = checkMetaTransaction(args[0], text, intent)
+          const signed = JSON.stringify(checked.typed)
+          await session()
+          if (checked.sale) handOff()
+          return provider.request({ method, params: [intent.buyer, signed] })
         }
         case 'eth_sendTransaction': {
           if (args.length !== 1) refuse('The Shop only sends its own purchases.')
           const checked = checkTransaction(args[0], intent)
-          // A wallet on another network would spend gas there and leave the purchase pending.
+          await session()
+          // The chain is the last thing awaited: a wallet that moved to another network meanwhile would spend gas
+          // there and leave the purchase pending. The login is checked again after it.
           if (lower(await provider.request({ method: 'eth_chainId' })) !== chainHex) refuse('Your wallet is on another network. Switch it to the Shop’s and try again.')
-          await ready(checked.sale)
+          stillCurrent()
+          if (checked.sale) handOff()
           return provider.request({ method, params: [checked.snapshot] })
         }
         default:
