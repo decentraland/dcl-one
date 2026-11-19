@@ -41,7 +41,6 @@ use dcl_types::{SceneLogLevel, SceneLogMessage};
 use history::ChatHistoryPlugin;
 use input_manager::{InputManager, InputPriority};
 use scene_runner::{renderer_context::RendererSceneContext, ContainingScene};
-use shlex::Shlex;
 use social::FriendshipEvent;
 use system_bridge::{ChatMessage, ChatReactionData, NativeUi, SystemApi};
 use ui_core::{
@@ -609,24 +608,23 @@ fn emit_user_chat(
             });
 
             if message.starts_with('/') {
-                let mut args = Shlex::new(message).collect::<Vec<_>>();
-
-                let command_name = args.remove(0);
-                debug!("Command entered: `{command_name}`, with args: `{args:?}`");
-
-                let command = console_config.commands.get(command_name.as_str());
-
-                if command.is_some() {
-                    command_entered.write(ConsoleCommandEntered {
-                        command_name,
-                        args,
-                        responder: None,
-                    });
-                } else {
-                    debug!(
-                        "Command not recognized, recognized commands: `{:?}`",
-                        console_config.commands.keys().collect::<Vec<_>>()
-                    );
+                match console::line::split(message, &console_config) {
+                    Ok((command_name, args)) => {
+                        debug!("Command entered: `{command_name}`, with args: `{args:?}`");
+                        if console_config.commands.contains_key(command_name.as_str()) {
+                            command_entered.write(ConsoleCommandEntered {
+                                command_name,
+                                args,
+                                responder: None,
+                            });
+                        } else {
+                            debug!(
+                                "Command not recognized, recognized commands: `{:?}`",
+                                console_config.commands.keys().collect::<Vec<_>>()
+                            );
+                        }
+                    }
+                    Err(e) => debug!("Command not run: {e}"),
                 }
             }
         }
@@ -1090,28 +1088,31 @@ fn pipe_chats_from_scene(
                 message: message.clone(),
             });
 
-            let mut args = Shlex::new(&message).collect::<Vec<_>>();
-
-            let command_name = args.remove(0);
-            debug!("Command entered: `{command_name}`, with args: `{args:?}`");
-
-            let command = console_config.commands.get(command_name.as_str());
-
-            if command.is_some() {
-                command_entered.write(ConsoleCommandEntered {
-                    command_name,
-                    args,
-                    responder: None,
-                });
-            } else {
+            let reply = match console::line::split(&message, &console_config) {
+                Ok((command_name, args)) => {
+                    debug!("Command entered: `{command_name}`, with args: `{args:?}`");
+                    if console_config.commands.contains_key(command_name.as_str()) {
+                        command_entered.write(ConsoleCommandEntered {
+                            command_name,
+                            args,
+                            responder: None,
+                        });
+                        None
+                    } else {
+                        Some(format!(
+                            "Command not recognized, recognized commands: `{:?}`",
+                            console_config.commands.keys().collect::<Vec<_>>()
+                        ))
+                    }
+                }
+                Err(e) => Some(format!("Command not run: {e}")),
+            };
+            if let Some(message) = reply {
                 sender.write(ChatEvent {
                     timestamp: time.elapsed_secs_f64(),
                     sender: Entity::PLACEHOLDER,
                     channel: "System".to_owned(),
-                    message: format!(
-                        "Command not recognized, recognized commands: `{:?}`",
-                        console_config.commands.keys().collect::<Vec<_>>()
-                    ),
+                    message,
                 });
             }
         } else {

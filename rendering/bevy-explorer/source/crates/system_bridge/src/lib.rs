@@ -71,7 +71,7 @@ pub struct NewAccountPick {
 pub enum SystemApi {
     ConsoleCommand(String, Vec<String>, RpcResultSender<Result<String, String>>),
     /// A whole console line from outside the process (the page's console RPC, the loopback
-    /// server, the CEF HUD's page), split as `console::line` says once its command is known.
+    /// server, the CEF HUD's page), split by `console::line::split`.
     ConsoleLine(String, RpcResultSender<Result<String, String>>),
     CheckForUpdate(RpcResultSender<Option<(String, String)>>),
     MOTD(RpcResultSender<String>),
@@ -284,18 +284,10 @@ pub fn post_events(
         let (cmd, args, sender) = match ev {
             SystemApi::ConsoleCommand(cmd, args, sender) => (cmd, args, sender),
             SystemApi::ConsoleLine(line, sender) => {
-                let Some((cmd, rest)) = console::line::split_name(&line) else {
-                    sender.send(Err("empty command".to_owned()));
-                    continue;
-                };
-                let takes_rest = console_config
-                    .commands
-                    .get(cmd.as_str())
-                    .is_some_and(console::line::takes_rest);
-                match console::line::split_arguments(rest, takes_rest) {
-                    Ok(args) => (cmd, args, sender),
+                match console::line::split(&line, &console_config) {
+                    Ok((cmd, args)) => (cmd, args, sender),
                     Err(e) => {
-                        sender.send(Err(format!("{cmd}: {e}")));
+                        sender.send(Err(e));
                         continue;
                     }
                 }

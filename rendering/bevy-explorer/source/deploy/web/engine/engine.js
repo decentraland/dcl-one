@@ -375,7 +375,8 @@ export function start(options = {}) {
   };
 
   // A word the engine splits back into the same argument (crates/console/src/line.rs): quoted
-  // when it is empty or holds whitespace or a double quote.
+  // when it is empty or holds whitespace or a double quote. A command that takes the rest of the
+  // line (`rest`) is split on whitespace alone, quotes kept, so its words go unquoted.
   const quoteWord = (word) =>
     word === "" || /[\s"]/.test(word) ? `"${word.replace(/[\\"]/g, "\\$&")}"` : word;
 
@@ -397,10 +398,11 @@ export function start(options = {}) {
         const body = [
           `var parts = [${JSON.stringify(cmd.cmd)}];`,
           `var defs = ${JSON.stringify(cmd.args)};`,
+          `var word = ${cmd.rest ? 'String' : 'quoteWord'};`,
           `for (var i = 0; i < defs.length; i++) {`,
           `  var val = arguments[i];`,
           `  if (val === undefined) { if (!defs[i].optional) throw new Error(${JSON.stringify(jsName)} + ": missing arg '" + defs[i].name + "'"); break; }`,
-          `  parts.push(defs[i].kind === 'json' ? JSON.stringify(val) : quoteWord(String(val)));`,
+          `  parts.push(defs[i].kind === 'json' ? JSON.stringify(val) : word(String(val)));`,
           `}`,
           `return window.engine_console_command(parts.join(' ')).then(function(r) { try { return JSON.parse(r); } catch(e) { return r; } });`,
         ].join('\n');

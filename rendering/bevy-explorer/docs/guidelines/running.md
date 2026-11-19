@@ -405,9 +405,9 @@ does, see below); elsewhere (the DevTools console, a page script) they fall back
 which prove the HUD's handlers but not the browser's input path, and give a page script nothing it
 lacks. `/hud_click`, `/hud_fill` and `/click_at` say which in `"input"`: `trusted` or `synthetic`.
 Arguments are split on whitespace, and a double-quoted run is one argument, with `\"` and `\\`
-escaping inside it (`/chat nearby "two  words"`). A command that takes JSON (the HUD commands,
-`/set_component`) takes the rest of the line as sent, so natively runs of spaces inside the JSON
-collapse to one. The [conventions ADR](../../../../docs/adr/2026-11-17-console-command-conventions.md)
+escaping inside it (`/chat nearby "two  words"`); a command typed in the chat input splits the
+same way. A command that takes JSON (the HUD commands, `/set_component`) takes the rest of the
+line split on whitespace alone, so runs of spaces inside the JSON collapse to one. The [conventions ADR](../../../../docs/adr/2026-11-17-console-command-conventions.md)
 has the rules every automation command follows. The preview-only
 commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
 

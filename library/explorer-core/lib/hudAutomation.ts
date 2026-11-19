@@ -953,8 +953,10 @@ export const PAGE_COMMANDS: Record<string, PageCommand> = {
       let button: string | undefined
       let normalized = false
       for (let i = 2; i < words.length; i++) {
-        if (words[i] === '--button') button = words[++i]
-        else if (words[i] === '--normalized') normalized = true
+        if (words[i] === '--button') {
+          button = words[++i]
+          if (button === undefined) throw new Error('--button needs a value: left, right or middle')
+        } else if (words[i] === '--normalized') normalized = true
         else throw new Error(`unexpected \`${words[i]}\`: /click_at <x> <y> [--button b] [--normalized]`)
       }
       const given = { x: Number(xText), y: Number(yText) }

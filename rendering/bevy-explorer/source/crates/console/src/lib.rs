@@ -127,9 +127,6 @@ impl Plugin for ConsolePlugin {
         app.init_resource::<PendingConsoleResponses>()
             .add_systems(Update, poll_console_responses);
 
-        app.init_resource::<reply::FrameRate>()
-            .add_systems(First, reply::measure_frame_rate);
-
         app.configure_sets(
             Update,
             (

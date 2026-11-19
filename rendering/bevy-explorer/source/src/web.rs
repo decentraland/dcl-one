@@ -722,7 +722,9 @@ fn extract_js_api(config: Res<ConsoleConfiguration>, _js: JsThread) {
                     arg_json
                 })
                 .collect();
-            let mut cmd_json = serde_json::json!({ "cmd": name, "args": args });
+            // `rest`: the arguments are split on whitespace alone (`console::line`), so the
+            // page sends its words unquoted
+            let mut cmd_json = serde_json::json!({ "cmd": name, "args": args, "rest": trailing });
             if let Some(about) = cmd.get_about() {
                 cmd_json["help"] = serde_json::Value::String(about.to_string());
             }

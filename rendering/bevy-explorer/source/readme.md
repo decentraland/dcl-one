@@ -252,8 +252,8 @@ client's agent surface, the same in every build: end-to-end tests and people's o
 deployed clients through it, the HUD included, so nothing outside the client rebuilds the plumbing.
 Replies are JSON where the command says so; a failed command rejects (web) or answers `ok: false`
 (loopback), with no marker in the text. Arguments split on whitespace, and a double-quoted run is
-one argument (`/chat nearby "two words"`); a command that takes JSON takes the rest of the line as
-sent. A reply with a screen position carries `screen` (`width`, `height` in logical pixels, `scale`);
+one argument (`/chat nearby "two words"`), in the chat input as over a transport; a command that
+takes JSON takes the rest of the line, split on whitespace alone. A reply with a screen position carries `screen` (`width`, `height` in logical pixels, `scale`);
 the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.md) has the rest
 (normalized coordinates, `--seconds`, refusals that name their cause).
 

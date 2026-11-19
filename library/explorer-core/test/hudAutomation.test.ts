@@ -882,6 +882,7 @@ describe('trusted input from a test runner', () => {
       expect(JSON.parse(await PAGE_COMMANDS['/click_at'].run('400 450'))).toMatchObject({ normalized: { x: 0.25, y: 0.5 } })
       await expect(PAGE_COMMANDS['/click_at'].run('2 0.5 --normalized')).rejects.toThrow('normalized coordinates run from 0 to 1')
       await expect(PAGE_COMMANDS['/click_at'].run('1 2 --frames 3')).rejects.toThrow('unexpected `--frames`')
+      await expect(PAGE_COMMANDS['/click_at'].run('1 2 --button')).rejects.toThrow('--button needs a value')
       expect(sent).toEqual([
         req({ op: 'click', x: 800, y: 225, button: 'right' }),
         req({ op: 'click', x: 400, y: 450, button: 'left' })
