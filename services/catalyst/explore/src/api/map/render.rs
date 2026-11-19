@@ -2,7 +2,7 @@
 //! on-sale / for-rent tint and the selection layers, and the two 512x512
 //! minimaps the explorer's map reads flags from.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use tiny_skia::{Color, Paint, Pixmap, Rect, Transform};
 
@@ -339,16 +339,17 @@ fn compare_estate_ids(a: &str, b: &str) -> std::cmp::Ordering {
 }
 
 /// One pixel per parcel carrying its estate's 1-based ordinal in id order.
+// from: atlas-server@6dfd733fc0a225f5a46eb67f978dbe3825a171a9:src/adapters/mini-map-renderer.ts (getEstateIndexes)
 pub fn render_estate_minimap(grid: &Grid) -> Result<Vec<u8>, String> {
     let mut rgba = vec![0u8; MINIMAP_DIM * MINIMAP_DIM * 4];
     let mut ids: Vec<&str> = grid
-        .tiles
-        .values()
-        .filter_map(|tile| tile.estate_id.as_deref())
+        .estates_all
+        .keys()
+        .map(String::as_str)
+        .filter(|id| !id.is_empty())
         .collect();
     ids.sort_unstable_by(|a, b| compare_estate_ids(a, b));
-    ids.dedup();
-    let order: std::collections::HashMap<&str, u32> = ids.into_iter().zip(1..).collect();
+    let order: HashMap<&str, u32> = ids.into_iter().zip(1..).collect();
     for tile in grid.tiles.values() {
         let index = tile
             .estate_id
@@ -369,7 +370,6 @@ pub fn render_estate_minimap(grid: &Grid) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     fn grid() -> Grid {
         let mut tiles = HashMap::new();
@@ -426,6 +426,7 @@ mod tests {
             (0, 1, Some("9")),
             (1, 1, Some("9")),
             (5, 5, Some("abc")),
+            (4, 4, Some("")),
             (3, 3, None),
         ];
         let mut tiles = HashMap::new();
