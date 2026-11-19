@@ -85,6 +85,9 @@ const GATEWAY_PREFIXES: Readonly<Record<string, string>> = {
 // (decentraland/dcl-one#631). Behind the gateway they compose from decentraland.org, never from
 // the page's own host, as the engine does (`Gateway::segment` → its default base domain).
 const NOT_THROUGH_GATEWAY: ReadonlySet<string> = new Set(['abgen-cdn'])
+// The imposter store (distant-scene tiles) is a launch option, not a service table row; the
+// node serves it under this prefix (services/catalyst/src/serve.rs, explore::imposters).
+const IMPOSTER_PREFIX = '/bvimposters'
 
 /** The domain a url without ?baseDomain= means here: derived from the hosting origin, else this host. */
 export const DEFAULT_BASE_DOMAIN =
@@ -213,6 +216,10 @@ export function engineServiceOptions(): Record<string, string> {
   const options: Record<string, string> = {}
   if (BASE_DOMAIN === ONE_GATEWAY_HOST) {
     for (const s of SERVICES) options[s.name] = serviceUrl(s.name)
+    // the node's own imposter store, not the engine's built-in one; an entry ?imposterSource= wins
+    if (!new URLSearchParams(window.location.search).get('imposterSource')) {
+      options.imposterSource = `${window.location.origin}${IMPOSTER_PREFIX}`
+    }
   }
   Object.assign(options, SERVICE_OVERRIDES)
   const bare = normaliseBaseDomain(BASE_DOMAIN)
