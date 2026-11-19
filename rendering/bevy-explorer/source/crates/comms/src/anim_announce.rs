@@ -17,6 +17,10 @@
 //! caller's send gate treat an owed repeat as a reason to send, which puts the repeats on the next
 //! regular sends.
 //!
+//! A movement send uses up a repeat even if LiveKit or WebSocket cannot carry the animation
+//! packet. If all announcements are missed, an active clip can recover at the next keepalive.
+//! A clear has only its initial announcement and repeats.
+//!
 //! A pure object, like the Pulse pacer: its times are `f64` seconds on the caller's clock and it
 //! knows nothing of Bevy or the connection, so a test drives it without an app.
 
@@ -28,11 +32,11 @@ pub const ANNOUNCE_REPEATS: u32 = 2;
 
 /// What one send says about the clip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Announcement {
+pub enum Announcement<'a> {
     /// Leave both hashes out; the receiver keeps the clip it has.
     Nothing,
     /// Attach the hash pair of the current clip.
-    Clip,
+    Clip(&'a ClipHashes),
     /// Attach an empty scene hash: no animation is active.
     Clear,
 }
@@ -58,14 +62,14 @@ impl ClipAnnouncer {
         self.current.as_ref() != current
     }
 
-    /// The announcement for a send at `now` while `current` is the active clip. Call it once per
-    /// packet actually sent. `keepalive` is how often an unchanged active clip is re-announced.
-    pub fn announce(
+    /// Call once per movement send at `now`, even if no animation transport can carry the packet.
+    /// `current` is the active clip. `keepalive` is the interval for re-announcing an unchanged clip.
+    pub fn announce<'a>(
         &mut self,
         now: f64,
-        current: Option<&ClipHashes>,
+        current: Option<&'a ClipHashes>,
         keepalive: f64,
-    ) -> Announcement {
+    ) -> Announcement<'a> {
         if self.changed(current) {
             self.current = current.cloned();
             self.repeats_left = ANNOUNCE_REPEATS;
@@ -75,10 +79,9 @@ impl ClipAnnouncer {
             return Announcement::Nothing;
         }
         self.announced_at = now;
-        if current.is_some() {
-            Announcement::Clip
-        } else {
-            Announcement::Clear
+        match current {
+            Some(hashes) => Announcement::Clip(hashes),
+            None => Announcement::Clear,
         }
     }
 }
@@ -95,12 +98,12 @@ mod tests {
 
     /// Sends every 0.125 s from `start`, returning what each announced. The step is exact in
     /// binary, so the keepalive arithmetic has no rounding.
-    fn sends(
+    fn sends<'a>(
         announcer: &mut ClipAnnouncer,
         start: f64,
         count: usize,
-        current: Option<&ClipHashes>,
-    ) -> Vec<Announcement> {
+        current: Option<&'a ClipHashes>,
+    ) -> Vec<Announcement<'a>> {
         (0..count)
             .map(|i| announcer.announce(start + i as f64 * 0.125, current, KEEPALIVE))
             .collect()
@@ -113,7 +116,7 @@ mod tests {
         let jump = clip("jump");
         assert_eq!(
             sends(&mut announcer, 0.0, 5, Some(&jump)),
-            [Clip, Clip, Clip, Nothing, Nothing]
+            [Clip(&jump), Clip(&jump), Clip(&jump), Nothing, Nothing]
         );
     }
 
@@ -123,7 +126,7 @@ mod tests {
         let mut announcer = ClipAnnouncer::default();
         let walk = clip("walk");
         let all = sends(&mut announcer, 0.0, 25, Some(&walk));
-        let announced: Vec<usize> = (0..all.len()).filter(|&i| all[i] == Clip).collect();
+        let announced: Vec<usize> = (0..all.len()).filter(|&i| all[i] == Clip(&walk)).collect();
         // the change and its repeats, then once a second after the last of them (at 0.25 s)
         assert_eq!(announced, [0, 1, 2, 10, 18]);
         assert!(all.iter().all(|a| *a != Clear));
@@ -158,26 +161,9 @@ mod tests {
         // a keepalive owes nothing
         assert_eq!(
             announcer.announce(1.25, Some(&walk), KEEPALIVE),
-            Announcement::Clip
+            Announcement::Clip(&walk)
         );
         assert!(!announcer.repeat_pending());
-    }
-
-    #[test]
-    fn a_clear_followed_by_silence_still_yields_its_repeats() {
-        use Announcement::*;
-        let mut announcer = ClipAnnouncer::default();
-        let walk = clip("walk");
-        sends(&mut announcer, 0.0, 3, Some(&walk));
-        // the caller sends only while a repeat is pending once nothing else changes
-        let mut announced = Vec::new();
-        let mut now = 0.375;
-        while announcer.repeat_pending() || announced.is_empty() {
-            announced.push(announcer.announce(now, None, KEEPALIVE));
-            now += 0.125;
-        }
-        assert_eq!(announced, [Clear, Clear, Clear]);
-        assert_eq!(announcer.announce(now, None, KEEPALIVE), Nothing);
     }
 
     #[test]
@@ -194,10 +180,14 @@ mod tests {
         let mut announcer = ClipAnnouncer::default();
         let walk = clip("walk");
         sends(&mut announcer, 0.0, 3, Some(&walk));
-        assert_eq!(
-            sends(&mut announcer, 0.375, 5, None),
-            [Clear, Clear, Clear, Nothing, Nothing]
-        );
+        assert!(!announcer.repeat_pending());
+        assert_eq!(announcer.announce(0.375, None, KEEPALIVE), Clear);
+        for now in [0.5, 0.625] {
+            assert!(announcer.repeat_pending());
+            assert_eq!(announcer.announce(now, None, KEEPALIVE), Clear);
+        }
+        assert!(!announcer.repeat_pending());
+        assert_eq!(sends(&mut announcer, 0.75, 2, None), [Nothing, Nothing]);
     }
 
     #[test]
@@ -205,15 +195,21 @@ mod tests {
         use Announcement::*;
         let mut announcer = ClipAnnouncer::default();
         let (jump, land) = (clip("jump"), clip("land"));
-        assert_eq!(sends(&mut announcer, 0.0, 2, Some(&jump)), [Clip, Clip]);
+        assert_eq!(
+            sends(&mut announcer, 0.0, 2, Some(&jump)),
+            [Clip(&jump), Clip(&jump)]
+        );
         // the clip changes on the third send, one repeat short of done
         assert_eq!(
             sends(&mut announcer, 0.25, 5, Some(&land)),
-            [Clip, Clip, Clip, Nothing, Nothing]
+            [Clip(&land), Clip(&land), Clip(&land), Nothing, Nothing]
         );
         // and a clear in the window replaces a pair's repeats
         let mut announcer = ClipAnnouncer::default();
-        assert_eq!(sends(&mut announcer, 0.0, 2, Some(&jump)), [Clip, Clip]);
+        assert_eq!(
+            sends(&mut announcer, 0.0, 2, Some(&jump)),
+            [Clip(&jump), Clip(&jump)]
+        );
         assert_eq!(
             sends(&mut announcer, 0.25, 4, None),
             [Clear, Clear, Clear, Nothing]

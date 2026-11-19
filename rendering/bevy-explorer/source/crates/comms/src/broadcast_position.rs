@@ -197,10 +197,7 @@ fn broadcast_position(
             .announcer
             .announce(time, current_hashes.as_ref(), ANIM_URN_KEEPALIVE)
         {
-            Announcement::Clip => current_hashes
-                .as_ref()
-                .map(|(s, c)| (Some(s.clone()), Some(c.clone())))
-                .unwrap_or_default(),
+            Announcement::Clip((scene, content)) => (Some(scene.clone()), Some(content.clone())),
             // Transition active → none: signal clear with an empty scene_hash.
             Announcement::Clear => (Some(String::new()), None),
             Announcement::Nothing => (None, None),
