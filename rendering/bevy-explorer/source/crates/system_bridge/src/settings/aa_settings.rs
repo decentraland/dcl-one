@@ -36,12 +36,18 @@ impl EnumAppSetting for AaSetting {
     }
 }
 
-/// The highest MSAA sample count up to `requested` that `supported` accepts, falling back from 8
-/// to 4, 2 and 1.
+/// The MSAA sample count `supported` accepts nearest `requested`: the highest up to it, else the
+/// lowest above it (Vulkan only guarantees 1 and 4, so some GPUs have 4x but no 2x), else 1.
 fn clamp_msaa(requested: u32, supported: impl Fn(u32) -> bool) -> u32 {
-    [8, 4, 2]
+    if requested <= 1 {
+        return 1;
+    }
+    let below = [8, 4, 2]
         .into_iter()
-        .filter(|&samples| samples <= requested)
+        .filter(|&samples| samples <= requested);
+    let above = [2, 4, 8].into_iter().filter(|&samples| samples > requested);
+    below
+        .chain(above)
         .find(|&samples| supported(samples))
         .unwrap_or(1)
 }
@@ -149,5 +155,9 @@ mod test {
         assert_eq!(clamp_msaa(8, |n| n <= 8), 8);
         assert_eq!(clamp_msaa(8, |n| n == 1 || n == 2), 2);
         assert_eq!(clamp_msaa(8, |n| n == 1), 1);
+        let vulkan_minimum = |n: u32| matches!(n, 1 | 4);
+        assert_eq!(clamp_msaa(2, vulkan_minimum), 4);
+        assert_eq!(clamp_msaa(8, vulkan_minimum), 4);
+        assert_eq!(clamp_msaa(1, vulkan_minimum), 1);
     }
 }

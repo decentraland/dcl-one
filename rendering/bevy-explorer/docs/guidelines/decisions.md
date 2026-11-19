@@ -718,19 +718,30 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Distance. Bevy has one sea plane, a single opaque quad that casts no shadows, so hiding it would
   save almost nothing, and the water material draws without fog, so nothing would soften it
   appearing and disappearing.
-- **Graphics presets set fewer settings than Unity's.** Low, Medium and High carry Unity's values
-  for the frame rate, VSync, render scale, anti-aliasing, bloom, avatar outline, sun shadows,
-  shadow distance and scene lights; Medium is the default and the one every saved config migrates
-  to. They leave out Unity's scene distance (in parcels, where far scenes load as LODs; here
-  imposters draw them and the load distance stays the player's), the landscape distance (read
-  only at startup; its default is Medium's 1000 m), current-scene streams, spring bones and HDR
+- **Graphics presets set fewer settings than Unity's, and four differently.** Low, Medium and High
+  carry Unity's values for the frame rate, VSync, render scale, avatar outline, jiggle bones, sun
+  shadow quality, the Low and High shadow distances and scene lights; Medium is the default and
+  the one every saved config migrates to, except jiggle bones, which stay off by default (see the
+  spring bones ADR). Anti-aliasing and depth of field differ (next entry). Bloom is Low in every
+  preset, closer to Unity's look than High. Medium's sun shadow distance is 20 m, not 60 m: Medium
+  has one cascade on a 4096 map (above), so at 60 m each texel is three times as large and the
+  shadows break up. The presets leave out Unity's scene distance (in parcels, where far scenes
+  load as LODs; here imposters draw them and the load distance stays the player's), the landscape
+  distance (read only at startup; its default is Medium's 1000 m), current-scene streams and HDR
   (always on). The preset is not stored: the HUD reads it off the settings, and any difference
   shows as Custom.
 - **Depth of field yields to MSAA.** The fork's transparent focus texture takes the sample count
   of the resolved main texture, so a multisampled transparent pass with depth of field fails
   wgpu validation. While MSAA is on, the camera has no depth of field and the stars draw before
-  the transparent pass. Unity has no depth of field, so no preset combines them; the native
-  Medium preset is MSAA 2x.
+  the transparent pass. Unlike Unity, which has none, the presets keep depth of field on, because
+  it hides the lack of detail in distant imposters, and they use FXAA so it stays on: the yield
+  only applies when a player picks MSAA. SSAO is off in every preset: bevy 0.16's SSAO is not
+  good enough to put in one.
+- **VSync caps the frame rate; it does not set it.** Unity's `vSyncCount` hands the rate to the
+  monitor and ignores the frame limit. Here VSync only removes tearing: the explorer paces to the
+  lower of the Target Frame Rate (or a session override) and the monitor's refresh rate. Medium's
+  60 fps holds on a 120 or 144 Hz monitor, and the debug panel's 30 FPS limit, `/fps` and
+  `--fps` still apply; Max means the monitor's rate.
 - **No satellite floor.** unity-explorer lays the minimap's satellite images flat at 0.205 m under the
   terrain in Genesis City; here the ground covers that plane everywhere, so the floor would never be
   seen and is not shipped.

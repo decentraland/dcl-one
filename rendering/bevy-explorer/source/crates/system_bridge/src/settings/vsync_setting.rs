@@ -40,7 +40,7 @@ impl AppSetting for VsyncSetting {
     }
 
     fn description(&self) -> String {
-        "Sync frames to the monitor's refresh rate.\n\nOn: no tearing, and the frame rate follows the monitor; the Target Frame Rate is ignored. Off: frames show as soon as they are ready, at the Target Frame Rate.".to_owned()
+        "Sync frames to the monitor's refresh rate.\n\nOn: no tearing; the frame rate is the Target Frame Rate or the monitor's refresh rate, whichever is lower. Off: frames show as soon as they are ready, at the Target Frame Rate.".to_owned()
     }
 
     fn category() -> SettingCategory {
