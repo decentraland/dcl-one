@@ -3700,6 +3700,49 @@ async fn with_a_relayer_key_the_testnet_relay_signs_on_amoy_alone_and_admits_dcl
     );
 }
 
+/// A NAME route with no Ethereum signer answers 503 with the reason it is missing, as the startup
+/// log does: the flag on the keyed testnet profile, and the settings that provision it when the
+/// key and `ETH_RPC_URL` are there but broadcasting is off. Nothing reaches a chain either way.
+#[tokio::test]
+async fn a_name_route_without_the_ethereum_signer_says_why() {
+    let key = hex::encode(PrivateKeySigner::random().to_bytes());
+    let names = |meta_tx_broadcast_enabled: bool, names_signer_enabled: bool| Settings {
+        meta_tx_broadcast_enabled,
+        names_signer_enabled,
+        relayer_private_key: Some(key.clone()),
+        polygon_rpc_url: Some("http://127.0.0.1:1/".into()),
+        eth_rpc_url: Some("http://127.0.0.1:1/".into()),
+        admin_token: Some(ADMIN.into()),
+        ..Settings::for_tests()
+    };
+    let bearer = format!("Bearer {ADMIN}");
+    for (settings, reason) in [
+        (names(true, false), "off (NAMES_SIGNER_ENABLED=false)"),
+        (
+            names(false, true),
+            "not provisioned (set META_TX_BROADCAST_ENABLED=true with RELAYER_PRIVATE_KEY_FILE + ETH_RPC_URL)",
+        ),
+    ] {
+        let app = router(state(lazy_pool(), settings));
+        let (status, text) = send(
+            &app,
+            "POST",
+            "/v1/broker/names/buy",
+            Some(json!({ "mode": "mint", "name": "nacho", "buyerAddress": BUYER }).to_string()),
+            &[
+                ("authorization", &bearer),
+                ("idempotency-key", "names-without-a-signer"),
+            ],
+        )
+        .await;
+        assert_eq!(status, 503, "{text}");
+        assert!(
+            text.contains(&format!("the Ethereum signer, which is {reason}")),
+            "{text}"
+        );
+    }
+}
+
 /// Under a trial the MANA payment routes refuse before any work: `config` would hand a client the
 /// relay's own signer as the pay-to address of a top-up the credits lane then refuses.
 #[tokio::test]

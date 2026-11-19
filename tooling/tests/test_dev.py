@@ -1020,6 +1020,55 @@ class DevTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 dev.prepare_supervisor()
         written.assert_not_called()
+        # With an installed service, `up` refuses before it starts the service, whose supervisor would only
+        # restart in a loop on the same refusal.
+        (self.state / 'settings.json').write_text(json.dumps(exposed))
+        with patch.object(dev, 'service_file', return_value=key), \
+                patch.object(dev, 'service_start') as started, \
+                patch.object(dev, 'supervisor_running', return_value=False):
+            with self.assertRaises(SystemExit):
+                dev.up()
+        started.assert_not_called()
+        # `service install` refuses before it touches the installed unit or stops the running stack.
+        with patch.object(dev, 'DARWIN', False):
+            unit = dev.service_file()
+        unit.parent.mkdir(parents=True, exist_ok=True)
+        unit.write_text('the unit installed before')
+        with patch.object(dev, 'DARWIN', False), \
+                patch.object(dev.shutil, 'which', return_value='/nix/bin/nix'), \
+                patch.object(dev, 'systemctl') as systemctl, patch.object(dev, 'down') as down, \
+                patch.object(dev, 'service_start') as started:
+            with self.assertRaises(SystemExit):
+                dev.service_install()
+        self.assertEqual(unit.read_text(), 'the unit installed before')
+        for untouched in (systemctl, down, started):
+            untouched.assert_not_called()
+        # The key file is read only for a testnet stack behind a public origin: an unreadable one never stops
+        # another profile, nor a testnet stack on loopback.
+        with patch.object(dev, 'relayer_key', side_effect=AssertionError('read the relayer key')):
+            for config in ({**exposed, 'profile': 'mirror'}, {**exposed, 'profile': 'offline'},
+                           {**exposed, 'public_origin': None}):
+                dev.refuse_an_exposed_relayer(config)
+            with patch.object(dev, 'settings', return_value={**exposed, 'profile': 'mirror'}), \
+                    patch.object(dev, 'supervisor_running', return_value=False), \
+                    patch.object(dev, 'ports_free', return_value=True), \
+                    patch.object(dev, 'ingress_ports_free', return_value=True), \
+                    patch.object(dev, 'save_json'):
+                self.assertIsNotNone(dev.prepare_supervisor())
+        # What only reads the environment, or runs PostgreSQL alone, signs nothing and still works.
+        self.assertEqual(dev.psql_env(exposed)['PGDATABASE'], 'catalyst')
+        with patch.object(dev, 'run', return_value=subprocess.CompletedProcess([], 0, stdout='1\n')):
+            self.assertEqual(dev.sql(exposed, 'SELECT 1'), '1')
+        printed = io.StringIO()
+        with patch.object(dev.sys, 'argv', ['foundation-dev', 'env']), contextlib.redirect_stdout(printed):
+            dev.main()
+        self.assertIn('FOUNDATION_DEV_PUBLIC_URL=', printed.getvalue())
+        with patch.object(dev, 'settings', return_value=exposed), \
+                patch.object(dev, 'supervisor_running', return_value=False), \
+                patch.object(dev, 'ports_free', return_value=True), \
+                patch.object(dev, 'ingress_ports_free', return_value=True), \
+                patch.object(dev, 'save_json'):
+            self.assertIsNotNone(dev.prepare_supervisor(postgres_only=True))
         # The same key on loopback starts, capped; another profile never reads it.
         self.assertEqual(dev.runtime_env({**exposed, 'public_origin': None})['MAX_RELAYED_TRANSACTIONS_PER_DAY'], '100')
         self.assertNotIn('RELAYER_PRIVATE_KEY_FILE', dev.runtime_env({**exposed, 'profile': 'mirror'}))

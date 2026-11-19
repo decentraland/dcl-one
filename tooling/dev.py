@@ -461,7 +461,9 @@ def pulse_env(config, certificate, key):
 PUBLIC_SIGN_IN_IDS = ('THIRDWEB_CLIENT_ID', 'MAGIC_API_KEY', 'WALLETCONNECT_PROJECT_ID')
 
 
-def runtime_env(config):
+def runtime_env(config, refuse_exposed_relayer=True):
+    """The stack's environment. `refuse_exposed_relayer=False` is for callers that only read it and start nothing
+    that signs (sql, psql, `foundation-dev env`, PostgreSQL): they work on a stack refuse_an_exposed_relayer stops."""
     # Do not inherit a shell's production database, upstreams or credentials.
     env = {key: os.environ[key] for key in (
         'PATH', 'HOME', 'USER', 'TMPDIR', 'LANG', 'LC_ALL', 'LOCALE_ARCHIVE',
@@ -599,11 +601,11 @@ def runtime_env(config):
             'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/polygon',
         })
     if config['profile'] == 'testnet':
-        env.update(testnet_env(config))
+        env.update(testnet_env(config, refuse_exposed_relayer))
     return env
 
 
-def testnet_env(config):
+def testnet_env(config, refuse_exposed_relayer=True):
     """The mirror profile's upstreams on Decentraland's testnet: .zone services, Amoy and Sepolia.
 
     The Shop settles on Amoy (VITE_SHOP_CHAIN_ID, read by the Sites dev server), its order book is the
@@ -673,7 +675,7 @@ def testnet_env(config):
         # MANA only. This profile sets the mock card on Amoy alone, and the stack listens on 127.0.0.1.
         'CREDITS_MOCK_CARD': 'true',
         **credits_signer_env(),
-        **relayer_env(config),
+        **relayer_env(config, refuse_exposed_relayer),
         **name_simulation_env(),
     }
 
@@ -693,7 +695,7 @@ TESTNET_RELAYER_FREE_CALLS_PER_DAY = '100'
 PUBLISHED_CONTRACT_ADDRESSES_URL = 'https://contracts.decentraland.org/addresses.json'
 
 
-def relayer_env(config):
+def relayer_env(config, refuse_exposed_relayer=True):
     """Who pays the testnet relay's gas, and the contract list that goes with it (testnet only).
 
     Without a relayer key the relay forwards to the .zone transactions API and admits the published list, which
@@ -715,11 +717,12 @@ def relayer_env(config):
     Its spend is bounded per transaction by the fee cap, and per day by TESTNET_RELAYER_FREE_CALLS_PER_DAY for free
     calls but only by the per-address quota for sales and credits purchases, and addresses cost nothing to make.
     So the key belongs on a loopback stack: behind FOUNDATION_DEV_PUBLIC_ORIGIN the stack refuses to start with
-    it (refuse_an_exposed_relayer)."""
+    it (refuse_an_exposed_relayer), unless the caller only reads the environment."""
     key = relayer_key()
     if key is None:
         return {'CONTRACT_ADDRESSES_URL': PUBLISHED_CONTRACT_ADDRESSES_URL}
-    refuse_an_exposed_relayer(config, key)
+    if refuse_exposed_relayer:
+        refuse_an_exposed_relayer(config, lambda: key)
     if key.stat().st_mode & 0o077:
         print(f'Warning: {key} is readable by other users; chmod 600 it.', file=sys.stderr)
     return {
@@ -737,14 +740,18 @@ def relayer_key():
     return key if key.is_file() and key.read_text().strip() else None
 
 
-def refuse_an_exposed_relayer(config, key):
+def refuse_an_exposed_relayer(config, read_key=None):
     """A testnet stack behind a public origin never starts with a relayer key.
 
     The key would pay the gas of whatever its relay admits, and only free calls have a daily cap: anyone who reaches
     the origin could spend its POL through sales and credits purchases from fresh addresses. `up` checks it before
-    starting anything, and relayer_env again wherever the stack's environment is built, with the key (relayer_key)
-    each already read."""
-    if config.get('profile') == 'testnet' and config.get('public_origin') and key is not None:
+    starting anything (a PostgreSQL-only run signs nothing), `service install` before it touches the unit, the
+    supervisor again, and relayer_env wherever a process's environment is built (passing the key it already read).
+    The key file is read only for a testnet stack behind a public origin, so it never stops another profile."""
+    if config.get('profile') != 'testnet' or not config.get('public_origin'):
+        return
+    key = (read_key or relayer_key)()
+    if key is not None:
         raise SystemExit(
             f"{key} would pay the gas of every transaction this stack relays, and the stack is "
             f"served at {config['public_origin']}, where anyone who reaches it could spend the key's POL. Either "
@@ -883,7 +890,7 @@ def project(config, postgres_only=False):
 
 
 def sql(config, query, database='catalyst'):
-    env = runtime_env(config)
+    env = runtime_env(config, refuse_exposed_relayer=False)
     env.update(PGHOST='127.0.0.1', PGPORT=str(config['port'] + 3), PGUSER='foundation',
                PGPASSWORD=config['password'], PGDATABASE=database)
     return run(['psql', '-X', '-v', 'ON_ERROR_STOP=1', '-Atq'], input=query, text=True,
@@ -901,7 +908,7 @@ DISPOSABLE_MARKER = 'foundation-dev-disposable'
 
 
 def postgres(config):
-    env = runtime_env(config)
+    env = runtime_env(config, refuse_exposed_relayer=False)
     data = STATE / 'postgres'
     disposable = os.environ.get('FOUNDATION_DEV_DISPOSABLE_POSTGRES') == '1'
     if not (data / 'PG_VERSION').exists():
@@ -966,7 +973,7 @@ TRADES_TABLES = ('shop.trades', 'shop.trade_assets', 'shop.trade_assets_erc20',
 
 
 def psql_env(config):
-    env = runtime_env(config)
+    env = runtime_env(config, refuse_exposed_relayer=False)
     env.update(PGHOST='127.0.0.1', PGPORT=str(config['port'] + 3), PGUSER='foundation',
                PGPASSWORD=config['password'], PGDATABASE='catalyst')
     return env
@@ -1172,8 +1179,9 @@ def stale_graph(config):
 def prepare_supervisor(postgres_only=False):
     """Write the process graph; returns the supervisor's `up` arguments and environment, or None if it runs."""
     config = settings(create=True)
-    # Here, before any process starts, so `up` fails with the reason rather than the API failing in its log.
-    refuse_an_exposed_relayer(config, relayer_key())
+    # Also here, for the installed service's supervisor, whose `up` already refused (see up).
+    if not postgres_only:
+        refuse_an_exposed_relayer(config)
     if supervisor_running():
         running = json.loads((STATE / 'process-compose.json').read_text())['processes']
         if not postgres_only and set(running) == {'postgres'}:
@@ -1251,7 +1259,8 @@ def service_stop():
 def service_install():
     # The service environment has no FOUNDATION_DEV_PORT or _PROFILE; apply them now.
     STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
-    settings(create=True)
+    # Before the unit is written and the running stack stopped: the service would only restart on the refusal.
+    refuse_an_exposed_relayer(settings(create=True))
     path = service_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     nix = shutil.which('nix')
@@ -1324,6 +1333,11 @@ def desktop():
 
 def up(postgres_only=False):
     STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Before either way of starting, so `up` fails with the reason: an installed service would otherwise
+    # restart its supervisor in a loop, and the API would fail only in its log. A first start has no settings
+    # yet; prepare_supervisor creates them and checks before it starts anything.
+    if not postgres_only and SETTINGS.exists():
+        refuse_an_exposed_relayer(settings())
     if service_file().exists():
         if postgres_only:
             raise RuntimeError('PostgreSQL-only runs require a checkout without an installed development service.')
@@ -1614,7 +1628,7 @@ def main():
                            ('FOUNDATION_DEV_DATABASE_URL', database_url(config)),
                            ('FOUNDATION_DEV_TEST_DATABASE_URL', database_url(config, 'postgres')),
                            ('FOUNDATION_DEV_STACK_PROFILE', config['profile']),
-                           ('FOUNDATION_DEV_PUBLIC_URL', runtime_env(config)['PUBLIC_URL'])):
+                           ('FOUNDATION_DEV_PUBLIC_URL', runtime_env(config, refuse_exposed_relayer=False)['PUBLIC_URL'])):
             print(f'{key}={shlex.quote(value)}')
     elif args.command == 'psql':
         os.execvpe('psql', ['psql', '-X'], psql_env(settings()))
