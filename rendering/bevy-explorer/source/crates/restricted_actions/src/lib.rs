@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod agent_commands;
 pub mod explorer_ui;
 mod map_pins;
@@ -215,7 +217,6 @@ fn cancel_active_move(
     commands.entity(entity).remove::<ActivePlayerMove>();
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn handle_player_move_requests(
     mut commands: Commands,
     mut events: EventReader<RpcCallEvent>,
@@ -357,8 +358,6 @@ pub fn handle_player_move_requests(
     }
 }
 
-#[allow(clippy::type_complexity)]
-#[allow(clippy::too_many_arguments)]
 fn apply_player_move(
     commands: &mut Commands,
     player_entity: Entity,
@@ -378,6 +377,10 @@ fn apply_player_move(
     teleport_events: &mut EventWriter<PlayerTeleported>,
     now: f64,
 ) {
+    #[allow(
+        clippy::unwrap_used,
+        reason = "PrimaryUser is a mandatory singleton; a missing player is an engine bug"
+    )]
     let (_, mut player_transform, mut dynamics, maybe_active) = player.single_mut().unwrap();
     if let Some(active) = maybe_active {
         cancel_active_move(
@@ -493,7 +496,6 @@ fn announce_returned_to_world(
     }
 }
 
-#[allow(clippy::type_complexity)]
 pub fn update_player_move(
     mut commands: Commands,
     mut player: Query<
@@ -627,6 +629,10 @@ pub fn move_camera(
 
         let (yaw, pitch, roll) = facing.to_euler(EulerRot::YXZ);
 
+        #[allow(
+            clippy::unwrap_used,
+            reason = "PrimaryCamera is a mandatory singleton; a missing camera is an engine bug"
+        )]
         let mut camera = camera.single_mut().unwrap();
         camera.yaw = yaw;
         camera.pitch = pitch;
@@ -891,7 +897,6 @@ fn resolve_portable_urn(urn: &str, realm_url: &str) -> Result<(String, String), 
 
 type SpawnResponseChannel = Option<RpcResultSender<Result<SpawnResponse, String>>>;
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn spawn_portable(
     mut commands: Commands,
     current_portables: Res<PortableScenes>,
@@ -1281,7 +1286,6 @@ fn list_portables(
     }
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn get_user_data(
     profile: Res<CurrentUserProfile>,
     others: Query<(&ForeignPlayer, &UserProfile)>,
@@ -1573,8 +1577,6 @@ fn event_player_disconnected(
     });
 }
 
-#[allow(clippy::type_complexity)]
-#[allow(clippy::too_many_arguments)]
 fn event_player_moved_scene(
     mut enter_senders: Local<HashMap<Entity, RpcEventSender>>,
     mut leave_senders: Local<HashMap<Entity, RpcEventSender>>,
@@ -1904,7 +1906,6 @@ fn show_nft_dialog(
     }
 }
 
-#[allow(clippy::type_complexity)]
 pub fn handle_eth_async(
     mut events: EventReader<RpcCallEvent>,
     scenes: Query<&RendererSceneContext>,
@@ -2073,7 +2074,6 @@ pub fn handle_copy_to_clipboard(
     }
 }
 
-#[allow(clippy::type_complexity)]
 pub fn handle_texture_size(
     mut events: EventReader<RpcCallEvent>,
     ipfas: IpfsAssetServer,
@@ -2165,7 +2165,6 @@ enum PortableAction {
     Kill,
 }
 
-#[allow(clippy::type_complexity)]
 #[derive(Resource, Default)]
 struct PendingPortableCommands(
     Vec<(
@@ -2367,7 +2366,6 @@ fn signed_fetch_is_guest(server: bool, profile: Option<&UserProfile>) -> Result<
         .ok_or_else(|| "no player identity!".to_owned())
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn handle_sign_request(
     mut events: EventReader<RpcCallEvent>,
     mut system_events: EventReader<SystemApi>,
@@ -2546,7 +2544,6 @@ fn reads_local_realm_origin(filename: &str, realm: &CurrentRealm) -> bool {
             .is_some_and(|(target, realm)| target.origin() == realm.origin())
 }
 
-#[allow(clippy::type_complexity)]
 fn handle_read_file(
     mut events: EventReader<RpcCallEvent>,
     mut tasks: Local<
@@ -2619,7 +2616,6 @@ fn handle_read_file(
     })
 }
 
-#[allow(clippy::type_complexity)]
 fn handle_entity_definition(
     mut events: EventReader<RpcCallEvent>,
     mut tasks: Local<
@@ -2660,7 +2656,6 @@ fn handle_entity_definition(
     })
 }
 
-#[allow(clippy::type_complexity)]
 pub fn process_startup_scenes(
     mut startup_scenes: ResMut<StartupScenes>,
     mut tasks: Local<Vec<(usize, Task<Result<(String, PortableSource), String>>)>>,

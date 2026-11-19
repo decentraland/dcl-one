@@ -908,6 +908,19 @@ pub async fn op_read_block_update_stream(
 }
 
 #[wasm_bindgen]
+pub async fn op_deploy_outfits(
+    state: &WorkerContext,
+    address: String,
+    outfits: JsValue,
+) -> Result<(), WasmError> {
+    let outfits = serde_wasm_bindgen::from_value(outfits)
+        .map_err(|e| WasmError::from(anyhow::anyhow!("deployOutfits: {e}")))?;
+    dcl_js::system_api::op_deploy_outfits(state.rc(), address, outfits)
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
 pub async fn op_get_portables_stream(state: &WorkerContext) -> u32 {
     dcl_js::system_api::op_get_portables_stream(state.rc()).await
 }

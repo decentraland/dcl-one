@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod plugin;
 #[cfg(test)]
 pub mod test;

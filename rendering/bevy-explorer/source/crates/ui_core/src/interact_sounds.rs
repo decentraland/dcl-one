@@ -31,7 +31,6 @@ enum InteractSound {
     Click,
 }
 
-#[allow(clippy::type_complexity)]
 fn play_interact_sounds(
     mut commands: Commands,
     q: Query<(

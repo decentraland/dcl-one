@@ -184,7 +184,6 @@ pub struct DmUserStateStream {
 /// Reports each subscribed recipient's DM state to the HUD: once on subscription and then
 /// whenever one of its inputs changed and the resolved state with it. Subscriptions end when
 /// the HUD drops its end.
-#[allow(clippy::too_many_arguments)]
 pub fn pipe_dm_user_state_to_scene(
     mut requests: EventReader<SystemApi>,
     mut streams: Local<Vec<DmUserStateStream>>,

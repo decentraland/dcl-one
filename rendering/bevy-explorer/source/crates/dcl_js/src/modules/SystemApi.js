@@ -121,6 +121,13 @@ module.exports.setAvatar = async function(avatar) {
     return await Deno.core.ops.op_set_avatar(avatar)
 }
 
+// signs and deploys the local player's catalyst `outfits` entity; refused when `address` is not
+// the signed-in account
+// outfits: { outfits: [{ slot, outfit: { bodyShape, eyes, hair, skin, wearables, forceRender } }], namesForExtraSlots }
+module.exports.deployOutfits = async function(address, outfits) {
+    return await Deno.core.ops.op_deploy_outfits(address, outfits)
+}
+
 // any user's full profile (own, nearby or remote), resolved through the engine's profile cache
 // and fetch cascade. Rejects if the address can't be resolved.
 // address: string => SerializedProfile

@@ -119,7 +119,6 @@ pub struct Playing;
 #[derive(Component)]
 pub struct RetryEmitter;
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn manage_audio_sources(
     mut commands: Commands,
     query: Query<
@@ -251,7 +250,6 @@ fn manage_audio_sources(
     }
 }
 
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
 fn play_system_audio(
     mut commands: Commands,
     mut events: EventReader<SystemAudio>,

@@ -94,7 +94,6 @@ pub struct SessionSignals {
 
 /// Fills [`FrameInputs`] from every source. Runs after `TimeSystem` and after the client window
 /// focus is copied in.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn collect_frame_inputs_system(
     mut inputs: ResMut<FrameInputs>,
     time: Res<Time<Real>>,
