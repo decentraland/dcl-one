@@ -71,6 +71,8 @@ impl CrdtStore {
         }
     }
 
+    /// Advances the timestamp for last-write-wins components. Grow-only components use
+    /// value-set semantics and always return zero, even when the payload is already retained.
     pub fn force_update(
         &mut self,
         component_id: SceneComponentId,
@@ -519,11 +521,14 @@ mod test {
             ),
             None,
         );
-        store.force_update(
-            component,
-            CrdtType::GO_ANY,
-            entity(1),
-            Some(&mut DclReader::new(b"event")),
+        assert_eq!(
+            store.force_update(
+                component,
+                CrdtType::GO_ANY,
+                entity(1),
+                Some(&mut DclReader::new(b"event")),
+            ),
+            SceneCrdtTimestamp(0),
         );
         assert_eq!(store.retained_data_bytes(), b"event".len());
         assert_eq!(store.take_updates().go[&component].0[&entity(1)].len(), 1);
@@ -592,6 +597,35 @@ mod test {
         assert_eq!(updates.go[&SceneComponentId(2)].0[&entity(1)].len(), 1);
         assert_eq!(updates.go[&SceneComponentId(1)].0[&entity(2)].len(), 1);
         assert_eq!(updates.retained_data_bytes(), 3 * b"event".len());
+    }
+
+    #[test]
+    fn filtered_grow_only_appends_remain_idempotent_across_scene_drains() {
+        let mut store = CrdtStore::default();
+        let mut sidecar = CrdtStore::default();
+        let mut context = CrdtContext::new(
+            crate::SceneId::DUMMY,
+            Default::default(),
+            Default::default(),
+            false,
+            false,
+            false,
+        );
+        let writers = CrdtComponentInterfaces::default();
+        let component = SceneComponentId(1);
+        for (payload, retained_bytes) in [(b"A", 1), (b"B", 2), (b"A", 2)] {
+            let frame = crate::crdt::append_component(&entity(1), &component, payload);
+            store.process_message_stream(
+                &mut context,
+                &writers,
+                &mut DclReader::new(&frame),
+                true,
+                Some(&mut sidecar),
+                None,
+            );
+            assert_eq!(store.take_updates().retained_data_bytes(), 0);
+            assert_eq!(sidecar.retained_data_bytes(), retained_bytes);
+        }
     }
 
     // retained_data_bytes must sum LWW last-write payloads and grow-only entries, and must
