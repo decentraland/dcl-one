@@ -126,6 +126,19 @@ describe('createWearablePreviewController', () => {
     await expect(screenshot).rejects.toThrow('not loaded')
   })
 
+  it('ignores an answer that does not come from the preview it asked', async () => {
+    render(<WearablePreview id="preview" />)
+    const posted = watchFrame()
+    const controller = createWearablePreviewController('preview')
+
+    const length = controller.emote.getLength()
+    const { id } = posted()[0].payload
+    fromFrame(PreviewMessageType.CONTROLLER_RESPONSE, { id, ok: true, result: 99 }, window)
+    fromFrame(PreviewMessageType.CONTROLLER_RESPONSE, { id, ok: true, result: 2.5 })
+
+    await expect(length).resolves.toBe(2.5)
+  })
+
   it('hands the emote events of its preview to whoever listens', () => {
     render(<WearablePreview id="preview" />)
     const controller = createWearablePreviewController('preview')

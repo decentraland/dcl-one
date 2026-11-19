@@ -6,7 +6,13 @@ import styles from './SubNav.module.css'
 
 // The Curation tab needs the visitor's session and the committee list. It loads once the page is idle, so the
 // tabs themselves cost a page nothing and are there from its first render.
-const CurationTab = lazy(() => import('./CurationTab').then(m => ({ default: m.CurationTab })))
+// A chunk that fails to load (a flaky network, a deploy that replaced it) only leaves the tab out.
+const CurationTab = lazy(() =>
+  import('./CurationTab').then(
+    m => ({ default: m.CurationTab }),
+    () => ({ default: () => null })
+  )
+)
 
 type Props = {
   /** On a page whose top bar overlays its content (the landing): the tabs take their place under it, on the section's violet field. */

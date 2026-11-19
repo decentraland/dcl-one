@@ -5,7 +5,13 @@ import type { WearablePreviewController } from './types'
 const REQUEST_TIMEOUT_MS = 10_000
 
 type EmoteEvents = WearablePreviewController['emote']['events']
-type Pending = { resolve: (value: unknown) => void; reject: (reason: Error) => void; timeout: ReturnType<typeof setTimeout> }
+type Pending = {
+  /** The preview window asked: only its answer settles the request. */
+  source: Window
+  resolve: (value: unknown) => void
+  reject: (reason: Error) => void
+  timeout: ReturnType<typeof setTimeout>
+}
 
 const pending = new Map<string, Pending>()
 const emoteEvents = new WeakMap<object, EmoteEvents>()
@@ -17,7 +23,7 @@ function onMessage(event: MessageEvent): void {
   if (!payload) return
   if (type === PreviewMessageType.CONTROLLER_RESPONSE) {
     const request = pending.get(String(payload.id))
-    if (!request) return
+    if (!request || event.source !== request.source) return
     pending.delete(String(payload.id))
     clearTimeout(request.timeout)
     if (payload.ok) request.resolve(payload.result)
@@ -48,7 +54,7 @@ export function createWearablePreviewController(id: string): WearablePreviewCont
         pending.delete(requestId)
         reject(new Error(`Request timeout for ${method}`))
       }, REQUEST_TIMEOUT_MS)
-      pending.set(requestId, { resolve: resolve as (value: unknown) => void, reject, timeout })
+      pending.set(requestId, { source: window, resolve: resolve as (value: unknown) => void, reject, timeout })
       sendMessage(window, PreviewMessageType.CONTROLLER_REQUEST, { id: requestId, namespace, method, params } as never)
     })
 

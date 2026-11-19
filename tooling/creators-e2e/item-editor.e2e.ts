@@ -45,6 +45,23 @@ const badgeStatus = (a: App, status: string) =>
   })
 
 describe('item editor', () => {
+  it('opens an item linked without its collection inside that collection', async () => {
+    app = await launchApp({ path: `/collections/editor?item=${hat.id}`, builder: { collections: [draft], items: [hat, polo] } })
+    await waitForEditor(app.page)
+    expect(new URL(app.page.url()).searchParams.get('collection')).toBe(draft.id)
+    expect(await app.page.$eval(byTestId('properties-panel-name'), el => (el as HTMLInputElement).value)).toBe(
+      'Red Bandana'
+    )
+  })
+
+  it('shows not found for an item link the server does not know', async () => {
+    app = await launchApp({
+      path: '/collections/editor?item=00000000-0000-4000-8000-000000000000',
+      builder: { collections: [draft], items: [hat] }
+    })
+    await waitForTestId(app.page, 'collection-not-found')
+  })
+
   it('saves name, category and hides, and keeps them after a reload', async () => {
     app = await openEditor(hat.id)
     const { page } = app

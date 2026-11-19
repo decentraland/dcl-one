@@ -96,9 +96,10 @@ export function redact(input: string): string {
 const CLIENT_ERROR_ENDPOINT = '/internal/client-error'
 const REPORT_BUDGET = 10
 const DEDUPE_MS = 60_000
-// The endpoint refuses bodies over 16 KB and clips to these lengths itself.
+// The endpoint refuses bodies over 16 KB and clips to these lengths itself (the message's for the url and agent).
 const MAX_MESSAGE = 2000
 const MAX_STACK = 8000
+const MAX_BODY_BYTES = 16 * 1024
 
 const lastReported = new Map<string, number>()
 let reported = 0
@@ -124,18 +125,25 @@ export function clientErrorForwarder(error: unknown, context: ErrorContext): voi
   if (reported >= REPORT_BUDGET || (last !== undefined && now - last < DEDUPE_MS)) return
   lastReported.set(`${name}:${message}`, now)
   reported += 1
+  const report = {
+    name,
+    message: message.slice(0, MAX_MESSAGE),
+    stack: redact(error instanceof Error ? (error.stack ?? '') : '').slice(0, MAX_STACK),
+    source: `creators:${typeof context.flow === 'string' ? context.flow : 'unknown'}`,
+    url: window.location.href.slice(0, MAX_MESSAGE),
+    ua: navigator.userAgent.slice(0, MAX_MESSAGE),
+    ts: new Date(now).toISOString()
+  }
+  // Escaping can still grow the body past the limit, so the stack gives way until it fits.
+  let body = JSON.stringify(report)
+  while (new TextEncoder().encode(body).length > MAX_BODY_BYTES && report.stack) {
+    report.stack = report.stack.slice(0, Math.floor(report.stack.length / 2))
+    body = JSON.stringify(report)
+  }
   void fetch(CLIENT_ERROR_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name,
-      message: message.slice(0, MAX_MESSAGE),
-      stack: redact(error instanceof Error ? (error.stack ?? '') : '').slice(0, MAX_STACK),
-      source: `creators:${typeof context.flow === 'string' ? context.flow : 'unknown'}`,
-      url: window.location.href,
-      ua: navigator.userAgent,
-      ts: new Date(now).toISOString()
-    }),
+    body,
     keepalive: true
   })
     .then(response => response.body?.cancel())
