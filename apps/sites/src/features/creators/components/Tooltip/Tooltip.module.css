@@ -8,8 +8,8 @@
   --tooltip-weight: 400;
   --tooltip-shadow: 0 8px 24px var(--color-overlay-strong);
 
-  z-index: var(--z-tooltip);
-  font-family: var(--font-sans);
+  z-index: var(--creators-z-tooltip);
+  font-family: var(--creators-font);
   line-height: 1.4;
   white-space: pre-line;
 }

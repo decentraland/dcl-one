@@ -3,7 +3,7 @@
   top: calc(var(--nav-h) + var(--sub-nav-h) + 8px);
   left: 50%;
   transform: translateX(-50%);
-  z-index: var(--z-prompt);
+  z-index: var(--creators-z-prompt);
   display: flex;
   flex-direction: column;
   align-items: center;

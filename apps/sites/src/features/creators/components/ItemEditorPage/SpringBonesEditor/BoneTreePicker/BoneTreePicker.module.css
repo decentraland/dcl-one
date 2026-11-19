@@ -73,7 +73,7 @@
 /* Portaled to <body> and positioned from the trigger's rect, so the editor's panels can't clip it. */
 .tree {
   position: fixed;
-  z-index: var(--z-tooltip);
+  z-index: var(--creators-z-tooltip);
   max-height: min(320px, calc(100vh - 16px));
   margin: 0;
   overflow: auto;

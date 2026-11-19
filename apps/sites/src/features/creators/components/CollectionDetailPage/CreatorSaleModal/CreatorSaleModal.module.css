@@ -12,7 +12,7 @@
   flex-direction: column;
   gap: 16px;
   color: var(--color-soft-white);
-  font-family: var(--font-sans);
+  font-family: var(--creators-font);
 
   /* It takes focus as a dialog does; the ring belongs to the controls inside it. */
   &:focus {
@@ -145,7 +145,7 @@
   border-radius: 20px;
   background: var(--color-glass);
   color: var(--color-white);
-  font-family: var(--font-sans);
+  font-family: var(--creators-font);
   font-weight: 600;
   font-size: 14px;
   letter-spacing: 0.46px;
@@ -217,7 +217,7 @@
     border: 0;
     outline: none;
     background: transparent;
-    font-family: var(--font-sans);
+    font-family: var(--creators-font);
     font-size: 15px;
     font-weight: 700;
     color: var(--color-white);
@@ -242,7 +242,7 @@
 
 .whenAnchor {
   position: fixed;
-  z-index: calc(var(--z-overlay) + 1);
+  z-index: calc(var(--creators-z-overlay) + 1);
   pointer-events: none;
 
   & > * {
@@ -264,7 +264,7 @@
   border-radius: 6px;
   background: transparent;
   color: var(--color-soft-white);
-  font-family: var(--font-sans);
+  font-family: var(--creators-font);
   font-size: 16px;
   font-weight: 600;
   line-height: 24px;
@@ -332,7 +332,7 @@
     border: 0;
     background: transparent;
     color: var(--color-soft-white);
-    font-family: var(--font-sans);
+    font-family: var(--creators-font);
     font-size: 16px;
     outline: 0;
   }

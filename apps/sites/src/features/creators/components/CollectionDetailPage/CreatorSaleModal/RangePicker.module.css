@@ -16,7 +16,7 @@
     z-index: 40;
   }
   & :global(.react-datepicker) {
-    font-family: var(--font-sans);
+    font-family: var(--creators-font);
     font-size: 13px;
     color: var(--color-text);
     background: var(--color-white);
@@ -134,7 +134,7 @@
       border-radius: 8px;
       background: var(--color-white);
       color: var(--color-text);
-      font-family: var(--font-sans);
+      font-family: var(--creators-font);
       font-size: 13px;
       font-weight: 600;
       cursor: pointer;
@@ -191,7 +191,7 @@
   border-radius: 8px;
   background: transparent;
   color: var(--color-accent);
-  font-family: var(--font-sans);
+  font-family: var(--creators-font);
   font-size: 13px;
   font-weight: 600;
   text-align: left;
@@ -224,7 +224,7 @@
   gap: 12px;
   padding: 10px 12px;
   border-top: 1px solid rgba(22, 21, 24, 0.1);
-  font-family: var(--font-sans);
+  font-family: var(--creators-font);
   font-size: 13px;
   color: var(--color-text);
 
@@ -245,7 +245,7 @@
   border: 1px solid rgba(22, 21, 24, 0.16);
   background: var(--color-white);
   color: var(--color-text);
-  font-family: var(--font-sans);
+  font-family: var(--creators-font);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;

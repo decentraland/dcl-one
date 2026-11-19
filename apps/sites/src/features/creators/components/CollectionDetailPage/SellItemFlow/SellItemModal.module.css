@@ -219,10 +219,10 @@
   }
 
   & :global(.react-datepicker-popper) {
-    z-index: var(--z-prompt);
+    z-index: var(--creators-z-prompt);
   }
   & :global(.react-datepicker) {
-    font-family: var(--font-sans);
+    font-family: var(--creators-font);
     font-size: 13px;
     color: var(--color-white);
     background: var(--color-modal-surface);
@@ -381,7 +381,7 @@
 
 .options {
   position: fixed;
-  z-index: var(--z-tooltip);
+  z-index: var(--creators-z-tooltip);
   max-height: 220px;
   margin: 0;
   padding: 4px;

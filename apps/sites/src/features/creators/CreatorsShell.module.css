@@ -17,7 +17,7 @@
     )
     fixed;
   color: var(--color-soft-white);
-  font-family: var(--font-sans);
+  font-family: var(--creators-font);
   -webkit-font-smoothing: antialiased;
 
   @media (min-width: 1024px) {
