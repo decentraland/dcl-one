@@ -199,6 +199,36 @@ async fn estate_membership_uses_only_the_configured_fresh_publication_on_the_cal
     db.drop().await;
 }
 
+#[tokio::test]
+async fn a_minted_estate_without_land_is_dissolved_once_the_index_answers() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    seed_rights(&db.pool).await;
+    sqlx::query("INSERT INTO land_authz.token_right (token_address, token_id, owner, updated_block, updated_log) VALUES ($1, 501, $2, 1, 7)")
+        .bind(ESTATE)
+        .bind(ALICE)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let state = state_over(db.pool.clone(), Settings::for_tests(), None);
+    assert_eq!(state.estate_is_dissolved("501").await, None, "unready");
+    sqlx::query("INSERT INTO land_authz.index_cursor (network,land_registry,estate_registry,last_block,folded_block,folded_at,full_replay_started) VALUES ($1,$2,$3,1,1,timezone('UTC',now()),true)")
+        .bind(NETWORK_MAINNET).bind(LAND).bind(ESTATE).execute(&db.pool).await.unwrap();
+    assert_eq!(state.estate_is_dissolved("501").await, Some(true));
+    assert_eq!(
+        state.estate_is_dissolved("500").await,
+        Some(false),
+        "holds LAND"
+    );
+    assert_eq!(
+        state.estate_is_dissolved("999").await,
+        Some(false),
+        "never minted"
+    );
+    db.drop().await;
+}
+
 async fn job_ctx() -> (Jobs, JobContext) {
     let jobs = Jobs::new();
     let (tx, rx) = tokio::sync::oneshot::channel();

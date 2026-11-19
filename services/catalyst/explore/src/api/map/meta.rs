@@ -8,7 +8,9 @@
 //! estate membership come from the mirrored tile grid (upstream fills a
 //! tile's `name` and `tokenId` from the same LAND data), the token id is
 //! derived from the coordinates when the grid carries none, and the
-//! description is empty (the grid has no description column). The district
+//! description is empty (the grid has no description column). An estate the
+//! grid does not hold answers from the LAND index when that index proves it
+//! minted and holding no LAND (a dissolved estate, size 0, empty name). The district
 //! and contribution documents are upstream's vendored data at the revision
 //! production still serves (42 districts, 1,695 contributing addresses; the
 //! old crate and atlas-server `8b2c3620`, #142, ship them as `[]`/`{}` while
@@ -251,14 +253,38 @@ pub(crate) fn estate_nft(state: &Shared, grid: &Grid, id: &str) -> Option<NftMet
         .filter_map(|t| t.name.clone())
         .find(|n| !n.is_empty())
         .unwrap_or_default();
+    Some(estate_document(state, id, name, &coords))
+}
+
+/// An estate the LAND index proves minted and empty (the atlas's dissolved
+/// estate): size 0, no proximity. The index keeps no estate data, so the
+/// name and description are empty.
+pub(crate) fn dissolved_estate_nft(state: &Shared, id: &str) -> NftMetadata {
+    estate_document(state, id, String::new(), &[])
+}
+
+/// A grid estate, else a dissolved one from the LAND index (none attached
+/// or not ready: not found).
+async fn estate_or_dissolved(state: &Shared, grid: &Grid, id: &str) -> Option<NftMetadata> {
+    if let Some(nft) = estate_nft(state, grid, id) {
+        return Some(nft);
+    }
+    let land = state.land_authz.get()?;
+    land.estate_is_dissolved(id)
+        .await
+        .unwrap_or(false)
+        .then(|| dissolved_estate_nft(state, id))
+}
+
+fn estate_document(state: &Shared, id: &str, name: String, coords: &[(i32, i32)]) -> NftMetadata {
     let mut attributes = vec![NftAttribute {
         trait_type: "Size".into(),
         value: coords.len() as i64,
         display_type: "number".into(),
     }];
-    append_proximity(&mut attributes, &coords);
+    append_proximity(&mut attributes, coords);
     let s = &state.settings;
-    Some(NftMetadata {
+    NftMetadata {
         id: id.to_string(),
         name,
         description: String::new(),
@@ -272,7 +298,7 @@ pub(crate) fn estate_nft(state: &Shared, grid: &Grid, id: &str) -> Option<NftMet
             .map(|b| format!("{b}/contracts/{}/tokens/{id}", s.estate_contract_address)),
         background_color: "000000".into(),
         attributes,
-    })
+    }
 }
 
 fn with_grid(state: &Shared, headers: &HeaderMap, f: impl FnOnce(&Grid) -> Response) -> Response {
@@ -313,15 +339,26 @@ pub async fn get_estate(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Response {
-    with_grid(&state, &headers, |grid| {
-        if id.parse::<i64>().is_err() {
-            return (StatusCode::FORBIDDEN, "Invalid id").into_response();
-        }
-        match estate_nft(&state, grid, &id) {
-            Some(nft) => ok_nft(nft),
-            None => not_found(),
-        }
-    })
+    let last = state.map.last_updated_at();
+    if let Some(r) = http_cache::not_modified(
+        &headers,
+        last,
+        http_cache::DEFAULT_MAX_AGE,
+        http_cache::DEFAULT_SWR,
+    ) {
+        return r;
+    }
+    let Some(grid) = state.map.snapshot() else {
+        return finalize(not_ready(), last);
+    };
+    if id.parse::<i64>().is_err() {
+        return finalize((StatusCode::FORBIDDEN, "Invalid id").into_response(), last);
+    }
+    let resp = match estate_or_dissolved(&state, &grid, &id).await {
+        Some(nft) => ok_nft(nft),
+        None => not_found(),
+    };
+    finalize(resp, last)
 }
 
 /// A LAND token answers its parcel (immutable: the coordinates are the
@@ -363,7 +400,8 @@ pub async fn get_token(
     }
     if addr == state.settings.estate_contract_address && id.parse::<i64>().is_ok() {
         return finalize(
-            estate_nft(&state, &grid, &id)
+            estate_or_dissolved(&state, &grid, &id)
+                .await
                 .map(ok_nft)
                 .unwrap_or_else(not_found),
             last,
@@ -572,6 +610,133 @@ mod tests {
             json!([]),
             "the contributions capture's address has no rows"
         );
+    }
+
+    fn grid_with_estate(id: &str) -> Grid {
+        let tile: super::super::tiles::Tile = serde_json::from_value(json!({
+            "id": "1,1", "x": 1, "y": 1, "type": "owned", "top": false, "left": false,
+            "topLeft": false, "updatedAt": 0, "estateId": id, "name": "Kept"
+        }))
+        .unwrap();
+        Grid::from_tiles(
+            [("1,1".to_string(), tile)].into(),
+            1,
+            None,
+            chrono::Utc::now().naive_utc(),
+        )
+    }
+
+    async fn estate_and_token(state: &Shared, id: &str) -> [(StatusCode, Value); 2] {
+        let body = |resp: Response| async move {
+            let status = resp.status();
+            let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            (
+                status,
+                serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+            )
+        };
+        let estate = get_estate(State(state.clone()), HeaderMap::new(), Path(id.into())).await;
+        let token = get_token(
+            State(state.clone()),
+            HeaderMap::new(),
+            Path((
+                state.settings.estate_contract_address.to_uppercase(),
+                id.into(),
+            )),
+        )
+        .await;
+        [body(estate).await, body(token).await]
+    }
+
+    /// Without a LAND index an estate the grid does not hold stays 404 on
+    /// both routes; one it holds answers 200.
+    #[tokio::test]
+    async fn an_estate_outside_the_grid_is_not_found_without_the_land_index() {
+        let state = crate::api::tests_support::state_without_db().await;
+        state.map.set(grid_with_estate("500"));
+        for (status, body) in estate_and_token(&state, "501").await {
+            assert_eq!(status, StatusCode::NOT_FOUND);
+            assert_eq!(body, json!({"ok": false, "error": "Not Found"}));
+        }
+        for (status, body) in estate_and_token(&state, "500").await {
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["name"], "Kept");
+            assert_eq!(body["attributes"][0]["value"], 1);
+        }
+    }
+
+    /// atlas-server `handlers.ts` `estateRequestHandler`/`tokenRequestHandler`
+    /// and `buildDissolvedEstate`: an estate the grid does not hold answers
+    /// 200 when the LAND index proves it minted and empty; never minted,
+    /// still holding LAND, or an unready index answers 404.
+    #[tokio::test]
+    async fn a_dissolved_estate_answers_from_the_land_index() {
+        let Some(db) = crate::api::tests_support::scratch_database().await else {
+            return;
+        };
+        let mut settings = crate::api::Settings::for_tests(crate::api::Sources::defaults());
+        settings.map_image_base_url = "https://img.example/v2".into();
+        settings.map_external_base_url = Some("https://market.example".into());
+        let state = crate::api::tests::node_on_pool_state(settings, db.pool.clone()).await;
+        state.map.set(grid_with_estate("500"));
+        let land_settings = crate::land_authz::Settings::for_tests();
+        let estate = land_settings.estate_registry.clone();
+        sqlx::query(
+            "INSERT INTO land_authz.token_right (token_address, token_id, updated_block, updated_log) \
+             VALUES ($1, 501, 1, 0), ($1, 502, 1, 1)",
+        )
+        .bind(&estate)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) \
+             VALUES (7, 502, 1, 2)",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        assert!(state.attach_land_authz(std::sync::Arc::new(
+            crate::land_authz::LandAuthzState::new(
+                db.pool.clone(),
+                crate::http::Outbound::for_tests(),
+                land_settings.clone(),
+                None,
+            )
+        )));
+        for (status, _) in estate_and_token(&state, "501").await {
+            assert_eq!(status, StatusCode::NOT_FOUND, "the index is not ready");
+        }
+        sqlx::query("INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) VALUES ($1, $2, $3, 1, 1, timezone('UTC', now()), true)")
+            .bind(&land_settings.network)
+            .bind(&land_settings.land_registry)
+            .bind(&estate)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        for (status, body) in estate_and_token(&state, "501").await {
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(
+                body,
+                json!({
+                    "id": "501",
+                    "name": "",
+                    "description": "",
+                    "image": "https://img.example/v2/estates/501/map.png?size=24&width=1024&height=1024",
+                    "external_url": format!("https://market.example/contracts/{estate}/tokens/501"),
+                    "background_color": "000000",
+                    "attributes": [{"trait_type": "Size", "value": 0, "display_type": "number"}],
+                })
+            );
+        }
+        for id in ["502", "999"] {
+            for (status, _) in estate_and_token(&state, id).await {
+                assert_eq!(status, StatusCode::NOT_FOUND, "{id}");
+            }
+        }
+        db.teardown().await;
     }
 
     /// The wire shape the old parity test pinned (`fixtures/nft_parcel.json`).

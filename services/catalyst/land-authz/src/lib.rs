@@ -410,6 +410,26 @@ impl LandAuthzState {
         Ok(answer.map(|(estate_id,)| EstateMembership { estate_id }))
     }
 
+    /// Whether the Estate token `estate_id` (decimal) was minted by the
+    /// configured Estate registry and holds no LAND now: a dissolved estate,
+    /// the atlas's `searchEstateSize: 0` lookup. `None` when the index may
+    /// not answer; a database error reads as not ready.
+    pub async fn estate_is_dissolved(&self, estate_id: &str) -> Option<bool> {
+        let mut snapshot = self.ready_snapshot().await?;
+        sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM land_authz.token_right e \
+                             WHERE e.token_address = $1 AND e.token_id = $2::numeric) \
+                AND NOT EXISTS (SELECT 1 FROM land_authz.estate_land el \
+                                 WHERE el.estate_token_id = $2::numeric)",
+        )
+        .bind(&self.settings.estate_registry)
+        .bind(estate_id)
+        .fetch_one(&mut *snapshot.tx)
+        .await
+        .inspect_err(|e| tracing::warn!(error = %e, "land-authz: dissolved-estate lookup failed"))
+        .ok()
+    }
+
     /// The marketplace reader, when one with a subgraph URL is attached.
     fn fallback_reader(&self) -> Option<&Arc<ChainIndex>> {
         self.market

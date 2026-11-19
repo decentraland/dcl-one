@@ -327,6 +327,15 @@ pub async fn estate_map_png(
     Path(estate_id): Path<String>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
+    // An estate the grid holds no parcel of (dissolved, or never minted)
+    // redirects to the dissolved-estate image before any conditional check,
+    // as the atlas does; no grid falls through to the render path's 503.
+    if let Some(grid) = state.map.snapshot()
+        && select_estate_coords(&grid, &estate_id).is_empty()
+    {
+        return dissolved_estate_redirect(&state.settings.map_dissolved_estate_image_url);
+    }
+    let dissolved = state.settings.map_dissolved_estate_image_url.clone();
     let p = extract_params(&q);
     let key = format!(
         "estate:{estate_id}:{}:{}",
@@ -342,7 +351,8 @@ pub async fn estate_map_png(
         move |grid| {
             let selected = select_estate_coords(grid, &estate_id);
             if selected.is_empty() {
-                return Err(Box::new(StatusCode::NOT_FOUND.into_response()));
+                // the grid swapped since the check above
+                return Err(Box::new(dissolved_estate_redirect(&dissolved)));
             }
             let mut xs: Vec<i32> = selected.iter().map(|c| c.x).collect();
             let mut ys: Vec<i32> = selected.iter().map(|c| c.y).collect();
@@ -356,6 +366,20 @@ pub async fn estate_map_png(
         },
     )
     .await
+}
+
+/// The atlas's redirect cache policy (`image-http-cache.ts`).
+const REDIRECT_CACHE_CONTROL: &str = "max-age=60, s-maxage=60, public";
+
+fn dissolved_estate_redirect(location: &str) -> Response {
+    (
+        StatusCode::FOUND,
+        [
+            (header::LOCATION, location),
+            (header::CACHE_CONTROL, REDIRECT_CACHE_CONTROL),
+        ],
+    )
+        .into_response()
 }
 
 pub async fn minimap_png(State(state): State<Shared>, headers: HeaderMap) -> Response {
@@ -623,5 +647,57 @@ mod tests {
             .await;
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
         assert_ne!(missing.headers()[header::CACHE_CONTROL], "no-store");
+    }
+
+    /// atlas-server `handlers.ts` `toPngErrorResponse`: an estate with no
+    /// tiles (dissolved, or never minted) answers 302 to the dissolved-estate
+    /// image, even to a conditional request; no grid stays 503.
+    #[tokio::test]
+    async fn an_estate_without_tiles_redirects_to_the_dissolved_estate_image() {
+        let state = crate::api::tests_support::state_without_db().await;
+        let call = |id: &str, headers: HeaderMap| {
+            estate_map_png(
+                State(state.clone()),
+                headers,
+                Path(id.to_string()),
+                Query(HashMap::new()),
+            )
+        };
+        let unready = call("500", HeaderMap::new()).await;
+        assert_eq!(unready.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let mut tiles = HashMap::new();
+        let t = tile(1, 1, Some("500"), true);
+        tiles.insert(t.id.clone(), t);
+        state.map.set(Grid::from_tiles(
+            tiles,
+            1,
+            None,
+            chrono::Utc::now().naive_utc(),
+        ));
+        let mut conditional = HeaderMap::new();
+        conditional.insert(header::IF_NONE_MATCH, "*".parse().unwrap());
+        for (id, headers) in [
+            ("501", HeaderMap::new()),
+            ("99999999", HeaderMap::new()),
+            ("501", conditional),
+        ] {
+            let resp = call(id, headers).await;
+            assert_eq!(resp.status(), StatusCode::FOUND, "{id}");
+            assert_eq!(
+                resp.headers()[header::LOCATION],
+                state.settings.map_dissolved_estate_image_url.as_str()
+            );
+            assert_eq!(
+                resp.headers()[header::CACHE_CONTROL],
+                "max-age=60, s-maxage=60, public"
+            );
+        }
+        let live = call("500", HeaderMap::new()).await;
+        assert_eq!(
+            live.status(),
+            StatusCode::OK,
+            "an estate with tiles renders"
+        );
     }
 }
