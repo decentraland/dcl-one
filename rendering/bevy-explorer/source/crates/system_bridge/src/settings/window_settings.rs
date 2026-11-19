@@ -151,9 +151,7 @@ impl AppSetting for FullscreenResSetting {
     }
 
     fn apply(&self, mut window: SystemParamItem<Self::Param>, _: Commands) {
-        let Ok(mut window) = window.single_mut() else {
-            return;
-        };
+        let mut window = window.single_mut().unwrap();
         window.resolution = WindowResolution::new(self.0.x as f32, self.0.y as f32);
     }
 }
