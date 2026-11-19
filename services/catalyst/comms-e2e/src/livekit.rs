@@ -423,17 +423,18 @@ impl LiveKitJoin {
         self.shared.view.lock().clone()
     }
 
-    /// For a probe: ok while the client is connected. Its being disconnected is a fatal reason
-    /// naming how LiveKit ended it, so the wait that asked stops at once.
+    /// For a probe: ok while the client is connected and running. Its being disconnected or its
+    /// process having exited is a fatal reason, so the wait that asked stops at once. An exit
+    /// counts even when no line said the client disconnected.
     pub fn alive(&self) -> Result<(), String> {
         let view = self.view();
-        if view.connected {
-            return Ok(());
-        }
         match (&view.disconnect_reason, view.exited) {
-            (Some(reason), _) => Err(format!("fatal: the client was disconnected: {reason}")),
-            (None, Some(code)) => Err(format!("fatal: the client exited with code {code}")),
-            (None, None) => Err("fatal: the client is not connected".to_owned()),
+            (Some(reason), _) if !view.connected => {
+                Err(format!("fatal: the client was disconnected: {reason}"))
+            }
+            (_, Some(code)) => Err(format!("fatal: the client exited with code {code}")),
+            _ if view.connected => Ok(()),
+            _ => Err("fatal: the client is not connected".to_owned()),
         }
     }
 
@@ -1090,6 +1091,39 @@ mod tests {
         assert_eq!(ctx.timeline().count("kept", "connected"), 1);
         join.leave().await.unwrap();
         assert!(join.view().exited.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_client_that_exits_after_it_connected_is_not_alive() {
+        let ctx = ctx();
+        // connected, then gone a second later without a `disconnected` line
+        let command = if cfg!(windows) {
+            stand_in(&format!(
+                "echo {CONNECTED} & ping -n 2 127.0.0.1 > nul & exit 4"
+            ))
+        } else {
+            stand_in(&format!("echo '{CONNECTED}'; sleep 1; exit 4"))
+        };
+        let join = LiveKitJoin::start_command(&ctx, "crashing", command, Duration::from_secs(10))
+            .await
+            .unwrap();
+        expect_or(
+            &ctx,
+            "the client has exited",
+            Duration::from_secs(10),
+            || {
+                join.view()
+                    .exited
+                    .map(|_| ())
+                    .ok_or_else(|| "still running".to_owned())
+            },
+        )
+        .await
+        .unwrap();
+        assert!(join.view().connected, "no line said it disconnected");
+        let reason = join.alive().unwrap_err();
+        assert!(reason.contains("exited with code 4"), "{reason}");
+        assert!(reason.starts_with("fatal:"), "{reason}");
     }
 
     #[tokio::test]
