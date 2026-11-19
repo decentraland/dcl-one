@@ -2,19 +2,253 @@
 //! the stack sees one flow per actor and counts its per-address limits as it would without the
 //! link.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use futures::future::BoxFuture;
 use parking_lot::Mutex;
 use tokio::net::UdpSocket;
+use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 
-use super::{Direction, Fault, Shared, ending};
+use super::{Direction, Fate, Fault, Faults, Shared, ending};
 
 const MAX_DATAGRAM: usize = 65_535;
+
+/// Sends one packet on, to where the packet was going.
+type Sender = Arc<dyn Fn(Vec<u8>) -> BoxFuture<'static, ()> + Send + Sync>;
+
+/// A packet a `Queue` keeps, and the way it goes on.
+pub(crate) struct Queued {
+    packet: Vec<u8>,
+    send: Sender,
+}
+
+/// A packet that waits in a line until it is due.
+struct Due {
+    at: Instant,
+    packet: Vec<u8>,
+    send: Sender,
+}
+
+/// The two directions' lines: each sends its packets in the order they joined it, each once it is
+/// due, so a packet due earlier waits for the one before it.
+pub(crate) struct Lines {
+    up: mpsc::UnboundedSender<Due>,
+    down: mpsc::UnboundedSender<Due>,
+}
+
+fn queue_of(faults: &mut Faults, direction: Direction) -> &mut VecDeque<Queued> {
+    match direction {
+        Direction::Uplink => &mut faults.up_queue,
+        _ => &mut faults.down_queue,
+    }
+}
+
+fn fault_of(faults: &Faults, direction: Direction) -> Fault {
+    match direction {
+        Direction::Uplink => faults.up,
+        _ => faults.down,
+    }
+}
+
+/// What a fault does with one packet.
+enum Action {
+    Now,
+    Twice,
+    /// After a wait of its own: it may overtake others (`Delay`, `Reorder`).
+    Alone(Instant),
+    /// In the line, once due: it never overtakes (`Link`).
+    InLine(Instant),
+    Lose,
+}
+
+impl Action {
+    fn fate(&self) -> Fate {
+        match self {
+            Action::Now | Action::Twice => Fate::Passed,
+            Action::Alone(_) | Action::InLine(_) => Fate::Delayed,
+            Action::Lose => Fate::Lost,
+        }
+    }
+}
+
+/// What `fault` does with the next packet of `direction`, drawing from the direction's generator.
+/// A `Queue` is dealt with before this is asked.
+fn decide(shared: &Shared, direction: Direction, fault: Fault) -> Action {
+    let now = Instant::now();
+    match fault {
+        Fault::Pass => Action::Now,
+        Fault::Stall | Fault::Queue { .. } => Action::Lose,
+        Fault::Drop { share } => {
+            if shared.chance(direction) < share {
+                Action::Lose
+            } else {
+                Action::Now
+            }
+        }
+        Fault::Delay { by } => Action::Alone(now + by),
+        Fault::Reorder { window } => Action::Alone(now + shared.gap(direction, window)),
+        Fault::Duplicate => Action::Twice,
+        Fault::Link {
+            delay,
+            jitter,
+            loss,
+        } => {
+            if loss > 0.0 && shared.chance(direction) < loss {
+                return Action::Lose;
+            }
+            let extra = if jitter.is_zero() {
+                Duration::ZERO
+            } else {
+                shared.gap(direction, jitter)
+            };
+            let wait = delay + extra;
+            if wait.is_zero() {
+                Action::Now
+            } else {
+                Action::InLine(now + wait)
+            }
+        }
+    }
+}
+
+/// Puts a packet in the line of `direction`, to go at `at`.
+fn join_line(shared: &Shared, direction: Direction, at: Instant, packet: Vec<u8>, send: Sender) {
+    let lines = shared.lines.lock();
+    let Some(lines) = lines.as_ref() else {
+        // the link is gone
+        return;
+    };
+    let line = match direction {
+        Direction::Uplink => &lines.up,
+        _ => &lines.down,
+    };
+    shared.waiting(direction).fetch_add(1, Ordering::SeqCst);
+    if line.send(Due { at, packet, send }).is_err() {
+        shared.waiting(direction).fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Sends the packets of one direction's line, each once it is due, in order.
+async fn line(
+    shared: Arc<Shared>,
+    direction: Direction,
+    mut packets: mpsc::UnboundedReceiver<Due>,
+) {
+    while let Some(due) = packets.recv().await {
+        // what waits is dropped with the link, sockets and all
+        if !shared.sleep_until_unless_closed(due.at).await {
+            return;
+        }
+        (due.send)(due.packet).await;
+        shared.waiting(direction).fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+fn start_lines(shared: &Arc<Shared>) -> Vec<AbortHandle> {
+    let (up, up_packets) = mpsc::unbounded_channel();
+    let (down, down_packets) = mpsc::unbounded_channel();
+    *shared.lines.lock() = Some(Lines { up, down });
+    vec![
+        tokio::spawn(line(shared.clone(), Direction::Uplink, up_packets)).abort_handle(),
+        tokio::spawn(line(shared.clone(), Direction::Downlink, down_packets)).abort_handle(),
+    ]
+}
+
+/// Sends a packet that may go at once: straight away, or behind the packets that wait in the
+/// line, so it does not overtake them.
+async fn go(shared: &Arc<Shared>, direction: Direction, packet: Vec<u8>, send: Sender) {
+    if shared.waiting(direction).load(Ordering::SeqCst) > 0 {
+        join_line(shared, direction, Instant::now(), packet, send);
+    } else {
+        send(packet).await;
+    }
+}
+
+/// Carries out what a fault decided for one packet.
+async fn act(
+    shared: &Arc<Shared>,
+    direction: Direction,
+    action: Action,
+    packet: Vec<u8>,
+    send: Sender,
+) {
+    match action {
+        Action::Now => go(shared, direction, packet, send).await,
+        Action::Twice => {
+            go(shared, direction, packet.clone(), send.clone()).await;
+            go(shared, direction, packet, send).await;
+        }
+        // A held packet lives no longer than the link: the task that holds it also holds the
+        // listen socket, which must be free when the link is dropped, whatever the delay.
+        Action::Alone(at) => {
+            shared.delayed.fetch_add(1, Ordering::Relaxed);
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                if shared.sleep_until_unless_closed(at).await {
+                    send(packet).await;
+                }
+            });
+        }
+        Action::InLine(at) => {
+            shared.delayed.fetch_add(1, Ordering::Relaxed);
+            join_line(shared, direction, at, packet, send);
+        }
+        Action::Lose => {
+            shared.dropped.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+/// The fault of `direction` was just set: if it is no longer a queue, what the queue kept goes on
+/// through it, in the order it came, ahead of anything that arrives later. Called with the faults
+/// locked, so no packet slips between. The number of packets released.
+pub(super) fn release(shared: &Arc<Shared>, faults: &mut Faults, direction: Direction) -> usize {
+    let fault = fault_of(faults, direction);
+    if matches!(fault, Fault::Queue { .. }) {
+        return 0;
+    }
+    let kept: Vec<Queued> = queue_of(faults, direction).drain(..).collect();
+    let count = kept.len();
+    shared.released.fetch_add(count as u64, Ordering::Relaxed);
+    for Queued { packet, send } in kept {
+        match decide(shared, direction, fault) {
+            Action::Now => join_line(shared, direction, Instant::now(), packet, send),
+            Action::Twice => {
+                join_line(
+                    shared,
+                    direction,
+                    Instant::now(),
+                    packet.clone(),
+                    send.clone(),
+                );
+                join_line(shared, direction, Instant::now(), packet, send);
+            }
+            Action::Alone(at) => {
+                shared.delayed.fetch_add(1, Ordering::Relaxed);
+                let shared = shared.clone();
+                tokio::spawn(async move {
+                    if shared.sleep_until_unless_closed(at).await {
+                        send(packet).await;
+                    }
+                });
+            }
+            Action::InLine(at) => {
+                shared.delayed.fetch_add(1, Ordering::Relaxed);
+                join_line(shared, direction, at, packet, send);
+            }
+            Action::Lose => {
+                shared.dropped.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+    count
+}
 
 struct Flow {
     upstream: Arc<UdpSocket>,
@@ -58,8 +292,9 @@ pub(super) async fn start(
             .with_context(|| format!("the fault link cannot listen on UDP {listen}"))?,
     );
     let listen = socket.local_addr()?;
-    let task = tokio::spawn(relay(shared, socket, listen, upstream));
-    Ok((listen, vec![task.abort_handle()]))
+    let mut tasks = start_lines(&shared);
+    tasks.push(tokio::spawn(relay(shared, socket, listen, upstream)).abort_handle());
+    Ok((listen, tasks))
 }
 
 async fn relay(
@@ -233,49 +468,37 @@ async fn downlink(
     }
 }
 
-/// Applies the direction's fault to one packet and sends what survives.
+/// Notes one packet in the history, then applies the direction's fault to it and sends it on if
+/// the fault lets it.
 async fn forward<F, Fut>(shared: &Arc<Shared>, direction: Direction, packet: Vec<u8>, send: F)
 where
-    F: Fn(Vec<u8>) -> Fut + Send + 'static,
+    F: Fn(Vec<u8>) -> Fut + Send + Sync + 'static,
     Fut: std::future::Future<Output = ()> + Send + 'static,
 {
-    shared.count(direction, packet.len());
-    match shared.fault(direction) {
-        Fault::Pass => send(packet).await,
-        Fault::Stall => {
-            shared.dropped.fetch_add(1, Ordering::Relaxed);
-        }
-        Fault::Drop { share } => {
-            if shared.chance(direction) < share {
-                shared.dropped.fetch_add(1, Ordering::Relaxed);
+    let at = shared.started.elapsed();
+    let bytes = packet.len();
+    shared.count(direction, bytes);
+    let send: Sender = Arc::new(move |packet| Box::pin(send(packet)));
+    let action = {
+        let mut faults = shared.faults.lock();
+        if let Fault::Queue { limit } = fault_of(&faults, direction) {
+            let queue = queue_of(&mut faults, direction);
+            let fate = if queue.len() < limit {
+                queue.push_back(Queued { packet, send });
+                shared.queued.fetch_add(1, Ordering::Relaxed);
+                Fate::Queued
             } else {
-                send(packet).await;
-            }
+                shared.dropped.fetch_add(1, Ordering::Relaxed);
+                Fate::Lost
+            };
+            drop(faults);
+            shared.note(direction, at, bytes, fate);
+            return;
         }
-        // A held packet lives no longer than the link: the task that holds it also holds the
-        // listen socket, which must be free when the link is dropped, whatever the delay.
-        Fault::Delay { by } => {
-            let shared = shared.clone();
-            tokio::spawn(async move {
-                if shared.sleep_unless_closed(by).await {
-                    send(packet).await;
-                }
-            });
-        }
-        Fault::Reorder { window } => {
-            let wait = shared.gap(direction, window);
-            let shared = shared.clone();
-            tokio::spawn(async move {
-                if shared.sleep_unless_closed(wait).await {
-                    send(packet).await;
-                }
-            });
-        }
-        Fault::Duplicate => {
-            send(packet.clone()).await;
-            send(packet).await;
-        }
-    }
+        decide(shared, direction, fault_of(&faults, direction))
+    };
+    shared.note(direction, at, bytes, action.fate());
+    act(shared, direction, action, packet, send).await;
 }
 
 #[cfg(test)]

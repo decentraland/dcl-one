@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use catalyst_comms_e2e::engine::{Ctx, expect_or};
-use catalyst_comms_e2e::fault::{Direction, Fault, FaultLink};
+use catalyst_comms_e2e::fault::{Direction, Fate, Fault, FaultLink, windows};
 use catalyst_comms_e2e::pulse::{ConnectOptions, HandshakeOptions, HandshakeOutcome, PulseBot};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
@@ -868,4 +868,324 @@ async fn a_dropped_link_frees_its_port_for_the_next_one() {
         drop(udp);
         drop(tcp);
     }
+}
+
+fn ms(value: u64) -> Duration {
+    Duration::from_millis(value)
+}
+
+/// The byte an echo of a one-byte datagram carries after `echo:`.
+fn echoed_byte(echo: &[u8]) -> u8 {
+    echo[5]
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_link_delays_each_way_and_its_jitter_never_reorders() {
+    let ctx = ctx("udp-link");
+    let (server, _seen) = udp_echo().await;
+    let link = FaultLink::udp(&ctx, "link", ANY.parse().unwrap(), server)
+        .await
+        .unwrap();
+    let client = udp_client(&link).await;
+
+    link.set(
+        Direction::Both,
+        Fault::Link {
+            delay: ms(100),
+            jitter: Duration::ZERO,
+            loss: 0.0,
+        },
+    );
+    let started = std::time::Instant::now();
+    client.send(b"slow").await.unwrap();
+    assert_eq!(
+        receive(&client, SOON).await.as_deref(),
+        Some(&b"echo:slow"[..])
+    );
+    let took = started.elapsed();
+    assert!(
+        took >= ms(195) && took < ms(1000),
+        "a round trip took {took:?}"
+    );
+
+    // jitter: each packet waits 20 to 100 ms each way, and none overtakes the one before it
+    link.set(
+        Direction::Both,
+        Fault::Link {
+            delay: ms(20),
+            jitter: ms(80),
+            loss: 0.0,
+        },
+    );
+    for index in 0..30u8 {
+        client.send(&[index]).await.unwrap();
+        tokio::time::sleep(ms(2)).await;
+    }
+    let mut back = Vec::new();
+    while back.len() < 30 {
+        let echo = receive(&client, SOON)
+            .await
+            .expect("every packet comes back");
+        back.push(echoed_byte(&echo));
+    }
+    assert_eq!(
+        back,
+        (0..30).collect::<Vec<u8>>(),
+        "a packet overtook another"
+    );
+
+    // spaced out so no packet waits behind another: the round trips spread over the window
+    let mut round_trips = Vec::new();
+    for index in 0..8u8 {
+        let started = std::time::Instant::now();
+        client.send(&[index]).await.unwrap();
+        receive(&client, SOON).await.expect("it comes back");
+        round_trips.push(started.elapsed());
+    }
+    let (shortest, longest) = (
+        *round_trips.iter().min().unwrap(),
+        *round_trips.iter().max().unwrap(),
+    );
+    assert!(shortest >= ms(38), "{round_trips:?}");
+    assert!(longest < ms(400), "{round_trips:?}");
+    assert!(
+        longest - shortest >= ms(15),
+        "the jitter did not spread the round trips: {round_trips:?}"
+    );
+    let counters = link.counters();
+    assert_eq!(counters.delayed, 2 + 2 * 30 + 2 * 8);
+    assert_eq!(counters.dropped, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_lossy_link_loses_its_share_and_the_same_packets_for_the_same_seed() {
+    let mut runs = Vec::new();
+    for _ in 0..2 {
+        let ctx = ctx("udp-loss");
+        let (server, _seen) = udp_echo().await;
+        let link = FaultLink::udp(&ctx, "link", ANY.parse().unwrap(), server)
+            .await
+            .unwrap();
+        let client = udp_client(&link).await;
+        link.set(
+            Direction::Uplink,
+            Fault::Link {
+                delay: Duration::ZERO,
+                jitter: Duration::ZERO,
+                loss: 0.3,
+            },
+        );
+        for index in 0..200u8 {
+            client.send(&[index]).await.unwrap();
+            tokio::time::sleep(Duration::from_micros(500)).await;
+        }
+        let mut echoed = 0;
+        while receive(&client, QUIET).await.is_some() {
+            echoed += 1;
+        }
+        // the first packet is the one `udp_client` sent before the fault
+        let lost: Vec<usize> = link
+            .history(Direction::Uplink)
+            .iter()
+            .enumerate()
+            .filter(|(_, seen)| seen.fate == Fate::Lost)
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(link.counters().dropped, lost.len() as u64);
+        assert_eq!(echoed + lost.len(), 200, "every packet passed or was lost");
+        assert!(
+            (30..=90).contains(&lost.len()),
+            "{} of 200 lost at 30 %",
+            lost.len()
+        );
+        runs.push(lost);
+    }
+    assert_eq!(runs[0], runs[1], "the same seed lost other packets");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_queue_keeps_what_arrives_up_to_its_limit_and_releases_it_together_in_order() {
+    let ctx = ctx("udp-queue");
+    let (server, _seen) = udp_echo().await;
+    let link = FaultLink::udp(&ctx, "link", ANY.parse().unwrap(), server)
+        .await
+        .unwrap();
+    let client = udp_client(&link).await;
+
+    link.set(Direction::Uplink, Fault::Queue { limit: 5 });
+    for index in 0..8u8 {
+        client.send(&[index]).await.unwrap();
+    }
+    assert_eq!(
+        receive(&client, QUIET).await,
+        None,
+        "a queued packet passed"
+    );
+    let counters = link.counters();
+    assert_eq!((counters.queued, counters.dropped), (5, 3));
+    let fates: Vec<Fate> = link
+        .history(Direction::Uplink)
+        .iter()
+        .skip(1)
+        .map(|seen| seen.fate)
+        .collect();
+    assert_eq!(
+        fates,
+        [[Fate::Queued; 5].as_slice(), [Fate::Lost; 3].as_slice()].concat()
+    );
+
+    // the queue ends: what it kept goes on at once, in the order it came
+    link.set(Direction::Uplink, Fault::Pass);
+    let started = std::time::Instant::now();
+    let mut back = Vec::new();
+    for _ in 0..5 {
+        let echo = receive(&client, SOON)
+            .await
+            .expect("a kept packet comes back");
+        back.push(echoed_byte(&echo));
+    }
+    assert!(started.elapsed() < ms(500), "{:?}", started.elapsed());
+    assert_eq!(back, vec![0, 1, 2, 3, 4]);
+    assert_eq!(
+        receive(&client, QUIET).await,
+        None,
+        "a lost packet came back"
+    );
+    assert_eq!(link.counters().released, 5);
+
+    // released into a delayed link: they wait the delay, and arrive together
+    link.set(Direction::Uplink, Fault::Queue { limit: 10 });
+    for index in 10..13u8 {
+        client.send(&[index]).await.unwrap();
+    }
+    assert_eq!(receive(&client, QUIET).await, None);
+    link.set(
+        Direction::Uplink,
+        Fault::Link {
+            delay: ms(200),
+            jitter: Duration::ZERO,
+            loss: 0.0,
+        },
+    );
+    let started = std::time::Instant::now();
+    let mut arrivals = Vec::new();
+    for expected in 10..13u8 {
+        let echo = receive(&client, SOON)
+            .await
+            .expect("a kept packet comes back");
+        assert_eq!(echoed_byte(&echo), expected);
+        arrivals.push(started.elapsed());
+    }
+    assert!(arrivals[0] >= ms(195), "{arrivals:?}");
+    assert!(arrivals[2] - arrivals[0] < ms(100), "{arrivals:?}");
+    let counters = link.counters();
+    assert_eq!((counters.queued, counters.released), (8, 8));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn queued_packets_do_not_hold_the_port_after_the_link_is_dropped() {
+    let ctx = ctx("udp-queue-lifetime");
+    let (server, _seen) = udp_echo().await;
+    let link = FaultLink::udp(&ctx, "link", ANY.parse().unwrap(), server)
+        .await
+        .unwrap();
+    let client = udp_client(&link).await;
+    link.set(Direction::Both, Fault::Queue { limit: 100 });
+    client.send(b"kept").await.unwrap();
+    assert_eq!(receive(&client, QUIET).await, None);
+    assert_eq!(link.counters().queued, 1);
+    let address = link.address();
+    drop(link);
+    let mut bound = None;
+    for _ in 0..50 {
+        match std::net::UdpSocket::bind(address) {
+            Ok(socket) => {
+                bound = Some(socket);
+                break;
+            }
+            Err(_) => tokio::time::sleep(ms(20)).await,
+        }
+    }
+    assert!(
+        bound.is_some(),
+        "a queued packet still holds the listen socket"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_history_notes_each_packet_as_it_arrives_with_its_size_and_fate() {
+    let ctx = ctx("udp-history");
+    let (server, _seen) = udp_echo().await;
+    let link = FaultLink::udp(&ctx, "link", ANY.parse().unwrap(), server)
+        .await
+        .unwrap();
+    let client = UdpSocket::bind(ANY).await.unwrap();
+    client.connect(link.address()).await.unwrap();
+    let before = link.clock();
+
+    client.send(&[0; 10]).await.unwrap();
+    assert!(receive(&client, SOON).await.is_some());
+    link.set(Direction::Uplink, Fault::Drop { share: 1.0 });
+    client.send(&[0; 100]).await.unwrap();
+    assert_eq!(receive(&client, QUIET).await, None);
+    link.set(Direction::Uplink, Fault::Delay { by: ms(50) });
+    client.send(&[0; 30]).await.unwrap();
+    assert!(receive(&client, SOON).await.is_some());
+    let after = link.clock();
+
+    let up = link.history(Direction::Uplink);
+    let sizes: Vec<(usize, Fate)> = up.iter().map(|seen| (seen.bytes, seen.fate)).collect();
+    assert_eq!(
+        sizes,
+        [(10, Fate::Passed), (100, Fate::Lost), (30, Fate::Delayed)]
+    );
+    // the downlink saw the two echoes, each the datagram and `echo:`
+    let down: Vec<(usize, Fate)> = link
+        .history(Direction::Downlink)
+        .iter()
+        .map(|seen| (seen.bytes, seen.fate))
+        .collect();
+    assert_eq!(down, [(15, Fate::Passed), (35, Fate::Passed)]);
+    assert!(up.windows(2).all(|pair| pair[0].at <= pair[1].at));
+    assert!(up[0].at >= before && up[2].at <= after);
+    // both directions together, in the order they arrived
+    let both = link.history(Direction::Both);
+    assert_eq!(both.len(), 5);
+    assert!(both.windows(2).all(|pair| pair[0].at <= pair[1].at));
+
+    let windows = windows(&up, before, after, ms(50), 50);
+    assert_eq!(windows.iter().map(|window| window.packets).sum::<u32>(), 3);
+    assert_eq!(windows.iter().map(|window| window.large).sum::<u32>(), 1);
+    assert_eq!(windows.iter().map(|window| window.bytes).sum::<u64>(), 140);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_tcp_link_takes_its_delay_and_a_tcp_queue_holds_the_bytes_as_a_stall_does() {
+    let (_ctx, link, _seen) = tcp_link("tcp-link-queue").await;
+    let mut stream = served(&link).await;
+    link.set(
+        Direction::Uplink,
+        Fault::Link {
+            delay: ms(250),
+            jitter: ms(100),
+            loss: 0.5,
+        },
+    );
+    let started = std::time::Instant::now();
+    stream.write_all(b"late").await.unwrap();
+    assert_eq!(
+        read_some(&mut stream, SOON).await.as_deref(),
+        Some(&b"late"[..]),
+        "a TCP link loses nothing"
+    );
+    assert!(started.elapsed() >= ms(240), "{:?}", started.elapsed());
+
+    link.set(Direction::Uplink, Fault::Queue { limit: 1 });
+    stream.write_all(b"held").await.unwrap();
+    assert_eq!(read_some(&mut stream, QUIET).await, None);
+    link.restore();
+    assert_eq!(
+        read_some(&mut stream, SOON).await.as_deref(),
+        Some(&b"held"[..])
+    );
 }

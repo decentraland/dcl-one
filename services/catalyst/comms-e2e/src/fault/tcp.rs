@@ -152,7 +152,8 @@ fn gate(shared: &Shared, direction: Direction, generation: u64) -> Gate {
         };
     }
     match shared.fault(direction) {
-        Fault::Stall => Gate::Wait,
+        // the bytes of a queue wait in the sockets, as on a stall
+        Fault::Stall | Fault::Queue { .. } => Gate::Wait,
         fault => Gate::Open(fault),
     }
 }
@@ -242,6 +243,7 @@ async fn pump<R, W>(
                 shared.count(direction, length);
                 let delay = match fault {
                     Fault::Delay { by } => by,
+                    Fault::Link { delay, .. } => delay,
                     _ => Duration::ZERO,
                 };
                 held.push_back(Held {

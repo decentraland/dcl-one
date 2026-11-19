@@ -1,16 +1,22 @@
 //! The fault link: a relay a client dials instead of the stack, which a scenario can disturb.
 //!
 //! Faults act on whole packets (UDP) or on the byte stream (TCP) and never read the content. A
-//! stalled link drops what arrives, as a dead link does; it does not queue it for later.
+//! stalled link drops what arrives, as a dead link does; a queue keeps it and lets it go together
+//! when it ends, as a link that buffers does. A UDP link notes every packet as it arrives, before
+//! its fault acts ([`FaultLink::history`]).
 
+mod history;
 mod tcp;
 mod udp;
 
+pub use history::{Cadence, Fate, Gap, Seen, Silences, Window, cadence, windows};
+
 use std::any::Any;
+use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use parking_lot::Mutex;
@@ -50,6 +56,21 @@ pub enum Fault {
     },
     /// UDP: each packet arrives twice. TCP: as `Pass`.
     Duplicate,
+    /// A path: each packet is lost with probability `loss`, and the rest arrive `delay` later plus
+    /// a random wait inside `jitter`, drawn from the direction's seeded generator. None overtakes
+    /// the one before it: a packet whose wait ends first waits for it. TCP: everything arrives
+    /// `delay` later; nothing is lost and there is no jitter.
+    Link {
+        delay: Duration,
+        jitter: Duration,
+        loss: f32,
+    },
+    /// UDP: nothing gets through, and what arrives is kept, up to `limit` packets (the rest are
+    /// lost). When the direction's fault changes, what was kept goes on at once, in the order it
+    /// came, through the fault set then. TCP: as `Stall`, where the bytes wait in the sockets.
+    Queue {
+        limit: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
@@ -62,11 +83,22 @@ pub struct Counters {
     pub dropped: u64,
     /// Client flows (UDP) or connections (TCP) seen so far.
     pub flows: u64,
+    /// UDP: packets sent on after a wait (`Delay`, `Reorder`, `Link`).
+    pub delayed: u64,
+    /// UDP: packets a `Queue` kept.
+    pub queued: u64,
+    /// UDP: kept packets sent on when their queue ended.
+    pub released: u64,
+    /// UDP: packets that arrived after the history of their direction was full.
+    pub unrecorded: u64,
 }
 
 pub(crate) struct Faults {
     pub up: Fault,
     pub down: Fault,
+    /// What a `Queue` keeps in each direction.
+    pub up_queue: VecDeque<udp::Queued>,
+    pub down_queue: VecDeque<udp::Queued>,
 }
 
 /// How one generation of flows was ended. A flow belongs to the generation that was current when
@@ -109,6 +141,18 @@ pub(crate) struct Shared {
     pub down_bytes: AtomicU64,
     pub dropped: AtomicU64,
     pub flows: AtomicU64,
+    pub delayed: AtomicU64,
+    pub queued: AtomicU64,
+    pub released: AtomicU64,
+    /// The link's clock: [`Seen::at`] counts from here.
+    pub started: Instant,
+    pub history: Mutex<history::History>,
+    /// UDP: the lines that send each direction's packets in order, once the relay has started.
+    pub lines: Mutex<Option<udp::Lines>>,
+    /// UDP: packets waiting in each direction's line. While one waits, a packet that could go at
+    /// once joins the line instead, so it does not overtake.
+    pub up_waiting: AtomicUsize,
+    pub down_waiting: AtomicUsize,
 }
 
 impl Shared {
@@ -149,6 +193,27 @@ impl Shared {
                 _ = &mut sleep => return true,
                 _ = &mut changed => {}
             }
+        }
+    }
+
+    /// Sleeps until `deadline`, or until the link is dropped. `false`: the link was dropped.
+    pub async fn sleep_until_unless_closed(&self, deadline: Instant) -> bool {
+        self.sleep_unless_closed(deadline.saturating_duration_since(Instant::now()))
+            .await
+    }
+
+    /// Notes a packet of `direction` that arrived at `at` on the link's clock.
+    pub fn note(&self, direction: Direction, at: Duration, bytes: usize, fate: Fate) {
+        self.history
+            .lock()
+            .push(direction == Direction::Uplink, Seen { at, bytes, fate });
+    }
+
+    /// Packets waiting in the line of `direction`.
+    pub fn waiting(&self, direction: Direction) -> &AtomicUsize {
+        match direction {
+            Direction::Uplink => &self.up_waiting,
+            _ => &self.down_waiting,
         }
     }
 
@@ -272,6 +337,8 @@ impl FaultLink {
             faults: Mutex::new(Faults {
                 up: Fault::Pass,
                 down: Fault::Pass,
+                up_queue: VecDeque::new(),
+                down_queue: VecDeque::new(),
             }),
             up_seeded: Mutex::new(Seeded::new(direction_seed(
                 ctx.seed(),
@@ -295,7 +362,36 @@ impl FaultLink {
             down_bytes: AtomicU64::new(0),
             dropped: AtomicU64::new(0),
             flows: AtomicU64::new(0),
+            delayed: AtomicU64::new(0),
+            queued: AtomicU64::new(0),
+            released: AtomicU64::new(0),
+            started: Instant::now(),
+            history: Mutex::new(history::History::default()),
+            lines: Mutex::new(None),
+            up_waiting: AtomicUsize::new(0),
+            down_waiting: AtomicUsize::new(0),
         })
+    }
+
+    /// Now on the link's clock, the one [`Seen::at`] counts on.
+    pub fn clock(&self) -> Duration {
+        self.shared.started.elapsed()
+    }
+
+    /// The packets of `direction` that reached the link so far, in the order they arrived, each
+    /// noted before the fault acted: what the sender sent. `Both` gives the two directions
+    /// together. UDP only; a TCP link notes nothing.
+    pub fn history(&self, direction: Direction) -> Vec<Seen> {
+        let history = self.shared.history.lock();
+        match direction {
+            Direction::Uplink => history.up.clone(),
+            Direction::Downlink => history.down.clone(),
+            Direction::Both => {
+                let mut both: Vec<Seen> = history.up.iter().chain(&history.down).copied().collect();
+                both.sort_by_key(|seen| seen.at);
+                both
+            }
+        }
     }
 
     /// The address a client dials.
@@ -308,19 +404,25 @@ impl FaultLink {
     }
 
     pub fn set(&self, direction: Direction, fault: Fault) {
+        let mut released = 0;
         {
             let mut faults = self.shared.faults.lock();
             if matches!(direction, Direction::Uplink | Direction::Both) {
                 faults.up = fault;
+                released += udp::release(&self.shared, &mut faults, Direction::Uplink);
             }
             if matches!(direction, Direction::Downlink | Direction::Both) {
                 faults.down = fault;
+                released += udp::release(&self.shared, &mut faults, Direction::Downlink);
             }
         }
         self.shared.record(
             "fault",
             serde_json::json!({ "direction": direction, "fault": fault }),
         );
+        if released > 0 {
+            self.shared.record("released", released);
+        }
         self.shared.changed.notify_waiters();
     }
 
@@ -385,6 +487,10 @@ impl FaultLink {
             down_bytes: self.shared.down_bytes.load(Ordering::Relaxed),
             dropped: self.shared.dropped.load(Ordering::Relaxed),
             flows: self.shared.flows.load(Ordering::Relaxed),
+            delayed: self.shared.delayed.load(Ordering::Relaxed),
+            queued: self.shared.queued.load(Ordering::Relaxed),
+            released: self.shared.released.load(Ordering::Relaxed),
+            unrecorded: self.shared.history.lock().missed,
         }
     }
 }
@@ -397,6 +503,13 @@ impl Drop for FaultLink {
         self.shared.closed.store(true, Ordering::SeqCst);
         self.shared.end_generation(ending::CUT);
         self.shared.parked.lock().clear();
+        // what a queue kept, and what waits in a line, holds the sockets it would go out on
+        {
+            let mut faults = self.shared.faults.lock();
+            faults.up_queue.clear();
+            faults.down_queue.clear();
+        }
+        self.shared.lines.lock().take();
         self.shared.changed.notify_waiters();
     }
 }
