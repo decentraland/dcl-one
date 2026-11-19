@@ -276,11 +276,25 @@ describe('profile domain', () => {
     expect(h.session().profile.saving).toBe(false)
     expect(h.session().profile.data).toBeNull()
     expect(peekProfile(profile.address)).toBeUndefined()
+    expect(h.session().profile.saveError).toBe('Your session changed before the save was confirmed.')
     expect(h.driver.sentOf('getProfile')).toHaveLength(reads + 1)
     h.driver.emit({ kind: 'profile', profile: { ...profile, address, description: 'current account' } })
     expect(peekProfile(address)?.description).toBe('current account')
     act(() => h.session().profile.save({ description: 'fresh edit' }))
     expect(h.driver.last('saveProfile')).toMatchObject({ address, description: 'fresh edit' })
+  })
+
+  it.each([true, false])('reports a discarded form behind a quiet color save only when queued (%s)', async (formQueued) => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile })
+    act(() => h.session().profile.saveNameColor({ r: 1, g: 0, b: 0 }))
+    const requestId = h.driver.last('saveProfile')?.requestId
+    if (formQueued) act(() => h.session().profile.save({ description: 'pending form edit' }))
+    h.driver.emit({ kind: 'profileSaved', ok: false, accountChanged: true, requestId })
+    expect(h.session().profile.saving).toBe(false)
+    expect(h.session().profile.saveError).toBe(formQueued ? 'Your session changed before the save was confirmed.' : null)
+    expect(h.driver.sentOf('saveProfile')).toHaveLength(1)
   })
 
   it('discards a previous sign-in’s save rejection while the same player is saving again', async () => {

@@ -432,28 +432,34 @@ export function registerProfile(ctx: Ctx): void {
   // costs it the profile for the whole session. `getPlayer()` is the scene's view of the player
   // CRDT, which lags world entry by a good few hundred frames, so a request that arrives in that
   // window is held rather than answered — the page only ever hears a profile it can use.
-  let wanted = false
+  const playerAddress = (): string | null => getPlayer()?.userId ?? null
+  let wanted: (() => boolean) | undefined
+  // A read invalidated by logout can serve a different player. Reading the same wallet again
+  // requires an explicit request from its new login, because the scene can still see it on logout.
+  let retryAfter: string | undefined
   let inFlight = false
   const answerProfile = async (): Promise<void> => {
     const player = getPlayer()
     if (player == null || inFlight) return
-    wanted = false
+    if (!wanted?.() && (retryAfter === undefined || retryAfter === profileKey(player.userId))) return
+    wanted = undefined
+    retryAfter = undefined
     inFlight = true
     try {
-      const isCurrent = identity.session(() => getPlayer()?.userId ?? null)
+      const isCurrent = identity.session(playerAddress)
       const av = await fetchProfile(player.userId)
       if (isCurrent()) ctx.send({ kind: 'profile', profile: toProfile(av, player.userId, player.isGuest, player.name) })
-      else wanted = true
+      else retryAfter = profileKey(player.userId)
     } finally {
       inFlight = false
     }
   }
   ctx.on('getProfile', () => {
-    wanted = true
-    void answerProfile()
+    wanted = identity.session(playerAddress)
+    return answerProfile()
   })
   ctx.push(() => {
-    if (wanted) void answerProfile()
+    if (wanted || retryAfter !== undefined) void answerProfile()
   })
 
   // The engine tells us when any profile it holds moves to a new version; the page decides what

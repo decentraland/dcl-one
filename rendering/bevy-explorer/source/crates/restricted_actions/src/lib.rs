@@ -1288,7 +1288,6 @@ fn list_portables(
 
 fn get_user_data(
     mut system_events: EventReader<SystemApi>,
-    system_scene: Query<Entity, With<SuperUserScene>>,
     profile: Res<CurrentUserProfile>,
     others: Query<(&ForeignPlayer, &UserProfile)>,
     me: Res<Wallet>,
@@ -1326,7 +1325,8 @@ fn get_user_data(
             response.send(committed.map(|profile| profile.content.clone()).ok_or(()));
             return None;
         }
-        Some((Some(address), system_scene.single().ok(), response))
+        // The system UI runs on clients, where nearby players share one context.
+        Some((Some(address), None, response))
     });
     for (user, scene, response) in scene_reads.chain(system_reads) {
         debug!("process get_user_data for {:?}", scene);
@@ -2755,6 +2755,92 @@ pub fn process_startup_scenes(
 
     if tasks.is_empty() {
         *done = true;
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn system_and_scene_self_reads_during_an_optimistic_edit() {
+    use bevy::asset::io::memory::MemoryAssetReader;
+    use comms::profile::ProfileCache;
+    use ipfs::IpfsResource;
+
+    let owner = Address::repeat_byte(7);
+    let address = format!("{owner:#x}");
+    let mut wallet = Wallet::default();
+    wallet.finalize_remote(
+        owner,
+        owner,
+        vec![common::structs::ChainLink {
+            ty: "SIGNER".into(),
+            payload: address.clone(),
+            signature: String::new(),
+        }],
+        false,
+    );
+    let mut current = CurrentUserProfile::default();
+    let saved = SerializedProfile {
+        eth_address: address.clone(),
+        name: "Saved".into(),
+        version: 1,
+        ..default()
+    };
+    current.adopt_server_profile(UserProfile {
+        version: 1,
+        content: saved.clone(),
+        ..default()
+    });
+    current.begin_edits();
+    current.bump_version();
+    current.is_deployed = false;
+    current.profile.as_mut().unwrap().content.name = "Edited".into();
+    let edited = current.profile.as_ref().unwrap().content.clone();
+
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+        .insert_resource(wallet)
+        .insert_resource(current)
+        .init_resource::<ProfileCache>()
+        .insert_resource(IpfsResource {
+            inner: Arc::new(IpfsIo::new(
+                false,
+                Box::new(MemoryAssetReader { root: default() }),
+                None,
+                default(),
+                1,
+                tokio::sync::mpsc::unbounded_channel().0,
+            )),
+        })
+        .add_event::<RpcCallEvent>()
+        .add_event::<SystemApi>()
+        .add_systems(Update, get_user_data);
+    let scene = app.world_mut().spawn_empty().id();
+    let shared = app.world_mut().spawn_empty().id();
+    let mut contexts = CrdtContexts::default();
+    contexts.0.insert(String::new(), shared);
+    app.insert_resource(contexts);
+
+    let (send, mut system) = RpcResultSender::channel();
+    app.world_mut().send_event(SystemApi::GetUserProfile {
+        address: address.clone(),
+        response: send,
+    });
+    let scene_reads = [None, Some(address)].map(|user| {
+        let (response, recv) = RpcResultSender::channel();
+        app.world_mut().send_event(RpcCallEvent {
+            origin: RpcOrigin::Scene {
+                entity: scene,
+                hash: "parcel".into(),
+            },
+            call: RpcCall::GetUserData { user, response },
+        });
+        recv
+    });
+    app.update();
+
+    assert_eq!(system.try_recv().unwrap(), Ok(saved));
+    for mut read in scene_reads {
+        assert_eq!(read.try_recv().unwrap(), Ok(edited.clone()));
     }
 }
 

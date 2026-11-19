@@ -75,6 +75,7 @@ async function bridge() {
     request: async (msg: PageToScene) => await handlers.get(msg.kind)?.(msg),
     frame: () => frames.forEach((frame) => frame(1 / 60)),
     replies: () => sent.filter((msg) => msg.kind === 'profileSaved' || msg.kind === 'avatarSaveFailed' || msg.kind === 'welcomeAccepted'),
+    profiles: () => sent.filter((msg) => msg.kind === 'profile'),
     draft,
     identity
   }
@@ -91,6 +92,56 @@ beforeEach(() => {
 })
 
 describe('Passport and Backpack deployments', () => {
+  it.each([undefined, '0xabc'])('answers an unavailable player for expected address %s', async (address) => {
+    const { request, replies } = await bridge()
+    player = null
+    await request({ kind: 'saveProfile', address, requestId: 9, description: 'edit' })
+    expect(replies()).toEqual([address === undefined
+      ? { kind: 'profileSaved', requestId: 9, ok: false, error: 'Not signed in yet.' }
+      : { kind: 'profileSaved', requestId: 9, ok: false, accountChanged: true, error: 'The active account changed.' }])
+    expect(setAvatar).not.toHaveBeenCalled()
+  })
+
+  it('requires a new request before reading the same account again after explicit logout', async () => {
+    const { request, profiles, frame } = await bridge()
+    const old = deferred<{ name: string }>()
+    getUserProfile.mockReturnValueOnce(old.promise)
+    const read = request({ kind: 'getProfile' })
+    await request({ kind: 'getProfile' }) // Another request in the old login.
+    await request({ kind: 'rpc:req', id: 'logout', method: 'logout' })
+    old.resolve({ name: 'Old name' })
+    await read
+    await vi.dynamicImportSettled()
+    frame() // The scene still sees the old player after the logout RPC.
+    player = null
+    frame()
+    player = account('0xabc')
+    frame()
+    await vi.dynamicImportSettled()
+    expect(getUserProfile).toHaveBeenCalledTimes(1)
+    expect(profiles()).toEqual([])
+    await request({ kind: 'getProfile' })
+    await vi.waitFor(() => expect(profiles()).toMatchObject([{ profile: { address: '0xabc', name: 'After' } }]))
+  })
+
+  it('answers an outstanding own-profile read once for the new account when the player changes', async () => {
+    const { request, profiles, frame } = await bridge()
+    const old = deferred<{ name: string }>()
+    getUserProfile.mockReturnValueOnce(old.promise)
+    const read = request({ kind: 'getProfile' })
+    player = null
+    frame()
+    old.resolve({ name: 'Old name' })
+    await read
+    await vi.dynamicImportSettled()
+    frame()
+    player = account('0xdef')
+    frame()
+    await vi.waitFor(() => expect(profiles()).toMatchObject([{ profile: { address: '0xdef', name: 'After' } }]))
+    frame()
+    expect(getUserProfile.mock.calls).toEqual([['0xabc'], ['0xdef']])
+  })
+
   it.each(['0xAaA', ''])('refuses a Passport edit for a different or unknown account (%s)', async (address) => {
     const { request, replies } = await bridge()
     await request({ kind: 'saveProfile', requestId: 12, address, description: 'Account A only' })

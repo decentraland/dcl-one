@@ -1704,23 +1704,29 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setNativeQuit(() => driver.send({ kind: 'quit' }))
     nearbyPlayers.setTransport((on) => driver.send({ kind: 'watchMapPlayers', on }))
 
+    const discardSessionEdits = (): void => {
+      const formSave = profileSubmit.current?.quiet === false || queuedProfileEditRef.current?.quiet === false
+      profileSubmit.current = null
+      queuedProfileEditRef.current = null
+      setProfileSaving(false)
+      setProfileSaveError(formSave ? 'Your session changed before the save was confirmed.' : null)
+    }
+
     // The engine's answer to the profile save in flight, or the bridge failing to handle it (then no
     // answer ever comes, so it counts as a failure rather than leaving every later save queued).
     const settleProfileSave = ({ ok, error, profile: committed, requestId, accountChanged }: Omit<ProfileSavedMessage, 'kind'>): void => {
       const submit = profileSubmit.current
       if (!submit || (requestId !== undefined && requestId !== submit.requestId) || (committed && committed.address.toLowerCase() !== submit.address)) return
-      profileSubmit.current = null
       if (accountChanged) {
-        queuedProfileEditRef.current = null
+        discardSessionEdits()
         confirmedProfile.current = null
         profileRef.current = null
         setOwnProfile(null)
         setProfile(null)
-        setProfileSaving(false)
-        setProfileSaveError(null)
         driver.send({ kind: 'getProfile' })
         return
       }
+      profileSubmit.current = null
       // Older bridges can omit the snapshot. Keep their confirmed edit on success and use the
       // last engine profile on transport failure until the next read arrives.
       const next = committed !== undefined ? committed : (ok ? profileRef.current : confirmedProfile.current)
@@ -2084,12 +2090,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'profile': {
           if (profileSubmit.current && (!msg.profile || msg.profile.address.toLowerCase() === profileSubmit.current.address)) break
-          if (profileSubmit.current) {
-            profileSubmit.current = null
-            queuedProfileEditRef.current = null
-            setProfileSaving(false)
-            setProfileSaveError(null)
-          }
+          if (profileSubmit.current) discardSessionEdits()
           setOwnProfile(msg.profile?.address ?? null)
           const stale = msg.profile != null && !receiveOwnProfile(msg.profile)
           if (stale && profileRef.current?.address.toLowerCase() === msg.profile?.address.toLowerCase()) break

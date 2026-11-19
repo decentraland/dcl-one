@@ -5981,7 +5981,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/profile.ts",
-      "sha256": "90837f9946f17b94ee06d217c2f2e01adf66d4d6cb5f6c4aa628464515ecfc22"
+      "sha256": "385e72c835dc36378438058a735e03a04bf9eabaed490dcc30826d25cb0a165d"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/randomizer.ts",
@@ -6157,7 +6157,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeAvatarDraft.test.ts",
-      "sha256": "717f3fefb48d4b4ab77994e403bc18f2cce5d404885df45047851f4fdce5f91d"
+      "sha256": "40a43d7c6c15a8b0c3f46a0d90ba1ce9189a296934a66f6524fd9ffab44b61f0"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeChat.test.ts",
@@ -10022,7 +10022,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/NameEditModal.tsx",
-      "sha256": "145a385773f2979acf63cc5dfce6409b4b685d5b66503bf3fd33f726bdf109d4"
+      "sha256": "c383c22da9fd21d130bb8e23f1423247f478d3cca547d20cc306aa3e406ec82a"
     },
     {
       "path": "library/ui/apps/hud/features/profile/Passport.tsx",
@@ -10098,7 +10098,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "0a18516045bbc5935c52beb3f21a12253a4a5c05416799144ed26e40dab64ee3"
+      "sha256": "fb81bef5df95ff57972eb1c93a337effa9c2ab41349dd57eca18dee7e6faf044"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10718,7 +10718,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nameEdit.test.tsx",
-      "sha256": "d1b651a7b187d3e3ae09d58b63f540b4a7972487f77aed98326518e4bbf63d74"
+      "sha256": "296f56c04728475992089a4f69f12b47e96bb14fc0b80848354e438da066c235"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nametags.test.tsx",
@@ -10798,7 +10798,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/profile.test.tsx",
-      "sha256": "6f6fd671026b863ca2437dd31ec0caa3d3d13993f00fa0497d1b1902ae8b8ea1"
+      "sha256": "2989ed7dd960a7ff70f3ff4d1d1eb7f7965d0080c76e7a03f8790fd318aa9df6"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/profileCardContainer.test.tsx",
