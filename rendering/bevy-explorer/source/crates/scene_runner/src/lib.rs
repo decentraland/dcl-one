@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::{collections::VecDeque, marker::PhantomData, time::Duration};
 
 use dcl_types::TryRecvError;
@@ -12,6 +14,7 @@ use bevy::{
     prelude::*,
     scene::scene_spawner_system,
     time::common_conditions::on_real_timer,
+    utils::synccell::SyncCell,
     window::PrimaryWindow,
     winit::WinitWindows,
 };
@@ -83,6 +86,7 @@ pub mod permissions;
 pub mod portables;
 pub mod primary_entities;
 pub mod renderer_context;
+pub mod scene_lod;
 pub mod scene_partition;
 pub mod scene_spawn_slice;
 mod scene_traffic;
@@ -96,7 +100,8 @@ pub mod util;
 #[derive(Resource)]
 pub struct SceneUpdates {
     pub sender: TaggedSceneResponseSender,
-    receiver: SceneResponseReceiver,
+    // on wasm this is std's mpsc Receiver, which is !Sync; SyncCell only hands it out through &mut
+    receiver: SyncCell<SceneResponseReceiver>,
     pub jobs_in_flight: HashSet<Entity>,
     pub update_deadline: SystemTime,
     pub eligible_jobs: usize,
@@ -118,14 +123,9 @@ pub struct SceneUpdates {
     pub priority_scenes: HashMap<&'static str, Entity>,
 }
 
-// safety: struct is sync except for the receiver.
-// receiver is only accessible via &mut handle
-unsafe impl Sync for SceneUpdates {}
-unsafe impl Send for SceneUpdates {}
-
 impl SceneUpdates {
     pub fn receiver(&mut self) -> &mut SceneResponseReceiver {
-        &mut self.receiver
+        self.receiver.get()
     }
 }
 
@@ -257,6 +257,9 @@ pub struct SceneLoopTiming {
     pub scene_schedule_run_count: u32,
     /// Scenes still eligible for a tick when the loop ended.
     pub eligible_scene_jobs_left_count: u32,
+    /// The monitor's refresh rate in whole hertz, rounded up past it (60 Hz gives 61), when winit
+    /// reports one (native only). See [`SessionGraphics::paced_fps`].
+    pub refresh_hz: Option<usize>,
 }
 
 #[derive(Resource)]
@@ -381,7 +384,7 @@ impl Plugin for SceneRunnerPlugin {
         let (sender, receiver) = scene_response_channel();
         app.insert_resource(SceneUpdates {
             sender,
-            receiver,
+            receiver: SyncCell::new(receiver),
             jobs_in_flight: Default::default(),
             update_deadline: web_time::SystemTime::now(),
             eligible_jobs: 0,
@@ -458,6 +461,7 @@ impl Plugin for SceneRunnerPlugin {
             app.add_systems(Update, scene_traffic::track_parcel.in_set(SceneSets::Input));
             app.add_plugins(debug_panel::SceneDebugPanelPlugin);
             app.add_plugins(LightsPlugin);
+            app.add_plugins(scene_lod::SceneLodPlugin);
         }
         app.add_plugins(AssetPreloadPlugin);
         app.add_plugins(scene_spawn_slice::SceneSpawnSlicePlugin);
@@ -495,20 +499,13 @@ fn run_scene_loop(world: &mut World) {
         .and_then(|window_ent| winit_windows.and_then(|ww| ww.get_window(window_ent)))
         .and_then(|window| window.current_monitor())
         .and_then(|monitor| monitor.refresh_rate_millihertz());
-    let config = world.resource::<AppConfig>();
-    let fps_target = world
-        .get_resource::<SessionGraphics>()
-        .map_or(config.graphics.fps_target, |session| {
-            session.fps_target(config)
-        });
-    let fps = if config.graphics.vsync {
-        // TODO this should use video mode if we add fullscreen video modes
-        refresh_rate
-            .map(|rr| ((rr as f64 + 999.0) / 1000.0).ceil())
-            .unwrap_or(fps_target as f64)
-    } else {
-        fps_target as f64
-    };
+    // TODO this should use video mode if we add fullscreen video modes
+    let refresh_hz = refresh_rate.map(|rr| ((rr as f64 + 999.0) / 1000.0).ceil() as usize);
+    let fps = SessionGraphics::paced_fps(
+        world.get_resource::<SessionGraphics>(),
+        world.resource::<AppConfig>(),
+        refresh_hz,
+    ) as f64;
     let mut loop_schedule = world.resource_mut::<SceneLoopSchedule>();
     let mut schedule = std::mem::take(&mut loop_schedule.schedule);
 
@@ -562,6 +559,7 @@ fn run_scene_loop(world: &mut World) {
         frame_limiter_sleep_ms,
         scene_schedule_run_count,
         eligible_scene_jobs_left_count,
+        refresh_hz,
     });
 }
 
@@ -717,6 +715,12 @@ pub fn vec3_to_parcel(position: Vec3) -> IVec2 {
     (position.xz() * Vec2::new(1.0, -1.0) / PARCEL_SIZE)
         .floor()
         .as_ivec2()
+}
+
+/// The parcels within Chebyshev ring `ring` of `center`, `center` included: a square `2 * ring + 1`
+/// parcels a side. A negative ring gives none.
+pub fn ring_parcels(center: IVec2, ring: i32) -> impl Iterator<Item = IVec2> {
+    (-ring..=ring).flat_map(move |x| (-ring..=ring).map(move |y| center + IVec2::new(x, y)))
 }
 
 pub fn parcel_to_vec3(parcel: IVec2) -> Vec3 {

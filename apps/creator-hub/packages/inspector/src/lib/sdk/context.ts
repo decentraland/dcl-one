@@ -9,6 +9,7 @@ import {
 } from '../renderer/controller';
 import type { RendererId } from '../renderer/controller';
 import { asBabylonInternals } from '../renderer/babylon/register';
+import { hideEditorHelpers } from '../babylon/setup/editor-helpers';
 import { asBevyInternals } from '../renderer/bevy/register';
 import type { IRenderer } from '../renderer/types';
 import type { InspectorPreferences } from '../logic/preferences/types';
@@ -126,6 +127,13 @@ export async function createSdkContext(
       operations,
       engine,
       enumEntity,
+      babylonInternals
+        ? () =>
+            hideEditorHelpers(
+              babylonInternals.sceneContext.scene,
+              babylonInternals.sceneContext.gizmos.getUtilityLayers(),
+            )
+        : undefined,
       recorder,
     );
 

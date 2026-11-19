@@ -57,6 +57,9 @@ export type AppSettings = {
   renderer: RENDERER;
   aiAssistant: boolean;
   aiAssistantPromoted?: boolean;
+  // Marker for the one-time move of `scenesPath` off the hidden app data folder — see
+  // `promoteScenesPath`.
+  scenesPathPromoted?: boolean;
   // Opt-in: let AI agents running OUTSIDE the app (Claude Code in a terminal or VS Code,
   // Codex, Claude Desktop…) use the Creator Hub MCP server. While on, its URL + token are shown
   // in settings and written to the app data folder as `mcp-server.json` and into the open scene

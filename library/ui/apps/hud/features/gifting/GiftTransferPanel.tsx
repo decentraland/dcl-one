@@ -4,7 +4,7 @@
 // the activity page), then "Gift Sent to <name>!" with rays and OK, or "Something went wrong" with TRY AGAIN and
 // Contact Support. The host resolves the recipient and the item itself.
 
-import { Avatar, Button, Modal, ModalActions, ModalTitle, Spinner, VerifiedBadge } from '../../design'
+import { ArmedButton, Avatar, Button, Modal, ModalActions, ModalTitle, Spinner, VerifiedBadge } from '../../design'
 import { ItemTile, RaysPopup } from '../rewards/RewardPopup'
 import styles from './GiftTransferPanel.module.css'
 
@@ -91,7 +91,8 @@ export function GiftTransferPanel({ view, handlers }: { view: GiftTransferView; 
             <Button variant="secondary" onClick={handlers.onClose}>
               CANCEL
             </Button>
-            <Button onClick={handlers.onConfirm}>SEND GIFT</Button>
+            {/* Opened by a press in the app (the picker's SEND GIFT): a second click of that press must not send. */}
+            <ArmedButton onClick={handlers.onConfirm}>SEND GIFT</ArmedButton>
           </ModalActions>
         </Modal>
       )

@@ -24,6 +24,11 @@ import { qrCodeDataUrl } from './qr-code';
 import { getLanIp } from './network';
 import { getRealm } from './bevy-realm';
 import { NO_SERVER_FLAG } from './realm-server-logs';
+import {
+  addDependencyOverrides,
+  clearTemplateDescription,
+  ensureEditorFilesNotDeployed,
+} from './project-config-files';
 
 // `mobile` marks a preview that was started for the mobile-QR flow (`--mobile`): the
 // SDK runs the preview server but does NOT open the desktop client. It is tracked so a
@@ -75,6 +80,12 @@ export async function init(targetPath: string, repo: string): Promise<void> {
   log.info('[CLI] Downloading GitHub repository', { repo, targetPath });
   await downloadGithubRepo(repo, targetPath);
   log.info('[CLI] GitHub repository downloaded successfully');
+  excludeEditorFiles(targetPath);
+  try {
+    addDependencyOverrides(targetPath);
+  } catch (error) {
+    log.warn('[CLI] Could not add the dependency overrides to package.json', { targetPath, error });
+  }
   track('Scene created', {
     projectType: 'github-repo',
     url: repo,
@@ -544,6 +555,22 @@ async function doStart(path: string, opts: StartOptions, generation: number): Pr
   }
 }
 
+// Templates ship editor and agent files (`cursor.config`, `cursorignore`) that no default deploy
+// rule covers, and the empty template describes itself. Run before every deploy so scenes created
+// before these fixes are covered too. A file the Hub cannot write leaves the scene as it is.
+function excludeEditorFiles(path: string) {
+  try {
+    ensureEditorFilesNotDeployed(path);
+  } catch (error) {
+    log.warn('[CLI] Could not add the editor files to .dclignore', { path, error });
+  }
+  try {
+    clearTemplateDescription(path);
+  } catch (error) {
+    log.warn('[CLI] Could not clear the template description from scene.json', { path, error });
+  }
+}
+
 // ############################################################################################
 // TODO: Remove this after a couple of months...
 export async function legacyDeploy({
@@ -554,6 +581,7 @@ export async function legacyDeploy({
   if (deployServer) {
     await deployServer.stop();
   }
+  excludeEditorFiles(path);
   const port = await getAvailablePort();
   const process = run('@dcl/sdk-commands', 'sdk-commands', {
     args: [
@@ -662,6 +690,7 @@ async function startDeploy({
     };
   }
 
+  excludeEditorFiles(path);
   const port = await getAvailablePort();
   const deployToken = support.deployResource && support.deployToken ? randomUUID() : undefined;
 

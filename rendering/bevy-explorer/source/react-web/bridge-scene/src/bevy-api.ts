@@ -26,8 +26,10 @@ import type {
   HoverAction,
   HoverEvent,
   HomeScene,
+  OutfitsData,
   LiveSceneInfo,
   LobbyStage,
+  MapPinInfo,
   WorldAccessVerdict,
   PermanentPermissionItem,
   PermissionRequestEvent,
@@ -235,6 +237,8 @@ export type BevyApiInterface = {
   /** The portables the player can see and stop, tagged by kind: the whole list on subscribe and on
    *  every change (never the HUD's own scene or a startup portable). */
   getPortablesStream: () => Promise<AsyncIterable<PortableInfo[]>>
+  /** The map pins of portable experiences: the whole list on subscribe and on every change. */
+  getMapPinsStream: () => Promise<AsyncIterable<MapPinInfo[]>>
   /** Live scenes, for resolving a permission request's scene name (hash → title) and the current
    *  scene to reload — `/reload` uses `parcels`/`isSuper` to target the scene the player stands in,
    *  never the bridge. */
@@ -243,6 +247,9 @@ export type BevyApiInterface = {
    *  `/about`), null or undefined when it advertises none — only Genesis City realms do. */
   getSatelliteView: () => Promise<SatelliteView | null | undefined>
   setAvatar: (data: SetAvatarData) => Promise<unknown>
+  /** Signs and deploys the player's catalyst `outfits` entity; rejects for a guest, when `address`
+   *  is not the signed-in account, or when the catalyst refuses it. */
+  deployOutfits: (address: string, outfits: OutfitsData) => Promise<void>
   /** Any user's full deployed profile as the engine holds it (own, nearby and remote players,
    *  guests included), resolved through its profile cache and fetch cascade. Rejects once the
    *  engine has concluded the address can't be resolved. */

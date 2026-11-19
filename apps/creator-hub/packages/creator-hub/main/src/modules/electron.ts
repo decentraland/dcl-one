@@ -9,7 +9,10 @@ import {
   type SaveDialogOptions,
   shell,
 } from 'electron';
+import log from 'electron-log/main';
+import { getDefaultScenesPath } from '/shared/paths';
 import type { Env } from '/shared/types/env';
+import type { DeploymentLogEntry, RendererErrorLogEntry } from '/shared/types/ipc';
 
 // Store environment override from CLI arguments
 let envOverride: Env | null = null;
@@ -24,6 +27,11 @@ export function getEnvOverride(): Env | null {
 
 export function getHome() {
   return app.getPath('home');
+}
+
+/** Where new scenes go unless the user picks another folder. */
+export function getDefaultScenesPathForUser() {
+  return getDefaultScenesPath(getHome());
 }
 
 export function getUserDataPath() {
@@ -68,6 +76,18 @@ export async function openExternal(url: string) {
   shell.openExternal(url);
 }
 
+/**
+ * Opens a `decentraland://` link in the installed desktop client. Resolves false when no app
+ * handles the scheme: macOS and Linux then do nothing at all, so the caller can fall back to
+ * the web.
+ */
+export async function openDeepLink(url: string): Promise<boolean> {
+  if (!url.startsWith('decentraland://')) throw new Error('Not a decentraland:// link');
+  if (!app.getApplicationNameForProtocol(url)) return false;
+  await shell.openExternal(url);
+  return true;
+}
+
 export async function getAppVersion() {
   return app.getVersion();
 }
@@ -83,4 +103,29 @@ export async function focusWindow(sender: Electron.WebContents) {
   if (!window || window.isDestroyed()) return;
   if (window.isMinimized()) window.restore();
   window.focus();
+}
+
+export async function logDeployment(entry: DeploymentLogEntry): Promise<void> {
+  if (entry.outcome === 'published') {
+    log.info(
+      `[Deploy] Published "${entry.title}" to ${entry.target} at ${entry.baseParcel}: ${entry.rootCID}`,
+    );
+  } else {
+    log.warn(`[Deploy] Publish failed: ${entry.error}`);
+  }
+}
+
+/** Enough for a stack and a component stack; a renderer can't flood the log through it. */
+const RENDERER_ERROR_MAX_LENGTH = 8000;
+
+const cap = (text: string) =>
+  text.length > RENDERER_ERROR_MAX_LENGTH
+    ? `${text.slice(0, RENDERER_ERROR_MAX_LENGTH)}… [${text.length - RENDERER_ERROR_MAX_LENGTH} more characters]`
+    : text;
+
+export async function logRendererError(entry: RendererErrorLogEntry): Promise<void> {
+  const boundary = cap(String(entry.boundary));
+  const error = cap(String(entry.error));
+  const componentStack = entry.componentStack && cap(String(entry.componentStack));
+  log.error(`[ErrorBoundary:${boundary}] ${error}${componentStack ? `\n${componentStack}` : ''}`);
 }

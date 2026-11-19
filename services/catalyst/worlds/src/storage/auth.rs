@@ -36,6 +36,7 @@ pub const CANONICAL_METADATA_KEYS: &[&str] = &[
     "signer",
     "realmName",
     "realm.serverName",
+    "realm.hostname",
     "parcel",
     "sceneId",
 ];
@@ -67,6 +68,14 @@ impl SceneAuthMetadata {
         server_name
             .filter(|v| v.truthy())
             .or_else(|| self.get("realmName").filter(|v| v.truthy()))
+    }
+
+    /// The signed realm URL, `realm.hostname` when it is a string.
+    pub fn realm_url(&self) -> Option<&str> {
+        match self.get("realm") {
+            Some(JsValue::Object(realm)) => realm.get("hostname").and_then(JsValue::as_str),
+            _ => None,
+        }
     }
 
     /// `parcel || undefined`.

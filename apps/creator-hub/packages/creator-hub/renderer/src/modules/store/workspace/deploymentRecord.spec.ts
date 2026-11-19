@@ -106,6 +106,33 @@ describe('deploymentRecordMiddleware', () => {
     });
   });
 
+  describe('when a World republish runs after scene.json lost the World name', () => {
+    it('should record it under the World the scene was last published to', async () => {
+      const previous = {
+        publishedAt: 1,
+        deploymentHash: 'bafy-old',
+        parcel: '-7,-10',
+        worldName: 'w.dcl.eth',
+      };
+      const { publish, infoOf } = setup([
+        localProject('/scenes/w', {
+          info: {
+            id: 'w',
+            skipPublishWarning: false,
+            deployments: { 'world:w.dcl.eth:-7,-10': previous },
+          },
+        }),
+      ]);
+
+      publish('/scenes/w', deployInfo({ isWorld: true, baseParcel: '-7,-10', rootCID: 'bafy-w' }));
+      await settle();
+
+      expect(infoOf('/scenes/w').deployments).toEqual({
+        'world:w.dcl.eth:-7,-10': { ...previous, publishedAt: NOW, deploymentHash: 'bafy-w' },
+      });
+    });
+  });
+
   describe('when the scene was already published to the same target and to another', () => {
     it('should overwrite that target and keep the other', async () => {
       const other = {

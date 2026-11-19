@@ -9,6 +9,7 @@
 //! unavailable envelope through [`require_collections`] /
 //! [`require_marketplace`], never an empty page.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -50,6 +51,8 @@ pub struct Caches {
     m5: TtlMap<String, Arc<Value>>,
     m10: TtlMap<String, Arc<Value>>,
     m15: TtlMap<String, Arc<Value>>,
+    /// The keys a background read is refreshing ([`Caches::begin_refresh`]).
+    refreshing: parking_lot::Mutex<HashSet<String>>,
 }
 
 impl Default for Caches {
@@ -60,6 +63,7 @@ impl Default for Caches {
             m5: TtlMap::bounded(Ttl::M5.duration(), MAX_ENTRIES),
             m10: TtlMap::bounded(Ttl::M10.duration(), MAX_ENTRIES),
             m15: TtlMap::bounded(Ttl::M15.duration(), MAX_ENTRIES),
+            refreshing: parking_lot::Mutex::default(),
         }
     }
 }
@@ -73,6 +77,38 @@ impl Caches {
             Ttl::M10 => &self.m10,
             Ttl::M15 => &self.m15,
         }
+    }
+
+    /// `key`'s answer under `ttl` while it is fresh.
+    pub fn fresh(&self, ttl: Ttl, key: &str) -> Option<Arc<Value>> {
+        self.map(ttl).get_fresh(&key.to_string())
+    }
+
+    /// `key`'s last answer under `ttl`, expired or not, while it is younger than `max_age`.
+    pub fn within(&self, ttl: Ttl, key: &str, max_age: Duration) -> Option<Arc<Value>> {
+        self.map(ttl).get_within(&key.to_string(), max_age)
+    }
+
+    /// Claims `key`'s background refresh: true for the one caller that is to run it, until it
+    /// calls [`Caches::end_refresh`].
+    pub fn begin_refresh(&self, key: &str) -> bool {
+        self.refreshing.lock().insert(key.to_string())
+    }
+
+    pub fn end_refresh(&self, key: &str) {
+        self.refreshing.lock().remove(key);
+    }
+
+    /// Ages `key`'s answer under `ttl` by `by`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn backdate(&self, ttl: Ttl, key: &str, by: Duration) {
+        self.map(ttl).backdate(&key.to_string(), by);
+    }
+
+    /// Whether `key` holds a fresh answer under `ttl`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn holds(&self, ttl: Ttl, key: &str) -> bool {
+        self.map(ttl).get_fresh(&key.to_string()).is_some()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -102,6 +138,20 @@ pub async fn cached<F, Fut>(
 where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<Value, String>>,
+{
+    memoized(state, ttl, key, fetch).await
+}
+
+/// [`cached`] for a fetch whose failure is the route's own answer; a failure is not kept.
+pub async fn memoized<F, Fut, E>(
+    state: &MarketplaceState,
+    ttl: Ttl,
+    key: String,
+    fetch: F,
+) -> Result<Arc<Value>, E>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<Value, E>>,
 {
     state
         .readers

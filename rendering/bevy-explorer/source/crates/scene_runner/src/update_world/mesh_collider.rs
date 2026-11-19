@@ -1221,8 +1221,7 @@ pub struct HasCollider<T: ColliderType>(pub ColliderId, PhantomData<fn() -> T>);
 #[derive(Component)]
 pub struct HasTrigger(pub ColliderId);
 
-#[allow(clippy::type_complexity)]
-fn update_colliders<T: ColliderType>(
+pub(crate) fn update_colliders<T: ColliderType>(
     mut commands: Commands,
     // add colliders
     // any entity with a mesh collider that we're not already using, or where the mesh collider has changed
@@ -1242,7 +1241,9 @@ fn update_colliders<T: ColliderType>(
         (Entity, &ContainerEntity, &HasCollider<T>),
         Without<MeshCollider<T>>,
     >,
-    mut scene_data: Query<(&RendererSceneContext, &mut SceneColliderData)>,
+    // a scene's stand-in (`scene_lod`) has collider data and no context: its colliders are its
+    // glTF nodes', which need none
+    mut scene_data: Query<(Option<&RendererSceneContext>, &mut SceneColliderData)>,
     mut gltf_mesh_resolver: GltfMeshResolver,
     meshes: Res<Assets<Mesh>>,
     gltfs_in_progress: Query<(), With<GltfProcessing>>,
@@ -1298,7 +1299,7 @@ fn update_colliders<T: ColliderType>(
             MeshColliderShape::Sphere => ColliderBuilder::ball(0.5),
             MeshColliderShape::Shape(shape, _) => ColliderBuilder::new(shape.clone()),
             MeshColliderShape::GltfShape { gltf_src, name } => {
-                let Ok((scene, _)) = scene_data.get(container.root) else {
+                let Ok((Some(scene), _)) = scene_data.get(container.root) else {
                     continue;
                 };
                 let Ok(Some(h_mesh)) = gltf_mesh_resolver.resolve_mesh(gltf_src, &scene.hash, name)
@@ -1370,7 +1371,6 @@ fn on_collider_removed<T: ColliderType>(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn propagate_disabled<T: ColliderType>(
     mut scene_datas: Query<(Entity, &mut SceneColliderData)>,
     q: Query<
@@ -1424,7 +1424,6 @@ pub struct PreviousColliderTransform {
     pub updated: u32,
 }
 
-#[allow(clippy::type_complexity)]
 pub fn update_collider_transforms<T: ColliderType>(
     mut commands: Commands,
     changed_colliders: Query<
@@ -1486,7 +1485,6 @@ fn debug_colliders(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_debug_colliders<T: ColliderType>(
     mut commands: Commands,
     debug: Res<DebugColliders>,

@@ -283,6 +283,8 @@ export class SceneServer extends RPC<Method, Params, Result> {
     engine?: IEngine,
     // Network-id allocator, needed by addAsset for Smart Items with sync components.
     enumEntity?: EnumEntity,
+    // Hides the editor's gizmos and helpers for a Babylon capture; returns what puts them back.
+    hideEditorHelpers?: () => () => void,
     // Session recording for the AI assistant. Absent in test/standalone setups, where
     // set_recording acknowledges without capturing anything.
     recorder?: Pick<SessionRecorder, 'setEnabled'>,
@@ -342,12 +344,19 @@ export class SceneServer extends RPC<Method, Params, Result> {
         camera.setTarget(new Vector3(x, y, z));
       });
 
+      // The capture copies the canvas on the next rendered frame, so whatever is hidden now
+      // stays out of the picture, and the helpers come back once it is taken.
       this.handle('take_screenshot', async ({ width, height, precision }) => {
-        return ScreenshotTools.CreateScreenshotAsync(renderer.engine, camera, {
-          width,
-          height,
-          precision,
-        });
+        const restoreEditorHelpers = hideEditorHelpers?.();
+        try {
+          return await ScreenshotTools.CreateScreenshotAsync(renderer.engine, camera, {
+            width,
+            height,
+            precision,
+          });
+        } finally {
+          restoreEditorHelpers?.();
+        }
       });
     } else if (takeScreenshot) {
       // Non-Babylon renderer (Bevy): no camera control, but it can still capture

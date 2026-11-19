@@ -123,8 +123,8 @@ export class BabylonRenderer implements IRenderer {
     // ECS-driven path remains the source of truth during migration.
   }
 
-  async getPointerWorldPoint(): Promise<Vector3 | null> {
-    const point = await getPointerCoords(this.context.scene);
+  async getPointerWorldPoint(ndc?: { x: number; y: number }): Promise<Vector3 | null> {
+    const point = getPointerCoords(this.context.scene, ndc);
     return point ? DclVector3.create(point.x, point.y, point.z) : null;
   }
 

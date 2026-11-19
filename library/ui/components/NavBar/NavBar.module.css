@@ -5,6 +5,9 @@
   .frame {
     width: 100%;
     min-width: 0;
+    /* The bar reads the same in every section, whatever smoothing the page under it uses. */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   .root[data-menu-open] > .start,
@@ -143,6 +146,22 @@
     left: 0;
   }
 
+  .dropdown[data-compact] {
+    min-width: 100%;
+    width: max-content;
+    background: var(--dcl-bg-surface-overlay);
+    box-shadow: 0 4px 16px color-mix(in srgb, var(--dcl-neutrals-black) 50%, transparent);
+    -webkit-backdrop-filter: blur(12.5px);
+    backdrop-filter: blur(12.5px);
+  }
+
+  /* Keep the pointer inside the disclosure while it crosses the visual gap. */
+  .dropdown::before {
+    content: '';
+    position: absolute;
+    inset: calc(-1 * var(--dcl-space-8) - 1px) 0 100%;
+  }
+
   .accountMenu {
     right: 0;
     min-width: 240px;
@@ -166,6 +185,16 @@
     text-align: left;
     text-decoration: none;
     cursor: pointer;
+  }
+
+  .dropdown[data-compact] .dropdownLink {
+    color: var(--dcl-text-secondary);
+  }
+
+  .tab:active,
+  .dropdownLink:active,
+  .drawerToggle:active {
+    background: var(--dcl-bg-pressed);
   }
 
   .dropdownLink[aria-current='page'],
@@ -260,6 +289,18 @@
     cursor: pointer;
   }
 
+  .notificationControl {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  @media (max-width: 1023px) {
+    .notificationControl[data-panel] {
+      position: static;
+    }
+  }
+
   .badge {
     composes: text6c6162656c2f746167 from '../../foundations/typography/text-styles.module.css';
     position: absolute;
@@ -330,6 +371,64 @@
     padding: 0 var(--dcl-space-12);
   }
 
+  .account[data-appearance='sites'] .accountMenu {
+    box-sizing: border-box;
+    width: 272px;
+    padding: var(--dcl-space-16);
+    border-radius: var(--dcl-radius-lg);
+  }
+
+  .accountHeader {
+    display: flex;
+    align-items: center;
+    gap: var(--dcl-space-12);
+  }
+
+  .accountDetails {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .accountMenuAvatar {
+    display: none;
+  }
+
+  .account[data-appearance='sites'] .menuItem {
+    display: flex;
+    align-items: center;
+    gap: var(--dcl-space-12);
+    min-height: var(--dcl-space-40);
+  }
+
+  .account[data-appearance='sites'] .menuItem svg {
+    flex-shrink: 0;
+  }
+
+  .accountIdentity {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--dcl-space-8);
+    padding: var(--dcl-space-8) var(--dcl-space-12) 0;
+    color: var(--dcl-text-secondary);
+  }
+
+  @media (max-width: 1023px) {
+    .account[data-appearance='sites'] {
+      position: static;
+    }
+
+    .accountMenuAvatar {
+      display: flex;
+    }
+
+    .account[data-appearance='sites'] .accountMenu {
+      inset-inline: var(--dcl-space-16);
+      width: auto;
+      min-width: 0;
+    }
+  }
+
   .menuList {
     display: grid;
     gap: var(--dcl-space-4);
@@ -379,33 +478,46 @@
     color: var(--dcl-text-primary);
   }
 
+  .drawer[data-compact] {
+    --drawer-motion-duration: 280ms;
+    --drawer-hidden-opacity: 0;
+    padding-right: calc(var(--dcl-space-12) + env(safe-area-inset-right, 0px));
+    padding-bottom: calc(var(--dcl-space-12) + env(safe-area-inset-bottom, 0px));
+    padding-left: calc(var(--dcl-space-12) + env(safe-area-inset-left, 0px));
+    overscroll-behavior: contain;
+  }
+
   @keyframes drawerReveal {
     from {
       clip-path: inset(0 0 100% 0);
+      opacity: var(--drawer-hidden-opacity, 1);
     }
     to {
       clip-path: inset(0);
+      opacity: 1;
     }
   }
 
   @keyframes drawerConceal {
     from {
       clip-path: var(--drawer-exit-from, inset(0));
+      opacity: var(--drawer-exit-opacity, 1);
     }
     to {
       clip-path: inset(0 0 100% 0);
+      opacity: var(--drawer-hidden-opacity, 1);
     }
   }
 
   @media (prefers-reduced-motion: no-preference) {
     .drawer {
-      animation: drawerReveal 180ms ease-out both;
+      animation: drawerReveal var(--drawer-motion-duration, 180ms) ease-out both;
     }
     .drawer[data-entry-revealed] {
       animation: none;
     }
     .drawer[data-exiting] {
-      animation: drawerConceal 180ms ease-in both;
+      animation: drawerConceal var(--drawer-motion-duration, 180ms) ease-in both;
     }
   }
 
@@ -428,7 +540,8 @@
   }
 
   .drawerGroup,
-  .drawerLink {
+  .drawerLink,
+  .drawerToggle {
     composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
     color: var(--dcl-text-primary);
   }
@@ -444,6 +557,51 @@
     text-decoration: none;
   }
 
+  .drawerToggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: var(--dcl-space-24) var(--dcl-space-16);
+    border: 0;
+    border-radius: var(--dcl-radius-sm);
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .drawerDisclosure {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+
+  .drawerSection[data-expanded] .drawerDisclosure {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+
+  .drawerDisclosureClip {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .drawerDisclosure .drawerItems {
+    padding: var(--dcl-space-4) var(--dcl-space-16) var(--dcl-space-16);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .drawerDisclosure {
+      transition:
+        grid-template-rows 220ms ease-in-out,
+        opacity 180ms ease-in-out;
+    }
+  }
+
+  .drawerToggle[aria-expanded='true'] .chevron {
+    transform: rotate(180deg);
+  }
+
   .drawerItemLink {
     composes: text626f64792f6d64 from '../../foundations/typography/text-styles.module.css';
     display: block;
@@ -451,6 +609,16 @@
     border-radius: var(--dcl-radius-sm);
     color: var(--dcl-text-primary);
     text-decoration: none;
+  }
+
+  .drawerDisclosure .drawerItemLink {
+    padding-inline: var(--dcl-space-16);
+    color: var(--dcl-text-secondary);
+  }
+
+  .drawerDisclosure .drawerItemLink[aria-current='page'] {
+    background: var(--dcl-bg-hover);
+    color: var(--dcl-text-primary);
   }
 
   .drawerAccount {
@@ -487,6 +655,7 @@
     .dropdownLink:hover,
     .menuItem:hover,
     .drawerLink:hover,
+    .drawerToggle:hover,
     .drawerItemLink:hover,
     .signIn:hover,
     .iconButton:hover,

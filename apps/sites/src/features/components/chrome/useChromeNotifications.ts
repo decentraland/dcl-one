@@ -9,10 +9,12 @@ export function useChromeNotifications(
   account: string | null,
   open: boolean,
   fetcher?: ChromeNotificationsFetcher,
+  preload = false,
 ) {
   return useQuery({
     ...chromeNotificationsQuery(account, fetcher),
-    enabled: !!account && open,
+    enabled: !!account && (open || (preload && !!fetcher)),
+    staleTime: preload ? 30_000 : 0,
     select: parseNotificationsLoose,
   });
 }

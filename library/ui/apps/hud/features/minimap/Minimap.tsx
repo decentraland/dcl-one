@@ -22,6 +22,7 @@ import { EngineViewport } from '../engine/EngineViewport'
 import { PARCEL_METERS, atlasPx, chunksInRect, isGenesisSatelliteView, parcelTileFor, type Chunk } from '@explorer-core/features/map/atlas'
 import { MARKER_ART, PANEL_ART } from '../map/mapArt'
 import { MaskIcon } from '../../design/MaskIcon'
+import { QuestPinIcon } from '../map/QuestPinIcon'
 import { useMapLayerData } from '../map/useMapLayerData'
 import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
 import { navigation } from '@explorer-core/features/map/navigation'
@@ -451,6 +452,12 @@ export const Minimap = memo(function Minimap({
                     <span key={m.id} className={styles.poi} style={atlasPxAt(m.key)}>
                       <img className={styles.poiPin} src={MARKER_ART.poi} alt="" draggable={false} />
                       <span className={styles.poiLabel}>{m.title}</span>
+                    </span>
+                  ))}
+                {inGenesis && layers.has('pins') &&
+                  layerData.pins.map((m) => (
+                    <span key={m.id} className={styles.poi} style={atlasPxAt(m.key)} data-marker="pins">
+                      <QuestPinIcon icon={m.icon} className={styles.questPin} />
                     </span>
                   ))}
                 {inGenesis && layers.has('liveEvents') &&

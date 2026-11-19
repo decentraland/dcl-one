@@ -11,6 +11,8 @@ import wednesday from "@dcl/one-ui/apps/sites/assets/weekly-rituals/wednesday.we
 import type { HomeContent } from "@/data/lib/catalyst/landings/home";
 import { VIBE_CREATORS } from "@/data/lib/catalyst/landings/vibe-creators";
 import { homeEventHref } from "./links";
+import { homeCopy } from "./locale";
+import type { SitesLocale } from "@ui/web/frames/sites-locale";
 
 // Home media and recurring events from decentraland/sites at cfdfa1a51216f9dc90c5b148686a95e7ee9c2862 (src/data/static-content.ts).
 
@@ -42,35 +44,36 @@ export const WATCH_PARTY_WEDNESDAYS_EVENT_ID =
 export const WEEKLY_RITUALS = [
   {
     id: "career-mondays",
-    title: "Career Mondays",
     eventId: CAREER_MONDAYS_EVENT_ID,
     image: monday,
     mobileImage: mondayMobile,
   },
   {
     id: "takeover-tuesdays",
-    title: "Takeover Tuesdays",
     eventId: TAKEOVER_TUESDAYS_EVENT_ID,
     image: tuesday,
     mobileImage: tuesdayMobile,
   },
   {
     id: "watch-party",
-    title: "Watch Party Wednesdays",
     eventId: WATCH_PARTY_WEDNESDAYS_EVENT_ID,
     image: wednesday,
     mobileImage: wednesdayMobile,
   },
 ] as const;
 
-export function homeAgentContent(content: HomeContent): HomeContent {
+export function homeAgentContent(
+  content: HomeContent,
+  locale: SitesLocale = "en",
+): HomeContent {
+  const copy = homeCopy[locale];
   return {
     ...content,
     hero: {
       ...content.hero,
-      title: "Close the Feed. Come Hang Out.",
-      mobileTitle: "Hang Out From Anywhere",
-      subtitle: "Decentraland now on mobile.",
+      title: copy.hero.title,
+      mobileTitle: copy.hero.mobileTitle,
+      subtitle: copy.hero.subtitle,
     },
     rails: content.rails.map((rail) =>
       rail.kind === "rituals"
@@ -78,7 +81,7 @@ export function homeAgentContent(content: HomeContent): HomeContent {
             ...rail,
             items: WEEKLY_RITUALS.map((ritual) => ({
               id: ritual.id,
-              title: ritual.title,
+              title: copy.rituals[ritual.id],
               day: null,
               image: null,
               href: homeEventHref(ritual.eventId),

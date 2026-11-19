@@ -1,5 +1,6 @@
 //! Scene lookup responsibilities.
 use super::*;
+use crate::world_identity::signed_realm_name;
 
 pub(crate) fn meta_str(meta: &Value, key: &str) -> Option<String> {
     meta.get(key)
@@ -8,12 +9,21 @@ pub(crate) fn meta_str(meta: &Value, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// The signed realm name, `realmName` else `realm.serverName`; a non-world
+/// name signed beside a realm URL naming a world reads as that world
+/// ([`crate::world_identity::signed_realm_name`]).
 pub fn realm_name_from_metadata(metadata: &Value) -> Option<String> {
-    meta_str(metadata, "realmName").or_else(|| {
+    let signed = meta_str(metadata, "realmName").or_else(|| {
         metadata
             .get("realm")
             .and_then(|r| meta_str(r, "serverName"))
-    })
+    })?;
+    Some(signed_realm_name(&signed, signed_realm_url(metadata)))
+}
+
+/// The signed realm URL (`realm.hostname`), when it is a string.
+pub(crate) fn signed_realm_url(metadata: &Value) -> Option<&str> {
+    metadata.pointer("/realm/hostname").and_then(Value::as_str)
 }
 
 /// The place a scene-signed request stands on: the world name for a world

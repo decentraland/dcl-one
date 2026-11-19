@@ -340,6 +340,53 @@
   .stinvite__rail { margin-left: 192px; margin-right: 192px; }
 }
 @media (max-width: 990.95px) {
+  .stinvite__hero--primary,
+  .stinvite__hero--primary .stinvite__hero-inner {
+    min-height: 100svh;
+  }
+
+  .stinvite__hero--primary .stinvite__hero-inner {
+    display: grid;
+    /* The artwork gives up space to the copy when the viewport is short. */
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(min(25svh, 12rem), 1fr) auto;
+    align-items: stretch;
+    padding: 0;
+  }
+
+  .stinvite__hero--primary .stinvite__media {
+    position: relative;
+    grid-row: 1;
+  }
+
+  .stinvite__hero--primary .stinvite__avatar {
+    inset: 0;
+    height: 100%;
+  }
+
+  .stinvite__hero--primary .stinvite__rail {
+    position: relative;
+    inset: auto;
+    width: auto;
+    height: auto;
+    min-height: 50svh;
+    box-sizing: border-box;
+    margin: 0;
+    padding: var(--dcl-space-24) clamp(var(--dcl-space-16), 8vw, var(--dcl-space-96)) var(--dcl-space-32);
+  }
+
+  .stinvite__hero--primary .stinvite__rail-text {
+    margin-bottom: var(--dcl-space-24);
+  }
+
+  .stinvite__hero--primary .stinvite__title {
+    margin-bottom: clamp(var(--dcl-space-16), 4svh, var(--dcl-space-48));
+  }
+
+  .stinvite__hero--primary .stinvite__actions {
+    justify-content: center;
+  }
+
   .stinvite__rail {
     position: absolute;
     top: 50%;

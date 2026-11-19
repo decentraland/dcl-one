@@ -10,6 +10,7 @@ import { PACKAGES } from '/shared/types/pkg';
 import { getPath } from '../';
 import type { Severity } from '../../store/snackbar/types';
 import { store } from '../../store';
+import { getOpenProject } from '/@/lib/open-project';
 import { actions as aiActions } from '../../store/ai';
 import { actions as snackbarActions } from '../../store/snackbar';
 import { createGenericNotification } from '../../store/snackbar/utils';
@@ -119,7 +120,7 @@ export class SceneRpcServer extends RPC<Method, Params, Result> {
     // holds its old layout).
     let lastEditorLayout = layoutKey(project.scene);
     this.handle('notify_scene_metadata', async ({ title, scene }) => {
-      const current = store.getState().editor.project ?? project;
+      const current = getOpenProject(store.getState()) ?? project;
       const layout = scene && layoutKey(scene);
       const layoutChanged = !!layout && layout !== lastEditorLayout;
       if (layout) lastEditorLayout = layout;

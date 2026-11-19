@@ -25,6 +25,11 @@ vi.hoisted(() => {
   });
 });
 
+const marketplace = vi.hoisted(() => ({ eligible: false }));
+vi.mock("@/data/lib/shop/marketplace-access", () => ({
+  useMarketplaceHere: () => marketplace.eligible,
+}));
+
 const baseAuth: ChromeAuth = {
   signedIn: false,
   account: "",
@@ -69,18 +74,21 @@ beforeEach(() => {
     this.open = false;
   };
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  marketplace.eligible = false;
+  vi.unstubAllGlobals();
+});
+
+const shopAccount = "0x" + "ab".repeat(20);
 
 describe("Sites native chrome integration", () => {
   it("renders one banner and keeps signed-out links and dropdown destinations", () => {
     render(<Host />);
     expect(screen.getAllByRole("banner")).toHaveLength(1);
-    expect(
-      screen.getByRole("link", { name: "Shop" }).getAttribute("href"),
-    ).toBe("/shop");
-    expect(
-      screen.getByRole("link", { name: "Shop" }).getAttribute("aria-current"),
-    ).toBe("page");
+    fireEvent.click(screen.getByRole("button", { name: "Shop" }));
+    expect(screen.getByRole("link", { name: "Shop All" }).getAttribute("href")).toBe("/shop/overview");
+    expect(screen.queryByRole("link", { name: "LAND" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Discover" }));
     expect(
       screen.getByRole("link", { name: "Events" }).getAttribute("href"),
@@ -91,12 +99,55 @@ describe("Sites native chrome integration", () => {
     expect(screen.getByRole("link", { name: "Sign in" })).toBeTruthy();
     expect(screen.queryByLabelText("Credits")).toBeNull();
   });
+  it("selects the Shop item from the router query and shows LAND after the wallet matches", async () => {
+    marketplace.eligible = true;
+    let resolveAccounts!: (accounts: string[]) => void;
+    vi.stubGlobal("ethereum", {
+      request: () => new Promise<string[]>((resolve) => { resolveAccounts = resolve; }),
+    });
+    render(
+      <Host
+        pathname="/shop/items?category=emote"
+        auth={{ ...baseAuth, signedIn: true, account: shopAccount }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Shop" }));
+    expect(screen.getByRole("link", { name: "Emotes" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("link", { name: /names/i }).getAttribute("href")).toBe("/shop/names");
+    expect(screen.queryByRole("link", { name: "LAND" })).toBeNull();
+    await act(async () => resolveAccounts([shopAccount]));
+    expect((await screen.findByRole("link", { name: "LAND" })).getAttribute("href")).toBe("/shop/lands");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+    const menu = within(screen.getByRole("dialog", { name: "Menu" }));
+    fireEvent.click(menu.getByRole("button", { name: "Shop" }));
+    expect(menu.getByRole("link", { name: "LAND" }).getAttribute("href")).toBe("/shop/lands");
+    expect(menu.getByRole("link", { name: "Emotes" }).getAttribute("aria-current")).toBe("page");
+  });
+  it("keeps LAND hidden for a different wallet, an empty list, or a rejected wallet read", async () => {
+    marketplace.eligible = true;
+    for (const accounts of [["0x" + "cd".repeat(20)], [], null]) {
+      const request = vi.fn(async () => {
+        if (accounts === null) throw new Error("Wallet read denied");
+        return accounts;
+      });
+      vi.stubGlobal("ethereum", { request });
+      const view = render(<Host auth={{ ...baseAuth, signedIn: true, account: shopAccount }} />);
+      await act(async () => {});
+      expect(request).toHaveBeenCalledWith({ method: "eth_accounts" });
+      fireEvent.click(screen.getByRole("button", { name: "Shop" }));
+      expect(screen.getByRole("link", { name: /names/i })).toBeTruthy();
+      expect(screen.queryByRole("link", { name: "LAND" })).toBeNull();
+      view.unmount();
+    }
+  });
   it("shows the canonical Events destination as selected inside the mobile menu", () => {
     render(
       <Host pathname="/events" children={<DclTopBar active="events" />} />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
     const menu = within(screen.getByRole("dialog", { name: "Menu" }));
+    fireEvent.click(menu.getByRole("button", { name: "Discover" }));
     const events = menu.getByRole("link", { name: "Events" });
     expect(events.getAttribute("href")).toBe("/events");
     expect(events.getAttribute("aria-current")).toBe("page");
@@ -114,6 +165,7 @@ describe("Sites native chrome integration", () => {
       );
       fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
       const menu = within(screen.getByRole("dialog", { name: "Menu" }));
+      fireEvent.click(menu.getByRole("button", { name: "Discover" }));
       const places = menu.getByRole("link", { name: "Places" });
       expect(places.getAttribute("href")).toBe("/places");
       expect(places.getAttribute("aria-current")).toBe("page");
@@ -257,8 +309,57 @@ describe("when a Sites page reports its area", () => {
     },
   );
   it("should select no section for an area outside the navigation", () => {
-    render(<Host pathname="/social/" children={<DclTopBar active="social" />} />);
+    render(
+      <Host pathname="/social/" children={<DclTopBar active="social" />} />,
+    );
     expect(document.querySelector('[aria-current="page"]')).toBeNull();
+  });
+});
+
+describe("when the signed-in web visitor opens the profile", () => {
+  const logout = vi.fn();
+  const switchAccount = vi.fn();
+
+  beforeEach(() => {
+    logout.mockReset();
+    switchAccount.mockReset();
+    render(
+      <Host pathname="/events" auth={{
+        ...baseAuth, signedIn: true, account: "0xA", name: "Ada",
+        onSignOut: logout, onSwitchAccount: switchAccount,
+      }} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Account: Ada" }));
+  });
+
+  it("should show the profile links in order and keep the logout action", () => {
+    const profile = screen.getByRole("link", { name: "View Profile" });
+    const panel = profile.closest("[tabindex='-1']")!;
+    expect(within(panel as HTMLElement).getAllByRole("link").map((link) => link.getAttribute("href")))
+      .toEqual(["/profile/0xa", "/shop/my-items", "/account", "/shop/settings"]);
+    expect(screen.queryByRole("button", { name: "Switch account" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Logout" }));
+    expect(logout).toHaveBeenCalledOnce();
+  });
+});
+
+describe("when the embedded creator host owns the account", () => {
+  const switchAccount = vi.fn();
+
+  beforeEach(() => {
+    switchAccount.mockReset();
+    render(
+      <Host pathname="/create/home" auth={{
+        ...baseAuth, signedIn: true, account: "0xA", name: "Ada", onSwitchAccount: switchAccount,
+      }} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Account: Ada" }));
+  });
+
+  it("should keep the host switch action available", () => {
+    expect(screen.queryByRole("button", { name: "Logout" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Switch account" }));
+    expect(switchAccount).toHaveBeenCalledOnce();
   });
 });
 
@@ -302,8 +403,72 @@ it("keeps cached notifications alongside a background refresh error", async () =
   fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
   await screen.findByRole("link", { name: /Cached notice/ });
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
-  fireEvent.click(screen.getByRole("button", { name: /^Notifications/ }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Notifications, 1 unread" }),
+  );
   await screen.findByRole("alert");
   expect(screen.getByRole("link", { name: /Cached notice/ })).toBeTruthy();
   expect(fetchNotifications).toHaveBeenCalledTimes(2);
+});
+
+describe("when a signed-in visitor has an unread notification", () => {
+  it("should show the unread count before opening notifications", async () => {
+    render(
+      <Host
+        pathname="/"
+        auth={{
+          ...baseAuth,
+          signedIn: true,
+          account: "0xa",
+          fetchNotifications: async () => ({
+            notifications: [
+              {
+                id: "unread",
+                type: "broadcast",
+                timestamp: Date.now(),
+                read: false,
+                metadata: { title: "Seeded notice" },
+              },
+              {
+                id: "read",
+                type: "broadcast",
+                timestamp: Date.now(),
+                read: true,
+                metadata: { title: "Read notice" },
+              },
+            ],
+          }),
+        }}
+      />,
+    );
+    const bell = await screen.findByRole("button", { name: /1 unread/ });
+    expect(bell.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(bell);
+    await screen.findByText("Seeded notice");
+  });
+});
+
+describe("when Home notifications are opened", () => {
+  it("should open a nonmodal inbox and restore focus on Escape", async () => {
+    render(
+      <Host
+        pathname="/"
+        auth={{
+          ...baseAuth,
+          signedIn: true,
+          account: "0xa",
+          fetchNotifications: async () => ({ notifications: [] }),
+        }}
+      />,
+    );
+    const bell = screen.getByRole("button", { name: "Notifications" });
+    fireEvent.click(bell);
+    const panel = screen.getByRole("dialog", { name: "Notifications" });
+    await screen.findByText("No notifications yet");
+    const close = within(panel).getByRole("button", { name: "Close" });
+    close.focus();
+    fireEvent.keyDown(close, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Notifications" })).toBeNull();
+    expect(document.activeElement).toBe(bell);
+  });
 });

@@ -51,6 +51,8 @@ pub struct SceneAdapterResponse {
 fn signed_scene_target(metadata: &Value) -> Result<(String, String), ApiError> {
     let realm_name = scene::meta_str(metadata, "realmName")
         .ok_or_else(|| unauthorized("Access denied, invalid signed-fetch request, no realmName"))?;
+    let realm_name =
+        crate::world_identity::signed_realm_name(&realm_name, scene::signed_realm_url(metadata));
     let scene_id = scene::meta_str(metadata, "sceneId").ok_or_else(|| {
         ApiError::bad_request("Access denied, invalid signed-fetch request, no sceneId")
     })?;
@@ -145,9 +147,9 @@ pub async fn get_scene_adapter(
         },
         async {
             if !is_world {
-                return Ok(true);
+                return Ok(scene::WorldAccess::Allowed);
             }
-            scene::has_world_access_permission(
+            scene::world_access(
                 &state,
                 &identity,
                 &realm_name,
@@ -160,10 +162,20 @@ pub async fn get_scene_adapter(
         },
     );
     gate.into_result()?;
-    if !world_allowed? {
-        return Err(unauthorized(
-            "Access denied, you are not authorized to access this world",
-        ));
+    match world_allowed? {
+        scene::WorldAccess::Allowed => {}
+        // A ban of the scene (under its own key or a successor's) is
+        // answered apart from the world's refusal, as upstream.
+        scene::WorldAccess::SceneBanned => {
+            return Err(crate::gatekeeper::errors::forbidden(
+                crate::gatekeeper::moderation::store::SCENE_BANNED_MSG,
+            ));
+        }
+        scene::WorldAccess::Refused => {
+            return Err(unauthorized(
+                "Access denied, you are not authorized to access this world",
+            ));
+        }
     }
     let mut grants = join_grants(&resolved.room);
     grants.can_update_own_metadata = true;

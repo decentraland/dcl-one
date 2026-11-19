@@ -19,9 +19,9 @@ use system_bridge::{
     CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
     FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
     FriendshipEventUpdate, HomeScene, HoverEvent, ListenedCommunity, LiveSceneInfo, LobbyStage,
-    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, PlatformBanNotice,
-    PortableInfo, ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi,
-    SetAvatarData, SetPermanentPermission, SetSinglePermission, SystemApi,
+    MapPinInfo, OutfitsData, PermanentPermissionItem, PermissionRequestEvent, PhotoModeState,
+    PlatformBanNotice, PortableInfo, ProfileChangedEvent, ProximityEvent, SatelliteView,
+    SceneLoadingUi, SetAvatarData, SetPermanentPermission, SetSinglePermission, SystemApi,
     TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
     WorldAccessEvent, WorldAccessVerdict,
 };
@@ -245,7 +245,20 @@ pub async fn op_set_avatar(
     rx.await?.map_err(|e| anyhow::anyhow!(e))
 }
 
-pub async fn op_native_input(state: Rc<RefCell<impl State>>) -> String {
+pub async fn op_deploy_outfits(
+    state: Rc<RefCell<impl State>>,
+    address: String,
+    outfits: OutfitsData,
+) -> Result<(), anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::DeployOutfits(address, outfits, sx))?;
+    rx.await?.map_err(|e| anyhow::anyhow!(e))
+}
+
+pub async fn op_native_input(state: Rc<RefCell<impl State>>) -> Result<String, anyhow::Error> {
     let (sx, rx) = RpcResultSender::channel();
 
     state
@@ -254,14 +267,11 @@ pub async fn op_native_input(state: Rc<RefCell<impl State>>) -> String {
         .send(SystemApi::GetNativeInput(sx))
         .unwrap();
 
-    let identifier = rx.await.unwrap();
-    serde_json::to_string(&identifier)
-        .unwrap()
-        .strip_prefix("\"")
-        .unwrap()
-        .strip_suffix("\"")
-        .unwrap()
-        .to_owned()
+    let identifier = rx.await?;
+    match serde_json::to_value(identifier)? {
+        serde_json::Value::String(label) => Ok(label),
+        other => Err(anyhow::anyhow!("input identifier is not a string: {other}")),
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -847,6 +857,26 @@ pub async fn op_read_portables_stream(
     state: Rc<RefCell<impl State>>,
     rid: u32,
 ) -> Result<Option<Vec<PortableInfo>>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub async fn op_get_map_pins_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetMapPinsStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_map_pins_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<Vec<MapPinInfo>>, anyhow::Error> {
     Ok(read_stream(state, rid).await)
 }
 

@@ -6,7 +6,7 @@ import { Link } from "react-router";
 
 import { Coin } from "../../../atoms/icons";
 import ThumbnailImage from "../../../components/ThumbnailImage";
-import { publicThumbnail, publicThumbnailSet } from "../../../data/thumbnail";
+import { publicThumbnail, publicThumbnailSet, useThumbnailPublicBase } from "../../../data/thumbnail";
 import Icon from "../../discovery/components/Icon";
 import { CreditsAmount } from "../../discovery/components/PriceTag";
 import { useCreatorName } from "../../discovery/hooks";
@@ -51,6 +51,7 @@ export function itemPrice(item: Pick<FavoriteItem, "isOnSale" | "priceCredits">)
 }
 
 export default function ItemCard({ item, saved, onToggleSave, actions }: { item: FavoriteItem; saved?: boolean; onToggleSave?: () => void; actions?: ReactNode }) {
+  const thumbnailBase = useThumbnailPublicBase();
   const href = shopPath("itemDetail", { contractAddress: item.contractAddress, itemId: item.itemId });
   const author = useCreatorName(item.creator);
   const catIco = categoryIcon({ category: item.category });
@@ -72,7 +73,7 @@ export default function ItemCard({ item, saved, onToggleSave, actions }: { item:
         ) : null}
         <div className="shop-card__media" style={{ backgroundImage: rarityMedia(item.rarity) }}>
           {item.thumbnail ? (
-            <ThumbnailImage className="shop-card__img" src={publicThumbnail(item.thumbnail, 320)} srcSet={publicThumbnailSet(item.thumbnail, [320, 640])}
+            <ThumbnailImage className="shop-card__img" src={publicThumbnail(item.thumbnail, 320, thumbnailBase)} srcSet={publicThumbnailSet(item.thumbnail, [320, 640], thumbnailBase)}
               sizes="(max-width: 640px) 45vw, 240px" fallbackSrc={item.thumbnail} alt="" loading="lazy" decoding="async" />
           ) : null}
         </div>

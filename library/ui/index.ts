@@ -17,7 +17,8 @@ export type {
 export {
   decentralandNavigation,
   decentralandNavigationSection,
-  decentralandNavSections
+  decentralandNavSections,
+  decentralandPublicNavSections
 } from './components/NavBar/NavBar.navigation'
 export type {
   DecentralandNavigationArea,
@@ -30,6 +31,7 @@ export { Button } from './components/Button/Button'
 export type { ButtonProps } from './components/Button/Button'
 
 export * from './components/CardActionButton/CardActionButton'
+export * from './components/CopyFeedback/CopyFeedback'
 export * from './components/EventCard/EventCard'
 export * from './components/JumpInCTA/JumpInCTA'
 export * from './components/NavCreditsBalance/NavCreditsBalance'
@@ -37,6 +39,8 @@ export * from './components/NavMenuItem/NavMenuItem'
 export * from './components/NavMenuTab/NavMenuTab'
 export * from './components/NavNotificationsButton/NavNotificationsButton'
 export * from './components/NavProfileButton/NavProfileButton'
+export * from './components/BlogBanner/BlogBanner'
+export * from './components/BlogCard/BlogCard'
 export * from './components/PlaceCard/PlaceCard'
 export * from './components/SearchBar/SearchBar'
 export * from './components/ShopCard/ShopCard'

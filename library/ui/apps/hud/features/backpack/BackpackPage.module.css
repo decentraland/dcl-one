@@ -833,6 +833,23 @@
   gap: 28px;
   width: 1308px;
 }
+.outfitNotice,
+.outfitError {
+  position: absolute;
+  left: 0;
+  right: 0;
+  font-size: var(--type-16);
+  text-align: center;
+}
+.outfitNotice {
+  bottom: 100%;
+  margin: 0 0 12px;
+}
+.outfitError {
+  top: 100%;
+  margin: 12px 0 0;
+  color: var(--error-text);
+}
 .outfitRow {
   display: flex;
   justify-content: center;

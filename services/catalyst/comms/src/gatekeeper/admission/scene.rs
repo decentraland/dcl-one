@@ -60,14 +60,15 @@ pub use lookup::{
     PlaceInfo, PlaceLookup, place_from_metadata, realm_name_from_metadata,
     resolve_listing_place_id, resolve_world_scene_id, try_load_place_info,
 };
-pub(crate) use lookup::{meta_str, participant_room, resolve_adapter_room};
+pub(crate) use lookup::{meta_str, participant_room, resolve_adapter_room, signed_realm_url};
 #[path = "scene_policy.rs"]
 mod policy;
 pub(crate) use policy::try_get_lease_holders_for_parcels;
 pub use policy::{
-    SceneCaches, ensure_target_not_protected, get_extra_addresses, get_lease_holders_for_parcels,
-    has_world_access_permission, holds_extended_permission, names_for,
-    scene_owner_or_admin_decision, try_get_extra_addresses,
+    SceneCaches, WorldAccess, ensure_target_not_protected, get_extra_addresses,
+    get_lease_holders_for_parcels, has_world_access_permission, holds_extended_permission,
+    names_for, scene_manager_decision, scene_owner_or_admin_decision, try_get_extra_addresses,
+    world_access,
 };
 #[path = "scene_effects.rs"]
 mod effects;
@@ -307,6 +308,55 @@ mod tests {
         assert_eq!(
             place_from_metadata(&json!({ "realmName": "main", "sceneId": "x" })).as_deref(),
             Some("x")
+        );
+    }
+
+    /// A world published here signs its stripped `/about` realm name (or an
+    /// override) beside the realm URL `<host>/world/<name>`: every reading of
+    /// the signed realm takes the world; a realm URL without one keeps Genesis.
+    #[test]
+    fn a_stripped_realm_name_signed_beside_a_world_realm_url_is_that_world() {
+        let stripped = json!({
+            "realm": { "serverName": "foo", "hostname": "node.example/world/foo.dcl.eth" },
+            "sceneId": "bafkreiabc",
+            "parcel": "0,0",
+        });
+        assert_eq!(
+            realm_name_from_metadata(&stripped).as_deref(),
+            Some("foo.dcl.eth")
+        );
+        assert_eq!(
+            listing_key_candidate(&stripped).as_deref(),
+            Some("bafkreiabc")
+        );
+        assert_eq!(
+            place_from_metadata(&stripped).as_deref(),
+            Some("foo.dcl.eth")
+        );
+        assert_eq!(
+            plan(&RoomContext::from_metadata(&stripped, "place-1")),
+            RoomPlan::World {
+                world: "foo.dcl.eth".into(),
+                scene_id: Some("bafkreiabc".into()),
+            }
+        );
+        let genesis = json!({
+            "realm": { "serverName": "main", "hostname": "node.example" },
+            "sceneId": "bafkreiabc",
+        });
+        assert_eq!(realm_name_from_metadata(&genesis).as_deref(), Some("main"));
+        assert_eq!(
+            plan(&RoomContext::from_metadata(&genesis, "place-1")),
+            RoomPlan::Scene("scene:main:bafkreiabc".into())
+        );
+        let signed_world = json!({
+            "realmName": "bar.dcl.eth",
+            "realm": { "serverName": "bar.dcl.eth", "hostname": "node.example/world/foo.dcl.eth" },
+        });
+        assert_eq!(
+            realm_name_from_metadata(&signed_world).as_deref(),
+            Some("bar.dcl.eth"),
+            "a signed world name is kept as signed"
         );
     }
 

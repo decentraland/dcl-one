@@ -8,6 +8,7 @@ import {
   Scripts,
   ScrollRestoration,
   useRouteLoaderData,
+  useMatches,
 } from "react-router";
 
 // The shared tokens, not foundations.css: the Inter faces are the app's own (@ui/atoms/inter.css, through primitives.css).
@@ -28,8 +29,10 @@ import SyncEngineBridge from "@/features/components/creator-hub/SyncEngineBridge
 import NotFoundPage from "@/features/not-found/NotFoundPage";
 import StatusPage from "@ui/components/StatusPage";
 import { EMBED_BOOT_SCRIPT } from "@ui/web/frames/embed";
+import { ThumbnailPublicBase } from "@ui/data/thumbnail";
 import type { ShouldRevalidateFunctionArgs } from "react-router";
-import { pageSid, sessionMiddleware } from "@/core/lib/telemetry/session";
+import { pageSid, parseCookies, publicResponseContext, sessionMiddleware } from "@/core/lib/telemetry/session";
+import { SitesLocaleContext, sitesLanguage, type SitesLocale, type SitesLocaleHandle } from "@ui/web/frames/sites-locale";
 import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { browserCatalystBase } from "@/data/lib/catalyst/bases";
 import { isCommitteeMember } from "@/data/lib/catalyst/creator-hub/committee-membership.server";
@@ -52,10 +55,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const commitHash = (typeof process !== "undefined" && process.env.COMMIT_HASH) || "";
   const pulseServer = (typeof process !== "undefined" && process.env.PUBLIC_PULSE_SERVER) || "";
   const catalystBase = browserCatalystBase();
+  const requestUrl = new URL(request.url);
+  const forwardedScheme = request.headers.get("x-forwarded-proto");
+  if (forwardedScheme === "http" || forwardedScheme === "https") requestUrl.protocol = forwardedScheme + ":";
   const shopApiMode = serverShopApiMode();
   const wallet = readWallet(request);
   // Only the Creator Hub reads the committee seat: other pages do not ask the node for the curation committee.
-  const committee = wallet && isCreatorPath(new URL(request.url).pathname)
+  const committee = wallet && isCreatorPath(requestUrl.pathname)
     ? await isCommitteeMember(wallet, request.signal).catch(() => false)
     : false;
   return {
@@ -68,8 +74,12 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     commitHash,
     pulseServer,
     catalystBase,
+    thumbnailBase: catalystBase || requestUrl.origin,
     shopApiMode,
     wallet,
+    locale: context.get(publicResponseContext)
+      ? undefined
+      : sitesLanguage(parseCookies(request.headers.get("cookie")).lang).code,
     /** The curation committee seat; read only for a Creator Hub path, false on every other path. */
     committee,
     /**
@@ -117,8 +127,12 @@ export function meta(_args: Route.MetaArgs) {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData("root") as
-    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; commitHash?: string; pulseServer?: string; catalystBase?: string; shopApiMode?: string }
+    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; commitHash?: string; pulseServer?: string; catalystBase?: string; thumbnailBase?: string; shopApiMode?: string; locale?: SitesLocale }
     | undefined;
+  const [selectedLocale, setLocale] = useState<SitesLocale>();
+  const homeData = useRouteLoaderData("routes/_index") as { locale?: SitesLocale } | undefined;
+  const locale = selectedLocale ?? homeData?.locale ?? data?.locale ?? "en";
+  const localized = useMatches().some(({ handle }) => (handle as SitesLocaleHandle | undefined)?.sitesLocalized === true);
   const publicEnv = JSON.stringify({
     thirdwebClientId: data?.thirdwebClientId ?? "",
     walletConnectProjectId: data?.walletConnectProjectId ?? "",
@@ -137,7 +151,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     // The docs theme boot script sets data-docs-theme* on <html> before hydration.
-    <html lang="en" suppressHydrationWarning>
+    <html lang={localized ? locale : "en"} suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -162,7 +176,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Links />
       </head>
       <body>
-        {children}
+        <SitesLocaleContext.Provider value={{ locale, onSelect: setLocale }}>
+          <ThumbnailPublicBase.Provider value={data?.thumbnailBase ?? ""}>
+            {children}
+          </ThumbnailPublicBase.Provider>
+        </SitesLocaleContext.Provider>
         <ScrollRestoration />
         <Scripts />
       </body>
@@ -371,13 +389,11 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
     }
   }, [isRouteError, routeStatus, name, message, stack]);
 
-  if (isRouteError) {
-    return <RouteErrorView error={error} />;
-  }
-
-  // Every visitor gets the branded 500 screen, the dev server's too (dev and prod serve
-  // alike); the trace goes to the client-error report above.
-  return <StatusPage status={500} />;
+  return (
+    <div lang="en">
+      {isRouteError ? <RouteErrorView error={error} /> : <StatusPage status={500} />}
+    </div>
+  );
 }
 
 function RouteErrorView({
