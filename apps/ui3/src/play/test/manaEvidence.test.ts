@@ -81,6 +81,23 @@ describe('a MANA sale on chain', () => {
     expect(await resolve(record(), evidence)).toEqual({ kind: 'waiting', retry: false })
   })
 
+  it('keeps waiting, with no RETRY, on a nonce read below the sale’s (a lagging node)', async () => {
+    expect(await resolve(record(), chain({ nonce: 6n }))).toEqual({ kind: 'waiting', retry: false })
+  })
+
+  it('keeps waiting on a range that would read backwards (the finalized block below the checkpoint)', async () => {
+    const evidence = chain({ nonce: 8n })
+    expect(await resolve(record({ fromBlock: String(F + 1n) }), evidence)).toEqual({ kind: 'waiting', retry: false })
+    expect(evidence.executions).not.toHaveBeenCalled()
+  })
+
+  it('never ends a sale as not bought at a venue whose evidence isn’t verified', async () => {
+    const other = '0x' + '77'.repeat(20)
+    const evidence = chain({ nonce: 8n })
+    const out = await resolveMana(record({ venue: other }), { chainId: 137, buyer: BUYER, venue: { address: other, metaTx: 'functionData' }, evidence })
+    expect(out).toEqual({ kind: 'waiting', retry: false })
+  })
+
   it('throws on a log range it can’t read, so nothing settles on half a range', async () => {
     await expect(resolve(record(), chain({ nonce: 8n, executions: new Error('range too large') }))).rejects.toThrow()
   })

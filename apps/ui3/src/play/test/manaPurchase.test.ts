@@ -1,7 +1,7 @@
 // A MANA purchase's attempt (shell/shop/manaPurchase): when each send of the sale may go, and what its record keeps.
 import { describe, expect, it, vi } from 'vitest'
 import { keccak256, type Hex } from 'viem'
-import { createManaAttempt, isManaAttempt, manaDispatched, manaFingerprint, manaFirstDispatch, type ManaAttemptRecord } from '../shell/shop/manaPurchase'
+import { compactManaAttempt, createManaAttempt, isManaAttempt, manaDispatched, manaFingerprint, manaFirstDispatch, manaHasRoom, MAX_SENDS, type ManaAttemptRecord } from '../shell/shop/manaPurchase'
 import type { ManaSaleTerms } from '../shell/shop/manaGuard'
 
 const STORE = '0x214ffc0f0103735728dc66b61a22e4f163e275ae'
@@ -167,6 +167,41 @@ describe('a MANA purchase’s attempt', () => {
     await expect(a.observe(wallet).request({ method: 'eth_signTypedData_v4', params: [BUYER, sale] })).rejects.toBe(reject)
     expect(a.record.sends).toEqual([{ stage: 'declined' }])
     expect(a.dispatched()).toBe(false)
+  })
+
+  it('keeps only what may be evidence: the sends that went, each payload once', () => {
+    const a = attempt()
+    a.handOff({ rail: 'relay', nonce: 3n, data: CALL })
+    const rec: ManaAttemptRecord = {
+      ...a.record,
+      fromBlock: '1',
+      sends: [
+        { stage: 'dispatched', payload: keccak256('0x01'), at: 1 },
+        { stage: 'refused', payload: keccak256('0x02'), at: 2 },
+        { stage: 'dispatched', payload: keccak256('0x01'), at: 3, hash: HASH },
+        { stage: 'declined' },
+        { stage: 'signing' }
+      ]
+    }
+    expect(compactManaAttempt(rec).sends).toEqual([{ stage: 'dispatched', payload: keccak256('0x01'), at: 1, hash: HASH }])
+  })
+
+  it('retires a send left signing, and has no room once as many sends went as a record keeps', async () => {
+    const k = keeper()
+    const a = attempt(k)
+    a.handOff({ rail: 'relay', nonce: 3n, data: CALL })
+    await a.relay(sent({ ok: false, error: 'unknown' }) as unknown as typeof fetch)('https://relay/transactions', post(STORE))
+    a.retry()
+    a.handOff({ rail: 'relay', nonce: 3n, data: CALL })
+    expect(manaHasRoom(a.record)).toBe(false)
+    expect(a.retire()).toBe(true)
+    expect(a.record.sends.map((s) => s.stage)).toEqual(['dispatched'])
+    expect(manaHasRoom(a.record)).toBe(true)
+    const full: ManaAttemptRecord = { ...a.record, sends: Array.from({ length: MAX_SENDS }, (_, i) => ({ stage: 'dispatched' as const, payload: keccak256(`0x0${i}`), at: i })) }
+    expect(manaHasRoom(full)).toBe(false)
+    const capped = attempt(keeper(), { from: full })
+    capped.retry()
+    expect(capped.handOff({ rail: 'relay', nonce: 3n, data: CALL })).toBe(false)
   })
 
   it('takes a kept record up again for a retry, and only for the same sale', () => {

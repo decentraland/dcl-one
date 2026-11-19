@@ -69,8 +69,11 @@ export interface ManaAttemptRecord {
   sends: ManaSend[]
 }
 
-/** Sends a record keeps: the first and its retries. */
-const MAX_SENDS = 8
+/**
+ * The sends a record keeps: the first and its retries, each one's evidence (the payload that went). At that many sends
+ * that went, no more retries: the evidence is all kept, and the chain still decides.
+ */
+export const MAX_SENDS = 8
 const STAGES: readonly SendStage[] = ['signing', 'dispatched', 'refused', 'declined']
 const ADDRESS = /^0x[0-9a-f]{40}$/
 const HASH = /^0x[0-9a-f]{64}$/
@@ -123,6 +126,27 @@ export function isManaAttempt(v: unknown): v is ManaAttemptRecord {
 /** Whether the sale may have left this page: a send got as far as its relay request, and no answer since says it didn't. */
 export function manaDispatched(attempt: ManaAttemptRecord): boolean {
   return attempt.sends.some((s) => s.stage === 'dispatched')
+}
+
+/**
+ * The record with only what may be evidence: the sends that went (`dispatched`), each payload once, in order. A send
+ * still `signing` with no sender left to finish it, one the relay refused or one the buyer declined never left this
+ * page, so nothing on chain can be it.
+ */
+export function compactManaAttempt(record: ManaAttemptRecord): ManaAttemptRecord {
+  const sends: ManaSend[] = []
+  for (const send of record.sends) {
+    if (send.stage !== 'dispatched') continue
+    const same = sends.find((s) => s.payload === send.payload)
+    if (same) same.hash ??= send.hash
+    else sends.push({ ...send })
+  }
+  return { ...record, sends }
+}
+
+/** Whether the record has room for another send: none being signed, and fewer than MAX_SENDS that went. */
+export function manaHasRoom(record: ManaAttemptRecord): boolean {
+  return !record.sends.some((s) => s.stage === 'signing') && record.sends.filter((s) => s.stage === 'dispatched').length < MAX_SENDS
 }
 
 /** When the first send that went, went (ms), or null. */
@@ -189,6 +213,8 @@ export interface ManaAttempt {
   retry(): void
   /** Keeps the hash the relay answered for the latest send. */
   answered(hash: string): void
+  /** Drops what can't be evidence (compactManaAttempt): sends that never left, once no sender is left to finish them. */
+  retire(): boolean
   /** The buyer's wallet, under the guard: a signature of the sale the buyer declines there ends its send as declined. */
   observe(wallet: Eip1193Provider): Eip1193Provider
   /** Whether the sale may have left this page. */
@@ -278,11 +304,12 @@ export function createManaAttempt(
       if (record.sends.length === 0) {
         return move({ ...record, nonce: attempt.nonce.toString(), data: attempt.data, sends: [{ stage: 'signing' }] })
       }
-      // A retry: the buyer's own, of the same call at the same nonce, while no send is being signed.
-      if (!retrying || record.sends.length >= MAX_SENDS || last()?.stage === 'signing') return false
+      // A retry: the buyer's own, of the same call at the same nonce, while no send is being signed and the record has room.
+      if (!retrying || !manaHasRoom(compactManaAttempt(record)) || last()?.stage === 'signing') return false
       if (attempt.nonce.toString() !== record.nonce || attempt.data.toLowerCase() !== record.data?.toLowerCase()) return false
       retrying = false
-      return move({ ...record, sends: [...record.sends, { stage: 'signing' }] })
+      const kept = compactManaAttempt(record)
+      return move({ ...kept, sends: [...kept.sends, { stage: 'signing' }] })
     },
     relay(send) {
       return (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
@@ -335,6 +362,10 @@ export function createManaAttempt(
     answered(hash) {
       const send = last()
       if (send?.stage === 'dispatched' && !send.hash && TX_HASH.test(hash)) restage({ hash })
+    },
+    retire() {
+      const kept = compactManaAttempt(record)
+      return JSON.stringify(kept) === JSON.stringify(record) || move(kept)
     },
     observe(wallet) {
       return {
