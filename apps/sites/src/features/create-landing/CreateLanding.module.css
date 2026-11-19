@@ -98,29 +98,6 @@
 .cta:focus-visible { outline: 2px solid var(--dcl-primary-primary); outline-offset: 2px; }
 .ctaLabel { display: flex; flex-direction: column; }
 .cta .osIcon { margin-left: var(--dcl-space-8); }
-.otherBuilds {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--dcl-space-4);
-  margin-top: var(--dcl-space-8);
-  color: var(--dcl-neutrals-white);
-  font-size: var(--dcl-font-size-body-sm);
-}
-.otherBuild {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--dcl-space-4);
-  min-width: 44px;
-  height: 44px;
-  padding: 0 10px;
-  border-radius: 22px;
-  color: var(--dcl-neutrals-white);
-  text-decoration: none;
-}
-.otherBuild:hover { background: var(--dcl-bg-hover); }
-.otherBuild:focus-visible { outline: 2px solid var(--dcl-neutrals-white); outline-offset: 2px; }
 .ctaMobile { display: none; }
 .scroll {
   display: flex;

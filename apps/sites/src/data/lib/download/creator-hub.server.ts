@@ -150,6 +150,8 @@ function normalizeArch(v: string | null | undefined): ArchKey | undefined {
 type ResolvedDownload = {
   version: string;
   overridden: boolean;
+  /** The link named a chip. */
+  archOverridden: boolean;
   /** False when neither an override nor the User-Agent names Windows or macOS: the page offers no installer. */
   installable: boolean;
   detectedOs: OsKey;
@@ -184,18 +186,20 @@ export function resolveDownload(
   const primaryKey = pickKey(options, detectedOs, detectedArch) ?? DEFAULT_OPTION;
   const primary = options[primaryKey] ?? FALLBACK.options[DEFAULT_OPTION];
 
-  // Every other installer, once per link: before a release is read they all lead to the releases page.
+  // Every other installer. Before a release is read they all lead to the releases page, so each system is offered once.
+  const buildKey = (opt: DownloadOption) => (opt.fileName ? opt.url : opt.osKey);
   const secondary: DownloadOption[] = [];
-  const seenUrls = new Set<string>();
+  const seen = new Set<string>([buildKey(primary)]);
   for (const opt of Object.values(options)) {
-    if (opt === primary || seenUrls.has(opt.url)) continue;
+    if (seen.has(buildKey(opt))) continue;
     secondary.push(opt);
-    seenUrls.add(opt.url);
+    seen.add(buildKey(opt));
   }
 
   return {
     version: release.version,
     overridden: osOverride !== undefined || archOverride !== undefined,
+    archOverridden: archOverride !== undefined,
     installable: (osOverride ?? uaOs) !== undefined,
     detectedOs,
     detectedArch,

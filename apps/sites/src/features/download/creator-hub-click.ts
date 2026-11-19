@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, type MouseEvent } from "react";
 
+import type { DownloadOption, OsKey } from "@/data/lib/download/creator-hub.server";
 import { track } from "@/core/lib/telemetry/track";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
-
-import type { DownloadOption, OsKey } from "./creator-hub.server";
 
 export const CREATOR_HUB_DOWNLOAD_STORY: StoryId = "landings/creator-hub-download";
 
@@ -18,8 +17,17 @@ export function successPath(os: OsKey, arch: string): string {
 /** The click handler of an installer link: reports the download, then opens the install steps for that build. */
 export function useCreatorHubDownloadClick(sid: string) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => {
-    if (timer.current !== null) clearTimeout(timer.current);
+  useEffect(() => {
+    const cancel = () => {
+      if (timer.current !== null) clearTimeout(timer.current);
+      timer.current = null;
+    };
+    // A page left for another one may come back from the back/forward cache with the timer still pending.
+    window.addEventListener("pagehide", cancel);
+    return () => {
+      window.removeEventListener("pagehide", cancel);
+      cancel();
+    };
   }, []);
 
   return useCallback(

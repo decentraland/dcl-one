@@ -86,6 +86,14 @@ describe("the latest Creator Hub release", () => {
     expect(d.secondary.map((o) => `${o.osKey}-${o.arch}`)).toEqual(["macos-amd64", "windows-amd64"]);
   });
 
+  it("offers each other system once when no release was ever read", async () => {
+    fetchMock.mockRejectedValueOnce(new Error("network"));
+    const mac = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
+    const d = resolveDownload(await loadLatestRelease(), mac);
+    expect(d.primary).toMatchObject({ osKey: "macos", url: RELEASES_PAGE });
+    expect(d.secondary.map((o) => `${o.osKey}-${o.url}`)).toEqual([`windows-${RELEASES_PAGE}`]);
+  });
+
   it("asks again a minute after a failed read, not before", async () => {
     fetchMock.mockRejectedValueOnce(new Error("network"));
     await loadLatestRelease();

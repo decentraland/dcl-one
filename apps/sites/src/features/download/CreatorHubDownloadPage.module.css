@@ -108,46 +108,6 @@
   display: block;
 }
 
-.also {
-  display: flex;
-  align-items: center;
-  gap: var(--dcl-space-8);
-  margin-top: var(--dcl-space-8);
-  justify-content: center;
-}
-.alsoText {
-  font-size: var(--dcl-font-size-body-sm);
-  color: var(--dcl-neutrals-pearl);
-}
-
-.altIcon {
-  background: none;
-  border: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--dcl-space-4);
-  min-width: 44px;
-  height: 44px;
-  padding: 0 10px;
-  border-radius: 22px;
-  color: var(--dcl-neutrals-white);
-  font-size: var(--dcl-font-size-body-sm);
-  text-decoration: none;
-  outline: none;
-}
-.altIcon:hover { background: var(--dcl-bg-hover); }
-.altIcon:focus-visible {
-  outline: 2px solid var(--dcl-primary-primary);
-  outline-offset: 2px;
-}
-.altIcon img {
-  width: 20px;
-  height: 20px;
-  display: block;
-}
-
 /* The reference's BannerImage: half the row up to 480px wide, its 752x500 PNG setting the height. */
 .banner {
   width: 50%;

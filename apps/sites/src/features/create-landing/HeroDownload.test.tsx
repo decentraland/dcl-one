@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import type { DownloadOption, HeroDownloads } from "@/data/lib/download/creator-hub.server";
@@ -41,8 +42,8 @@ const assign = vi.fn();
 
 beforeEach(() => {
   vi.mocked(detectMacChip).mockReturnValue("unknown");
-  vi.useFakeTimers();
-  vi.stubGlobal("location", { ...window.location, assign });
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.stubGlobal("location", { href: "http://localhost/", assign });
 });
 afterEach(() => {
   cleanup();
@@ -52,6 +53,7 @@ afterEach(() => {
 });
 
 const main = () => screen.getByRole("link", { name: /Download Creator Hub/ });
+const user = () => userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
 
 it("links to the download page when there is no installer to offer in place", () => {
   render(<HeroDownload downloads={null} sid="s1" />);
@@ -86,9 +88,9 @@ it("links an iPad, which names itself a Mac, to the download page", () => {
   expect(screen.queryByText("Also available on")).toBeNull();
 });
 
-it("reports the download and shows the install steps three seconds later", () => {
+it("reports the download and shows the install steps three seconds later", async () => {
   render(<HeroDownload downloads={onWindows} sid="s1" />);
-  fireEvent.click(main());
+  await user().click(main());
   expect(track).toHaveBeenCalledWith(
     "lp_creatorhub_download_clicked",
     { os: "windows", arch: "amd64", file_name: "hub-win-x64.exe", kind: "primary" },
@@ -99,9 +101,9 @@ it("reports the download and shows the install steps three seconds later", () =>
   expect(assign).toHaveBeenCalledWith("/download/creator-hub-success?os=windows&arch=amd64");
 });
 
-it("reports another build as a secondary download and shows the steps for that build", () => {
+it("reports another build as a secondary download and shows the steps for that build", async () => {
   render(<HeroDownload downloads={onWindows} sid="s1" />);
-  fireEvent.click(screen.getByRole("link", { name: "Download for macOS (Intel)" }));
+  await user().click(screen.getByRole("link", { name: "Download for macOS (Intel)" }));
   expect(track).toHaveBeenCalledWith(
     "lp_creatorhub_download_clicked",
     expect.objectContaining({ os: "macos", arch: "amd64", kind: "secondary" }),
@@ -111,17 +113,20 @@ it("reports another build as a secondary download and shows the steps for that b
   expect(assign).toHaveBeenCalledWith("/download/creator-hub-success?os=macos&arch=amd64");
 });
 
-it("stays on the page when the download is opened in another tab", () => {
+it("stays on the page when the download is opened in another tab", async () => {
   render(<HeroDownload downloads={onWindows} sid="s1" />);
-  fireEvent.click(main(), { metaKey: true });
+  const u = user();
+  await u.keyboard("{Meta>}");
+  await u.click(main());
+  await u.keyboard("{/Meta}");
   act(() => vi.advanceTimersByTime(3000));
   expect(track).toHaveBeenCalled();
   expect(assign).not.toHaveBeenCalled();
 });
 
-it("does not leave for the install steps once the visitor has left the landing", () => {
+it("does not leave for the install steps once the visitor has left the landing", async () => {
   const { unmount } = render(<HeroDownload downloads={onWindows} sid="s1" />);
-  fireEvent.click(main());
+  await user().click(main());
   unmount();
   act(() => vi.advanceTimersByTime(3000));
   expect(assign).not.toHaveBeenCalled();
