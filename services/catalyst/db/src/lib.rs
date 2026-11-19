@@ -537,37 +537,35 @@ pub mod scratch {
             }
             Err(e) => panic!("CREATE DATABASE {name} from {}: {e}", template.name),
         }
-        // A clone carries neither the template's database settings
-        // (schema.sql sets the timezone) nor its per-database identity.
-        let settings: Vec<String> = sqlx::query_scalar(
-            "SELECT format('ALTER DATABASE %I SET %I = %L', $1::text, \
-                    split_part(c, '=', 1), substr(c, strpos(c, '=') + 1)) \
-             FROM pg_db_role_setting s CROSS JOIN unnest(s.setconfig) c \
-             WHERE s.setrole = 0 \
-               AND s.setdatabase = (SELECT oid FROM pg_database WHERE datname = $2)",
-        )
-        .bind(name)
-        .bind(&template.name)
-        .fetch_all(admin)
-        .await
-        .unwrap_or_else(|e| panic!("reading {}'s settings: {e}", template.name));
-        for sql in settings {
-            sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
-                .execute(admin)
-                .await
-                .unwrap_or_else(|e| panic!("{sql}: {e}"));
+        if let Err(error) = initialize_clone(admin, name, template).await {
+            let cleanup = sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"
+            )))
+            .execute(admin)
+            .await;
+            panic!("initializing {name}: {error}; cleanup: {cleanup:?}");
+        }
+    }
+
+    async fn initialize_clone(admin: &PgPool, name: &str, template: &Template) -> sqlx::Result<()> {
+        // A clone needs its own database settings and federation identity.
+        for setting in &template.settings {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "ALTER DATABASE \"{name}\" SET {setting}"
+            )))
+            .execute(admin)
+            .await?;
         }
         use sqlx::Connection;
-        let mut conn = sqlx::PgConnection::connect_with(&opts.as_ref().clone().database(name))
-            .await
-            .unwrap_or_else(|e| panic!("connecting to {name}: {e}"));
+        let opts = admin.connect_options();
+        let mut conn =
+            sqlx::PgConnection::connect_with(&opts.as_ref().clone().database(name)).await?;
         sqlx::query(
             "UPDATE social.fed_instance_identity SET peer_id = 'instance-' || gen_random_uuid()",
         )
         .execute(&mut conn)
-        .await
-        .unwrap_or_else(|e| panic!("minting {name}'s instance identity: {e}"));
-        conn.close().await.ok();
+        .await?;
+        conn.close().await
     }
 
     async fn clone_template(admin: &PgPool, name: &str, template: &Template) -> sqlx::Result<()> {
@@ -588,6 +586,7 @@ pub mod scratch {
     struct Template {
         name: String,
         strategy: &'static str,
+        settings: Vec<String>,
     }
 
     static TEMPLATE: OnceCell<Template> = OnceCell::const_new();
@@ -604,6 +603,8 @@ pub mod scratch {
         hash.update(SCHEMA_SQL);
         hash.update(b"\0");
         hash.update(MIGRATIONS_SQL);
+        hash.update(b"\0");
+        hash.update(include_bytes!("schema_migrate.rs"));
         format!("{TEMPLATE_PREFIX}{}", &hex::encode(hash.finalize())[..16])
     }
 
@@ -618,36 +619,38 @@ pub mod scratch {
             .unwrap_or_else(|e| {
                 panic!("connecting to the postgres database of the test cluster: {e}")
             });
+        let key = template_lock_key(&name).expect("generated template name");
+        // Released with the connection if this process dies.
+        sqlx::query("SELECT pg_advisory_lock($1)")
+            .bind(key)
+            .execute(&mut conn)
+            .await
+            .unwrap_or_else(|e| panic!("locking {name}: {e}"));
         if !template_ready(&mut conn, &name).await {
-            let key = u64::from_str_radix(&name[TEMPLATE_PREFIX.len()..], 16).unwrap() as i64;
-            // Released with the connection if this process dies.
-            sqlx::query("SELECT pg_advisory_lock($1)")
-                .bind(key)
-                .execute(&mut conn)
+            // Remove any leftover from an interrupted sweep.
+            drop_database(&mut conn, &name)
                 .await
-                .unwrap_or_else(|e| panic!("locking {name}: {e}"));
-            if !template_ready(&mut conn, &name).await {
-                // A sweep that died between unmarking and dropping it.
-                let leftover: bool = sqlx::query_scalar(
-                    "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)",
-                )
-                .bind(&name)
-                .fetch_one(&mut conn)
-                .await
-                .unwrap_or_else(|e| panic!("looking up {name}: {e}"));
-                if leftover {
-                    drop_database(&mut conn, &name)
-                        .await
-                        .unwrap_or_else(|e| panic!("dropping the unfinished {name}: {e}"));
-                }
-                build_template(&mut conn, opts, &name).await;
-            }
-            sqlx::query("SELECT pg_advisory_unlock($1)")
-                .bind(key)
-                .execute(&mut conn)
-                .await
-                .unwrap_or_else(|e| panic!("unlocking {name}: {e}"));
+                .unwrap_or_else(|e| panic!("dropping the unfinished {name}: {e}"));
+            build_template(&mut conn, opts, &name).await;
         }
+        let settings: Vec<String> = sqlx::query_scalar(
+            "SELECT format('%I = %L', split_part(c, '=', 1), substr(c, strpos(c, '=') + 1)) \
+             FROM pg_db_role_setting s CROSS JOIN unnest(s.setconfig) c \
+             WHERE s.setrole = 0 \
+               AND s.setdatabase = (SELECT oid FROM pg_database WHERE datname = $1)",
+        )
+        .bind(&name)
+        .fetch_all(&mut conn)
+        .await
+        .unwrap_or_else(|e| panic!("reading {name}'s settings: {e}"));
+        assert!(!settings.is_empty(), "{name} must carry database settings");
+        let used_at = chrono::Utc::now().timestamp();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "COMMENT ON DATABASE \"{name}\" IS '{used_at}'"
+        )))
+        .execute(&mut conn)
+        .await
+        .unwrap_or_else(|e| panic!("recording {name}'s use: {e}"));
         sweep_stale_templates(&mut conn, &name).await;
         let version: i32 = sqlx::query_scalar("SELECT current_setting('server_version_num')::int")
             .fetch_one(&mut conn)
@@ -656,6 +659,7 @@ pub mod scratch {
         conn.close().await.ok();
         Template {
             name,
+            settings,
             // PostgreSQL 15+: copying the files beats WAL-logging every page.
             strategy: if version >= 150_000 {
                 " STRATEGY FILE_COPY"
@@ -663,6 +667,14 @@ pub mod scratch {
                 ""
             },
         }
+    }
+
+    fn template_lock_key(name: &str) -> Option<i64> {
+        let hash = name.strip_prefix(TEMPLATE_PREFIX)?;
+        if hash.len() != 16 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        u64::from_str_radix(hash, 16).ok().map(|key| key as i64)
     }
 
     async fn template_ready(conn: &mut sqlx::PgConnection, name: &str) -> bool {
@@ -717,8 +729,8 @@ pub mod scratch {
         eprintln!("lib tests: built the schema template {name}");
     }
 
-    /// Drops other schemas' templates built more than a day ago. A checkout
-    /// still using one rebuilds it on its next clone.
+    /// Drops other schemas' templates when no test process has looked them up
+    /// for a day. A checkout still using one can rebuild it on its next clone.
     async fn sweep_stale_templates(conn: &mut sqlx::PgConnection, current: &str) {
         let stale: Vec<String> = sqlx::query_scalar(
             "SELECT datname FROM pg_database \
@@ -732,10 +744,71 @@ pub mod scratch {
         .await
         .unwrap_or_default();
         for name in stale {
-            if drop_database(&mut *conn, &name).await.is_ok() {
+            let Some(key) = template_lock_key(&name) else {
+                continue;
+            };
+            let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+                .bind(key)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap_or(false);
+            if !locked {
+                continue;
+            }
+            // The template may have been refreshed since the candidate scan.
+            let still_stale: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1 \
+                   AND coalesce(substring(shobj_description(oid, 'pg_database') FROM '^[0-9]+$')::bigint, 0) \
+                       < extract(epoch FROM now())::bigint - $2)",
+            )
+            .bind(&name)
+            .bind(STALE_TEMPLATE_SECS)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap_or(false);
+            if still_stale && drop_database(&mut *conn, &name).await.is_ok() {
                 eprintln!("lib tests: dropped the stale schema template {name}");
             }
+            let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+                .bind(key)
+                .execute(&mut *conn)
+                .await;
         }
+    }
+
+    #[tokio::test]
+    async fn stale_template_sweep_leaves_a_locked_template_alone() {
+        use sqlx::Connection;
+        let Ok(base) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
+            return;
+        };
+        let opts = base
+            .parse::<PgConnectOptions>()
+            .unwrap()
+            .database("postgres");
+        let mut owner = sqlx::PgConnection::connect_with(&opts).await.unwrap();
+        let mut sweeper = sqlx::PgConnection::connect_with(&opts).await.unwrap();
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let name = format!("{TEMPLATE_PREFIX}{}", &id[..16]);
+        let key = template_lock_key(&name).unwrap();
+        sqlx::query("SELECT pg_advisory_lock($1)")
+            .bind(key)
+            .execute(&mut owner)
+            .await
+            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE DATABASE \"{name}\" WITH IS_TEMPLATE true ALLOW_CONNECTIONS false"
+        )))
+        .execute(&mut owner)
+        .await
+        .unwrap();
+
+        let current = template_name();
+        sweep_stale_templates(&mut sweeper, &current).await;
+        let retained = template_ready(&mut owner, &name).await;
+        drop_database(&mut owner, &name).await.unwrap();
+        owner.close().await.unwrap();
+        assert!(retained, "the sweep must preserve a locked template");
     }
 
     /// Drops a database even if it is marked a template. An invalid database
@@ -755,7 +828,7 @@ pub mod scratch {
             .await?;
         }
         sqlx::query(sqlx::AssertSqlSafe(format!(
-            "DROP DATABASE \"{name}\" WITH (FORCE)"
+            "DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"
         )))
         .execute(&mut *conn)
         .await?;
