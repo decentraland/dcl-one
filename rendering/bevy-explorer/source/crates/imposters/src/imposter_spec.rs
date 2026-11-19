@@ -293,18 +293,19 @@ pub async fn load_imposter_local(
     if let Ok(mut file) = platform_fs::File::open(&path).await {
         let mut buf = Vec::default();
         if file.read_to_end(&mut buf).await.is_ok() {
-            if let Ok(baked_scene) = serde_json::from_slice::<BakedScene>(&buf) {
-                if required_crc.is_none_or(|crc| crc == baked_scene.crc) {
-                    return Some(baked_scene);
-                } else {
-                    debug!(
-                        "mismatched hash for {path:?} (expected {}, found {})",
-                        required_crc.unwrap(),
-                        baked_scene.crc
-                    );
+            match serde_json::from_slice::<BakedScene>(&buf) {
+                Ok(baked_scene) => {
+                    if required_crc.is_none_or(|crc| crc == baked_scene.crc) {
+                        return Some(baked_scene);
+                    } else {
+                        debug!(
+                            "mismatched hash for {path:?} (expected {}, found {})",
+                            required_crc.unwrap(),
+                            baked_scene.crc
+                        );
+                    }
                 }
-            } else {
-                warn!("failed to deserialize {path:?}");
+                Err(e) => warn!("failed to deserialize {path:?}: {e}"),
             }
         };
     }

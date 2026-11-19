@@ -791,7 +791,7 @@ fn announce_version(transports: &Query<&Transport>, profile: &UserProfile) {
     let serialized_profile = match serde_json::to_string(&profile.content) {
         Ok(serialized_profile) => serialized_profile,
         Err(e) => {
-            warn_once!("not announcing profile, serialization failed: {e}");
+            error_once!("not announcing profile, serialization failed: {e}");
             return;
         }
     };
@@ -1288,7 +1288,7 @@ pub fn process_profile_events(
                             match serde_json::to_string(&current_profile.content) {
                                 Ok(serialized_profile) => serialized_profile,
                                 Err(e) => {
-                                    warn_once!("not sending profile, serialization failed: {e}");
+                                    error_once!("not sending profile, serialization failed: {e}");
                                     continue;
                                 }
                             };

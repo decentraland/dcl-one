@@ -662,7 +662,7 @@ fn on_page_envelope(
                         state.hud,
                     );
                 }
-                Err(e) => warn!("[react-hud-cef] failed to serialize prefs: {e}"),
+                Err(e) => error!("[react-hud-cef] failed to serialize prefs: {e}"),
             },
             Some("prefSet") => {
                 if let (Some(key), Some(value)) = (
@@ -795,7 +795,7 @@ fn write_prefs(prefs: &BTreeMap<String, String>) {
     let json = match serde_json::to_string(prefs) {
         Ok(json) => json,
         Err(e) => {
-            warn!("[react-hud-cef] failed to serialize prefs: {e}");
+            error!("[react-hud-cef] failed to serialize prefs: {e}");
             return;
         }
     };

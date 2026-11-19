@@ -681,7 +681,7 @@ fn process_login_bridge(
                             }
                         };
 
-                    // exactly 32 bytes: a shorter slice would be zero-padded into another key
+                    // the stored key must be exactly 32 bytes
                     let local_wallet = match B256::try_from(ephemeral_key.as_slice())
                         .map_err(|e| e.to_string())
                         .and_then(|key| {

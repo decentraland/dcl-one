@@ -5,7 +5,7 @@ use std::{
 
 use crate::{default_color_grading, scatter_bloom};
 use anyhow::anyhow;
-use bevy::log::warn;
+use bevy::log::{error, warn};
 use bevy::{
     core_pipeline::tonemapping::{DebandDither, Tonemapping},
     ecs::bundle::Bundle,
@@ -157,7 +157,7 @@ pub fn write_config_file<T: Serialize>(config: &T) {
     let json = match serde_json::to_string(config) {
         Ok(json) => json,
         Err(e) => {
-            warn!("couldn't serialize config file: {e:?}");
+            error!("couldn't serialize config file: {e:?}");
             return;
         }
     };

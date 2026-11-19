@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use bevy::log::{debug, warn};
+use bevy::log::{debug, error, warn};
 use common::rpc::{RpcCall, RpcEventSender, RpcStreamReceiver};
 use serde::Serialize;
 
@@ -224,7 +224,7 @@ pub fn op_send_batch(state: &mut impl State) -> Vec<Event> {
                             event_data,
                         },
                     }),
-                    Err(e) => warn!("dropping localeChanged event: {e}"),
+                    Err(e) => error!("dropping localeChanged event: {e}"),
                 }
             }
             state.put(LastLocale(current));

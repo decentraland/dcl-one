@@ -145,7 +145,7 @@ pub struct HoverText;
 fn format_button_label(input_map: &InputMap, info: &Info) -> String {
     input_map
         .get_input(info.button().to_common())
-        .and_then(|b| match serde_json::to_value(&b) {
+        .and_then(|b| match serde_json::to_value(b) {
             Ok(serde_json::Value::String(label)) => Some(label),
             _ => None,
         })
