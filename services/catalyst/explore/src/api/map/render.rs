@@ -338,8 +338,7 @@ fn compare_estate_ids(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
-/// One pixel per parcel carrying its estate's ordinal in RGB: estates
-/// numbered from 1 in id order, so 0 is "no estate" and replicas agree.
+/// One pixel per parcel carrying its estate's 1-based ordinal in id order.
 pub fn render_estate_minimap(grid: &Grid) -> Result<Vec<u8>, String> {
     let mut rgba = vec![0u8; MINIMAP_DIM * MINIMAP_DIM * 4];
     let mut ids: Vec<&str> = grid
@@ -417,8 +416,7 @@ mod tests {
         assert_ne!(png, selected);
     }
 
-    /// Every parcel of an estate carries one ordinal, numbered from 1 in id
-    /// order (token ids numerically first), whatever the map's order.
+    /// Every parcel of an estate carries one ordinal, numbered from 1 in id order.
     #[test]
     fn estate_minimap_numbers_each_estate_once_in_id_order() {
         let parcels = [
