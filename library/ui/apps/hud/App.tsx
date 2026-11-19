@@ -34,6 +34,7 @@ import { PhotoModeOverlay } from './features/photoMode/PhotoModeOverlay'
 import { openPassport } from './features/profile/Passport'
 import type { PassportTab } from './features/profile/ProfilePassport'
 import { openWorldVisit } from './components/WorldVisitModal'
+import { confirmOpenLink, confirmTeleport } from './features/chat/chatLinkPrompts'
 import { openPermissionDialog } from './features/permissions/PermissionDialog'
 import { openWorldPasswordDialog } from './features/worldAccess/WorldPasswordDialog'
 import { PopupHost, ToastHost, showDialog } from './design'
@@ -520,8 +521,9 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             chat={session.chat}
             hidden={session.friends.open || !chrome}
             me={session.profile.data}
-            onTeleport={(x, y) => session.map.teleport(x, y)}
+            onTeleport={(x, y) => void confirmTeleport(x, y, session.minimap.linkRealm, session.map.teleport)}
             onVisitWorld={(name) => openWorldVisit({ worldName: name, onConfirm: () => session.map.changeRealm(name) })}
+            onOpenUrl={(url) => void confirmOpenLink(url, session.openExternalUrl)}
             onOpenSettings={session.settings.toggle}
           />
           <SurfaceBoundary name="Friends" open={session.friends.open} onCrash={session.closeAllPanels}>

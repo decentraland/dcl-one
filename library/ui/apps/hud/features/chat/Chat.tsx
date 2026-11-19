@@ -258,6 +258,7 @@ export const ChatBubble = memo(function ChatBubble({
   onOpenProfile,
   onLocation,
   onVisitWorld,
+  onOpenUrl,
   onReact,
   onToggleReaction,
   onReactionHover,
@@ -294,6 +295,8 @@ export const ChatBubble = memo(function ChatBubble({
   onLocation?: (x: number, y: number) => void
   /** A world name (e.g. boedo.dcl.eth) in the message was clicked → prompt to jump there. */
   onVisitWorld?: (name: string) => void
+  /** A URL in the message was clicked. */
+  onOpenUrl?: (url: string) => void
 }): React.JSX.Element {
   // Resolved from the profile store for as long as the line is on screen: a sender who has since
   // left keeps their name and face, and a name change reaches every line they sent.
@@ -356,7 +359,7 @@ export const ChatBubble = memo(function ChatBubble({
             </span>
           )}
           <span className={styles.text}>
-            <MessageText text={text} members={members} styles={MSG_STYLES} onMention={onMention} onLocation={(x, y) => onLocation?.(x, y)} onWorld={onVisitWorld} />
+            <MessageText text={text} members={members} styles={MSG_STYLES} onMention={onMention} onLocation={(x, y) => onLocation?.(x, y)} onWorld={onVisitWorld} onUrl={onOpenUrl} />
           </span>
           <span className={styles.time}>
             {formatTime(line.ts)}
@@ -631,6 +634,7 @@ export function Chat({
   me,
   onTeleport,
   onVisitWorld,
+  onOpenUrl,
   onOpenSettings
 }: {
   chat: ChatState
@@ -641,6 +645,8 @@ export function Chat({
   onTeleport?: (x: number, y: number) => void
   /** A world name (e.g. boedo.dcl.eth) in a message was clicked → prompt to jump there. */
   onVisitWorld?: (name: string) => void
+  /** A URL in a message was clicked; unset, the link is a plain anchor. */
+  onOpenUrl?: (url: string) => void
   /** The blocked-input "DM settings" link. */
   onOpenSettings?: () => void
 }): React.JSX.Element | null {
@@ -855,13 +861,15 @@ export function Chat({
     openProfileCard(user.address, x, y, { onClose: () => setCardOpen(false) })
   }, [])
   // The HUD passes fresh arrows each render; read them through refs so bubbles stay memoized.
-  const handlers = useRef({ onTeleport, onVisitWorld })
+  const handlers = useRef({ onTeleport, onVisitWorld, onOpenUrl })
   useEffect(() => {
-    handlers.current = { onTeleport, onVisitWorld }
+    handlers.current = { onTeleport, onVisitWorld, onOpenUrl }
   })
   const teleport = useCallback((x: number, y: number) => handlers.current.onTeleport?.(x, y), [])
   const visitWorld = useCallback((name: string) => handlers.current.onVisitWorld?.(name), [])
   const hasVisitWorld = onVisitWorld != null
+  const openUrl = useCallback((url: string) => handlers.current.onOpenUrl?.(url), [])
+  const hasOpenUrl = onOpenUrl != null
 
   // Reactions: picking an emoji the local user already reacted with takes it back.
   const chatRef = useRef(chat)
@@ -1193,6 +1201,7 @@ export function Chat({
                   onOpenProfile={openProfile}
                   onLocation={teleport}
                   onVisitWorld={hasVisitWorld ? visitWorld : undefined}
+                  onOpenUrl={hasOpenUrl ? openUrl : undefined}
                   onReact={openReactionBar}
                   onToggleReaction={toggleReaction}
                   onReactionHover={hoverReaction}
