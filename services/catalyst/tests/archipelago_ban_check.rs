@@ -104,11 +104,10 @@ async fn ban_checker_flags_blocked_wallets_and_allows_others() {
 async fn ban_checker_fails_open_when_the_store_is_unreachable() {
     let checker = archipelago::ban_checker(policy(archipelago::lazy_pool()));
     assert!(!checker.is_banned(BANNED).await);
-    assert!(!checker.is_banned_fresh(BANNED).await);
 }
 
 #[tokio::test]
-async fn ban_checker_memoizes_verdicts_and_a_fresh_check_refreshes_them() {
+async fn ban_checker_sees_a_ban_issued_after_a_clean_check() {
     let Some(scratch) = db::scratch_database().await else {
         eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
         return;
@@ -117,16 +116,8 @@ async fn ban_checker_memoizes_verdicts_and_a_fresh_check_refreshes_them() {
     assert!(!checker.is_banned(BANNED).await);
     block(&scratch.pool, BANNED).await;
     assert!(
-        !checker.is_banned(BANNED).await,
-        "the second check is served from the memo"
-    );
-    assert!(
-        checker.is_banned_fresh(BANNED).await,
-        "the sweep always asks"
-    );
-    assert!(
         checker.is_banned(BANNED).await,
-        "the fresh verdict refreshed the memo"
+        "the next handshake reads the ban just written"
     );
     scratch.teardown().await;
 }
