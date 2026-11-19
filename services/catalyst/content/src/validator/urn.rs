@@ -45,10 +45,24 @@ const LAND_NETWORKS: &[&str] = &["ethereum", "sepolia", "goerli"];
 
 /// The resolved type of `input`, `None` when `parseUrn` resolves nothing.
 pub fn parse(input: &str) -> Option<UrnType> {
+    resolved(input).map(|(kind, _)| kind)
+}
+
+/// `input` as the resolver reads it: `urn:` and the URL path (no
+/// surrounding whitespace, tab or newline, query or fragment), a legacy
+/// `dcl://` address as its URN; `None` when it does not resolve.
+pub fn canonical(input: &str) -> Option<String> {
+    resolved(input).map(|(_, urn)| urn)
+}
+
+fn resolved(input: &str) -> Option<(UrnType, String)> {
     let url = Url::parse(input).ok()?;
     match url.scheme() {
-        "urn" => resolve(url.path()),
-        "dcl" => resolve_legacy_dcl(&url),
+        "urn" => resolve(url.path()).map(|kind| (kind, format!("urn:{}", url.path()))),
+        "dcl" => {
+            let urn = legacy_dcl_urn(&url)?;
+            Some((parse_urn_scheme(&urn)?, urn))
+        }
         _ => None,
     }
 }
@@ -62,7 +76,7 @@ fn parse_urn_scheme(input: &str) -> Option<UrnType> {
 
 /// `dcl://{collection}/{name}`: a base avatar or emote, or a collections-v1
 /// asset on Ethereum named by its collection.
-fn resolve_legacy_dcl(url: &Url) -> Option<UrnType> {
+fn legacy_dcl_urn(url: &Url) -> Option<String> {
     let path = url.path();
     let (host, segments): (String, Vec<&str>) = match path.strip_prefix("//") {
         Some(rest) => {
@@ -85,11 +99,10 @@ fn resolve_legacy_dcl(url: &Url) -> Option<UrnType> {
     let [name] = segments[..] else {
         return None;
     };
-    let urn = match host.as_str() {
+    Some(match host.as_str() {
         "base-avatars" | "base-emotes" => format!("urn:decentraland:off-chain:{host}:{name}"),
         _ => format!("urn:decentraland:ethereum:collections-v1:{host}:{name}"),
-    };
-    parse_urn_scheme(&urn)
+    })
 }
 
 /// `decodeURIComponent`: `None` on a malformed escape or invalid UTF-8.

@@ -125,7 +125,10 @@ fn token_ref(l1: bool, contract: Option<Address>, id: &str) -> ItemRef {
 }
 
 pub fn item_ref(urn: &str) -> ItemRef {
-    let urn = urn.to_lowercase();
+    // Classify what the content step resolved, not the raw spelling.
+    let urn = super::super::urn::canonical(urn)
+        .unwrap_or_else(|| urn.to_string())
+        .to_lowercase();
     let parts: Vec<&str> = urn.split(':').collect();
     let ["urn", "decentraland", network, kind, rest @ ..] = &parts[..] else {
         return ItemRef::NotAsked;
@@ -192,6 +195,30 @@ mod tests {
     use super::*;
 
     const A: &str = "0xaaa0000000000000000000000000000000000001";
+
+    #[test]
+    fn an_item_is_asked_however_the_resolver_accepts_its_spelling() {
+        let addr: Address = A.parse().unwrap();
+        let asked = ItemRef::Token {
+            l1: false,
+            contract: Some(addr),
+            token: U256::from(42u8),
+        };
+        for urn in [
+            format!(" urn:decentraland:matic:collections-v2:{A}:1:42"),
+            format!("urn:decentraland:matic:collections-v2:{A}:1:42\n"),
+            format!("u\trn:decentraland:matic:collections-v2:{A}:1:42"),
+            format!("urn:decentra\nland:matic:collections-v2:{A}:1:4\t2"),
+            format!("URN:decentraland:matic:collections-v2:{A}:1:42?x=1#y"),
+        ] {
+            assert_eq!(
+                crate::validator::urn::parse(&urn),
+                Some(crate::validator::urn::UrnType::CollectionV2Item),
+                "{urn:?}"
+            );
+            assert_eq!(item_ref(&urn), asked, "{urn:?}");
+        }
+    }
 
     #[test]
     fn items_with_a_token_are_asked_and_assets_are_not() {
