@@ -78,6 +78,8 @@ export type BevyRealmSupervisionEvent =
       message: string;
       /** Delay before main restarts the realm, or null when it gave up. */
       restartInMs: number | null;
+      /** The Multiplayer Server cannot run on this machine; the realm goes on without it. */
+      unavailable?: boolean;
     }
   /** The realm is being replaced now; its URLs stop working. */
   | { kind: 'restarting'; path: string }

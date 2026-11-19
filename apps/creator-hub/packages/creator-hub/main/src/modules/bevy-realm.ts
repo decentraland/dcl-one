@@ -8,7 +8,7 @@ import {
 } from '/shared/types/ipc';
 
 import { MAIN_WINDOW_ID } from '../mainWindow';
-import { run, type Child } from './bin';
+import { run, type Child, type StreamType } from './bin';
 import { getAvailablePort } from './port';
 import { getProjectId, track } from './analytics';
 import { getWindow } from './window';
@@ -18,6 +18,7 @@ import {
   NO_SERVER_FLAG,
   REALM_SERVER_PREVIEW_HINT,
   REALM_SERVER_RESTARTING,
+  REALM_SERVER_UNAVAILABLE,
   captureRealmServerLogs,
   previewRunsServer,
   realmServerStopped,
@@ -48,7 +49,8 @@ import {
  * Multiplayer Server as its own child, and the preview reuses it (cli.ts). When the realm
  * or only that server stops unexpectedly, this module restarts the realm with a backoff,
  * at most {@link MAX_RESTARTS} times in {@link RESTART_WINDOW_MS}, and reports each step
- * to the editor (BEVY_REALM_SUPERVISION_EVENT). A deliberate stop never restarts.
+ * to the editor (BEVY_REALM_SUPERVISION_EVENT). A deliberate stop never restarts. A server
+ * that cannot run on this machine is not restarted: the realm goes on without it.
  */
 
 type Realm = {
@@ -106,6 +108,20 @@ const realms: Map<string, Realm> = new Map();
 const starting: Map<string, Promise<{ url: string; wsUrl: string }>> = new Map();
 let shuttingDown = false;
 
+// Deliberate stops per path. A start reads the count before it prepares and spawns nothing
+// when it changed meanwhile: the realm would outlive the editor that asked for it.
+const deliberateStops: Map<string, number> = new Map();
+
+// Scenes whose Multiplayer Server cannot run on this machine (SERVER_UNAVAILABLE_CODE). Their
+// realm starts without it until the scene is closed.
+const serverUnavailable: Set<string> = new Set();
+
+class StartCancelled extends Error {
+  constructor() {
+    super('The scene server was stopped before it started.');
+  }
+}
+
 // A realm whose Multiplayer Server stopped still serves the editor, but it is no longer
 // what the project should run: start() and ensure() replace it.
 function isRealmRunning(realm?: Realm): realm is Realm {
@@ -160,14 +176,17 @@ export function start(path: string): Promise<{ url: string; wsUrl: string }> {
 }
 
 async function startInternal(path: string): Promise<{ url: string; wsUrl: string }> {
+  const stopsBefore = deliberateStops.get(path) ?? 0;
   await stopRealm(path);
 
   const port = await getAvailablePort();
   const url = `http://localhost:${port}`;
   const wsUrl = `ws://localhost:${port}/data-layer`;
   const spawnsServer = await spawnsMultiplayerServer(path);
+  const env = await getEnv(path);
+  if ((deliberateStops.get(path) ?? 0) !== stopsBefore) throw new StartCancelled();
   // A preview that already runs its own server keeps it; a second one would lose the room.
-  const leavesServer = spawnsServer && previewRunsServer(path);
+  const leavesServer = spawnsServer && (previewRunsServer(path) || serverUnavailable.has(path));
 
   const child = run('@dcl/sdk-commands', 'sdk-commands', {
     args: [
@@ -181,7 +200,7 @@ async function startInternal(path: string): Promise<{ url: string; wsUrl: string
     ],
     cwd: path,
     workspace: path,
-    env: await getEnv(path),
+    env,
   });
 
   relayBuildEvents(path, child);
@@ -265,14 +284,13 @@ function watchExit(path: string, child: Child): void {
     if (shuttingDown || realm?.child !== child) return;
     realms.delete(path);
     markRealmDown(path);
-    // A stopped server was handled already, including the realm exit that may follow it
-    // (sdk-commands exits after an unavailable server).
-    if (realm.serverDown || restartPending(path)) return;
+    // The pending restart replaces this realm; its stop was reported with the server's.
+    if (restartPending(path)) return;
     log.error(
       `[BevyRealm] ${path} exited unexpectedly after ${Date.now() - servingSince} ms: ${message}`,
     );
     const restartInMs = scheduleRestart(path);
-    if (realm.servesMultiplayer) {
+    if (realm.servesMultiplayer && !realm.serverDown) {
       realmServerStopped(
         path,
         restartInMs === null ? REALM_SERVER_PREVIEW_HINT : REALM_SERVER_RESTARTING,
@@ -288,23 +306,48 @@ function watchExit(path: string, child: Child): void {
 
 /** Restarts the realm when its Multiplayer Server child stops while the realm keeps serving. */
 function watchServer(path: string, realm: Realm): void {
-  const lines = createLineBuffer();
-  realm.child.on(/(.*)/, data => {
-    if (!data) return;
-    for (const line of lines.push(data)) {
-      if (line.includes('[Server]')) continue;
-      const match = SERVER_STOPPED.exec(line);
-      if (match) onServerStopped(path, realm, line.trim(), match[1]);
-    }
-  });
+  // One line buffer per stream: a stderr chunk arriving inside a stdout line must not cut it.
+  const streams: StreamType[] = ['stdout', 'stderr'];
+  for (const type of streams) {
+    const lines = createLineBuffer();
+    realm.child.on(
+      /(.*)/,
+      data => {
+        if (!data) return;
+        for (const line of lines.push(data)) {
+          if (line.includes('[Server]')) continue;
+          const match = SERVER_STOPPED.exec(line);
+          if (match) onServerStopped(path, realm, line.trim(), match[1]);
+        }
+      },
+      { type },
+    );
+  }
 }
 
 function onServerStopped(path: string, realm: Realm, message: string, exitCode?: string): void {
   if (shuttingDown || realms.get(path) !== realm || realm.serverDown) return;
-  realm.serverDown = true;
+  if (!realm.servesMultiplayer) return;
   log.error(`[BevyRealm] The Multiplayer Server of ${path} stopped: ${message}`);
+  if (exitCode === SERVER_UNAVAILABLE_CODE) {
+    // A restart would only fail the same way. The realm goes on without the server, and a
+    // realm that replaces it starts without one.
+    serverUnavailable.add(path);
+    realm.servesMultiplayer = false;
+    realmServerStopped(path, REALM_SERVER_UNAVAILABLE);
+    notify({
+      kind: 'stopped',
+      path,
+      cause: 'server',
+      message,
+      restartInMs: null,
+      unavailable: true,
+    });
+    return;
+  }
+  realm.serverDown = true;
   if (restartPending(path)) return;
-  const restartInMs = scheduleRestart(path, exitCode === SERVER_UNAVAILABLE_CODE);
+  const restartInMs = scheduleRestart(path);
   realmServerStopped(
     path,
     restartInMs === null ? REALM_SERVER_PREVIEW_HINT : REALM_SERVER_RESTARTING,
@@ -313,19 +356,20 @@ function onServerStopped(path: string, realm: Realm, message: string, exitCode?:
 }
 
 /** Plans the next restart of the realm. Returns its delay, or null when it gave up. */
-function scheduleRestart(path: string, unavailable = false): number | null {
+function scheduleRestart(path: string): number | null {
   let supervisor = supervisors.get(path);
   if (!supervisor) {
     supervisor = { restarts: [], restarting: false, gaveUp: false };
     supervisors.set(path, supervisor);
   }
   const now = Date.now();
-  const plan = unavailable ? null : planRestart(supervisor.restarts, now);
+  const plan = planRestart(supervisor.restarts, now);
   if (!plan) {
     supervisor.gaveUp = true;
-    log.error(`[BevyRealm] Not restarting ${path}: it stopped too often, or cannot run here`);
+    log.error(`[BevyRealm] Not restarting ${path}: it stopped too often`);
     return null;
   }
+  supervisor.gaveUp = false;
   supervisor.restarts.push(now);
   const owner = supervisor;
   owner.timer = setTimeout(() => void autoRestart(path, owner), plan.delayMs);
@@ -397,6 +441,8 @@ export async function ensure(path: string): Promise<{ url: string; wsUrl: string
     notify({ kind: 'restarted', path, ...started });
     return started;
   } catch (error) {
+    // The editor that asked has left the scene; there is no one to tell.
+    if (error instanceof StartCancelled) throw error;
     const message = error instanceof Error ? error.message : String(error);
     notify({ kind: 'stopped', path, cause: 'realm', message, restartInMs: null });
     throw error;
@@ -405,6 +451,8 @@ export async function ensure(path: string): Promise<{ url: string; wsUrl: string
 
 export async function kill(path: string): Promise<void> {
   dropSupervisor(path);
+  deliberateStops.set(path, (deliberateStops.get(path) ?? 0) + 1);
+  serverUnavailable.delete(path);
   await stopRealm(path);
   clearRealmDown(path);
 }
@@ -413,7 +461,7 @@ export async function killAllRealms(): Promise<void> {
   shuttingDown = true;
   try {
     for (const path of [...supervisors.keys()]) dropSupervisor(path);
-    for (const path of realms.keys()) {
+    for (const path of new Set([...starting.keys(), ...realms.keys()])) {
       await kill(path);
     }
     realms.clear();

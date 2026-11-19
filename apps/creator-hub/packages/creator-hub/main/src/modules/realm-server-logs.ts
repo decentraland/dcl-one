@@ -64,6 +64,7 @@ export function previewRunsServer(path: string): boolean {
 
 export const REALM_SERVER_STOPPED = "⚠️ WARNING! The editor's Multiplayer Server stopped.";
 export const REALM_SERVER_RESTARTING = 'Creator Hub is restarting it.';
+export const REALM_SERVER_UNAVAILABLE = 'It cannot run on this computer.';
 export const REALM_SERVER_PREVIEW_HINT =
   'Press Preview again to run the scene with its own Multiplayer Server.';
 

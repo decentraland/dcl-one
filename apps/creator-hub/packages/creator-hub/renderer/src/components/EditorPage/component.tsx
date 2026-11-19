@@ -113,6 +113,11 @@ function readAiPanelWidth(): number {
 // Require BOTH the option-rejection phrasing AND one of our flags — matching a bare
 // "--data-layer"/"--no-client" mention would misfire on an unrelated build error that
 // merely prints the flag as text.
+// One per scene: a second stop replaces the snackbar, and the editor can close it.
+function realmServerStoppedId(path: string): string {
+  return `realm-server-stopped:${path}`;
+}
+
 function isOutdatedDepsError(message: string): boolean {
   const rejectsOption = /(?:unknown|unexpected|unrecognized|invalid)[^\n]{0,40}option/i.test(
     message,
@@ -242,9 +247,23 @@ export function EditorPage() {
   // inspector on the new realm. A realm that stopped takes the editor with it, so it shows the
   // loader until the restart. One that only lost its Multiplayer Server keeps serving the
   // editor until it is replaced.
-  useBevyRealmRestart(useBevy ? project?.path : undefined, {
-    onStopped: ({ path, cause, restartInMs }) => {
-      if (restartInMs !== null) {
+  const realmPath = useBevy ? project?.path : undefined;
+  // The server is being replaced, or the editor of the scene closed: Retry has nothing to do.
+  const closeRealmServerStopped = useCallback(() => {
+    if (realmPath) dispatch(snackbarActions.removeSnackbar(realmServerStoppedId(realmPath)));
+  }, [realmPath, dispatch]);
+  useEffect(() => closeRealmServerStopped, [closeRealmServerStopped]);
+  useBevyRealmRestart(realmPath, {
+    onStopped: ({ path, cause, restartInMs, unavailable }) => {
+      if (unavailable) {
+        dispatch(
+          snackbarActions.pushSnackbar(
+            createGenericNotification('warning', t('editor.realm_server_unavailable'), {
+              requestId: `realm-server-unavailable:${path}`,
+            }),
+          ),
+        );
+      } else if (restartInMs !== null) {
         const message =
           cause === 'server' ? t('editor.realm_server_restarting') : t('editor.realm_restarted');
         dispatch(snackbarActions.pushSnackbar(createGenericNotification('warning', message)));
@@ -252,7 +271,10 @@ export function EditorPage() {
       } else if (cause === 'server') {
         dispatch(
           snackbarActions.pushSnackbar(
-            createCustomNotification({ type: 'realm-server-stopped', path }, { duration: 0 }),
+            createCustomNotification(
+              { type: 'realm-server-stopped', path },
+              { duration: 0, requestId: realmServerStoppedId(path) },
+            ),
           ),
         );
       } else {
@@ -261,8 +283,12 @@ export function EditorPage() {
         setLoadError(t('editor.loading.failed.data_layer_crashed'));
       }
     },
-    onRestarting: () => setBevyRealm(null),
+    onRestarting: () => {
+      closeRealmServerStopped();
+      setBevyRealm(null);
+    },
     onRestarted: realm => {
+      closeRealmServerStopped();
       setRealmGaveUp(false);
       setLoadError(null);
       setBevyRealm(realm);

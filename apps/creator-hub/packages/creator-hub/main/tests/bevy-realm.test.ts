@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BEVY_REALM_SUPERVISION_EVENT } from '/shared/types/ipc';
 
-import type { Child } from '../src/modules/bin';
+import type { Child, StreamType } from '../src/modules/bin';
 import type * as RealmServerLogs from '../src/modules/realm-server-logs';
 
 const mocks = vi.hoisted(() => ({
@@ -48,8 +48,8 @@ type FakeChild = {
   exit: () => void;
   crash: (err: Error) => void;
   release: () => void;
-  /** One output chunk, delivered to every matcher as the real process would. */
-  print: (chunk: string) => void;
+  /** One output chunk of a stream, delivered to the matchers that listen to it. */
+  print: (chunk: string, stream?: 'stdout' | 'stderr') => void;
 };
 
 function createFakeChild(opts: { holdReady?: boolean } = {}): FakeChild {
@@ -71,9 +71,12 @@ function createFakeChild(opts: { holdReady?: boolean } = {}): FakeChild {
     alive = false;
     resolveWait(Buffer.from(''));
   };
-  const handlers: ((data?: string) => void)[] = [];
+  const handlers: { handler: (data?: string) => void; type: StreamType }[] = [];
   const child = {
-    on: vi.fn((_pattern: RegExp, handler: (data?: string) => void) => handlers.push(handler) - 1),
+    on: vi.fn(
+      (_pattern: RegExp, handler: (data?: string) => void, opts: { type?: StreamType } = {}) =>
+        handlers.push({ handler, type: opts.type ?? 'all' }) - 1,
+    ),
     once: vi.fn(() => 1),
     off: vi.fn(),
     wait: () => waitPromise,
@@ -90,7 +93,10 @@ function createFakeChild(opts: { holdReady?: boolean } = {}): FakeChild {
       rejectWait(err);
     },
     release: () => release(),
-    print: chunk => handlers.forEach(handler => handler(chunk)),
+    print: (chunk, stream = 'stdout') =>
+      handlers.forEach(({ handler, type }) => {
+        if (type === 'all' || type === stream) handler(chunk);
+      }),
   };
 }
 
@@ -390,6 +396,24 @@ describe('bevy-realm restarts', () => {
       });
     });
 
+    describe('and the editor leaves the scene while the restart is preparing', () => {
+      beforeEach(async () => {
+        let releasePort!: (port: number) => void;
+        vi.mocked(getAvailablePort)
+          .mockReset()
+          .mockImplementationOnce(() => new Promise<number>(resolve => (releasePort = resolve)))
+          .mockResolvedValue(8004);
+        await vi.advanceTimersByTimeAsync(1_000);
+        await kill(path);
+        releasePort(8005);
+        await flush();
+      });
+
+      it('should not spawn a realm', () => {
+        expect(run).toHaveBeenCalledTimes(1);
+      });
+    });
+
     describe('and the editor leaves the scene during the backoff', () => {
       beforeEach(async () => {
         await kill(path);
@@ -568,24 +592,132 @@ describe('bevy-realm restarts', () => {
       });
     });
 
-    describe('and the server cannot run on this machine', () => {
+    describe('and a stderr chunk arrives inside the stdout line of the server stop', () => {
       beforeEach(async () => {
         await start(path);
+        fake.print(SERVER_EXITED.slice(0, 30));
+        fake.print('[Server] 15:42:18 shutting down\n', 'stderr');
+        fake.print(SERVER_EXITED.slice(30));
+      });
+
+      it('should still tell the editor the server stopped', () => {
+        expect(stoppedEvents()).toEqual([
+          expect.objectContaining({ cause: 'server', restartInMs: 1_000 }),
+        ]);
+      });
+    });
+
+    describe(`and the server keeps stopping ${MAX_RESTARTS + 1} times in a row`, () => {
+      let last: FakeChild;
+
+      beforeEach(async () => {
+        await start(path);
+        last = fake;
+        for (let i = 0; i < MAX_RESTARTS; i++) {
+          const next = createFakeChild();
+          mocks.child = next.child;
+          last.print(SERVER_EXITED);
+          await vi.advanceTimersByTimeAsync(9_000);
+          last = next;
+        }
+        last.print(SERVER_EXITED);
+        await flush();
+      });
+
+      it('should give up and keep the realm up for the editor', () => {
+        expect(stoppedEvents().at(-1)).toEqual(
+          expect.objectContaining({ cause: 'server', restartInMs: null }),
+        );
+        expect(last.child.kill).not.toHaveBeenCalled();
+      });
+
+      describe('and the realm then exits', () => {
+        beforeEach(async () => {
+          mocks.send.mockClear();
+          last.exit();
+          await flush();
+        });
+
+        it('should tell the editor the realm stopped', () => {
+          expect(stoppedEvents()).toEqual([
+            expect.objectContaining({ cause: 'realm', restartInMs: null }),
+          ]);
+        });
+
+        it('should mark the realm down', () => {
+          expect(isRealmDown(path)).toBe(true);
+        });
+      });
+    });
+
+    describe('and the server cannot run on this machine', () => {
+      let next: FakeChild;
+
+      beforeEach(async () => {
+        await start(path);
+        next = createFakeChild();
+        mocks.child = next.child;
+        vi.mocked(getAvailablePort).mockResolvedValueOnce(8005);
         fake.print(
           '⚠️ WARNING! Multiplayer Server exited with code 78. The preview keeps running\n',
         );
         await vi.advanceTimersByTimeAsync(10_000);
       });
 
-      it('should give up at once', () => {
-        expect(stoppedEvents()).toEqual([
-          expect.objectContaining({ cause: 'server', restartInMs: null }),
+      it('should tell the editor once that the server is unavailable, and not restart', () => {
+        expect(supervisionEvents()).toEqual([
+          expect.objectContaining({
+            kind: 'stopped',
+            cause: 'server',
+            restartInMs: null,
+            unavailable: true,
+          }),
         ]);
         expect(run).toHaveBeenCalledTimes(1);
       });
 
       it('should report that the realm provides no server', () => {
         expect(realmProvidesServer(path)).toBe(false);
+      });
+
+      describe('and the editor reloads', () => {
+        beforeEach(async () => {
+          mocks.send.mockClear();
+          await ensure(path);
+        });
+
+        it('should reuse the realm without restart events', () => {
+          expect(run).toHaveBeenCalledTimes(1);
+          expect(supervisionEvents()).toEqual([]);
+        });
+      });
+
+      describe('and the realm then exits', () => {
+        beforeEach(async () => {
+          mocks.send.mockClear();
+          fake.exit();
+          await vi.advanceTimersByTimeAsync(1_000);
+        });
+
+        it('should restart the realm without a Multiplayer Server', () => {
+          expect(supervisionEvents().map(event => event.kind)).toEqual([
+            'stopped',
+            'restarting',
+            'restarted',
+          ]);
+          expect(spawnedArgs(1)).toContain('--no-server');
+        });
+      });
+
+      describe('and the scene is closed and opened again', () => {
+        beforeEach(async () => {
+          await kill(path);
+          await start(path);
+        });
+
+        it('should let the new realm try the server again', () => {
+          expect(spawnedArgs(1)).not.toContain('--no-server');
+        });
       });
     });
 
