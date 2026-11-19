@@ -1248,16 +1248,31 @@ async fn a_banned_wallet_is_skipped_entirely() {
     assert!(h.delivered().is_empty());
 }
 
-#[tokio::test]
-async fn an_access_check_failure_lets_the_peer_through() {
+/// An undecided ban lookup defers the assignment; the next hint after the store recovers mints.
+#[tokio::test(flavor = "current_thread")]
+async fn an_access_check_failure_defers_the_assignment() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let series = recorder.handle();
+    let _recording = metrics::set_default_local_recorder(&recorder);
     let h = harness();
     h.gateway.deny_error.store(true, Ordering::Relaxed);
     h.feed(WALLET, &change("c1", SESSION_A)).await;
+    assert!(h.gateway.minted().is_empty());
+    assert!(h.delivered().is_empty());
+    let rendered = series.render();
     assert_eq!(
-        h.gateway.minted().len(),
-        1,
-        "the gate fails open: a background feed has nobody to report the error to"
+        metric_value(&rendered, "comms_cluster_access_check_failed_total"),
+        Some(1.0)
     );
+    assert_eq!(
+        metric_value(&rendered, "comms_cluster_banned_skipped_total"),
+        None
+    );
+
+    h.gateway.deny_error.store(false, Ordering::Relaxed);
+    h.feed(WALLET, &change("c1", SESSION_A)).await;
+    assert_eq!(h.gateway.minted().len(), 1);
+    assert_eq!(delivered_to(&h.delivered()[0]), (WALLET, SESSION_A));
 }
 
 #[tokio::test]

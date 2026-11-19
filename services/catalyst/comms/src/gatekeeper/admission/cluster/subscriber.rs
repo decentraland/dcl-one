@@ -627,19 +627,23 @@ impl ClusterSubscriber {
         );
     }
 
-    /// The one gate in this service that fails open: a background feed has no caller to return an
-    /// error to, and failing closed would stop island formation for everyone during an outage of
-    /// the store behind it. Nothing is remembered on failure, so the next event retries.
+    /// Admission proceeds only on a positive "not banned" answer. A lookup failure defers the
+    /// assignment: nothing is minted or remembered, so a later hint or reconnect retries it.
     ///
     /// Only this platform's ban store is consulted. Upstream also ORs in a deny-list lookup, for
     /// which this platform has no equivalent store; see the stream notes.
-    async fn is_denied(&self, wallet: &str) -> bool {
+    async fn admission_withheld(&self, wallet: &str) -> bool {
         match self.gateway.is_denied(wallet).await {
-            Ok(denied) => denied,
+            Ok(denied) => {
+                if denied {
+                    crate::gatekeeper::admission::cluster::metrics::cluster_banned_skipped();
+                }
+                denied
+            }
             Err(_) => {
                 crate::gatekeeper::admission::cluster::metrics::cluster_access_check_failed();
-                tracing::warn!(%wallet, reason = "gateway failure", "access check failed; allowing");
-                false
+                tracing::warn!(%wallet, reason = "gateway failure", "access check failed; admission deferred");
+                true
             }
         }
     }
@@ -948,7 +952,7 @@ impl ClusterSubscriber {
 
     #[cfg(test)]
     pub(crate) async fn verify_stamp(&self, stamp: &PulseAdmissionStamp) -> bool {
-        if !stamp.valid() || self.is_denied(&stamp.wallet).await {
+        if !stamp.valid() || self.admission_withheld(&stamp.wallet).await {
             return false;
         }
         let Some(current) = self.lookup_current(&stamp.wallet, &stamp.session).await else {
@@ -1350,8 +1354,7 @@ impl ClusterSubscriber {
         if !self.acknowledge_receipts(&snapshot).await {
             return;
         }
-        if self.is_denied(wallet).await {
-            crate::gatekeeper::admission::cluster::metrics::cluster_banned_skipped();
+        if self.admission_withheld(wallet).await {
             return;
         }
         if self.same_authority(&snapshot).await.is_none() {
