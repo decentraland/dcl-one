@@ -29,14 +29,13 @@ override fn shadows::fetch_directional_shadow(light_id: u32, frag_position: vec4
 
 #ifdef ENVIRONMENT_MAP
 #import bevy_pbr::{ambient, clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting}
-#import "embedded://shaders/sky_envmap_lookup.wgsl"::{sky_envmap_input, sky_envmap_level, sky_envmap_light}
+#import "embedded://shaders/sky_envmap_lookup.wgsl"::{sky_envmap_level, sky_envmap_light, sky_envmap_reflectivity, sky_envmap_metallic_reflectivity}
 
 // the sky envmaps are the only ambient light: the Trilight ambient, and the sky reflections
 // levelled towards the flat ambient light (see sky_envmap_lookup.wgsl)
 override fn environment_map::compute_radiances(input: lighting::LayerLightingInput, clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>, world_position: vec3<f32>, found_diffuse_indirect: bool) -> environment_map::EnvironmentMapRadiances {
-    let upper = sky_envmap_input(input);
-    let radiances = environment_map::compute_radiances(upper, clusterable_object_index_ranges, world_position, found_diffuse_indirect);
-    return sky_envmap_level(radiances, input, upper, lights.ambient_color);
+    let radiances = environment_map::compute_radiances(input, clusterable_object_index_ranges, world_position, found_diffuse_indirect);
+    return sky_envmap_level(radiances, input, lights.ambient_color);
 }
 
 // the ambient diffuse at full strength, the reflection added on top (see sky_envmap_lookup.wgsl)
@@ -175,6 +174,11 @@ fn fragment(
 
     // alpha discard
     pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
+
+#ifdef ENVIRONMENT_MAP
+    // a dark metal reflects the sky at grazing angles as a pale one does
+    sky_envmap_reflectivity = sky_envmap_metallic_reflectivity(pbr_input.material.metallic);
+#endif
 
     // apply lighting
     if (pbr_input.material.flags & bevy_pbr::pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT) == 0u {
