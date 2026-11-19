@@ -658,7 +658,6 @@ fn microphone_route_enabled(
         }
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn reconcile_publications(
     mut commands: Commands,
     participants: Query<

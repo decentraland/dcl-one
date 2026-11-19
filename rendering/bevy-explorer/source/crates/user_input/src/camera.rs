@@ -24,14 +24,12 @@ use tween::SystemTween;
 
 use crate::TRANSITION_TIME;
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub struct CinematicInitialData {
     base_yaw: f32,
     base_pitch: f32,
     base_roll: f32,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn update_camera(
     time: Res<Time>,
     mut camera: Query<(&Transform, &mut PrimaryCamera), Without<PhotoMode>>,
@@ -137,7 +135,6 @@ pub fn update_camera(
     }
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn update_camera_position(
     mut commands: Commands,
     mut camera: Query<

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod atmosphere_params;
 mod coast;
 mod day_night;
@@ -182,7 +184,6 @@ fn setup(
 
 static TRANSITION_TIME: f32 = 1.0;
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn apply_global_light(
     mut commands: Commands,
     setting: Res<AppConfig>,

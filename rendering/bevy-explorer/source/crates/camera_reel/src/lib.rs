@@ -2,6 +2,8 @@
 //! itself and its upload to the camera-reel service. The gallery that shows the photos is the
 //! HUD's.
 
+#![forbid(unsafe_code)]
+
 pub mod capture;
 pub mod diagnostics;
 pub mod metadata;

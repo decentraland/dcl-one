@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use anyhow::anyhow;
 use bevy::log::{debug, error, warn};
 use common::structs::SceneJsFile;
@@ -72,7 +74,6 @@ pub struct NewSceneCommand {
     system_api_sender: Option<tokio::sync::mpsc::UnboundedSender<SystemApi>>,
 }
 
-#[allow(clippy::type_complexity)]
 pub static NEW_SCENE_SENDER: Lazy<
     RwLock<Option<tokio::sync::mpsc::UnboundedSender<NewSceneCommand>>>,
 > = Lazy::new(Default::default);
@@ -202,7 +203,6 @@ pub fn init_runtime() -> anyhow::Result<()> {
     init_rx.blocking_recv()?
 }
 
-#[allow(clippy::type_complexity)]
 pub async fn renderer_ipc_out(
     mut stream: SendHalf,
     mut new_scene: tokio::sync::mpsc::UnboundedReceiver<NewSceneCommand>,
@@ -330,7 +330,10 @@ async fn next_global_update(
 pub async fn renderer_ipc_in(mut stream: RecvHalf) {
     while let Ok(len) = stream.read_u64_le().await {
         let mut buffer = vec![0u8; len as usize];
-        stream.read_exact(&mut buffer).await.unwrap();
+        if let Err(e) = stream.read_exact(&mut buffer).await {
+            warn!("renderer_ipc_in exit on truncated message: {e}");
+            break;
+        }
         let msg: SceneToEngine = rmp_serde::from_slice(&buffer).unwrap();
 
         match msg {
@@ -378,7 +381,6 @@ pub async fn renderer_ipc_in(mut stream: RecvHalf) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn spawn_scene(
     initial_crdt_store: CrdtStore,
     scene_context: CrdtContext,

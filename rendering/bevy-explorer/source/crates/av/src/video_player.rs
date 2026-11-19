@@ -68,7 +68,6 @@ impl Plugin for VideoPlayerPlugin {
     }
 }
 
-#[expect(clippy::type_complexity)]
 fn new_audio_stream_source(
     trigger: Trigger<OnInsert, <AudioStream as AVPlayer>::Source>,
     mut commands: Commands,
@@ -116,7 +115,6 @@ fn new_audio_stream_source(
     commands.entity(entity).try_insert(sinks);
 }
 
-#[expect(clippy::type_complexity)]
 fn new_video_player_source(
     trigger: Trigger<OnInsert, <VideoPlayer as AVPlayer>::Source>,
     mut commands: Commands,
@@ -236,7 +234,6 @@ fn player_source_replaced<T: AVPlayer>(
     }
 }
 
-#[expect(clippy::type_complexity)]
 fn player_config_added<T: AVPlayer>(
     trigger: Trigger<OnInsert, T::Config>,
     mut av_players: Query<(
@@ -323,7 +320,6 @@ fn update_av_volume<T: AVPlayer>(
     }
 }
 
-#[expect(clippy::type_complexity)]
 fn player_position_added<T: AVPlayer>(
     trigger: Trigger<OnInsert, T::Position>,
     av_players: Query<(&T::Position, Option<&AVSinks<T>>, Has<Stream>)>,

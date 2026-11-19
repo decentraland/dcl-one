@@ -144,7 +144,6 @@ impl AnimationSourceCounts {
 #[command(name = "/foreign_movement")]
 struct ForeignMovementCommand;
 
-#[allow(clippy::type_complexity)]
 fn foreign_movement(
     mut input: ConsoleCommand<ForeignMovementCommand>,
     filter: Res<MovementProfile>,

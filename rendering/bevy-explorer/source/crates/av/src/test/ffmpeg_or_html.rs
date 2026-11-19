@@ -40,7 +40,6 @@ macro_rules! test_component {
     };
 }
 
-#[expect(clippy::too_many_arguments)]
 fn test_components<T: AVPlayer>(
     app: &mut App,
     entity: Entity,

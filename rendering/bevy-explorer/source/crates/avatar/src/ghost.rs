@@ -250,7 +250,6 @@ struct GhostDressing {
 #[derive(Component)]
 struct RevealedBy(Entity);
 
-#[allow(clippy::type_complexity)]
 fn spawn_ghosts(
     mut commands: Commands,
     players: Query<
@@ -297,7 +296,6 @@ fn spawn_ghosts(
 
 /// spawns the base body under each new ghost, then dresses it: the ghost material on every
 /// mesh, the idle clip on the armature, as `process_avatar` does for an avatar
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn dress_ghosts(
     mut commands: Commands,
     body: Res<GhostBody>,
@@ -404,7 +402,6 @@ fn dress_ghosts(
 
 // an avatar built while its ghost stands in is clipped away, to be revealed by the handover; one
 // rebuilt mid-handover (a look change) joins the reveal at its current height
-#[allow(clippy::type_complexity)]
 fn clip_built_avatars(
     mut commands: Commands,
     built: Query<(Entity, &ChildOf), Added<AvatarProcessed>>,
