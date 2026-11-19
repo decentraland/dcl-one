@@ -26,4 +26,8 @@ describe("buildDestination", () => {
       "/create/collections/abc",
     );
   });
+
+  it("should open the collections list for an item link, which names no collection", () => {
+    expect(buildDestination(REDIRECTS["item-detail"], from("/builder/item/i1"), { id: "i1" })).toBe("/create/collections");
+  });
 });

@@ -19,7 +19,6 @@ import {
   useAllCollectionItems,
   useCollection,
   useCollectionStatus,
-  useItemCollectionId,
   useSaveCollection
 } from '../../hooks/useCollection'
 import { useCommittee } from '../../hooks/useCommittee'
@@ -129,18 +128,6 @@ const ItemEditorPage = () => {
   const showToast = useNotifications(state => state.showToast)
   const isMobile = useMediaQuery(media.maxWidth('mobile'))
 
-  // A link that names only the item (the old Builder's item page) opens it in its own collection.
-  const itemCollection = useItemCollectionId(address, collectionParam ? null : itemParam)
-  useEffect(() => {
-    if (!itemCollection.data) return
-    setSearchParams(
-      params => {
-        params.set('collection', itemCollection.data!)
-        return params
-      },
-      { replace: true }
-    )
-  }, [itemCollection.data, setSearchParams])
   const collectionQuery = useCollection(address, collectionId ?? undefined)
   // Linked collections belong to a third party: its managers, not the collection's roles, may edit them.
   const isLinked = !!collectionQuery.data && isLinkedCollection(collectionQuery.data)
@@ -624,8 +611,6 @@ const ItemEditorPage = () => {
   const isLoading =
     !restored ||
     isResolvingReviewer ||
-    itemCollection.isLoading ||
-    !!itemCollection.data ||
     (!!address && !!collectionId && (collectionQuery.isLoading || itemsQuery.isLoading || thirdParty.isLoading)) ||
     // Whether a viewer without a role gets a back link depends on the committee, so wait for it.
     (mode === 'edit' && !!collection && !hasRole && committee.isLoading)
@@ -633,12 +618,8 @@ const ItemEditorPage = () => {
     thirdParty.isError &&
     thirdParty.error instanceof BuilderServerError &&
     NOT_FOUND_STATUSES.includes(thirdParty.error.status)
-  const isItemNotFound =
-    (itemCollection.error instanceof BuilderServerError && NOT_FOUND_STATUSES.includes(itemCollection.error.status)) ||
-    itemCollection.data === null
   const isNotFound =
     (!!collectionParam && !collectionId) ||
-    isItemNotFound ||
     (!!collectionId &&
       ((collectionQuery.isError &&
         collectionQuery.error instanceof BuilderServerError &&
@@ -654,9 +635,8 @@ const ItemEditorPage = () => {
             : !canViewCollection(collection, address)))))
   const isError =
     !isNotFound &&
-    ((itemCollection.isError && !isItemNotFound) ||
-      (!!collectionId &&
-        (collectionQuery.isError || itemsQuery.isError || (thirdParty.isError && !isThirdPartyNotFound))))
+    !!collectionId &&
+    (collectionQuery.isError || itemsQuery.isError || (thirdParty.isError && !isThirdPartyNotFound))
 
   const preview = (
     <AvatarPreview

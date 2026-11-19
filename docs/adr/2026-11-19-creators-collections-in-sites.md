@@ -20,7 +20,9 @@ The creators pages move into `apps/sites` from `decentraland/creators-website` `
 - **Routes.** `/create/collections`, `/create/collections/:collectionId`,
   `/create/collections/editor`, `/create/curation` and `/create/live-preview`, one route file each.
   The placeholder wizards, their routes and the `/create/wearables` and `/create/curate` pages are
-  removed, and the `/builder/*` redirects point at the new routes. The pages share
+  removed without redirects: they never served production and nothing links to them. The
+  `/builder/*` redirects point at the closest page that exists (an item link, which names no
+  collection, opens the collections list). The pages share
   `features/creators/CreatorsShell.tsx`: the site chrome, the Create section tabs (which the landing
   shows too) and full-screen pages for the item editor and the live preview.
 - **Layers.** Fetchers, flows and encoding go in `src/data/lib/creators/`, components and query

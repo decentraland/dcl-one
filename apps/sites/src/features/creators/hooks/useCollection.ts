@@ -1,7 +1,7 @@
 import { privateKey, privateDomain } from '@/data/lib/creators/queryKeys'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { errorCode, track } from '@/data/lib/creators/analytics'
-import { fetchAllCollectionItems, fetchCollection, fetchItem, saveCollection, deleteCollection } from '@/data/lib/creators/builder'
+import { fetchAllCollectionItems, fetchCollection, saveCollection, deleteCollection } from '@/data/lib/creators/builder'
 import { buildCollectionInitializeData } from '@/data/lib/creators/saveCollection'
 import { useCollectionCuration } from './useCuration'
 import {
@@ -20,16 +20,6 @@ export function useCollection(address: string | undefined, collectionId: string 
     queryFn: () => fetchCollection(address!, collectionId!),
     enabled: !!address && !!collectionId,
     staleTime: 30_000
-  })
-}
-
-/** The collection an item belongs to, for a link that names only the item; enabled only when `itemId` is set. */
-export function useItemCollectionId(address: string | undefined, itemId: string | null) {
-  return useQuery({
-    queryKey: privateKey(address, 'item-collection', itemId),
-    queryFn: async () => (await fetchItem(address!, itemId!)).collectionId ?? null,
-    enabled: !!address && !!itemId,
-    staleTime: Infinity
   })
 }
 

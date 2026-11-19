@@ -65,9 +65,9 @@ export const REDIRECT_DASHBOARD: RedirectFixture = {
     {
       from: "item-detail",
       legacyPath: "/builder/item/:id",
-      to: "/create/collections/editor",
+      to: "/create/collections",
       carry: [],
-      param: { name: "id", queryKey: "item" },
+      param: null,
     },
   ],
   rollup: [],

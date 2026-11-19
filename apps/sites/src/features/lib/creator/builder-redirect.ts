@@ -40,11 +40,11 @@ export const REDIRECTS = {
     carry: [],
     param: { name: "id" },
   },
+  // The editor needs the item's collection, which an item link does not carry.
   "item-detail": {
     from: "item-detail",
-    to: "/create/collections/editor",
+    to: "/create/collections",
     carry: [],
-    param: { name: "id", queryKey: "item" },
   },
 } as const satisfies Record<string, RedirectRule>;
 
