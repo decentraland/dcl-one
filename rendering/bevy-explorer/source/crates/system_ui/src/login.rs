@@ -910,15 +910,16 @@ fn process_login_bridge(
                 let resave = mark_account(&mut profile, guest_account);
                 current_profile.profile = Some(profile);
                 current_profile.is_deployed = deployed;
+                // held, the host shows its welcome page, which deploys the new profile
+                current_profile.deploy_held = !deployed && world_hold.is_some();
+                current_profile.revert_to = None;
                 if deployed && resave {
-                    // as any deploying edit: peers hear the saved version until this one lands
+                    // as any deploying edit: peers hear the saved version number (already marked
+                    // as a guest's here) until the re-save lands, and a failed one goes back to it
                     current_profile.snapshot_for_revert();
                     current_profile.bump_version();
                     current_profile.is_deployed = false;
                 }
-                // held, the host shows its welcome page, which deploys the new profile
-                current_profile.deploy_held = !deployed && world_hold.is_some();
-                current_profile.revert_to = None;
 
                 sender.send(Ok(()));
             }
