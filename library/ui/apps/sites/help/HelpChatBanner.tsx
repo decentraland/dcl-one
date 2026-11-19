@@ -1,7 +1,7 @@
 import { useId, type ReactNode } from 'react'
 import helpGirl from '../assets/help/help_girl.webp'
 import { AnimatedBackground } from '../shared/AnimatedBackground/AnimatedBackground'
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
 import styles from './HelpChatBanner.module.css'
 
 type HelpChatBannerProps = {
@@ -26,7 +26,7 @@ function HelpChatBanner({ title, subtitle, actionLabel, onAction }: HelpChatBann
         <p className={styles.subtitle} aria-live="polite">
           {subtitle}
         </p>
-        <Button className={styles.action} onClick={onAction}>
+        <Button size="lg" className={styles.action} onClick={onAction}>
           {actionLabel}
         </Button>
       </div>

@@ -1,7 +1,7 @@
 import { HydrationBoundary } from "@tanstack/react-query";
 import { useParams, useRouteError, useRouteLoaderData } from "react-router";
 
-import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
+import { Button } from "@dcl/one-ui";
 
 import { normalizeAddress } from "@/data/lib/catalyst/social/profile";
 import { profileKeys } from "@/data/lib/profile/queries";
@@ -64,7 +64,7 @@ export function ProfileErrorBoundary() {
       <h1>{copy.title}</h1>
       <p>{copy.body}</p>
       {reason === "unavailable" ? (
-        <Button variant="secondary" onClick={retry}>
+        <Button variant="secondary" size="lg" onClick={retry}>
           Try again
         </Button>
       ) : null}
