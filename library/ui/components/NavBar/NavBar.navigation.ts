@@ -90,7 +90,7 @@ const publicSectionItems: Record<
   create: [
     { label: 'Create in Decentraland', href: '/create' },
     { label: 'Publish Wearables & Emotes', href: '/create/wearables' },
-    { label: 'Publish LAND', href: '/create/land' }
+    { label: 'Publish LAND', href: '/download/creator-hub' }
   ],
   learn: [
     { label: 'Get Started', href: '/docs/player/' },

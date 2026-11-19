@@ -1,5 +1,5 @@
 import type { AuthIdentity, SignedFetchMetadata } from "../auth/types";
-import { catalystUrl, publicWorldsUrl, worldsUrl } from "./bases";
+import { catalystUrl, worldsUrl } from "./bases";
 
 async function signedFetch(
   ...args: Parameters<typeof import("../auth/signer").signedFetch>
@@ -50,10 +50,6 @@ export function worldsBase(override?: string): string {
 
 /** The worlds origin browsers can reach. `worldsBase()` may point the server at a loopback
     twin (WORLDS_URL); links and thumbnails that ship to the page must not. */
-export function publicWorldsBase(): string {
-  return publicWorldsUrl();
-}
-
 export type QueryValue = string | number | boolean | undefined | null;
 export type Query = Record<string, QueryValue>;
 

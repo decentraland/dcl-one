@@ -37,7 +37,6 @@ function watchUi3(ui3Src: string): Plugin {
     },
   };
 }
-const monaco = fileURLToPath(new URL("./node_modules/monaco-editor", import.meta.url));
 const three = fileURLToPath(new URL("./node_modules/three", import.meta.url));
 const qrcode = fileURLToPath(new URL("./node_modules/qrcode-generator", import.meta.url));
 const reactQuery = fileURLToPath(new URL("./node_modules/@tanstack/react-query", import.meta.url));
@@ -291,7 +290,6 @@ export default defineConfig({
         "@hud": hud,
         "@explorer-core": explorerCore,
         "@": src,
-        "monaco-editor": monaco,
         three,
         "qrcode-generator": qrcode,
         "@tanstack/react-query": reactQuery,
@@ -304,13 +302,9 @@ export default defineConfig({
     dedupe: ["viem", "react", "react-dom", "zod"],
   },
   optimizeDeps: {
-    include: ["monaco-editor", "@xstate/react", "xstate", "zod", "viem/accounts"],
+    include: ["@xstate/react", "xstate", "zod", "viem/accounts"],
     // The shared dev sandbox is also a public browsing surface. Compact vendor
     // code while keeping development React, named stacks and application HMR.
     rolldownOptions: { output: { minify: true, keepNames: true } },
-    exclude: [
-      "monaco-editor/esm/vs/editor/editor.worker?worker&url",
-      "monaco-editor/esm/vs/language/typescript/ts.worker?worker&url",
-    ],
   },
 });

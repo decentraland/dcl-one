@@ -226,7 +226,7 @@ describe("/shop/token/:contract/:tokenId/manage", () => {
     renderManage("web3", result, {}, fakeWallet({ account: OWNER, chainId: 1 }));
     expect(await screen.findByRole("heading", { name: "Selling" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Edit listing" })).toHaveAttribute("href", `/shop/token/${NET.land}/${result.nft.tokenId}/sell`);
-    expect(screen.getByRole("link", { name: "Open in Builder" })).toHaveAttribute("href", "/create/land");
+    expect(screen.getByRole("link", { name: "Open in Creator Hub" })).toHaveAttribute("href", "/download/creator-hub");
     expect(screen.getByRole("link", { name: "Transfer" })).toHaveAttribute("href", `/shop/token/${NET.land}/${result.nft.tokenId}/transfer`);
     expect(screen.getByRole("button", { name: "List for rent" })).toBeEnabled();
     const highlights = await screen.findByRole("region", { name: "Highlights" });
@@ -321,7 +321,7 @@ describe("/shop/token/:contract/:tokenId/manage", () => {
         <ManageAsset client={client} />
       </ShopHarness>,
     );
-    expect(await screen.findByRole("link", { name: "Manage your NAMEs" })).toHaveAttribute("href", "/create/names");
+    expect(await screen.findByRole("link", { name: "Open in Creator Hub" })).toHaveAttribute("href", "/download/creator-hub");
   });
 });
 
@@ -358,7 +358,7 @@ describe("/shop/token/:contract/:tokenId/rent", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     expect(await screen.findByRole("heading", { name: "LAND rented" })).toBeInTheDocument();
     expect(wallet.sent.map((t) => t.fn)).toEqual(["approve", "acceptListing"]);
-    expect(screen.getByRole("link", { name: /Manage LAND/ })).toHaveAttribute("href", "/create/land");
+    expect(screen.getByRole("link", { name: /Manage LAND/ })).toHaveAttribute("href", "/download/creator-hub");
     noCredits();
   });
 

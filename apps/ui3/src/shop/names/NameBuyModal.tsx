@@ -55,14 +55,13 @@ export type NameBuyModalProps = {
   iapMode?: boolean;
   portal?: boolean;
   timing?: { wait?: { pollMs?: number; timeoutMs?: number }; acrossPoll?: { intervalMs?: number; maxAttempts?: number; fetchImpl?: typeof fetch } };
-  use?: { href(name: string): string; label: string; onUse?(name: string): void };
 };
 
 function escapeName(name: string): string {
   return name.replace(/[^A-Za-z0-9]/g, "");
 }
 
-export default function NameBuyModal({ name, offer, onClose, client: givenClient, readerFor, submitUseCredits, iapMode = false, portal, timing, use }: NameBuyModalProps) {
+export default function NameBuyModal({ name, offer, onClose, client: givenClient, readerFor, submitUseCredits, iapMode = false, portal, timing }: NameBuyModalProps) {
   const client = givenClient ?? shopClient();
   const wallet = useLandWallet();
   const navigate = useNavigate();
@@ -398,8 +397,8 @@ export default function NameBuyModal({ name, offer, onClose, client: givenClient
               <Button variant="secondary" onClick={() => navigate("/shop/my-items")}>
                 My items
               </Button>
-              <Button as="a" href={use ? use.href(name) : "/create/names"} onClick={() => use?.onUse?.(name)}>
-                {use ? use.label : "Use it for your World or avatar"}
+              <Button as="a" href="/download/creator-hub">
+                Use it for your World or avatar
               </Button>
             </div>
           </>

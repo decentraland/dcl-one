@@ -141,7 +141,7 @@ describe("profile overview screen, header", () => {
     cleanup();
 
     show(profile({ hasClaimedName: true }), true);
-    expect(screen.getByRole("link", { name: "Manage World" }).getAttribute("href")).toBe("/create/worlds");
+    expect(screen.getByRole("link", { name: "Manage World" }).getAttribute("href")).toBe("/download/creator-hub");
     cleanup();
 
     show(profile(), false);

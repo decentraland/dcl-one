@@ -7,7 +7,7 @@ import type { Route } from "./+types/builder.scenes";
 
 const STORY = "creator-integration-redirect-scenes";
 const FROM = "/builder/scenes";
-const TO = "/create/scenes";
+const TO = "/download/creator-hub";
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const session = requestSession(request, context);
@@ -15,14 +15,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   // Behind the root middleware the cookie is set once on the response; only a direct call sets it here.
   const cookies = ownedSessionCookies(request, session);
 
-  const params = new URL(request.url).searchParams;
-  const address = params.get("address");
-  if (address !== null) {
-    params.delete("address");
-    params.set("creator", address);
-  }
-  const query = params.toString();
-  const location = query ? `${TO}?${query}` : TO;
+  const query = new URL(request.url).searchParams.toString();
 
   track(
     "creator_builder_redirect",
@@ -31,7 +24,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   );
 
   return redirect(
-    location,
+    TO,
     cookies ? { headers: cookies } : undefined,
   );
 }
