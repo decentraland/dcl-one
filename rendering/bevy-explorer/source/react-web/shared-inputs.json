@@ -5944,6 +5944,10 @@
       "sha256": "49f3bbf60f79a4233d5df7260c26ad05c1d61ce32d330d3db17bab8eeadd2d5b"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/graphicsPresets.ts",
+      "sha256": "59eb638dafeb0f711b8b5f63ce825e8dbee332f12650849b3af9fe0d73f53e2e"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/marketplace.ts",
       "sha256": "0f03d1ecb090d06c1c0a1bb5d7939677d22aa9e0f1d4be67ffccbf81818b8807"
     },
@@ -6216,6 +6220,10 @@
       "sha256": "809082502001ff082e036dea2e02552fceaff138811d99ac8c93ec56f8a0e92e"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
+      "sha256": "2a7d25c775f5d3bbac4a4a15296d428f034aff39b1d665c63961a58e44d64e92"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
       "sha256": "9215e44d8c803335b125591254a6584453268644d0d65b4b59fb375322ef83aa"
     },
@@ -6407,6 +6415,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRelay.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneLookup.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeVoice.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeVoiceChat.test.ts",
