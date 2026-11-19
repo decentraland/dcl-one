@@ -17,16 +17,16 @@
 //! `checkout.session.async_payment_failed`, `payment_intent.succeeded`,
 //! `charge.refunded`, `charge.dispute.created` and
 //! `charge.dispute.funds_withdrawn` (without it an inquiry that escalates is
-//! never revoked). A
-//! delayed payment method completes its session unpaid, which records the
-//! session's payment intent on the order. When the payment clears, whichever
-//! of `async_payment_succeeded` and `payment_intent.succeeded` lands first
-//! credits it, through the same grant, and the other adds nothing. Both are
-//! needed: a `payment_intent.succeeded` that arrives before the completion
-//! recorded the intent finds no order, and only the session's event credits
-//! it then. `payment_intent.payment_failed` is not handled: it also fires for
-//! an attempt the buyer retried in the open session, and a late delivery of
-//! one would fail an order whose debit is still on its way.
+//! never revoked). A delayed payment method completes its session unpaid,
+//! which records the session's payment intent on the order. When the payment
+//! clears, whichever of `async_payment_succeeded` and
+//! `payment_intent.succeeded` lands first credits it, through the same grant,
+//! and the other adds nothing. Both are needed: a `payment_intent.succeeded`
+//! that arrives before the completion recorded the intent finds no order, and
+//! only the session's event credits it then. `payment_intent.payment_failed`
+//! is not handled: it also fires for an attempt the buyer retried in the open
+//! session, and a late delivery of one would fail an order whose debit is
+//! still on its way.
 
 use axum::Json;
 use axum::body::Bytes;
