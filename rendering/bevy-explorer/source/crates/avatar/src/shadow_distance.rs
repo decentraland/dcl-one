@@ -53,7 +53,6 @@ fn casts_shadow(distance: f32, max_distance: f32, casting: bool) -> bool {
         }
 }
 
-#[allow(clippy::type_complexity)]
 fn set_avatar_shadows(
     mut commands: Commands,
     distance: Res<AvatarShadowDistance>,
