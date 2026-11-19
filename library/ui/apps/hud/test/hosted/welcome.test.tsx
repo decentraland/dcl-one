@@ -69,6 +69,8 @@ describe('welcome page', () => {
     // a new account made here skips the lobby: it travels to its home (Genesis Plaza) at once
     await waitFor(() => expect(h.session().phase).toBe('entering'))
     expect(h.driver.last('teleport')).toMatchObject({ x: 0, y: 0 })
+    // the page's read held the offered name: the chosen one is read again for the Me panel
+    expect(h.driver.sentOf('getProfile')).toHaveLength(2)
   })
 
   it('runs a PLAY AS GUEST clicked before the engine was ready once it is', async () => {
