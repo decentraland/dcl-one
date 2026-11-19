@@ -93,6 +93,9 @@ pub struct AVSinks<T: AVPlayer> {
     /// The last volume sent, to send only changes.
     pub sent_volume: Option<f32>,
     pub sent_state: VideoState,
+    /// The web source's reopen state.
+    #[cfg(feature = "html")]
+    pub retry: watch::Receiver<media::MediaRetryStatus>,
     pub _phantom: PhantomData<T>,
 }
 

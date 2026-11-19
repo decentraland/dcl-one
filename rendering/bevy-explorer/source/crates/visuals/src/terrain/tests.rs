@@ -55,7 +55,7 @@ fn mesh_split_matches_unity() {
         let Some(Indices::U32(indices)) = mesh.indices() else {
             panic!("indices");
         };
-        for triangle in indices.chunks_exact(3) {
+        for triangle in indices.as_chunks::<3>().0 {
             let corners: [Vec3; 3] =
                 std::array::from_fn(|i| Vec3::from(positions[triangle[i] as usize]));
             // front faces point up

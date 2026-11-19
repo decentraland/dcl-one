@@ -202,26 +202,6 @@ pub fn init_runtime() -> anyhow::Result<()> {
     init_rx.blocking_recv()?
 }
 
-#[cfg(test)]
-mod endpoint_tests {
-    use super::ipc_socket_name;
-    use std::collections::HashSet;
-
-    #[test]
-    fn concurrent_runtimes_have_distinct_endpoints() {
-        let names = std::thread::scope(|scope| {
-            let workers: Vec<_> = (0..16)
-                .map(|_| scope.spawn(|| (0..128).map(|_| ipc_socket_name()).collect::<Vec<_>>()))
-                .collect();
-            workers
-                .into_iter()
-                .flat_map(|worker| worker.join().unwrap())
-                .collect::<HashSet<_>>()
-        });
-        assert_eq!(names.len(), 16 * 128);
-    }
-}
-
 #[allow(clippy::type_complexity)]
 pub async fn renderer_ipc_out(
     mut stream: SendHalf,
@@ -457,4 +437,24 @@ pub async fn write_msg<T: Serialize>(stream: &mut SendHalf, value: &T) {
         .await
         .unwrap();
     stream.write_all(&bytes).await.unwrap();
+}
+
+#[cfg(test)]
+mod endpoint_tests {
+    use super::ipc_socket_name;
+    use std::collections::HashSet;
+
+    #[test]
+    fn concurrent_runtimes_have_distinct_endpoints() {
+        let names = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..16)
+                .map(|_| scope.spawn(|| (0..128).map(|_| ipc_socket_name()).collect::<Vec<_>>()))
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|worker| worker.join().unwrap())
+                .collect::<HashSet<_>>()
+        });
+        assert_eq!(names.len(), 16 * 128);
+    }
 }

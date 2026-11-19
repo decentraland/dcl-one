@@ -25,7 +25,7 @@ WITH e AS (
            (SELECT COALESCE(jsonb_agg(to_char(d AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') ORDER BY o), '[]'::jsonb)
               FROM unnest(e.recurrent_dates) WITH ORDINALITY AS r(d, o)) AS dates_j,
            -- Uploads on the upstream poster bucket become this node's
-           -- /poster[-vertical]/<file> path (posters.rs normalize_image_input),
+           -- /poster[-vertical]/<file> path (events/posters.rs resolve),
            -- served by the poster read-through; other URLs are kept.
            CASE WHEN e.image ~ '^https?://events-assets-[0-9a-f]+\.decentraland\.(org|zone|today)/(poster|poster-vertical)/[A-Za-z0-9][A-Za-z0-9.-]*$'
                 THEN regexp_replace(e.image, '^https?://[^/]+', '') ELSE e.image END AS image_n,

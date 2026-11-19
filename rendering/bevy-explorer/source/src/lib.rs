@@ -2,6 +2,7 @@
 // the headless binary takes the same launch options
 pub mod automation;
 mod autopilot;
+mod client_window_focus;
 mod commands;
 mod debug_panel;
 mod deep_link;
@@ -782,6 +783,7 @@ impl DecentralandApp {
         // debug panel section; with the `performance-profiler` feature, the scope profiler, Bevy's
         // per-pass render timings (not in a `tracy` build, whose GPU context they would double)
         // and its system information on Windows and Linux
+        app.add_plugins(client_window_focus::ClientWindowFocusPlugin);
         app.add_plugins(perf::PerformanceMonitoringPlugin);
         #[cfg(all(
             feature = "performance-profiler",

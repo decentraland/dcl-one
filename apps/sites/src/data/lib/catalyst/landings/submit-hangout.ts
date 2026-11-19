@@ -185,6 +185,7 @@ export async function uploadHangoutPoster(identity: AuthIdentity, file: File, ve
   const Poster = z.object({ url: z.string() });
   const raw: unknown = await response.json();
   const poster = z.union([Poster, apiOkOf(Poster).transform((value) => value.data)]).parse(raw);
+  if (/^\/events-assets-099ac00\/poster(?:-vertical)?\//.test(poster.url)) return poster.url;
   const origin = typeof window === "undefined" ? base : window.location.origin;
   const absoluteBase = new URL(base || origin, origin);
   return new URL(poster.url, absoluteBase).href;
