@@ -336,7 +336,12 @@ export function manaGuardedProvider(provider: Eip1193Provider, source: ManaPurch
           if (args.length !== 2) refuse('The Shop only signs its own purchases.')
           // The rails hand over JSON text: it is parsed once, here, into data of the guard's own. An object is
           // serialized first, so what is checked is exactly what is forwarded.
-          const text = typeof args[1] === 'string' ? args[1] : JSON.stringify(args[1])
+          let text: string
+          try {
+            text = typeof args[1] === 'string' ? args[1] : JSON.stringify(args[1])
+          } catch {
+            refuse('The Shop could not read what it was asked to sign.')
+          }
           const checked = checkMetaTransaction(args[0], text, intent)
           const signed = JSON.stringify(checked.typed)
           await session()

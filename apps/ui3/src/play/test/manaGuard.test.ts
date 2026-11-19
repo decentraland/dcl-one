@@ -326,6 +326,14 @@ describe('the MANA guard’s provider', () => {
     expect(moved.handOff).not.toHaveBeenCalled()
   })
 
+  it('refuses typed data it can’t serialize as its own refusal, before any hand-off or wallet call', async () => {
+    const g = guarded(listings())
+    const data = { ...typed(MANA_DOMAIN, approve()), extra: 1n }
+    await expect(g.provider.request({ method: 'eth_signTypedData_v4', params: [BUYER, data] })).rejects.toMatchObject({ name: 'WalletRefusal', code: 4100 })
+    expect(g.handOff).not.toHaveBeenCalled()
+    expect(g.w.requests).toHaveLength(0)
+  })
+
   it('switches only to its own network, and refuses any other method', async () => {
     const g = guarded(listings())
     await g.provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x89' }] })
