@@ -70,9 +70,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   worst-case change between near and far is smaller. Fading to no shadow looked worse about
   half the time.
 - **Low shadows keep hardware 2x2 filtering.** Unity's soft shadows filter every quality. Low is
-  the default preset and the filter applies per view, spot shadows included, so Low keeps
-  bevy's `Hardware2x2` (one PCF sample) instead of `Gaussian` (nine) to stay cheap on weak GPUs
-  and web. High uses `Gaussian`.
+  the Medium preset's shadow quality and the filter applies per view, spot shadows included, so
+  Low keeps bevy's `Hardware2x2` (one PCF sample) instead of `Gaussian` (nine) to stay cheap on
+  weak GPUs and web. High uses `Gaussian`.
 - **Jump marker reads the depth prepass.** Like Unity's projector, the blob (`BlobShadow.mat`)
   is projected onto the surface below, so it follows slopes, steps and ledges; a flat quad
   cut into rising ground. A depth bias does not fix that: it offsets the quad's depth test,
@@ -120,7 +120,7 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     after a re-dial: what the user chose since then stands.
   - Don't keep a muted mic's track published. Muting unpublishes it, so no audio leaves a muted
     user. In a stream `MuteSpeakerFromCommunityVoiceChat` is still sent, so every client shows the
-    same state.
+    same state (a focus pause is the exception, below).
   - Don't play calls at the nearby-voice volume. Calls and streams follow `Voice Chat Volume` and
     nearby players `Voice Volume`, both scaled by `Master`. Capture uses the system's default
     microphone; a device picker is next work.
@@ -182,6 +182,17 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     too: the platform ban-status poll (every 300 s) reads the ban but never admits the room
     again. unity-explorer suppresses on any 401 or 403 from the scene room and lifts it on the
     room's next connect or disconnect; its scene room asks again every 5 s while refused.
+- **The mic pauses while the Explorer lacks focus** (the primary window natively,
+  `document.hasFocus()` on the web), so it never captures while the player is in another app
+  or tab: it stops capturing and publishing for nearby voice and calls alike, and resumes when
+  focus returns. The mic setting does not change, and neither pause nor resume plays the mic
+  on/off sound. The HUD shows the paused mic off: the call panel at once, the nearby mic toggle
+  at its next mic state poll (up to 1 s).
+  - In a community stream no `MuteSpeakerFromCommunityVoiceChat` is sent for the pause, so
+    other clients keep showing the paused speaker unmuted while no audio arrives; the mute
+    entry above holds only for a mute the player chooses.
+  - unity-explorer pauses only the nearby mic and lets the player turn the pause off in
+    settings ("mute mic in background", on by default); the Explorer has no such setting.
 - **Blocked and scene-banned players are not heard nearby.** A player blocked in either
   direction, or banned by the connected scene room, carries `BlockedOrBanned`, and their nearby
   voice track is unsubscribed while it lasts; unity-explorer keeps the track and creates no audio
@@ -544,6 +555,35 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   successful, failed and cancelled gifts and plays a sound with the sent and received popups; this
   port leaves both out for now. The shell's "Preparing Gift for" tile shows the
   marketplace index's item category (wearable or emote), so its corner glyph is the generic one.
+- **Media reopens on the web.** The web backend keeps unity-explorer's counts and delays: a
+  failed URL source is reopened up to 5 times, 2, 4, 8, 16 and 32 s after each failure, the count
+  restarts when the scene changes the source, and a source that gave up stays failed until the
+  source changes. It differs in five ways:
+  - *States between reopens.* unity-explorer reports `VsError` after every failed attempt; here a
+    scheduled reopen reports `VsLoading`, so `VsError` means the source gave up or is failed and
+    paused.
+  - *Failures during playback.* unity-explorer reopens only a source that failed to open; here an
+    element error at any time starts the schedule, and a live stream that ends (its feed dropped)
+    counts as a failure rather than a normal end, so a stream whose feed drops reconnects without a
+    scene reload. A reopened source that is not live resumes where it failed, or where the scene
+    seeked meanwhile.
+  - *Count restart.* unity-explorer clears the count as soon as a reopen opens; here it restarts
+    only after 5 s of playback since the last failure, so a source that keeps failing at the same
+    point gives up.
+  - *Pause.* unity-explorer reopens a failed source whether or not it plays; here a failed source is
+    reopened only while the scene plays it, so a paused screen requests nothing. A failure while
+    paused, or before the scene first plays the source, counts and reports `VsError`. The next play
+    reports `VsLoading` and reopens once the current delay has passed since the failure, so toggling
+    playback never reopens faster than the schedule, and a pause keeps the count. A pause during a
+    loading reopen lets it load, as a paused first open does. A live stream resumes at its live
+    edge, not at a saved position.
+  - *The screen.* unity-explorer renders black whenever a player is in `VsError` or `VsNone`; here
+    the image turns black when the source gives up or a non-looping source ends, and keeps the
+    last frame while a reopen is pending, so a short drop shows no black flash; the failed source
+    is detached meanwhile. A non-looping source that ends reports `VsNone`, as in unity-explorer.
+
+  Native (FFmpeg) has no reopen: its first error ends playback. A non-looping source that ends
+  there reports `VsPaused` and keeps its last frame, where the web reports `VsNone` and clears it.
 - **The map's markers are HUD elements, not a rendered scene.** unity-explorer draws its map and
   markers with a camera into a texture; here the atlas and every marker are elements of the HUD
   page, placed from the map camera's position and zoom. The seven zoom levels, the marker sizes at
@@ -559,14 +599,28 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   as unity-explorer's. unity-explorer's minimap doesn't zoom and moves the pin to the edge past a
   fixed distance (about eight parcels); this one zooms, so the pin moves to the edge exactly when
   the destination leaves the visible map. It is the full map's destination pin, and the minimap
-  being square, it runs along the square's edge rather than a circle. Scene map pins are
-  on neither (below). The header's heart marks the place the player stands in as a favourite; in
+  being square, it runs along the square's edge rather than a circle. Scene map pins are on
+  both (below). The header's heart marks the place the player stands in as a favourite; in
   a World, the World's scene there.
-- **The map draws no scene map pins.** unity-explorer shows the `MapPin`s of every portable
-  experience, among them the quests' global one (`globalpx.dcl.eth`, loaded at startup from
-  `alfa-global-portable-experiences`), and of any scene under `alfa-map-pins`, with a Quest
-  Mini-Games layer to hide them. This explorer loads no global portable experience, so the map
-  reads no `MapPin` and has no such layer.
+- **Scene map pins come only from portable experiences.** The engine reads `MapPin` only from
+  scenes running as a portable (from the launch option or console, spawned by a scene, or a smart
+  wearable's) whose scene.json also declares `isPortableExperience: true`, and streams them to the
+  HUD (`getMapPinsStream`); every other scene's pins are ignored, and no flag turns them on for
+  other scenes. unity-explorer reads them from any scene that declares `isPortableExperience:
+  true`, however it was loaded, and from every scene under `alfa-map-pins`; here a parcel scene or
+  World that declares it can't put pins on its visitors' maps. The Layers panel's Quest Mini-Games
+  switch (on by default, for the session) shows or hides them on the full map and the minimap. A
+  pin stands on the centre of its parcel, its position rounded halves to even; it is never
+  clustered, its title and description are not drawn, and a click opens the place panel for its
+  parcel. It shows the scene's own icon, a content file of the scene, cut round on a white disc;
+  with no such file (another texture kind, a src that parses as a url, a missing file, or an image
+  that fails to load) it shows the default quest pin, so a scene can't make the HUD request a host
+  of its choosing. The icon resolves again only when its src changes, and a moved pin keeps its
+  icon. The title is cut to 100 characters. unity-explorer loads that icon only under
+  `alfa-map-pins-custom-icons`, and otherwise always shows its default pin. The pin doesn't pulse.
+  This explorer loads no global portable experience at startup: unity-explorer loads the quests'
+  one (`globalpx.dcl.eth`) from `alfa-global-portable-experiences`; here it is loaded with the
+  launch option (`--portables` or `?portables=`, e.g. `basiccontroller.dcl.eth;globalpx.dcl.eth`).
 - **Arrival is checked on every position report.** unity-explorer checks the route only after
   the player's squared distance from the map's origin has changed by 300 map units, which can
   skip the arrival spot when the player stops on it or reaches it sideways, so the route never
@@ -665,6 +719,32 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Distance. Bevy has one sea plane, a single opaque quad that casts no shadows, so hiding it would
   save almost nothing, and the water material draws without fog, so nothing would soften it
   appearing and disappearing.
+- **Graphics presets set fewer settings than Unity's, and four differently.** Low, Medium and High
+  carry Unity's values for the frame rate, VSync, render scale, avatar outline, jiggle bones, sun
+  shadow quality, the Low and High shadow distances and scene lights; Medium is the default and
+  the one every saved config migrates to, except jiggle bones, which stay off by default (see the
+  spring bones ADR). Anti-aliasing and depth of field differ (next entry). Bloom is Low in every
+  preset, closer to Unity's look than High. Medium's sun shadow distance is 20 m, not 60 m: Medium
+  has one cascade on a 4096 map (above), so at 60 m each texel is three times as large and the
+  shadows break up. The presets leave out Unity's scene distance (in parcels, where far scenes
+  load as LODs; here imposters draw them and the load distance stays the player's), the landscape
+  distance (read only at startup; its default is Medium's 1000 m), current-scene streams and HDR
+  (always on). The preset is not stored: the HUD reads it off the settings, and any difference
+  shows as Custom.
+- **Depth of field yields to MSAA.** The fork's transparent focus texture takes the sample count
+  of the resolved main texture, so a multisampled transparent pass with depth of field fails
+  wgpu validation. While MSAA is on, the camera has no depth of field and the stars draw before
+  the transparent pass. Unlike Unity, which has none, the presets keep depth of field on, because
+  it hides the lack of detail in distant imposters, and they use FXAA so it stays on: the yield
+  only applies when a player picks MSAA. SSAO is off in every preset: bevy 0.16's SSAO is not
+  good enough to put in one.
+- **VSync caps the frame rate; it does not set it.** Unity's `vSyncCount` hands the rate to the
+  monitor and ignores the frame limit. Here VSync only removes tearing: the explorer paces to the
+  lower of the Target Frame Rate (or a session override) and the monitor's refresh rate. Medium's
+  60 fps holds on a 120 or 144 Hz monitor, and the debug panel's 30 FPS limit, `/fps` and
+  `--fps` still apply; Max means the monitor's rate. A target that does not divide the refresh rate
+  shows frames for an uneven number of refreshes (60 fps on 144 Hz alternates 2 and 3), so motion
+  can judder slightly; 60 fps on 60 or 120 Hz is even.
 - **No satellite floor.** unity-explorer lays the minimap's satellite images flat at 0.205 m under the
   terrain in Genesis City; here the ground covers that plane everywhere, so the floor would never be
   seen and is not shipped.
@@ -787,8 +867,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   at a 30 FPS cap), takes real frame times with no 250 ms cap, and is sent once per 15 s sample,
   in world and focused only, instead of once per 1000 frames of virtual time through loading
   screens and unfocused windows. The old event's own sampling was removed rather than kept beside
-  the sampler. Dashboards comparing across this change see a step from the definitions; whether
-  the event gets a schema field or a fixed 50 ms count is the analytics owners' call.
+  the sampler. Dashboards comparing across this change see a step from the definitions.
+  The event records the applied threshold, raw hiccup counts and measured sample counts for CPU
+  and, when readings are available, GPU. These counts let dashboards compute session rates.
 - **Bevy stays on the 0.16 fork for now.** Security-relevant dependencies (V8 and deno,
   libwebrtc, ffmpeg, wgpu) get bumped inside it. Whether to ever move the bevy version is an
   open discussion, not a decision.

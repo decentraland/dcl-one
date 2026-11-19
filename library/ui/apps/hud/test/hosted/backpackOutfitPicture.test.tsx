@@ -5,7 +5,7 @@ import { BackpackPage } from '../../features/backpack/BackpackPage'
 import type { Outfit } from '@explorer-core/engine/protocol'
 import { fakeProfileState, fakeSession } from '../harness'
 
-const grey = { r: 0.5, g: 0.5, b: 0.5 }
+const grey = { r: 0.5, g: 0.5, b: 0.5, a: 1 }
 const outfit: Outfit = { bodyShape: '', eyes: { color: grey }, hair: { color: grey }, skin: { color: grey }, wearables: ['urn:hat'], forceRender: [] }
 const PICTURE = 'data:image/png;base64,AAAA'
 

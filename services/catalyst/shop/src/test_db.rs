@@ -26,10 +26,7 @@ impl OwnDatabase {
             std::process::id(),
             &uuid::Uuid::new_v4().simple().to_string()[..8]
         );
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let mut own = url::Url::parse(&url).unwrap();
         own.set_path(&format!("/{name}"));
         let pool = crate::db::connect_pool(
@@ -41,7 +38,6 @@ impl OwnDatabase {
         )
         .await
         .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         Some(Self { pool, admin, name })
     }
 

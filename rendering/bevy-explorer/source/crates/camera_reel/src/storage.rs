@@ -282,6 +282,63 @@ pub async fn lookup_place(
     }
 }
 
+/// Fetches the storage counts for the signed-in address when it changes and whenever photo mode
+/// opens, so a photo deleted from the gallery frees its slot here too. A fetch that failed is
+/// retried when a photo is asked for and, while photo mode stays open, every few seconds: the
+/// HUD's Shoot is disabled until the status is known, so it recovers without reopening photo mode.
+pub(crate) fn fetch_storage_status(
+    mut storage: ResMut<CameraReelStorage>,
+    wallet: Res<Wallet>,
+    mut opened: EventReader<crate::mode::PhotoModeChanged>,
+    mut takes: EventReader<crate::capture::TakePhotoRequest>,
+    in_photo_mode: Query<(), With<crate::PhotoCamera>>,
+    time: Res<Time>,
+    ipfs: ipfs::IpfsAssetServer,
+) {
+    use common::util::{TaskCompat, TaskExt};
+
+    let now = time.elapsed_secs_f64();
+    if let Some(result) = storage.fetch.as_mut().and_then(|task| task.complete()) {
+        storage.fetch = None;
+        match result {
+            Ok(response) => {
+                storage.set(response.current_images, response.max_images);
+                storage.retry_at = None;
+            }
+            Err(message) => {
+                warn!("camera reel storage status: {message}");
+                storage.retry_at = Some(now + STORAGE_RETRY_SECS);
+            }
+        }
+    }
+
+    let address = wallet.address().map(|a| format!("{a:#x}"));
+    let opened = opened.read().any(|change| change.active);
+    let asked = takes.read().next().is_some();
+    let address_changed = address != storage.address;
+    if address_changed {
+        // a fetch for the previous address would land as this one's
+        storage.fetch = None;
+        storage.address = address.clone();
+        storage.loaded = false;
+        storage.current = 0;
+        storage.max = 0;
+        storage.retry_at = None;
+    }
+    let Some(address) = address else {
+        return;
+    };
+    let due = !in_photo_mode.is_empty() && storage.retry_at.is_some_and(|at| now >= at);
+    let retry = (asked || due) && !storage.loaded;
+    if (address_changed || opened || retry) && storage.fetch.is_none() {
+        storage.fetch = Some(bevy::tasks::IoTaskPool::get().spawn_compat(fetch_storage(
+            ipfs.ipfs().client(),
+            wallet.clone(),
+            address,
+        )));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,62 +395,5 @@ mod tests {
             serde_json::from_str(r#"{"currentImages":3,"maxImages":500,"image":{"id":"abc"}}"#)
                 .unwrap();
         assert_eq!((minimal.current_images, minimal.max_images), (3, 500));
-    }
-}
-
-/// Fetches the storage counts for the signed-in address when it changes and whenever photo mode
-/// opens, so a photo deleted from the gallery frees its slot here too. A fetch that failed is
-/// retried when a photo is asked for and, while photo mode stays open, every few seconds: the
-/// HUD's Shoot is disabled until the status is known, so it recovers without reopening photo mode.
-pub(crate) fn fetch_storage_status(
-    mut storage: ResMut<CameraReelStorage>,
-    wallet: Res<Wallet>,
-    mut opened: EventReader<crate::mode::PhotoModeChanged>,
-    mut takes: EventReader<crate::capture::TakePhotoRequest>,
-    in_photo_mode: Query<(), With<crate::PhotoCamera>>,
-    time: Res<Time>,
-    ipfs: ipfs::IpfsAssetServer,
-) {
-    use common::util::{TaskCompat, TaskExt};
-
-    let now = time.elapsed_secs_f64();
-    if let Some(result) = storage.fetch.as_mut().and_then(|task| task.complete()) {
-        storage.fetch = None;
-        match result {
-            Ok(response) => {
-                storage.set(response.current_images, response.max_images);
-                storage.retry_at = None;
-            }
-            Err(message) => {
-                warn!("camera reel storage status: {message}");
-                storage.retry_at = Some(now + STORAGE_RETRY_SECS);
-            }
-        }
-    }
-
-    let address = wallet.address().map(|a| format!("{a:#x}"));
-    let opened = opened.read().any(|change| change.active);
-    let asked = takes.read().next().is_some();
-    let address_changed = address != storage.address;
-    if address_changed {
-        // a fetch for the previous address would land as this one's
-        storage.fetch = None;
-        storage.address = address.clone();
-        storage.loaded = false;
-        storage.current = 0;
-        storage.max = 0;
-        storage.retry_at = None;
-    }
-    let Some(address) = address else {
-        return;
-    };
-    let due = !in_photo_mode.is_empty() && storage.retry_at.is_some_and(|at| now >= at);
-    let retry = (asked || due) && !storage.loaded;
-    if (address_changed || opened || retry) && storage.fetch.is_none() {
-        storage.fetch = Some(bevy::tasks::IoTaskPool::get().spawn_compat(fetch_storage(
-            ipfs.ipfs().client(),
-            wallet.clone(),
-            address,
-        )));
     }
 }

@@ -20,7 +20,8 @@ vi.mock('electron-log/main', () => ({
   default: { info: vi.fn(), warn: mocks.warn, error: vi.fn() },
 }));
 vi.mock('../src/modules/path', () => ({
-  APP_UNPACKED_PATH: mocks.appDir,
+  APP_UNPACKED_PATH: '/fake/app',
+  getNodeShimDir: () => mocks.appDir,
   getBinPath: mocks.getBinPath,
   joinEnvPaths: (...paths: (string | undefined)[]) => paths.filter(Boolean).join(path.delimiter),
 }));

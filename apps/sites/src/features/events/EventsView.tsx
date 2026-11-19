@@ -17,6 +17,7 @@ import type {
 } from "@dcl/one-ui/apps/sites/events/types";
 
 import { useAuth } from "@/data/lib/auth/context";
+import { siteUrl } from "@/data/lib/catalyst/bases";
 import type { JumpPlaceRecord } from "@/data/lib/catalyst/jump/jump";
 import type { Event } from "@/data/lib/catalyst/places/events";
 import {
@@ -75,7 +76,7 @@ import {
 
 const STORY: StoryId = "admin/whats-on";
 const DETAIL_STORY: StoryId = "admin/whats-on-detail";
-const LEARN_MORE_URL = "https://decentraland.org/blog/about-decentraland/how-to-make-and-run-an-event-in-decentraland";
+const LEARN_MORE_PATH = "/blog/about-decentraland/how-to-make-and-run-an-event-in-decentraland";
 const CREATE_HREF = "/events/new-event";
 
 export type EventsViewProps = {
@@ -365,7 +366,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
         status={calendarStatus}
         onRetry={() => void calendar.refetch()}
       />
-      <HostBanner createHref={CREATE_HREF} learnMoreHref={LEARN_MORE_URL} />
+      <HostBanner createHref={CREATE_HREF} learnMoreHref={siteUrl(LEARN_MORE_PATH)} />
     </EventsPage>
   );
 }

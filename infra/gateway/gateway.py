@@ -21,6 +21,10 @@ BADGES_ASSET_CAP = "16m"
 # One report evidence file (the gatekeeper reports `MAX_FILE_BYTES`); a
 # gateway test pins it.
 REPORT_EVIDENCE_CAP = "5m"
+# A Cast presentation upload: the presenter's `MAX_FILE_SIZE` (100 MiB, the whole
+# multipart body) plus 1 MiB, so its own JSON 413 is the one a client meets; a
+# gateway test pins it.
+CAST_PRESENTATION_CAP = "101m"
 # The content server's `POST /entities` route limit at the default field
 # count (`max_deployment_body_bytes`: 200 MiB of files and fields plus
 # multipart framing), rounded up, so its own 413 is the one a client meets.
@@ -324,6 +328,11 @@ def render(table, cfg, mime):
     # /report-user request takes `location /` and the server-wide cap.
     locations += location('~ "^/report-user/api/reports/(players/)?[^/]+/evidence/[^/]+$"', proxy("apis",
         f"client_max_body_size {REPORT_EVIDENCE_CAP}; {uploads}"))
+    # A Cast presentation (`cast-presenter-service.<domain>/presentations` arrives
+    # rewritten under its prefix): one PDF in the body, which the app reads only after
+    # nginx buffers it, so concurrent uploads are capped as on the deploy routes.
+    locations += location('~ "^/cast-presenter-service/presentations/*$"', proxy("apis",
+        f"client_max_body_size {CAST_PRESENTATION_CAP}; client_body_timeout 300s; {uploads}"))
     # Both badges host forms reach this already rewritten under /badges. The admin
     # check is a bearer token the app reads after nginx buffers the body, so
     # concurrent uploads are capped as on the deploy routes.

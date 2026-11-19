@@ -199,7 +199,6 @@ fn island_connected(
     health.get(island).is_ok_and(ConnectionHealth::is_connected)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn manage_islands(
     mut commands: Commands,
     mut manager: AdapterManager,
@@ -319,7 +318,6 @@ fn manage_islands(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn settle_island(
     mut commands: Commands,
     mut owners: Query<(Entity, &ArchipelagoTransport, &mut IslandAssignment)>,
@@ -436,7 +434,6 @@ fn refresh_island(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn connect_websocket(
     mut commands: Commands,
     mut new_websockets: Query<

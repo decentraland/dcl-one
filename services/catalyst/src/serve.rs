@@ -327,7 +327,10 @@ pub async fn serve(
     }
     let explore_settings = explore::Settings {
         content_public_url: content.settings.content_public_url.clone(),
-        asset_rewrite_domain: explore::Settings::asset_rewrite_domain_for(
+        asset_rewrite_base: explore::Settings::asset_rewrite_base_for(
+            config.node.public_url.as_deref(),
+        ),
+        configured_public_base: explore::Settings::configured_public_base_for(
             config.node.public_url.as_deref(),
         ),
         events_admin_token: config.explore.catalyrst_events_admin_token.clone(),
@@ -682,6 +685,7 @@ pub async fn serve(
         landiler_escrow_address: Config::non_empty(&config.economy.landiler_escrow_address),
         names_chain_id: config.economy.names_chain_id,
         eth_rpc_url: config.content.eth_rpc_url()?,
+        names_signer_enabled: config.economy.names_signer_enabled,
         names_max_price_wei: Config::non_empty(&config.economy.names_max_price_wei)
             .map(|s| alloy_primitives::U256::from_str_radix(s.trim(), 10))
             .transpose()

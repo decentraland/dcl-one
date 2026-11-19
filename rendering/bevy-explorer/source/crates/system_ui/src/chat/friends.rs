@@ -96,7 +96,6 @@ pub fn update_profile_images(
 #[derive(Event, Clone)]
 pub struct ShowConversationEvent(pub Address);
 
-#[allow(clippy::too_many_arguments)]
 pub fn show_conversation(
     mut show_events: EventReader<ShowConversationEvent>,
     mut pending_event: Local<Option<Address>>,
@@ -227,7 +226,6 @@ pub fn show_conversation(
     tab_manager.set_selected_entity(tab, new_tab);
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn update_friends(
     mut commands: Commands,
     client: Res<SocialClient>,
@@ -377,7 +375,6 @@ pub fn update_friends(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn update_conversations(
     mut client: ResMut<SocialClient>,
     tab: Query<&TabSelection, With<ChatTab>>,
@@ -423,7 +420,12 @@ pub fn update_conversations(
         *last_chat = Some(private_chat.address);
 
         conversation.clear(chatbox);
-        text_entry.single_mut().unwrap().enabled = true;
+        #[allow(
+            clippy::unwrap_used,
+            reason = "the chat template spawns the ChatInput with the chatbox; a missing input is a template bug"
+        )]
+        let mut text_entry = text_entry.single_mut().unwrap();
+        text_entry.enabled = true;
 
         if private_chat.wants_history_count == 0
             && !(private_chat.history_receiver.is_closed()

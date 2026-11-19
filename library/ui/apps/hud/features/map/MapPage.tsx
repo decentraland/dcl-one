@@ -197,6 +197,7 @@ export function MapPage({
           liveEvents={data.liveEvents}
           pois={data.pois}
           people={data.people}
+          pins={data.pins}
           searchMarkers={snap.searchMarkers}
           categoryMarkers={snap.categoryMarkers}
           markerCategory={snap.markerCategory}

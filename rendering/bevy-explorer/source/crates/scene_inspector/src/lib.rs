@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use bevy::prelude::*;
 use common::sets::SceneSets;
 use dcl_component::ComponentNameRegistry;

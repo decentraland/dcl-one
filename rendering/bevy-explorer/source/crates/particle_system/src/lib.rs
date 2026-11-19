@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod plugin;
 
 use bevy::{asset::embedded_asset, prelude::*};

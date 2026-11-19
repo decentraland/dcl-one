@@ -676,7 +676,7 @@ pub struct AppConfig {
 
 /// bump to run one-time migrations of the preset-managed settings in existing configs
 /// (see [`AppConfig::reset_outdated_settings`])
-pub const SETTINGS_GENERATION: u32 = 3;
+pub const SETTINGS_GENERATION: u32 = 4;
 
 /// bump to run one-time migrations of saved input binding tables
 /// (see [`AppConfig::migrate_inputs`])
@@ -772,6 +772,8 @@ impl AppConfig {
     /// else. gen 1: reinitialize the preset-managed settings to the current defaults.
     /// gen 2: default bloom dropped High -> Low; move configs still on the old default.
     /// gen 3: native gpu uploads became capped by default; move configs still uncapped (0).
+    /// gen 4: the defaults became the Medium graphics preset; reset the settings the presets set,
+    /// so every saved config lands on Medium.
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;
@@ -786,9 +788,14 @@ impl AppConfig {
         if self.settings_generation < 3 && self.graphics.gpu_bytes_per_frame == 0 {
             self.graphics.gpu_bytes_per_frame = default.graphics.gpu_bytes_per_frame;
         }
+        if self.settings_generation < 4 {
+            self.graphics.reset_quality_preset(&default.graphics);
+        }
         self.settings_generation = SETTINGS_GENERATION;
     }
 
+    /// gen 1's list, frozen: the settings the presets managed then, load distances and avatars
+    /// included. Today's preset settings are [`GraphicsSettings::reset_quality_preset`].
     fn reset_preset_settings(&mut self, default: &Self) {
         self.graphics.msaa = default.graphics.msaa;
         self.graphics.shadow_distance = default.graphics.shadow_distance;
@@ -801,6 +808,7 @@ impl AppConfig {
         self.graphics.ssao = default.graphics.ssao;
         self.graphics.sky_reflections = default.graphics.sky_reflections;
         self.graphics.oob = default.graphics.oob;
+        self.graphics.spring_bones = default.graphics.spring_bones;
         self.scene_load_distance = default.scene_load_distance;
         self.scene_unload_extra_distance = default.scene_unload_extra_distance;
         self.scene_imposter_distances = default.scene_imposter_distances.clone();
@@ -1025,17 +1033,25 @@ pub struct GraphicsSettings {
 /// (visuals::sky_envmap).
 pub const AMBIENT_BRIGHTNESS_DEFAULT: i32 = 50;
 
+/// The defaults are the Medium graphics preset, the one a new install gets: the HUD's Graphics
+/// Preset (`react-web/bridge-scene/src/domains/graphicsPresets.ts`) reads Medium off each
+/// setting's published default.
 impl Default for GraphicsSettings {
     fn default() -> Self {
         Self {
-            vsync: false,
+            // the browser paces the web build to the display, whatever this says
+            vsync: !cfg!(target_arch = "wasm32"),
             log_fps: !cfg!(target_arch = "wasm32"),
-            msaa: AaSetting::FxaaLow,
+            // FXAA, not MSAA, so depth of field stays on (see `DofSetting::apply_to_camera`)
+            msaa: AaSetting::FxaaHigh,
             fps_target: 60,
+            // one 4096 cascade (`visuals`), so a short distance keeps its texels small
             shadow_distance: 20.0,
+            // one cascade
             shadow_settings: ShadowSetting::Low,
-            light_count: 4,
-            shadow_caster_count: 0,
+            light_count: 6,
+            // spot light shadows within 20 m
+            shadow_caster_count: 3,
             window: WindowSetting::Windowed,
             // fullscreen_res: FullscreenResSetting(UVec2::new(1280,720)),
             fog: FogSetting::On,
@@ -1052,6 +1068,26 @@ impl Default for GraphicsSettings {
             gpu_bytes_per_frame: 10_000_000,
             render_scale: 1.0,
         }
+    }
+}
+
+impl GraphicsSettings {
+    /// Set every setting the HUD's Graphics Preset sets to `preset`'s value, keeping the rest.
+    pub fn reset_quality_preset(&mut self, preset: &Self) {
+        self.vsync = preset.vsync;
+        self.fps_target = preset.fps_target;
+        self.render_scale = preset.render_scale;
+        self.msaa = preset.msaa;
+        self.bloom = preset.bloom;
+        self.avatar_outline = preset.avatar_outline;
+        self.shadow_settings = preset.shadow_settings;
+        self.shadow_distance = preset.shadow_distance;
+        self.light_count = preset.light_count;
+        self.shadow_caster_count = preset.shadow_caster_count;
+        self.dof = preset.dof;
+        self.ssao = preset.ssao;
+        self.fog = preset.fog;
+        self.sky_reflections = preset.sky_reflections;
     }
 }
 
@@ -1072,6 +1108,42 @@ impl SessionGraphics {
 
     pub fn fps_target(&self, config: &AppConfig) -> usize {
         self.fps_target.unwrap_or(config.graphics.fps_target)
+    }
+
+    /// The frame rate the explorer paces to: the session's target, else the player's, and with
+    /// VSync on no faster than the monitor. VSync only removes tearing, so a lower target still
+    /// applies, and Max (999) means the monitor's rate. `refresh_hz`, when known, is the monitor's
+    /// rate rounded up past it (60 Hz gives 61), so at the monitor's rate VSync, not the pacer's
+    /// sleep, sets the frame time.
+    pub fn paced_fps(
+        session: Option<&Self>,
+        config: &AppConfig,
+        refresh_hz: Option<usize>,
+    ) -> usize {
+        let target = session.map_or(config.graphics.fps_target, |session| {
+            session.fps_target(config)
+        });
+        match refresh_hz {
+            Some(refresh) if config.graphics.vsync && (target == 0 || refresh <= target + 1) => {
+                refresh
+            }
+            _ => target,
+        }
+    }
+
+    /// [`Self::paced_fps`] as the debug panel shows it: when VSync sets the rate, the monitor's
+    /// rate (60 for a 60 Hz monitor, not the pacer's 61).
+    pub fn shown_fps(
+        session: Option<&Self>,
+        config: &AppConfig,
+        refresh_hz: Option<usize>,
+    ) -> usize {
+        let fps = Self::paced_fps(session, config, refresh_hz);
+        if config.graphics.vsync && refresh_hz == Some(fps) {
+            fps.saturating_sub(1)
+        } else {
+            fps
+        }
     }
 
     pub fn parcel_grass(&self, config: &AppConfig) -> ParcelGrassSetting {
@@ -1199,6 +1271,12 @@ pub enum AaSetting {
     Msaa2x,
     Msaa4x,
     Msaa8x,
+}
+
+impl AaSetting {
+    pub fn is_msaa(self) -> bool {
+        matches!(self, Self::Msaa2x | Self::Msaa4x | Self::Msaa8x)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1411,9 +1489,20 @@ pub struct SceneMeta {
     /// ([`PortableExperiencesToggle`]) and `nearbyVoiceChat` are read. Kept as raw json so a value of another shape never
     /// fails the scene.json.
     pub feature_toggles: Option<serde_json::Value>,
+    /// `isPortableExperience`. Kept as raw json so a value of another shape never fails the
+    /// scene.json.
+    pub is_portable_experience: Option<serde_json::Value>,
 }
 
 impl SceneMeta {
+    /// `isPortableExperience: true`, however the scene was loaded.
+    pub fn declares_portable_experience(&self) -> bool {
+        self.is_portable_experience
+            .as_ref()
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    }
+
     /// What this scene says about portable experiences while the player stands in it.
     pub fn portable_experiences_toggle(&self) -> PortableExperiencesToggle {
         self.feature_toggles
@@ -1460,6 +1549,11 @@ impl std::str::FromStr for PortableExperiencesToggle {
 
 #[derive(Component)]
 pub struct NearbyVoiceDisabled;
+
+/// On the root of a scene loaded as a portable experience whose scene.json also declares
+/// `isPortableExperience: true`: the only scenes whose `MapPin`s are read.
+#[derive(Component)]
+pub struct ReadsMapPins;
 
 pub trait PermissionStrings {
     fn active(&self) -> &str;
@@ -1945,6 +2039,42 @@ pub enum AppError {
     NetworkFailure(anyhow::Error),
 }
 
+/// The client's focus: one representation for the native window's focus and the browser page's
+/// focus.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientWindowFocus {
+    Focused,
+    NoFocus,
+}
+
+impl ClientWindowFocus {
+    /// From the OS's focus report for the window, not `Window::focused`, which also holds
+    /// unanswered focus requests.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn from_window_focused(window_focused: &bevy::window::WindowFocused) -> Self {
+        Self::from_has_focus(window_focused.focused)
+    }
+
+    /// `page_has_focus` is `document.hasFocus()`, not `Window::focused`.
+    #[cfg(target_arch = "wasm32")]
+    pub fn from_page_focus(page_has_focus: bool) -> Self {
+        Self::from_has_focus(page_has_focus)
+    }
+
+    fn from_has_focus(has_focus: bool) -> Self {
+        if has_focus {
+            Self::Focused
+        } else {
+            Self::NoFocus
+        }
+    }
+}
+
+/// Asks the OS to focus the primary window. [`ClientWindowFocus`] changes only once the OS
+/// reports the focus.
+#[derive(Event, Debug, Clone, Copy)]
+pub struct RequestClientWindowFocus;
+
 #[derive(Resource, Default, Serialize, Deserialize, Clone)]
 pub struct MicState {
     pub available: bool,
@@ -1966,7 +2096,16 @@ pub struct MicState {
 }
 
 impl MicState {
-    pub fn scene_blocked(&self) -> bool {
+    /// This state with `enabled` false while the client window lacks focus, since the mic is
+    /// paused then.
+    pub fn gated_by_client_window_focus(&self, focus: ClientWindowFocus) -> Self {
+        Self {
+            enabled: self.enabled && focus == ClientWindowFocus::Focused,
+            ..self.clone()
+        }
+    }
+
+    pub const fn scene_blocked(&self) -> bool {
         self.scene_blocked
     }
 
@@ -2270,6 +2409,62 @@ impl CameraSmoothing {
 #[derive(Event)]
 pub struct PointAtMarkerVisibilityChanged;
 
+/// The local player's language as a BCP-47 tag: the chosen one, else the system's. `None` where
+/// no player is present (headless).
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
+pub struct PlayerLanguage(pub Option<String>);
+
+/// Who may DM a user.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DmPrivacy {
+    #[default]
+    All,
+    OnlyFriends,
+}
+
+impl From<PrivateMessagePrivacySetting> for DmPrivacy {
+    fn from(value: PrivateMessagePrivacySetting) -> Self {
+        match value {
+            PrivateMessagePrivacySetting::All => DmPrivacy::All,
+            PrivateMessagePrivacySetting::OnlyFriends => DmPrivacy::OnlyFriends,
+        }
+    }
+}
+
+impl From<DmPrivacy> for PrivateMessagePrivacySetting {
+    fn from(value: DmPrivacy) -> Self {
+        match value {
+            DmPrivacy::All => PrivateMessagePrivacySetting::All,
+            DmPrivacy::OnlyFriends => PrivateMessagePrivacySetting::OnlyFriends,
+        }
+    }
+}
+
+/// Another user's DM privacy, as returned by `GetPrivateMessagesSettings`.
+#[derive(Clone, Debug)]
+pub struct DmPrivacyOf {
+    pub address: String,
+    pub privacy: DmPrivacy,
+}
+
+/// A scene's javascript, as loaded from its content
+#[derive(Asset, Debug, Clone, TypePath)]
+pub struct SceneJsFile(pub Arc<String>);
+
+/// A world password the HUD must ask for (see `ipfs::world_access`); answered with the password,
+/// or `None` when the player gives up. Dropped unanswered when the realm change no longer needs it.
+pub struct WorldPasswordPrompt {
+    pub world: String,
+    /// Why the previous answer was refused; `None` on the first ask
+    pub error: Option<String>,
+    pub answer: tokio::sync::oneshot::Sender<Option<String>>,
+}
+
+/// Where world password prompts go, installed by whatever shows them (the system bridge). Without
+/// it a password-protected world can't be entered.
+#[derive(Resource, Clone)]
+pub struct WorldPasswordPrompter(pub tokio::sync::mpsc::UnboundedSender<WorldPasswordPrompt>);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2530,6 +2725,102 @@ mod tests {
     }
 
     #[test]
+    fn default_graphics_are_the_medium_preset() {
+        let g = GraphicsSettings::default();
+        assert_eq!((g.fps_target, g.render_scale), (60, 1.0));
+        assert_eq!((g.bloom, g.avatar_outline), (BloomSetting::Low, true));
+        assert_eq!(
+            (
+                g.shadow_settings,
+                g.shadow_distance,
+                g.light_count,
+                g.shadow_caster_count
+            ),
+            (ShadowSetting::Low, 20.0, 6, 3)
+        );
+        assert_eq!(
+            (g.dof, g.ssao, g.fog, g.sky_reflections),
+            (
+                DofSetting::High,
+                SsaoSetting::Off,
+                FogSetting::On,
+                SkyReflectionSetting::High
+            )
+        );
+        assert_eq!(g.msaa, AaSetting::FxaaHigh);
+        assert_eq!(g.vsync, !cfg!(target_arch = "wasm32"));
+    }
+
+    #[test]
+    fn vsync_caps_the_target_at_the_refresh_rate() {
+        let mut config = AppConfig::default();
+        let paced = |config: &AppConfig, session: Option<&SessionGraphics>, refresh| {
+            SessionGraphics::paced_fps(session, config, refresh)
+        };
+        let thirty = SessionGraphics {
+            fps_target: Some(30),
+            ..Default::default()
+        };
+        config.graphics.vsync = true;
+        config.graphics.fps_target = 60;
+        assert_eq!(paced(&config, None, Some(144)), 60);
+        assert_eq!(paced(&config, None, Some(50)), 50);
+        // a 60 Hz monitor reads as 61: VSync sets the rate
+        assert_eq!(paced(&config, None, Some(61)), 61);
+        assert_eq!(paced(&config, Some(&thirty), Some(144)), 30);
+        assert_eq!(paced(&config, None, None), 60);
+        config.graphics.fps_target = 999;
+        assert_eq!(paced(&config, None, Some(144)), 144);
+        config.graphics.vsync = false;
+        assert_eq!(paced(&config, None, Some(144)), 999);
+        assert_eq!(paced(&config, Some(&thirty), Some(144)), 30);
+    }
+
+    #[test]
+    fn the_shown_rate_is_the_monitors_when_vsync_sets_it() {
+        let mut config = AppConfig::default();
+        let shown = |config: &AppConfig, refresh| SessionGraphics::shown_fps(None, config, refresh);
+        config.graphics.vsync = true;
+        config.graphics.fps_target = 999;
+        assert_eq!(shown(&config, Some(61)), 60);
+        assert_eq!(shown(&config, None), 999);
+        config.graphics.fps_target = 60;
+        assert_eq!(shown(&config, Some(61)), 60);
+        assert_eq!(shown(&config, Some(145)), 60);
+        config.graphics.vsync = false;
+        config.graphics.fps_target = 999;
+        assert_eq!(shown(&config, Some(61)), 999);
+    }
+
+    #[test]
+    fn generation_4_lands_on_medium_and_keeps_the_rest() {
+        let mut config = AppConfig {
+            settings_generation: 3,
+            scene_load_distance: 100.0,
+            max_avatars: 50,
+            ..Default::default()
+        };
+        let g = &mut config.graphics;
+        (g.vsync, g.fps_target, g.render_scale) = (false, 144, 0.5);
+        (g.msaa, g.bloom, g.dof) = (AaSetting::FxaaLow, BloomSetting::High, DofSetting::Off);
+        (g.shadow_distance, g.light_count, g.shadow_caster_count) = (200.0, 32, 8);
+        (g.ambient_brightness, g.oob, g.cel_shading) = (10, 0.0, false);
+        config.reset_outdated_settings();
+
+        let mut medium = GraphicsSettings::default();
+        (medium.ambient_brightness, medium.oob, medium.cel_shading) = (10, 0.0, false);
+        assert_eq!(
+            serde_json::to_value(&config.graphics).unwrap(),
+            serde_json::to_value(&medium).unwrap()
+        );
+        assert_eq!(
+            (config.scene_load_distance, config.max_avatars),
+            (100.0, 50)
+        );
+        assert_eq!(config.settings_generation, SETTINGS_GENERATION);
+    }
+
+    #[test]
     fn migrate_inputs_updates_old_tables() {
         // a table saved before Places/Gallery/etc existed, with old roll defaults and
         // one deliberate user customization
@@ -2787,60 +3078,23 @@ mod tests {
             );
         }
     }
-}
 
-/// The local player's language as a BCP-47 tag: the chosen one, else the system's. `None` where
-/// no player is present (headless).
-#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
-pub struct PlayerLanguage(pub Option<String>);
-
-/// Who may DM a user.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum DmPrivacy {
-    #[default]
-    All,
-    OnlyFriends,
-}
-
-impl From<PrivateMessagePrivacySetting> for DmPrivacy {
-    fn from(value: PrivateMessagePrivacySetting) -> Self {
-        match value {
-            PrivateMessagePrivacySetting::All => DmPrivacy::All,
-            PrivateMessagePrivacySetting::OnlyFriends => DmPrivacy::OnlyFriends,
+    #[test]
+    fn is_portable_experience_parses_leniently() {
+        let meta = |field: &str| -> SceneMeta {
+            serde_json::from_str(&format!(
+                r#"{{"main":"bin/index.js","scene":{{"base":"0,0","parcels":["0,0"]}}{field}}}"#
+            ))
+            .unwrap()
+        };
+        assert!(meta(r#","isPortableExperience":true"#).declares_portable_experience());
+        for field in [
+            "",
+            r#","isPortableExperience":false"#,
+            r#","isPortableExperience":"true""#,
+            r#","isPortableExperience":1"#,
+        ] {
+            assert!(!meta(field).declares_portable_experience(), "{field}");
         }
     }
 }
-
-impl From<DmPrivacy> for PrivateMessagePrivacySetting {
-    fn from(value: DmPrivacy) -> Self {
-        match value {
-            DmPrivacy::All => PrivateMessagePrivacySetting::All,
-            DmPrivacy::OnlyFriends => PrivateMessagePrivacySetting::OnlyFriends,
-        }
-    }
-}
-
-/// Another user's DM privacy, as returned by `GetPrivateMessagesSettings`.
-#[derive(Clone, Debug)]
-pub struct DmPrivacyOf {
-    pub address: String,
-    pub privacy: DmPrivacy,
-}
-
-/// A scene's javascript, as loaded from its content
-#[derive(Asset, Debug, Clone, TypePath)]
-pub struct SceneJsFile(pub Arc<String>);
-
-/// A world password the HUD must ask for (see `ipfs::world_access`); answered with the password,
-/// or `None` when the player gives up. Dropped unanswered when the realm change no longer needs it.
-pub struct WorldPasswordPrompt {
-    pub world: String,
-    /// Why the previous answer was refused; `None` on the first ask
-    pub error: Option<String>,
-    pub answer: tokio::sync::oneshot::Sender<Option<String>>,
-}
-
-/// Where world password prompts go, installed by whatever shows them (the system bridge). Without
-/// it a password-protected world can't be entered.
-#[derive(Resource, Clone)]
-pub struct WorldPasswordPrompter(pub tokio::sync::mpsc::UnboundedSender<WorldPasswordPrompt>);

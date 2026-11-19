@@ -191,7 +191,6 @@ impl Plugin for AvatarAnimationPlugin {
 /// sounds in the avatar tier at this avatar's partition. With no owner they rank after every
 /// scene in range. A scene emote downloads under its scene's hash and a built-in one does not
 /// download, so neither is listed. Written only when the list changes.
-#[allow(clippy::type_complexity)]
 pub(crate) fn file_emote_downloads(
     mut commands: Commands,
     avatars: Query<
@@ -250,7 +249,6 @@ pub(crate) fn emote_download_hashes<'a>(
 pub struct LastEmoteCommand(EmoteCommand);
 
 #[cfg(feature = "explorer")]
-#[allow(clippy::type_complexity)]
 fn handle_trigger_emotes(
     mut commands: Commands,
     mut emote_cmds: EventReader<RpcCallEvent>,
@@ -312,7 +310,6 @@ fn handle_trigger_emotes(
 // (or a switch to a different urn); a looping emote also sends an explicit stop when it ends —
 // one-shots end on the receiver's own timer (and the Pulse server's), so they need no stop.
 #[cfg(feature = "explorer")]
-#[allow(clippy::too_many_arguments)]
 fn broadcast_emote(
     q: Query<(&ActiveEmote, &MaskedEmote), With<PrimaryUser>>,
     emotes: CollectibleManager<Emote>,
@@ -571,7 +568,6 @@ fn identity(playback: &EmotePlayback) -> (&EmoteUrn, EmoteMask, i64) {
 
 // TODO this function is a POS
 // lots of magic numbers that don't even deserve to be constants, needs reworking
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn animate(
     mut commands: Commands,
     mut avatars: Query<(
@@ -1235,7 +1231,6 @@ enum PropState {
 
 /// The emote's prop scene, spawned under `avatar` on first sight and set up once loaded, held in
 /// `extras` (keyed by avatar) across frames.
-#[allow(clippy::too_many_arguments)]
 fn ensure_prop(
     commands: &mut Commands,
     params: &mut PlayParams,
@@ -1417,7 +1412,6 @@ fn slot_sound(
 }
 
 /// Fire a slot's due sound once its playback reaches it.
-#[allow(clippy::too_many_arguments)]
 fn fire_slot_sound(
     commands: &mut Commands,
     params: &mut PlayParams,
@@ -1492,7 +1486,6 @@ const MAX_CLIP_NODES: usize = 16;
 /// `urn`'s clip node in the avatar graph, stamped as played at `now`. A new urn gets `clip` under
 /// `mask` on a new node or, at `MAX_CLIP_NODES`, on the least recently played node that's off the
 /// player. `None` if the graph isn't loaded.
-#[allow(clippy::too_many_arguments)]
 fn clip_node(
     nodes: &mut HashMap<String, (AnimationNodeIndex, f32)>,
     urn: &str,
@@ -1589,7 +1582,6 @@ struct Played {
 /// Play a slot for one frame: its clip on the avatar's player (started unless it's the one already
 /// running, and on a `restart`), with its loop, `speed` and `seek`, the prop clip alongside, and
 /// the sound due. `playback` gets the clip duration and end.
-#[allow(clippy::too_many_arguments)]
 fn play_slot(
     commands: &mut Commands,
     params: &mut PlayParams,
@@ -1817,7 +1809,6 @@ fn play_slot(
     })
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn play_current_emote(
     mut commands: Commands,
     mut q: Query<(
@@ -2068,7 +2059,6 @@ fn play_current_emote(
 ///
 /// The emote's prop and audio come along like a full-body emote's, and go the moment the request
 /// ends or is suspended; a resume brings them back from the top.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn play_masked_emote(
     mut commands: Commands,
     mut q: Query<(Entity, &mut MaskedEmote, &AvatarAnimPlayer, &Children)>,

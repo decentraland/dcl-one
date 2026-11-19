@@ -264,6 +264,24 @@ describe("profile creations", () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("link", { name: "Hat 0" })));
   });
 
+  it("focuses Try again when trying again fails too", async () => {
+    const user = userEvent.setup();
+    let fail!: (reason: Error) => void;
+    net.fetchProfileCreations
+      .mockRejectedValueOnce(new Error("503"))
+      .mockReturnValueOnce(new Promise((_, reject) => (fail = reject)));
+    show();
+    await screen.findByText("Creations are unavailable right now.");
+
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    // The retry reads from scratch, so Try again leaves and focus falls to the page.
+    expect(await screen.findByText("Loading creations")).toBeTruthy();
+    await act(async () => fail(new Error("503")));
+
+    expect(await screen.findByText("Creations are unavailable right now.")).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Try again" })));
+  });
+
   it("shows the retry loading, and focuses the panel when it ends empty", async () => {
     const user = userEvent.setup();
     let release!: (value: unknown) => void;

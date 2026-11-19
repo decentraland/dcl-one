@@ -1221,7 +1221,6 @@ pub struct HasCollider<T: ColliderType>(pub ColliderId, PhantomData<fn() -> T>);
 #[derive(Component)]
 pub struct HasTrigger(pub ColliderId);
 
-#[allow(clippy::type_complexity)]
 fn update_colliders<T: ColliderType>(
     mut commands: Commands,
     // add colliders
@@ -1370,7 +1369,6 @@ fn on_collider_removed<T: ColliderType>(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn propagate_disabled<T: ColliderType>(
     mut scene_datas: Query<(Entity, &mut SceneColliderData)>,
     q: Query<
@@ -1424,7 +1422,6 @@ pub struct PreviousColliderTransform {
     pub updated: u32,
 }
 
-#[allow(clippy::type_complexity)]
 pub fn update_collider_transforms<T: ColliderType>(
     mut commands: Commands,
     changed_colliders: Query<
@@ -1486,7 +1483,6 @@ fn debug_colliders(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_debug_colliders<T: ColliderType>(
     mut commands: Commands,
     debug: Res<DebugColliders>,

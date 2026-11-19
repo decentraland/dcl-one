@@ -2,6 +2,7 @@
 // the Explorer 2.0 Figma. Open with ?showcase=1. Add every new primitive here.
 
 import { Button } from './Button'
+import { ArmedButton, ARM_MS } from './ArmedButton'
 import { LogoPattern } from './LogoPattern'
 import { SubmitField } from './SubmitField'
 import { CodeInput } from './CodeInput'
@@ -269,6 +270,10 @@ export function Showcase(): React.JSX.Element {
           <Button size="md">Medium</Button>
           <Button size="lg">Large</Button>
         </div>
+      </Section>
+
+      <Section title="ArmedButton (a confirm that spends or gives away what can't be taken back: SEND GIFT, SEND TIP, BUY ITEM)">
+        <ArmedShowcase />
       </Section>
 
       <Section title="Button (start: the sign-in screens' CTA)">
@@ -829,6 +834,25 @@ function ShowcaseRowScroller(): React.JSX.Element {
         ))}
       </div>
       <ScrollThumb target={ref} length={80} axis="x" className={undefined} />
+    </div>
+  )
+}
+
+/** ArmedButton mounted again by SHOW AGAIN, so its wait can be tried: a press before ARM_MS counts nothing. */
+function ArmedShowcase(): React.JSX.Element {
+  const [shown, setShown] = useState(0)
+  const [sent, setSent] = useState(0)
+  return (
+    <div style={row}>
+      <Button variant="secondary" onClick={() => setShown((n) => n + 1)}>
+        SHOW AGAIN
+      </Button>
+      <ArmedButton key={shown} onClick={() => setSent((n) => n + 1)}>
+        SEND GIFT
+      </ArmedButton>
+      <span>
+        Sent {sent} · answers {ARM_MS} ms after it appears
+      </span>
     </div>
   )
 }
