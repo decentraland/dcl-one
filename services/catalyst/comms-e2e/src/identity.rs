@@ -1,6 +1,8 @@
 //! Test identities: a wallet and a device key derived from text, and the three signatures the
-//! stack asks for (the Pulse handshake, the archipelago challenge, a signed fetch). The keys are
-//! derived, never real: nothing here may hold a key that owns anything.
+//! stack asks for (the Pulse handshake, the archipelago challenge, a signed fetch). The keys the
+//! tool derives own nothing and their mandates last until 2099. A wallet whose key is given (one
+//! the servers admit) delegates to a random device key, by a mandate that lasts
+//! [`WALLET_KEY_MANDATE`].
 
 use catalyst_comms::pulse::decentraland::pulse::{
     ClientMessage, HandshakeRequest, PlayerInitialState, SceneListenerAoi,
@@ -11,6 +13,9 @@ use dcl_auth::signed_fetch::{
 };
 use dcl_auth::{AuthLink, AuthLinkType, Wallet};
 use sha2::{Digest, Sha256};
+
+/// How long the mandate of a wallet whose key is given lasts.
+pub const WALLET_KEY_MANDATE: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
 /// The metadata the explorer signs its own requests with.
 pub const EXPLORER_METADATA: &str = "{\"signer\":\"dcl:explorer\"}";
@@ -23,6 +28,26 @@ pub struct Identity {
     material: String,
     index: u32,
     device_number: u32,
+    mandate: Mandate,
+}
+
+/// How a wallet delegates to its device key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mandate {
+    /// A derived device key, under a mandate that expires in 2099.
+    Derived,
+    /// A random device key, under a mandate that expires at this Unix millisecond.
+    Until(i64),
+}
+
+/// The expiry line of a derived identity's mandate.
+const DERIVED_EXPIRATION: &str = "2099-01-01T00:00:00.000Z";
+
+/// A random device key and the end of its mandate, [`WALLET_KEY_MANDATE`] from now.
+fn random_device() -> anyhow::Result<(Wallet, Mandate)> {
+    let device = Wallet::random().map_err(|error| anyhow::anyhow!("no device key: {error}"))?;
+    let until = now_ms() + WALLET_KEY_MANDATE.as_millis() as i64;
+    Ok((device, Mandate::Until(until)))
 }
 
 impl std::fmt::Debug for Identity {
@@ -65,21 +90,25 @@ impl Identity {
             material: material.to_owned(),
             index,
             device_number: 0,
+            mandate: Mandate::Derived,
         }
     }
 
     /// The identity of a wallet whose private key is given (a scene listener's wallet, which the
-    /// server is configured to admit), with a device key derived from `material`. The key is
-    /// never printed or kept beyond the wallet it builds.
+    /// server is configured to admit). Its device key is random and its mandate expires
+    /// [`WALLET_KEY_MANDATE`] after this call, so a handshake has to be signed within that time.
+    /// The key is never printed or kept beyond the wallet it builds.
     pub fn from_wallet_key(private_key_hex: &str, material: &str) -> anyhow::Result<Identity> {
         let wallet = Wallet::from_hex(private_key_hex.trim())
             .map_err(|_| anyhow::anyhow!("the wallet key is not a valid private key"))?;
+        let (device, mandate) = random_device()?;
         Ok(Identity {
             wallet,
-            device: derived_key("device", material, 0, 0),
+            device,
             material: material.to_owned(),
             index: 0,
             device_number: 0,
+            mandate,
         })
     }
 
@@ -100,18 +129,28 @@ impl Identity {
             material: material.to_owned(),
             index: 0,
             device_number: 0,
+            mandate: Mandate::Derived,
         }
     }
 
-    /// The same wallet on another device: a new session key.
+    /// The same wallet on another device: a new session key, random with a fresh short mandate
+    /// for a wallet whose key was given.
     pub fn second_device(&self) -> Identity {
         let device_number = self.device_number + 1;
+        let (device, mandate) = match self.mandate {
+            Mandate::Derived => (
+                derived_key("device", &self.material, self.index, device_number),
+                Mandate::Derived,
+            ),
+            Mandate::Until(_) => random_device().expect("the system has entropy"),
+        };
         Identity {
             wallet: Wallet::from_hex(&self.wallet.private_key_hex()).expect("a key that was valid"),
-            device: derived_key("device", &self.material, self.index, device_number),
+            device,
             material: self.material.clone(),
             index: self.index,
             device_number,
+            mandate,
         }
     }
 
@@ -123,6 +162,7 @@ impl Identity {
             material: self.material.clone(),
             index: self.index,
             device_number: self.device_number,
+            mandate: self.mandate,
         }
     }
 
@@ -138,8 +178,14 @@ impl Identity {
 
     /// SIGNER, the wallet's mandate for the device key, and `payload` signed by the device key.
     pub fn auth_chain(&self, payload: &str) -> Vec<AuthLink> {
+        let expiration = match self.mandate {
+            Mandate::Derived => DERIVED_EXPIRATION.to_owned(),
+            Mandate::Until(until) => chrono::DateTime::from_timestamp_millis(until)
+                .expect("a time within chrono's range")
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        };
         let mandate = format!(
-            "Decentraland Login\nEphemeral address: {}\nExpiration: 2099-01-01T00:00:00.000Z",
+            "Decentraland Login\nEphemeral address: {}\nExpiration: {expiration}",
             self.device.address()
         );
         let mandate_signature = self
@@ -343,6 +389,57 @@ mod tests {
             panic!("a handshake message");
         };
         assert!(verify_handshake(&request, now).is_err());
+    }
+
+    /// The expiry of the mandate in `identity`'s auth chain, in Unix milliseconds.
+    fn mandate_expiry(identity: &Identity) -> i64 {
+        let chain = identity.auth_chain("payload");
+        dcl_auth::parse_ephemeral_payload(&chain[1].payload)
+            .expect("the server parses the mandate")
+            .2
+    }
+
+    #[test]
+    fn a_wallet_key_gets_a_random_device_and_a_short_mandate() {
+        let key = hex::encode(Sha256::digest(b"comms-e2e identity test wallet"));
+        let first = Identity::from_wallet_key(&key, "run/listener").unwrap();
+        let again = Identity::from_wallet_key(&key, "run/listener").unwrap();
+        assert_eq!(first.address(), again.address());
+        // nothing anyone can recompute: the same inputs give another device key
+        assert_ne!(first.session(), again.session());
+        assert_ne!(first.second_device().session(), first.session());
+        assert_eq!(first.same_device().session(), first.session());
+
+        let now = now_ms();
+        let expiry = mandate_expiry(&first);
+        assert!(expiry > now, "the mandate has expired already");
+        assert!(
+            expiry <= now + WALLET_KEY_MANDATE.as_millis() as i64,
+            "the mandate lasts past {WALLET_KEY_MANDATE:?}: {expiry} at {now}"
+        );
+        assert!(
+            mandate_expiry(&first.second_device())
+                <= now_ms() + WALLET_KEY_MANDATE.as_millis() as i64
+        );
+
+        // the server still accepts the handshake it signs
+        let ClientMessage {
+            message: Some(client_message::Message::Handshake(request)),
+        } = first.pulse_handshake(now, None)
+        else {
+            panic!("a handshake message");
+        };
+        let verified = verify_handshake(&request, now).expect("the server accepts the chain");
+        assert_eq!(verified.user_address, first.address());
+        assert_eq!(verified.session, first.session());
+    }
+
+    #[test]
+    fn a_derived_identity_keeps_its_far_mandate() {
+        let derived = Identity::derive("verify", 0);
+        let year_2090 = 3_786_912_000_000;
+        assert!(mandate_expiry(&derived) > year_2090);
+        assert!(mandate_expiry(&Identity::seeded_guest_wallet(7, "far")) > year_2090);
     }
 
     #[test]

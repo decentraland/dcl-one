@@ -31,6 +31,8 @@ rusty_enet.workspace = true
 web-transport-quinn.workspace = true
 rustls.workspace = true
 tokio-tungstenite.workspace = true
+# the expiry of a short mandate, in the form the servers parse
+chrono.workspace = true
 base64.workspace = true
 # the key of a headless explorer's seeded guest wallet: the same generator and curve its wallet uses
 k256.workspace = true
