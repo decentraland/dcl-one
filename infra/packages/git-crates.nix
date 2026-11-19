@@ -40,7 +40,9 @@ let
   workspaceRootOnly = pkgs.writeShellScriptBin "cargo" ''echo "{\"workspace_root\":\"$WORKSPACE_ROOT\"}"'';
 in {
   # `crates` are crane's lock entries of one git source; `fetched` is crane's checkout of it,
-  # whose name the result keeps. `craneUtils` is the crane instance's (it resolves inheritance).
+  # whose name the result keeps; it is never built, since building it loads the workspace. `tree`
+  # is the source to copy from: the plain fetch (`fetched.src`) or a patched tree. `craneUtils`
+  # is the crane instance's (it resolves inheritance).
   checkout = { craneUtils, tree, crates, fetched }: pkgs.runCommand fetched.name {
     nativeBuildInputs = [ pkgs.python3 craneUtils workspaceRootOnly ];
   } "python3 ${gitCrates} ${tree} $out ${pkgs.lib.escapeShellArgs (map (crate: "${crate.name}-${crate.version}") crates)}";
