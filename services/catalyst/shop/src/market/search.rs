@@ -708,6 +708,29 @@ mod tests {
         );
         lock.rollback().await.unwrap();
         until_fresh(state.clone()).await;
+
+        // The kept copy serves for an hour from its read, and no longer: past it, with the cache
+        // entry expired and the refresh held up, a feed answers without profiles.
+        state.readers.backdate(
+            Ttl::M15,
+            CREATOR_DIRECTORY_KEY,
+            Ttl::M15.duration() + Duration::from_secs(60),
+        );
+        state.readers.backdate_kept(
+            CREATOR_DIRECTORY_KEY,
+            DIRECTORY_STALE_FOR + Duration::from_secs(1),
+        );
+        let mut lock = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE shop.items IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+        let held = tokio::time::timeout(Duration::from_secs(10), directory_snapshot(&state))
+            .await
+            .expect("the feed is not held up by the directory's read");
+        assert!(held.is_none(), "a copy older than the hour is not served");
+        lock.rollback().await.unwrap();
+        until_fresh(state.clone()).await;
     }
 
     #[test]

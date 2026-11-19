@@ -95,11 +95,26 @@ impl Caches {
         self.map(ttl).get_fresh(&key.to_string())
     }
 
-    /// Keeps `value` as `key`'s last good answer, for [`Caches::kept_within`].
+    /// Keeps `value` as `key`'s last good answer, for [`Caches::kept_within`], aged from the read
+    /// that produced it: keeping the very answer already kept (a cache hit handing it out again)
+    /// leaves its age alone, and only a new answer starts it over.
     pub fn keep(&self, key: &str, value: Arc<Value>) {
-        self.kept
-            .lock()
-            .insert(key.to_string(), (Instant::now(), value));
+        let mut kept = self.kept.lock();
+        if kept
+            .get(key)
+            .is_some_and(|(_, held)| Arc::ptr_eq(held, &value))
+        {
+            return;
+        }
+        kept.insert(key.to_string(), (Instant::now(), value));
+    }
+
+    /// Ages `key`'s kept answer by `by`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn backdate_kept(&self, key: &str, by: Duration) {
+        if let Some((at, _)) = self.kept.lock().get_mut(key) {
+            *at = at.checked_sub(by).expect("a backdate within the clock");
+        }
     }
 
     /// `key`'s last good answer while it was kept less than `max_age` ago.
@@ -873,5 +888,28 @@ mod refresh_tests {
             "released as failed, not held for good"
         );
         assert!(readers.begin_refresh(KEY, Duration::ZERO));
+    }
+
+    /// A kept answer ages from the read that produced it: handing the same answer out again (a
+    /// cache hit) does not extend its hour, and only a new read starts it over.
+    #[test]
+    fn a_kept_answer_ages_from_its_read_not_from_its_reuse() {
+        let caches = Caches::default();
+        const KEY: &str = "kept";
+        let hour = Duration::from_secs(3600);
+        let read = Arc::new(json!(["read at 12:00"]));
+        caches.keep(KEY, Arc::clone(&read));
+        caches.backdate_kept(KEY, Duration::from_secs(50 * 60));
+        caches.keep(KEY, Arc::clone(&read));
+        assert_eq!(caches.kept_within(KEY, hour), Some(Arc::clone(&read)));
+        caches.backdate_kept(KEY, Duration::from_secs(11 * 60));
+        assert_eq!(
+            caches.kept_within(KEY, hour),
+            None,
+            "reusing the read at 12:50 did not extend it past 13:00"
+        );
+        let again = Arc::new(json!(["read at 13:01"]));
+        caches.keep(KEY, Arc::clone(&again));
+        assert_eq!(caches.kept_within(KEY, hour), Some(again));
     }
 }
