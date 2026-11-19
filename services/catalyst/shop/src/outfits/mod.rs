@@ -7,7 +7,7 @@
 //! variant, read per request from the Shop's held `dapps` flags
 //! (`market::features`; no answer, a disabled flag or an answer too old to
 //! stand is an empty list), or `SHOP_OUTFIT_CREATORS` when set (a local
-//! override that replaces the flag). A
+//! override that replaces the flag; set with no valid wallet, no one may author). A
 //! draft is visible to an allowlisted signer only; everyone else gets the
 //! same 404 (a 403 would confirm it exists). Thumbnail bytes go to the ONE
 //! blob store under their `hash_bytes_v1` cid; the sha256 hex of the bytes
@@ -59,10 +59,10 @@ pub const MAX_OUTFIT_ITEMS: usize = 20;
 pub const OUTFITS_MAX_LIMIT: i64 = 50;
 
 /// `SHOP_OUTFIT_CREATORS` (comma or newline separated wallets, compared
-/// lowercase; non-empty, it replaces the flag) and the write gate.
+/// lowercase; `Some` when set, and then it replaces the flag) and the write gate.
 #[derive(Clone, Debug, Default)]
 pub struct Settings {
-    pub creators: Vec<String>,
+    pub creators: Option<Vec<String>>,
     pub writes_enabled: bool,
 }
 
@@ -81,9 +81,14 @@ impl Settings {
         out
     }
 
+    /// The local override: `None` when blank (the flag decides), else the parsed list, which may be empty.
+    pub fn creators_override(raw: &str) -> Option<Vec<String>> {
+        (!raw.trim().is_empty()).then(|| Self::parse_creators(raw))
+    }
+
     pub fn is_creator(&self, address: &str) -> bool {
         let address = address.to_ascii_lowercase();
-        self.creators.contains(&address)
+        self.creators.as_ref().is_some_and(|c| c.contains(&address))
     }
 }
 
@@ -105,10 +110,14 @@ impl State {
         settings: Settings,
         eip1654: Option<Arc<dyn Eip1654Validator>>,
     ) -> Self {
-        if !settings.creators.is_empty() {
-            tracing::info!(
+        match settings.creators.as_deref() {
+            Some([]) => tracing::warn!(
+                "SHOP_OUTFIT_CREATORS is set but lists no valid wallet: no one may author outfits"
+            ),
+            Some(_) => tracing::info!(
                 "SHOP_OUTFIT_CREATORS is set: it replaces the dapps-shop-outfit-creators flag as the outfit allowlist"
-            );
+            ),
+            None => {}
         }
         Self {
             store: Outfits::new(pool),
@@ -126,7 +135,7 @@ impl State {
 
     /// Whether `address` may author outfits now: the local override when set, else the flag's current variant.
     pub fn is_creator(&self, address: &str) -> bool {
-        if !self.settings.creators.is_empty() {
+        if self.settings.creators.is_some() {
             return self.settings.is_creator(address);
         }
         let creators = self

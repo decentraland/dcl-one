@@ -991,7 +991,7 @@ pub async fn serve(
         pool.clone(),
         storage.clone(),
         shop::outfits::Settings {
-            creators: shop::outfits::Settings::parse_creators(&config.shop.shop_outfit_creators),
+            creators: shop::outfits::Settings::creators_override(&config.shop.shop_outfit_creators),
             writes_enabled: config.writes.data_writes_enabled,
         },
         eip1654.clone(),

@@ -68,6 +68,8 @@ impl Default for Source {
 pub struct DappsFlags {
     snapshot: feature_flags::Snapshot,
     fetched: Mutex<Option<(Value, Instant)>>,
+    /// The local overrides as last read, applied while they cannot be read again.
+    overrides: Mutex<Vec<(String, bool)>>,
 }
 
 impl DappsFlags {
@@ -78,6 +80,7 @@ impl DappsFlags {
         Self {
             snapshot: feature_flags::Snapshot::from_document(document(on)),
             fetched: Mutex::new(None),
+            overrides: Mutex::new(Vec::new()),
         }
     }
 
@@ -134,7 +137,8 @@ impl MarketplaceState {
 
     /// Reads the service (when configured) and applies the local overrides on top. A failed read keeps the last
     /// document the service answered while it still stands (see the module doc); before any answer, and once it
-    /// no longer does, only the overrides count.
+    /// no longer does, only the overrides count. The overrides that cannot be read are the ones last read, and the
+    /// document is replaced either way, so an answer that no longer stands is dropped.
     pub async fn refresh_feature_flags(&self) -> anyhow::Result<()> {
         if !self.flags_source.url.is_empty() {
             match self.fetch_feature_flags().await {
@@ -163,11 +167,19 @@ impl MarketplaceState {
             .as_ref()
             .map(|(doc, _)| doc.clone())
             .unwrap_or_else(|| document(false));
-        let doc = feature_flags::with_local_overrides(&self.pool, APP, base)
-            .await
-            .context("reading the dapps feature flag overrides")?;
-        self.dapps_flags.snapshot.replace(doc);
-        Ok(())
+        let read = feature_flags::local_overrides(&self.pool, APP).await;
+        let overrides = match &read {
+            Ok(overrides) => {
+                *self.dapps_flags.overrides.lock() = overrides.clone();
+                overrides.clone()
+            }
+            Err(_) => self.dapps_flags.overrides.lock().clone(),
+        };
+        self.dapps_flags
+            .snapshot
+            .replace(feature_flags::apply_local_overrides(base, &overrides));
+        read.map(drop)
+            .context("reading the dapps feature flag overrides")
     }
 
     async fn fetch_feature_flags(&self) -> anyhow::Result<Value> {
@@ -245,6 +257,39 @@ mod tests {
         assert!(still_stands(minute * 10, minute));
         assert!(still_stands(minute * 20, minute * 2));
         assert!(!still_stands(minute * 21, minute * 2));
+    }
+
+    /// An answer too old to stand is dropped even when the overrides cannot be read: the overrides last read
+    /// still apply, every other flag is off.
+    #[tokio::test]
+    async fn an_answer_too_old_is_dropped_while_the_overrides_cannot_be_read() {
+        let unreachable = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(200))
+            .connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
+            .unwrap();
+        let state = MarketplaceState::new(
+            unreachable,
+            crate::http::Outbound::for_tests(),
+            super::super::Settings::for_tests(),
+        )
+        .with_feature_flags(Source {
+            // Refused by the outbound guard, so the read fails without a network.
+            url: "http://127.0.0.1".into(),
+            ..Source::default()
+        });
+        let outfits = format!("{APP}-{OUTFIT_CREATORS}");
+        let long_ago = Instant::now() - Duration::from_secs(3600);
+        *state.dapps_flags.fetched.lock() = Some((document(true), long_ago));
+        *state.dapps_flags.overrides.lock() = vec![(outfits.clone(), true)];
+        assert!(state.marketplace_features());
+
+        assert!(state.refresh_feature_flags().await.is_err());
+        assert!(state.dapps_flags.fetched.lock().is_none());
+        assert!(!state.marketplace_features(), "the old answer is dropped");
+        assert!(
+            state.dapps_flags.snapshot.enabled(APP, OUTFIT_CREATORS),
+            "the overrides last read still apply"
+        );
     }
 
     #[test]

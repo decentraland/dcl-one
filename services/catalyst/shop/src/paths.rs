@@ -343,7 +343,7 @@ pub(crate) mod tests {
             pool.clone(),
             Arc::new(storage),
             outfits::Settings {
-                creators: Vec::new(),
+                creators: None,
                 writes_enabled: true,
             },
             None,
