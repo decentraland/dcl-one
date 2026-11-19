@@ -59,7 +59,7 @@ const FEET: &[Range] = &[
         20.0,
         0.1,
     ),
-    range("Other avatars within (m)", "max_distance", 0.0, 1000.0, 1.0),
+    range("Max camera distance (m)", "max_distance", 0.0, 1000.0, 1.0),
 ];
 const HEAD: &[Range] = &[
     range("Vertical limit (degrees)", "pitch_limit", 0.0, 89.0, 1.0),

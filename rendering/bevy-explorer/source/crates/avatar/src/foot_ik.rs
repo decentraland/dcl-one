@@ -1,6 +1,9 @@
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
-use common::{sets::PostUpdateSets, structs::PrimaryUser};
+use common::{
+    sets::PostUpdateSets,
+    structs::{PrimaryCamera, PrimaryUser},
+};
 use console::DoAddConsoleCommand;
 use dcl_component::proto_components::sdk::components::ColliderLayer;
 use scene_runner::{
@@ -23,11 +26,29 @@ fn is_display_only(layers: Option<&CameraLayers>) -> bool {
 }
 
 /// Whether an avatar at `avatar` plants its feet: the local player's always, another within
-/// `max_distance` of the local player at `player` (every avatar while there is no local player).
-fn plants_feet(is_local: bool, avatar: Vec3, player: Option<Vec3>, max_distance: f32) -> bool {
+/// `max_distance` of the camera at `camera` (every avatar while there is no camera).
+fn plants_feet(is_local: bool, avatar: Vec3, camera: Option<Vec3>, max_distance: f32) -> bool {
     is_local
-        || player
-            .is_none_or(|player| avatar.distance_squared(player) <= max_distance * max_distance)
+        || camera
+            .is_none_or(|camera| avatar.distance_squared(camera) <= max_distance * max_distance)
+}
+
+/// The IK strength an avatar ramps toward: full in an idle pose within range, none otherwise.
+fn weight_target(in_range: bool, idle: bool) -> f32 {
+    if in_range && idle {
+        1.0
+    } else {
+        0.0
+    }
+}
+
+/// `weight` moved toward `target` by at most `step`.
+fn approach(weight: f32, target: f32, step: f32) -> f32 {
+    if target > weight {
+        (weight + step).min(target)
+    } else {
+        (weight - step).max(target)
+    }
 }
 
 pub struct FootIkPlugin;
@@ -79,7 +100,7 @@ pub struct FootIkConfig {
     /// and the foot together, leaving the relative offset unchanged).
     /// Snaps on the first engaged frame after a disengaged one.
     pub target_velocity_limit: f32,
-    /// Other avatars plant their feet only within this distance (metres) of the local player:
+    /// Other avatars plant their feet only within this distance (metres) of the camera:
     /// further away the correction is too small to see, and each avatar costs two ground
     /// raycasts and a leg solve per frame. The local player's avatar always plants.
     pub max_distance: f32,
@@ -366,7 +387,7 @@ fn apply_foot_ik(
         ),
         With<AvatarShape>,
     >,
-    player: Query<&GlobalTransform, With<PrimaryUser>>,
+    camera: Query<&GlobalTransform, With<PrimaryCamera>>,
     containing: ContainingScene,
     mut scenes: Query<&mut SceneColliderData>,
     global_ground: Query<Entity, With<GlobalGroundCollider>>,
@@ -383,7 +404,7 @@ fn apply_foot_ik(
         }
         return;
     }
-    let player_pos = player.single().ok().map(GlobalTransform::translation);
+    let camera_pos = camera.single().ok().map(GlobalTransform::translation);
     *log_tick = log_tick.wrapping_add(1);
     let log_now = *log_tick % 60 == 1;
     let dt = time.delta_secs();
@@ -401,14 +422,16 @@ fn apply_foot_ik(
             *runtime = FootIkRuntime::default();
             continue;
         }
-        // Too far for the correction to show: leave the animated pose, before any transform is
-        // computed or ray cast. The runtime resets, so the feet engage afresh on coming near.
-        if !plants_feet(
+        // Too far for the correction to show: the weight ramps out as for a non-idle pose, then
+        // the animated pose is left as it is, before any transform is computed or ray cast. The
+        // runtime resets, so the feet engage afresh on coming near.
+        let in_range = plants_feet(
             is_local,
             avatar_transform.translation(),
-            player_pos,
+            camera_pos,
             config.max_distance,
-        ) {
+        );
+        if !in_range && runtime.anim_w <= 0.0 {
             *runtime = FootIkRuntime::default();
             continue;
         }
@@ -426,20 +449,15 @@ fn apply_foot_ik(
         let s = avatar_global.compute_transform().scale.y.abs().max(1e-3);
 
         // Animation-driven IK strength: ramp toward 1.0 while the active emote
-        // is an idle pose, otherwise toward 0.0, at a rate set by the emote's
-        // declared transition_seconds. No active emote → ramp out.
-        let target = active_emote
-            .map(|e| if e.is_idle() { 1.0 } else { 0.0 })
-            .unwrap_or(0.0);
+        // is an idle pose and the avatar is in range, otherwise toward 0.0, at
+        // a rate set by the emote's declared transition_seconds. No active
+        // emote → ramp out.
+        let target = weight_target(in_range, active_emote.is_some_and(|e| e.is_idle()));
         let transition = active_emote
             .map(|e| e.transition_seconds())
             .unwrap_or(config.min_transition_seconds)
             .max(config.min_transition_seconds);
-        runtime.anim_w = if target > runtime.anim_w {
-            (runtime.anim_w + dt / transition).min(target)
-        } else {
-            (runtime.anim_w - dt / transition).max(target)
-        };
+        runtime.anim_w = approach(runtime.anim_w, target, dt / transition);
         let w_anim = runtime.anim_w;
 
         // Bound the raycasts to scenes containing *this* avatar's position, plus the ground
@@ -807,18 +825,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn feet_are_planted_for_the_local_player_and_avatars_near_them() {
-        let player = Some(Vec3::new(10.0, 0.0, 10.0));
+    fn feet_are_planted_for_the_local_player_and_avatars_near_the_camera() {
+        let camera = Some(Vec3::new(10.0, 0.0, 10.0));
         let near = Vec3::new(10.0, 0.0, 21.0);
         let far = Vec3::new(10.0, 0.0, 23.0);
-        assert!(plants_feet(false, near, player, 12.0));
-        assert!(!plants_feet(false, far, player, 12.0));
+        assert!(plants_feet(false, near, camera, 12.0));
+        assert!(!plants_feet(false, far, camera, 12.0));
         // the local player's own avatar, wherever its transform is read
-        assert!(plants_feet(true, far, player, 12.0));
+        assert!(plants_feet(true, far, camera, 12.0));
         // a distance of nothing leaves only the local player's
-        assert!(!plants_feet(false, near, player, 0.0));
-        assert!(plants_feet(true, near, player, 0.0));
-        // no local player yet: nothing to measure from
+        assert!(!plants_feet(false, near, camera, 0.0));
+        assert!(plants_feet(true, near, camera, 0.0));
+        // no camera yet: nothing to measure from
         assert!(plants_feet(false, far, None, 12.0));
+    }
+
+    #[test]
+    fn an_engaged_avatar_leaving_range_ramps_out_over_the_transition() {
+        // a 0.25 s transition at 20 frames a second
+        let step = 0.05 / 0.25;
+        let mut weight = 1.0;
+        let mut frames = 0;
+        // the frame loop's gate: solve until the weight is out, then skip
+        while weight > 0.0 {
+            let next = approach(weight, weight_target(false, true), step);
+            assert!(next < weight && weight - next <= step + 1e-6);
+            weight = next;
+            frames += 1;
+        }
+        assert!((5..=6).contains(&frames));
+        // back in range it ramps in again, and only in an idle pose
+        assert!((approach(0.0, weight_target(true, true), step) - step).abs() < 1e-6);
+        assert_eq!(approach(0.0, weight_target(true, false), step), 0.0);
     }
 }
