@@ -12,6 +12,15 @@ export const APP_UNPACKED_PATH = path.join(
 );
 
 /**
+ * Where the app keeps its `node` shim (a link to its own executable). It lives in the user's
+ * app data, never in the app bundle: writing into a signed bundle breaks its signature
+ * (macOS `spctl` then rejects the installed app), and AppImage and system packages are read-only.
+ */
+export function getNodeShimDir() {
+  return path.join(app.getPath('userData'), 'bin');
+}
+
+/**
  * Returns the path to a particular bin
  * @param pkg The name of the package
  * @param bin The name of the bin
@@ -40,7 +49,7 @@ export function getBinPath(pkg: string, bin: string, workspace: string = APP_UNP
  */
 export function getNodeCmdPath() {
   const cmd = process.platform === 'win32' ? 'node.cmd' : 'node';
-  return path.join(APP_UNPACKED_PATH, cmd);
+  return path.join(getNodeShimDir(), cmd);
 }
 
 /**

@@ -7,10 +7,12 @@ export function ToggleRow({
   checked,
   label,
   onChange,
+  disabled = false,
 }: {
   checked: boolean;
   label: string;
   onChange: (checked: boolean) => void;
+  disabled?: boolean;
 }) {
   const labelId = useId();
   return (
@@ -18,6 +20,7 @@ export function ToggleRow({
       <Toggle
         checked={checked}
         ariaLabelledBy={labelId}
+        disabled={disabled}
         onChange={onChange}
       />
       <Text

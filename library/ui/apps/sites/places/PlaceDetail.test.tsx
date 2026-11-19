@@ -1,0 +1,194 @@
+import { describe, expect, test, vi } from 'vitest'
+import { fireEvent, render, screen, within } from '@testing-library/react'
+
+import { PlaceDetail } from './PlaceDetail'
+
+const place = {
+  id: 'p1',
+  title: 'Meta GamiMall',
+  coords: '1,95',
+  description: 'Shops and games',
+  image: 'https://example.test/content/contents/bafkcover'
+}
+const creator = { name: 'MetaDoge', address: '0x797066a17f83425c1b4c7a8cca52d19095520a52' }
+const JUMP = '/play/?position=1%2C95'
+const mount = (over: Partial<Parameters<typeof PlaceDetail>[0]> = {}) =>
+  render(<PlaceDetail place={place} creator={creator} livePlayers={6} jumpHref={JUMP} {...over} />)
+
+describe('PlaceDetail', () => {
+  test('a quote in the cover address stays inside the CSS string', () => {
+    const { container } = mount({
+      place: { ...place, image: 'https://example.test/a.png");color:red;x:url("' }
+    })
+    const hero = container.querySelector<HTMLElement>('[style*="--cover"]')
+    expect(hero?.style.getPropertyValue('--cover')).toBe(
+      'url("https://example.test/a.png\\");color:red;x:url(\\"")'
+    )
+  })
+
+  test('with players in the scene, a desktop visitor gets the viewer, the chat panel and what to expect', () => {
+    mount()
+    const viewer = screen.getByRole('region', { name: 'Meta GamiMall' })
+    expect(
+      within(viewer).getByRole('heading', { level: 1, name: 'Meta GamiMall' })
+    ).toBeInTheDocument()
+    expect(within(viewer).getByText('MetaDoge')).toBeInTheDocument()
+    expect(
+      screen.getByRole('link', { name: 'Jump into 1,95 (opens in a new tab)' })
+    ).toHaveAttribute('href', JUMP)
+    expect(screen.getByRole('link', { name: 'Jump in' })).toHaveAttribute('href', JUMP)
+    expect(screen.getByRole('heading', { name: 'In-World Chat' })).toBeInTheDocument()
+    expect(screen.getByText('No messages yet.')).toBeInTheDocument()
+    expect(screen.getByText('What to expect')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  test("with no players, or on a phone, the route's travel error and its retry sit in the dialog, above the backdrop", () => {
+    const slot = (
+      <div role="alert">
+        <button type="button">Retry travel</button>
+      </div>
+    )
+    const { unmount } = mount({ livePlayers: 0, jumpHref: undefined, detailSlot: slot })
+    expect(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Retry travel' })
+    ).toBeInTheDocument()
+    unmount()
+    mount({ mobile: true, detailSlot: slot })
+    expect(within(screen.getByRole('dialog')).getByRole('alert')).toBeInTheDocument()
+  })
+
+  test('the chat panel keeps one shell through its states: empty while the room is asked for or silent, and says when there is none', () => {
+    const { rerender } = render(
+      <PlaceDetail
+        place={place}
+        livePlayers={6}
+        jumpHref={JUMP}
+        chat={{ status: 'loading', messages: [] }}
+      />
+    )
+    const footer = () => screen.getByText(/in Decentraland to participate in the chat/).textContent
+    expect(screen.getByText('No messages yet.')).toBeInTheDocument()
+    expect(footer()).toBe('Jump into Meta GamiMall in Decentraland to participate in the chat.')
+    rerender(
+      <PlaceDetail
+        place={place}
+        livePlayers={6}
+        jumpHref={JUMP}
+        chat={{ status: 'unavailable', messages: [] }}
+      />
+    )
+    expect(screen.getByText('Chat is unavailable right now.')).toBeInTheDocument()
+    rerender(
+      <PlaceDetail
+        place={place}
+        livePlayers={6}
+        jumpHref={JUMP}
+        chat={{ status: 'ready', messages: [] }}
+      />
+    )
+    expect(screen.getByText('No messages yet.')).toBeInTheDocument()
+    const at = new Date(2026, 0, 1, 9, 5).getTime()
+    const messages = [
+      {
+        sender: 'brave-lynx',
+        name: 'brave-lynx',
+        avatarUrl: '/lynx.png',
+        avatarBackground: 'red',
+        timestamp: at,
+        message: 'hello from the cast'
+      },
+      {
+        sender: '0x797066a17F83425C1B4C7a8Cca52D19095520a52',
+        name: '…',
+        avatarUrl: '/wallet.png',
+        avatarBackground: 'white',
+        timestamp: at,
+        message: 'gm'
+      }
+    ]
+    rerender(
+      <PlaceDetail
+        place={place}
+        livePlayers={6}
+        jumpHref={JUMP}
+        chat={{ status: 'ready', messages }}
+      />
+    )
+    expect(screen.queryByText('No messages yet.')).toBeNull()
+    expect(screen.getByText('brave-lynx')).toBeInTheDocument()
+    expect(screen.getByText('hello from the cast')).toBeInTheDocument()
+    expect(screen.getByText('gm')).toBeInTheDocument()
+    expect(screen.getByText('…')).toBeInTheDocument()
+    expect(
+      screen.getAllByText(
+        new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      )
+    ).toHaveLength(2)
+    expect(footer()).toBe('Jump into Meta GamiMall in Decentraland to participate in the chat.')
+  })
+
+  test('a world with more than one scene picks the scene to jump into; with one there is no picker', () => {
+    const onChange = vi.fn()
+    const options = [
+      { value: 'a', label: 'Plaza (0,0)' },
+      { value: 'b', label: 'Arena (10,4)' }
+    ]
+    const { unmount } = mount({ scenePicker: { options, value: 'a', onChange } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Scene' }), { target: { value: 'b' } })
+    expect(onChange).toHaveBeenCalledWith('b')
+    unmount()
+    mount({ scenePicker: { options: options.slice(0, 1), value: 'a', onChange } })
+    expect(screen.queryByRole('combobox')).toBeNull()
+  })
+
+  test('explore the scene opens the explorer in the viewer, and stop closes it', () => {
+    mount()
+    fireEvent.click(screen.getByRole('button', { name: 'Explore the scene' }))
+    expect(screen.getByTitle('Meta GamiMall')).toHaveAttribute('src', JUMP)
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    expect(screen.queryByTitle('Meta GamiMall')).toBeNull()
+  })
+
+  test("the creator's name opens the owner's profile", () => {
+    const onCreator = vi.fn()
+    mount({ onCreator })
+    fireEvent.click(screen.getByRole('button', { name: 'MetaDoge' }))
+    expect(onCreator).toHaveBeenCalledWith('0x797066a17f83425c1b4c7a8cca52d19095520a52')
+  })
+
+  test('the jump-in dialog takes the focus and keeps Tab inside it', () => {
+    mount({ livePlayers: 0 })
+    const dialog = screen.getByRole('dialog', { name: 'Meta GamiMall' })
+    const close = within(dialog).getByRole('button', { name: 'Close' })
+    expect(document.activeElement).toBe(close)
+    const controls = dialog.querySelectorAll<HTMLElement>('a[href], button:not([disabled])')
+    const last = controls[controls.length - 1]!
+    fireEvent.keyDown(close, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(last)
+    fireEvent.keyDown(last, { key: 'Tab' })
+    expect(document.activeElement).toBe(close)
+  })
+
+  test('an empty scene shows the jump-in card without the live badges', () => {
+    mount({ livePlayers: 0 })
+    const dialog = screen.getByRole('dialog', { name: 'Meta GamiMall' })
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Copy link' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('link', { name: 'Jump in' })).toHaveAttribute('href', JUMP)
+    expect(screen.queryByTestId('SensorsRoundedIcon')).toBeNull()
+    expect(screen.queryByText('In-World Chat')).toBeNull()
+  })
+
+  test('a phone gets the jump-in card with the live player count', () => {
+    mount({ mobile: true })
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByText('Live')).toBeInTheDocument()
+    expect(screen.getByTestId('PermIdentityRoundedIcon').parentElement).toHaveTextContent('6')
+  })
+
+  test('a missing place says so', () => {
+    render(<PlaceDetail notFound />)
+    expect(screen.getByRole('heading', { name: 'Scene not found' })).toBeInTheDocument()
+  })
+})

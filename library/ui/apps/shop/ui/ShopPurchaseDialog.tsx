@@ -15,9 +15,9 @@
 // scrolls, with the Shop's scroll thumb beside it, as the Cart flow draws it. Purchase successful shows
 // three of what was bought (the design draws three); more scroll sideways, with the same thumb below.
 
-import { useEffect, useRef, useState } from 'react'
+import { useRef } from 'react'
 import { formatCredits, formatCreditsFull } from '@shop/checkout/lib/currency'
-import { Button, ScrollThumb, Spinner } from '@hud/design'
+import { ArmedButton, Button, ScrollThumb, Spinner } from '@hud/design'
 import balanceIcon from '../assets/modal/balance-credit.svg'
 import badge0 from '../assets/modal/credits-badge-0.svg'
 import badge1 from '../assets/modal/credits-badge-1.svg'
@@ -82,8 +82,6 @@ export interface ShopPurchaseDialogProps {
   onSignIn?: () => void
 }
 
-/** How long BUY ITEM is up before it answers. */
-export const ARM_MS = 500
 /** Rows the list shows before it scrolls, and tiles Purchase successful shows, as drawn. */
 const ROWS_SHOWN = 2
 const TILES_SHOWN = 3
@@ -100,23 +98,6 @@ const simulationDone = (items: readonly ShopPurchaseItem[]): string =>
   isName(items) ? `This was a simulation: no Credits were spent, and ${items[0].name} wasn’t registered or reserved.` : SIMULATION_DONE
 /** Whether a step's rows are a NAME. */
 const isName = (items: readonly ShopPurchaseItem[]): boolean => items.length === 1 && items[0].kind === 'name'
-
-/**
- * BUY ITEM, answering only once it has been up a moment: it appears where the loading step's disabled
- * button was, and a click meant for that, or for the card behind, must not spend a credit.
- */
-function ArmedButton({ onClick, children }: { onClick?: () => void; children: React.ReactNode }): React.JSX.Element {
-  const [armed, setArmed] = useState(false)
-  useEffect(() => {
-    const timer = setTimeout(() => setArmed(true), ARM_MS)
-    return () => clearTimeout(timer)
-  }, [])
-  return (
-    <Button size="modal" onClick={armed ? onClick : undefined} aria-disabled={armed ? undefined : true}>
-      {children}
-    </Button>
-  )
-}
 
 export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onBackpack, onPreview, onRetry, onSignIn }: ShopPurchaseDialogProps): React.JSX.Element {
   const cancel = (
@@ -141,8 +122,20 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
     case 'confirm': {
       const count = view.items.length
       const name = isName(view.items)
+      // BUY ITEM answers only once it has been up a moment (ArmedButton): it appears where the loading step's
+      // disabled button was, and a click meant for that, or for the card behind, must not spend a credit.
       return (
-        <ShopModal label={buyTitle(count, name)} actions={<>{cancel}<ArmedButton onClick={onConfirm}>{buyLabel(count, name, view.simulation)}</ArmedButton></>}>
+        <ShopModal
+          label={buyTitle(count, name)}
+          actions={
+            <>
+              {cancel}
+              <ArmedButton size="modal" onClick={onConfirm}>
+                {buyLabel(count, name, view.simulation)}
+              </ArmedButton>
+            </>
+          }
+        >
           <h2 className={styles.title}>{buyTitle(count, name)}</h2>
           <Balance credits={view.balance} />
           <ShopModalGap count={2} />

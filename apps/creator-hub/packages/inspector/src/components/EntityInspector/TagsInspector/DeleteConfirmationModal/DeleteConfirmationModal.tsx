@@ -33,14 +33,15 @@ export const DeleteConfirmationModal = withSdk<DeleteConfirmationModalProps>(
         </div>
         <div className="actions">
           <Button
-            size="big"
-            type="danger"
+            variant="primary"
+            size="lg"
             onClick={onConfirm}
           >
             Remove
           </Button>
           <Button
-            size="big"
+            variant="secondary"
+            size="lg"
             onClick={onClose}
           >
             Cancel

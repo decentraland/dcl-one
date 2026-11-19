@@ -1,5 +1,5 @@
 import type { InfiniteData, UseInfiniteQueryResult } from "@tanstack/react-query";
-import { useEffect, useId, useRef, type MouseEvent, type ReactNode, type Ref } from "react";
+import { useEffect, useId, useRef, useState, type MouseEvent, type ReactNode, type Ref } from "react";
 import { Link, useNavigate } from "react-router";
 
 import { Button, Spinner, Tabs, TabsBar, type ShopCardLinkProps } from "@dcl/one-ui";
@@ -108,7 +108,15 @@ export function loadMore<T>(query: CollectiblesQuery<T>, noun: string, onRequest
   );
 }
 
-type FocusRows = { expectRowsFrom: (index: number) => void };
+/**
+ * Where focus goes after a read, and whether the reader asked for the read under way: `retry` is
+ * `reading` from a Try again until that read ends, then `done` until the next read ends.
+ */
+type FocusRows = {
+  expectRowsFrom: (index: number) => void;
+  retryAgain: () => void;
+  retry: "idle" | "reading" | "done";
+};
 
 /** Try again for a read that ended without rows to show: read every loaded page again. */
 function tryAgain<T>(query: CollectiblesQuery<T>, focus: FocusRows): ReactNode {
@@ -119,7 +127,7 @@ function tryAgain<T>(query: CollectiblesQuery<T>, focus: FocusRows): ReactNode {
       // A refetch with data already read keeps the query a success: the button shows it is working.
       loading={query.isFetching}
       onClick={() => {
-        focus.expectRowsFrom(0);
+        focus.retryAgain();
         void query.refetch();
       }}
     >
@@ -145,12 +153,14 @@ export function unreadyState<T extends { id: string }>(
   }
   if (!query.data) return { kind: "loading", label: `Loading ${copy.noun}` };
   if (rows.length === 0 && receivedAny(query.data)) {
-    // The status line says when it is reading again and when that failed, not only the first result.
-    const message = query.isRefetching
-      ? `Reading the ${copy.noun} again.`
-      : query.isRefetchError
-        ? `${copy.unreadable} Trying again failed.`
-        : copy.unreadable;
+    // The status line says when the reader's Try again is reading and when it failed; a refetch they
+    // did not ask for (e.g. on window focus) keeps the first result's copy.
+    const message =
+      query.isRefetching && focus.retry === "reading"
+        ? `Reading the ${copy.noun} again.`
+        : query.isRefetchError && focus.retry === "done"
+          ? `${copy.unreadable} Trying again failed.`
+          : copy.unreadable;
     return {
       kind: "error",
       message,
@@ -186,8 +196,8 @@ export function useRouterClick(): (href: string) => (event: MouseEvent<HTMLAncho
  * Where keyboard focus goes when the control that held it unmounts: the last Load more (the list
  * ended) or the first read's Try again. A click calls `expectRowsFrom` with the index of the first
  * row it will bring. When the read ends, and only if focus has fallen to the page body, the link of
- * that row takes it; when the read brought no new row (an empty list, only repeated rows, a
- * failure), the panel does. A control that stays mounted keeps the focus. `readAt` changes with
+ * that row takes it; when the read brought no new row, the panel's error action (a failed read's
+ * Try again or Load more) does, or else the panel (an empty list, only repeated rows). A control that stays mounted keeps the focus. `readAt` changes with
  * every read that ends (TanStack's data and error update times), so a read that ends within one
  * render still counts.
  */
@@ -195,23 +205,37 @@ export function useFocusNewRows(rows: number, readAt: number) {
   const listRef = useRef<HTMLUListElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const pending = useRef<number | null>(null);
+  const [retry, setRetry] = useState<FocusRows["retry"]>("idle");
+  useEffect(() => {
+    // A read ended: the reader's Try again is done, and an earlier one no longer describes it.
+    setRetry((now) => (now === "reading" ? "done" : "idle"));
+  }, [readAt]);
   useEffect(() => {
     const from = pending.current;
     if (from === null) return;
     pending.current = null;
     const active = document.activeElement;
     if (active && active !== document.body) return;
-    const row = listRef.current?.children[from]?.querySelector<HTMLElement>("a, button");
-    (row ?? panelRef.current)?.focus();
+    const row = listRef.current?.children[from]?.querySelector<HTMLElement>(FOCUSABLE);
+    const action = panelRef.current?.querySelector<HTMLElement>(`[data-error-action] :is(${FOCUSABLE})`);
+    (row ?? action ?? panelRef.current)?.focus();
   }, [rows, readAt]);
   return {
     listRef,
     panelRef,
+    retry,
     expectRowsFrom: (index: number) => {
       pending.current = index;
     },
+    retryAgain: () => {
+      pending.current = 0;
+      setRetry("reading");
+    },
   };
 }
+
+/** What a reader can tab to: not a pointer-only target. */
+const FOCUSABLE = 'a:not([tabindex="-1"]), button:not([tabindex="-1"])';
 
 export type CategoryOption<T> = { value: T; label: string; icon?: ReactNode };
 
@@ -271,14 +295,15 @@ export type CollectiblesState =
   | { kind: "error"; message: string; action?: ReactNode }
   /** Nothing to list: an empty message, announced by its title, or a one-line note. */
   | { kind: "empty"; label: string; children: ReactNode }
-  | { kind: "empty-note"; message: string }
+  /** `more` keeps Load more under a note when a filter matched nothing on the pages loaded so far. */
+  | { kind: "empty-note"; message: string; more?: ReactNode }
   | {
       kind: "list";
       /** Announced when loading ends; shown above the list unless `showCount` is false. */
       count: string;
       showCount?: boolean;
-      /** Cards in a grid, or full-width rows (NAMEs). */
-      layout?: "grid" | "rows";
+      /** Cards in a grid, full-width rows (NAMEs), or the photo grid. */
+      layout?: "grid" | "rows" | "photos";
       children: ReactNode;
       /** The list element, so the page can move focus to a row it loaded. */
       listRef?: Ref<HTMLUListElement>;
@@ -303,15 +328,18 @@ export type CollectiblesPanelProps = {
  * otherwise the panel takes focus only from script, after a control it held went away.
  */
 function panelTabIndex(state: CollectiblesState, tabpanel: boolean, scripted: boolean): number | undefined {
-  const empty = state.kind === "loading" || state.kind === "empty-note" || (state.kind === "error" && !state.action);
+  const empty =
+    state.kind === "loading" ||
+    (state.kind === "empty-note" && !state.more) || (state.kind === "error" && !state.action);
   if (tabpanel && empty) return 0;
   return scripted ? -1 : undefined;
 }
 
-/** A profile's Creations or Assets tab body: the filters, then loading, an error, an empty state or the list. */
+/** A profile's Creations, Assets or Photos tab body: the filters, then loading, an error, an empty state or the list. */
 export function CollectiblesPanel({ filters, aside, panel, state, panelRef }: CollectiblesPanelProps) {
   const list = state.kind === "list" ? state : null;
   const countShown = list !== null && list.showCount !== false;
+  const more = state.kind === "list" || state.kind === "empty-note" ? state.more : undefined;
 
   return (
     <div className={styles.root}>
@@ -349,16 +377,18 @@ export function CollectiblesPanel({ filters, aside, panel, state, panelRef }: Co
             <span className={styles.visuallyHidden}>{state.label}</span>
           )}
         </p>
-        {state.kind === "error" && state.action ? <div className={styles.errorAction}>{state.action}</div> : null}
+        {state.kind === "error" && state.action ? (
+          <div className={styles.errorAction} data-error-action="">
+            {state.action}
+          </div>
+        ) : null}
         {state.kind === "empty" ? state.children : null}
         {list ? (
-          <>
-            <ul ref={list.listRef} className={list.layout === "rows" ? styles.rows : styles.grid}>
-              {list.children}
-            </ul>
-            {list.more ? <div className={styles.more}>{list.more}</div> : null}
-          </>
+          <ul ref={list.listRef} className={styles[list.layout ?? "grid"]}>
+            {list.children}
+          </ul>
         ) : null}
+        {more ? <div className={styles.more}>{more}</div> : null}
       </div>
     </div>
   );

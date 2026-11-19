@@ -983,14 +983,15 @@ function ProjectView({ folders, thumbnails }: Props) {
         </h2>
         <div>
           <Button
-            type="danger"
-            size="big"
+            variant="primary"
+            size="lg"
             onClick={handleConfirm}
           >
             Delete anyway
           </Button>
           <Button
-            size="big"
+            variant="secondary"
+            size="lg"
             onClick={handleModalClose}
           >
             Cancel

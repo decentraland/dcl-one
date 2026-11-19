@@ -64,11 +64,19 @@ export interface StateManagerOptions {
   compositePath: string;
 }
 
+// How long an undo, redo or import waits for the scene's previous write before giving up.
+export const IDLE_WAIT_TIMEOUT_MS = 30_000;
+export const IDLE_WAIT_TIMEOUT_ERROR = 'Timed out waiting for the scene to finish saving';
+
 export class StateManager {
   private providers = new Map<string, StateProvider>();
   private pendingTransaction: Transaction | null = null;
   private transactionQueue: Transaction[] = [];
   private processing = false;
+  // Resolved when `processing` goes back to false, so an explicit transaction can wait its turn.
+  private idleWaiters: Array<() => void> = [];
+  // Tail of the explicit-transaction chain: each executeTransaction runs after the previous one.
+  private explicitTail: Promise<unknown> = Promise.resolve();
   // Engine changes are ignored only while an explicit transaction (undo/redo/import) mutates
   // the engine itself: those are persisted by their caller and must not be re-captured. They
   // are NOT ignored while the queue is being persisted — persisting awaits disk writes, and
@@ -225,7 +233,39 @@ export class StateManager {
     } catch (error) {
       console.error('Error processing transaction queue:', error);
     } finally {
-      this.processing = false;
+      this.setIdle();
+    }
+  }
+
+  private setIdle(): void {
+    this.processing = false;
+    const waiters = this.idleWaiters;
+    this.idleWaiters = [];
+    for (const resolve of waiters) resolve();
+  }
+
+  /**
+   * Resolves once nothing is being written. Rejects after `IDLE_WAIT_TIMEOUT_MS` so an undo or
+   * import queued behind a write that never settles fails with an error instead of hanging, and
+   * the explicit transactions after it still get their turn.
+   */
+  private async waitUntilIdle(): Promise<void> {
+    const deadline = Date.now() + IDLE_WAIT_TIMEOUT_MS;
+    while (this.processing) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error(IDLE_WAIT_TIMEOUT_ERROR);
+      let waiter: (() => void) | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          waiter = resolve;
+          this.idleWaiters.push(resolve);
+          timer = setTimeout(() => reject(new Error(IDLE_WAIT_TIMEOUT_ERROR)), remaining);
+        });
+      } finally {
+        clearTimeout(timer);
+        this.idleWaiters = this.idleWaiters.filter(w => w !== waiter);
+      }
     }
   }
 
@@ -264,25 +304,34 @@ export class StateManager {
     }
   }
 
-  async executeTransaction<T>(
-    source: Transaction['source'],
-    operations: () => Promise<T>,
-  ): Promise<T> {
-    if (this.processing) {
-      throw new Error('Cannot execute transaction while processing');
-    }
+  /**
+   * Runs `operations` (an undo/redo or a file import/removal) with engine capture suspended.
+   *
+   * Explicit transactions run one at a time and wait for the queue to finish persisting: two
+   * catalog drops in quick succession each import their files here, and the second must wait
+   * for the first (and for the scene write the first drop started) instead of failing.
+   */
+  executeTransaction<T>(source: Transaction['source'], operations: () => Promise<T>): Promise<T> {
+    const run = async (): Promise<T> => {
+      // An edit made in the same tick (still waiting for its setTimeout(0) commit) goes first, so
+      // an edit followed at once by Ctrl+Z undoes that edit.
+      if (this.pendingTransaction) await this.commitPendingTransaction();
+      await this.waitUntilIdle();
+      this.processing = true;
+      this.captureSuspended = true;
 
-    const wasProcessing = this.processing;
-    this.processing = true;
-    this.captureSuspended = true;
+      try {
+        return await operations();
+      } finally {
+        this.captureSuspended = false;
+        this.setIdle();
+        await this.processTransactionQueue();
+      }
+    };
 
-    try {
-      return await operations();
-    } finally {
-      this.captureSuspended = false;
-      this.processing = wasProcessing;
-      await this.processTransactionQueue();
-    }
+    const result = this.explicitTail.then(run, run);
+    this.explicitTail = result.catch(() => undefined);
+    return result;
   }
 
   getComposite(): CompositeDefinition | null {

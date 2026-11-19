@@ -24,3 +24,35 @@
 .orange {
   background: var(--dcl-brand-orange);
 }
+
+@media (min-width: 768px) {
+  .badge[data-card-tone] {
+    min-height: 24px;
+    padding: 0 var(--dcl-space-8);
+    font-size: var(--dcl-font-size-label-xs-caps);
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    line-height: 1.25;
+  }
+
+  .badge[data-card-tone='updates'] {
+    background: var(--dcl-brand-orange);
+    color: var(--dcl-neutrals-black);
+  }
+
+  .badge[data-card-tone='communities'] {
+    /* Event Live surface, also used by EventCard. */
+    background: #680d4a;
+  }
+
+  .badge[data-card-tone='about'] {
+    background: var(--dcl-brand-lavender);
+    color: var(--dcl-neutrals-black);
+  }
+}
+
+@media (min-width: 1024px) {
+  .badge[data-card-tone] {
+    min-height: 26px;
+  }
+}

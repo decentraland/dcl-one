@@ -20,21 +20,37 @@ use wallet::{sign_service_request, SignedLoginMeta, Wallet};
 
 pub const SUPERSEDED: &str = "superseded by a later realm change";
 
-/// Whether a later realm change has been issued since the one this belongs to, which then stands
-/// down rather than finish behind it.
+/// The latest issued realm change id, and the answer of every earlier change that stands down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Issued {
+    pub id: u64,
+    pub refusal: &'static str,
+}
+
+/// Whether a later id has been issued since the change this belongs to.
 pub struct Superseded {
-    pub latest: watch::Receiver<u64>,
+    pub latest: watch::Receiver<Issued>,
     pub id: u64,
 }
 
 impl Superseded {
     pub fn is_superseded(&self) -> bool {
-        *self.latest.borrow() != self.id
+        self.latest.borrow().id != self.id
     }
 
-    /// Resolves once superseded (or once nothing issues changes any more)
-    pub async fn wait(&mut self) {
-        let _ = self.latest.wait_for(|latest| *latest != self.id).await;
+    /// What this change answers once superseded.
+    pub fn refusal(&self) -> String {
+        self.latest.borrow().refusal.to_owned()
+    }
+
+    /// Resolves once superseded (or once nothing issues changes any more), with the refusal of
+    /// the id that superseded it.
+    pub async fn wait(&mut self) -> String {
+        let id = self.id;
+        match self.latest.wait_for(|latest| latest.id != id).await {
+            Ok(latest) => latest.refusal.to_owned(),
+            Err(_) => SUPERSEDED.to_owned(),
+        }
     }
 }
 
@@ -221,7 +237,7 @@ pub async fn check_world_access(
                     Ok(()) => tokio::select! {
                         answer = answered => answer.ok().flatten(),
                         // drops the prompt unanswered, which withdraws it from the HUD
-                        _ = superseded.wait() => return Err(SUPERSEDED.to_owned()),
+                        refusal = superseded.wait() => return Err(refusal),
                     },
                     Err(_) => None,
                 };

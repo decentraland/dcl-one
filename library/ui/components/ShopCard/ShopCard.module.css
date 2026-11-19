@@ -86,7 +86,8 @@
     opacity: 1;
   }
 
-  /* The whole card opens or selects; the actions sit above it. */
+  /* The whole card opens or selects for the pointer; the name (the keyboard's and assistive
+     technology's control), the badges and the actions sit above it. */
   .hit {
     position: absolute;
     z-index: 1;
@@ -224,13 +225,40 @@
     padding: var(--dcl-space-16);
   }
 
+  /* Above .hit for its tooltip; only the control in it takes the pointer, the rest falls to .hit. */
   .name {
     composes: text626f64792f736d2d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
 
+    position: relative;
+    z-index: 2;
     overflow: hidden;
     margin: 0;
     text-overflow: ellipsis;
     white-space: nowrap;
+    pointer-events: none;
+  }
+
+  .control {
+    display: inline-block;
+    overflow: hidden;
+    max-width: 100%;
+    padding: 0;
+    border: none;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: inherit;
+    text-decoration: none;
+    text-overflow: ellipsis;
+    vertical-align: top;
+    white-space: nowrap;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+
+  /* The card's ring shows keyboard focus. */
+  .control:focus-visible {
+    outline: none;
   }
 
   .creator {
@@ -288,7 +316,10 @@
     text-transform: uppercase;
   }
 
+  /* Above .hit, so each badge's label shows on hover. */
   .badges {
+    position: relative;
+    z-index: 2;
     display: flex;
     align-items: center;
     gap: var(--dcl-space-4);
@@ -368,7 +399,7 @@
   }
 
   .catalogue:hover,
-  .catalogue:focus-within {
+  .catalogue:has(:focus-visible) {
     transform: translateY(-4px);
   }
 
@@ -404,6 +435,7 @@
     .catalogue .actions {
       position: relative;
       z-index: 2;
+      inset: auto;
       opacity: 1;
       pointer-events: auto;
       transform: none;
@@ -414,6 +446,24 @@
     .catalogue.hasActions:hover .meta,
     .catalogue.hasActions:has(:focus-visible) .meta {
       opacity: 1;
+    }
+
+    /* A tap leaves :hover on the card: it neither lifts nor rings unless it is focused or selected. */
+    .catalogue:hover:not(:has(:focus-visible)) {
+      transform: none;
+    }
+
+    .catalogue:hover:not(.selected, :has(:focus-visible))::after {
+      inset: 0;
+      opacity: 0;
+    }
+  }
+
+  /* Forced colours drop the ring (a masked background), so keyboard focus gets an outline. */
+  @media (forced-colors: active) {
+    .control:focus-visible {
+      outline: 2px solid CanvasText;
+      outline-offset: 2px;
     }
   }
 
@@ -503,7 +553,7 @@
     }
 
     .catalogue:hover,
-    .catalogue:focus-within,
+    .catalogue:has(:focus-visible),
     .catalogue .actions {
       transform: none;
     }

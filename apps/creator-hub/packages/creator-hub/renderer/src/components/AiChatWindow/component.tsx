@@ -86,6 +86,23 @@ export function AiChatWindow() {
   // The close button shuts the assistant entirely (window + inline panel), consistent with the
   // inline close — not a dock-back. The main window handles it (it owns the inline open flag).
   const onClose = useCallback(() => aiPreload.sendAiRemoteCommand({ type: 'closeAssistant' }), []);
+  const onShareDecision = useCallback(
+    (granted: boolean) => aiPreload.sendAiRemoteCommand({ type: 'shareDecision', granted }),
+    [],
+  );
+  const onShareNotNow = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'shareNotNow' }),
+    [],
+  );
+  const onSetConversationShared = useCallback(
+    (shared: boolean) => aiPreload.sendAiRemoteCommand({ type: 'setConversationShared', shared }),
+    [],
+  );
+  const onRateTurn = useCallback(
+    (id: string, rating: 'up' | 'down' | null) =>
+      aiPreload.sendAiRemoteCommand({ type: 'rateTurn', id, rating }),
+    [],
+  );
 
   if (mirror === null) {
     return (
@@ -127,6 +144,11 @@ export function AiChatWindow() {
       onClearSelection={onClearSelection}
       onRemoveAssetMention={onRemoveAssetMention}
       onClose={onClose}
+      sharing={mirror.sharing}
+      onShareDecision={onShareDecision}
+      onShareNotNow={onShareNotNow}
+      onSetConversationShared={onSetConversationShared}
+      onRateTurn={onRateTurn}
     />
   );
 }
