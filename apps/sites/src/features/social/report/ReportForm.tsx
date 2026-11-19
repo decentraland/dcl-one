@@ -2,14 +2,13 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 
-import { Button, CheckboxLabel, InputWebCreatorTools } from "@dcl/one-ui";
+import { Button, CheckboxLabel, InputWebCreatorTools, WebSelect, WebTextarea } from "@dcl/one-ui";
 import { AnimatedBackground } from "@dcl/one-ui/apps/sites/shared/AnimatedBackground/AnimatedBackground";
 import { GeneralClose, GeneralDecentralandColor } from "@dcl/one-ui/foundations/icons";
 import SitesChrome from "@ui/web/frames/SitesChrome";
 
 import { track, type TrackContext } from "@/core/lib/telemetry/track";
 import { useAuth } from "@/data/lib/auth/context";
-import { isDesktopShell } from "@/data/lib/auth/native-shell";
 import {
   buildSubmitReport,
   REPORT_EVIDENCE_TYPES,
@@ -22,7 +21,7 @@ import {
   type EvidenceUpload,
   type ReportReason,
 } from "@/data/lib/catalyst/landings/report";
-import { openSignIn } from "../../components/auth/signin-store";
+import { onBeforeBrowserSignIn, openSignIn } from "../../components/auth/signin-store";
 
 import styles from "./ReportForm.module.css";
 import { saveSignInDraft, takeSignInDraft } from "./sign-in-draft";
@@ -145,7 +144,6 @@ function FileUpload({
                 variant="text"
                 size="sm"
                 iconOnly
-                className={styles.chipRemove}
                 aria-label={`Remove ${f.name}`}
                 onClick={() => onChange(files.filter((x) => x.id !== f.id))}
               >
@@ -159,7 +157,7 @@ function FileUpload({
         variant="secondary"
         size="md"
         className={styles.addFile}
-        aria-invalid={invalid || undefined}
+        data-missing-evidence={invalid || undefined}
         aria-describedby={invalid ? "report-field-5-help report-field-5-error" : "report-field-5-help"}
         onClick={() => input.current?.click()}
         disabled={files.length >= REPORT_LIMITS.maxFiles}
@@ -194,7 +192,7 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
   const [reattachEvidence, setReattachEvidence] = useState(false);
   const [comments, setComments] = useState("");
   const [confirmed, setConfirmed] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
+  const [submitAttempts, setSubmitAttempts] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -212,13 +210,14 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
     setReattachEvidence(saved.hadEvidence);
   }, [reportedParam, returnTo]);
 
-  const signIn = () => {
-    const desktop = isDesktopShell();
-    if (!desktop) {
-      saveSignInDraft(returnTo, { reportedAddress, reason, description, comments, hadEvidence: reattachEvidence || evidence.length > 0 });
-    }
-    openSignIn(desktop ? undefined : { redirectTo: returnTo });
-  };
+  useEffect(
+    () =>
+      onBeforeBrowserSignIn((destination) => {
+        if (destination !== returnTo) return;
+        saveSignInDraft(returnTo, { reportedAddress, reason, description, comments, hadEvidence: reattachEvidence || evidence.length > 0 });
+      }),
+    [returnTo, reportedAddress, reason, description, comments, reattachEvidence, evidence.length],
+  );
 
   const [startCtx] = useState(trackCtx);
   useEffect(() => {
@@ -245,15 +244,24 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
     evidence: checked.evidence,
     confirm: checked.confirmAccuracy,
   };
-  const shown = (e: string) => (submitted ? e || undefined : undefined);
+  const shown = (e: string) => (submitAttempts > 0 ? e || undefined : undefined);
+
+  const formContent = useRef<HTMLDivElement>(null);
+  const focusInvalid = useRef(false);
+  useEffect(() => {
+    if (!focusInvalid.current) return;
+    focusInvalid.current = false;
+    formContent.current?.querySelector<HTMLElement>('[aria-invalid="true"]:not(:disabled), button[data-missing-evidence]')?.focus();
+  }, [submitAttempts]);
 
   const busy = useRef(false);
   const submit = async () => {
     if (busy.current) return;
-    setSubmitted(true);
+    setSubmitAttempts((attempts) => attempts + 1);
     track("report_review_reached", {}, trackCtx);
     const invalid = Object.entries(errors).flatMap(([field, e]) => (e ? [field] : []));
     if (invalid.length || mismatch) {
+      focusInvalid.current = true;
       track("report_validation_failed", { fields: mismatch ? [...invalid, "player"] : invalid, step: "form" }, trackCtx);
       return;
     }
@@ -281,7 +289,7 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
       <main className={styles.page}>
         <AnimatedBackground />
         <div className={styles.content}>
-          <div className={styles.card}>
+          <div className={styles.card} ref={formContent}>
             <div className={styles.logoWrap}>
               <GeneralDecentralandColor className={styles.logo} aria-hidden="true" />
               <h1 className={styles.title}>Report User</h1>
@@ -313,7 +321,7 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
             {!isConnected && (
               <div className={styles.signIn}>
                 Please sign in with your wallet to submit a report.
-                <Button variant="text" size="sm" className={styles.signInButton} onClick={signIn}>
+                <Button variant="text" size="sm" className={styles.signInButton} onClick={() => openSignIn()}>
                   Sign In
                 </Button>
               </div>
@@ -340,9 +348,8 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
               helper="Select the option that best describes the issue."
               error={shown(errors.reason)}
             >
-              <select
+              <WebSelect
                 {...named(3, shown(errors.reason))}
-                className={styles.control}
                 aria-required="true"
                 aria-invalid={!!shown(errors.reason)}
                 value={reason}
@@ -360,7 +367,7 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
                     {label}
                   </option>
                 ))}
-              </select>
+              </WebSelect>
             </Field>
 
             <Field
@@ -370,11 +377,10 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
               error={shown(errors.description)}
             >
               <div className={styles.inputGroup}>
-                <textarea
+                <WebTextarea
                   {...named(4, shown(errors.description))}
                   aria-required="true"
                   aria-invalid={!!shown(errors.description)}
-                  className={`${styles.control} ${styles.textarea}`}
                   rows={4}
                   placeholder="Write your description here..."
                   value={description}
@@ -411,9 +417,8 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
               helper="Provide any extra information that might help moderators investigate."
             >
               <div className={styles.inputGroup}>
-                <textarea
+                <WebTextarea
                   {...named(6)}
-                  className={`${styles.control} ${styles.textarea}`}
                   rows={3}
                   placeholder="Write your comments here..."
                   value={comments}

@@ -152,7 +152,7 @@
   .root[data-surface='web'] .description {
     color: var(--dcl-neutrals-snow);
   }
-  .root[data-surface='web'] .field {
+  .webField {
     box-sizing: border-box;
     min-height: 48px;
     border: 0;
@@ -165,14 +165,14 @@
     line-height: 24px;
     text-overflow: ellipsis;
   }
-  .root[data-surface='web'] .field:focus-within {
+  .field.webField:focus-within {
     outline: none;
     box-shadow: inset 0 0 0 2px var(--dcl-neutrals-snow);
   }
-  .root[data-surface='web'] .field[data-invalid] {
+  .field.webField[data-invalid] {
     box-shadow: inset 0 0 0 2px var(--dcl-feedback-error);
   }
-  .root[data-surface='web'] .field[data-invalid]:focus-within {
+  .field.webField[data-invalid]:focus-within {
     box-shadow:
       inset 0 0 0 2px var(--dcl-feedback-error),
       0 0 0 2px var(--dcl-neutrals-snow);
@@ -193,11 +193,25 @@
     opacity: 1;
   }
   @media (hover: hover) {
-    .root[data-surface='web']:not(:has(input:disabled))
-      .field:hover:not(:focus-within):not([data-invalid]) {
+    .webField:hover:not(:focus-within, [data-invalid], :has(:disabled)) {
       background: var(--dcl-transparencies-white-20);
       box-shadow: inset 0 0 0 1px var(--dcl-transparencies-white-60);
     }
+  }
+  .nativeField:has(:disabled) {
+    opacity: 0.4;
+  }
+  .nativeField .input:disabled {
+    opacity: 1;
+  }
+  .nativeSelect {
+    color-scheme: dark;
+  }
+  .nativeTextarea {
+    box-sizing: border-box;
+    padding: var(--dcl-space-8) 0;
+    line-height: 24px;
+    resize: vertical;
   }
 }
 
