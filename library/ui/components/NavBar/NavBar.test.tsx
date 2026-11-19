@@ -926,7 +926,7 @@ describe('NavBar', () => {
   describe.each(['desktop', 'mobile'])('when Shop is open on %s', (viewport) => {
     beforeEach(async () => {
       const { desktop, mobile } = decentralandPublicNavSections('events', '/events')
-      render(<NavBar sections={desktop} mobileSections={mobile} />)
+      render(<NavBar sections={desktop} mobileSections={mobile} signIn={{ href: '/sign-in' }} />)
       if (viewport === 'mobile') await user.click(screen.getByRole('button', { name: 'Open menu' }))
       await user.click(screen.getByRole('button', { name: 'Shop' }))
     })
