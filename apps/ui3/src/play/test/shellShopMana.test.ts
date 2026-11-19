@@ -2,7 +2,7 @@
 // runManaGroup, its relayed and direct paths, the MANA guard, and the attempt kept at each checkpoint
 // (shell/shop/manaPurchase). The Shop server, the chain, the relay and the wallet are the checkout's fakes.
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { decodeFunctionData, maxUint256, parseAbi, type Hex } from 'viem'
+import { decodeFunctionData, keccak256, maxUint256, parseAbi, type Hex } from 'viem'
 import { createFakeChain, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade } from '../../shop/checkout/fakes'
 import { ASSET_TYPE, encodeStoreBuy } from '../../shop/checkout/purchase/encoding'
 import { manaFingerprint } from '../shell/shop/manaPurchase'
@@ -1255,6 +1255,76 @@ describe('the in-world purchase with MANA', () => {
       expect(p.events.filter((e) => e.operation === '0000000a-0000-0000-0000-000000000004').map((e) => e.state)).not.toContain('cancelled')
       const kept = JSON.parse(w.storage.getItem(`dcl-inworld-shop:record:v1:${BUYER}:0000000a-0000-0000-0000-000000000004`)!) as { mana: { sends: { id: string }[] } }
       expect(kept.mana.sends.map((x) => x.id)).toEqual(['a1'])
+    })
+
+    it.each([
+      ['once, and ends it failed on the next look, without a reload', 1, 'failed'],
+      ['every time, and keeps it waiting', Infinity, 'processing']
+    ])('when tidying the record on takeover fails %s', async (_what, refusals, end) => {
+      const w = world()
+      const id = '0000000a-0000-0000-0000-000000000005'
+      seed(w, id, [
+        { id: 'a1', stage: 'refused', payload: '0x' + 'cd'.repeat(32), at: 1 },
+        { id: 'b1', stage: 'signing' }
+      ])
+      let refused = 0
+      // The tidied record (only A) is refused as many times as asked; every other write goes through.
+      const storage = w.storage
+      const flaky: Storage = {
+        get length() {
+          return storage.length
+        },
+        clear: () => storage.clear(),
+        getItem: (k) => storage.getItem(k),
+        key: (i) => storage.key(i),
+        removeItem: (k) => storage.removeItem(k),
+        setItem: (k, v) => {
+          if (k.endsWith(id) && v.includes('"a1"') && !v.includes('"b1"') && !v.includes('"failed"') && refused < refusals) {
+            refused++
+            throw new DOMException('full', 'QuotaExceededError')
+          }
+          storage.setItem(k, v)
+        }
+      }
+      const p = page(w, { storage: flaky, services: { sleep: () => new Promise((r) => setTimeout(r, 20)) } })
+      await p.shell.request('shop.status', {})
+      await new Promise((r) => setTimeout(r, 150))
+      const states = p.events.filter((e) => e.operation === id).map((e) => e.state)
+      expect(states).not.toContain('cancelled')
+      if (end === 'failed') expect(states.at(-1)).toBe('failed')
+      else expect(states.some((x) => x === 'failed')).toBe(false)
+      expect(refused).toBeGreaterThan(0)
+    })
+
+    it('still reads a sale that went on chain while tidying its record keeps failing', async () => {
+      const w = world()
+      const id = '0000000a-0000-0000-0000-000000000006'
+      const input = ('0x0c53c51c' + 'ab'.repeat(40)) as Hex
+      const hash = ('0x' + '9a'.repeat(32)) as Hex
+      w.txs.set(hash, { to: STORE, input })
+      w.chain.receipts.set(hash, 'success')
+      seed(w, id, [
+        { id: 'a1', stage: 'dispatched', payload: keccak256(input), at: 1, hash },
+        { id: 'b1', stage: 'signing' }
+      ])
+      const storage = w.storage
+      const stuck: Storage = {
+        get length() {
+          return storage.length
+        },
+        clear: () => storage.clear(),
+        getItem: (k) => storage.getItem(k),
+        key: (i) => storage.key(i),
+        removeItem: (k) => storage.removeItem(k),
+        setItem: (k, v) => {
+          // The tidied record (A without B) never sticks.
+          if (k.endsWith(id) && v.includes('"a1"') && !v.includes('"b1"') && !v.includes('"succeeded"')) throw new DOMException('full', 'QuotaExceededError')
+          storage.setItem(k, v)
+        }
+      }
+      const p = page(w, { storage: stuck })
+      await p.shell.request('shop.status', {})
+      await vi.waitFor(() => expect(p.events.filter((e) => e.operation === id).at(-1)).toMatchObject({ state: 'succeeded', txHash: hash }))
     })
 
     it('keeps a dispatched purchase the chain can’t settle yet, and a BUY of its item shows it', async () => {

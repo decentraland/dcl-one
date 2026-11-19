@@ -834,8 +834,12 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     let attempt = record
     if (op.release && !op.foreign && !op.manaSending) {
       const kept = compactManaAttempt(record)
-      if (JSON.stringify(kept) !== JSON.stringify(record) && keeper(op)(kept)) attempt = kept
-      else if (JSON.stringify(kept) !== JSON.stringify(record)) return false
+      if (JSON.stringify(kept) !== JSON.stringify(record)) {
+        // Judged only once storage holds the tidied record (read back); until then, a sale that went is still read
+        // on chain from the record as it stands, and anything else waits for the next look.
+        if (keeper(op, { latch: false })(kept)) attempt = kept
+        else if (!manaDispatched(record)) return false
+      }
     }
     // The relay refused every send that went (answering, maybe, after the send's deadline): proven unsent, it ends
     // failed (on the dialog still up for it, with TRY AGAIN; quietly when that was closed), not as one that never left.
@@ -1705,13 +1709,17 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     fail(op, message, result.status === 'skipped' ? again : () => restart(op, req, 'failed'))
   }
 
-  /** Writes `op`'s MANA attempt and reads it back: true only when storage holds exactly the record given. */
+  /**
+   * Writes `op`'s MANA attempt and reads it back: true only when storage holds exactly the record given. A checkpoint a
+   * send depends on (`latch`, the default) also refuses once any write for the operation failed this page's lifetime;
+   * the watch's tidying of a record (dropping what can't be evidence) needs only this write to stick.
+   */
   const keeper =
-    (op: Operation) =>
+    (op: Operation, opts: { latch?: boolean } = {}) =>
     (record: ManaAttemptRecord): boolean => {
       const before = op.mana
       op.mana = record
-      const kept = keep(op) && !ledger.failed(op.id) && JSON.stringify(ledger.saved(op.buyer ?? '', op.id)?.mana) === JSON.stringify(record)
+      const kept = keep(op) && (opts.latch === false || !ledger.failed(op.id)) && JSON.stringify(ledger.saved(op.buyer ?? '', op.id)?.mana) === JSON.stringify(record)
       if (!kept) op.mana = before
       return kept
     }
