@@ -15,16 +15,17 @@ export interface AvatarLook {
 }
 
 /** The deploy that turns `from` into `look`. The body and colors only go when they changed (a base
- *  also rewrites the name); force-render always goes, since sending [] erases the overrides the
- *  player set in another client. */
-export function lookDeploy(look: AvatarLook, from: AvatarLook, name: string): SetAvatarData {
+ *  can carry the profile name, which Backpack leaves unchanged); force-render always goes,
+ *  since sending [] erases the overrides the player set in another client. */
+export function lookDeploy(look: AvatarLook, from: AvatarLook): SetAvatarData {
   const baseChanged =
     look.bodyShape !== from.bodyShape ||
     JSON.stringify([look.eyes, look.hair, look.skin]) !== JSON.stringify([from.eyes, from.hair, from.skin])
   return {
     ...(baseChanged && {
+      preserveName: true,
       base: {
-        name,
+        name: '',
         bodyShapeUrn: look.bodyShape,
         eyesColor: look.eyes,
         hairColor: look.hair,

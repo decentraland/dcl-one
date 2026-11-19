@@ -72,7 +72,7 @@ impl ClearableColor3 {
 #[ts(export)]
 pub struct SetAvatarData {
     /// Body shape, colors and name. An empty `body_shape_urn` and absent colors are "unchanged",
-    /// so a name-only edit needn't restate the avatar.
+    /// so a name-only edit needn't restate the avatar. Set `preserve_name` for appearance-only edits.
     #[ts(optional)]
     pub base: Option<PbAvatarBase>,
     #[ts(optional)]
@@ -85,6 +85,8 @@ pub struct SetAvatarData {
     pub profile_extras: Option<std::collections::HashMap<String, serde_json::Value>>,
     #[ts(optional)]
     pub name_color: Option<ClearableColor3>,
+    #[ts(optional)]
+    pub preserve_name: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

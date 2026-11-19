@@ -5893,11 +5893,15 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarDraft.ts",
-      "sha256": "f7bd876f153075954844844d8ba045510c9d77179928430847a6e772a6425ac3"
+      "sha256": "0da47f7e2bfdade7c429913deec3fe324a21c1dcd6cba0e0c46578d41869ee1f"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarPreview.tsx",
       "sha256": "85338dca73d8bcd9636bb1de35eeacd78708f421f1b7fd8941c8adc0a9d1a49c"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarSaves.ts",
+      "sha256": "959f2911375bcd1dcafb73482077cf9396fcfedd310377ccbadf20a3ca1a4755"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/chat.ts",
@@ -5969,7 +5973,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/profile.ts",
-      "sha256": "67cc2e6f63d53cad69c9c69f9dbbab31f3be8743c0f2d96d274ebd1020bac994"
+      "sha256": "bfc97d7a833a2280ac622e876b6ded7cad5cc0f6d0e301aff8b0e455bdf0a098"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/randomizer.ts",
@@ -5977,7 +5981,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/session.ts",
-      "sha256": "c4a8eaa94177021bf9905c75d3cab9eea51d90323735a8d8c02899ec63a9e90a"
+      "sha256": "f47ba94c7c93af15b0a74d8f0d01cfe9bc728ec47c5fa14d29e9b198d118e03c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/textureOptimization.ts",
@@ -6137,7 +6141,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeAvatarDraft.test.ts",
-      "sha256": "02d834ceb539309241f6758b3ec4f0b9b525572606e18172a4eae5015e5fb5d9"
+      "sha256": "105bbf3ec4c5c367acb68b51fa7ccbcd0050c575ee77b3fe896bb11f94a1ca63"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeChat.test.ts",
@@ -6460,7 +6464,7 @@
     },
     {
       "path": "library/explorer-core/engine/avatarEquip.ts",
-      "sha256": "e0e160a908315b03d8d8be1dc9b3cc8e6fa339a430ee8c3f4db53d52fb1547d6"
+      "sha256": "32e07a38c505a9d83676d96cb3bb9fb6cdeec36e0ccba4442261df29a82e8624"
     },
     {
       "path": "library/explorer-core/engine/avatarHides.ts",
@@ -6976,7 +6980,7 @@
     },
     {
       "path": "library/explorer-core/test/avatarEquip.test.ts",
-      "sha256": "a50e45be621737a22554856ced6e0eb91c32856190f845e47606fd8d43f25e40"
+      "sha256": "1b402b4c70441189cb3f9465644ba014dc20f63de4b709c965eabc5c895a191a"
     },
     {
       "path": "library/explorer-core/test/avatarHides.test.ts",

@@ -12,11 +12,11 @@ import type { JsonValue } from "./serde_json/JsonValue";
 export type SetAvatarData = { 
 /**
  * Body shape, colors and name. An empty `body_shape_urn` and absent colors are "unchanged",
- * so a name-only edit needn't restate the avatar.
+ * so a name-only edit needn't restate the avatar. Set `preserve_name` for appearance-only edits.
  */
 base?: PbAvatarBase, equip?: PbAvatarEquippedData, hasClaimedName?: boolean, 
 /**
  * Profile keys the renderer doesn't model (description, links, country, …), MERGED over the
  * current set: omit a key to leave it alone, send `null` to remove it.
  */
-profileExtras?: { [key in string]: JsonValue }, nameColor?: ClearableColor3, };
+profileExtras?: { [key in string]: JsonValue }, nameColor?: ClearableColor3, preserveName?: boolean, };

@@ -6,6 +6,7 @@ import { bugReportUrl } from '@explorer-core/lib/bugReport'
 import { BevyApi } from '../bevy-api'
 import { relay } from '../system-helpers'
 import { identity } from '../identity'
+import { observeAvatarSaveAccount } from './avatarSaves'
 import type { Ctx } from '../bridge'
 import { GUEST_SESSION_KEY, emailLoginComplete, emailLoginStart, guestLogin, guestSign } from '@explorer-core/features/auth/thirdweb'
 
@@ -78,7 +79,7 @@ export function registerSession(ctx: Ctx): void {
         // the identity. A refused code or address keeps its code in the error's text.
         case 'emailStart': await emailLoginStart(msg.params?.email ?? '', THIRDWEB_HEADERS); break
         case 'emailComplete': value = await emailLoginComplete(msg.params?.email ?? '', msg.params?.code ?? '', THIRDWEB_HEADERS); break
-        case 'logout': BevyApi.logout(); break
+        case 'logout': observeAvatarSaveAccount(null); BevyApi.logout(); break
         default: throw new Error(`unsupported method ${String(msg.method)}`)
       }
       // A completed sign-in says the (possibly same) account is back and must be announced again,
@@ -125,6 +126,7 @@ export function registerSession(ctx: Ctx): void {
   ctx.push(() => {
     const player = getPlayer()
     identity.observe(player?.userId ?? null)
+    observeAvatarSaveAccount(player?.userId ?? null)
     // the engine clears the player on logout; the next one is announced afresh
     if (player == null) ready = false
     if (ready) return

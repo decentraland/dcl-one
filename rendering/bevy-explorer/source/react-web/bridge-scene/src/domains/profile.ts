@@ -11,7 +11,7 @@ import { catalystBase, getJson, serviceBase } from '../http'
 import { resolveEquippedSet, resolveWearables } from './wearables'
 import { resolveEquippedEmotes } from './emotes'
 import { equippedSlots } from './emoteSlots'
-import { profileSaveSettled } from './avatarDraft'
+import { avatarSaveSession } from './avatarSaves'
 import type { Badge, Profile, ProfileInfo, SaveProfileRequest } from '@explorer-core/engine/protocol'
 import type { SetAvatarData } from '@explorer-core/engine/generated'
 // Not via the generated barrel: it only re-exports the top-level files, not serde_json/.
@@ -380,7 +380,8 @@ export function registerProfile(ctx: Ctx): void {
     }
 
     // the account can change while this waits; the edit and its answers belong to this one only
-    const signedOut = (): boolean => getPlayer()?.userId !== player.userId
+    const session = avatarSaveSession(player.userId)
+    const signedOut = (): boolean => !session.isCurrent()
     const data: SetAvatarData = {}
     if (msg.name !== undefined) {
       const owned = await fetchOwnedNames(player.userId).catch(() => [])
@@ -402,18 +403,15 @@ export function registerProfile(ctx: Ctx): void {
       // setAvatar resolves only once the engine has deployed the new profile version (guests
       // resolve immediately — they have no catalyst presence to deploy to), so a rejection here
       // is a genuinely failed save and the HUD must not keep showing the edit as if it stuck.
-      await BevyApi.setAvatar(data)
+      await session.run(async () => await BevyApi.setAvatar(data), 'passport')
     } catch (e) {
       if (signedOut()) return
-      // a save that a later one replaced settles nothing: the later one carries it
-      if (!String(e).includes('cancelled')) profileSaveSettled(false)
       console.error('[profile] save failed', e)
       ctx.send({ kind: 'profileSaved', ok: false, error: e instanceof Error ? e.message : String(e) })
       return
     }
 
     if (signedOut()) return
-    profileSaveSettled(true)
     ctx.send({ kind: 'profileSaved', ok: true })
     // setAvatar amends the engine's own copy of the profile before it resolves, so re-reading it
     // is the post-save state — no need to fold the edit in by hand.

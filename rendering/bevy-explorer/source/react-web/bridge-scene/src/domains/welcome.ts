@@ -67,7 +67,7 @@ export function registerWelcome(ctx: Ctx): void {
         // the look deploys as the player wears it, which reaches the scene after the player's
         // identity (the sign-in's accept can land between): deployed before, it would be bare
         for (let waited = 0; !AvatarEquippedData.has(engine.PlayerEntity) && waited < PLAYER_LOOK_FRAMES; waited++) await waitFrames(1)
-        await deployLookAs(msg.name ?? getPlayer()?.name ?? '')
+        if (!(await deployLookAs(msg.name ?? getPlayer()?.name ?? ''))) return
       }
       ctx.send({ kind: 'welcomeAccepted', ok: true })
     } catch (e) {

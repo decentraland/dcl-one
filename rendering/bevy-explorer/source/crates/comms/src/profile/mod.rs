@@ -1909,8 +1909,10 @@ fn process_profile(
                 profile.content.avatar.skin = Some(AvatarColor::new(skin));
             }
 
-            profile.content.name = base.name.clone();
-            profile.content.avatar.name = Some(base.name.clone());
+            if !set_avatar.preserve_name.unwrap_or_default() {
+                profile.content.name = base.name.clone();
+                profile.content.avatar.name = Some(base.name.clone());
+            }
         }
 
         if let Some(has_claimed_name) = set_avatar.has_claimed_name {
@@ -2662,14 +2664,21 @@ mod tests {
         }
 
         fn edit(&mut self) -> common::rpc::RpcResultReceiver<Result<u32, String>> {
-            let (sender, receiver) = RpcResultSender::channel();
-            let data = system_bridge::SetAvatarData {
+            self.edit_with(system_bridge::SetAvatarData {
                 base: None,
+                preserve_name: None,
                 equip: None,
                 has_claimed_name: None,
                 profile_extras: None,
                 name_color: None,
-            };
+            })
+        }
+
+        fn edit_with(
+            &mut self,
+            data: system_bridge::SetAvatarData,
+        ) -> common::rpc::RpcResultReceiver<Result<u32, String>> {
+            let (sender, receiver) = RpcResultSender::channel();
             self.0
                 .world_mut()
                 .send_event(SystemApi::SetAvatar(data, sender));
@@ -2687,6 +2696,34 @@ mod tests {
         fn current(&mut self) -> Mut<'_, CurrentUserProfile> {
             self.0.world_mut().resource_mut::<CurrentUserProfile>()
         }
+    }
+
+    #[test]
+    fn backpack_body_edit_preserves_passport_name() {
+        use dcl_component::proto_components::sdk::components::PbAvatarBase;
+
+        let mut saves = Saves::new(web3(5, "New Passport name"));
+        let _result = saves.edit_with(system_bridge::SetAvatarData {
+            base: Some(PbAvatarBase {
+                name: String::new(),
+                body_shape_urn: "urn:body:new".to_owned(),
+                ..Default::default()
+            }),
+            preserve_name: Some(true),
+            equip: None,
+            has_claimed_name: None,
+            profile_extras: None,
+            name_color: None,
+        });
+        saves.0.update();
+
+        let current = saves.current();
+        let profile = current.profile.as_ref().unwrap();
+        assert_eq!(profile.content.name, "New Passport name");
+        assert_eq!(
+            profile.content.avatar.body_shape.as_deref(),
+            Some("urn:body:new")
+        );
     }
 
     #[test]
