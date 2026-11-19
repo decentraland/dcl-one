@@ -287,6 +287,19 @@ pub struct GltfHandle(Handle<Gltf>);
 #[derive(Component)]
 pub struct StandInBounds(pub SceneBounds);
 
+/// The part of its model a stand-in's container (`scene_lod`) takes; a live scene's container
+/// has none and takes all of it.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GltfPart {
+    /// The colliders alone: loaded under an asset path of its own with no textures, materials or
+    /// lights (`collider_gltf_loader_settings`), its meshes kept in main-world memory only and
+    /// none of them drawn. Once processed the container lets the glTF go: its colliders keep
+    /// their shapes and collider meshes.
+    Colliders,
+    /// What is drawn: shares the live scene's asset and builds no collider.
+    Visuals,
+}
+
 #[derive(Component, Deref)]
 pub struct GltfReady(InstanceId);
 
@@ -365,6 +378,18 @@ pub fn scene_gltf_loader_settings(
     }
 }
 
+/// A colliders-part load ([`GltfPart::Colliders`]): meshes in main-world memory only, nothing for
+/// the renderer. Empty material usages make the loader register embedded textures as 1x1
+/// placeholders, and the part's uri resolver points referenced images at one placeholder
+/// (`ipfs::ipfs_path::COLLIDERS_PART`), so no texture is fetched or decoded.
+fn collider_gltf_loader_settings(s: &mut GltfLoaderSettings) {
+    s.load_cameras = false;
+    s.load_lights = false;
+    s.load_meshes = RenderAssetUsages::MAIN_WORLD;
+    s.load_materials = RenderAssetUsages::empty();
+    s.include_source = false;
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_gltf(
     mut commands: Commands,
@@ -377,6 +402,7 @@ fn update_gltf(
             Option<&GltfLoaded>,
             Has<GltfProcessed>,
             Option<&GltfSource>,
+            Option<&GltfPart>,
         ),
         Changed<GltfDefinition>,
     >,
@@ -427,7 +453,7 @@ fn update_gltf(
         };
     };
 
-    for (ent, scene_ent, gltf, maybe_loaded, has_gltf_processed, source) in new_gltfs.iter() {
+    for (ent, scene_ent, gltf, maybe_loaded, has_gltf_processed, source, part) in new_gltfs.iter() {
         // the value last acted on, put again (some scenes do it every tick): the model it loaded
         // stays, and one that could not load is not tried again; a different value is
         if source.is_some_and(|source| source.0 == gltf.0) {
@@ -472,11 +498,21 @@ fn update_gltf(
         } else {
             RenderAssetTransferPriority::Priority(0)
         };
-        let h_gltf = ipfas.load_content_file_with_settings::<Gltf, GltfLoaderSettings>(
-            &gltf.0.src,
-            &scene_def.id,
-            scene_gltf_loader_settings(transfer_priority, no_render_app.is_some()),
-        );
+        let h_gltf = if part == Some(&GltfPart::Colliders) {
+            Ok(
+                ipfas.load_content_file_colliders::<Gltf, GltfLoaderSettings>(
+                    &gltf.0.src,
+                    &scene_def.id,
+                    collider_gltf_loader_settings,
+                ),
+            )
+        } else {
+            ipfas.load_content_file_with_settings::<Gltf, GltfLoaderSettings>(
+                &gltf.0.src,
+                &scene_def.id,
+                scene_gltf_loader_settings(transfer_priority, no_render_app.is_some()),
+            )
+        };
 
         let h_gltf = match h_gltf {
             Ok(h_gltf) => h_gltf,
@@ -647,6 +683,7 @@ type UnprocessedGltf = (
     &'static GltfDefinition,
     &'static GltfHandle,
     &'static mut GltfProcessing,
+    Option<&'static GltfPart>,
 );
 
 /// The components of a glTF node processing reads.
@@ -684,7 +721,9 @@ struct Model<'a> {
     scene_entity: &'a SceneEntity,
     definition: &'a GltfDefinition,
     gltf: &'a Gltf,
-    scene_bounds: &'a SceneBounds,
+    /// the bounds its materials clip to; a colliders part, which has no material, may have none
+    scene_bounds: Option<&'a SceneBounds>,
+    part: Option<GltfPart>,
 }
 
 /// A material of the model is not loaded: the model is spawned again.
@@ -709,7 +748,10 @@ impl NodeProcessing<'_, '_> {
             definition,
             gltf,
             scene_bounds,
+            part,
         } = model;
+        let colliders = part != Some(GltfPart::Visuals);
+        let visuals = part != Some(GltfPart::Colliders);
         let NodeProcessing {
             nodes: gltf_spawned_entities,
             base_mats,
@@ -826,8 +868,9 @@ impl NodeProcessing<'_, '_> {
                 });
             }
 
-            // if there is an animation player, record the entity (bevy-specific hack)
-            if maybe_player.is_some() {
+            // if there is an animation player, record the entity (bevy-specific hack). A
+            // colliders part plays nothing
+            if maybe_player.is_some() && visuals {
                 if let Some(name) = maybe_name {
                     debug!("animator found on {name} node of {}", definition.0.src);
                     // animation_roots.try_insert((spawned_ent, name.clone()));
@@ -912,13 +955,16 @@ impl NodeProcessing<'_, '_> {
                 let mesh_data = meshes.get_mut(h_gltf_mesh.0.id()).unwrap();
                 mesh_data.normalize_joint_weights();
 
-                if maybe_hash.is_some() {
-                    // if we won't need the mesh data again, we can push it only to gpu
-                    mesh_data.asset_usage |= RenderAssetUsages::RENDER_WORLD;
-                } else {
-                    // if we can't make a hash to reuse the mesh, we need to keep the data cpu-side as well,
-                    // to rebuild everything next time
-                    mesh_data.asset_usage |= RenderAssetUsages::RENDER_WORLD;
+                // a colliders part's meshes never reach the gpu
+                if visuals {
+                    if maybe_hash.is_some() {
+                        // if we won't need the mesh data again, we can push it only to gpu
+                        mesh_data.asset_usage |= RenderAssetUsages::RENDER_WORLD;
+                    } else {
+                        // if we can't make a hash to reuse the mesh, we need to keep the data cpu-side as well,
+                        // to rebuild everything next time
+                        mesh_data.asset_usage |= RenderAssetUsages::RENDER_WORLD;
+                    }
                 }
 
                 let has_joints = mesh_data.attribute(Mesh::ATTRIBUTE_JOINT_INDEX).is_some();
@@ -994,8 +1040,10 @@ impl NodeProcessing<'_, '_> {
                 commands.entity(spawned_ent).remove::<SkinnedMesh>();
             }
 
-            // substitute material
-            if let Some(h_material) = maybe_material {
+            // substitute material; a colliders part draws nothing
+            if let (true, Some(h_material), Some(scene_bounds)) =
+                (visuals, maybe_material, scene_bounds)
+            {
                 let material_name = gltf
                     .named_materials
                     .iter()
@@ -1125,7 +1173,8 @@ impl NodeProcessing<'_, '_> {
             // them invisible, so we recalculate `is_collider` here
             let is_collider = is_collider || definition.0.visible_meshes_collision_mask.is_some();
 
-            if is_collider && collider_bits != Some(0) {
+            // a visuals part leaves its colliders to its scene's colliders part
+            if colliders && is_collider && collider_bits != Some(0) {
                 let collider_bits = collider_bits
                     .unwrap_or(ColliderLayer::ClPhysics as u32 | ColliderLayer::ClPointer as u32);
                 let index = progress
@@ -1151,7 +1200,7 @@ impl NodeProcessing<'_, '_> {
                     });
             }
 
-            if is_trigger && collider_bits != Some(0) {
+            if colliders && is_trigger && collider_bits != Some(0) {
                 let collider_bits = collider_bits.unwrap_or(ColliderLayer::ClPlayer as u32);
                 let index = progress
                     .collider_counter
@@ -1174,6 +1223,12 @@ impl NodeProcessing<'_, '_> {
                         index: *index,
                         _p: Default::default(),
                     });
+            }
+
+            // a colliders part draws none of its meshes: its collider nodes hold theirs, the
+            // rest go with the glTF
+            if !visuals {
+                commands.entity(spawned_ent).try_remove::<Mesh3d>();
             }
         }
         Ok(())
@@ -1221,9 +1276,17 @@ pub(crate) fn update_ready_gltfs(
 
     // models already in progress first
     'outer: for in_progress in [true, false] {
-        for (bevy_scene_entity, dcl_scene_entity, loaded, definition, h_gltf, mut processing) in
-            models.iter_mut()
+        for (
+            bevy_scene_entity,
+            dcl_scene_entity,
+            loaded,
+            definition,
+            h_gltf,
+            mut processing,
+            part,
+        ) in models.iter_mut()
         {
+            let part = part.copied();
             if (processing.next > 0) != in_progress {
                 continue;
             }
@@ -1260,20 +1323,22 @@ pub(crate) fn update_ready_gltfs(
             else {
                 continue;
             };
-            // a live scene's root, or a stand-in's (`scene_lod`), which has no scene to tell
-            let Some(scene_bounds) = context
+            // a live scene's root, or a stand-in's (`scene_lod`), which has no scene to tell. A
+            // colliders part has no material to clip, and its root no bounds
+            let scene_bounds = context
                 .as_deref()
                 .map(|context| &context.scene_bounds)
-                .or(stand_in.map(|stand_in| &stand_in.0))
-            else {
+                .or(stand_in.map(|stand_in| &stand_in.0));
+            if scene_bounds.is_none() && part != Some(GltfPart::Colliders) {
                 continue;
-            };
+            }
             let model = Model {
                 container: bevy_scene_entity,
                 scene_entity: dcl_scene_entity,
                 definition,
                 gltf,
                 scene_bounds,
+                part,
             };
 
             // resume where the last frame stopped
@@ -1325,6 +1390,24 @@ pub(crate) fn update_ready_gltfs(
                 .try_remove::<GltfProcessing>();
             let named_nodes = std::mem::take(&mut processing.named_nodes);
             let has_animations = processing.has_animations;
+
+            if part == Some(GltfPart::Colliders) {
+                // its colliders hold their shapes and collider meshes: the glTF, with every
+                // other mesh, goes once no other load of this asset path holds it. No scene
+                // reads its names
+                commands
+                    .entity(bevy_scene_entity)
+                    .try_insert((
+                        GltfProcessed {
+                            instance_id: Some(instance),
+                            named_nodes,
+                        },
+                        GltfReady(instance),
+                    ))
+                    .try_remove::<GltfHandle>();
+                reveal(&mut commands, instance);
+                continue;
+            }
 
             // names for the loading-state message; extracted once, then the source is
             // dropped after this loop (see GltfNames)

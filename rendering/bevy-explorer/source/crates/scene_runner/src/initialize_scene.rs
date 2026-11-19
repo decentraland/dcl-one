@@ -54,7 +54,7 @@ use crate::{
         SCENE_JS_SPAWN_TICK,
     },
     ring_parcels,
-    scene_lod::{LodState, SceneLod},
+    scene_lod::SceneLod,
     scene_partition::camera_facing,
     update_world::{visibility::VisibilityComponent, ComponentTracker},
     vec3_to_parcel, ContainerEntity, DeletedSceneEntities, MobileUiEmulation, OutOfWorld,
@@ -2181,7 +2181,7 @@ fn update_loading_quads(
     let prev_active = std::mem::take(&mut *local_prev_active);
     let stood_in = lods
         .iter()
-        .filter(|lod| matches!(lod.state, LodState::Shown))
+        .filter(|lod| lod.shown())
         .map(|lod| lod.hash.as_str())
         .collect::<HashSet<_>>();
 

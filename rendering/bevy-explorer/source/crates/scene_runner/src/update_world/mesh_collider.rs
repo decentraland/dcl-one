@@ -20,7 +20,6 @@ use rapier3d_f64::{
 
 use crate::{
     gltf_resolver::GltfMeshResolver,
-    scene_lod::{show_scene_lods, LodState, SceneLod},
     update_world::{
         gltf_container::{mesh_to_parry_shape, GltfProcessing},
         mesh_renderer::truncated_cone::TruncatedCone,
@@ -139,13 +138,7 @@ pub fn add_collider_systems<T: ColliderType>(app: &mut App) {
     // Collider components are created in RunLoop (by scene messages) and in the SpawnScene
     // schedule (by glTF processing). PostUpdate propagates their global transforms before
     // the next Init registers and positions them for Input raycasts and triggers.
-    // after the stand-ins show, so a stand-in's colliders register in the frame it appears
-    app.add_systems(
-        Update,
-        update_colliders::<T>
-            .in_set(SceneSets::Init)
-            .after(show_scene_lods),
-    );
+    app.add_systems(Update, update_colliders::<T>.in_set(SceneSets::Init));
 
     // update collider transforms before queries and scenes are run, but after global transforms are updated (at end of prior frame)
     app.add_systems(
@@ -1255,22 +1248,13 @@ pub(crate) fn update_colliders<T: ColliderType>(
     mut gltf_mesh_resolver: GltfMeshResolver,
     meshes: Res<Assets<Mesh>>,
     gltfs_in_progress: Query<(), With<GltfProcessing>>,
-    stand_ins: Query<&SceneLod>,
 ) {
     gltf_mesh_resolver.begin_frame();
 
     // add colliders
     // any entity with a mesh collider that we're not using, or where the mesh collider has changed
     for (ent, collider_def, container, global_transform, has_collider) in new_colliders.iter() {
-        // still unmatched by `Without<HasCollider>`, so it comes back next frame. A stand-in's
-        // colliders wait until it shows: nothing hidden may block or carry the player, and every
-        // cast (movement, collisions, foot IK) reads the whole collider set
-        if stand_ins
-            .get(container.root)
-            .is_ok_and(|lod| !matches!(lod.state, LodState::Shown))
-        {
-            continue;
-        }
+        // still unmatched by `Without<HasCollider>`, so it comes back next frame
         if waits_for_reveal(
             ent,
             container,

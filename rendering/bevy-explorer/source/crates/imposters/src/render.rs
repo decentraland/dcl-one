@@ -29,7 +29,7 @@ use scene_runner::{
         ScenePointers, PARCEL_SIZE,
     },
     renderer_context::RendererSceneContext,
-    scene_lod::{LodState, SceneLod},
+    scene_lod::SceneLod,
 };
 
 use crate::{
@@ -277,7 +277,7 @@ pub fn spawn_imposters(
         // a shown near LOD covers its parcels too: imposters draw beyond the stand-ins
         .chain(
             lods.iter()
-                .filter(|lod| matches!(lod.state, LodState::Shown))
+                .filter(|lod| lod.shown())
                 .flat_map(|lod| lod.parcels.iter().copied()),
         )
         .collect::<HashSet<_>>();

@@ -32,7 +32,7 @@ impl AppSetting for MaxNearLodsSetting {
     }
 
     fn description(&self) -> String {
-        "Max Near LODs\n\nHow many nearby scenes in view, within 3 parcels and kept until they are 4 away, may show their own models while they load. The nearest scenes come first; the rest wait for a place. Scenes behind you keep theirs without counting, up to twice this number in all. Lower it to save memory; 0 turns near LODs off.".to_string()
+        "Max Near LODs\n\nHow many loading scenes nearby may draw their own models, the nearest in view first. When all are taken, a scene behind you gives its place to one in view. Lower it to save memory; 0 draws none. Every loading scene within 3 parcels still blocks you with its own colliders.".to_string()
     }
 
     fn save(&self, config: &mut AppConfig) {

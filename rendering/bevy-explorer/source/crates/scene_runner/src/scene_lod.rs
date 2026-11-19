@@ -1,12 +1,22 @@
-//! A scene's stand-in while it is in range but not live: the scene's own glTF files, placed from
-//! the asset pipeline's initial-scene-state descriptor. Each model is a glTF container of the
-//! stand-in's root, which the live container path (`gltf_container`) loads under the scene's
-//! content path, processes a slice a frame and gives its colliders, as it does a live scene's.
-//! The live scene's containers made before it goes name the same files and share the loaded
-//! glTFs. Nothing of
-//! the stand-in shows until every model is processed or has failed; it goes in the frame the live
-//! scene's content is first on screen. While shown, its models' collider nodes are colliders, so
-//! a player who reaches the scene before it is live walks on what they see.
+//! A scene's stand-in while it is in range but not live, built from the asset pipeline's
+//! initial-scene-state descriptor, which places the scene's own glTF files. It has two parts with
+//! their own rules, each a glTF container per model on the live container path
+//! (`gltf_container`), which loads it under the scene's content path and processes it a slice a
+//! frame:
+//! - Colliders, for every scene within the start ring whatever the facing, so a player who
+//!   reaches a loading scene, backing in or walking in, is stopped by it. Each model loads a
+//!   second time under an asset path of its own with no textures (`GltfPart::Colliders`); its
+//!   colliders block as soon as the model is processed, whether or not anything is drawn, and the
+//!   glTF goes then, leaving the collider shapes in main-world memory. A colliders part is never
+//!   interrupted: it goes with its scene.
+//! - Visuals, for the scenes in view under "Max Near LODs" (`GltfPart::Visuals`): the same asset
+//!   the live scene loads, drawn once every model is processed. When the cap is full, one behind
+//!   the camera makes way for one in view; dropping it frees its textures and meshes once nothing
+//!   else holds the glTF, and coming back reloads from the disk cache the colliders part filled.
+//!
+//! The stand-in goes, both parts with it, in the frame the live scene's content is first on
+//! screen; the live scene's containers made before then name the same files and share the loaded
+//! glTFs.
 
 use bevy::{
     asset::{io::Reader, AssetLoader, LoadContext, LoadState},
@@ -41,7 +51,9 @@ use crate::{
     renderer_context::RendererSceneContext,
     scene_partition::Partition,
     update_world::{
-        gltf_container::{GltfDefinition, GltfProcessed, SceneResourceLookup, StandInBounds},
+        gltf_container::{
+            GltfDefinition, GltfPart, GltfProcessed, SceneResourceLookup, StandInBounds,
+        },
         mesh_collider::SceneColliderData,
         ComponentTracker,
     },
@@ -73,10 +85,11 @@ impl Plugin for SceneLodPlugin {
                 title: "Scene stand-ins",
                 query: "/scene_lod_state",
                 fields: &[
+                    ("Near LOD colliders", "near.colliders"),
                     ("Near LODs shown", "near.shown"),
                     ("Near LODs loading", "near.loading"),
                     (
-                        "Near LODs waiting (behind, out of range or over the limit)",
+                        "Near LODs not drawn (behind, out of range or over the limit)",
                         "near.waiting",
                     ),
                     ("Max Near LODs (setting)", "near.max"),
@@ -95,8 +108,8 @@ impl Plugin for SceneLodPlugin {
             (
                 mark_shown_scenes,
                 update_scene_lods,
-                trim_scene_lods,
                 start_scene_lods,
+                update_lod_visuals,
                 show_scene_lods,
                 tint_scene_lods.run_if(resource_changed::<LodTint>),
             )
@@ -154,10 +167,7 @@ fn tint_scene_lods(
     base_materials: Res<Assets<StandardMaterial>>,
     mut materials: ResMut<Assets<SceneMaterial>>,
 ) {
-    for (_, lookup) in lods
-        .iter()
-        .filter(|(lod, _)| matches!(lod.state, LodState::Shown))
-    {
+    for (_, lookup) in lods.iter().filter(|(lod, _)| lod.shown()) {
         apply_tint(tint.0, lookup, &base_materials, &mut materials);
     }
 }
@@ -193,31 +203,37 @@ fn lod_state(
     if input.take().is_none() {
         return;
     }
-    let (mut waiting, mut loading, mut shown, mut none) = (0, 0, 0, 0);
+    let (mut colliders, mut waiting, mut loading, mut shown, mut none) = (0, 0, 0, 0, 0);
     for lod in &lods {
-        match lod.state {
-            LodState::Pending => waiting += 1,
-            LodState::Definition(_) | LodState::Descriptor { .. } | LodState::Loading => {
-                loading += 1
+        match (&lod.state, &lod.visuals) {
+            (LodState::Ready(_), visuals) => {
+                colliders += 1;
+                match visuals {
+                    Visuals::Off => waiting += 1,
+                    Visuals::Loading => loading += 1,
+                    Visuals::Shown => shown += 1,
+                    Visuals::Nothing => none += 1,
+                }
             }
-            LodState::Shown => shown += 1,
-            LodState::Nothing => none += 1,
+            (LodState::Nothing, _) => none += 1,
+            _ => waiting += 1,
         }
     }
     input.reply_ok(
         json!({
             "tint": tint.0,
-            "near": {"waiting": waiting, "loading": loading, "shown": shown, "none": none,
-                     "max": config.max_near_lods},
+            "near": {"colliders": colliders, "waiting": waiting, "loading": loading,
+                     "shown": shown, "none": none, "max": config.max_near_lods},
         })
         .to_string(),
     );
 }
 
-/// The stand-in of one scene: the root its models' containers hang from, at the scene's base
-/// parcel once its entity definition is loaded. While it exists the scene's hash ranks its
-/// downloads in the LOD tier (the hooks), below every live scene's; once the scene spawns, its
-/// own registration takes the hash to the scene tier.
+/// The stand-in of one scene: the root its visual containers and its colliders root
+/// ([`StandInColliders`]) hang from, at the scene's base parcel once its entity definition is
+/// loaded. While it exists the scene's hash ranks its downloads in the LOD tier (the hooks), below
+/// every live scene's; once the scene spawns, its own registration takes the hash to the scene
+/// tier.
 #[derive(Component)]
 #[component(on_insert = register_lod_hash, on_replace = release_lod_hash)]
 pub struct SceneLod {
@@ -229,11 +245,18 @@ pub struct SceneLod {
     /// name within the keep ring, which are all its partition needs; then all of them
     pub parcels: Vec<IVec2>,
     pub state: LodState,
+    pub visuals: Visuals,
+}
+
+impl SceneLod {
+    /// Its visuals are drawn: they cover the scene's parcels.
+    pub fn shown(&self) -> bool {
+        matches!(self.visuals, Visuals::Shown)
+    }
 }
 
 pub enum LodState {
-    /// not started: no partition yet, the scene past the start ring or wholly behind the
-    /// camera, or no free place
+    /// not started: no partition yet, or the scene past the start ring
     Pending,
     /// the scene's entity definition is loading, as the live scene loads it; the root holds the
     /// handle too (`SceneEntityDefinitionHandle`), which the containers' loads read
@@ -243,26 +266,45 @@ pub enum LodState {
         definition: Handle<EntityDefinition>,
         descriptor: Handle<Descriptor>,
     },
-    /// the containers are loading and processing; the root stays hidden until each is done
-    Loading,
-    Shown,
-    /// nothing to show: no descriptor, a definition or descriptor that could not load, no
-    /// model the scene deployed, or no model that loaded. Not asked again while the scene
-    /// stays within the keep ring
+    /// the models are known and their colliders part is loading or built; the visuals follow
+    /// their own rule ([`Visuals`])
+    Ready(Vec<StandInModel>),
+    /// nothing to stand in: no descriptor, a definition or descriptor that could not load, or
+    /// no model the scene deployed. Not asked again while the scene stays within the keep ring
     Nothing,
 }
 
-impl LodState {
+/// A model the descriptor places, by the scene's file name for it.
+#[derive(Clone)]
+pub struct StandInModel {
+    file: String,
+    transform: Transform,
+}
+
+/// The visuals of a stand-in whose models are known ([`LodState::Ready`]).
+pub enum Visuals {
+    /// not drawn: not in view, or no free place
+    Off,
+    /// the visual containers are loading and processing; the root stays hidden until each is
+    /// done
+    Loading,
+    Shown,
+    /// no model loaded. Not tried again while the scene stays within the keep ring
+    Nothing,
+}
+
+impl Visuals {
+    /// Takes a place under "Max Near LODs".
     fn started(&self) -> bool {
-        matches!(
-            self,
-            LodState::Definition(_)
-                | LodState::Descriptor { .. }
-                | LodState::Loading
-                | LodState::Shown
-        )
+        matches!(self, Visuals::Loading | Visuals::Shown)
     }
 }
+
+/// The root of a stand-in's colliders part: a hidden child of the stand-in's root, with the
+/// collider data its models' colliders join and a resource lookup of its own, so its meshes, held
+/// in main-world memory only, are never handed to a visual container.
+#[derive(Component)]
+pub struct StandInColliders;
 
 /// `{sceneId}_InitialSceneState.json`: the scene's models by content hash, each at its transform
 /// relative to the base parcel, in SDK coordinates. It lists only glTFs the scene deployed: a
@@ -452,123 +494,100 @@ fn update_scene_lods(
                 urn: urn.map(ToOwned::to_owned),
                 parcels,
                 state: LodState::Pending,
+                visuals: Visuals::Off,
             },
             Transform::default(),
             Visibility::Hidden,
-            // what the live container and collider systems keep on a scene root
+            // what the live container systems keep on a scene root
             SceneResourceLookup::default(),
             ComponentTracker::default(),
-            SceneColliderData::default(),
         ));
     }
 }
 
-/// Whether a stand-in counts toward "Max Near LODs": started, and not wholly behind the camera.
-/// One behind is kept but takes no place from one ahead.
-fn counts(lod: &SceneLod, partition: Option<&Partition>) -> bool {
-    lod.state.started() && !partition.is_some_and(|partition| partition.0.is_behind)
-}
-
-/// The most stand-ins started at once, counted or behind the camera: twice "Max Near LODs", so
-/// the setting still bounds memory when the player turns and new stand-ins start in view.
-fn hard_total(max: usize) -> usize {
-    max.saturating_mul(2)
-}
-
 type LodRow<'a> = (Entity, &'a SceneLod, Option<&'a Partition>);
 
-/// Keeps the stand-ins within "Max Near LODs" and its hard total (`trimmed_lods`). A removed one
-/// comes back as waiting (`update_scene_lods`) and starts again when a place frees.
-fn trim_scene_lods(
-    mut commands: Commands,
-    lods: Query<(Entity, &SceneLod, Option<&Partition>)>,
-    config: Res<AppConfig>,
-    mut last_max: Local<Option<usize>>,
-) {
-    let max = config.max_near_lods;
-    let lowered = last_max.is_some_and(|last| max < last);
-    *last_max = Some(max);
-    for entity in trimmed_lods(&lods.iter().collect::<Vec<_>>(), max, lowered) {
-        commands.entity(entity).despawn();
-    }
-}
-
-/// The stand-ins to remove, farthest first. Once "Max Near LODs" is lowered, the counted ones
-/// over it. Then those past the hard total (`hard_total`): the ones behind the camera first, so
-/// turning the camera alone never removes one; only stand-ins started in view after the turn push
-/// the ones behind out. A stand-in with no partition yet is kept.
-fn trimmed_lods(lods: &[LodRow<'_>], max: usize, lowered: bool) -> Vec<Entity> {
-    // the started stand-ins in view (`behind` false) or behind the camera, farthest first
-    let started = |behind: bool| {
-        let mut rows = lods
-            .iter()
-            .filter(|(_, lod, partition)| lod.state.started() && counts(lod, *partition) != behind)
-            .map(|(entity, _, partition)| {
-                let key = partition.map(|partition| partition.0.load_priority(Tier::Lod));
-                (key, *entity)
-            })
-            .collect::<Vec<_>>();
-        rows.sort_by_key(|(key, _)| std::cmp::Reverse(*key));
-        rows
-    };
-    let mut counted = started(false);
-    let behind = started(true);
-    let mut removed = Vec::new();
-    if lowered {
-        let excess = counted.len().saturating_sub(max);
-        removed.extend(counted.drain(..excess).map(|(_, entity)| entity));
-    }
-    let excess = (counted.len() + behind.len()).saturating_sub(hard_total(max));
-    removed.extend(
-        behind
-            .into_iter()
-            .chain(counted)
-            .filter(|(key, _)| key.is_some())
-            .take(excess)
-            .map(|(_, entity)| entity),
-    );
-    removed
-}
-
-/// Whether a stand-in that has not started may start: its scene within the start ring and not
-/// wholly behind the camera.
+/// Whether a stand-in that has not started may start: its scene within the start ring, whatever
+/// the facing. The ring bounds how many start; each loads its colliders part and nothing drawn.
 fn may_start(partition: Option<&Partition>) -> bool {
-    partition.is_some_and(|partition| {
-        partition.0.parcel_distance <= NEAR_LOD_START_RING && !partition.0.is_behind
-    })
+    partition.is_some_and(|partition| partition.0.parcel_distance <= NEAR_LOD_START_RING)
 }
 
-/// The stand-ins allowed to start this frame: those that may, nearest first (by the download
-/// key: ring, then in front of the camera, then distance), up to the "Max Near LODs" setting
-/// less the stand-ins it counts. The rest wait for a free place. Started ones behind the camera
-/// do not block one in view; `trim_scene_lods` then keeps the total within the hard total.
-fn admitted_lods(lods: &[LodRow<'_>], max: usize) -> HashSet<Entity> {
-    let counted = lods
+/// Whether a stand-in's visuals may start: its models known, its scene within the start ring and
+/// not wholly behind the camera.
+fn may_draw(lod: &SceneLod, partition: Option<&Partition>) -> bool {
+    matches!(lod.state, LodState::Ready(_))
+        && matches!(lod.visuals, Visuals::Off)
+        && partition.is_some_and(|partition| {
+            partition.0.parcel_distance <= NEAR_LOD_START_RING && !partition.0.is_behind
+        })
+}
+
+/// The visuals to start and to stop this frame, keeping at most "Max Near LODs" started. Those
+/// that may start (`may_draw`) do, nearest first (by the download key: ring, then distance),
+/// while there is a free place. With none free, one started behind the camera makes way for each
+/// in view, the farthest first; one in view never does. Once the setting is lowered, the
+/// farthest over it stop, those behind the camera first. Visuals with no partition yet are kept.
+fn visual_changes(lods: &[LodRow<'_>], max: usize) -> (Vec<Entity>, Vec<Entity>) {
+    // started visuals, those behind the camera first, then the farthest first
+    let mut started = lods
         .iter()
-        .filter(|(_, lod, partition)| counts(lod, *partition))
-        .count();
+        .filter(|(_, lod, _)| lod.visuals.started())
+        .map(|(entity, _, partition)| {
+            let key = partition.map(|partition| partition.0.load_priority(Tier::Lod));
+            (key, *entity)
+        })
+        .collect::<Vec<_>>();
+    let mut count = started.len();
+    started.retain(|(key, _)| key.is_some());
+    started.sort_by_key(|(key, _)| {
+        (
+            key.is_some_and(|key| !key.is_behind),
+            std::cmp::Reverse(*key),
+        )
+    });
+    let mut evictable = started.into_iter().peekable();
+
     let mut candidates = lods
         .iter()
-        .filter(|(_, lod, partition)| {
-            matches!(lod.state, LodState::Pending) && may_start(*partition)
-        })
+        .filter(|(_, lod, partition)| may_draw(lod, *partition))
         .filter_map(|(entity, _, partition)| {
             partition.map(|partition| (partition.0.load_priority(Tier::Lod), *entity))
         })
         .collect::<Vec<_>>();
     candidates.sort_by_key(|(key, _)| *key);
-    candidates
-        .into_iter()
-        .take(max.saturating_sub(counted))
-        .map(|(_, entity)| entity)
-        .collect()
+
+    let mut stop = Vec::new();
+    while count > max {
+        let Some((_, entity)) = evictable.next() else {
+            break;
+        };
+        stop.push(entity);
+        count -= 1;
+    }
+    let mut start = Vec::new();
+    for (_, entity) in candidates {
+        if count < max {
+            start.push(entity);
+            count += 1;
+            continue;
+        }
+        // full: one behind the camera makes way, never one in view
+        match evictable.next_if(|(key, _)| key.is_some_and(|key| key.is_behind)) {
+            Some((_, behind)) => {
+                stop.push(behind);
+                start.push(entity);
+            }
+            None => break,
+        }
+    }
+    (start, stop)
 }
 
-/// Starts a stand-in once it has a partition within the start ring, the scene is not wholly
-/// behind the camera and it fits the "Max Near LODs" count, nearest first: loads the scene's
-/// entity definition as the live scene does, then the descriptor, then gives each model the
-/// descriptor names among the scene's deployed files a glTF container under the root.
-#[allow(clippy::too_many_arguments)]
+/// Starts a stand-in once its scene is within the start ring, whatever the facing: loads the
+/// scene's entity definition as the live scene does, then the descriptor, then gives each model
+/// the descriptor names among the scene's deployed files a colliders-part container under a
+/// colliders root ([`StandInColliders`]). The visuals start apart (`update_lod_visuals`).
 fn start_scene_lods(
     mut commands: Commands,
     mut lods: Query<(Entity, &mut SceneLod, Option<&Partition>)>,
@@ -577,16 +596,14 @@ fn start_scene_lods(
     live_scenes: Res<LiveScenes>,
     contexts: Query<(), With<RendererSceneContext>>,
     ipfas: IpfsAssetServer,
-    config: Res<AppConfig>,
     // absent without the render storage-buffer assets (tests), as for the live scene's bounds
     mut storage_buffers: Option<ResMut<Assets<ShaderStorageBuffer>>>,
 ) {
-    let admitted = admitted_lods(&lods.iter().collect::<Vec<_>>(), config.max_near_lods);
-    for (root, lod, _) in lods.iter_mut() {
+    for (root, lod, partition) in lods.iter_mut() {
         let lod = lod.into_inner();
         match &lod.state {
             LodState::Pending => {
-                if !admitted.contains(&root) {
+                if !may_start(partition) {
                     continue;
                 }
                 // the live scene loads the same handle: the entity file is fetched once
@@ -688,6 +705,7 @@ fn start_scene_lods(
                     }
                     _ => continue,
                 }
+                let definition_handle = definition.clone();
                 let (Some(definition), Some(descriptor)) = (
                     definitions.get(definition.id()),
                     descriptors.get(descriptor.id()),
@@ -695,7 +713,7 @@ fn start_scene_lods(
                     lod.state = LodState::Nothing;
                     continue;
                 };
-                let mut spawned = 0u16;
+                let mut models = Vec::new();
                 for asset in &descriptor.assets {
                     // the descriptor names the file by its content hash
                     let Some((file, _)) = definition
@@ -710,32 +728,112 @@ fn start_scene_lods(
                         );
                         continue;
                     };
-                    let Some(id) = FIRST_CONTAINER_ID.checked_add(spawned) else {
-                        break;
-                    };
-                    spawned += 1;
-                    commands.spawn((
-                        SceneEntity {
-                            root,
-                            scene_id: SceneId(root),
-                            id: SceneEntityId::new(id, 0),
-                        },
-                        GltfDefinition::from(PbGltfContainer {
-                            src: file.clone(),
-                            ..Default::default()
-                        }),
-                        asset.transform(),
-                        Visibility::default(),
-                        ChildOf(root),
-                    ));
+                    models.push(StandInModel {
+                        file: file.clone(),
+                        transform: asset.transform(),
+                    });
                 }
-                lod.state = if spawned == 0 {
-                    LodState::Nothing
-                } else {
-                    LodState::Loading
-                };
+                if models.is_empty() {
+                    lod.state = LodState::Nothing;
+                    continue;
+                }
+                // the colliders part: hidden, and blocking as each model is processed
+                let colliders = commands
+                    .spawn((
+                        StandInColliders,
+                        Transform::default(),
+                        Visibility::Hidden,
+                        SceneEntityDefinitionHandle(definition_handle),
+                        SceneResourceLookup::default(),
+                        ComponentTracker::default(),
+                        SceneColliderData::default(),
+                        ChildOf(root),
+                    ))
+                    .id();
+                spawn_containers(&mut commands, colliders, &models, GltfPart::Colliders);
+                lod.state = LodState::Ready(models);
             }
             _ => (),
+        }
+    }
+}
+
+/// One container per model under `root`, each taking `part` of its model.
+fn spawn_containers(
+    commands: &mut Commands,
+    root: Entity,
+    models: &[StandInModel],
+    part: GltfPart,
+) {
+    for (model, id) in models.iter().zip(FIRST_CONTAINER_ID..=u16::MAX) {
+        commands.spawn((
+            SceneEntity {
+                root,
+                scene_id: SceneId(root),
+                id: SceneEntityId::new(id, 0),
+            },
+            GltfDefinition::from(PbGltfContainer {
+                src: model.file.clone(),
+                ..Default::default()
+            }),
+            part,
+            model.transform,
+            Visibility::default(),
+            ChildOf(root),
+        ));
+    }
+}
+
+/// Starts and stops stand-ins' visuals by `visual_changes`. Starting gives each model a visuals
+/// container under the stand-in's root; stopping despawns them, hides the root and empties its
+/// resource lookup, so the scene materials go and, once no live scene holds them, the glTFs with
+/// their textures and meshes. The colliders part stays.
+#[allow(clippy::type_complexity)]
+fn update_lod_visuals(
+    mut commands: Commands,
+    mut lods: Query<(
+        Entity,
+        &mut SceneLod,
+        Option<&Partition>,
+        Option<&Children>,
+        &mut SceneResourceLookup,
+    )>,
+    parts: Query<&GltfPart>,
+    config: Res<AppConfig>,
+) {
+    let (start, stop) = visual_changes(
+        &lods
+            .iter()
+            .map(|(entity, lod, partition, ..)| (entity, lod, partition))
+            .collect::<Vec<_>>(),
+        config.max_near_lods,
+    );
+    for root in stop {
+        let Ok((_, mut lod, _, children, mut lookup)) = lods.get_mut(root) else {
+            continue;
+        };
+        lod.visuals = Visuals::Off;
+        despawn_visuals(&mut commands, children, &parts);
+        *lookup = SceneResourceLookup::default();
+        commands.entity(root).insert(Visibility::Hidden);
+    }
+    for root in start {
+        let Ok((_, mut lod, ..)) = lods.get_mut(root) else {
+            continue;
+        };
+        let LodState::Ready(models) = &lod.state else {
+            continue;
+        };
+        spawn_containers(&mut commands, root, models, GltfPart::Visuals);
+        lod.visuals = Visuals::Loading;
+    }
+}
+
+/// Despawns a stand-in root's visuals containers, leaving its colliders root.
+fn despawn_visuals(commands: &mut Commands, children: Option<&Children>, parts: &Query<&GltfPart>) {
+    for child in children.into_iter().flat_map(|children| children.iter()) {
+        if matches!(parts.get(child), Ok(GltfPart::Visuals)) {
+            commands.entity(child).despawn();
         }
     }
 }
@@ -757,10 +855,10 @@ fn scene_placement(definition: &EntityDefinition) -> Option<(IVec2, Vec<IVec2>)>
     Some((base, parcels))
 }
 
-/// Shows a stand-in in one frame once each of its containers is processed: some model loaded,
-/// or nothing to show if none did (the parcels then stay the loading walls' and the
-/// imposters').
-pub(crate) fn show_scene_lods(
+/// Shows a stand-in's visuals in one frame once each of its visuals containers is processed:
+/// some model loaded, or nothing to show if none did (the parcels then stay the loading walls'
+/// and the imposters'; the colliders part stays).
+fn show_scene_lods(
     mut commands: Commands,
     mut lods: Query<(
         Entity,
@@ -768,13 +866,14 @@ pub(crate) fn show_scene_lods(
         Option<&Children>,
         &SceneResourceLookup,
     )>,
-    containers: Query<Option<&GltfProcessed>, With<GltfDefinition>>,
+    containers: Query<(&GltfPart, Option<&GltfProcessed>)>,
+    parts: Query<&GltfPart>,
     tint: Res<LodTint>,
     base_materials: Res<Assets<StandardMaterial>>,
     mut materials: ResMut<Assets<SceneMaterial>>,
 ) {
     for (root, mut lod, children, lookup) in lods.iter_mut() {
-        if !matches!(lod.state, LodState::Loading) {
+        if !matches!(lod.visuals, Visuals::Loading) {
             continue;
         }
         let Some(children) = children else {
@@ -782,7 +881,10 @@ pub(crate) fn show_scene_lods(
         };
         let mut processed = true;
         let mut any_model = false;
-        for done in containers.iter_many(children.collection()) {
+        for (part, done) in containers.iter_many(children.collection()) {
+            if *part != GltfPart::Visuals {
+                continue;
+            }
             match done {
                 Some(done) => any_model |= done.instance_id.is_some(),
                 None => processed = false,
@@ -792,14 +894,14 @@ pub(crate) fn show_scene_lods(
             continue;
         }
         if any_model {
-            lod.state = LodState::Shown;
+            lod.visuals = Visuals::Shown;
             commands.entity(root).insert(Visibility::Inherited);
             if tint.0 {
                 apply_tint(true, lookup, &base_materials, &mut materials);
             }
         } else {
-            lod.state = LodState::Nothing;
-            commands.entity(root).despawn_related::<Children>();
+            lod.visuals = Visuals::Nothing;
+            despawn_visuals(&mut commands, Some(children), &parts);
         }
     }
 }
@@ -819,17 +921,18 @@ mod tests {
         })
     }
 
-    fn lod(state: LodState) -> SceneLod {
+    fn lod(state: LodState, visuals: Visuals) -> SceneLod {
         SceneLod {
             hash: "scene".to_owned(),
             urn: None,
             parcels: Vec::new(),
             state,
+            visuals,
         }
     }
 
-    /// Stand-ins at the given rings, `true` behind the camera, `started` or waiting; their
-    /// entities in the same order.
+    /// Stand-ins with their models known at the given rings, `true` behind the camera, their
+    /// visuals `started` or not drawn; their entities in the same order.
     fn rows(
         world: &mut World,
         stand_ins: &[(u16, bool, bool)],
@@ -837,12 +940,16 @@ mod tests {
         stand_ins
             .iter()
             .map(|&(ring, behind, started)| {
-                let state = if started {
-                    LodState::Loading
+                let visuals = if started {
+                    Visuals::Loading
                 } else {
-                    LodState::Pending
+                    Visuals::Off
                 };
-                (world.spawn_empty().id(), lod(state), at_ring(ring, behind))
+                (
+                    world.spawn_empty().id(),
+                    lod(LodState::Ready(Vec::new()), visuals),
+                    at_ring(ring, behind),
+                )
             })
             .collect()
     }
@@ -853,97 +960,84 @@ mod tests {
             .collect()
     }
 
-    /// Only stand-ins in view take a place: one started behind the camera leaves the nearest
-    /// waiting one in view free to start, and one waiting behind the camera never starts.
+    /// A stand-in starts its colliders part whatever the facing, within the start ring only.
     #[test]
-    fn admission_counts_stand_ins_in_view() {
+    fn colliders_start_by_distance_alone() {
+        assert!(may_start(Some(&at_ring(1, true))));
+        assert!(may_start(Some(&at_ring(NEAR_LOD_START_RING, false))));
+        assert!(!may_start(Some(&at_ring(NEAR_LOD_KEEP_RING, false))));
+        assert!(!may_start(None));
+    }
+
+    /// Visuals start in view, nearest first, while a place is free; every started one takes a
+    /// place, behind the camera or not, and none behind the camera starts. With one place left,
+    /// the nearest in view takes it and the started one behind the camera makes way for the next.
+    #[test]
+    fn visuals_start_in_view_nearest_first_within_the_cap() {
         let mut world = World::new();
         let rows = rows(
             &mut world,
             &[
                 (1, false, true),
-                (1, true, true),
                 (3, false, false),
                 (2, false, false),
                 (1, true, false),
+                (1, true, true),
             ],
         );
-        let admitted = admitted_lods(&as_rows(&rows), 2);
-        assert_eq!(admitted, HashSet::from([rows[3].0]));
-        assert!(admitted_lods(&as_rows(&rows), 1).is_empty());
+        assert_eq!(
+            visual_changes(&as_rows(&rows), 4),
+            (vec![rows[2].0, rows[1].0], vec![])
+        );
+        assert_eq!(
+            visual_changes(&as_rows(&rows), 3),
+            (vec![rows[2].0, rows[1].0], vec![rows[4].0])
+        );
+        assert_eq!(
+            visual_changes(&as_rows(&rows), 2),
+            (vec![rows[2].0], vec![rows[4].0])
+        );
     }
 
-    /// Past twice "Max Near LODs" the farthest stand-ins behind the camera go, never one in
-    /// view; within it nothing goes until the setting is lowered.
+    /// With every place taken, one started behind the camera makes way for one in view, the
+    /// farthest first; one in view never does.
     #[test]
-    fn stand_ins_behind_the_camera_stay_within_the_hard_total() {
+    fn one_behind_makes_way_for_one_in_view() {
         let mut world = World::new();
         let rows = rows(
             &mut world,
             &[
-                (1, false, true),
-                (2, false, true),
+                (3, false, true),
                 (1, true, true),
                 (3, true, true),
-                (2, true, true),
+                (2, false, false),
+                (1, false, false),
                 (3, false, false),
             ],
         );
-        assert_eq!(trimmed_lods(&as_rows(&rows), 2, false), vec![rows[3].0]);
-        assert!(trimmed_lods(&as_rows(&rows), 3, false).is_empty());
+        assert_eq!(
+            visual_changes(&as_rows(&rows), 3),
+            (vec![rows[4].0, rows[3].0], vec![rows[2].0, rows[1].0])
+        );
     }
 
-    /// Lowering "Max Near LODs" removes the farthest counted stand-ins over it, then the
-    /// farthest behind the camera over the new hard total.
+    /// Lowering "Max Near LODs" stops the farthest over it, those behind the camera first.
     #[test]
-    fn lowering_the_count_trims_in_view_then_behind() {
+    fn lowering_the_cap_stops_behind_then_in_view() {
         let mut world = World::new();
         let rows = rows(
             &mut world,
             &[
                 (1, false, true),
                 (3, false, true),
-                (2, false, true),
                 (1, true, true),
                 (3, true, true),
             ],
         );
         assert_eq!(
-            trimmed_lods(&as_rows(&rows), 1, true),
-            vec![rows[1].0, rows[2].0, rows[4].0]
+            visual_changes(&as_rows(&rows), 1),
+            (vec![], vec![rows[3].0, rows[2].0, rows[1].0])
         );
-    }
-
-    /// The setting's change is read by the system: the hard total holds every frame, and
-    /// lowering the count trims the stand-ins in view once.
-    #[test]
-    fn trim_follows_the_setting() {
-        let mut world = World::new();
-        world.insert_resource(AppConfig {
-            max_near_lods: 2,
-            ..Default::default()
-        });
-        let stand_ins =
-            [(1, false), (2, false), (1, true), (2, true), (3, true)].map(|(ring, behind)| {
-                world
-                    .spawn((lod(LodState::Shown), at_ring(ring, behind)))
-                    .id()
-            });
-        let mut trim = IntoSystem::into_system(trim_scene_lods);
-        trim.initialize(&mut world);
-
-        trim.run((), &mut world);
-        trim.apply_deferred(&mut world);
-        assert!(world.get_entity(stand_ins[4]).is_err());
-        assert_eq!(world.query::<&SceneLod>().iter(&world).count(), 4);
-
-        world.resource_mut::<AppConfig>().max_near_lods = 1;
-        trim.run((), &mut world);
-        trim.apply_deferred(&mut world);
-        // the farther one in view goes for the count, the farther one behind for the hard total
-        assert!(world.get_entity(stand_ins[1]).is_err());
-        assert!(world.get_entity(stand_ins[3]).is_err());
-        assert_eq!(world.query::<&SceneLod>().iter(&world).count(), 2);
     }
 
     fn container(world: &mut World, root: Entity, processed: Option<GltfProcessed>) -> Entity {
@@ -952,6 +1046,7 @@ mod tests {
                 src: "model.glb".to_owned(),
                 ..Default::default()
             }),
+            GltfPart::Visuals,
             ChildOf(root),
         ));
         if let Some(processed) = processed {
@@ -960,37 +1055,45 @@ mod tests {
         container.id()
     }
 
-    /// A stand-in whose every model failed shows nothing: it waits for the last container, then
-    /// becomes `Nothing`, drops its containers and stays hidden.
+    /// Visuals whose every model failed show nothing: they wait for the last container, then
+    /// become `Nothing`, drop their containers and stay hidden. The colliders root stays.
     #[test]
-    fn a_stand_in_whose_models_all_fail_shows_nothing() {
+    fn visuals_whose_models_all_fail_show_nothing() {
         let mut world = World::new();
         world.init_resource::<LodTint>();
         world.init_resource::<Assets<StandardMaterial>>();
         world.init_resource::<Assets<SceneMaterial>>();
         let root = world
             .spawn((
-                lod(LodState::Loading),
+                lod(LodState::Ready(Vec::new()), Visuals::Loading),
                 Visibility::Hidden,
                 SceneResourceLookup::default(),
             ))
             .id();
+        let colliders = world.spawn((StandInColliders, ChildOf(root))).id();
         container(&mut world, root, Some(GltfProcessed::default()));
         let last = container(&mut world, root, None);
 
         world.run_system_once(show_scene_lods).unwrap();
         assert!(matches!(
-            world.get::<SceneLod>(root).unwrap().state,
-            LodState::Loading
+            world.get::<SceneLod>(root).unwrap().visuals,
+            Visuals::Loading
         ));
 
         world.entity_mut(last).insert(GltfProcessed::default());
         world.run_system_once(show_scene_lods).unwrap();
         assert!(matches!(
-            world.get::<SceneLod>(root).unwrap().state,
-            LodState::Nothing
+            world.get::<SceneLod>(root).unwrap().visuals,
+            Visuals::Nothing
         ));
-        assert!(world.get::<Children>(root).is_none());
+        assert_eq!(
+            world
+                .get::<Children>(root)
+                .unwrap()
+                .iter()
+                .collect::<Vec<_>>(),
+            vec![colliders]
+        );
         assert_eq!(world.get::<Visibility>(root), Some(&Visibility::Hidden));
     }
 
@@ -1072,11 +1175,10 @@ mod tests {
         assert_eq!(stand_ins(&mut world), 0);
     }
 
-    /// A stand-in's colliders join the collider set only once it shows, so a hidden stand-in
-    /// neither blocks nor carries the player: movement, collision resolution and foot IK all cast
-    /// against the whole set.
+    /// A stand-in's colliders block as soon as its colliders part registers them, while nothing
+    /// of the stand-in is drawn: a player backing into a loading scene is stopped by it.
     #[test]
-    fn a_stand_in_collides_only_once_shown() {
+    fn a_stand_in_collides_while_nothing_is_drawn() {
         use std::sync::Arc;
 
         use bevy::{
@@ -1112,9 +1214,21 @@ mod tests {
             })
             .add_systems(Update, update_colliders::<CtCollider>);
 
+        let stand_in = app
+            .world_mut()
+            .spawn((
+                lod(LodState::Ready(Vec::new()), Visuals::Off),
+                Visibility::Hidden,
+            ))
+            .id();
         let root = app
             .world_mut()
-            .spawn((lod(LodState::Loading), SceneColliderData::default()))
+            .spawn((
+                StandInColliders,
+                Visibility::Hidden,
+                SceneColliderData::default(),
+                ChildOf(stand_in),
+            ))
             .id();
         let node = app.world_mut().spawn_empty().id();
         app.world_mut().entity_mut(node).insert((
@@ -1142,13 +1256,7 @@ mod tests {
                 .is_some()
         };
 
-        // still loading: the processed model's collider waits
-        app.update();
-        app.update();
         assert!(!blocks(&mut app));
-
-        // shown: the collider registers in the same update
-        app.world_mut().get_mut::<SceneLod>(root).unwrap().state = LodState::Shown;
         app.update();
         assert!(blocks(&mut app));
     }

@@ -629,9 +629,9 @@ pub struct AppConfig {
     pub scene_threads: usize,
     pub scene_load_distance: f32,
     pub scene_unload_extra_distance: f32,
-    /// How many scenes not wholly behind the camera may load or show a near LOD (their own
-    /// models, while they load) at once, the nearest first. Twice as many are kept at most,
-    /// counting those behind the camera.
+    /// How many loading scenes may draw a near LOD (their own models) at once, in view and
+    /// behind the camera together: the nearest in view start first, and with none free one
+    /// behind the camera makes way for one in view. A near LOD's colliders take no place.
     pub max_near_lods: usize,
     pub scene_imposter_distances: Vec<f32>,
     pub scene_imposter_multisample: bool,
