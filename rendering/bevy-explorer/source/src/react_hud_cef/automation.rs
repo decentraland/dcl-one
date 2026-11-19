@@ -95,7 +95,6 @@ struct HudCalls {
 }
 
 impl HudCalls {
-    #[allow(clippy::too_many_arguments)]
     fn ask(
         &mut self,
         page: Entity,

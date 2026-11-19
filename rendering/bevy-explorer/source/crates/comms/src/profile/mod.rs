@@ -571,7 +571,6 @@ fn is_senders_own(sender: Address, content: &SerializedProfile) -> bool {
             .is_none_or(|id| id.is_empty() || is_sender(id))
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn setup_primary_profile(
     mut commands: Commands,
     player: Query<(Entity, Option<&UserProfile>), With<PrimaryUser>>,
@@ -1128,7 +1127,6 @@ fn request_missing_profiles(
 
 /// Answers `getCompactProfiles` (the HUD's list rows) once every address of a request has
 /// settled. Runs after `drive_profile_fetches`, so a batch that lands answers in that frame.
-#[allow(clippy::type_complexity)]
 fn serve_compact_profiles(
     mut requests: EventReader<RpcCallEvent>,
     mut pending: Local<Vec<(Vec<Address>, RpcResultSender<Vec<CompactProfile>>)>>,
@@ -1237,7 +1235,6 @@ fn pipe_profile_changes_to_scene(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn process_profile_events(
     mut commands: Commands,
     mut players: Query<(&mut ForeignPlayer, Option<&mut UserProfile>)>,

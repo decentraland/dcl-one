@@ -59,7 +59,6 @@ fn console_relay(mut write: EventWriter<PrintConsoleLine>, mut relay: ResMut<Con
 #[command(name = "/debug_dump_scene")]
 struct DebugDumpScene;
 
-#[allow(clippy::too_many_arguments)]
 fn debug_dump_scene(
     mut input: ConsoleCommand<DebugDumpScene>,
     containing_scene: ContainingScene,

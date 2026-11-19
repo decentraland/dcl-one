@@ -576,7 +576,12 @@ impl State {
     /// maintenance and denylist snapshot reload run on every process.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         auth_api::spawn_identity_sweeper(self, jobs);
-        denylist::spawn_reload(self, jobs, denylist::RELOAD_INTERVAL);
+        denylist::spawn_reload(
+            self,
+            jobs,
+            denylist::RELOAD_INTERVAL,
+            denylist::RELOAD_TIMEOUT,
+        );
         let pool = self.pool.clone();
         jobs.spawn_periodic_leased(
             "opensea-cache-expiry",

@@ -79,7 +79,6 @@ impl Plugin for AvatarModifierAreaPlugin {
 #[derive(Component)]
 pub struct HiddenNametag;
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn update_avatar_modifier_area(
     mut commands: Commands,
     mut players: Query<

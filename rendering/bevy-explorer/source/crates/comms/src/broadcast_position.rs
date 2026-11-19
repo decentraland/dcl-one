@@ -59,7 +59,6 @@ struct LastAnim {
     sequence: u32,
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn broadcast_position(
     player: Query<
         (

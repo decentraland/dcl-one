@@ -32,6 +32,6 @@ test-support = ["catalyst-shared/test-support", "catalyst-chain-index/test-suppo
 [dev-dependencies]
 catalyst-shared = { path = "../shared", features = ["test-support"] }
 catalyst-chain-index = { path = "../chain-index", features = ["test-support"] }
-catalyst-db = { path = "../db", features = ["scratch"] }
+catalyst-db = { path = "../db", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }

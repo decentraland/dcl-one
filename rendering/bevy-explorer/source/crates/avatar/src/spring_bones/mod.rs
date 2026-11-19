@@ -251,7 +251,6 @@ fn measure(
 /// behind it and those hidden. An avatar that drops out gets its bones back at rest. Bone poses
 /// are computed here from local transforms: the stored globals predate this frame's movement and
 /// IK.
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn simulate_spring_bones(
     mut commands: Commands,
     config: Res<AppConfig>,

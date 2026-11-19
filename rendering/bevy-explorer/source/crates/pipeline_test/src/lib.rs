@@ -1,6 +1,8 @@
 //! The setup the `#[ignore]`d pipeline-compile tests share (see recipes.md). Only ever a
 //! dev-dependency.
 
+#![forbid(unsafe_code)]
+
 use std::time::{Duration, Instant};
 
 use bevy::{
