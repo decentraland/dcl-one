@@ -687,7 +687,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     return manaHasRoom(compactManaAttempt(op.mana)) ? 'retry' : 'capped'
   }
   /** Whether this page may retry the MANA purchase now: it holds it, nothing runs, and the chain read last allows it. */
-  const manaRetryable = (op: Operation): boolean => !!op.mana && !!op.release && !op.foreign && !running && op.manaRetry === true && !TERMINAL_STATES.includes(op.state)
+  const manaRetryable = (op: Operation): boolean =>
+    !!op.mana && !!op.release && !op.foreign && !running && !op.manaSending && op.manaRetry === true && !TERMINAL_STATES.includes(op.state)
   /** CHECK AGAIN: one look now, besides the watch's own; the dialog follows if it settled. */
   const checkAgain = async (op: Operation, view: (check: 'ready' | 'checking') => void): Promise<void> => {
     if (!op.buyer || op.foreign || TERMINAL_STATES.includes(op.state)) return
@@ -1504,16 +1505,23 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       return
     }
     running = true
-    try {
-      await runMana(op, req, quote, mana, wallet, current)
-    } finally {
+    // The shop-wide hold ends once the sale is kept as gone (or this ends): the operation's own lock keeps the purchase.
+    let held = true
+    const release = (): void => {
+      if (!held) return
+      held = false
       running = false
+    }
+    try {
+      await runMana(op, req, quote, mana, wallet, current, release)
+    } finally {
+      release()
       // Followed once the dialog says so: a watch that settles at once then updates it.
       if ((op.state as ShopOperationState) === 'pending') void reconcile(op)
     }
   }
 
-  const runMana = async (op: Operation, req: ShopBuyRequest, quote: Quote, mana: ManaQuote, wallet: Eip1193Provider, current: () => boolean): Promise<void> => {
+  const runMana = async (op: Operation, req: ShopBuyRequest, quote: Quote, mana: ManaQuote, wallet: Eip1193Provider, current: () => boolean, release: () => void): Promise<void> => {
     const { part } = mana
     const { group } = part
     const chainId = group.key.chainId
@@ -1567,7 +1575,18 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     store.restore(part.priced.map((p) => p.line))
     const keepAttempt = keeper(op)
     // The checkpoint is a finalized block: no reorg can move the sale below it.
-    const attempt = createManaAttempt(terms, keepAttempt, { mana: registryFor({ chainId, sale: terms }).mana.address, checkpoint: () => svc.manaEvidence().finalized(chainId), now: svc.now })
+    const attempt = createManaAttempt(terms, keepAttempt, {
+      mana: registryFor({ chainId, sale: terms }).mana.address,
+      checkpoint: () => svc.manaEvidence().finalized(chainId),
+      now: svc.now,
+      // Kept as gone: pending from here, closable, and followed by the watch, however long the relay and the executor take.
+      onDispatch: () => {
+        if (op.state === 'processing') move(op, 'pending')
+        if (slot.holds(op) && !TERMINAL_STATES.includes(op.state)) showPending(op)
+        release()
+        void reconcile(op)
+      }
+    })
     if (!keepAttempt(structuredClone(attempt.record))) {
       refused(STORAGE_REFUSED, again)
       return
@@ -1628,19 +1647,28 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     // A sale that went (or that the executor says went): whatever it read (a receipt for the relay's hash, a revert, no
     // answer), only the chain's evidence for this sale's own signed execution settles it (./manaEvidence). A reverted
     // transaction doesn't retire the sale's nonce: the sale may still run, so it is followed like any other.
-    // Kept as pending and shown so at once, closable: the watch (started once this returns) reads the chain.
+    // Settled meanwhile by the watch (the chain answered first): nothing left to do here.
+    if (TERMINAL_STATES.includes(op.state)) return
+    // A sale that went: pending, as its dispatch already showed it. The watch reads the chain; one look now too, with
+    // whatever the relay answered since (its hash), rather than at the watch's next turn.
     if (attempt.dispatched() || result.status === 'confirmed' || result.status === 'pending') {
-      move(op, 'pending')
-      showPending(op)
+      if (op.state !== 'pending') {
+        move(op, 'pending')
+        if (slot.holds(op)) showPending(op)
+      }
+      void check(op as Operation & { buyer: string }, store).catch(() => false)
       return
     }
-    if (result.status === 'skipped') {
-      refused("This purchase couldn't run. No MANA was spent.", again)
+    const message = result.status === 'skipped' ? "This purchase couldn't run. No MANA was spent." : result.failure.message
+    // Shown as pending at its dispatch, then the relay's late answer proved nothing went (a marked refusal): it ends
+    // unbought, on the dialog still up for it, or quietly when that was closed (its item is free again).
+    if (op.state === 'pending' && !slot.holds(op)) {
+      settled(op, 'failed', {}, message, message)
       return
     }
     op.state = 'reviewing'
     publish(op)
-    fail(op, result.failure.message, () => restart(op, req, 'failed'))
+    fail(op, message, result.status === 'skipped' ? again : () => restart(op, req, 'failed'))
   }
 
   /** Writes `op`'s MANA attempt and reads it back: true only when storage holds exactly the record given. */
@@ -1673,12 +1701,31 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     const chainId = op.chainId
     const terms = storedManaTerms(record)
     const nonce = BigInt(record.nonce)
+    /** The shop-wide hold, from RETRY until the retry is kept as gone (or ends). */
+    let held = false
+    const release = (): void => {
+      if (!held) return
+      held = false
+      running = false
+    }
     let attempt: ReturnType<typeof createManaAttempt>
     let venue
     try {
       const book = registryFor({ chainId, sale: terms })
       venue = book.venue
-      attempt = createManaAttempt(terms, keeper(op), { mana: book.mana.address, checkpoint: () => svc.manaEvidence().finalized(chainId), now: svc.now, from: record })
+      attempt = createManaAttempt(terms, keeper(op), {
+        mana: book.mana.address,
+        checkpoint: () => svc.manaEvidence().finalized(chainId),
+        now: svc.now,
+        from: record,
+        // Kept as gone: in progress from here, closable, and followed by the watch, however long the relay takes.
+        onDispatch: () => {
+          op.manaRetry = undefined
+          if (slot.holds(op) && !TERMINAL_STATES.includes(op.state)) showPending(op)
+          release()
+          void reconcile(op)
+        }
+      })
     } catch (e) {
       console.warn('[shell/shop] could not retry the MANA purchase', e)
       return
@@ -1700,6 +1747,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     }
     const rail = svc.rail()
     running = true
+    held = true
     op.manaSending = true
     show(op, { step: 'processing', balance: null, count: op.items.reduce((n, l) => n + l.quantity, 0) }, { onClose: () => {} })
     try {
@@ -1721,7 +1769,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       console.warn('[shell/shop] the MANA retry ended', e)
     } finally {
       op.manaSending = false
-      running = false
+      release()
       // A retry that ended before its request (its signature failed, or its dispatch couldn't be kept) left nothing that
       // can be evidence: dropped, so the purchase may be retried again.
       attempt.retire()

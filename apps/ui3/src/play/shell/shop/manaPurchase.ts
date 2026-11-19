@@ -253,12 +253,13 @@ const isDecline = (e: unknown): boolean => (e as { code?: unknown } | null)?.cod
  * A purchase's attempt: a fresh one at `terms` (no send yet), or `from` a kept record (a retry after a reload).
  * `keep` writes the record and reads it back from storage: true only when what storage holds is the record given.
  * `mana`: the chain's MANA token, whose approve the relay may carry while the buyer authorizes it. `checkpoint` reads
- * a block at or before now, kept before the first relay request; `now` stamps each send.
+ * a block at or before now, kept before the first relay request; `now` stamps each send. `onDispatch` hears each send
+ * kept as gone, right before its request leaves: the purchase is followed from then on, not once its answer comes.
  */
 export function createManaAttempt(
   terms: ManaSaleTerms,
   keep: (record: ManaAttemptRecord) => boolean,
-  opts: { mana: string; checkpoint: () => Promise<bigint>; now: () => number; from?: ManaAttemptRecord }
+  opts: { mana: string; checkpoint: () => Promise<bigint>; now: () => number; from?: ManaAttemptRecord; onDispatch?: () => void }
 ): ManaAttempt {
   const record: ManaAttemptRecord = opts.from ? structuredClone(opts.from) : { venue: terms.venue.toLowerCase(), terms: storeTerms(terms), fingerprint: manaFingerprint(terms), sends: [] }
   if (record.fingerprint !== manaFingerprint(terms)) throw new Error('The kept attempt is for another sale')
@@ -336,6 +337,8 @@ export function createManaAttempt(
         if (!move({ ...record, fromBlock, sends: [...record.sends.slice(0, -1), { ...pending, stage: 'dispatched', payload: keccak256(request.payload), at: opts.now() }] })) {
           return notSent("This browser couldn't keep a record of the purchase, so it wasn't sent.")
         }
+        // Kept as gone: whoever follows the purchase takes over from here, whatever the request and its answer take.
+        opts.onDispatch?.()
         const res = await send(input, init)
         const body = (await res
           .clone()

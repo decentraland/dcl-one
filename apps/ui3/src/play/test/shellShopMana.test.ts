@@ -401,7 +401,7 @@ describe('the in-world purchase with MANA', () => {
       expect(w.wallet.sent).toHaveLength(0)
     })
 
-    it('moves on to processing once the allowance is set, and a late CANCEL from that step can’t end a sale on its way', async () => {
+    it('moves on once the allowance is set, and a late CANCEL from that step can’t end a sale on its way', async () => {
       const w = world()
       let release!: () => void
       const held = new Promise<void>((r) => (release = r))
@@ -416,10 +416,11 @@ describe('the in-world purchase with MANA', () => {
       await p.payMana()
       const auth = await p.until('authorize')
       auth.handlers.onAuthorize?.()
-      // The approve relayed and the sale signed: its relay request is the one held.
+      // The approve relayed and the sale signed and kept as gone: its relay request is the one held, and the purchase
+      // already shows as in progress, closable.
       await vi.waitFor(() => expect(signatures(w)).toHaveLength(2))
       expect(relayedTo(w)).toEqual([MANA])
-      expect(p.shown.at(-1)?.view.step).toBe('processing')
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view.step).toBe('pending'))
       // The step's own CANCEL, pressed late (a stale view): nothing.
       auth.handlers.onClose()
       release()
@@ -812,6 +813,80 @@ describe('the in-world purchase with MANA', () => {
       release()
       await p.until('success')
       expect(p.events.at(-1)).toMatchObject({ operation: op, state: 'succeeded' })
+    })
+
+    it('shows the purchase in progress once the sale is kept as gone, while the executor still waits on its receipt', async () => {
+      const w = world({ allowance: maxUint256 })
+      let release!: () => void
+      const held = new Promise<void>((r) => (release = r))
+      const reader = { ...w.chain, receipt: async (...a: Parameters<typeof w.chain.receipt>) => (await held, w.chain.receipt(...a)) }
+      const p = page(w, { services: { reader: () => reader } })
+      await p.payMana()
+      const pending = await p.until('pending')
+      expect(w.relay.posts).toHaveLength(1)
+      // Closed while the receipt is held, then the same item again: the same purchase, nothing signed or sent again.
+      pending.handlers.onClose()
+      const op = p.events.at(-1)!.operation
+      expect(await p.open()).toMatchObject({ operation: op, state: 'pending' })
+      expect(signatures(w)).toHaveLength(1)
+      expect(w.relay.posts).toHaveLength(1)
+      release()
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ operation: op, state: 'succeeded' }))
+    })
+
+    it('shows a retry in progress once it is kept as gone, while the relay’s answer to it is held', async () => {
+      const w = world({ allowance: maxUint256 })
+      let release!: () => void
+      const held = new Promise<void>((r) => (release = r))
+      let posts = 0
+      const slow = (async (url: string, init?: RequestInit) => {
+        // Counted as asked: the first request (the relay down) throws, and the retry's is the second.
+        const n = ++posts
+        const res = await w.relay.fetchImpl(url, init)
+        if (n === 2) await held
+        return res
+      }) as unknown as typeof fetch
+      const p = page(w, { services: { rail: () => ({ relayerUrl: 'https://node.test/transactions-api/v1', fetchImpl: slow, gasless: true, wait: { timeoutMs: 30, pollMs: 10 } }) } })
+      w.relay.state.mode = 'down'
+      await p.payMana()
+      const pending = await p.until('pending')
+      w.relay.state.mode = 'ok'
+      w.clock.now += RETRY_AFTER_MS
+      pending.handlers.onCheckAgain?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', retry: true }))
+      p.shown.at(-1)!.handlers.onRetry?.()
+      await vi.waitFor(() => expect(w.relay.posts).toHaveLength(2))
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view.step).toBe('pending'))
+      p.shown.at(-1)!.handlers.onClose()
+      const op = p.events.at(-1)!.operation
+      expect(await p.open()).toMatchObject({ operation: op, state: 'pending' })
+      expect(signatures(w)).toHaveLength(2)
+      expect(w.relay.posts).toHaveLength(2)
+      release()
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ operation: op, state: 'succeeded' }))
+    })
+
+    it('keeps the relay’s late refusal with the purchase it answers: closed meanwhile, it ends unbought and frees the item', async () => {
+      const w = world({ allowance: maxUint256 })
+      let release!: () => void
+      const held = new Promise<void>((r) => (release = r))
+      const slow = (async (url: string, init?: RequestInit) => {
+        const res = await w.relay.fetchImpl(url, init)
+        await held
+        return res
+      }) as unknown as typeof fetch
+      w.relay.state.mode = 'refuse'
+      const p = page(w, { services: { rail: () => ({ relayerUrl: 'https://node.test/transactions-api/v1', fetchImpl: slow, gasless: true, wait: { timeoutMs: 30, pollMs: 10 } }) } })
+      await p.payMana()
+      const pending = await p.until('pending')
+      const op = p.events.at(-1)!.operation
+      pending.handlers.onClose()
+      release()
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ operation: op, state: 'failed' }))
+      // Its item can be bought again: a fresh purchase, not the one that ended.
+      const again = (await p.open()) as { operation: string }
+      expect(again.operation).not.toBe(op)
+      await p.until('method')
     })
 
     it('shows the purchase in progress at once after a retry, before the chain answers', async () => {
