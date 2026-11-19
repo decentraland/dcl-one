@@ -12,7 +12,7 @@ import type { CartLine, GroupProgress } from "@shop/model/purchase";
 import { CreditsAmount, ManaAmount } from "../../credits/components/Amount";
 import { explorerTxUrl } from "../chain/config";
 import { contractAt } from "../chain/contracts";
-import { AFTER_PENDING, type GroupResult } from "../purchase/executor";
+import type { GroupResult } from "../purchase/executor";
 import "./checkoutgroups.css";
 
 type Row = Pick<CartGroup, "keyId" | "key" | "lineIds"> & { total: CartGroup["total"] | null };
@@ -25,13 +25,13 @@ function venue(group: Row): string {
   return known ?? "Contract";
 }
 
-function statusText(group: Row, progress: GroupProgress | undefined, result: GroupResult | undefined, walletNeeded: boolean): { text: string; tone: "idle" | "busy" | "done" | "failed" | "wait" } {
+function statusText(group: Row, progress: GroupProgress | undefined, result: GroupResult | undefined, walletNeeded: boolean, othersInFlight: boolean): { text: string; tone: "idle" | "busy" | "done" | "failed" | "wait" } {
   if (walletNeeded && (!progress || progress.status === "idle")) return { text: "Needs a web3 wallet with MANA", tone: "wait" };
   if (!progress) return { text: "Ready to confirm", tone: "idle" };
   switch (progress.status) {
     case "idle":
-      // Held while another group is in flight (executor runGroups): it runs on a later confirmation.
-      if (result?.status === "skipped" && result.reason === AFTER_PENDING) return { text: "Waits for the part above to be confirmed. Confirm again once it is.", tone: "wait" };
+      // Held while another group of the checkout is in flight (executor runGroups), read from the live progress.
+      if (othersInFlight) return { text: "Waiting for another payment in this checkout to be confirmed.", tone: "wait" };
       return { text: "Ready to confirm", tone: "idle" };
     case "authorizing":
       return { text: group.key.method === "credits" ? "Reserving your Credits…" : "Preparing the MANA payment…", tone: "busy" };
@@ -61,12 +61,13 @@ export default function CheckoutGroups({ groups, lines, progress, results, walle
   const shown: Row[] = groups.map((g) => ({ keyId: g.keyId, key: g.key, lineIds: g.lineIds, total: g.total }));
   for (const p of progress) if (!shown.some((g) => g.keyId === p.keyId)) shown.push({ keyId: p.keyId, key: p.key, lineIds: p.lineIds, total: null });
   if (shown.length === 0) return null;
+  const inFlight = progress.some((p) => p.status === "submitted" || p.status === "pending");
 
   return (
     <ol className="shop-groups" aria-label="Payments in this checkout">
       {shown.map((group, i) => {
         const p = progress.find((x) => x.keyId === group.keyId);
-        const status = statusText(group, p, results[group.keyId], walletNeededKeys.includes(group.keyId));
+        const status = statusText(group, p, results[group.keyId], walletNeededKeys.includes(group.keyId), inFlight);
         const tx = p?.txHash ? explorerTxUrl(group.key.chainId, p.txHash) : null;
         const total = group.total;
         return (
