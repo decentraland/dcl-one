@@ -1,8 +1,9 @@
-use common::structs::AppConfig;
+use common::structs::{AppConfig, GraphicsSettings};
 
 use super::{AppSetting, IntAppSetting, SettingCategory};
 
-/// Render resolution in tenths of the window's width and height, so the slider moves 10% per step.
+/// Render resolution in steps of the window's width and height
+/// ([`GraphicsSettings::RENDER_SCALE_STEPS`] per whole window).
 #[derive(Debug, PartialEq, Eq)]
 pub struct RenderScaleSetting(i32);
 
@@ -15,21 +16,20 @@ impl IntAppSetting for RenderScaleSetting {
         self.0
     }
 
-    // Players stop at 50%; hosts may go lower for the session (SessionGraphics::MIN_RENDER_SCALE).
     fn min() -> i32 {
-        5
+        GraphicsSettings::MIN_PLAYER_RENDER_SCALE_STEPS
     }
 
     fn max() -> i32 {
-        10
+        GraphicsSettings::RENDER_SCALE_STEPS
     }
 
     fn scale() -> f32 {
-        10.0
+        100.0 / GraphicsSettings::RENDER_SCALE_STEPS as f32
     }
 
     fn display(&self) -> String {
-        format!("{}%", self.0 * 10)
+        format!("{}%", self.0 as f32 * Self::scale())
     }
 }
 
@@ -49,11 +49,11 @@ impl AppSetting for RenderScaleSetting {
     }
 
     fn save(&self, config: &mut AppConfig) {
-        config.graphics.render_scale = self.0 as f32 / 10.0;
+        config.graphics.set_render_scale_steps(self.0);
     }
 
     fn load(config: &AppConfig) -> Self {
-        Self(((config.graphics.render_scale * 10.0).round() as i32).clamp(Self::min(), Self::max()))
+        Self(config.graphics.render_scale_steps())
     }
 }
 

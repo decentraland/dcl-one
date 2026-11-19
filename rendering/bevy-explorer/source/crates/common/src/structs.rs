@@ -789,8 +789,8 @@ impl AppConfig {
             self.graphics.gpu_bytes_per_frame = default.graphics.gpu_bytes_per_frame;
         }
         if self.settings_generation < 4 {
-            self.graphics.render_scale =
-                ((self.graphics.render_scale * 10.0).round() / 10.0).clamp(0.5, 1.0);
+            self.graphics
+                .set_render_scale_steps(self.graphics.render_scale_steps());
         }
         self.settings_generation = SETTINGS_GENERATION;
     }
@@ -991,6 +991,26 @@ pub struct GraphicsSettings {
 /// The ambient brightness setting at which the Trilight ambient is the sky preset's
 /// (visuals::sky_envmap).
 pub const AMBIENT_BRIGHTNESS_DEFAULT: i32 = 50;
+
+impl GraphicsSettings {
+    /// Render Resolution steps in a render scale of 1: one step is 10%.
+    pub const RENDER_SCALE_STEPS: i32 = 10;
+    /// The lowest Render Resolution a player can choose, in steps (50%). Hosts may go lower for
+    /// the session ([`SessionGraphics::MIN_RENDER_SCALE`]).
+    pub const MIN_PLAYER_RENDER_SCALE_STEPS: i32 = 5;
+
+    /// The saved render scale at its nearest Render Resolution step within the player's range.
+    pub fn render_scale_steps(&self) -> i32 {
+        ((self.render_scale * Self::RENDER_SCALE_STEPS as f32).round() as i32).clamp(
+            Self::MIN_PLAYER_RENDER_SCALE_STEPS,
+            Self::RENDER_SCALE_STEPS,
+        )
+    }
+
+    pub fn set_render_scale_steps(&mut self, steps: i32) {
+        self.render_scale = steps as f32 / Self::RENDER_SCALE_STEPS as f32;
+    }
+}
 
 impl Default for GraphicsSettings {
     fn default() -> Self {
