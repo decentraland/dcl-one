@@ -1020,6 +1020,14 @@ pub(super) async fn request_status(ctx: &Ctx<'_>, id: &str, request: &str) -> Re
         let mut guard =
             super::super::write_support::acquire_membership(&ctx.state.pool, community).await?;
         let mut tx = guard.begin().await?;
+        // A closed community records nothing, so the envelope stays usable.
+        match super::super::requests::lock_open_community(&mut tx, community).await {
+            Ok(()) => {}
+            Err(refused) if refused.status() == StatusCode::NOT_FOUND => {
+                return Ok(Err(err_json(StatusCode::NOT_FOUND, "community not found")));
+            }
+            Err(refused) => return Ok(Err(*refused)),
+        }
         let entry = Entry {
             kind: "request_status",
             target: Some(m.request_id.clone()),

@@ -272,3 +272,52 @@ async fn closed_communities_refuse_likes_and_invite_acceptance() {
         assert_eq!(rig.role_of(community, &invitee).await, None, "{closing}");
     }
 }
+
+/// A deleted or suspended community refuses new requests, including an invite
+/// that would meet a pending join request, and writes nothing.
+#[tokio::test]
+async fn closed_communities_refuse_new_requests_and_auto_accept() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    for closing in [
+        "UPDATE social.communities SET active = FALSE WHERE id = $1",
+        "UPDATE social.communities SET suspended = TRUE, suspended_at = now(), suspended_by = 'op' WHERE id = $1",
+    ] {
+        let (owner, joiner, invitee) = (wallet(), wallet(), wallet());
+        let community = rig.community(&owner, true).await;
+        let pending = rig.request(community, &joiner, "request_to_join").await;
+        sqlx::query(closing)
+            .bind(community)
+            .execute(&rig.pool)
+            .await
+            .unwrap();
+
+        let path = format!("/v1/communities/{community}/requests");
+        for target in [&joiner, &invitee] {
+            let invited = hit(
+                &rig.app,
+                Case::new("post", &path)
+                    .signed(&owner)
+                    .await
+                    .json(&json!({"type": "invite", "targetedAddress": target.address.as_str()})),
+            )
+            .await;
+            assert_eq!(invited.0, StatusCode::NOT_FOUND, "{closing}: {}", invited.1);
+        }
+
+        let requests: Vec<(Uuid, String)> = sqlx::query_as(
+            "SELECT id, status FROM social.community_requests WHERE community_id = $1",
+        )
+        .bind(community)
+        .fetch_all(&rig.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            requests,
+            vec![(pending, "pending".to_string())],
+            "{closing}"
+        );
+        assert_eq!(rig.role_of(community, &joiner).await, None, "{closing}");
+    }
+}

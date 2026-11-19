@@ -346,7 +346,7 @@ pub async fn create_request(
     };
 
     let community: Option<(String, bool)> = try_resp!(map_db(
-        sqlx::query_as("SELECT name, private FROM social.communities WHERE id = $1 AND active")
+        sqlx::query_as("SELECT name, private FROM social.communities WHERE id = $1 AND active AND NOT suspended")
             .bind(community_id)
             .fetch_optional(&state.pool)
             .await
@@ -810,6 +810,28 @@ async fn notify_request(
     }
 }
 
+/// Lock the community row; a deleted or suspended community answers 404 and
+/// settles no request.
+pub(super) async fn lock_open_community(
+    connection: &mut sqlx::PgConnection,
+    community: CommunityId,
+) -> Result<(), Refusal> {
+    let open: Option<bool> = map_db(
+        sqlx::query_scalar(
+            "SELECT active AND NOT suspended FROM social.communities WHERE id = $1 FOR UPDATE",
+        )
+        .bind(community)
+        .fetch_optional(&mut *connection)
+        .await,
+    )?;
+    if open != Some(true) {
+        return Err(Box::new(
+            CommError::not_found(format!("Community not found: {community}")).into_response(),
+        ));
+    }
+    Ok(())
+}
+
 /// Decide a pending request once, consuming it as upstream does. The delete
 /// serializes competing decisions; acceptance removes every request for the
 /// pair in the same transaction as its membership insert.
@@ -821,20 +843,7 @@ pub(super) async fn transition_request(
     status: &str,
 ) -> Result<(), Refusal> {
     let mut tx = map_db(connection.begin().await)?;
-    // A deleted or suspended community settles no request.
-    let open: Option<bool> = map_db(
-        sqlx::query_scalar(
-            "SELECT active AND NOT suspended FROM social.communities WHERE id = $1 FOR UPDATE",
-        )
-        .bind(community)
-        .fetch_optional(&mut *tx)
-        .await,
-    )?;
-    if open != Some(true) {
-        return Err(Box::new(
-            CommError::not_found(format!("Community not found: {community}")).into_response(),
-        ));
-    }
+    lock_open_community(&mut tx, community).await?;
     let changed = map_db(
         sqlx::query("DELETE FROM social.community_requests WHERE id = $1 AND community_id = $2 AND status = 'pending'")
             .bind(request)
