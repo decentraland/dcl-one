@@ -1167,8 +1167,8 @@ change.
 
 `POST /social-api/v1/client-login` derives the invited wallet from ADR-44 signed
 fetch. Its signed metadata contains `loginId` and `occurredAt`; the timestamp
-limits admission to the preceding 24 hours with five minutes of future tolerance,
-matching the signed-fetch clock window.
+limits admission to the preceding 24 hours with five minutes of future tolerance.
+The request itself still passes the 60-second signed-fetch window.
 The client preserves these values across retries and signs each request afresh.
 The occurrence timestamp bounds replay acceptance, while login-day accounting
 continues to use the database's UTC processing date.

@@ -22,10 +22,15 @@ expiration ahead.
 Every signed route the node serves uses one freshness window,
 `SIGNED_FETCH_WINDOW_SECS` (`library/dcl-auth/src/signed_fetch.rs`), 60
 seconds: the shared verification profile (explore, places, events, shop,
-credits, marketplace, social and builder routes), the comms gatekeeper,
-including its authoritative-server route, the comms and worlds storage
-signed-fetch surfaces and the worlds scene-state socket. There is no
-per-route override.
+credits, marketplace, social and builder routes, and content
+`DELETE /scenes/{coord}`), the comms gatekeeper, including its
+authoritative-server route, the comms and worlds storage signed-fetch
+surfaces and the worlds scene-state socket. There is no per-route override.
+
+The builder's upload routes (`PUT /v1/projects/{id}/blobs/{hash}`, `/files`
+and `/manifest`, and `POST /v1/items/{id}/files`, up to 21 MiB) verify the
+signature before reading the body, so upload time does not count against the
+window.
 
 `check_timestamp_window` caps the future side at `MAX_FUTURE_SKEW_SECS`, 60
 seconds, on every surface that verifies a signed fetch: the node's routes and
