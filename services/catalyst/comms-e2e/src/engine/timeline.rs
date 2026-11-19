@@ -66,14 +66,21 @@ impl Timeline {
 
 const REDACTED: &str = "<redacted>";
 
-/// Text with every secret it can carry cut out: the `access_token=` of a connection string, the
-/// value of an `Authorization` header, a `Bearer` token and any bare JWT. Neither a log, a timeline
+/// Text with every secret it can carry cut out: the `access_token=` of a connection string, what
+/// follows `token=`, `secret=`, `password=`, `api_key=` or `apikey=` (any case), the value of an
+/// `Authorization` header, a `Bearer` token and any bare JWT. Neither a log, a timeline
 /// nor a report may keep them. Addresses, hashes and names stay: failure messages need them.
 pub fn redact_text(text: &str) -> String {
     let text = redact_after(text, "access_token=", |c| {
         c == '&' || c == '"' || c.is_whitespace()
     });
-    let text = redact_authorization(&text);
+    let mut text = redact_authorization(&text);
+    // `token=` also covers `access_token=`, `secret=` covers `client_secret=`
+    for marker in ["token=", "secret=", "password=", "api_key=", "apikey="] {
+        text = redact_after_word(&text, marker, |c| {
+            c.is_whitespace() || matches!(c, '&' | '"' | '\'' | ',' | ';')
+        });
+    }
     let text = redact_after_word(&text, "bearer ", |c| {
         c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';')
     });
@@ -298,6 +305,26 @@ mod tests {
         // two parts, or a first part that is not a JSON header, are something else
         assert_eq!(redact_text("eyJabc.def and eyJ"), "eyJabc.def and eyJ");
         assert_eq!(redact_text("aeyJabc.def.ghi"), "aeyJabc.def.ghi");
+    }
+
+    #[test]
+    fn named_secret_values_are_cut_whatever_their_case() {
+        for (text, cut) in [
+            (
+                "GET /x?token=a-fake-token&y=1",
+                "GET /x?token=<redacted>&y=1",
+            ),
+            ("secret=a-fake-secret done", "secret=<redacted> done"),
+            ("PASSWORD=hunter-fake", "PASSWORD=<redacted>"),
+            ("Api_Key=fake-key-1;rest", "Api_Key=<redacted>;rest"),
+            ("x apikey=fake-key-2, y", "x apikey=<redacted>, y"),
+            (
+                "{\"q\":\"client_secret=fake-3\"}",
+                "{\"q\":\"client_secret=<redacted>\"}",
+            ),
+        ] {
+            assert_eq!(redact_text(text), cut, "{text}");
+        }
     }
 
     #[test]

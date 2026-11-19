@@ -250,9 +250,7 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
         }
         Command::Address { key_env } => {
             let key = catalyst_comms_e2e::stack::secret_from_environment(&key_env)?;
-            let identity =
-                catalyst_comms_e2e::identity::Identity::from_wallet_key(&key, "address")?;
-            println!("{}", identity.address());
+            println!("{}", address_of_key(&key)?);
             Ok(ExitCode::SUCCESS)
         }
         Command::Doctor { stack_file } => {
@@ -273,9 +271,27 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
     }
 }
 
+/// The wallet address of a private key. A key that does not parse is an error that does not
+/// repeat it.
+fn address_of_key(key: &str) -> Result<String> {
+    Ok(catalyst_comms_e2e::identity::Identity::from_wallet_key(key, "address")?.address())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_address_command_does_not_repeat_a_key_that_does_not_parse() {
+        let error = format!(
+            "{:#}",
+            address_of_key("not-a-real-key-fake-0123").unwrap_err()
+        );
+        assert!(error.contains("not a valid private key"), "{error}");
+        assert!(!error.contains("not-a-real-key-fake-0123"), "{error}");
+        // an obviously made-up key that parses
+        assert!(address_of_key(&"11".repeat(32)).unwrap().starts_with("0x"));
+    }
 
     fn run_with_repeat(repeat: &str) -> Result<Arguments, clap::Error> {
         Arguments::try_parse_from([

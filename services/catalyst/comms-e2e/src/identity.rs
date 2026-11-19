@@ -435,6 +435,18 @@ mod tests {
     }
 
     #[test]
+    fn a_wallet_key_that_does_not_parse_is_not_echoed() {
+        for malformed in ["not-a-real-key-fake-0123", "0xFAKEFAKEFAKE", "  zz  "] {
+            let error = format!(
+                "{:#}",
+                Identity::from_wallet_key(malformed, "m").unwrap_err()
+            );
+            assert!(error.contains("not a valid private key"), "{error}");
+            assert!(!error.contains(malformed.trim()), "{error}");
+        }
+    }
+
+    #[test]
     fn a_derived_identity_keeps_its_far_mandate() {
         let derived = Identity::derive("verify", 0);
         let year_2090 = 3_786_912_000_000;
