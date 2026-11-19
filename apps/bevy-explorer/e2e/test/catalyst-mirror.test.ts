@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
-import { createServer } from 'node:http'
+import { createServer, request } from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, test } from 'node:test'
@@ -80,8 +80,16 @@ describe('the catalyst mirror', () => {
       assert.equal(elsewhere.headers.get('access-control-allow-origin'), null)
       const preflight = await fetch(file, { method: 'OPTIONS', headers: { origin: 'https://example.com' } })
       assert.equal(preflight.status, 403)
-      const renamed = await fetch(file, { headers: { host: 'mirror.example.com' } })
-      assert.equal(renamed.status, 403)
+      // `fetch` sets the host itself, so this request is made by hand to name another one
+      const renamed = await new Promise<number | undefined>((resolve, reject) => {
+        const asking = request(file, { headers: { host: 'mirror.example.com' } }, (reply) => {
+          reply.resume()
+          resolve(reply.statusCode)
+        })
+        asking.on('error', reject)
+        asking.end()
+      })
+      assert.equal(renamed, 403)
       const long = await fetch(`${mirror.url}/content/entities/active`, { method: 'POST', body: 'a'.repeat(2 * 1024 * 1024) }).then(
         (reply) => reply.status,
         () => 413 // the connection may end before the whole body is sent
