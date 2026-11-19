@@ -111,7 +111,7 @@ export function clearTemplateDescription(dir: string): void {
   const scene = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (scene?.display?.description !== TEMPLATE_DESCRIPTION) return;
   scene.display.description = '';
-  fs.writeFileSync(file, JSON.stringify(scene, null, 2));
+  fs.writeFileSync(file, `${JSON.stringify(scene, null, 2)}\n`);
 }
 
 // npm `overrides` a new scene gets on top of its template's `package.json`. `@dcl/sdk` 7.33.0

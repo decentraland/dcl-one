@@ -199,6 +199,10 @@ describe('clearTemplateDescription', () => {
     it('should clear the description and keep the rest', () => {
       expect(read()).toEqual({ display: { title: 'Trees', description: '' } });
     });
+
+    it('should end the file with a newline', () => {
+      expect(fs.readFileSync(sceneFile(), 'utf8').endsWith('}\n')).toBe(true);
+    });
   });
 
   describe('when the creator wrote their own description', () => {

@@ -9,13 +9,18 @@ import * as fs from '../services/fs';
 import { invoke } from '../services/ipc';
 import { getConfig, setConfig } from '../services/config';
 
+/** Where new scenes go unless the user picks another folder. Reading it creates nothing. */
+export async function getDefaultScenesPath(): Promise<string> {
+  return invoke('electron.getDefaultScenesPath');
+}
+
 /**
- * The default scenes folder, created when missing: Settings checks the folder it shows exists,
- * and a user who resets to it may never have had it.
+ * Creates the default scenes folder and returns it, for a user who switches to it in Settings:
+ * Settings checks that the folder it shows exists, and that user may never have had it.
  */
-export async function getDefaultScenesPath() {
-  const scenesPath = await invoke('electron.getDefaultScenesPath');
-  await fs.mkdir(scenesPath, { recursive: true }).catch(() => undefined);
+export async function createDefaultScenesFolder(): Promise<string> {
+  const scenesPath = await getDefaultScenesPath();
+  await fs.mkdir(scenesPath, { recursive: true });
   return scenesPath;
 }
 

@@ -53,6 +53,8 @@ export async function getConfigStorage(): Promise<IFileSystemStorage<Config>> {
     // Initialize with default values if empty or merge with defaults if partial
     const defaultConfig = getDefaultConfig();
     const existingConfig = await configStorage.getAll();
+    // Read before the merge, which fills a missing folder with the new default.
+    const storedScenesPath = existingConfig.settings?.scenesPath;
 
     // One-time: the `experimental` flag was added after the `renderer` setting. A
     // config that predates it must derive the toggle from its active renderer —
@@ -76,6 +78,7 @@ export async function getConfigStorage(): Promise<IFileSystemStorage<Config>> {
     if (!mergedConfig.settings?.scenesPathPromoted) {
       const legacyPath = getLegacyScenesPath(getUserDataPath());
       promoteScenesPath(mergedConfig.settings, {
+        storedPath: storedScenesPath,
         legacyPath,
         defaultPath: defaultConfig.settings.scenesPath,
         legacyHasScenes: await holdsScenes(legacyPath),

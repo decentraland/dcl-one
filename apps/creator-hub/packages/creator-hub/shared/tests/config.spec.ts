@@ -257,9 +257,14 @@ describe('promoteScenesPath', () => {
     it.each([legacyPath, `${legacyPath}/`, ''])(
       'should move "%s" to the visible default and record that it has run',
       scenesPath => {
-        const settings: StoredSettings = { scenesPath };
+        const settings: StoredSettings = { scenesPath: scenesPath || defaultPath };
 
-        promoteScenesPath(settings, { legacyPath, defaultPath, legacyHasScenes: false });
+        promoteScenesPath(settings, {
+          storedPath: scenesPath,
+          legacyPath,
+          defaultPath,
+          legacyHasScenes: false,
+        });
 
         expect(settings).toEqual({ scenesPath: defaultPath, scenesPathPromoted: true });
       },
@@ -270,7 +275,26 @@ describe('promoteScenesPath', () => {
     it('should keep the folder and record that it has run', () => {
       const settings: StoredSettings = { scenesPath: legacyPath };
 
-      promoteScenesPath(settings, { legacyPath, defaultPath, legacyHasScenes: true });
+      promoteScenesPath(settings, {
+        storedPath: legacyPath,
+        legacyPath,
+        defaultPath,
+        legacyHasScenes: true,
+      });
+
+      expect(settings).toEqual({ scenesPath: legacyPath, scenesPathPromoted: true });
+    });
+
+    it('should keep it when the stored config names no folder', () => {
+      // The merge has already filled in the new default.
+      const settings: StoredSettings = { scenesPath: defaultPath };
+
+      promoteScenesPath(settings, {
+        storedPath: undefined,
+        legacyPath,
+        defaultPath,
+        legacyHasScenes: true,
+      });
 
       expect(settings).toEqual({ scenesPath: legacyPath, scenesPathPromoted: true });
     });
@@ -280,7 +304,12 @@ describe('promoteScenesPath', () => {
     it('should keep it and record that it has run', () => {
       const settings: StoredSettings = { scenesPath: '/projects/dcl' };
 
-      promoteScenesPath(settings, { legacyPath, defaultPath, legacyHasScenes: false });
+      promoteScenesPath(settings, {
+        storedPath: '/projects/dcl',
+        legacyPath,
+        defaultPath,
+        legacyHasScenes: false,
+      });
 
       expect(settings).toEqual({ scenesPath: '/projects/dcl', scenesPathPromoted: true });
     });
@@ -290,7 +319,12 @@ describe('promoteScenesPath', () => {
     it('should leave a later choice of the old folder alone', () => {
       const settings: StoredSettings = { scenesPath: legacyPath, scenesPathPromoted: true };
 
-      promoteScenesPath(settings, { legacyPath, defaultPath, legacyHasScenes: false });
+      promoteScenesPath(settings, {
+        storedPath: legacyPath,
+        legacyPath,
+        defaultPath,
+        legacyHasScenes: false,
+      });
 
       expect(settings).toEqual({ scenesPath: legacyPath, scenesPathPromoted: true });
     });

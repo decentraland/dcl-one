@@ -121,13 +121,20 @@ const withoutTrailingSeparator = (value: string) => value.replace(/[\\/]+$/, '')
 export function promoteScenesPath(
   settings: Partial<AppSettings> | undefined,
   {
+    storedPath,
     legacyPath,
     defaultPath,
     legacyHasScenes,
-  }: { legacyPath: string; defaultPath: string; legacyHasScenes: boolean },
+  }: {
+    /** The folder the stored config names, before defaults are merged in; none means the old one. */
+    storedPath: string | undefined;
+    legacyPath: string;
+    defaultPath: string;
+    legacyHasScenes: boolean;
+  },
 ): void {
   if (!settings || settings.scenesPathPromoted) return;
-  const current = settings.scenesPath || legacyPath;
+  const current = storedPath || legacyPath;
   const isLegacy = withoutTrailingSeparator(current) === withoutTrailingSeparator(legacyPath);
   if (isLegacy) settings.scenesPath = legacyHasScenes ? legacyPath : defaultPath;
   settings.scenesPathPromoted = true;
