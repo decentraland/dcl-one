@@ -593,7 +593,7 @@ impl TransactionComponent {
                 "this relay serves only the test's buyers (CREDITS_TRIAL_MODE)".into(),
             ));
         }
-        self.check_self_relay(&sender)?;
+        self.check_self_relay(&sender).await?;
         self.check_contract_address(contracts, tx).await?;
         check_sale_price(settings, tx)?;
         if self.chain.is_some() {
@@ -608,18 +608,26 @@ impl TransactionComponent {
         Ok(sender)
     }
 
-    /// Refuses a meta-transaction whose `userAddress` is one of this node's
-    /// own relayer EOAs: relaying it would let a caller spend a signature
-    /// this service holds the key for. Only the direct signer's address is
-    /// known locally (the OZ relayer's EOAs live behind its API).
-    fn check_self_relay(&self, sender: &MetaTxSender) -> Result<(), ApiError> {
-        if let Some(signer) = self.signer.as_ref() {
-            let relayer = format!("{:#x}", signer.relayer_address());
-            if sender.as_str().eq_ignore_ascii_case(&relayer) {
-                return Err(ApiError::InvalidTransaction(
-                    "Invalid transaction data.".into(),
-                ));
-            }
+    /// Refuses a meta-transaction whose `userAddress` is one of this node's relayer accounts,
+    /// whichever route broadcasts: the direct signer's and every account the OZ relayer's API
+    /// key lists ([`Relayer::accounts`]).
+    async fn check_self_relay(&self, sender: &MetaTxSender) -> Result<(), ApiError> {
+        let direct = self.signer.as_ref().is_some_and(|s| {
+            sender
+                .as_str()
+                .eq_ignore_ascii_case(&format!("{:#x}", s.relayer_address()))
+        });
+        let listed = match self.relayer.as_ref() {
+            Some(relayer) => relayer
+                .accounts()
+                .await
+                .contains(&sender.as_str().to_ascii_lowercase()),
+            None => false,
+        };
+        if direct || listed {
+            return Err(ApiError::InvalidTransaction(
+                "Invalid transaction data.".into(),
+            ));
         }
         Ok(())
     }

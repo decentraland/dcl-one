@@ -3,6 +3,8 @@
 //! the shared guarded client; the API key travels as a bearer and is never
 //! logged.
 
+use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Deserialize;
@@ -13,6 +15,9 @@ use crate::http::{Outbound, SendError, read_body_capped};
 
 const CANCEL_REQUEST_TIMEOUT: Duration = Duration::from_millis(5000);
 const OZ_BODY_CAP: usize = 256 * 1024;
+const ACCOUNTS_REQUEST_TIMEOUT: Duration = Duration::from_millis(5000);
+/// How long a fetched list of the relayer accounts is reused before it is read again.
+const ACCOUNTS_REFRESH: Duration = Duration::from_secs(60 * 60);
 
 const BROADCAST_STATUSES: [&str; 3] = ["submitted", "mined", "confirmed"];
 const FAILED_STATUSES: [&str; 3] = ["canceled", "failed", "expired"];
@@ -55,6 +60,18 @@ fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<Strin
     Option::<String>::deserialize(d).map(Some)
 }
 
+#[derive(Debug, Deserialize)]
+struct OzAccounts {
+    #[serde(default)]
+    data: Option<Vec<OzAccount>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OzAccount {
+    #[serde(default)]
+    address: Option<String>,
+}
+
 pub struct Relayer {
     http: Outbound,
     base_url: String,
@@ -63,6 +80,8 @@ pub struct Relayer {
     speed: String,
     max_status_checks: u32,
     sleep: Duration,
+    /// The last list of every relayer account the API key sees, lowercase, and when it was read.
+    accounts: parking_lot::Mutex<Option<(std::time::Instant, Arc<HashSet<String>>)>>,
 }
 
 impl Relayer {
@@ -83,7 +102,56 @@ impl Relayer {
             speed: speed.to_string(),
             max_status_checks,
             sleep,
+            accounts: parking_lot::Mutex::new(None),
         }
+    }
+
+    /// Every relayer account (`GET /api/v1/relayers/`), lowercase, reused for an hour. A failed
+    /// read keeps the last list, or answers an empty one when none was read yet.
+    pub async fn accounts(&self) -> Arc<HashSet<String>> {
+        let cached = self.accounts.lock().clone();
+        if let Some((read_at, accounts)) = &cached
+            && read_at.elapsed() < ACCOUNTS_REFRESH
+        {
+            return accounts.clone();
+        }
+        match self.fetch_accounts().await {
+            Ok(accounts) => {
+                let accounts = Arc::new(accounts);
+                *self.accounts.lock() = Some((std::time::Instant::now(), accounts.clone()));
+                accounts
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "economy: could not read the relayer accounts");
+                cached.map(|(_, accounts)| accounts).unwrap_or_default()
+            }
+        }
+    }
+
+    async fn fetch_accounts(&self) -> Result<HashSet<String>, String> {
+        let resp = self
+            .http
+            .get(format!("{}/api/v1/relayers/", self.base_url))
+            .timeout(ACCOUNTS_REQUEST_TIMEOUT)
+            .header(reqwest::header::AUTHORIZATION, self.bearer())
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(format!("status {}", status.as_u16()));
+        }
+        let body = read_body_capped(resp, OZ_BODY_CAP)
+            .await
+            .map_err(|e| e.to_string())?;
+        let listed: OzAccounts = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
+        let accounts = listed.data.ok_or("no relayer list in the answer")?;
+        Ok(accounts
+            .into_iter()
+            .filter_map(|a| a.address)
+            .map(|a| a.trim().to_ascii_lowercase())
+            .filter(|a| !a.is_empty())
+            .collect())
     }
 
     fn transactions_url(&self) -> String {

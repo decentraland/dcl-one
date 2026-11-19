@@ -1145,6 +1145,78 @@ async fn an_oz_transaction_never_signed_reaches_the_client_as_not_sent() {
     }
 }
 
+/// A fake OZ relayer whose API key lists `account`, counting the submissions it receives.
+async fn spawn_oz_listing(account: String) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let submissions = Arc::new(AtomicUsize::new(0));
+    let counted = submissions.clone();
+    let app = axum::Router::new()
+        .route(
+            "/api/v1/relayers/",
+            axum::routing::get(move || {
+                let account = account.clone();
+                async move { Json(json!({ "success": true, "data": [{ "id": "other", "address": account }] })) }
+            }),
+        )
+        .route(
+            "/api/v1/relayers/{relayer_id}/transactions",
+            post(move || {
+                counted.fetch_add(1, Ordering::Relaxed);
+                async { Json(json!({ "success": true, "data": { "id": "oz-1", "hash": format!("0x{:064x}", 1), "status": "submitted" } })) }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake relayer");
+    let addr = listener.local_addr().expect("relayer addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (format!("http://{addr}"), submissions)
+}
+
+/// With only the OZ relayer provisioned (no direct signer), a meta-transaction whose
+/// `userAddress` is any account the relayer's API key lists is answered 400 before the contract,
+/// quota or broadcast steps; another signer passes that step.
+#[tokio::test]
+async fn a_relayer_account_is_refused_as_the_user_with_only_the_oz_relayer() {
+    let relayer_key = PrivateKeySigner::random();
+    let relayer_account = relayer_key.address().to_checksum(None);
+    let (relayer_url, submissions) = spawn_oz_listing(relayer_account.clone()).await;
+    let state = state(
+        lazy_pool(),
+        Settings {
+            oz_relayer_url: Some(relayer_url),
+            oz_relayer_id: Some("relayer-under-test".into()),
+            oz_relayer_api_key: Some("api-key-under-test".into()),
+            ..Settings::for_tests()
+        },
+    );
+    assert!(state.transaction.has_oz_relayer() && !state.transaction.has_direct_signer());
+    let app = router(state);
+    let user = format!("{:#x}", relayer_key.address());
+    for calldata in [
+        signed_split_calldata(&relayer_key, FS),
+        signed_combined_calldata(&relayer_key, FS),
+    ] {
+        let (status, body) = post_transaction(&app, &user, COLLECTION, &calldata).await;
+        assert_eq!(status, 400, "{body}");
+        assert_eq!(body["error"], "invalid_transaction", "{body}");
+        assert_eq!(body["message"], "Invalid transaction data.", "{body}");
+        assert_eq!(body["not_sent"], true, "{body}");
+    }
+    assert_eq!(submissions.load(std::sync::atomic::Ordering::Relaxed), 0);
+    let other = PrivateKeySigner::random();
+    let (_, body) = post_transaction(
+        &app,
+        &format!("{:#x}", other.address()),
+        COLLECTION,
+        &signed_split_calldata(&other, FS),
+    )
+    .await;
+    assert_ne!(body["message"], "Invalid transaction data.", "{body}");
+}
+
 #[tokio::test]
 async fn honestly_signed_meta_transactions_relay_for_both_overloads() {
     let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
