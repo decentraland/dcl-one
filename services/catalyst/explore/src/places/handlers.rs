@@ -53,7 +53,8 @@ const WORLD_ORDER_BY: &[&str] = &["most_active", "like_score", "created_at"];
 
 /// The query of `GET /api/places` as the discovery server reads it
 /// (`get-places-handler.ts:12-34`, `query-params.ts:12-41`). A flag is true
-/// only as `true`. `limit` and `offset` are JavaScript non-negative integers;
+/// only as `true`, except places' own `only_excluded_from_ranking`
+/// (`getPlaceList.ts:49-51`, gatsby `bool()`). `limit` and `offset` are JavaScript non-negative integers;
 /// any other value is the default. `categories` and `names` split on commas.
 /// More than 1000 positions, categories or names is a 400. `names` turns
 /// `positions` off. An empty text parameter is absent.
@@ -1013,6 +1014,43 @@ mod tests {
             samples[n - 1]
         );
         assert_eq!(total, covered.min(places));
+    }
+
+    #[tokio::test]
+    async fn only_excluded_from_ranking_narrows_the_places_list() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let (kept, excluded) = (
+            uuid::Uuid::new_v4().to_string(),
+            uuid::Uuid::new_v4().to_string(),
+        );
+        for (id, pointer, raw) in [
+            (&kept, "1,2", json!({"positions": ["1,2"]})),
+            (
+                &excluded,
+                "3,4",
+                json!({"positions": ["3,4"], "exclude_from_ranking": true}),
+            ),
+        ] {
+            sqlx::query("INSERT INTO explore.place (id, base_position, title, raw) VALUES ($1, $2, 'ranked', $3)")
+                .bind(id).bind(pointer).bind(raw).execute(&pool).await.unwrap();
+        }
+        let state = Arc::new(crate::ExploreState::new(
+            pool.clone(),
+            crate::Settings::for_tests(),
+            None,
+        ));
+        let all = response(state.clone(), "/api/places").await;
+        assert_eq!(all["total"], 2, "{all}");
+        for uri in [
+            "/api/places?only_excluded_from_ranking=true",
+            "/api/places?only_excluded_from_ranking=true&order_by=most_active",
+        ] {
+            let body = response(state.clone(), uri).await;
+            assert_eq!(body["total"], 1, "{uri}: {body}");
+            assert_eq!(body["data"][0]["id"], excluded, "{uri}");
+        }
     }
 
     #[tokio::test]
