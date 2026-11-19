@@ -1847,7 +1847,8 @@
           "copy": "Copiar la dirección de la billetera",
           "edit": "Editar",
           "add": "Agregar billetera",
-          "unavailable": "Verifica tu correo para configurar tu billetera de pagos.",
+          "unavailable": "Verifica tu correo para configurar tu billetera.",
+          "no_active_place": "Necesitas tener una escena publicada para configurar tu billetera.",
           "notify_failed": "No pudimos enviarte un correo sobre este cambio, así que no guardamos tu billetera. Vuelve a intentarlo."
         },
         "contact": {
@@ -1856,7 +1857,7 @@
           "email": "Correo electrónico",
           "unverified": "Sin verificar",
           "verify": "Verificar correo",
-          "unavailable": "Necesitas tener 1 lugar activo para configurar tu billetera."
+          "unavailable": "Necesitas tener una escena publicada para verificar tu correo"
         },
         "table": {
           "label": "Pagos",

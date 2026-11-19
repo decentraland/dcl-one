@@ -429,6 +429,41 @@ describe('creatorFund slice', () => {
     });
   });
 
+  describe('when checking for a place in the program', () => {
+    it('should ask for the places with no cycle', async () => {
+      vi.mocked(api.getPlaces).mockResolvedValue(ok(places(RUNNING, [place('a')])));
+
+      await store.dispatch(actions.fetchHasActivePlace());
+
+      expect(api.getPlaces).toHaveBeenCalledWith();
+    });
+
+    it.each([
+      ['one place is in the program', [place('a', { status: 'not_eligible' }), place('b')], true],
+      [
+        'no place is in the program',
+        [place('a', { status: 'not_eligible' }), place('b', { status: 'not_eligible' })],
+        false,
+      ],
+      ['there are no places', [], false],
+    ])('should store %s as %s', async (_case, list, expected) => {
+      vi.mocked(api.getPlaces).mockResolvedValue(ok(places(RUNNING, list)));
+
+      await store.dispatch(actions.fetchHasActivePlace());
+
+      expect(store.getState().creatorFund.hasActivePlace.data).toBe(expected);
+    });
+
+    it('should fail, and store no answer, when the places cannot be read', async () => {
+      vi.mocked(api.getPlaces).mockResolvedValue(fail(500));
+
+      await store.dispatch(actions.fetchHasActivePlace());
+
+      expect(store.getState().creatorFund.hasActivePlace.status).toBe('failed');
+      expect(store.getState().creatorFund.hasActivePlace.data).toBeNull();
+    });
+  });
+
   describe('when fetching the metrics of my places', () => {
     it('should ask by world name or base position and key the answer by place', async () => {
       vi.mocked(metricsApi.fetchMetrics).mockResolvedValue({

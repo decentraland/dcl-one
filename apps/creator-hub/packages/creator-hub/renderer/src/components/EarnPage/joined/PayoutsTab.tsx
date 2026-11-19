@@ -13,7 +13,7 @@ import modalStyles from '../EarnModal.module.css';
 import { SnackbarCheckIcon } from '../icons';
 
 import { ListState } from './parts';
-import { ContactCard, WalletCard } from './PayoutCards';
+import { ContactCard, WalletCard, type WalletLock } from './PayoutCards';
 import { PayoutsEmpty } from './PayoutsEmpty';
 import { PayoutsTable } from './PayoutsTable';
 import { VerifyEmailModal } from './VerifyEmailModal';
@@ -33,9 +33,9 @@ const FOCUS_AFTER: Record<OpenModal, FocusTarget> = {
 };
 
 /**
- * The Creator Fund payouts: two setup steps, then the payout per cycle. Step 1 verifies the email,
- * and needs one of the creator's places in the program; step 2, the payout wallet, needs a verified
- * email, since every change to it is emailed there.
+ * The Creator Fund payouts: two setup steps, then the payout per cycle. Step 1 verifies the email;
+ * step 2, the payout wallet, needs it verified, since every change to it is emailed there. Both
+ * need one of the creator's places in the program; a failed read of the places locks neither.
  */
 export function PayoutsTab() {
   const dispatch = useDispatch();
@@ -50,7 +50,7 @@ export function PayoutsTab() {
     ),
   );
   const [modal, setModal] = useState<OpenModal | null>(null);
-  const [notice, setNotice] = useState<TranslationPath | null>(null);
+  const [notice, setNotice] = useState<{ message: TranslationPath } | null>(null);
   const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null);
   const editRef = useRef<HTMLButtonElement>(null);
   const contactTitleRef = useRef<HTMLHeadingElement>(null);
@@ -84,7 +84,7 @@ export function PayoutsTab() {
   const done = (message: TranslationPath) => {
     if (modal) setFocusTarget(FOCUS_AFTER[modal]);
     setModal(null);
-    setNotice(message);
+    setNotice({ message });
   };
 
   const retry = () => {
@@ -100,8 +100,10 @@ export function PayoutsTab() {
   const failed = [payouts, wallet, enrollment].some(resource => resource.status === 'failed');
   const empty = loaded && !failed && payouts.data?.payouts.length === 0;
   const emailVerified = !!enrollment.data?.email_verified_at;
-  // Only a known "no" locks the email step: when the places can't be read the service still decides.
-  const emailLocked = !emailVerified && hasActivePlace.data === false;
+  const noActivePlace = hasActivePlace.data === false;
+  let walletLock: WalletLock | null = null;
+  if (!emailVerified) walletLock = 'unverified_email';
+  else if (noActivePlace) walletLock = 'no_active_place';
 
   let body: React.ReactNode;
   if (!loaded) {
@@ -123,7 +125,7 @@ export function PayoutsTab() {
         <div className={styles.cardsRow}>
           <ContactCard
             enrollment={enrollment.data}
-            locked={emailLocked}
+            locked={!emailVerified && noActivePlace}
             titleRef={contactTitleRef}
             onVerify={() => {
               void analytics.track('Creator Fund Email Verification Started', undefined);
@@ -132,7 +134,7 @@ export function PayoutsTab() {
           />
           <WalletCard
             wallet={wallet.status === 'succeeded' ? wallet.data : undefined}
-            locked={!emailVerified}
+            lock={walletLock}
             editRef={editRef}
             onAdd={() => setModal('add_wallet')}
             onChange={() => setModal('change_wallet')}
@@ -164,10 +166,11 @@ export function PayoutsTab() {
         className={modalStyles.visuallyHidden}
         role="status"
       >
-        {notice && t(notice)}
+        {notice && t(notice.message)}
       </span>
       <Toast
         open={!!notice}
+        restartKey={notice}
         duration={SNACKBAR_MS}
         onClose={() => setNotice(null)}
         placement="bottom-center"
@@ -179,7 +182,7 @@ export function PayoutsTab() {
           aria-hidden
         >
           <SnackbarCheckIcon />
-          {notice && t(notice)}
+          {notice && t(notice.message)}
         </div>
       </Toast>
     </div>
