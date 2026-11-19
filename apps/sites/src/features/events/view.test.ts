@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { scheduleLine } from "../components/event-schedule";
 import { eventRecord, placeRecord } from "./fixtures";
 import {
   bucketByDay,
@@ -15,7 +16,6 @@ import {
   placeHref,
   readDayOffset,
   relativeStart,
-  scheduleLine,
   visibleDays,
 } from "./view";
 

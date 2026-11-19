@@ -10,7 +10,7 @@ import { Link, useSearchParams } from "react-router";
 import type { TrackContext } from "@/core/lib/telemetry/track";
 import { isStepValid, toEventSchedule, type EventScheduleSource, type HangoutDraft } from "@/data/lib/catalyst/landings/submit-hangout";
 import type { HangoutOptions } from "@/data/lib/catalyst/landings/hangout-options";
-import { heroWhen, scheduleLine } from "@/features/events/view";
+import { heroWhen, scheduleLine } from "../../components/event-schedule";
 import styles from "./SubmitHangout.module.css";
 import HangoutAssociations from "./HangoutAssociations";
 import {

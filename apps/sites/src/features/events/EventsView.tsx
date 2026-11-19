@@ -40,6 +40,7 @@ import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
 import { useCreatorProfiles } from "./useCreatorProfiles";
 import { REMIND_FAILED, useEventReminders, type Reminder } from "./useEventReminders";
 import type { CreatorProfiles } from "@/data/lib/catalyst/social/creator-profiles";
+import { formatTime, heroWhen, scheduleLine, type Zone } from "../components/event-schedule";
 import {
   bucketByDay,
   creatorWallets,
@@ -55,8 +56,6 @@ import {
   eventPageShareUrl,
   eventTarget,
   eventUsers,
-  formatTime,
-  heroWhen,
   liveNowItems,
   upcomingCardProps,
   locationLabel,
@@ -67,12 +66,10 @@ import {
   playHref,
   readDayOffset,
   relativeStart,
-  scheduleLine,
   TAB_PARAM,
   usersLabel,
   visibleDays,
   type Target,
-  type Zone,
 } from "./view";
 
 const STORY: StoryId = "admin/whats-on";
