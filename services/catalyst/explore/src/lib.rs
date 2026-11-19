@@ -321,9 +321,12 @@ pub struct ExploreState {
 
 pub type SharedState = Arc<ExploreState>;
 
+/// The prefixes `serve` nests this router under, besides the root mount.
+pub const NESTS: [&str; 2] = ["/places", "/events"];
+
 /// The nest-stripped route, so a proxy's `x-original-path` can match it.
 fn signed_path(path: &str) -> signed_fetch::SignedPath {
-    let local = ["/events", "/places"]
+    let local = NESTS
         .into_iter()
         .find_map(|nest| path.strip_prefix(nest).filter(|rest| rest.starts_with('/')))
         .unwrap_or(path);
@@ -1192,6 +1195,12 @@ mod tests {
                 .await
                 .is_some()
         );
+
+        // The root mount verifies with or without the forwarded path.
+        for headers in [signed.clone(), forwarded(signed.clone(), "/api/events")] {
+            let ok = state.signer(&headers, "post", "/api/events").await.unwrap();
+            assert_eq!(ok, address());
+        }
 
         // Missing or mismatched forwarded path, or another signed path: refused.
         for (headers, path) in [
