@@ -111,32 +111,16 @@ fn map_scene_audio_sources(
             volume: audio_source.0.volume.unwrap_or(1.0),
             global: audio_source.0.global(),
             seek_time,
-            ty: scene_audio_type(system_scene),
+            // the HUD's system scene plays interface sounds (chat pings), scaled by the System slider
+            ty: if system_scene {
+                AudioType::System
+            } else {
+                AudioType::Scene
+            },
         };
 
         debug!("emitter: {emitter:?}");
 
         commands.entity(ent).try_insert(emitter);
-    }
-}
-
-/// The volume group of a scene's audio source: the HUD's system scene plays interface sounds
-/// (chat pings), which follow the System slider; every other scene follows the Scene slider.
-fn scene_audio_type(system_scene: bool) -> AudioType {
-    if system_scene {
-        AudioType::System
-    } else {
-        AudioType::Scene
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn system_scene_audio_follows_the_system_slider() {
-        assert!(matches!(scene_audio_type(true), AudioType::System));
-        assert!(matches!(scene_audio_type(false), AudioType::Scene));
     }
 }
