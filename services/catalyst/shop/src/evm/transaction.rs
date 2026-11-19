@@ -582,6 +582,7 @@ impl TransactionComponent {
     ) -> Result<MetaTxSender, ApiError> {
         self.check_function_selector(tx)?;
         check_nested_meta_tx(tx)?;
+        check_refused_method(settings, tx)?;
         let sender = MetaTxSender::from_meta_tx_calldata(&tx.from, &tx.params[1])?;
         // A trial's relayer pays gas for the trial's buyers only, judged on the userAddress the
         // meta-transaction is signed for (its signature is checked below): any other wallet is
@@ -845,6 +846,28 @@ fn check_nested_meta_tx(tx: &TransactionData) -> Result<(), ApiError> {
         )));
     }
     Ok(())
+}
+
+/// Refuses a method a registered sale target never relays
+/// (`abi::refused_method`), before any simulation or quota.
+pub(super) fn check_refused_method(
+    settings: &Settings,
+    tx: &TransactionData,
+) -> Result<(), ApiError> {
+    let Ok(contract) = tx.params[0].trim().parse::<Address>() else {
+        return Ok(());
+    };
+    let Some(kind) = abi::sale_target(settings.collections_chain_id, contract) else {
+        return Ok(());
+    };
+    let full_data = hex_to_bytes(&tx.params[1]).unwrap_or_default();
+    match abi::refused_method(&full_data, kind) {
+        Some(method) => Err(ApiError::InvalidTransaction(format!(
+            "The meta-transaction method {method} is not allowed for contract {}.",
+            tx.params[0]
+        ))),
+        None => Ok(()),
+    }
 }
 
 /// The minimum sale price, on every registered sale target of the relay's

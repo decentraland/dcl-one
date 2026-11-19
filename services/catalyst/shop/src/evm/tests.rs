@@ -504,6 +504,57 @@ fn unique_address() -> String {
     format!("{:#x}", PrivateKeySigner::random().address())
 }
 
+/// `createOrder` on the legacy order books is answered 400 before any check
+/// that reaches the chain, the quota or the database; `executeOrder` on the
+/// same target and `createOrder`'s selector on another target are not.
+#[tokio::test]
+async fn create_order_on_the_legacy_marketplaces_is_refused_before_simulation() {
+    let app = router(state(lazy_pool(), Settings::for_tests()));
+    let key = PrivateKeySigner::random();
+    let user = format!("{:#x}", key.address());
+    let create_order =
+        super::abi::function_selector("createOrder(address,uint256,uint256,uint256)");
+    let mut call = create_order.to_vec();
+    call.extend_from_slice(&[0u8; 32 * 4]);
+    for market in [
+        "0x02080031b45a3c67d338dd4a2cc309d28756a160",
+        "0x480a0f4e360e8964e68858dd231c2922f1df45ef",
+    ] {
+        for calldata in [
+            signed_split_calldata(&key, &call),
+            signed_combined_calldata(&key, &call),
+        ] {
+            let (status, body) = post_transaction(&app, &user, market, &calldata).await;
+            assert_eq!(status, 400, "{market}: {body}");
+            assert_eq!(body["error"], "invalid_transaction", "{body}");
+            assert_eq!(body["not_sent"], true, "{body}");
+            assert_eq!(
+                body["message"],
+                format!(
+                    "The meta-transaction method createOrder(address,uint256,uint256,uint256) is not allowed for contract {market}."
+                ),
+            );
+        }
+    }
+    let settings = Settings::for_tests();
+    let tx = |contract: &str, inner: &[u8]| super::transaction::TransactionData {
+        from: user.clone(),
+        params: vec![contract.into(), signed_split_calldata(&key, inner)],
+    };
+    let mut execute_order = super::abi::executeOrderCall::SELECTOR.to_vec();
+    execute_order.extend_from_slice(&[0u8; 32 * 3]);
+    for allowed in [
+        tx("0x480a0f4e360e8964e68858dd231c2922f1df45ef", &execute_order),
+        tx("0x214ffc0f0103735728dc66b61a22e4f163e275ae", &call),
+        tx(COLLECTION, &call),
+    ] {
+        assert!(
+            super::transaction::check_refused_method(&settings, &allowed).is_ok(),
+            "{allowed:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn the_free_call_budget_never_holds_back_a_sale() {
     use axum::response::IntoResponse;

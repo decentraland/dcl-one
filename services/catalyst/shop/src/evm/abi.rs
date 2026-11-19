@@ -635,6 +635,19 @@ impl SaleMethod {
     }
 }
 
+/// The legacy order books' `createOrder`, which the relay never pays for.
+const CREATE_ORDER: &str = "createOrder(address,uint256,uint256,uint256)";
+
+/// The signature of the inner method a registered sale target never relays:
+/// `createOrder` on Marketplace and MarketplaceV2. `None` for every other call.
+pub fn refused_method(full_data: &[u8], kind: SaleKind) -> Option<&'static str> {
+    if !matches!(kind, SaleKind::Marketplace | SaleKind::MarketplaceV2) {
+        return None;
+    }
+    let inner = decode_meta_tx_full(full_data)?.function_signature;
+    (inner.get(..4)? == function_selector(CREATE_ORDER)).then_some(CREATE_ORDER)
+}
+
 /// The price a meta-transaction aimed at a registered sale target settles at:
 /// `None` for one of the target's reviewed non-sale methods (nothing to
 /// price); the decoded price for a sale; zero (fail closed) when the wrapper
