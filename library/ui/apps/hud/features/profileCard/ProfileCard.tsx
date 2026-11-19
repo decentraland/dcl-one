@@ -53,8 +53,7 @@ export function ProfileCard({
   // the user menus and the member menus offer it; the friend request and blocked lists' menus do not
   const isMe = session.profile.data?.address?.toLowerCase() === userId.toLowerCase()
   const inviteItems = useInviteToCommunityItems(userId, invite && offersInvite(isMe, context))
-  // a guest's account is a throwaway key on one device: an item sent there would be lost with it
-  const canGift = useGiftingAvailable() && gift && !isMe && known?.isGuest !== true
+  const canGift = useGiftingAvailable() && gift && !isMe
   return (
     <ProfileCardPresentation
       user={user}

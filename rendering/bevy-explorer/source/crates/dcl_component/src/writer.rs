@@ -49,6 +49,11 @@ impl<'a> DclWriter<'a> {
         self.buffer.clear();
     }
 
+    /// The buffer itself, for encoders that write through `BufMut` (prost).
+    pub(crate) fn buffer_mut(&mut self) -> &mut Vec<u8> {
+        self.buffer
+    }
+
     pub fn reader(&self) -> DclReader<'_> {
         DclReader::new(self.buffer)
     }
@@ -70,19 +75,5 @@ pub trait ToDclWriter {
         let mut writer = DclWriter::new(&mut buf);
         self.to_writer(&mut writer);
         buf
-    }
-}
-
-unsafe impl prost::bytes::BufMut for DclWriter<'_> {
-    fn remaining_mut(&self) -> usize {
-        self.buffer.remaining_mut()
-    }
-
-    unsafe fn advance_mut(&mut self, cnt: usize) {
-        self.buffer.advance_mut(cnt)
-    }
-
-    fn chunk_mut(&mut self) -> &mut prost::bytes::buf::UninitSlice {
-        self.buffer.chunk_mut()
     }
 }

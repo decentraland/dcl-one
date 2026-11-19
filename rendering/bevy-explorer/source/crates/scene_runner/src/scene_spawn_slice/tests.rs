@@ -14,7 +14,7 @@ pub(crate) fn scene_updates(frame_target: Option<Duration>) -> SceneUpdates {
     let (sender, receiver) = scene_response_channel();
     SceneUpdates {
         sender,
-        receiver,
+        receiver: bevy::utils::synccell::SyncCell::new(receiver),
         jobs_in_flight: Default::default(),
         update_deadline: web_time::SystemTime::now(),
         eligible_jobs: 0,

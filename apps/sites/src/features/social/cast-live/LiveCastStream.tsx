@@ -135,39 +135,15 @@ export default function LiveCastStream({
       stopShare,
       bindShareEnded,
       bindConnectionLost,
-      stage: session ? <StreamerStage tracks={tracks} muted={false} /> : undefined,
+      stage: session ? (muted) => <StreamerStage tracks={tracks} muted={muted} /> : undefined,
       participants: session ? session.participantCount() : undefined,
-      notice: audioBlocked ? (
-        <button
-          type="button"
-          className="cast-console__btn cast-console__btn--active"
-          onClick={() => void session?.startAudio()}
-        >
-          Enable audio
-        </button>
-      ) : undefined,
-      liveControls: session ? (
-        <>
-          <button
-            type="button"
-            className={"cast-console__btn" + (micOn ? "" : " cast-console__btn--active")}
-            disabled={toggling}
-            aria-pressed={!micOn}
-            onClick={() => void toggle("microphone")}
-          >
-            {micOn ? "Mute microphone" : "Unmute microphone"}
-          </button>
-          <button
-            type="button"
-            className={"cast-console__btn" + (camOn ? "" : " cast-console__btn--active")}
-            disabled={toggling}
-            aria-pressed={!camOn}
-            onClick={() => void toggle("camera")}
-          >
-            {camOn ? "Turn camera off" : "Turn camera on"}
-          </button>
-        </>
-      ) : undefined,
+      micOn,
+      cameraOn: camOn,
+      toggleMicrophone: () => void toggle("microphone"),
+      toggleCamera: () => void toggle("camera"),
+      devicesBusy: toggling,
+      audioBlocked,
+      enableAudio: () => void session?.startAudio(),
     }),
     [
       goLive,
