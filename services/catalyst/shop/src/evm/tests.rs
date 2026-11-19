@@ -377,17 +377,24 @@ fn state(pool: PgPool, settings: Settings) -> SharedState {
 /// A mirrored collection on matic plus the mirror's complete-pass marker
 /// (the collections mirror stands in for the old squid `collection` table).
 async fn seed_collection(pool: &PgPool, address: &str) {
+    seed_collection_on(pool, address, 137).await;
+}
+
+/// `seed_collection` for a collection the mirror read on `chain_id`: Polygon's and Amoy's both
+/// live under the `matic` network (`mirror_network`).
+async fn seed_collection_on(pool: &PgPool, address: &str, chain_id: i64) {
     sqlx::query(
         "INSERT INTO shop.collections \
          (network, contract_address, chain_id, name, symbol, creator, owner, urn, is_completed, is_approved, is_editable, \
           created_at, updated_at, reviewed_at, mirrored_at) \
-         VALUES ('matic', $1, 137, 'test', 'TST', $2, $2, $3, true, true, false, 0, 0, 0, $4) \
+         VALUES ('matic', $1, $5, 'test', 'TST', $2, $2, $3, true, true, false, 0, 0, 0, $4) \
          ON CONFLICT (network, contract_address) DO NOTHING",
     )
     .bind(address.to_lowercase())
     .bind(VICTIM)
     .bind(format!("urn:decentraland:matic:collections-v2:{}", address.to_lowercase()))
     .bind(now())
+    .bind(chain_id)
     .execute(pool)
     .await
     .expect("seed collection");
@@ -3575,7 +3582,9 @@ async fn without_a_relayer_key_dcl_ones_manager_is_refused_here_and_never_forwar
     let Some(pool) = scratch_pool().await else {
         return;
     };
-    seed_collection(&pool, COLLECTION).await;
+    // A collection the mirror read on Amoy, as the profile's collections mirror reads them.
+    let amoy_collection = unique_address();
+    seed_collection_on(&pool, &amoy_collection, 80_002).await;
     let map = spawn_contract_map(json!({
         "amoy": { "MarketplaceV5": "0x36fd1434a6c4b8ade80c9847c1d15033ce34488c" }
     }))
@@ -3596,6 +3605,7 @@ async fn without_a_relayer_key_dcl_ones_manager_is_refused_here_and_never_forwar
             transactions_upstream_url: Some(upstream),
             contract_addresses_url: Some(map),
             contract_addresses_chain_key: "amoy".into(),
+            collections_chain_id: 80_002,
             ..Settings::for_tests()
         },
     ));
@@ -3611,7 +3621,7 @@ async fn without_a_relayer_key_dcl_ones_manager_is_refused_here_and_never_forwar
     let other = unique_address();
     let (collection_status, collection_text) = post_with_auth(
         &app,
-        &tx_body(&other, COLLECTION, &split_sig_calldata(&other)),
+        &tx_body(&other, &amoy_collection, &split_sig_calldata(&other)),
     )
     .await;
     let forwarded_the_collection = seen.lock().unwrap().is_some();
