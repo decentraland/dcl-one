@@ -392,6 +392,8 @@ impl Drop for BanGuard {
 pub struct RealmDescription {
     /// `comms.adapter`: the adapter the realm tells a client to connect with.
     pub adapter: String,
+    /// `configurations.realmName`, when the description names it.
+    pub realm_name: Option<String>,
 }
 
 /// One look at the realm description: the status it answered, and what it names when it is a 200.
@@ -426,6 +428,10 @@ pub async fn realm_description(api: &Url) -> Result<RealmDescription, String> {
     }
     Ok(RealmDescription {
         adapter: adapter.to_owned(),
+        realm_name: body
+            .pointer("/configurations/realmName")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
     })
 }
 

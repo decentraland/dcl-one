@@ -32,6 +32,9 @@ web-transport-quinn.workspace = true
 rustls.workspace = true
 tokio-tungstenite.workspace = true
 base64.workspace = true
+# the key of a headless explorer's seeded guest wallet: the same generator and curve its wallet uses
+k256.workspace = true
+rand_chacha = "0.3.1"
 
 [dev-dependencies]
 axum.workspace = true

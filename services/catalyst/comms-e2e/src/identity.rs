@@ -83,6 +83,26 @@ impl Identity {
         })
     }
 
+    /// The wallet of a headless explorer started with `--wallet-seed <seed>`, with a device key of
+    /// its own derived from `material`: the explorer's wallet on another device. A seeded guest
+    /// explorer signs with its wallet key itself; that key is drawn from the standard generator of
+    /// `rand` 0.8 (ChaCha with 12 rounds) seeded with the seed's eight little-endian bytes followed
+    /// by zeros, as the explorer's wallet does.
+    pub fn seeded_guest_wallet(seed: u64, material: &str) -> Identity {
+        use rand_chacha::rand_core::SeedableRng as _;
+        let mut bytes = [0u8; 32];
+        bytes[..8].copy_from_slice(&seed.to_le_bytes());
+        let key = k256::ecdsa::SigningKey::random(&mut rand_chacha::ChaCha12Rng::from_seed(bytes));
+        Identity {
+            wallet: Wallet::from_hex(&hex::encode(key.to_bytes()))
+                .expect("a signing key is a valid private key"),
+            device: derived_key("guest device", material, 0, 0),
+            material: material.to_owned(),
+            index: 0,
+            device_number: 0,
+        }
+    }
+
     /// The same wallet on another device: a new session key.
     pub fn second_device(&self) -> Identity {
         let device_number = self.device_number + 1;
@@ -261,6 +281,39 @@ mod tests {
         assert_ne!(second.session(), first.session());
         assert_ne!(second.second_device().session(), second.session());
         assert_eq!(first.same_device().session(), first.session());
+    }
+
+    #[test]
+    fn a_seeded_guest_wallet_is_the_explorers_on_another_device() {
+        // the addresses the explorer's own tool prints for these seeds (`harness-util address
+        // --seed <n>`), which a headless explorer started with `--wallet-seed <n>` signs as
+        for (seed, address) in [
+            (7, "0x16af891c5e59ba6e773680580ee412c0a176a48b"),
+            (
+                12_345_678_901_234_567,
+                "0xc1f0b32491674b401d8aaa04ce8320a94c6dd839",
+            ),
+        ] {
+            let identity = Identity::seeded_guest_wallet(seed, "another device");
+            assert_eq!(identity.address(), address, "seed {seed}");
+            // its own session key, not the wallet key the explorer signs with
+            assert_ne!(identity.session(), identity.address());
+            assert_ne!(
+                identity.session(),
+                Identity::seeded_guest_wallet(seed, "a third device").session()
+            );
+        }
+        let identity = Identity::seeded_guest_wallet(7, "verify");
+        let now = now_ms();
+        let ClientMessage {
+            message: Some(client_message::Message::Handshake(request)),
+        } = identity.pulse_handshake(now, None)
+        else {
+            panic!("a handshake message");
+        };
+        let verified = verify_handshake(&request, now).expect("the server accepts the chain");
+        assert_eq!(verified.user_address, identity.address());
+        assert_eq!(verified.session, identity.session());
     }
 
     #[test]

@@ -4,15 +4,20 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow, bail};
+use catalyst_comms::pulse::hardening::DisconnectReason;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use crate::archipelago::{ArchipelagoBot, ArchipelagoOptions, socket_url};
 use crate::engine::holds_for_async;
 use crate::engine::{Ctx, Needs, Scenario, expect_async, expect_or};
 use crate::explorer::{Explorer, ExplorerOptions, Fronts};
 use crate::fault::{Direction, Fault};
-use crate::pulse::PulseBot;
-use crate::scenarios::connections_support::{RealmDescription, realm_description};
+use crate::identity::Identity;
+use crate::pulse::{ConnectOptions, HandshakeOptions, HandshakeOutcome, PulseBot};
+use crate::scenarios::connections_support::{
+    RealmDescription, api, first_assignment, realm_description,
+};
 
 /// The scenarios of this group, in the order a run takes them.
 pub fn all() -> Vec<&'static Scenario> {
@@ -24,6 +29,10 @@ pub fn all() -> Vec<&'static Scenario> {
         &PORT_UNREACHABLE,
         &TWO_DEVICES,
         &RESYNC,
+        &REPLACED_BY_ANOTHER_DEVICE,
+        &REPLACES_ANOTHER_DEVICE,
+        &LONG_UPLINK_STALL,
+        &RECONNECT_OUTSIDE_GRID,
     ]
 }
 
@@ -120,7 +129,62 @@ static RESYNC: Scenario = Scenario {
     run: |ctx| Box::pin(resync(ctx)),
 };
 
+static REPLACED_BY_ANOTHER_DEVICE: Scenario = Scenario {
+    name: "explorer-replaced-by-another-device",
+    tags: &["explorer", "probe", "races"],
+    guards: &["dcl-one #1205"],
+    summary: "Another device signs in with the explorer's wallet and a session key of its own, on \
+              another island: the explorer is told it was replaced on Pulse, ends its island \
+              connection for good and does not dial again, and the other device stays in.",
+    needs: NEEDS,
+    hostile: false,
+    default_repeat: 1,
+    run: |ctx| Box::pin(replaced_by_another_device(ctx)),
+};
+
+static REPLACES_ANOTHER_DEVICE: Scenario = Scenario {
+    name: "explorer-replaces-another-device",
+    tags: &["explorer", "probe", "races"],
+    guards: &["dcl-one #1205"],
+    summary: "Another device with the explorer's wallet and a session key of its own is signed \
+              in first; the explorer then gets in world, connected to its island and to Pulse, \
+              and the other device's Pulse session ends as a duplicate.",
+    needs: NEEDS,
+    hostile: false,
+    default_repeat: 1,
+    run: |ctx| Box::pin(replaces_another_device(ctx)),
+};
+
+static LONG_UPLINK_STALL: Scenario = Scenario {
+    name: "explorer-long-uplink-stall",
+    tags: &["explorer", "probe", "faults"],
+    guards: &["dcl-one #1208"],
+    summary: "The uplink to Pulse is dead for longer than the transport waits while the explorer \
+              teleports: once it returns the explorer is authenticated again, kept or new, never \
+              ended for good, and the observer sees it where it last teleported.",
+    needs: NEEDS,
+    hostile: false,
+    default_repeat: 1,
+    run: |ctx| Box::pin(long_uplink_stall(ctx)),
+};
+
+static RECONNECT_OUTSIDE_GRID: Scenario = Scenario {
+    name: "explorer-reconnect-outside-grid",
+    tags: &["explorer", "probe", "faults"],
+    guards: &["dcl-one #1205"],
+    summary: "The explorer's Pulse session breaks while it stands north of the parcel grid, so \
+              it has to connect again from there; back inside it is authenticated and the \
+              observer sees it where it re-entered, and it is never ended for good.",
+    needs: NEEDS,
+    hostile: false,
+    default_repeat: 1,
+    run: |ctx| Box::pin(reconnect_outside_grid(ctx)),
+};
+
 const SOON: Duration = Duration::from_secs(15);
+/// How long the link to Pulse is dead in the probes that need the transport to give up: past the
+/// five seconds after which the transport ends a connection that no longer answers.
+const LONG_OUTAGE: Duration = Duration::from_secs(8);
 const CONSOLE_TICK: Duration = Duration::from_millis(200);
 
 /// The explorer under test, the links in front of it and what it says about itself.
@@ -150,6 +214,11 @@ fn vector(value: &Value) -> Option<[f32; 3]> {
 }
 
 async fn start(ctx: &Ctx, preview: bool) -> Result<Subject> {
+    start_seeded(ctx, preview, wallet_seed(ctx, 0)).await
+}
+
+/// [`start`] with the wallet seed given.
+async fn start_seeded(ctx: &Ctx, preview: bool, seed: u64) -> Result<Subject> {
     let fronts = Fronts::start(ctx).await?;
     let mut extra = Vec::new();
     if preview {
@@ -160,7 +229,7 @@ async fn start(ctx: &Ctx, preview: bool) -> Result<Subject> {
         ctx,
         "explorer",
         ExplorerOptions {
-            wallet_seed: wallet_seed(ctx, 0),
+            wallet_seed: seed,
             extra,
             ..ExplorerOptions::default()
         },
@@ -1061,6 +1130,601 @@ async fn resync(ctx: Ctx) -> Result<()> {
         SOON,
     )
     .await?;
+    subject.explorer.stop().await;
+    Ok(())
+}
+
+/// States an explorer reported, in order, each change once: what a probe saw on the way.
+#[derive(Default)]
+struct Trail(parking_lot::Mutex<Vec<String>>);
+
+impl Trail {
+    fn push(&self, state: &str) {
+        let mut states = self.0.lock();
+        if states.last().map(String::as_str) != Some(state) {
+            states.push(state.to_owned());
+        }
+    }
+
+    fn seen(&self, state: &str) -> bool {
+        self.0.lock().iter().any(|seen| seen == state)
+    }
+
+    fn states(&self) -> Vec<String> {
+        self.0.lock().clone()
+    }
+}
+
+/// [`pulse_state`], kept on `trail`.
+async fn pulse_state_onto(explorer: &Explorer, trail: &Trail) -> Result<String, String> {
+    let state = pulse_state(explorer).await?;
+    trail.push(&state);
+    Ok(state)
+}
+
+/// [`realm_room`], kept on `trail`.
+async fn realm_room_onto(explorer: &Explorer, trail: &Trail) -> Result<String, String> {
+    let state = realm_room(explorer).await?;
+    trail.push(&state);
+    Ok(state)
+}
+
+/// Waits until the explorer reports its realm room as `wanted`. An identity conflict ends the
+/// wait at once when it is not what is wanted: nothing brings the room back from it.
+async fn expect_realm_room(
+    ctx: &Ctx,
+    explorer: &Explorer,
+    what: &str,
+    deadline: Duration,
+    wanted: &str,
+) -> Result<()> {
+    expect_async(ctx, what, deadline, CONSOLE_TICK, || async {
+        let state = realm_room(explorer).await?;
+        if state == wanted {
+            Ok(())
+        } else if state == "identity_conflict" {
+            Err(format!(
+                "fatal: the explorer reports its realm room as {state}"
+            ))
+        } else {
+            Err(format!("its realm room is {state}"))
+        }
+    })
+    .await
+}
+
+/// Waits until the explorer reports Pulse as `terminal disconnect`.
+async fn expect_terminal(ctx: &Ctx, explorer: &Explorer, what: &str) -> Result<()> {
+    expect_async(ctx, what, Duration::from_secs(30), CONSOLE_TICK, || async {
+        let state = pulse_state(explorer).await?;
+        (state == "terminal disconnect")
+            .then_some(())
+            .ok_or(format!("it reports Pulse as {state}"))
+    })
+    .await
+}
+
+/// A spot inside the grid `distance` metres from `from` along one axis: another island.
+fn far_spot(ctx: &Ctx, from: [f32; 3], distance: f32) -> Result<[f32; 3]> {
+    let grid = ctx.stack().grid;
+    [
+        (distance, 0.0),
+        (-distance, 0.0),
+        (0.0, distance),
+        (0.0, -distance),
+    ]
+    .into_iter()
+    .map(|(dx, dz)| [from[0] + dx, 0.0, from[2] + dz])
+    .find(|world| grid.locate(*world).is_some())
+    .ok_or_else(|| anyhow!("no spot inside the grid is {distance} m from {from:?} along an axis"))
+}
+
+/// What the statistics route lists for `wallet`: each entry's island and position, or why it could
+/// not be asked.
+async fn listed(ctx: &Ctx, wallet: &str) -> Value {
+    let peers = match api(ctx) {
+        Ok(api) => crate::oracle::peers(api).await,
+        Err(error) => Err(error),
+    };
+    match peers {
+        Ok(peers) => crate::oracle::of_wallet(&peers, wallet)
+            .into_iter()
+            .map(|peer| serde_json::json!({ "island": peer.island, "position": peer.position }))
+            .collect(),
+        Err(error) => Value::String(format!("{error:#}")),
+    }
+}
+
+/// The last `count` lines of the explorer's log that contain `needle`.
+fn last_log_lines(explorer: &Explorer, needle: &str, count: usize) -> Vec<String> {
+    let mut lines = explorer.log_lines(needle);
+    let skip = lines.len().saturating_sub(count);
+    lines.split_off(skip)
+}
+
+async fn replaced_by_another_device(ctx: Ctx) -> Result<()> {
+    let seed = wallet_seed(&ctx, 0);
+    let subject = start_seeded(&ctx, false, seed).await?;
+    expect_realm_room(
+        &ctx,
+        &subject.explorer,
+        "the explorer has its realm room connected",
+        Duration::from_secs(60),
+        "connected",
+    )
+    .await?;
+
+    // the explorer's wallet on another device: the wallet key, and a session key of its own
+    let device = Identity::seeded_guest_wallet(seed, &ctx.realm("another device"));
+    if device.address() != subject.wallet {
+        bail!(
+            "the wallet built from seed {seed} is {}, the explorer reports {}: the other device would not share its wallet",
+            device.address(),
+            subject.wallet
+        );
+    }
+    let far = far_spot(&ctx, subject.position, 800.0)?;
+    ctx.note(
+        "the statistics route on the wallet before the other device",
+        listed(&ctx, &subject.wallet).await,
+    );
+
+    let url = socket_url(api(&ctx)?)?;
+    let archipelago = ArchipelagoBot::begin(
+        &ctx,
+        "other device archipelago",
+        &url,
+        &device,
+        ArchipelagoOptions::default(),
+    )
+    .await?;
+    ctx.note(
+        "already_connected in the other device's challenge",
+        archipelago.view().already_connected,
+    );
+    archipelago.finish(&ctx, &device).await?;
+    archipelago.heartbeat(far);
+    let assignment = first_assignment(&ctx, &archipelago).await?;
+    ctx.note("the other device's island", &assignment.island);
+
+    let pulse = PulseBot::dial(&ctx, "other device pulse", ConnectOptions::default()).await?;
+    match pulse
+        .handshake(&ctx, &device, HandshakeOptions::default())
+        .await?
+    {
+        HandshakeOutcome::Accepted => {}
+        other => bail!("the other device's Pulse handshake was not accepted: {other:?}"),
+    }
+    pulse.teleport(&subject.realm, far)?;
+    pulse.move_to(far)?;
+
+    let rooms = Trail::default();
+    rooms.push("connected");
+    let verdict = async {
+        expect_terminal(
+            &ctx,
+            &subject.explorer,
+            "the explorer reports Pulse as ended for good (terminal disconnect)",
+        )
+        .await?;
+        expect_async(
+            &ctx,
+            "the explorer ends its island connection for good: its realm room reports identity_conflict",
+            Duration::from_secs(30),
+            CONSOLE_TICK,
+            || async {
+                let state = realm_room_onto(&subject.explorer, &rooms).await?;
+                (state == "identity_conflict")
+                    .then_some(())
+                    .ok_or(format!("its realm room is {state}"))
+            },
+        )
+        .await?;
+        let packets = subject.fronts.pulse.counters().up_packets;
+        holds_for_async(
+            &ctx,
+            "the explorer stays down without dialling Pulse again and keeps its realm room in identity_conflict, while the other device stays authenticated on Pulse and welcomed on the archipelago with its island",
+            Duration::from_secs(8),
+            CONSOLE_TICK,
+            || async {
+                let state = pulse_state(&subject.explorer).await?;
+                if state != "terminal disconnect" {
+                    return Err(format!("the explorer reports Pulse as {state}"));
+                }
+                let room = realm_room_onto(&subject.explorer, &rooms).await?;
+                if room != "identity_conflict" {
+                    return Err(format!("the explorer's realm room is {room}"));
+                }
+                let sent = subject.fronts.pulse.counters().up_packets - packets;
+                if sent > 0 {
+                    return Err(format!("the explorer sent {sent} packets towards Pulse"));
+                }
+                pulse
+                    .alive()
+                    .map_err(|reason| format!("the other device on Pulse: {reason}"))?;
+                archipelago
+                    .alive()
+                    .map_err(|reason| format!("the other device on the archipelago: {reason}"))?;
+                if archipelago.assignments().is_empty() {
+                    return Err("the other device holds no island".to_owned());
+                }
+                Ok(())
+            },
+        )
+        .await
+    }
+    .await;
+    ctx.note("the explorer's realm room states", rooms.states());
+    ctx.note(
+        "the statistics route on the wallet afterwards",
+        listed(&ctx, &subject.wallet).await,
+    );
+    let view = archipelago.view();
+    ctx.note(
+        "the other device's archipelago socket: kicked, closed, assignments",
+        (view.kicked, view.closed, view.assignments.len()),
+    );
+    ctx.note(
+        "explorer log, archipelago (last lines)",
+        last_log_lines(&subject.explorer, "comms::archipelago", 6),
+    );
+    ctx.note(
+        "explorer log, Pulse disconnects",
+        last_log_lines(&subject.explorer, "pulse: terminal", 3),
+    );
+    verdict?;
+    subject.explorer.stop().await;
+    Ok(())
+}
+
+async fn replaces_another_device(ctx: Ctx) -> Result<()> {
+    let seed = wallet_seed(&ctx, 0);
+    let device = Identity::seeded_guest_wallet(seed, &ctx.realm("another device"));
+    let api_url = api(&ctx)?.clone();
+    // the other device announces the realm the explorer will enter, where it starts
+    let realm = realm_description(&api_url)
+        .await
+        .ok()
+        .and_then(|description| description.realm_name)
+        .unwrap_or_else(|| ctx.realm("explorer"));
+    ctx.note("the realm the other device announces", &realm);
+    let start_parcel = ExplorerOptions::default().position;
+    let here = ctx
+        .stack()
+        .grid
+        .parcel_centre(start_parcel.0, start_parcel.1);
+    let beside = [here[0] + 3.0, 0.0, here[2] + 3.0];
+
+    let archipelago = ArchipelagoBot::open(&ctx, "other device archipelago", &device).await?;
+    archipelago.heartbeat(beside);
+    let assignment = first_assignment(&ctx, &archipelago).await?;
+    ctx.note("the other device's island", &assignment.island);
+    let pulse = PulseBot::enter(&ctx, "other device pulse", &device).await?;
+    pulse.teleport(&realm, beside)?;
+    pulse.move_to(beside)?;
+
+    let rooms = Trail::default();
+    let started = start_seeded(&ctx, false, seed).await;
+    let verdict = async {
+        let subject = started?;
+        if device.address() != subject.wallet {
+            bail!(
+                "the wallet built from seed {seed} is {}, the explorer reports {}: the other device did not share its wallet",
+                device.address(),
+                subject.wallet
+            );
+        }
+        expect_async(
+            &ctx,
+            "the explorer has its realm room connected",
+            Duration::from_secs(60),
+            CONSOLE_TICK,
+            || async {
+                let state = realm_room_onto(&subject.explorer, &rooms).await?;
+                match state.as_str() {
+                    "connected" => Ok(()),
+                    "identity_conflict" => Err(format!(
+                        "fatal: the explorer reports its realm room as {state}"
+                    )),
+                    _ => Err(format!("its realm room is {state}")),
+                }
+            },
+        )
+        .await?;
+        pulse
+            .expect_disconnect_with(
+                &ctx,
+                DisconnectReason::DuplicateSession,
+                Duration::from_secs(15),
+            )
+            .await?;
+        expect_pulse(
+            &ctx,
+            &subject.explorer,
+            "the explorer is still authenticated on Pulse",
+            SOON,
+        )
+        .await?;
+        Ok(subject)
+    }
+    .await;
+    ctx.note("the explorer's realm room states", rooms.states());
+    let view = archipelago.view();
+    ctx.note(
+        "the other device's archipelago socket: kicked, closed, assignments",
+        (view.kicked, view.closed, view.assignments.len()),
+    );
+    ctx.note(
+        "the other device's Pulse disconnect code",
+        pulse.view().disconnect,
+    );
+    ctx.note(
+        "the statistics route on the wallet afterwards",
+        listed(&ctx, &device.address()).await,
+    );
+    let subject = verdict?;
+    subject.explorer.stop().await;
+    Ok(())
+}
+
+async fn long_uplink_stall(ctx: Ctx) -> Result<()> {
+    let subject = start(&ctx, true).await?;
+    let bot = observer(&ctx, &subject).await?;
+    let home = subject.position;
+    let away = [home[0] + 6.0, home[1], home[2]];
+    let wallet = subject.wallet.clone();
+    let held = bot
+        .view()
+        .of(&wallet)
+        .map(|seen| seen.subject_id)
+        .ok_or_else(|| anyhow!("the observer lost the explorer before the stall"))?;
+    let (joins, leaves) = (bot.view().joins_of(&wallet), bot.view().leaves_of(&wallet));
+    let accepted_before = subject.explorer.log_count("pulse: handshake accepted");
+
+    // The uplink is dead for longer than the transport waits for an acknowledgement, while the
+    // explorer is asked to teleport over and over, as in `explorer-uplink-stall`.
+    let states = Trail::default();
+    states.push("authenticated");
+    let dropped_before = subject.fronts.pulse.counters().dropped;
+    subject.fronts.pulse.set(Direction::Uplink, Fault::Stall);
+    let started = Instant::now();
+    let mut moves = 0u32;
+    while started.elapsed() < LONG_OUTAGE {
+        let target = if moves.is_multiple_of(2) { away } else { home };
+        let line = format!("/move_player_to {} {} {}", target[0], target[1], target[2]);
+        subject.explorer.fire(&line).await?;
+        moves += 1;
+        if moves.is_multiple_of(10) {
+            // what it reports inside the stall; a failed look is not the explorer's answer
+            if let Ok(state) = pulse_state(&subject.explorer).await {
+                states.push(&state);
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let last = if moves % 2 == 1 { away } else { home };
+    subject.fronts.pulse.restore();
+    let dropped = subject.fronts.pulse.counters().dropped - dropped_before;
+    ctx.note("stall, ms", LONG_OUTAGE.as_millis() as u64);
+    ctx.note("moves asked during the stall", moves);
+    ctx.note("packets dropped by the stall", dropped);
+    if dropped == 0 {
+        bail!("the stall dropped no packet of the explorer: the fault touched nothing");
+    }
+
+    let verdict = async {
+        if states.seen("terminal disconnect") {
+            bail!(
+                "the explorer reported a terminal disconnect during the stall; its Pulse states: {:?}",
+                states.states()
+            );
+        }
+        expect_async(
+            &ctx,
+            "Pulse is authenticated again within 30 s of the uplink's return",
+            Duration::from_secs(30),
+            CONSOLE_TICK,
+            || async {
+                match pulse_state_onto(&subject.explorer, &states).await?.as_str() {
+                    "authenticated" => Ok(()),
+                    "terminal disconnect" => Err(
+                        "fatal: the explorer reports a terminal disconnect: Pulse is over until the realm changes"
+                            .to_owned(),
+                    ),
+                    other => Err(format!("the explorer reports Pulse as {other}")),
+                }
+            },
+        )
+        .await?;
+        holds_for_async(
+            &ctx,
+            "the explorer does not report a terminal disconnect afterwards",
+            Duration::from_secs(5),
+            CONSOLE_TICK,
+            || async {
+                match pulse_state_onto(&subject.explorer, &states).await?.as_str() {
+                    "terminal disconnect" => {
+                        Err("the explorer reports a terminal disconnect".to_owned())
+                    }
+                    _ => Ok(()),
+                }
+            },
+        )
+        .await?;
+        observer_sees_at(
+            &ctx,
+            &bot,
+            &wallet,
+            last,
+            "the observer sees the explorer where it last teleported",
+        )
+        .await
+    }
+    .await;
+    let view = bot.view();
+    let now = view.of(&wallet).map(|seen| seen.subject_id);
+    let (joined, left) = (
+        view.joins_of(&wallet) - joins,
+        view.leaves_of(&wallet) - leaves,
+    );
+    ctx.note(
+        "the explorer's Pulse states from the stall on",
+        states.states(),
+    );
+    ctx.note(
+        "session after the stall",
+        if now == Some(held) && joined == 0 && left == 0 {
+            "kept"
+        } else {
+            "new"
+        },
+    );
+    ctx.note(
+        "handshakes the explorer had accepted since the stall began",
+        subject.explorer.log_count("pulse: handshake accepted") - accepted_before,
+    );
+    ctx.note(
+        "times the observer saw the explorer leave and join",
+        (left, joined),
+    );
+    ctx.note(
+        "explorer log, Pulse disconnects and failures",
+        last_log_lines(&subject.explorer, "pulse: disconnected", 4)
+            .into_iter()
+            .chain(last_log_lines(&subject.explorer, "pulse: failed", 4))
+            .collect::<Vec<_>>(),
+    );
+    verdict?;
+    subject.explorer.stop().await;
+    Ok(())
+}
+
+async fn reconnect_outside_grid(ctx: Ctx) -> Result<()> {
+    let subject = start(&ctx, true).await?;
+    let bot = observer(&ctx, &subject).await?;
+    let grid = ctx.stack().grid;
+    let home = subject.position;
+    let wallet = subject.wallet.clone();
+
+    // as in `explorer-out-of-grid`: two parcels past the padded north edge
+    let outside = [
+        home[0],
+        0.0,
+        (grid.max_parcel_z + grid.padding + 2) as f32 * grid.parcel_size as f32 + 8.0,
+    ];
+    if grid.locate(outside).is_some() {
+        bail!(
+            "{outside:?} is inside the grid of this stack; the scenario needs a position outside"
+        );
+    }
+    move_and_confirm(
+        &ctx,
+        &subject.explorer,
+        outside,
+        "the explorer stands outside the grid",
+    )
+    .await?;
+    let leaves = bot.view().leaves_of(&wallet);
+    let accepted_before = subject.explorer.log_count("pulse: handshake accepted");
+    let disconnects_before = subject.explorer.log_count("pulse: disconnected");
+    let states = Trail::default();
+    if let Ok(state) = pulse_state(&subject.explorer).await {
+        states.push(&state);
+    }
+
+    // The link to Pulse is dead both ways for longer than the transport waits, while the explorer
+    // stands outside the grid: its session ends and it has to connect again from there.
+    subject.fronts.pulse.set(Direction::Both, Fault::Stall);
+    let started = Instant::now();
+    while started.elapsed() < LONG_OUTAGE {
+        if let Ok(state) = pulse_state(&subject.explorer).await {
+            states.push(&state);
+        }
+        tokio::time::sleep(CONSOLE_TICK).await;
+    }
+    subject.fronts.pulse.restore();
+    ctx.note("outage, ms", LONG_OUTAGE.as_millis() as u64);
+
+    let back = [home[0] + 16.0, 0.0, home[2]];
+    let verdict = async {
+        if states.seen("terminal disconnect") {
+            bail!(
+                "the explorer reported a terminal disconnect during the outage; its Pulse states: {:?}",
+                states.states()
+            );
+        }
+        // it stays outside for a while with the link back, whatever it does there to reconnect
+        holds_for_async(
+            &ctx,
+            "outside the grid with the link back, the explorer does not report a terminal disconnect",
+            Duration::from_secs(10),
+            CONSOLE_TICK,
+            || async {
+                match pulse_state_onto(&subject.explorer, &states).await?.as_str() {
+                    "terminal disconnect" => {
+                        Err("the explorer reports a terminal disconnect".to_owned())
+                    }
+                    _ => Ok(()),
+                }
+            },
+        )
+        .await?;
+        // the outage must have ended the session, or the rest proves nothing
+        let left = bot.view().leaves_of(&wallet) - leaves;
+        let disconnects = subject.explorer.log_count("pulse: disconnected") - disconnects_before;
+        if states.states().iter().all(|state| state == "authenticated") && left == 0 && disconnects == 0
+        {
+            bail!(
+                "the explorer reported Pulse as authenticated throughout, logged no disconnect and the observer never saw it leave: the outage broke nothing"
+            );
+        }
+        states.push("(walked back inside)");
+        move_to(&subject.explorer, back).await?;
+        expect_async(
+            &ctx,
+            "the explorer is authenticated on Pulse within 30 s of walking back inside",
+            Duration::from_secs(30),
+            CONSOLE_TICK,
+            || async {
+                match pulse_state_onto(&subject.explorer, &states).await?.as_str() {
+                    "authenticated" => Ok(()),
+                    "terminal disconnect" => Err(
+                        "fatal: the explorer reports a terminal disconnect: Pulse is over until the realm changes"
+                            .to_owned(),
+                    ),
+                    other => Err(format!("the explorer reports Pulse as {other}")),
+                }
+            },
+        )
+        .await?;
+        observer_sees_at(
+            &ctx,
+            &bot,
+            &wallet,
+            back,
+            "the observer sees the explorer where it re-entered the grid",
+        )
+        .await
+    }
+    .await;
+    let view = bot.view();
+    ctx.note(
+        "the explorer's Pulse states from standing outside on",
+        states.states(),
+    );
+    ctx.note(
+        "handshakes the explorer had accepted since the outage began",
+        subject.explorer.log_count("pulse: handshake accepted") - accepted_before,
+    );
+    ctx.note(
+        "times the observer saw the explorer leave",
+        view.leaves_of(&wallet) - leaves,
+    );
+    ctx.note(
+        "explorer log, Pulse (last lines)",
+        last_log_lines(&subject.explorer, "pulse:", 8),
+    );
+    verdict?;
     subject.explorer.stop().await;
     Ok(())
 }

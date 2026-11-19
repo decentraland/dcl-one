@@ -124,7 +124,7 @@ The LiveKit SDK brings libwebrtc, which stays out of this workspace.
 |---|---|---|
 | `pulse` | Smoke, refusal codes, the authentication timeout, rate limits, the same-wallet race, the handshake swarm, churn, a realm round trip, the emote lifecycle, resync requests, stall and resume, the scene listener, bursts over WebTransport | Pulse. All but the last run on either transport (`--transport`). |
 | `connections` | The full stack for one wallet, a second device, a stale socket, assignment order, mints under churn, ban eviction, credentials across a restart, two LiveKit joins with one identity | The API, and LiveKit for the joins |
-| `explorer` | An uplink stall while teleporting, off the north edge of the grid, off the east edge, a stale archipelago socket, an unreachable Pulse port, two explorers with one wallet, packets from Pulse out of order | The API and a headless explorer build |
+| `explorer` | An uplink stall while teleporting, off the north edge of the grid, off the east edge, a stale archipelago socket, an unreachable Pulse port, two explorers with one wallet, packets from Pulse out of order. Probes (`probe`): another device of the explorer's wallet signing in after it or before it, an uplink stall longer than the transport waits, a reconnect outside the grid | The API and a headless explorer build |
 
 Races repeat by default and take their order and gaps from the seed, so a failure replays.
 
