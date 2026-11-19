@@ -15,6 +15,8 @@ import DclTopBar from "@ui/web/frames/DclTopBar";
 import SiteLayout from "@ui/web/frames/SiteLayout";
 import { ChromeAuthContext, type ChromeAuth } from "@ui/web/frames/chrome-auth";
 import { ChromeNavContext } from "@ui/web/frames/chrome-nav";
+import { SitesLocaleContext, type SitesLocale } from "@ui/web/frames/sites-locale";
+import { forgetSignIn, recordSignIn } from "@/data/lib/auth/signin-kind";
 import ChromeNavBridge from "./ChromeNavBridge";
 
 vi.hoisted(() => {
@@ -30,6 +32,12 @@ vi.mock("@/data/lib/shop/marketplace-access", () => ({
   useMarketplaceHere: () => marketplace.eligible,
 }));
 
+const { readManaBalanceWei } = vi.hoisted(() => ({ readManaBalanceWei: vi.fn() }));
+vi.mock("@ui/shop/checkout/lib/mana", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@ui/shop/checkout/lib/mana")>(),
+  readManaBalanceWei,
+}));
+
 const baseAuth: ChromeAuth = {
   signedIn: false,
   account: "",
@@ -41,10 +49,12 @@ function Host({
   auth = baseAuth,
   children = <DclTopBar active="shop" />,
   pathname = "/shop",
+  locale = "en",
 }: {
   auth?: ChromeAuth;
   children?: React.ReactNode;
   pathname?: string;
+  locale?: SitesLocale;
 }) {
   const [client] = React.useState(
     () => new QueryClient({ defaultOptions: { queries: { retry: false } } }),
@@ -53,7 +63,9 @@ function Host({
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[pathname]}>
         <ChromeAuthContext.Provider value={auth}>
-          <ChromeNavBridge>{children}</ChromeNavBridge>
+          <SitesLocaleContext.Provider value={{ locale, onSelect: () => {} }}>
+            <ChromeNavBridge>{children}</ChromeNavBridge>
+          </SitesLocaleContext.Provider>
         </ChromeAuthContext.Provider>
       </MemoryRouter>
     </QueryClientProvider>
@@ -77,6 +89,8 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   marketplace.eligible = false;
+  forgetSignIn();
+  readManaBalanceWei.mockReset();
   vi.unstubAllGlobals();
 });
 
@@ -340,6 +354,74 @@ describe("when the signed-in web visitor opens the profile", () => {
     expect(screen.queryByRole("button", { name: "Switch account" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Logout" }));
     expect(logout).toHaveBeenCalledOnce();
+  });
+});
+
+describe("when Nav Profile reads the matching browser wallet", () => {
+  const otherAccount = "0x" + "cd".repeat(20);
+  const bodyUrl = "https://example.com/avatar-body.png";
+  let request: ReturnType<typeof vi.fn>;
+  let accountsChanged: ((accounts: string[]) => void) | undefined;
+
+  beforeEach(() => {
+    accountsChanged = undefined;
+    request = vi.fn(async ({ method }: { method: string }) => {
+      if (method === "eth_accounts") return [shopAccount.toUpperCase().replace("0X", "0x")];
+      if (method === "eth_chainId") return "0x1";
+      throw new Error(method);
+    });
+    vi.stubGlobal("ethereum", {
+      request,
+      on: (event: string, listener: (accounts: string[]) => void) => {
+        if (event === "accountsChanged" && !accountsChanged) accountsChanged = listener;
+      },
+      removeListener: () => {},
+    });
+    recordSignIn(shopAccount, "web3");
+    readManaBalanceWei.mockImplementation(async (_account, chain: number) => {
+      if (chain === 1) return 0n;
+      throw new Error("Polygon RPC unavailable");
+    });
+    render(
+      <Host
+        pathname="/"
+        locale="es"
+        auth={{ ...baseAuth, signedIn: true, account: shopAccount, name: "Ada", bodyUrl }}
+      />,
+    );
+  });
+
+  it("should defer MANA until the panel opens and keep the available balance after an RPC failure", async () => {
+    await act(async () => {});
+    expect(request).toHaveBeenCalledWith({ method: "eth_accounts" });
+    expect(readManaBalanceWei).not.toHaveBeenCalled();
+
+    const avatar = screen.getByRole("button", { name: "Account: Ada" });
+    fireEvent.click(avatar);
+    expect(await screen.findByRole("combobox", { name: "Red de la billetera" })).toBeTruthy();
+    const panel = document.getElementById(avatar.getAttribute("aria-controls")!);
+    await waitFor(() => expect(panel?.querySelector('[data-balance="mana"]')?.textContent).toBe("MANA: 0"));
+    expect(readManaBalanceWei).toHaveBeenCalledTimes(2);
+    expect(panel?.querySelector('[data-balance="polygonMana"]')).toBeNull();
+    expect(panel?.querySelector('img[loading="lazy"]')?.getAttribute("src")).toBe(bodyUrl);
+  });
+
+  it("should hide the wallet controls after the connected wallet changes", async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Account: Ada" }));
+    await screen.findByRole("combobox", { name: "Red de la billetera" });
+    act(() => accountsChanged?.([otherAccount]));
+    expect(screen.queryByRole("combobox", { name: "Red de la billetera" })).toBeNull();
+    expect(document.querySelector('[data-balance="mana"]')).toBeNull();
+    expect(readManaBalanceWei).not.toHaveBeenCalledWith(otherAccount, expect.anything(), expect.anything());
+  });
+
+  it("should confirm the address copy in the Sites locale", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    fireEvent.click(screen.getByRole("button", { name: "Account: Ada" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copiar ID de usuario" }));
+    expect(await screen.findByText("¡Dirección copiada!")).toBeTruthy();
+    expect(writeText).toHaveBeenCalledWith(shopAccount);
   });
 });
 

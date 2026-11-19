@@ -36,8 +36,6 @@ import { ProfileShell, type ProfileShellTab } from "./ProfileShell";
 
 /** Where the owner's empty Assets sends them: the Shop. */
 export const SHOP_HREF = SHOP_BASE;
-/** NAMEs are managed under Create; the source's Builder `/names/:name` redirects there. */
-export const MANAGE_NAMES_HREF = "/create/names";
 
 export type ProfileAssetsScreenProps = {
   profile: ProfileVM;
@@ -73,20 +71,15 @@ function tokenHref(asset: ProfileAsset): string {
   return assetPage(asset.contractAddress, asset.tokenId, "token");
 }
 
-/** A NAME's Edit (under Create) and Transfer (its token's transfer page). */
+/** A NAME's View (its token page) and Transfer (its token's transfer page). */
 function NameActions({ asset }: { asset: ProfileAsset }) {
   const routerClick = useRouterClick();
-  const transfer = `${tokenHref(asset)}/transfer`;
+  const view = tokenHref(asset);
+  const transfer = `${view}/transfer`;
   return (
     <>
-      <Button
-        href={MANAGE_NAMES_HREF}
-        onClick={routerClick(MANAGE_NAMES_HREF)}
-        variant="secondary"
-        size="md"
-        aria-label={`Edit ${asset.name}`}
-      >
-        Edit
+      <Button href={view} onClick={routerClick(view)} variant="secondary" size="md" aria-label={`View ${asset.name}`}>
+        View
       </Button>
       <Button href={transfer} onClick={routerClick(transfer)} size="md" aria-label={`Transfer ${asset.name}`}>
         Transfer
