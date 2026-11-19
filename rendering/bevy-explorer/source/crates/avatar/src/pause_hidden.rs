@@ -1,4 +1,4 @@
-//! Avatars that are hidden, or outside the camera's view, stop animating.
+//! Avatars that are hidden, or outside every camera's view, stop animating.
 //!
 //! An avatar hidden by the Max Avatars cap, an avatar modifier area, a block or ban, or its
 //! scene keeps its animation player running, but its bones leave the animation evaluation: each
@@ -16,12 +16,19 @@
 //! The player, its transitions and the emote logic keep running, so the clock stays in step
 //! with other clients: when the avatar shows again its bones take the current pose.
 //!
-//! An avatar the camera cannot see pauses the same way. It resumes before it comes into view:
-//! the test is a sphere around the avatar wider than the avatar ([`RESUME_MARGIN`]), so the
-//! camera has to turn through that margin first, and the avatar's shadow near the edge of the
-//! view stays live. It pauses only once a wider sphere ([`PAUSE_MARGIN`]) is out of view, so an
-//! avatar at the edge does not switch back and forth. An entity a scene attached to a bone of an
-//! avatar out of view stays where the bone was until the avatar resumes.
+//! An avatar no camera can see pauses the same way. Every active 3D camera that draws one of the
+//! avatar's render layers counts: the player's, a scene's texture cameras, the profile booth's
+//! and a scene test's snapshot cameras. It resumes before it comes into view: the test is a
+//! sphere around the avatar wider than the avatar ([`RESUME_MARGIN`]), so the camera has to turn
+//! through that margin first, and the avatar's shadow near the edge of the view stays live. It
+//! pauses only once a wider sphere ([`PAUSE_MARGIN`]) is out of every view, so an avatar at the
+//! edge does not switch back and forth. An entity a scene attached to a bone of an avatar out of
+//! view stays where the bone was until the avatar resumes.
+//!
+//! The views are the ones the last frame was drawn with: the cameras move, and their frusta are
+//! rebuilt, after the animation is evaluated. The margin covers a turning or moving camera. A
+//! teleport moves the view further than that, so in the frame of a teleport every shown avatar
+//! animates.
 //!
 //! The local player's avatar never pauses: first person hides it by render layer, not by
 //! visibility, and its bones carry attach points and the camera's head tracking.
@@ -29,9 +36,15 @@
 use bevy::{
     animation::AnimationTarget,
     prelude::*,
-    render::primitives::{Frustum, Sphere as ViewSphere},
+    render::{
+        primitives::{Frustum, Sphere as ViewSphere},
+        view::RenderLayers,
+    },
 };
-use common::structs::{PrimaryCamera, PrimaryUser};
+use common::{
+    sets::SceneSets,
+    structs::{PlayerTeleported, PrimaryUser},
+};
 
 use crate::AvatarProcessed;
 
@@ -39,13 +52,18 @@ pub struct PauseHiddenAvatarsPlugin;
 
 impl Plugin for PauseHiddenAvatarsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, pause_hidden_avatar_animation);
+        // comms registers the event in the Explorer; an app without comms still runs the system
+        app.add_event::<PlayerTeleported>().add_systems(
+            Update,
+            // after the systems that teleport the player, to see the event in its own frame
+            pause_hidden_avatar_animation.after(SceneSets::RestrictedActions),
+        );
     }
 }
 
 /// On an avatar whose build is hidden: the bones of that build taken out of the animation
-/// evaluation, with the target each one had. Systems that adjust the animated pose skip an avatar
-/// that has it.
+/// evaluation, with the target each one had (none, for a build with no bones to pause). Systems
+/// that adjust the animated pose skip an avatar that has it.
 #[derive(Component)]
 pub struct PausedAnimation {
     /// the build the bones belong to; a rebuild replaces it, leaving this record stale
@@ -74,19 +92,30 @@ fn pause_hidden_avatar_animation(
             Ref<AvatarProcessed>,
             &ChildOf,
             &GlobalTransform,
+            Option<&RenderLayers>,
         ),
         With<AvatarProcessed>,
     >,
     roots: Query<&InheritedVisibility>,
-    camera: Query<&Frustum, With<PrimaryCamera>>,
+    cameras: Query<(&Camera, &Frustum, Option<&RenderLayers>), With<Camera3d>>,
     primary: Query<(), With<PrimaryUser>>,
     paused: Query<&PausedAnimation>,
     children: Query<&Children>,
     targets: Query<&AnimationTarget>,
+    mut teleports: EventReader<PlayerTeleported>,
 ) {
-    // without a camera every shown avatar animates
-    let frustum = camera.single().ok();
-    for (build, inherited, visibility, processed, parent, transform) in &builds {
+    // an entity without `RenderLayers` is on the default layer
+    let default_layers = RenderLayers::default();
+    // the views that draw this frame, each with the layers it draws
+    let views: Vec<_> = cameras
+        .iter()
+        .filter(|(camera, ..)| camera.is_active)
+        .map(|(_, frustum, layers)| (frustum, layers.unwrap_or(&default_layers)))
+        .collect();
+    // without a view, or in the frame the player teleports, every shown avatar animates
+    let all_in_view = teleports.read().count() > 0 || views.is_empty();
+    for (build, inherited, visibility, processed, parent, transform, layers) in &builds {
+        let layers = layers.unwrap_or(&default_layers);
         let avatar = parent.parent();
         // A build loads hidden and is shown by the same commands that mark it processed, so in
         // the frame it is processed its `InheritedVisibility` may not have been propagated yet.
@@ -105,13 +134,14 @@ fn pause_hidden_avatar_animation(
             visible,
             paused.is_some_and(|paused| paused.build == build),
             |margin| {
-                frustum.is_none_or(|frustum| {
-                    let sphere = ViewSphere {
-                        center: (transform.translation() + Vec3::Y).into(),
-                        radius: margin,
-                    };
-                    frustum.intersects_sphere(&sphere, true)
-                })
+                let sphere = ViewSphere {
+                    center: (transform.translation() + Vec3::Y).into(),
+                    radius: margin,
+                };
+                all_in_view
+                    || views.iter().any(|(frustum, drawn)| {
+                        drawn.intersects(layers) && frustum.intersects_sphere(&sphere, true)
+                    })
             },
         );
         match (should_animate, paused) {
@@ -125,7 +155,8 @@ fn pause_hidden_avatar_animation(
             }
             // already paused on this build
             (false, Some(paused)) if paused.build == build => (),
-            // hidden or out of view, or rebuilt so while the earlier build was paused
+            // hidden or out of view, or rebuilt so while the earlier build was paused; a build
+            // with no bones to pause is recorded too, so it is walked once and not every frame
             (false, _) if !primary.contains(avatar) => {
                 let bones: Vec<_> = children
                     .iter_descendants(build)
@@ -137,9 +168,6 @@ fn pause_hidden_avatar_animation(
                             .map(|target| (bone, *target))
                     })
                     .collect();
-                if bones.is_empty() {
-                    continue;
-                }
                 for (bone, _) in &bones {
                     commands.entity(*bone).remove::<AnimationTarget>();
                 }
@@ -321,7 +349,7 @@ mod tests {
         );
         let camera = app
             .world_mut()
-            .spawn((PrimaryCamera::default(), projection.compute_frustum(&away)))
+            .spawn((Camera3d::default(), projection.compute_frustum(&away)))
             .id();
         app.update();
         assert!(app.world().get::<AnimationTarget>(avatar.bone).is_none());
@@ -335,6 +363,76 @@ mod tests {
             .insert(projection.compute_frustum(&towards));
         app.update();
         assert!(app.world().get::<AnimationTarget>(avatar.bone).is_some());
+        assert!(app.world().get::<PausedAnimation>(avatar.root).is_none());
+    }
+
+    /// A frustum 30 m from the origin, where the avatars stand, looking at it or away from it.
+    fn view(towards: bool) -> Frustum {
+        use bevy::render::camera::CameraProjection;
+
+        let facing = if towards { Vec3::Z } else { Vec3::NEG_Z };
+        PerspectiveProjection::default().compute_frustum(&GlobalTransform::from(
+            Transform::from_xyz(0.0, 0.0, -30.0).looking_to(facing, Vec3::Y),
+        ))
+    }
+
+    #[test]
+    fn an_avatar_another_camera_draws_keeps_animating() {
+        let (mut app, avatar) = app_with_avatar(false);
+        app.world_mut().spawn((Camera3d::default(), view(false)));
+        // a second camera faces the avatar, but draws a layer the avatar is not on
+        let other = app
+            .world_mut()
+            .spawn((Camera3d::default(), view(true), RenderLayers::layer(3)))
+            .id();
+        app.update();
+        assert!(app.world().get::<AnimationTarget>(avatar.bone).is_none());
+
+        // on that layer too, the avatar is in the second camera's view
+        app.world_mut()
+            .entity_mut(avatar.build)
+            .insert(RenderLayers::from_layers(&[0, 3]));
+        app.update();
+        assert!(app.world().get::<AnimationTarget>(avatar.bone).is_some());
+
+        // an inactive camera draws nothing
+        app.world_mut()
+            .entity_mut(other)
+            .get_mut::<Camera>()
+            .unwrap()
+            .is_active = false;
+        app.update();
+        assert!(app.world().get::<AnimationTarget>(avatar.bone).is_none());
+    }
+
+    #[test]
+    fn every_shown_avatar_animates_in_the_frame_of_a_teleport() {
+        let (mut app, avatar) = app_with_avatar(false);
+        app.world_mut().spawn((Camera3d::default(), view(false)));
+        app.update();
+        assert!(app.world().get::<AnimationTarget>(avatar.bone).is_none());
+
+        app.world_mut().send_event(PlayerTeleported {
+            position: Vec3::ZERO,
+        });
+        app.update();
+        assert!(app.world().get::<AnimationTarget>(avatar.bone).is_some());
+
+        app.update();
+        assert!(app.world().get::<AnimationTarget>(avatar.bone).is_none());
+    }
+
+    #[test]
+    fn a_build_with_no_bones_to_pause_is_recorded_as_paused() {
+        let (mut app, avatar) = app_with_avatar(false);
+        app.world_mut()
+            .entity_mut(avatar.bone)
+            .remove::<AnimationTarget>();
+        set_visible(&mut app, avatar.build, false);
+        let paused = app.world().get::<PausedAnimation>(avatar.root).unwrap();
+        assert!(paused.bones.is_empty());
+
+        set_visible(&mut app, avatar.build, true);
         assert!(app.world().get::<PausedAnimation>(avatar.root).is_none());
     }
 
