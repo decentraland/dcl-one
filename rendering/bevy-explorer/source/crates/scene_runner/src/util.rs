@@ -29,7 +29,10 @@ use crate::{
 };
 
 pub struct SceneUtilPlugin;
+mod preview_model;
 mod rapid_reload;
+
+use preview_model::{ReloadModel, RemoveModel};
 
 impl Plugin for SceneUtilPlugin {
     fn build(&self, app: &mut App) {
@@ -39,7 +42,21 @@ impl Plugin for SceneUtilPlugin {
         app.add_console_command::<ReloadCommand, _>(reload_command);
         app.add_plugins(rapid_reload::RapidReloadPlugin);
         app.add_preview_console_command::<ClearStoreCommand, _>(clear_store_command);
-        app.add_systems(Update, (console_relay, handle_preview_command));
+        app.add_event::<ReloadModel>();
+        app.add_event::<RemoveModel>();
+        app.add_systems(
+            Update,
+            (
+                console_relay,
+                (
+                    preview_model::finish_model_reloads,
+                    handle_preview_command,
+                    preview_model::remove_model,
+                    preview_model::reload_model,
+                )
+                    .chain(),
+            ),
+        );
     }
 }
 
@@ -335,32 +352,41 @@ fn handle_preview_command(
     mut live_scenes: ResMut<LiveScenes>,
     scenes: Query<&RendererSceneContext>,
     mut toaster: Toaster,
+    mut reload_model: EventWriter<ReloadModel>,
+    mut remove_model: EventWriter<RemoveModel>,
 ) {
     for command in events.read() {
+        let scene_id = match command {
+            PreviewCommand::ReloadScene { hash } => hash,
+            PreviewCommand::ReloadModel { scene_id, .. }
+            | PreviewCommand::RemoveModel { scene_id, .. } => scene_id,
+        };
+        let scene = live_scenes.scenes.get(scene_id).copied();
+        if scene
+            .and_then(|scene| scenes.get(scene).ok())
+            .is_some_and(|ctx| ctx.inspected)
+        {
+            toaster.add_toast("reload-inspected", "Scene has updated but an inspector is attached. To force the reload type \"/reload\" in the chat window");
+            continue;
+        }
+
         match command {
-            PreviewCommand::ReloadScene { hash }
-            // TODO properly handle model commands
-            | PreviewCommand::ReloadModel {
-                hash: _,
-                src: _,
-                scene_id: hash,
-            }
-            | PreviewCommand::RemoveModel {
-                hash: _,
-                src: _,
-                scene_id: hash,
-            } => {
-                if let Some(ctx) = live_scenes
-                    .scenes
-                    .get(hash)
-                    .and_then(|e| scenes.get(*e).ok())
-                {
-                    if ctx.inspected {
-                        toaster.add_toast("reload-inspected", "Scene has updated but an inspector is attached. To force the reload type \"/reload\" in the chat window");
-                        continue;
-                    }
-                };
+            PreviewCommand::ReloadScene { hash } => {
                 live_scenes.scenes.remove(hash);
+            }
+            // the dev server's `hash` is not used: it names the file by its path, as the scene's
+            // content map already does, so the file is fetched again by the same name
+            PreviewCommand::ReloadModel { src, .. } | PreviewCommand::RemoveModel { src, .. } => {
+                let Some(scene) = scene else {
+                    debug!("model command for {src} in {scene_id}, which is not live");
+                    continue;
+                };
+                let src = src.clone();
+                if matches!(command, PreviewCommand::ReloadModel { .. }) {
+                    reload_model.write(ReloadModel { scene, src });
+                } else {
+                    remove_model.write(RemoveModel { scene, src });
+                }
             }
         }
     }

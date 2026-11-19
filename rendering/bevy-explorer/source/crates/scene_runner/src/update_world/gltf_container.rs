@@ -11,7 +11,7 @@ use bevy::{
     animation::AnimationTarget,
     asset::{LoadState, RenderAssetTransferPriority},
     ecs::system::SystemParam,
-    gltf::{Gltf, GltfExtras, GltfLoaderSettings},
+    gltf::{Gltf, GltfExtras, GltfLoaderSettings, GltfMesh},
     pbr::{ExtendedMaterial, NotShadowCaster},
     platform::{
         collections::{HashMap, HashSet},
@@ -279,6 +279,17 @@ fn extras_collider_mask(extras: &str) -> Option<u32> {
 #[derive(Component)]
 pub struct GltfHandle(Handle<Gltf>);
 
+impl GltfHandle {
+    pub(crate) fn id(&self) -> AssetId<Gltf> {
+        self.0.id()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(h_gltf: Handle<Gltf>) -> Self {
+        Self(h_gltf)
+    }
+}
+
 #[derive(Component, Deref)]
 pub struct GltfReady(InstanceId);
 
@@ -333,6 +344,20 @@ fn on_gltf_container_removed(
         GltfAssetFailed,
         GltfSource,
     )>();
+}
+
+/// Has `update_gltf` load the container's current value again, as it does a new value: the same
+/// value put again otherwise keeps the model it loaded. The model shown stays until the new one is
+/// ready. Both changes land in one command, so `update_gltf` sees them together whenever it runs.
+pub(crate) fn reload_gltf_container(commands: &mut Commands, entity: Entity) {
+    commands
+        .entity(entity)
+        .queue_silenced(|mut entity: EntityWorldMut| {
+            entity.remove::<GltfSource>();
+            if let Some(mut definition) = entity.get_mut::<GltfDefinition>() {
+                definition.set_changed();
+            }
+        });
 }
 
 // assets are keyed by path and the first load's settings win, so every gltf that might
@@ -628,6 +653,26 @@ pub struct SceneResourceLookup {
     pub materials: HashMap<Handle<StandardMaterial>, Handle<SceneMaterial>>,
     pub meshes_by_hash: HashMap<u64, CachedMeshData>,
     pub mesh_hashes_by_id: HashMap<AssetId<Mesh>, u64>,
+}
+
+impl SceneResourceLookup {
+    /// Forgets the meshes and materials of `gltf`, whose file was loaded again: a reload keeps
+    /// their ids, so the entries kept for them would give the new model the old one's data.
+    pub(crate) fn forget_gltf(&mut self, gltf: &Gltf, gltf_meshes: &Assets<GltfMesh>) {
+        let mesh_ids: HashSet<AssetId<Mesh>> = gltf
+            .meshes
+            .iter()
+            .filter_map(|h_mesh| gltf_meshes.get(h_mesh))
+            .flat_map(|mesh| mesh.primitives.iter().map(|primitive| primitive.mesh.id()))
+            .collect();
+        self.mesh_hashes_by_id
+            .retain(|id, _| !mesh_ids.contains(id));
+        self.meshes_by_hash
+            .retain(|_, data| !mesh_ids.contains(&data.mesh_id));
+        for h_material in &gltf.materials {
+            self.materials.remove(h_material);
+        }
+    }
 }
 
 /// A loaded glTF container `update_ready_gltfs` has not finished processing.
@@ -2576,6 +2621,143 @@ mod tests {
             .instance_is_ready(instance));
         assert!(app.world().get_entity(scene_ent).is_err());
         assert!(app.world().get_entity(parent).is_ok());
+    }
+
+    #[test]
+    fn removing_a_container_during_processing_releases_its_instance() {
+        let (mut app, parent, instance) = setup();
+        app.add_observer(on_gltf_container_removed);
+        let entities: Vec<_> = app
+            .world()
+            .resource::<SceneSpawner>()
+            .iter_instance_entities(instance)
+            .collect();
+        app.world_mut().entity_mut(parent).insert((
+            GltfDefinition::from(PbGltfContainer {
+                src: "model.glb".to_owned(),
+                ..Default::default()
+            }),
+            GltfLoaded(Some(instance)),
+        ));
+        assert!(app.world().get::<GltfReady>(parent).is_none());
+
+        app.world_mut()
+            .entity_mut(parent)
+            .remove::<GltfDefinition>();
+        app.world_mut().flush();
+
+        assert!(!app
+            .world()
+            .resource::<SceneSpawner>()
+            .instance_is_ready(instance));
+        assert!(entities
+            .iter()
+            .all(|entity| app.world().get_entity(*entity).is_err()));
+        assert!(app.world().get::<GltfLoaded>(parent).is_none());
+        assert!(app.world().get_entity(parent).is_ok());
+    }
+
+    #[test]
+    fn reloading_a_container_makes_its_kept_value_new_again() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        let definition = PbGltfContainer {
+            src: "model.glb".to_owned(),
+            ..Default::default()
+        };
+        let container = app
+            .world_mut()
+            .spawn((GltfDefinition(definition.clone()), GltfSource(definition)))
+            .id();
+        let changed = |app: &mut App| {
+            app.world_mut()
+                .query_filtered::<Entity, Changed<GltfDefinition>>()
+                .iter(app.world())
+                .collect::<Vec<_>>()
+        };
+        // as a frame ends: what changed before is not new any more
+        app.world_mut().clear_trackers();
+        assert!(changed(&mut app).is_empty());
+
+        reload_gltf_container(&mut app.world_mut().commands(), container);
+        app.world_mut().flush();
+
+        // a change of the same value as the kept one is skipped: the kept one goes with it
+        assert!(app.world().get::<GltfSource>(container).is_none());
+        assert_eq!(changed(&mut app), vec![container]);
+    }
+
+    #[test]
+    fn forgetting_a_gltf_keeps_the_other_models_data() {
+        use bevy::gltf::GltfPrimitive;
+
+        let mut gltf_meshes = Assets::<GltfMesh>::default();
+        let meshes = Assets::<Mesh>::default();
+        let materials = Assets::<StandardMaterial>::default();
+        let scene_materials = Assets::<SceneMaterial>::default();
+        let mesh = meshes.reserve_handle();
+        let other_mesh = meshes.reserve_handle();
+        let h_gltf_mesh = gltf_meshes.add(GltfMesh {
+            index: 0,
+            name: "mesh".to_owned(),
+            primitives: vec![GltfPrimitive {
+                index: 0,
+                parent_mesh_index: 0,
+                name: "primitive".to_owned(),
+                mesh: mesh.clone(),
+                material: None,
+                extras: None,
+                material_extras: None,
+            }],
+            extras: None,
+        });
+        let material = materials.reserve_handle();
+        let other_material = materials.reserve_handle();
+        let gltf = Gltf {
+            scenes: Vec::new(),
+            named_scenes: HashMap::default(),
+            meshes: vec![h_gltf_mesh],
+            named_meshes: HashMap::default(),
+            materials: vec![material.clone()],
+            named_materials: HashMap::default(),
+            nodes: Vec::new(),
+            named_nodes: HashMap::default(),
+            skins: Vec::new(),
+            named_skins: HashMap::default(),
+            default_scene: None,
+            animations: Vec::new(),
+            named_animations: HashMap::default(),
+            source: None,
+        };
+        let cached = |mesh: &Handle<Mesh>| CachedMeshData {
+            mesh_id: mesh.id(),
+            is_skinned: false,
+            shape: SharedShape::ball(1.0),
+            maybe_collider: None,
+        };
+        let mut lookup = SceneResourceLookup::default();
+        lookup.mesh_hashes_by_id.insert(mesh.id(), 10);
+        lookup.mesh_hashes_by_id.insert(other_mesh.id(), 20);
+        lookup.meshes_by_hash.insert(10, cached(&mesh));
+        lookup.meshes_by_hash.insert(20, cached(&other_mesh));
+        lookup
+            .materials
+            .insert(material, scene_materials.reserve_handle());
+        lookup
+            .materials
+            .insert(other_material.clone(), scene_materials.reserve_handle());
+
+        lookup.forget_gltf(&gltf, &gltf_meshes);
+
+        assert_eq!(
+            lookup.mesh_hashes_by_id.keys().collect::<Vec<_>>(),
+            vec![&other_mesh.id()]
+        );
+        assert_eq!(lookup.meshes_by_hash.keys().collect::<Vec<_>>(), vec![&20]);
+        assert_eq!(
+            lookup.materials.keys().collect::<Vec<_>>(),
+            vec![&other_material]
+        );
     }
 
     #[test]
