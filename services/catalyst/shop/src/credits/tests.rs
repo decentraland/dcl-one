@@ -9804,3 +9804,212 @@ async fn a_trial_refuses_mana_top_ups_and_the_broker_checkout_before_any_work() 
     .await;
     assert_ne!(status, StatusCode::FORBIDDEN, "{body}");
 }
+
+#[test]
+fn only_a_live_secret_key_serves_live_events() {
+    use super::handlers::stripe::is_live_key;
+    assert!(is_live_key(Some("sk_live_x")));
+    assert!(is_live_key(Some("rk_live_x")));
+    for key in [
+        None,
+        Some("sk_test_x"),
+        Some("rk_test_x"),
+        Some("sk"),
+        Some(""),
+    ] {
+        assert!(!is_live_key(key), "{key:?}");
+    }
+}
+
+/// An event from the other Stripe mode is refused before its id is claimed, so it grants nothing and a
+/// correctly configured redelivery of the same id still processes.
+#[tokio::test]
+async fn a_webhook_event_from_the_other_stripe_mode_is_refused_unclaimed() {
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let pack = PackRow {
+        sku: "mode-pack".into(),
+        title: "Mode".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let pi = unique("pi_mode");
+    state
+        .credits
+        .insert_pending_purchase(&addr, &pack, &pi)
+        .await
+        .unwrap();
+    let evt = unique("evt_mode");
+    let paid = |livemode: bool| {
+        json!({ "id": evt, "type": "payment_intent.succeeded", "livemode": livemode, "data": { "object": { "id": pi, "amount": 500, "currency": "usd" } } }).to_string()
+    };
+
+    let (status, out) = deliver(&app, &paid(true)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{out}");
+    assert_eq!(available(&pool, &addr).await, "0");
+    let claimed: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM credits.stripe_events WHERE event_id = $1")
+            .bind(&evt)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(claimed, 0, "a refused event leaves its id unclaimed");
+
+    let (status, out) = deliver(&app, &paid(false)).await;
+    assert_eq!(
+        (status, out["detail"].as_str()),
+        (StatusCode::OK, Some("processed"))
+    );
+    assert_eq!(available(&pool, &addr).await, "50");
+}
+
+/// A dispute opened as an inquiry withdraws no funds and revokes nothing; once it escalates
+/// (`charge.dispute.funds_withdrawn`) the pack is revoked.
+#[tokio::test]
+async fn a_dispute_inquiry_revokes_nothing_until_funds_are_withdrawn() {
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let pack = PackRow {
+        sku: "inquiry-pack".into(),
+        title: "Inquiry".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let pi = unique("pi_inquiry");
+    state
+        .credits
+        .insert_pending_purchase(&addr, &pack, &pi)
+        .await
+        .unwrap();
+    let paid = json!({ "id": unique("evt_inq_paid"), "type": "payment_intent.succeeded", "data": { "object": { "id": pi, "amount": 500, "currency": "usd" } } }).to_string();
+    let (status, out) = deliver(&app, &paid).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(available(&pool, &addr).await, "50");
+
+    let dispute = |kind: &str, status: &str| {
+        json!({ "id": unique("evt_inq"), "type": kind, "data": { "object": { "id": "dp_1", "payment_intent": pi, "status": status, "amount": 500 } } }).to_string()
+    };
+    let (status, out) = deliver(
+        &app,
+        &dispute("charge.dispute.created", "warning_needs_response"),
+    )
+    .await;
+    assert_eq!(
+        (status, out["detail"].as_str()),
+        (StatusCode::OK, Some("processed"))
+    );
+    assert_eq!(
+        available(&pool, &addr).await,
+        "50",
+        "an inquiry revokes nothing"
+    );
+    let recorded: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM credits.payment_reversals WHERE payment_intent = $1",
+    )
+    .bind(&pi)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(recorded, 0, "nothing for a later grant to replay");
+
+    let (status, _) = deliver(
+        &app,
+        &dispute("charge.dispute.funds_withdrawn", "needs_response"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(available(&pool, &addr).await, "0");
+}
+
+/// A stub of Stripe's checkout session endpoints: `expire` answers the session expired and is counted.
+async fn stub_stripe() -> (String, Arc<AtomicUsize>) {
+    let expired = Arc::new(AtomicUsize::new(0));
+    let count = expired.clone();
+    let app = Router::new()
+        .route(
+            "/v1/checkout/sessions/{id}/expire",
+            axum::routing::post(
+                move |axum::extract::Path(id): axum::extract::Path<String>| {
+                    let count = count.clone();
+                    async move {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        axum::Json(
+                            json!({ "id": id, "status": "expired", "payment_status": "unpaid" }),
+                        )
+                    }
+                },
+            ),
+        )
+        .route(
+            "/v1/checkout/sessions/{id}",
+            axum::routing::get(
+                |axum::extract::Path(id): axum::extract::Path<String>| async move {
+                    axum::Json(json!({ "id": id, "status": "open", "payment_status": "unpaid" }))
+                },
+            ),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (url, expired)
+}
+
+/// Stripe's cancel landing expires the open session before the order is retired, so the hosted page the buyer
+/// left can no longer be paid.
+#[tokio::test]
+async fn the_cancel_return_expires_the_checkout_session() {
+    let Some(pool) = pool().await else { return };
+    let (stripe_url, expired) = stub_stripe().await;
+    let mut settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        usage_chain_id: super::usage::CHAIN_POLYGON,
+        checkout_fulfillment_mode: "secondary".into(),
+        marketplace_markup_bps: 0,
+        mana_price_max_staleness_secs: 3600,
+        ..RawSettings::default()
+    })
+    .unwrap();
+    settings.stripe_secret_key = Some("sk_test_stub".into());
+    settings.stripe_api_base = stripe_url;
+    let state: SharedState = Arc::new(State::with_sources(
+        pool.clone(),
+        Outbound::for_tests(),
+        settings,
+        Arc::new(FakeMarket::default()),
+        Arc::new(MockBroker::configured()),
+        None,
+    ));
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let (order_id, session) = session_order_fixture(&state, &addr).await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/credits/credits/orders/{order_id}/cancel-return"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        resp.status().is_success() || resp.status().is_redirection(),
+        "{}",
+        resp.status()
+    );
+    assert_eq!(
+        expired.load(Ordering::SeqCst),
+        1,
+        "the session is expired at Stripe"
+    );
+    assert_eq!(session_order_row(&pool, &session).await.0, "abandoned");
+}

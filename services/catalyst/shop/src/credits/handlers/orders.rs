@@ -379,9 +379,10 @@ async fn resume(
 
 /// `GET /credits/orders/{id}/cancel-return`: Stripe's `cancel_url` landing,
 /// unauthenticated (a browser redirect), so nothing is taken on the
-/// client's word: the session is read from Stripe and the order retired
-/// only when Stripe says it is not paid and no longer open; then the buyer
-/// is sent to the Shop's cancel page.
+/// client's word: the order's session is expired at Stripe first (as
+/// `cancel`; a paid or already closed one stays as it is) and read back, and the order retired only when Stripe says it
+/// is not paid and no longer open; then the buyer is sent to the Shop's
+/// cancel page.
 pub async fn cancel_return(
     State(state): State<SharedState>,
     Path(order_id): Path<String>,
@@ -390,7 +391,13 @@ pub async fn cancel_return(
     if let Some(stripe) = state.stripe.as_ref()
         && let Ok(Some((_, session))) = state.credits.get_order_with_session_any(&order_id).await
         && let Some(session) = session.as_deref()
-        && let Ok(Some(s)) = stripe.retrieve_checkout_session(session).await
+        && let Ok(expired) = stripe
+            .expire_checkout_session(session, &format!("expire:{session}"))
+            .await
+        && let Ok(Some(s)) = match expired {
+            Some(s) => Ok(Some(s)),
+            None => stripe.retrieve_checkout_session(session).await,
+        }
         && !s.is_paid()
         && !s.is_payable()
     {
