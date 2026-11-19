@@ -44,13 +44,16 @@ export function initIpc({ beforeQuitCleanup }: InitIpcOptions) {
   handleSync('electron.getEnvOverride', () => electron.getEnvOverride());
   handle('electron.getAppVersion', () => electron.getAppVersion());
   handle('electron.getUserDataPath', () => electron.getUserDataPath());
+  handle('electron.getDefaultScenesPath', () => electron.getDefaultScenesPathForUser());
   handle('electron.getWorkspaceConfigPath', (_event, path) =>
     electron.getWorkspaceConfigPath(path),
   );
   handle('electron.showOpenDialog', (_event, opts) => electron.showOpenDialog(opts));
   handle('electron.showSaveDialog', (_event, opts) => electron.showSaveDialog(opts));
   handle('electron.openExternal', (_event, url) => electron.openExternal(url));
+  handle('electron.openDeepLink', (_event, url) => electron.openDeepLink(url));
   handle('electron.logDeployment', (_event, entry) => electron.logDeployment(entry));
+  handle('electron.logRendererError', (_event, entry) => electron.logRendererError(entry));
   handle('electron.copyToClipboard', (_event, text) => electron.copyToClipboard(text));
 
   // analytics API (fetched here because the renderer's `Origin: null` fails CORS)

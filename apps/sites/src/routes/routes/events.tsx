@@ -6,8 +6,10 @@ import {
 } from "react-router";
 import { HydrationBoundary } from "@tanstack/react-query";
 import SitesChrome from "@ui/web/frames/SitesChrome";
+import type { SitesLocaleHandle } from "@ui/web/frames/sites-locale";
 
 import { detectPlatform } from "@/features/download/options";
+import { EventsLocaleProvider, useEventsFooterCopy } from "@/features/events/locale";
 import { EventsView } from "@/features/events/EventsView";
 import { TAB_PARAM } from "@/features/events/view";
 import EventManagement from "@/features/explorer/event-management/EventManagement";
@@ -18,7 +20,8 @@ import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 
 export const handle = {
   agentMarkdown: "whatsOn",
-} satisfies AgentMarkdownHandle;
+  sitesLocalized: true,
+} satisfies AgentMarkdownHandle & SitesLocaleHandle;
 
 export function meta() {
   return [{ title: "Events — Decentraland" }];
@@ -56,8 +59,13 @@ export function headers() {
   return { Vary: "User-Agent", "Cache-Control": "private, no-cache" };
 }
 
-export default function Events({ loaderData }: Route.ComponentProps) {
+export default function Events(props: Route.ComponentProps) {
+  return <EventsLocaleProvider><EventsRoute {...props} /></EventsLocaleProvider>;
+}
+
+function EventsRoute({ loaderData }: Route.ComponentProps) {
   const [params] = useSearchParams();
+  const footerCopy = useEventsFooterCopy();
   // A client navigation has no loader data: the session and device come from the browser instead.
   const [first] = useState(() => ({
     sid: loaderData?.sid ?? "",
@@ -73,10 +81,9 @@ export default function Events({ loaderData }: Route.ComponentProps) {
       ? { now: loaderData.now, unavailable: loaderData.unavailable }
       : null,
   }));
-  if (params.get(TAB_PARAM) === "my") return <EventManagement mode="mine" />;
-  return (
+  return params.get(TAB_PARAM) === "my" ? <EventManagement mode="mine" /> : (
     <HydrationBoundary state={loaderData?.dehydratedState ?? undefined}>
-      <SitesChrome active="whatson">
+      <SitesChrome active="whatson" headerSurface="overlay" overlayNav footerCopy={footerCopy}>
         <EventsView
           sid={first.sid}
           platform={first.platform}

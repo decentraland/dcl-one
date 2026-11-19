@@ -7,6 +7,7 @@ export type ChromeAuth = {
   name: string;
   committee: boolean;
   avatarUrl?: string;
+  bodyUrl?: string;
   /** The avatar disc's background once the profile loads; the CSS default before. */
   avatarColor?: string;
   onSignIn?: () => void;

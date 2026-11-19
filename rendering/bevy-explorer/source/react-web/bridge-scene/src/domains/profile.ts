@@ -454,13 +454,12 @@ export function registerProfile(ctx: Ctx): void {
   // A user's profile by address: the engine's copy alone for a name and a face (chat lines, the
   // profile card), plus badges + equipped items when the passport asks (`extras`).
   ctx.on('getUserProfile', async (msg) => {
+    const reply = (profile: Profile | null): void => {
+      ctx.send({ kind: 'userProfile', address: msg.address, requestId: msg.requestId, profile })
+    }
     if (msg.extras !== true) {
       const av = await fetchProfile(msg.address)
-      ctx.send({
-        kind: 'userProfile',
-        address: msg.address,
-        profile: av == null ? null : toProfile(av, msg.address, false, av.name ?? msg.address)
-      })
+      reply(av == null ? null : toProfile(av, msg.address, false, av.name ?? msg.address))
       return
     }
     const me = getPlayer()
@@ -470,7 +469,7 @@ export function registerProfile(ctx: Ctx): void {
       fetchBadges(msg.address, isSelf).catch(() => undefined)
     ])
     if (av == null && badges == null) {
-      ctx.send({ kind: 'userProfile', address: msg.address, profile: null })
+      reply(null)
       return
     }
     // Your OWN passport: read the live avatar (getPlayer()) so it matches the Backpack exactly.
@@ -495,11 +494,11 @@ export function registerProfile(ctx: Ctx): void {
       equippedWearables,
       equippedEmotes
     }
-    ctx.send({ kind: 'userProfile', address: msg.address, profile })
+    reply(profile)
     // The tiers arrive in a second copy of the same profile, so the passport shows its badges at
     // once and the tier rows (and NEXT TIER names) fill in when they land.
     if (badges?.tiered === true) {
-      ctx.send({ kind: 'userProfile', address: msg.address, profile: { ...profile, badges: await badges.withTiers() } })
+      reply({ ...profile, badges: await badges.withTiers() })
     }
   })
 }
