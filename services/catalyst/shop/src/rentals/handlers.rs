@@ -18,7 +18,7 @@ use super::db::{
 };
 use super::http::{ApiError, Ok2};
 use super::nft::NftReadError;
-use super::signature::{has_valid_v, verify_rentals_listing_signature};
+use super::signature::{has_valid_v, rentals_contract, verify_rentals_listing_signature};
 use super::types::{ADDRESS_ZERO, ContractRentalListing, RentalListingCreation};
 use super::{SharedState, signed_path};
 use crate::market::{Source, is_valid_eth_address, unavailable};
@@ -199,7 +199,7 @@ pub async fn create_rentals_listing(
     State(state): State<SharedState>,
     OriginalUri(original): OriginalUri,
     headers: HeaderMap,
-    axum::extract::Json(body): axum::extract::Json<RentalListingCreation>,
+    axum::extract::Json(mut body): axum::extract::Json<RentalListingCreation>,
 ) -> Result<Response, ApiError> {
     let signer = state
         .require_signer(&headers, "post", &signed_path(&original, ROUTE_LISTINGS))
@@ -224,6 +224,26 @@ pub async fn create_rentals_listing(
         ));
     }
 
+    // One chain is served: a listing signed for another is not fillable here.
+    let served_chain = crate::market::catalog::served_chains().0;
+    if body.chain_id != served_chain || body.network != "ETHEREUM" {
+        return Err(ApiError::bad_request(
+            "The chain id and network of the listing are not the ones supported by the server",
+        ));
+    }
+    // The stored address drives the status sync, so it is the served contract's, never the caller's.
+    let Some(rentals) = rentals_contract(served_chain as u64) else {
+        return Err(ApiError::bad_request(format!(
+            "There is no rentals contract for chain id {served_chain}"
+        )));
+    };
+    if !body.rental_contract_address.eq_ignore_ascii_case(rentals) {
+        return Err(ApiError::bad_request(
+            "The rental contract address does not match the Rentals contract of the given chain",
+        ));
+    }
+    body.rental_contract_address = rentals.to_string();
+
     let contract = ContractRentalListing::from_creation(&signer, &body);
     let chain_id = body.chain_id as u64;
     match verify_rentals_listing_signature(&contract, chain_id) {
@@ -239,13 +259,43 @@ pub async fn create_rentals_listing(
         Err(e) => return Err(ApiError::bad_request(e.to_string())),
     }
 
+    let latest_rent = super::index::latest_rent(
+        state.db.pool(),
+        rentals,
+        &body.contract_address,
+        &body.token_id,
+    )
+    .await?;
+    if latest_rent
+        .as_ref()
+        .is_some_and(|(_, ends_at)| *ends_at > now.timestamp())
+    {
+        return Err(ApiError::conflict(
+            "An open rental already exists for this token",
+        ));
+    }
+
     let nft = match state.nft(&body.contract_address, &body.token_id).await {
         Ok(Some(nft)) => nft,
         Ok(None) => return Err(ApiError::not_found("NFT not found")),
         Err(e) => return Ok(reader_unavailable(e)),
     };
 
-    if !nft.owner_address.eq_ignore_ascii_case(&signer) {
+    // The Rentals contract keeps the asset after a rent until it is claimed; its last lessor may list it again.
+    let held_for_lessor = if nft.owner_address.eq_ignore_ascii_case(rentals) {
+        if !super::index::ready(state.db.pool(), now).await {
+            return Ok(unavailable(
+                Source::RentalsIndex,
+                "The asset is held by the Rentals contract and the rentals index is not ready to name its lessor",
+            ));
+        }
+        latest_rent
+            .as_ref()
+            .is_some_and(|(lessor, _)| lessor.eq_ignore_ascii_case(&signer))
+    } else {
+        false
+    };
+    if !nft.owner_address.eq_ignore_ascii_case(&signer) && !held_for_lessor {
         return Err(ApiError::unauthorized(format!(
             "The owner of the NFT {} is not the lessor {}",
             nft.owner_address, signer

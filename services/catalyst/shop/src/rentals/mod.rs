@@ -19,7 +19,12 @@
 //!   replaces the crate's `squid.nft` probe; without
 //!   `MARKETPLACE_SUBGRAPH_URL` the route answers
 //!   `marketplace::unavailable(Source::MarketplaceSubgraph)` (the old 503
-//!   "NFT ownership verification is unavailable").
+//!   "NFT ownership verification is unavailable"). A listing must name the
+//!   served Ethereum chain and its Rentals contract (stored as the
+//!   contract's address); an asset whose last rent at that contract is
+//!   still running answers 409, and an asset the contract still holds may
+//!   be listed by that rent's lessor once the `rentals` index is ready (the
+//!   unavailable envelope until then).
 //! - `PATCH /v1/rentals-listings/{id}`: the same reader refreshes the asset
 //!   row; behind the write switch; the same envelope without a reader (the
 //!   old crate answered the stored row unchanged, which presents stale
