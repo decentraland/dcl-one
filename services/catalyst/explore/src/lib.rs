@@ -321,6 +321,17 @@ pub struct ExploreState {
 
 pub type SharedState = Arc<ExploreState>;
 
+/// The signed path of a request this router serves at the root or under the
+/// `/events` or `/places` nest: the nest-stripped route lets the proxy's
+/// `x-original-path` (the host rewrite's `/api/...`) match.
+fn signed_path(path: &str) -> signed_fetch::SignedPath {
+    let local = ["/events", "/places"]
+        .into_iter()
+        .find_map(|nest| path.strip_prefix(nest).filter(|rest| rest.starts_with('/')))
+        .unwrap_or(path);
+    signed_fetch::SignedPath::new(path, local)
+}
+
 impl ExploreState {
     pub fn new(
         pool: PgPool,
@@ -461,10 +472,10 @@ impl ExploreState {
         method: &str,
         path: &str,
     ) -> Result<String, signed_fetch::SignedFetchError> {
-        signed_fetch::require_signer(
+        signed_fetch::require_signer_at(
             headers,
             method,
-            path,
+            &signed_path(path),
             signed_fetch::PayloadPolicy::V6ThenLegacy,
             self.eip1654.as_deref(),
         )
@@ -475,10 +486,10 @@ impl ExploreState {
     /// The lowercased signer of a signed-fetch request, or `None` for an
     /// anonymous or unverifiable one.
     pub async fn viewer(&self, headers: &HeaderMap, method: &str, path: &str) -> Option<String> {
-        signed_fetch::optional_signer(
+        signed_fetch::optional_signer_at(
             headers,
             method,
-            path,
+            &signed_path(path),
             signed_fetch::PayloadPolicy::V6ThenLegacy,
             self.eip1654.as_deref(),
         )
@@ -1139,6 +1150,79 @@ mod tests {
     }
 
     use super::*;
+
+    /// The events and places hosts rewrite `/api/...` to the nest and forward
+    /// the client's path in `x-original-path`: a signature over it verifies,
+    /// and only over the path the proxy reports.
+    #[tokio::test]
+    async fn a_signature_over_the_rewritten_host_path_verifies_under_the_nest() {
+        use signed_fetch::test_support::{address, signed_headers};
+        let state = offline_state();
+        let forwarded = |mut headers: HeaderMap, original: &str| {
+            headers.insert(
+                signed_fetch::ORIGINAL_PATH_HEADER,
+                original.parse().unwrap(),
+            );
+            headers
+        };
+        let signed = signed_headers("post", "/api/events", "{}", true).await;
+        let ok = state
+            .signer(
+                &forwarded(signed.clone(), "/api/events?x=1"),
+                "post",
+                "/events/api/events",
+            )
+            .await
+            .unwrap();
+        assert_eq!(ok, address());
+        let rating = "/api/places/7b5c2f8e-6b0a-4c55-9a43-1f1d3c0e8a10/rating";
+        let signed_rating = signed_headers("put", rating, "{}", true).await;
+        let ok = state
+            .wkc_signer(
+                &forwarded(signed_rating, rating),
+                "put",
+                &format!("/places{rating}"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ok, address());
+        assert!(
+            state
+                .viewer(
+                    &forwarded(signed.clone(), "/api/events"),
+                    "post",
+                    "/events/api/events"
+                )
+                .await
+                .is_some()
+        );
+
+        // No forwarded path, a forwarded path for another route, or a
+        // signature over another path: refused.
+        for (headers, path) in [
+            (signed.clone(), "/events/api/events"),
+            (
+                forwarded(signed.clone(), "/api/events"),
+                "/events/api/schedules",
+            ),
+            (
+                forwarded(
+                    signed_headers("post", "/api/schedules", "{}", true).await,
+                    "/api/events",
+                ),
+                "/events/api/events",
+            ),
+            (
+                forwarded(signed.clone(), "/api/events"),
+                "/places/api/events/x",
+            ),
+        ] {
+            assert!(
+                state.signer(&headers, "post", path).await.is_err(),
+                "{path}"
+            );
+        }
+    }
 
     #[test]
     fn a_mirror_source_must_be_a_public_upstream_that_is_not_this_node() {

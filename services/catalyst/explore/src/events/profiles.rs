@@ -1889,6 +1889,49 @@ mod tests {
         assert_eq!(answer["error"], "Schedule request already applied");
     }
 
+    /// The events host rewrites `/api/schedules` to `/events/api/schedules`
+    /// and forwards the client's path: a signature over it writes, and without
+    /// the forwarded path it is refused.
+    #[tokio::test]
+    async fn a_write_signed_on_the_events_host_passes_the_rewrite() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let moderator = moderator(&pool).await;
+        let app = axum::Router::new().nest("/events", app(&pool));
+        let schedule = json!({"name":"Host","active_since":"2031-01-01T00:00:00.000Z","active_until":"2031-02-01T00:00:00.000Z"});
+        let headers = crate::shared::signed_fetch::test_support::signed_headers_by(
+            &moderator,
+            "post",
+            "/api/schedules",
+            "{}",
+            true,
+            &Utc::now().timestamp_millis().to_string(),
+        )
+        .await;
+        for (original, expected) in [
+            (Some("/api/schedules"), StatusCode::CREATED),
+            (None, StatusCode::UNAUTHORIZED),
+        ] {
+            let mut request = Request::builder()
+                .method("POST")
+                .uri("/events/api/schedules")
+                .header("content-type", "application/json");
+            for (key, value) in headers.iter() {
+                request = request.header(key, value);
+            }
+            if let Some(original) = original {
+                request = request.header("x-original-path", original);
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::from(schedule.to_string())).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected, "{original:?}");
+        }
+    }
+
     /// `Schedule/routes.ts:48-97`, `schema.ts:86-147`: the required triple,
     /// the `theme` enum, `image` as a URI, ignored unknown keys, `theme: null`
     /// on create, the merged eight keys on PATCH, the 404 text, and
