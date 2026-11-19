@@ -70,3 +70,7 @@ The creators pages move into `apps/sites` from `decentraland/creators-website` `
 3. Bring the server state fully under TanStack Query: the feature flags' module-level cache and the
    module-level copies in the roles, sales and discounts hooks become queries, and the inline query keys
    move to key factories (`docs/web-app-standards.md`).
+4. Retire the creators environment files (`data/lib/creators/config/env`): the pages pick the
+   development, staging or production Foundation services and chains from the page's host. Each
+   service leaves them when it moves behind the node and is reached like the rest of Sites; once the
+   chain choice is deployment configuration too, the files and the host detection go.
