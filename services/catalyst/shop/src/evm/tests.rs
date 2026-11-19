@@ -1540,6 +1540,59 @@ async fn relayer_accounts_are_refused_with_both_the_signer_and_the_oz_relayer() 
     assert!(raws.lock().unwrap().is_empty());
 }
 
+/// While the OZ relayer's list has not been read, the direct signer's address is still answered
+/// 400 at once, and any other user 503 (not sent) once the wait for the first read runs out.
+#[tokio::test]
+async fn a_relay_before_the_relayer_list_is_read_is_unavailable() {
+    let app = axum::Router::new().route(
+        "/api/v1/relayers/",
+        axum::routing::get(|| async {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            Json(json!({ "success": true, "data": [] }))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fake relayer");
+    let addr = listener.local_addr().expect("relayer addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let signer_key = PrivateKeySigner::random();
+    let (chain_url, raws) = spawn_fake_chain().await;
+    let state = state(
+        lazy_pool(),
+        Settings {
+            oz_relayer_url: Some(format!("http://{addr}")),
+            oz_relayer_id: Some("relayer-under-test".into()),
+            oz_relayer_api_key: Some("api-key-under-test".into()),
+            polygon_rpc_url: Some(chain_url),
+            meta_tx_broadcast_enabled: true,
+            relayer_private_key: Some(hex::encode(signer_key.to_bytes())),
+            ..Settings::for_tests()
+        },
+    );
+    let app = router(state);
+    let started = std::time::Instant::now();
+    let user = format!("{:#x}", signer_key.address());
+    let (status, body) = post_transaction(
+        &app,
+        &user,
+        COLLECTION,
+        &signed_split_calldata(&signer_key, FS),
+    )
+    .await;
+    assert_eq!(status, 400, "{body}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    let key = PrivateKeySigner::random();
+    let user = format!("{:#x}", key.address());
+    let (status, body) =
+        post_transaction(&app, &user, COLLECTION, &signed_split_calldata(&key, FS)).await;
+    assert_eq!(status, 503, "{body}");
+    assert_eq!(body["not_sent"], true, "{body}");
+    assert!(raws.lock().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn honestly_signed_meta_transactions_relay_for_both_overloads() {
     let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK

@@ -631,18 +631,21 @@ impl TransactionComponent {
     /// key lists ([`Relayer::accounts`]).
     async fn check_self_relay(&self, sender: &MetaTxSender) -> Result<(), ApiError> {
         let user = sender.address();
-        let direct = self
+        let refused = || ApiError::InvalidTransaction("Invalid transaction data.".into());
+        if self
             .signer
             .as_ref()
-            .is_some_and(|s| s.relayer_address() == user);
-        let listed = match self.relayer.as_ref() {
-            Some(relayer) => relayer.accounts().await.contains(&user),
-            None => false,
-        };
-        if direct || listed {
-            return Err(ApiError::InvalidTransaction(
-                "Invalid transaction data.".into(),
-            ));
+            .is_some_and(|s| s.relayer_address() == user)
+        {
+            return Err(refused());
+        }
+        if let Some(relayer) = self.relayer.as_ref() {
+            let accounts = relayer.accounts().await.ok_or_else(|| {
+                ApiError::RelayerUnavailable("The relayer accounts are not read yet.".into())
+            })?;
+            if accounts.contains(&user) {
+                return Err(refused());
+            }
         }
         Ok(())
     }

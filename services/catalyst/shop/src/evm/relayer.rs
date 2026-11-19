@@ -20,6 +20,9 @@ const OZ_BODY_CAP: usize = 256 * 1024;
 const ACCOUNTS_REQUEST_TIMEOUT: Duration = Duration::from_millis(5000);
 /// Bounds one whole read of the relayer accounts, every page included.
 const ACCOUNTS_READ_DEADLINE: Duration = Duration::from_secs(20);
+/// How long a request waits for the first read of the relayer accounts before it is answered
+/// as unavailable.
+const ACCOUNTS_FIRST_WAIT: Duration = Duration::from_secs(5);
 /// Relayers asked for per page; a full page stays well under [`OZ_BODY_CAP`].
 const ACCOUNTS_PAGE_SIZE: usize = 50;
 /// Pages read before the list is taken as unreadable.
@@ -141,6 +144,8 @@ pub struct Relayer {
     accounts: parking_lot::Mutex<Option<StoredAccounts>>,
     /// Held while the list is read, so concurrent requests wait for one read.
     accounts_read: tokio::sync::Mutex<()>,
+    /// [`ACCOUNTS_FIRST_WAIT`]; shorter in tests.
+    first_wait: Duration,
 }
 
 impl Relayer {
@@ -163,22 +168,27 @@ impl Relayer {
             sleep,
             accounts: parking_lot::Mutex::new(None),
             accounts_read: tokio::sync::Mutex::new(()),
+            first_wait: ACCOUNTS_FIRST_WAIT,
         }
     }
 
     /// Every relayer account (`GET /api/v1/relayers`, all pages). Only the first call, before
     /// anything is stored, waits for a read; later ones answer the stored list, which
-    /// [`Relayer::refresh_accounts`] keeps current. Concurrent callers share one read.
-    pub async fn accounts(&self) -> Arc<HashSet<Address>> {
+    /// [`Relayer::refresh_accounts`] keeps current. Concurrent callers share one read. `None` when
+    /// nothing is stored within [`ACCOUNTS_FIRST_WAIT`].
+    pub async fn accounts(&self) -> Option<Arc<HashSet<Address>>> {
         if let Some(stored) = self.accounts.lock().as_ref() {
-            return stored.accounts.clone();
+            return Some(stored.accounts.clone());
         }
-        let _ = self.read_accounts_if(|stored| stored.is_none()).await;
+        let _ = tokio::time::timeout(
+            self.first_wait,
+            self.read_accounts_if(|stored| stored.is_none()),
+        )
+        .await;
         self.accounts
             .lock()
             .as_ref()
             .map(|stored| stored.accounts.clone())
-            .unwrap_or_default()
     }
 
     /// The background pass: reads the list when it is missing, failed last time, or would expire
@@ -246,11 +256,12 @@ impl Relayer {
             .map_err(|_| "the relayer list took too long".to_string())?
     }
 
-    /// Walks the pages until they cover `total_items`. A page cut short, or a full page without a
-    /// count, is a failed read rather than a shorter list.
+    /// Walks the pages until they cover `total_items`. A page cut short, a full page without a
+    /// count, or a count that changes between pages is a failed read rather than a shorter list.
     async fn fetch_account_pages(&self) -> Result<HashSet<Address>, String> {
         let mut accounts = HashSet::new();
         let mut listed: u64 = 0;
+        let mut first_total = None;
         for page in 1..=ACCOUNTS_MAX_PAGES {
             let answer: OzAccounts = self
                 .get_json(format!(
@@ -264,9 +275,12 @@ impl Relayer {
             accounts.extend(entries.into_iter().filter_map(OzAccount::evm_address));
             let total = match answer.pagination {
                 Some(p) => p.total_items,
-                None if received < ACCOUNTS_PAGE_SIZE => return Ok(accounts),
-                None => return Err("a full page of relayers without a count".into()),
+                None if page == 1 && received < ACCOUNTS_PAGE_SIZE => return Ok(accounts),
+                None => return Err("a page of relayers without a count".into()),
             };
+            if *first_total.get_or_insert(total) != total {
+                return Err("the relayer list changed while it was read".into());
+            }
             if listed >= total {
                 return Ok(accounts);
             }
@@ -651,8 +665,8 @@ mod tests {
         let (url, server) = serve(app).await;
         let relayer = relayer(&url);
         let (a, b) = tokio::join!(relayer.accounts(), relayer.accounts());
-        assert!(a.is_empty() && b.is_empty());
-        assert!(relayer.accounts().await.is_empty());
+        assert!(a.unwrap().is_empty() && b.unwrap().is_empty());
+        assert!(relayer.accounts().await.unwrap().is_empty());
         assert_eq!(reads.load(Ordering::SeqCst), 1);
         server.abort();
     }
@@ -720,7 +734,7 @@ mod tests {
             Some(5),
         )
         .await;
-        let accounts = relayer(&url).accounts().await;
+        let accounts = relayer(&url).accounts().await.unwrap();
         assert_eq!(
             *accounts,
             (1..=5).map(account).collect::<HashSet<_>>(),
@@ -743,7 +757,7 @@ mod tests {
             let (url, server, _) = listing(pages, total).await;
             let relayer = relayer(&url);
             assert!(relayer.refresh_accounts().await.is_err());
-            assert!(relayer.accounts().await.is_empty());
+            assert!(relayer.accounts().await.unwrap().is_empty());
             server.abort();
         }
     }
@@ -765,7 +779,7 @@ mod tests {
             Some(5),
         )
         .await;
-        let accounts = relayer(&url).accounts().await;
+        let accounts = relayer(&url).accounts().await.unwrap();
         assert_eq!(
             *accounts,
             HashSet::from([account(0xab), account(0xcd)]),
@@ -782,8 +796,8 @@ mod tests {
         let (url, server, reads) =
             listing(vec![serde_json::json!([evm(account(1))])], Some(1)).await;
         let relayer = relayer(&url);
-        assert!(relayer.accounts().await.contains(&account(1)));
-        assert!(relayer.accounts().await.contains(&account(1)));
+        assert!(relayer.accounts().await.unwrap().contains(&account(1)));
+        assert!(relayer.accounts().await.unwrap().contains(&account(1)));
         relayer.refresh_accounts().await.unwrap();
         assert_eq!(reads.load(Ordering::SeqCst), 1);
         server.abort();
@@ -816,12 +830,12 @@ mod tests {
         );
         let (url, server) = serve(app).await;
         let relayer = relayer(&url);
-        assert!(relayer.accounts().await.contains(&account(1)));
+        assert!(relayer.accounts().await.unwrap().contains(&account(1)));
         down.store(true, Ordering::SeqCst);
         if let Some(stored) = relayer.accounts.lock().as_mut() {
             stored.until = Instant::now();
         }
-        assert!(relayer.accounts().await.contains(&account(1)));
+        assert!(relayer.accounts().await.unwrap().contains(&account(1)));
         assert_eq!(
             reads.load(Ordering::SeqCst),
             1,
@@ -829,7 +843,7 @@ mod tests {
         );
         assert!(relayer.refresh_accounts().await.is_err());
         assert_eq!(reads.load(Ordering::SeqCst), 2);
-        assert!(relayer.accounts().await.contains(&account(1)));
+        assert!(relayer.accounts().await.unwrap().contains(&account(1)));
         server.abort();
     }
 
@@ -848,7 +862,7 @@ mod tests {
                 }),
             );
         let (url, server) = serve(app).await;
-        let accounts = relayer(&url).accounts().await;
+        let accounts = relayer(&url).accounts().await.unwrap();
         assert_eq!(*accounts, HashSet::from([account(7)]), "{accounts:?}");
         server.abort();
     }
@@ -882,10 +896,94 @@ mod tests {
             );
         let (url, server) = serve(app).await;
         let relayer = relayer(&url);
-        assert!(relayer.accounts().await.is_empty());
+        assert!(relayer.accounts().await.unwrap().is_empty());
         assert!(relayer.refresh_accounts().await.is_err());
-        assert_eq!(*relayer.accounts().await, HashSet::from([account(7)]));
+        assert_eq!(
+            *relayer.accounts().await.unwrap(),
+            HashSet::from([account(7)])
+        );
         assert_eq!(own_reads.load(Ordering::SeqCst), 2);
+        server.abort();
+    }
+
+    /// A count that changes between pages is a failed read: a relayer removed mid-read moves
+    /// later entries up a page, which a shrinking count alone would not show. The last list stays.
+    #[tokio::test]
+    async fn a_relayer_list_that_changes_while_read_is_a_failed_read() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let changing = Arc::new(AtomicBool::new(false));
+        let flag = changing.clone();
+        let app = axum::Router::new().route(
+            "/api/v1/relayers/",
+            axum::routing::get(
+                move |axum::extract::Query(q): axum::extract::Query<
+                    std::collections::HashMap<String, String>,
+                >| {
+                    let page = q.get("page").cloned().unwrap_or_default();
+                    let body = match (flag.load(Ordering::SeqCst), page.as_str()) {
+                        (false, _) => serde_json::json!({
+                            "success": true, "data": [evm(account(1))],
+                            "pagination": { "total_items": 1 }
+                        }),
+                        (true, "1") => serde_json::json!({
+                            "success": true, "data": [evm(account(2)), evm(account(3))],
+                            "pagination": { "total_items": 4 }
+                        }),
+                        (true, _) => serde_json::json!({
+                            "success": true, "data": [evm(account(5))],
+                            "pagination": { "total_items": 3 }
+                        }),
+                    };
+                    async move { axum::Json(body) }
+                },
+            ),
+        );
+        let (url, server) = serve(app).await;
+        let relayer = relayer(&url);
+        relayer.refresh_accounts().await.unwrap();
+        changing.store(true, Ordering::SeqCst);
+        if let Some(stored) = relayer.accounts.lock().as_mut() {
+            stored.until = Instant::now();
+        }
+        assert!(relayer.refresh_accounts().await.is_err());
+        assert_eq!(
+            *relayer.accounts().await.unwrap(),
+            HashSet::from([account(1)])
+        );
+        server.abort();
+    }
+
+    /// A caller waits for the first read only up to `first_wait`, and gets nothing rather than an
+    /// empty list; the background pass still reads and stores the list.
+    #[tokio::test]
+    async fn a_caller_stops_waiting_for_a_slow_first_read() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let slow = Arc::new(AtomicBool::new(true));
+        let flag = slow.clone();
+        let app = axum::Router::new().route(
+            "/api/v1/relayers/",
+            axum::routing::get(move || {
+                let slow = flag.load(Ordering::SeqCst);
+                async move {
+                    if slow {
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                    }
+                    axum::Json(serde_json::json!({
+                        "success": true, "data": [evm(account(1))],
+                        "pagination": { "total_items": 1 }
+                    }))
+                }
+            }),
+        );
+        let (url, server) = serve(app).await;
+        let mut relayer = relayer(&url);
+        relayer.first_wait = Duration::from_millis(50);
+        let started = Instant::now();
+        assert!(relayer.accounts().await.is_none());
+        assert!(started.elapsed() < Duration::from_secs(1));
+        slow.store(false, Ordering::SeqCst);
+        relayer.refresh_accounts().await.unwrap();
+        assert!(relayer.accounts().await.unwrap().contains(&account(1)));
         server.abort();
     }
 
