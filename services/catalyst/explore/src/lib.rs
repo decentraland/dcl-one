@@ -321,9 +321,7 @@ pub struct ExploreState {
 
 pub type SharedState = Arc<ExploreState>;
 
-/// The signed path of a request this router serves at the root or under the
-/// `/events` or `/places` nest: the nest-stripped route lets the proxy's
-/// `x-original-path` (the host rewrite's `/api/...`) match.
+/// The nest-stripped route, so a proxy's `x-original-path` can match it.
 fn signed_path(path: &str) -> signed_fetch::SignedPath {
     let local = ["/events", "/places"]
         .into_iter()
@@ -1151,9 +1149,7 @@ mod tests {
 
     use super::*;
 
-    /// The events and places hosts rewrite `/api/...` to the nest and forward
-    /// the client's path in `x-original-path`: a signature over it verifies,
-    /// and only over the path the proxy reports.
+    /// A signature over the host-rewritten path verifies only as the proxy reports it.
     #[tokio::test]
     async fn a_signature_over_the_rewritten_host_path_verifies_under_the_nest() {
         use signed_fetch::test_support::{address, signed_headers};
@@ -1197,8 +1193,7 @@ mod tests {
                 .is_some()
         );
 
-        // No forwarded path, a forwarded path for another route, or a
-        // signature over another path: refused.
+        // Missing or mismatched forwarded path, or another signed path: refused.
         for (headers, path) in [
             (signed.clone(), "/events/api/events"),
             (
