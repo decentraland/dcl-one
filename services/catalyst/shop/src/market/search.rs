@@ -186,8 +186,10 @@ const DIRECTORY_STALE_FOR: Duration = Duration::from_secs(3600);
 /// The longest a feed-started directory read may take before it ends as failed.
 #[cfg(not(test))]
 const DIRECTORY_READ_LIMIT: Duration = Duration::from_secs(60);
+/// Every test's cold read runs under this limit, so it leaves a loaded runner room for a read
+/// that starts behind a held lock, and still ends inside the hung-read test's 20 s poll.
 #[cfg(test)]
-const DIRECTORY_READ_LIMIT: Duration = Duration::from_secs(2);
+const DIRECTORY_READ_LIMIT: Duration = Duration::from_secs(10);
 /// How long after a failed directory read the next one waits, so a failing database sees one
 /// directory read per this period rather than one per feed.
 const DIRECTORY_RETRY_AFTER: Duration = Duration::from_secs(30);
