@@ -690,11 +690,7 @@ mod tests {
             .await
             .expect("the fresh directory");
 
-        state.readers.backdate(
-            Ttl::M15,
-            CREATOR_DIRECTORY_KEY,
-            Ttl::M15.duration() + Duration::from_secs(60),
-        );
+        state.readers.forget(Ttl::M15, CREATOR_DIRECTORY_KEY);
         assert!(!state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
         let mut lock = pool.begin().await.unwrap();
         sqlx::query("LOCK TABLE shop.items IN ACCESS EXCLUSIVE MODE")
@@ -711,11 +707,7 @@ mod tests {
 
         // The kept copy serves for an hour from its read, and no longer: past it, with the cache
         // entry expired and the refresh held up, a feed answers without profiles.
-        state.readers.backdate(
-            Ttl::M15,
-            CREATOR_DIRECTORY_KEY,
-            Ttl::M15.duration() + Duration::from_secs(60),
-        );
+        state.readers.forget(Ttl::M15, CREATOR_DIRECTORY_KEY);
         state.readers.backdate_kept(
             CREATOR_DIRECTORY_KEY,
             DIRECTORY_STALE_FOR + Duration::from_secs(1),

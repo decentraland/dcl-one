@@ -1513,7 +1513,15 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     assert!(!state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
     let (status, body) = get(app(), "/v3/catalog/unified?groupBy=item&first=3").await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
+    // The browse read started the directory's read in the background; it may land after the
+    // answer, which waits at most 500 ms for it.
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while !state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the browse read fills the creator directory");
 
     // The feeds carry their creators' profiles per response, never memoized with the page: a
     // profile denylisted after the pages were memoized leaves the very next answer, and every

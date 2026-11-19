@@ -116,6 +116,12 @@ where
         self.map.clear();
     }
 
+    /// Drops `key`'s entry, as an eviction would (an expiry keeps the value for
+    /// [`TtlMap::get_stale`]), without moving any clock.
+    pub fn remove(&self, key: &K) {
+        self.map.remove(key);
+    }
+
     pub fn get_fresh(&self, key: &K) -> Option<V> {
         let slot = self.map.get(key)?;
         let entry = slot.cached.as_ref()?;

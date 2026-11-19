@@ -171,10 +171,11 @@ impl Caches {
         }
     }
 
-    /// Ages `key`'s answer under `ttl` by `by`.
+    /// Drops `key`'s answer under `ttl`, as an eviction would, without moving the clock (a
+    /// backdate of minutes can pass the clock's start on a host just booted).
     #[cfg(any(test, feature = "test-support"))]
-    pub fn backdate(&self, ttl: Ttl, key: &str, by: Duration) {
-        self.map(ttl).backdate(&key.to_string(), by);
+    pub fn forget(&self, ttl: Ttl, key: &str) {
+        self.map(ttl).remove(&key.to_string());
     }
 
     /// Whether `key` holds a fresh answer under `ttl`.
