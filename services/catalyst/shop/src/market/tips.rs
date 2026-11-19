@@ -20,9 +20,10 @@
 //! [`PREAUTH_PER_MINUTE_PER_48`]; a private or loopback peer (an unlisted
 //! gateway) is not limited before it.
 //! Without a running index (`MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED` off here
-//! and no other process advancing or publishing the `mana_transfers` cursor
-//! within [`chain_walk::READY_WINDOW`]) a signed forward is answered 503 and
-//! nothing is stored, since its claim could only expire.
+//! and no other process walking the `mana_transfers` cursor close enough to
+//! publish within the claim's hour, [`chain_walk::is_walked`]) a signed
+//! forward is answered 503 and no claim is stored or settled, since it could
+//! only expire.
 //! A transfer below the minimum amount, or mined longer than the maximum age
 //! before its claim, is rejected (`TipSettings`). The notification id is a
 //! uuid v5 of the transaction hash.
@@ -336,26 +337,25 @@ async fn forward(
     }
 }
 
-/// Whether a MANA transfer index serves this database: walked here, or its
-/// cursor moved by another process within [`chain_walk::READY_WINDOW`].
+/// Whether a MANA transfer index serves this database: walked here, or by
+/// another process ([`chain_walk::is_walked`] within the claim's hour).
 async fn index_runs(state: &SharedState) -> bool {
     if state.settings.market.indexes.mana_transfers_enabled {
         return true;
     }
     match chain_walk::cursor(&state.pool, INDEXER_MANA, NET).await {
-        Ok(cursor) => cursor.is_some_and(|c| walked_recently(&c, chrono::Utc::now())),
+        Ok(cursor) => cursor.is_some_and(|c| {
+            chain_walk::is_walked(
+                &c,
+                chrono::Utc::now(),
+                chrono::Duration::seconds(CLAIM_TTL_SECS),
+            )
+        }),
         Err(e) => {
             tracing::warn!(error = %e, "cannot read the MANA transfer cursor; refusing the tip forward");
             false
         }
     }
-}
-
-/// Published recently, or advanced recently (a walk still catching up).
-fn walked_recently(c: &chain_walk::Cursor, now: chrono::DateTime<chrono::Utc>) -> bool {
-    let advanced = now.naive_utc().signed_duration_since(c.updated_at);
-    chain_walk::is_ready(c, now)
-        || (advanced >= chrono::Duration::zero() && advanced <= chain_walk::READY_WINDOW)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -897,6 +897,18 @@ mod tests {
         real_ip: Option<&str>,
         signed: Option<&crate::outfits::testkit::Wallet>,
     ) -> StatusCode {
+        send_signed_body(app, peer, real_ip, signed, "{}".into())
+            .await
+            .status()
+    }
+
+    async fn send_signed_body(
+        app: &Router,
+        peer: &str,
+        real_ip: Option<&str>,
+        signed: Option<&crate::outfits::testkit::Wallet>,
+        body: String,
+    ) -> Response {
         use tower::ServiceExt;
         let mut req = axum::http::Request::post(PATH)
             .extension(ConnectInfo(SocketAddr::new(peer.parse().unwrap(), 4242)));
@@ -909,10 +921,9 @@ mod tests {
             }
         }
         app.clone()
-            .oneshot(req.body(axum::body::Body::from("{}")).unwrap())
+            .oneshot(req.body(axum::body::Body::from(body)).unwrap())
             .await
             .unwrap()
-            .status()
     }
 
     async fn send_from(app: &Router, peer: &str, real_ip: Option<&str>) -> StatusCode {
@@ -1456,60 +1467,9 @@ mod tests {
         assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
     }
 
-    fn cursor_at(
-        updated_ago: chrono::Duration,
-        folded_ago: Option<chrono::Duration>,
-    ) -> chain_walk::Cursor {
-        let now = chrono::Utc::now().naive_utc();
-        chain_walk::Cursor {
-            indexer: INDEXER_MANA.into(),
-            network: NET.db_name().into(),
-            start_block: 0,
-            last_block: 100,
-            last_block_hash: Some("0xabc".into()),
-            last_block_time: None,
-            fold_through: Some(100),
-            folded_block: folded_ago.map(|_| 100),
-            folded_at: folded_ago.map(|ago| now - ago),
-            full_history: folded_ago.is_some(),
-            reorg_rewinds: 0,
-            updated_at: now - updated_ago,
-        }
-    }
-
-    #[test]
-    fn an_index_runs_while_its_cursor_moves_or_publishes() {
-        let now = chrono::Utc::now();
-        let minutes = chrono::Duration::minutes;
-        assert!(
-            walked_recently(&cursor_at(minutes(1), None), now),
-            "catching up"
-        );
-        assert!(
-            walked_recently(&cursor_at(minutes(120), Some(minutes(1))), now),
-            "caught up and publishing"
-        );
-        assert!(
-            !walked_recently(&cursor_at(minutes(120), None), now),
-            "a walk that stopped"
-        );
-        assert!(
-            !walked_recently(&cursor_at(minutes(120), Some(minutes(90))), now),
-            "a publish that stopped"
-        );
-    }
-
     async fn forward_tip(app: &Router, w: &crate::outfits::testkit::Wallet) -> Response {
-        use tower::ServiceExt;
-        let mut req = axum::http::Request::post(PATH);
-        for (k, v) in &crate::outfits::testkit::signed_headers(w, "post", PATH).await {
-            req = req.header(k, v);
-        }
         let body = json!({ "type": "tip-received", "transactionHash": hash(7) }).to_string();
-        app.clone()
-            .oneshot(req.body(axum::body::Body::from(body)).unwrap())
-            .await
-            .unwrap()
+        send_signed_body(app, "10.77.0.1", None, Some(w), body).await
     }
 
     /// Without an index walked here or elsewhere a forward is refused unstored;
@@ -1544,18 +1504,46 @@ mod tests {
         );
         assert_eq!(claim_count(&db.pool).await, 0, "nothing stored");
 
-        sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, full_history, updated_at) \
-             VALUES ('mana_transfers', 'matic', 0, 10, false, timezone('UTC', now()) - interval '2 hours')",
-        )
-        .execute(&db.pool)
-        .await
-        .unwrap();
-        assert_eq!(
-            forward_tip(&off, &w).await.status(),
-            StatusCode::SERVICE_UNAVAILABLE,
-            "a walk that stopped"
-        );
+        // A whole-history walk this many minutes behind, last advanced
+        // `advanced` ago by the database clock.
+        let walk = |full: bool, behind_mins: i64, advanced: &'static str| {
+            let pool = db.pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_time, full_history, updated_at) \
+                     VALUES ('mana_transfers', 'matic', 0, 10, $1, $2, timezone('UTC', now()) - $3::interval) \
+                     ON CONFLICT (indexer, network) DO UPDATE SET last_block_time = $1, full_history = $2, updated_at = EXCLUDED.updated_at",
+                )
+                .bind(now_secs() - behind_mins * 60)
+                .bind(full)
+                .bind(advanced)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        for (full, behind, advanced, why) in [
+            (true, 5, "2 hours", "a walk that stopped"),
+            (
+                false,
+                5,
+                "0 seconds",
+                "a walk without its whole history never publishes",
+            ),
+            (
+                true,
+                120,
+                "0 seconds",
+                "a catch-up too far behind to publish within the hour",
+            ),
+        ] {
+            walk(full, behind, advanced).await;
+            assert_eq!(
+                forward_tip(&off, &w).await.status(),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{why}"
+            );
+        }
 
         assert_eq!(
             forward_tip(&app_with(true), &w).await.status(),
@@ -1563,17 +1551,27 @@ mod tests {
             "walked here"
         );
         assert_eq!(claim_count(&db.pool).await, 1);
+        assert_eq!(
+            forward_tip(&off, &w).await.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "a retried claim while no index runs"
+        );
 
-        sqlx::query("UPDATE shop.chain_cursor SET updated_at = timezone('UTC', now())")
-            .execute(&db.pool)
-            .await
-            .unwrap();
+        walk(true, 5, "0 seconds").await;
         assert_eq!(
             forward_tip(&off, &crate::outfits::testkit::scratch_wallet())
                 .await
                 .status(),
             StatusCode::ACCEPTED,
             "walked by another process"
+        );
+        walk(true, 5, "-5 minutes").await;
+        assert_eq!(
+            forward_tip(&off, &crate::outfits::testkit::scratch_wallet())
+                .await
+                .status(),
+            StatusCode::ACCEPTED,
+            "a database clock ahead of this node's"
         );
         db.drop().await;
     }

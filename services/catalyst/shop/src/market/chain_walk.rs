@@ -453,6 +453,21 @@ pub fn ready_sql(alias: &str, now_p: &str) -> String {
     )
 }
 
+/// Whether a walk serves `indexer` at `now`: ready, or with its whole history
+/// walked, advanced within [`READY_WINDOW`] and its last block under `horizon`
+/// old, so it can publish within `horizon`. A future `updated_at` (written by
+/// the database clock) counts as advanced.
+pub fn is_walked(c: &Cursor, now: DateTime<Utc>, horizon: ChronoDuration) -> bool {
+    if is_ready(c, now) {
+        return true;
+    }
+    let advanced = now.naive_utc().signed_duration_since(c.updated_at);
+    let near_head = c
+        .last_block_time
+        .is_some_and(|t| now.timestamp() - t <= horizon.num_seconds());
+    c.full_history && advanced <= READY_WINDOW && near_head
+}
+
 /// `Some(cursor)` when `indexer` may answer for `net` at `now`; a database
 /// error reads as not ready (the envelope, never a guess).
 pub async fn ready_cursor(
@@ -983,6 +998,49 @@ mod tests {
             reorg_rewinds: 0,
             updated_at: Utc::now().naive_utc(),
         }
+    }
+
+    #[test]
+    fn a_walk_serves_while_it_publishes_or_nears_the_head() {
+        let now = Utc::now();
+        let hour = ChronoDuration::hours(1);
+        let walking = |full: bool, advanced: ChronoDuration, behind: ChronoDuration| Cursor {
+            last_block_time: Some((now - behind).timestamp()),
+            updated_at: (now - advanced).naive_utc(),
+            ..cursor_row(100, None, None, full)
+        };
+        let minutes = ChronoDuration::minutes;
+        assert!(
+            is_walked(&walking(true, minutes(1), minutes(5)), now, hour),
+            "near the head"
+        );
+        assert!(
+            is_walked(&walking(true, minutes(-5), minutes(5)), now, hour),
+            "a database clock ahead"
+        );
+        assert!(
+            !is_walked(&walking(true, minutes(1), minutes(120)), now, hour),
+            "a catch-up too far behind to publish in time"
+        );
+        assert!(
+            !is_walked(&walking(false, minutes(1), minutes(5)), now, hour),
+            "a walk without its whole history never publishes"
+        );
+        assert!(
+            !is_walked(&walking(true, minutes(120), minutes(5)), now, hour),
+            "a walk that stopped"
+        );
+        assert!(
+            is_walked(
+                &Cursor {
+                    updated_at: (now - minutes(120)).naive_utc(),
+                    ..cursor_row(100, Some(100), Some(now - minutes(1)), true)
+                },
+                now,
+                hour
+            ),
+            "caught up and publishing"
+        );
     }
 
     #[test]
