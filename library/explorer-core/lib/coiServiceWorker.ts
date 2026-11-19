@@ -6,6 +6,7 @@
 //
 // vite serves the same worker at /service_worker.js in dev.
 import { PAGE_DIR } from '@hud-host'
+import { serviceWorkerUrl } from './isolation'
 
 // One-shot reload guard. Deliberately NOT the engine's `sw_reloaded` — the engine boot shares this
 // origin's sessionStorage and runs its own copy of the dance (engine/main.js).
@@ -23,7 +24,7 @@ export function registerCoiServiceWorker(): void {
   }
 
   navigator.serviceWorker
-    .register(new URL('service_worker.js', PAGE_DIR))
+    .register(serviceWorkerUrl(PAGE_DIR))
     .then((reg) => {
       if (navigator.serviceWorker.controller) {
         sessionStorage.removeItem(FLAG)
