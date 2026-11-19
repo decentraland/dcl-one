@@ -104,6 +104,7 @@ export type LandingsEvents = {
   lp_community_submit_failed: {
     error?: string;
   };
+  lp_creatorhub_docs_clicked: Record<string, never>;
   lp_creatorhub_download_clicked: {
     arch: "amd64" | "arm64";
     file_name: null | string;
@@ -118,6 +119,9 @@ export type LandingsEvents = {
     os: "macos" | "windows";
     overridden: boolean;
     version: string;
+  };
+  lp_creatorhub_link_shared: {
+    method: "copy" | "share";
   };
   lp_discover_viewed: Record<string, never>;
   lp_event_card_clicked: {

@@ -3087,6 +3087,10 @@
         }
       }
     },
+    "lp_creatorhub_docs_clicked": {
+      "loose": false,
+      "props": {}
+    },
     "lp_creatorhub_download_clicked": {
       "loose": false,
       "props": {
@@ -3154,6 +3158,19 @@
         },
         "version": {
           "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "lp_creatorhub_link_shared": {
+      "loose": false,
+      "props": {
+        "method": {
+          "kind": "enum-string",
+          "values": [
+            "copy",
+            "share"
+          ],
           "optional": false
         }
       }

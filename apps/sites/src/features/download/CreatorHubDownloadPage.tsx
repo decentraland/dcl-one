@@ -11,6 +11,7 @@ import { track } from "@/core/lib/telemetry/track";
 import { SubNav } from "../creators/components/SubNav";
 import { CREATOR_HUB_DOWNLOAD_STORY, useCreatorHubDownloadClick } from "./creator-hub-click";
 import CreatorHubDownload from "./CreatorHubDownload";
+import CreatorHubElsewhere from "./CreatorHubElsewhere";
 import styles from "./CreatorHubDownloadPage.module.css";
 
 const copy = { title: "Decentraland Creator Hub" };
@@ -24,7 +25,7 @@ type Props = {
   macChipUnknown: boolean;
   detectedOs: OsKey;
   detectedArch: string;
-  /** None on phones, tablets and Linux, which then see the title and banner only. */
+  /** None on phones, tablets and Linux, which then get the docs and a link to send to a computer. */
   primary: DownloadOption | null;
   secondary: DownloadOption[];
 };
@@ -70,10 +71,12 @@ export default function CreatorHubDownloadPage({
             <img className={styles.logo} src={logo} alt="Decentraland" width="20" height="20" />
             <h1 className={styles.title}>{copy.title}</h1>
 
-            {main && (
+            {main ? (
               <div className={styles.actions}>
                 <CreatorHubDownload primary={main} others={offered.others} onDownload={onDownload} />
               </div>
+            ) : (
+              <CreatorHubElsewhere sid={sid} />
             )}
           </div>
 
