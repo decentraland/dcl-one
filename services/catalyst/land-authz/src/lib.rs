@@ -4,7 +4,13 @@
 //! ONE client, a `jobs::spawn_periodic` job with `index_cursor` as its
 //! durable progress: [`indexer`]), `token_right` / `estate_land` /
 //! `account_right` (the fold), read by [`resolve::Store`] and served by
-//! [`routes`]. Consumers: the content deploy validator and `worlds::policy`
+//! [`routes`]. The same pass appends the Estate registry's version-0 data
+//! documents (`CreateEstate`, `Update`) to `estate_data_event`, which
+//! [`LandAuthzState::dissolved_estate`] reads for the map metadata of an
+//! estate left without LAND. A node whose index predates that table holds
+//! only the documents indexed since: `LAND_AUTHZ_REPLAY_FROM_BLOCK` at the
+//! Estate registry's deployment block (6,236,547 on mainnet) re-reads the
+//! earlier ones. Consumers: the content deploy validator and `worlds::policy`
 //! through [`can_deploy`] / [`can_deploy_batch`] / [`owns_land_at`], comms'
 //! scene permissions and the `lands-permissions` route through the old
 //! lambdas paths.
@@ -305,6 +311,14 @@ pub struct EstateMembership {
     pub estate_id: Option<String>,
 }
 
+/// An estate's latest data document: its name and description, each empty
+/// when the document has none.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EstateData {
+    pub name: String,
+    pub description: String,
+}
+
 /// Why no decision could be made: the caller refuses the write (never
 /// grants), and a route answers the unavailable envelope.
 #[derive(Debug, thiserror::Error)]
@@ -410,24 +424,34 @@ impl LandAuthzState {
         Ok(answer.map(|(estate_id,)| EstateMembership { estate_id }))
     }
 
-    /// Whether the Estate token `estate_id` (decimal) was minted by the
-    /// configured Estate registry and holds no LAND now: a dissolved estate,
-    /// the atlas's `searchEstateSize: 0` lookup. `None` when the index may
-    /// not answer; a database error reads as not ready.
-    pub async fn estate_is_dissolved(&self, estate_id: &str) -> Option<bool> {
+    /// The Estate token `estate_id` (decimal) when the configured Estate
+    /// registry minted it and it holds no LAND now: a dissolved estate, the
+    /// atlas's `searchEstateSize: 0` lookup, with the name and description
+    /// of its latest data document (`estate_data_event`; empty when it has
+    /// none). `Some(None)` when it is not dissolved (never minted, or still
+    /// holding LAND); `None` when the index may not answer (a database error
+    /// reads as not ready).
+    pub async fn dissolved_estate(&self, estate_id: &str) -> Option<Option<EstateData>> {
         let mut snapshot = self.ready_snapshot().await?;
-        sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM land_authz.token_right e \
-                             WHERE e.token_address = $1 AND e.token_id = $2::numeric) \
-                AND NOT EXISTS (SELECT 1 FROM land_authz.estate_land el \
-                                 WHERE el.estate_token_id = $2::numeric)",
+        let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT d.name, d.description FROM land_authz.token_right e \
+             LEFT JOIN LATERAL (SELECT x.name, x.description FROM land_authz.estate_data_event x \
+                                 WHERE x.token_address = e.token_address AND x.estate_id = e.token_id \
+                                 ORDER BY x.block_number DESC, x.log_index DESC LIMIT 1) d ON true \
+             WHERE e.token_address = $1 AND e.token_id = $2::numeric \
+               AND NOT EXISTS (SELECT 1 FROM land_authz.estate_land el \
+                                WHERE el.estate_token_id = $2::numeric)",
         )
         .bind(&self.settings.estate_registry)
         .bind(estate_id)
-        .fetch_one(&mut *snapshot.tx)
+        .fetch_optional(&mut *snapshot.tx)
         .await
         .inspect_err(|e| tracing::warn!(error = %e, "land-authz: dissolved-estate lookup failed"))
-        .ok()
+        .ok()?;
+        Some(row.map(|(name, description)| EstateData {
+            name: name.unwrap_or_default(),
+            description: description.unwrap_or_default(),
+        }))
     }
 
     /// The marketplace reader, when one with a subgraph URL is attached.

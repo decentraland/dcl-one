@@ -199,32 +199,148 @@ async fn estate_membership_uses_only_the_configured_fresh_publication_on_the_cal
     db.drop().await;
 }
 
+/// `data` as the ABI encodes the one `string` of a data log.
+fn abi_string(document: &str) -> String {
+    let bytes = document.as_bytes();
+    let mut padded = bytes.to_vec();
+    padded.resize(bytes.len().div_ceil(32) * 32, 0);
+    let body: String = padded.iter().map(|b| format!("{b:02x}")).collect();
+    format!("0x{:064x}{:064x}{body}", 32, bytes.len())
+}
+
+fn create_estate(block: u64, index: u32, owner: &str, estate: &str, document: &str) -> Log {
+    Log {
+        block,
+        index,
+        address: ESTATE,
+        topics: vec![
+            TOPIC_CREATE_ESTATE.into(),
+            topic_addr(owner),
+            topic_uint(estate),
+        ],
+        data: abi_string(document),
+    }
+}
+
+fn data_update(block: u64, index: u32, address: &'static str, asset: &str, document: &str) -> Log {
+    Log {
+        block,
+        index,
+        address,
+        topics: vec![
+            TOPIC_UPDATE.into(),
+            topic_token(asset),
+            topic_addr(ALICE),
+            topic_addr(ALICE),
+        ],
+        data: abi_string(document),
+    }
+}
+
+async fn estate_data_rows(pool: &PgPool) -> Vec<(String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT estate_id::text, name FROM land_authz.estate_data_event ORDER BY block_number, log_index",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// The indexer keeps the Estate registry's version-0 data documents (and
+/// not the LAND registry's, which share the `Update` topic, nor one that
+/// does not parse); a minted estate holding no LAND answers its latest
+/// document's name and description, or empty strings without one.
 #[tokio::test]
-async fn a_minted_estate_without_land_is_dissolved_once_the_index_answers() {
+async fn a_dissolved_estate_answers_its_latest_data_document() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    seed_rights(&db.pool).await;
-    sqlx::query("INSERT INTO land_authz.token_right (token_address, token_id, owner, updated_block, updated_log) VALUES ($1, 501, $2, 1, 7)")
-        .bind(ESTATE)
-        .bind(ALICE)
-        .execute(&db.pool)
-        .await
-        .unwrap();
-    let state = state_over(db.pool.clone(), Settings::for_tests(), None);
-    assert_eq!(state.estate_is_dissolved("501").await, None, "unready");
-    sqlx::query("INSERT INTO land_authz.index_cursor (network,land_registry,estate_registry,last_block,folded_block,folded_at,full_replay_started) VALUES ($1,$2,$3,1,1,timezone('UTC',now()),true)")
-        .bind(NETWORK_MAINNET).bind(LAND).bind(ESTATE).execute(&db.pool).await.unwrap();
-    assert_eq!(state.estate_is_dissolved("501").await, Some(true));
+    let s = START;
+    let chain = FakeChain::new(
+        s + 50,
+        vec![
+            transfer(s + 10, 0, ESTATE, ZERO_ADDR, ALICE, "501"),
+            create_estate(s + 10, 1, ALICE, "501", "0,\"First\",\"first words\""),
+            transfer(s + 11, 0, ESTATE, ZERO_ADDR, ALICE, "502"),
+            transfer(s + 12, 0, ESTATE, ZERO_ADDR, ALICE, "500"),
+            add_land(s + 12, 1, "500", TOKEN_37_55),
+            data_update(
+                s + 20,
+                0,
+                ESTATE,
+                "501",
+                "0,\"Dissolved\",\"Once an estate\"",
+            ),
+            data_update(s + 21, 0, ESTATE, "501", "not a document"),
+            data_update(s + 22, 0, LAND, TOKEN_37_55, "0,\"A parcel\",\"\""),
+            data_update(s + 23, 0, ESTATE, "500", "0,\"Kept\","),
+        ],
+        1_000,
+        1_000_000,
+    );
+    let url = serve(chain.clone()).await;
+    let state = state_over(
+        db.pool.clone(),
+        Settings {
+            rpc_url: Some(url),
+            index_enabled: true,
+            ..Settings::for_tests()
+        },
+        None,
+    );
+    assert_eq!(state.dissolved_estate("501").await, None, "unready");
+    let (_jobs, ctx) = job_ctx().await;
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
     assert_eq!(
-        state.estate_is_dissolved("500").await,
-        Some(false),
+        estate_data_rows(&db.pool).await,
+        vec![
+            ("501".into(), Some("First".into())),
+            ("501".into(), Some("Dissolved".into())),
+            ("500".into(), Some("Kept".into())),
+        ],
+        "the estates' version-0 documents only"
+    );
+    assert_eq!(
+        state.dissolved_estate("501").await,
+        Some(Some(EstateData {
+            name: "Dissolved".into(),
+            description: "Once an estate".into(),
+        }))
+    );
+    assert_eq!(
+        state.dissolved_estate("502").await,
+        Some(Some(EstateData::default())),
+        "no document: empty strings"
+    );
+    assert_eq!(
+        state.dissolved_estate("500").await,
+        Some(None),
         "holds LAND"
     );
     assert_eq!(
-        state.estate_is_dissolved("999").await,
-        Some(false),
+        state.dissolved_estate("999").await,
+        Some(None),
         "never minted"
+    );
+
+    // A reorg past the documents drops them with the log.
+    reorg_from(&chain, s + 20, vec![]);
+    chain.head.store(s + 55, Ordering::SeqCst);
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.reorg_rewound_to.is_some(), "{out:?}");
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    assert_eq!(
+        estate_data_rows(&db.pool).await,
+        vec![("501".into(), Some("First".into()))]
+    );
+    assert_eq!(
+        state.dissolved_estate("501").await,
+        Some(Some(EstateData {
+            name: "First".into(),
+            description: "first words".into(),
+        }))
     );
     db.drop().await;
 }
@@ -3534,10 +3650,18 @@ async fn live_rpc_reads_and_decodes_the_first_land_logs() {
         logs.len(),
         events.len()
     );
+    let rights_logs = logs
+        .iter()
+        .filter(|log| {
+            !log.topics
+                .first()
+                .is_some_and(|t| crate::events::is_data_topic(t))
+        })
+        .count();
     assert_eq!(
         events.len(),
-        logs.len(),
-        "every log of the seven topics decodes"
+        rights_logs,
+        "every log of the rights topics decodes"
     );
 }
 

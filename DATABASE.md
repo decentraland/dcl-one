@@ -2202,6 +2202,55 @@ reference nothing: no FK. The bootstrap defines the tables; an existing
 database gains them from the object pass, so no step exists. A restart of
 every replica keeps the relay's state.
 
+## Estate data documents workload
+
+`land_authz.estate_data_event` (`schemas/33_land_authz.sql`) holds the
+Estate registry's data documents, so the map metadata of a dissolved estate
+(a minted Estate token holding no LAND) carries the name and description
+the atlas reads from the marketplace subgraph.
+
+- **Input:** the Estate registry's `CreateEstate` and `Update` logs, fetched
+  by the land-authz pass in the same `eth_getLogs` as the rights topics.
+  One log per estate mint and per metadata edit. The LAND registry emits
+  `Update` under the same topic for parcel data; those logs are fetched and
+  dropped before timestamp hydration. Neither volume is measured; the
+  extra LAND logs count toward the endpoints' per-response log cap and may
+  narrow the ranges a pass reads.
+- **Row:** one per log whose document parses as version 0, with the
+  subgraph's `buildData` over graph-ts `parseCSV`
+  (`land-authz/src/events.rs`). `name` and `description` are NULL when the
+  document omits them. A document that does not parse writes no row, as
+  the subgraph keeps no data for it. Key `(block_number, log_index)`, the
+  log's own position, as `authz_event`.
+- **Write:** appended in the transaction that writes the range's
+  `authz_event` rows and advances the cursor, with `ON CONFLICT DO
+  NOTHING`. A decode failure never fails the pass: the row is skipped.
+- **Read:** `LandAuthzState::dissolved_estate`, on the published snapshot
+  (`ready_snapshot`): one `token_right` primary-key probe, one
+  `estate_land_estate_idx` probe and the latest row by
+  `estate_data_event_estate_idx`. It runs only for an estate the tile grid
+  does not hold (`/v2/estates/{id}`, `/v2/contracts/{estate}/tokens/{id}`).
+- **Invariants:** an estate's latest row names it. A later document that
+  omits a field leaves that field empty; the subgraph's merge may keep the
+  earlier value there instead (unverified). A reorg rewind deletes the rows
+  past its block in the transaction that deletes the log's. A registry
+  switch keeps the rows of the old registry, which reads never match
+  (`token_address`). No FK: rows reference no table and nothing references
+  them.
+
+The table and its index are new objects: the object pass creates them on a
+stamped database, so no step exists. On a node whose index already passed
+the Estate registry's history, the table holds only the documents indexed
+after the upgrade, and a dissolved estate's name and description read empty
+until the operator sets `LAND_AUTHZ_REPLAY_FROM_BLOCK` to the Estate
+registry's deployment block (mainnet 6,236,547, the marketplace squid's
+`EstateProxy` start block) and unsets it once the index publishes again.
+That replay re-reads both registries from there; until it publishes,
+readers use the subgraph fallbacks and Genesis collaborator grants fail
+closed. Its duration is not measured. Completeness check: `SELECT
+min(block_number) FROM land_authz.estate_data_event` is at or below the
+first `CreateEstate` block.
+
 ## Place removal feed
 
 `explore.place_removal_pending` (`schemas/10_explore.sql`) is a sparse outbox

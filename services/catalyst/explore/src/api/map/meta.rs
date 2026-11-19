@@ -10,7 +10,8 @@
 //! derived from the coordinates when the grid carries none, and the
 //! description is empty (the grid has no description column). An estate the
 //! grid does not hold answers from the LAND index when that index proves it
-//! minted and holding no LAND (a dissolved estate, size 0, empty name). The district
+//! minted and holding no LAND (a dissolved estate, size 0), named by its
+//! latest Estate data document. The district
 //! and contribution documents are upstream's vendored data at the revision
 //! production still serves (42 districts, 1,695 contributing addresses; the
 //! old crate and atlas-server `8b2c3620`, #142, ship them as `[]`/`{}` while
@@ -256,11 +257,17 @@ pub(crate) fn estate_nft(state: &Shared, grid: &Grid, id: &str) -> Option<NftMet
     Some(estate_document(state, id, name, &coords))
 }
 
-/// An estate the LAND index proves minted and empty (the atlas's dissolved
-/// estate): size 0, no proximity. The index keeps no estate data, so the
-/// name and description are empty.
-pub(crate) fn dissolved_estate_nft(state: &Shared, id: &str) -> NftMetadata {
-    estate_document(state, id, String::new(), &[])
+/// An estate the LAND index proves minted and empty (the atlas's
+/// `buildDissolvedEstate`): its latest data document's name and
+/// description, size 0, no proximity.
+pub(crate) fn dissolved_estate_nft(
+    state: &Shared,
+    id: &str,
+    data: crate::land_authz::EstateData,
+) -> NftMetadata {
+    let mut nft = estate_document(state, id, data.name, &[]);
+    nft.description = data.description;
+    nft
 }
 
 /// A grid estate, else a dissolved one from the LAND index (none attached
@@ -270,10 +277,8 @@ async fn estate_or_dissolved(state: &Shared, grid: &Grid, id: &str) -> Option<Nf
         return Some(nft);
     }
     let land = state.land_authz.get()?;
-    land.estate_is_dissolved(id)
-        .await
-        .unwrap_or(false)
-        .then(|| dissolved_estate_nft(state, id))
+    let data = land.dissolved_estate(id).await.flatten()?;
+    Some(dissolved_estate_nft(state, id, data))
 }
 
 fn estate_document(state: &Shared, id: &str, name: String, coords: &[(i32, i32)]) -> NftMetadata {
@@ -669,7 +674,8 @@ mod tests {
 
     /// atlas-server `handlers.ts` `estateRequestHandler`/`tokenRequestHandler`
     /// and `buildDissolvedEstate`: an estate the grid does not hold answers
-    /// 200 when the LAND index proves it minted and empty; never minted,
+    /// 200 when the LAND index proves it minted and empty, named by its
+    /// latest data document (empty strings without one); never minted,
     /// still holding LAND, or an unready index answers 404.
     #[tokio::test]
     async fn a_dissolved_estate_answers_from_the_land_index() {
@@ -685,7 +691,7 @@ mod tests {
         let estate = land_settings.estate_registry.clone();
         sqlx::query(
             "INSERT INTO land_authz.token_right (token_address, token_id, updated_block, updated_log) \
-             VALUES ($1, 501, 1, 0), ($1, 502, 1, 1)",
+             VALUES ($1, 501, 1, 0), ($1, 502, 1, 1), ($1, 503, 1, 3)",
         )
         .bind(&estate)
         .execute(&db.pool)
@@ -695,6 +701,14 @@ mod tests {
             "INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) \
              VALUES (7, 502, 1, 2)",
         )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO land_authz.estate_data_event (block_number, log_index, token_address, estate_id, name, description) \
+             VALUES (1, 4, $1, 501, 'First', 'first words'), (1, 5, $1, 501, 'Dissolved', 'Once an estate')",
+        )
+        .bind(&estate)
         .execute(&db.pool)
         .await
         .unwrap();
@@ -716,20 +730,22 @@ mod tests {
             .execute(&db.pool)
             .await
             .unwrap();
-        for (status, body) in estate_and_token(&state, "501").await {
-            assert_eq!(status, StatusCode::OK);
-            assert_eq!(
-                body,
-                json!({
-                    "id": "501",
-                    "name": "",
-                    "description": "",
-                    "image": "https://img.example/v2/estates/501/map.png?size=24&width=1024&height=1024",
-                    "external_url": format!("https://market.example/contracts/{estate}/tokens/501"),
-                    "background_color": "000000",
-                    "attributes": [{"trait_type": "Size", "value": 0, "display_type": "number"}],
-                })
-            );
+        for (id, name, description) in [("501", "Dissolved", "Once an estate"), ("503", "", "")] {
+            for (status, body) in estate_and_token(&state, id).await {
+                assert_eq!(status, StatusCode::OK, "{id}");
+                assert_eq!(
+                    body,
+                    json!({
+                        "id": id,
+                        "name": name,
+                        "description": description,
+                        "image": format!("https://img.example/v2/estates/{id}/map.png?size=24&width=1024&height=1024"),
+                        "external_url": format!("https://market.example/contracts/{estate}/tokens/{id}"),
+                        "background_color": "000000",
+                        "attributes": [{"trait_type": "Size", "value": 0, "display_type": "number"}],
+                    })
+                );
+            }
         }
         for id in ["502", "999"] {
             for (status, _) in estate_and_token(&state, id).await {

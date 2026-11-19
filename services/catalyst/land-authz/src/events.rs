@@ -3,7 +3,9 @@
 //! operator, update-operator, update-manager and approved-for-all legs, and
 //! `Transfer`, which clears the per-token legs and now also settles the
 //! owner) plus the Estate registry's `AddLand`/`RemoveLand`, which settle
-//! estate membership so the fold needs no squid `parcel.estate_id`.
+//! estate membership so the fold needs no squid `parcel.estate_id`. The
+//! Estate registry's `CreateEstate`/`Update` data documents decode apart,
+//! into an [`EstateDataEvent`] ([`decode_estate_data`]).
 
 use alloy_primitives::keccak256;
 use std::sync::LazyLock;
@@ -43,7 +45,19 @@ pub const TOPIC_REMOVE_LAND: &str =
 pub const SIGNATURE_ADD_LAND: &str = "AddLand(uint256,uint256)";
 pub const SIGNATURE_REMOVE_LAND: &str = "RemoveLand(uint256,uint256,address)";
 
-pub const ALL_TOPICS: [&str; 9] = [
+/// `CreateEstate(address indexed _owner, uint256 indexed _estateId, string _data)`
+/// (Estate registry, `decentraland/land` `IEstateRegistry.sol`).
+pub const TOPIC_CREATE_ESTATE: &str =
+    "0xd66691e9db811aef0bc0900328bd314b23f1f2285d5cb6d4baa4d959b3645a3c";
+/// `Update(uint256 indexed _assetId, address indexed _holder, address indexed
+/// _operator, string _data)`. The LAND registry emits the same topic for
+/// parcel data: only the Estate registry's logs are kept.
+pub const TOPIC_UPDATE: &str = "0x47c705b9219229ad762fca605f08fb024a3415d0ae78af5d319820c72e510414";
+
+pub const SIGNATURE_CREATE_ESTATE: &str = "CreateEstate(address,uint256,string)";
+pub const SIGNATURE_UPDATE: &str = "Update(uint256,address,address,string)";
+
+pub const ALL_TOPICS: [&str; 11] = [
     TOPIC_UPDATE_OPERATOR,
     TOPIC_UPDATE_MANAGER,
     TOPIC_APPROVAL_FOR_ALL,
@@ -53,7 +67,142 @@ pub const ALL_TOPICS: [&str; 9] = [
     TOPIC_TRANSFER_6,
     TOPIC_ADD_LAND,
     TOPIC_REMOVE_LAND,
+    TOPIC_CREATE_ESTATE,
+    TOPIC_UPDATE,
 ];
+
+/// Whether `topic0` carries an asset's data document (`CreateEstate`,
+/// `Update`): those logs feed [`decode_estate_data`], never the rights fold.
+pub fn is_data_topic(topic0: &str) -> bool {
+    topic0.eq_ignore_ascii_case(TOPIC_CREATE_ESTATE) || topic0.eq_ignore_ascii_case(TOPIC_UPDATE)
+}
+
+/// One row of `land_authz.estate_data_event`: an Estate registry data
+/// document that parses as version 0, with the fields it carries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EstateDataEvent {
+    pub block_number: i64,
+    pub log_index: i32,
+    pub token_address: String,
+    pub estate_id: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+}
+
+/// An Estate registry `CreateEstate`/`Update` log as an
+/// [`EstateDataEvent`]; `None` for any other log, a malformed one, or a
+/// document that is not version 0 (the subgraph keeps no data for those
+/// either). Never an error: a bad document must not stop the rights index.
+pub fn decode_estate_data(
+    estate_registry: &str,
+    address: &str,
+    topics: &[String],
+    data: &str,
+    block_number: i64,
+    log_index: i32,
+) -> Option<EstateDataEvent> {
+    if !address.eq_ignore_ascii_case(estate_registry) {
+        return None;
+    }
+    let topic0 = topics.first()?;
+    let estate_topic = if topic0.eq_ignore_ascii_case(TOPIC_CREATE_ESTATE) {
+        2
+    } else if topic0.eq_ignore_ascii_case(TOPIC_UPDATE) {
+        1
+    } else {
+        return None;
+    };
+    let estate_id = u256_topic_to_decimal(topics.get(estate_topic)?)?;
+    let document = abi_string(data)?;
+    let (name, description) = parse_estate_data(&document)?;
+    Some(EstateDataEvent {
+        block_number,
+        log_index,
+        token_address: address.to_lowercase(),
+        estate_id,
+        name,
+        description,
+    })
+}
+
+/// The one ABI-encoded `string` of a log's data (offset, length, bytes),
+/// read lossily as UTF-8 and without NULs (PostgreSQL text holds none).
+fn abi_string(data: &str) -> Option<String> {
+    let hex = data.strip_prefix("0x").unwrap_or(data);
+    let bytes: Vec<u8> = (0..hex.len() / 2)
+        .map(|i| u8::from_str_radix(hex.get(2 * i..2 * i + 2)?, 16).ok())
+        .collect::<Option<_>>()?;
+    let word = |at: usize| -> Option<usize> {
+        let w = bytes.get(at..at.checked_add(32)?)?;
+        if w[..24].iter().any(|b| *b != 0) {
+            return None;
+        }
+        Some(u64::from_be_bytes(w[24..].try_into().ok()?) as usize)
+    };
+    let offset = word(0)?;
+    let len = word(offset)?;
+    let start = offset.checked_add(32)?;
+    let raw = bytes.get(start..start.checked_add(len)?)?;
+    Some(String::from_utf8_lossy(raw).replace('\0', ""))
+}
+
+/// The marketplace subgraph's `buildData` (`decentraland/marketplace`
+/// `indexer/src/modules/data`, as `marketplace-squid` repeats it): the
+/// document must start with `0` and its first CSV value must be `0`; the
+/// second value is the name and the third the description, each `None`
+/// when absent. `None` for any other document.
+pub fn parse_estate_data(csv: &str) -> Option<(Option<String>, Option<String>)> {
+    if !csv.starts_with('0') {
+        return None;
+    }
+    let values = parse_csv(csv);
+    if values.first().map(String::as_str) != Some("0") {
+        return None;
+    }
+    Some((values.get(1).cloned(), values.get(2).cloned()))
+}
+
+/// graph-ts `parseCSV` (`helper-functions.ts`): a quoted value ends at the
+/// next quote (no `""` escape), an unquoted one at the next comma, empty
+/// values are skipped, and a trailing unquoted value with no comma after it
+/// is dropped.
+fn parse_csv(csv: &str) -> Vec<String> {
+    #[derive(PartialEq)]
+    enum State {
+        Between,
+        Unquoted,
+        Quoted,
+    }
+    let chars: Vec<char> = csv.chars().collect();
+    let mut values = Vec::new();
+    let mut start = 0;
+    let mut state = State::Between;
+    for (i, &c) in chars.iter().enumerate() {
+        match state {
+            State::Between => {
+                if c != ',' {
+                    if c == '"' {
+                        state = State::Quoted;
+                        start = i + 1;
+                    } else {
+                        state = State::Unquoted;
+                        start = i;
+                    }
+                }
+            }
+            State::Unquoted if c == ',' => {
+                values.push(chars[start..i].iter().collect());
+                state = State::Between;
+            }
+            State::Quoted if c == '"' => {
+                values.push(chars[start..i].iter().collect());
+                state = State::Between;
+            }
+            _ => {}
+        }
+    }
+    values
+}
 
 /// The two Estate topics computed from their signatures at first use; the
 /// constants above are what the decoder matches, and a unit test pins the two
@@ -278,6 +427,152 @@ mod tests {
             format!("{:#x}", keccak256("ApprovalForAll(address,address,bool)")),
             TOPIC_APPROVAL_FOR_ALL
         );
+        assert_eq!(
+            format!("{:#x}", keccak256(SIGNATURE_CREATE_ESTATE)),
+            TOPIC_CREATE_ESTATE
+        );
+        assert_eq!(format!("{:#x}", keccak256(SIGNATURE_UPDATE)), TOPIC_UPDATE);
+    }
+
+    /// `data` as the ABI encodes one `string` parameter.
+    fn abi(document: &str) -> String {
+        let bytes = document.as_bytes();
+        let mut padded = bytes.to_vec();
+        padded.resize(bytes.len().div_ceil(32) * 32, 0);
+        format!(
+            "0x{:064x}{:064x}{}",
+            32,
+            bytes.len(),
+            padded
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        )
+    }
+
+    #[test]
+    fn estate_data_is_graph_ts_parse_csv_under_build_data() {
+        let p = |s: &str| parse_estate_data(s);
+        let some =
+            |n: Option<&str>, d: Option<&str>| Some((n.map(String::from), d.map(String::from)));
+        assert_eq!(
+            p("0,\"Fashion Street\",\"A, quoted description\""),
+            some(Some("Fashion Street"), Some("A, quoted description"))
+        );
+        // a quoted value ends at the next quote: no "" escape
+        assert_eq!(
+            p("0,\"say \"\"hi\"\"\",\"d\""),
+            some(Some("say "), Some("hi"))
+        );
+        // a trailing unquoted value with no comma after it is dropped
+        assert_eq!(p("0,Name"), some(None, None));
+        assert_eq!(p("0,Name,"), some(Some("Name"), None));
+        // empty values are skipped
+        assert_eq!(p("0,,\"n\""), some(Some("n"), None));
+        // "0" alone yields no values: not version 0
+        assert_eq!(p("0"), None);
+        assert_eq!(p("1,\"x\""), None);
+        assert_eq!(p(" 0,\"x\""), None);
+        assert_eq!(p("01,\"x\""), None);
+        assert_eq!(p(""), None);
+    }
+
+    #[test]
+    fn only_the_estate_registrys_data_logs_decode() {
+        let estate = format!("0x{:0>64x}", 501);
+        let holder = topic_addr("0x1111111111111111111111111111111111111111");
+        let data = abi("0,\"Dissolved\",\"Once an estate\"");
+        let update = [
+            TOPIC_UPDATE.to_string(),
+            estate.clone(),
+            holder.clone(),
+            holder.clone(),
+        ];
+        let ev = decode_estate_data(
+            ESTATE_REGISTRY_MAINNET,
+            &ESTATE_REGISTRY_MAINNET
+                .to_uppercase()
+                .replacen("0X", "0x", 1),
+            &update,
+            &data,
+            9,
+            3,
+        )
+        .unwrap();
+        assert_eq!(
+            ev,
+            EstateDataEvent {
+                block_number: 9,
+                log_index: 3,
+                token_address: ESTATE_REGISTRY_MAINNET.to_string(),
+                estate_id: "501".into(),
+                name: Some("Dissolved".into()),
+                description: Some("Once an estate".into()),
+            }
+        );
+        let create = [TOPIC_CREATE_ESTATE.to_string(), holder.clone(), estate];
+        let created = decode_estate_data(
+            ESTATE_REGISTRY_MAINNET,
+            ESTATE_REGISTRY_MAINNET,
+            &create,
+            &data,
+            1,
+            0,
+        )
+        .unwrap();
+        assert_eq!(created.estate_id, "501");
+        // the LAND registry's parcel Update shares the topic: not an estate
+        assert!(
+            decode_estate_data(
+                ESTATE_REGISTRY_MAINNET,
+                LAND_REGISTRY_MAINNET,
+                &update,
+                &data,
+                9,
+                3
+            )
+            .is_none()
+        );
+        // malformed data or a non-version-0 document is no row, never an error
+        for bad in [
+            "0x",
+            "0x1234",
+            &abi("1,\"x\""),
+            &format!("0x{:064x}", 1u64 << 40),
+        ] {
+            assert!(
+                decode_estate_data(
+                    ESTATE_REGISTRY_MAINNET,
+                    ESTATE_REGISTRY_MAINNET,
+                    &update,
+                    bad,
+                    9,
+                    3
+                )
+                .is_none(),
+                "{bad}"
+            );
+        }
+        // NULs are dropped, invalid UTF-8 is read lossily
+        let nul = abi("0,\"a\u{0}b\",\"c\"");
+        assert_eq!(
+            decode_estate_data(
+                ESTATE_REGISTRY_MAINNET,
+                ESTATE_REGISTRY_MAINNET,
+                &update,
+                &nul,
+                9,
+                3
+            )
+            .unwrap()
+            .name
+            .as_deref(),
+            Some("ab")
+        );
+        assert!(is_data_topic(
+            &TOPIC_UPDATE.to_uppercase().replacen("0X", "0x", 1)
+        ));
+        assert!(!is_data_topic(TOPIC_ADD_LAND));
     }
 
     #[test]
