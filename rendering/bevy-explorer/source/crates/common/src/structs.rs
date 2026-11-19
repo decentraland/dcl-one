@@ -676,7 +676,7 @@ pub struct AppConfig {
 
 /// bump to run one-time migrations of the preset-managed settings in existing configs
 /// (see [`AppConfig::reset_outdated_settings`])
-pub const SETTINGS_GENERATION: u32 = 3;
+pub const SETTINGS_GENERATION: u32 = 4;
 
 /// bump to run one-time migrations of saved input binding tables
 /// (see [`AppConfig::migrate_inputs`])
@@ -772,6 +772,8 @@ impl AppConfig {
     /// else. gen 1: reinitialize the preset-managed settings to the current defaults.
     /// gen 2: default bloom dropped High -> Low; move configs still on the old default.
     /// gen 3: native gpu uploads became capped by default; move configs still uncapped (0).
+    /// gen 4: Render Resolution moves in 10% steps; move a value saved between steps to its
+    /// nearest step.
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;
@@ -785,6 +787,10 @@ impl AppConfig {
         }
         if self.settings_generation < 3 && self.graphics.gpu_bytes_per_frame == 0 {
             self.graphics.gpu_bytes_per_frame = default.graphics.gpu_bytes_per_frame;
+        }
+        if self.settings_generation < 4 {
+            self.graphics.render_scale =
+                ((self.graphics.render_scale * 10.0).round() / 10.0).clamp(0.5, 1.0);
         }
         self.settings_generation = SETTINGS_GENERATION;
     }
@@ -2605,6 +2611,25 @@ mod tests {
         assert_eq!(uncapped.graphics.gpu_bytes_per_frame, 10_000_000);
         assert_eq!(uncapped.settings_generation, SETTINGS_GENERATION);
         assert_eq!(saved(500_000).graphics.gpu_bytes_per_frame, 500_000);
+    }
+
+    #[test]
+    fn reset_outdated_settings_moves_render_scale_to_a_ten_percent_step() {
+        for (saved, migrated) in [
+            (0.97, 1.0),
+            (0.84, 0.8),
+            (0.53, 0.5),
+            (0.3, 0.5),
+            (0.7, 0.7),
+        ] {
+            let mut config = AppConfig {
+                settings_generation: 3,
+                ..Default::default()
+            };
+            config.graphics.render_scale = saved;
+            config.reset_outdated_settings();
+            assert_eq!(config.graphics.render_scale, migrated);
+        }
     }
 
     #[test]
