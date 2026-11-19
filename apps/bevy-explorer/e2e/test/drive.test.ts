@@ -4,7 +4,7 @@ import { describe, test } from 'node:test'
 import { FakeConsole } from '../driver/console.ts'
 import { Explorer } from '../driver/explorer.ts'
 import { REPORT_DIR } from '../driver/paths.ts'
-import { commandLine, parseArgs, type Result, runLines } from '../scripts/drive.ts'
+import { baseParcel, closeOnSignal, commandLine, parseArgs, type Result, runLines, SIGNAL_EXIT } from '../scripts/drive.ts'
 
 async function* from(lines: string[]): AsyncIterable<string> {
   yield* lines
@@ -77,5 +77,47 @@ describe('drive stdin protocol', () => {
     }
     const results = await runLines(from(['/world_state']), explorer, () => {})
     assert.deepEqual(results.map(({ ok, reply }) => ({ ok, reply })), [{ ok: false, reply: 'the page closed' }])
+  })
+})
+
+describe('drive arrival', () => {
+  const scene = (metadata: Record<string, unknown>) => ({ entity: { id: 'id', type: 'scene' as const, pointers: ['3,4', '2,4'], content: [], metadata } })
+
+  test('arrives at the base parcel, else at the first parcel', () => {
+    assert.equal(baseParcel(scene({ scene: { base: '2,4', parcels: ['3,4', '2,4'] } })), '2,4')
+    assert.equal(baseParcel(scene({ scene: { parcels: ['3,4', '2,4'] } })), '3,4')
+    assert.equal(baseParcel(scene({})), '3,4')
+  })
+})
+
+describe('drive interruption', () => {
+  test('closes once on a signal and exits with its code', async () => {
+    const before = { SIGINT: process.listenerCount('SIGINT'), SIGTERM: process.listenerCount('SIGTERM') }
+    let closed = 0
+    const exits: number[] = []
+    let finish!: () => void
+    const exited = new Promise<void>((resolve) => (finish = resolve))
+    const release = closeOnSignal(
+      async () => {
+        closed++
+      },
+      (code) => {
+        exits.push(code)
+        finish()
+      }
+    )
+    try {
+      process.emit('SIGTERM')
+      await exited
+      assert.equal(closed, 1)
+      assert.deepEqual(exits, [SIGNAL_EXIT.SIGTERM])
+      // a second signal while closing exits at once and closes nothing again
+      process.emit('SIGINT')
+      assert.equal(closed, 1)
+      assert.deepEqual(exits, [SIGNAL_EXIT.SIGTERM, SIGNAL_EXIT.SIGINT])
+    } finally {
+      release()
+    }
+    assert.deepEqual({ SIGINT: process.listenerCount('SIGINT'), SIGTERM: process.listenerCount('SIGTERM') }, before)
   })
 })

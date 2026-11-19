@@ -6,14 +6,15 @@
 // Every line runs in turn; blank lines and `#` lines are skipped. stdout carries one JSON line
 // per command, `{line, ok, reply, ms}`; stderr carries the boot and a short log. When stdin
 // closes, the frame is kept as `final.png` and the replies as `replies.jsonl` in the report
-// folder (`report/drive` by default), and the client and the servers are closed.
+// folder (`report/drive` by default), and the client and the servers are closed. An interrupt
+// (SIGINT, SIGTERM) closes them too, keeping no report.
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
 import { ConsoleError } from '../driver/console.ts'
 import type { Explorer } from '../driver/explorer.ts'
 import { PACKAGE_ROOT, REPORT_DIR } from '../driver/paths.ts'
-import { buildScene, serveRealm } from '../driver/realm.ts'
+import { buildScene, type BuiltScene, serveRealm } from '../driver/realm.ts'
 import { closeSessions, openSession, parsePosition } from '../driver/session.ts'
 import { readTarget } from '../driver/target.ts'
 
@@ -82,6 +83,37 @@ export async function runLines(lines: AsyncIterable<string>, explorer: Pick<Expl
   return results
 }
 
+/** Where a run arrives when no `--position` is given: the scene's base parcel, else its first. */
+export function baseParcel(scene: Pick<BuiltScene, 'entity'>): string {
+  const metadata = scene.entity.metadata as { scene?: { base?: unknown } } | undefined
+  const base = metadata?.scene?.base
+  return typeof base === 'string' ? base : scene.entity.pointers[0]!
+}
+
+/** The exit code of a run ended by a signal, as a shell reports it. */
+export const SIGNAL_EXIT = { SIGINT: 130, SIGTERM: 143 } as const
+
+/** Close the run once when the process is interrupted, then exit with the signal's code; a second
+ *  signal while closing exits at once. Returns the call that removes the handlers. */
+export function closeOnSignal(close: () => Promise<void>, exit: (code: number) => void = (code) => process.exit(code)): () => void {
+  let closing = false
+  const handlers = (Object.keys(SIGNAL_EXIT) as (keyof typeof SIGNAL_EXIT)[]).map((signal) => {
+    const handler = (): void => {
+      if (closing) return exit(SIGNAL_EXIT[signal])
+      closing = true
+      console.error(`[drive] ${signal}: closing the client and the servers`)
+      void close()
+        .catch((error: unknown) => console.error(`[drive] close failed: ${error instanceof Error ? error.message : String(error)}`))
+        .then(() => exit(SIGNAL_EXIT[signal]))
+    }
+    process.on(signal, handler)
+    return [signal, handler] as const
+  })
+  return () => {
+    for (const [signal, handler] of handlers) process.off(signal, handler)
+  }
+}
+
 function short(text: string): string {
   const flat = text.replace(/\s+/g, ' ')
   return flat.length > 160 ? `${flat.slice(0, 160)}... (${text.length} chars)` : flat
@@ -92,8 +124,13 @@ async function main(): Promise<void> {
   const read = readTarget()
   const target = { ...read, webApp: options.webApp ?? read.webApp }
   const scenes = await Promise.all(options.scenes.map((dir) => buildScene(dir)))
-  const position = options.position ?? scenes[0]!.entity.pointers[0]!
+  const position = options.position ?? baseParcel(scenes[0]!)
   const realm = await serveRealm({ scenes, port: target.ports.realm })
+  const close = async (): Promise<void> => {
+    await closeSessions()
+    await realm.close()
+  }
+  const release = closeOnSignal(close)
   console.error(`[drive] realm ${realm.realm}: ${scenes.map((scene) => scene.entity.pointers[0]).join(' ')}`)
   try {
     const { explorer } = await openSession({ realm: realm.realm, position, signIn: 'guest' }, target)
@@ -107,8 +144,8 @@ async function main(): Promise<void> {
     await writeFile(path.join(options.report, 'final.png'), await explorer.screenshot())
     console.error(`[drive] ${results.length} commands, ${results.filter((result) => !result.ok).length} failed; report in ${options.report}`)
   } finally {
-    await closeSessions()
-    await realm.close()
+    release()
+    await close()
   }
 }
 

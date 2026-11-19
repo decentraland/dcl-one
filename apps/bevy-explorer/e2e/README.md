@@ -119,7 +119,12 @@ and the lines run one after the other. stdout gets one JSON line per command, `{
 "reply", "ms"}` (`ok:false` carries the command's error, and the run goes on); stderr gets the
 boot and a one-line summary of each reply. When stdin closes, `final.png` (the engine's frame)
 and `replies.jsonl` go to the report folder (`report/drive` by default), and the client and both
-servers close. The other variables of the table above apply as for a run.
+servers close. An interrupt (SIGINT or SIGTERM) closes them too and keeps no report. The other
+variables of the table above apply as for a run.
+
+The tool takes no wait or sleep lines. To pace a longer script, pipe in a feed script that writes
+each line when it is due and reads stdout to decide the next one, for example counting the reply
+lines before going on. Because lines run one at a time, a feed cannot make two commands overlap.
 
 ## How a spec is written
 

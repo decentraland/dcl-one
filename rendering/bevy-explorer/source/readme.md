@@ -382,7 +382,8 @@ documents that runner (Node 24 and Chrome, no dependency), and the end-to-end su
 < commands.txt` in `apps/bevy-explorer/e2e` serves the web app and a loopback realm holding the
 built scene folders, boots a guest at the parcel (the first scene's base parcel by default), runs
 each console line read from stdin and prints one `{line, ok, reply, ms}` JSON line per command;
-it keeps the last frame as `final.png` when stdin closes. The e2e README's "Run it" has the flags.
+it keeps the last frame as `final.png` when stdin closes. The e2e README's "Drive a scene by hand
+or by agent" has the flags.
 
 ## CI and release channels
 
