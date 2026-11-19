@@ -265,11 +265,10 @@ struct ManifestJson {
 
 /// A manifest: `lanes` and `files`, original content CID → variant paths. Its `v` and any other
 /// field are abgen's own (they tell it when to rebuild) and are not read: whatever a manifest
-/// lists is loaded, whichever generation built it. Of `lanes`, the entries that are strings
-/// are kept for the debug panel. It is fetched at the
-/// entity's own url, so it names no entity. Paths that are not `bevy/{prefix}/{name}` with plain
-/// segments (a path becomes part of a url) or whose prefix letter names no class are dropped,
-/// and so is an original left with none.
+/// lists is loaded, whichever generation built it. Of `lanes`, the entries that are strings are
+/// kept for the debug panel. It is fetched at the entity's own url, so it names no entity. Paths
+/// that are not `bevy/{prefix}/{name}` with plain segments (a path becomes part of a url) or
+/// whose prefix letter names no class are dropped, and so is an original left with none.
 pub fn parse_manifest(bytes: &[u8]) -> Result<Manifest, String> {
     let json: ManifestJson = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
     let files = json
