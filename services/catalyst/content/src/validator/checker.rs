@@ -124,12 +124,13 @@ pub async fn validate_scene_access(
     ValidationResponse::from_errors(errors)
 }
 
-pub async fn validate_profile_access(
-    deployment: &Deployment<'_>,
+/// The profile pointer must be the single signer address (or a `default*`
+/// pointer signed by Decentraland), and the avatar identity fields must name it.
+fn validate_profile_pointer(
+    entity: &Entity,
     checker: &dyn BlockchainChecker,
     deployer_address: &str,
 ) -> ValidationResponse {
-    let entity = &deployment.entity;
     let pointers = &entity.pointers;
 
     if pointers.len() != 1 {
@@ -163,10 +164,18 @@ pub async fn validate_profile_access(
         ));
     }
 
-    let identity =
-        validate_profile_identity_fields(entity.metadata.as_ref(), entity.timestamp, &pointer);
-    if !identity.is_ok() {
-        return identity;
+    validate_profile_identity_fields(entity.metadata.as_ref(), entity.timestamp, &pointer)
+}
+
+pub async fn validate_profile_access(
+    deployment: &Deployment<'_>,
+    checker: &dyn BlockchainChecker,
+    deployer_address: &str,
+) -> ValidationResponse {
+    let entity = &deployment.entity;
+    let pointer = validate_profile_pointer(entity, checker, deployer_address);
+    if !pointer.is_ok() || entity.pointers[0].to_lowercase().starts_with("default") {
+        return pointer;
     }
 
     if entity.timestamp >= adr_timestamps::ADR_75
@@ -236,25 +245,21 @@ pub async fn validate_profile_access(
     ValidationResponse::Ok
 }
 
+/// The chain-free part of the access step, run under
+/// `IGNORE_BLOCKCHAIN_ACCESS_CHECKS`.
 pub fn validate_local_pointer_ownership(
     deployment: &Deployment<'_>,
+    checker: &dyn BlockchainChecker,
     deployer_address: &str,
 ) -> ValidationResponse {
     let entity = &deployment.entity;
-    let deployer = deployer_address.to_lowercase();
+    if entity.timestamp <= adr_timestamps::LEGACY_CONTENT_MIGRATION
+        && checker.is_address_owned_by_decentraland(deployer_address)
+    {
+        return ValidationResponse::Ok;
+    }
     match entity.entity_type {
-        EntityType::Profile => {
-            if let Some(p) = entity.pointers.first() {
-                let p = p.to_lowercase();
-                if !p.starts_with("default") && crate::auth::is_eth_address(&p) && p != deployer {
-                    return ValidationResponse::fail(format!(
-                        "You can only alter your own profile. The pointer address and the \
-                         signer address are different (pointer:{p} signer: {deployer})"
-                    ));
-                }
-            }
-            ValidationResponse::Ok
-        }
+        EntityType::Profile => validate_profile_pointer(entity, checker, deployer_address),
         EntityType::Store => validate_store_access(deployment, deployer_address),
         EntityType::Outfits => validate_outfits_pointer(&entity.pointers, deployer_address),
         _ => ValidationResponse::Ok,
@@ -815,7 +820,7 @@ mod tests {
         ] {
             assert!(
                 !matches!(
-                    validate_local_pointer_ownership(&d.view(), me),
+                    validate_local_pointer_ownership(&d.view(), &ItemChain::default(), me),
                     ValidationResponse::Ok
                 ),
                 "foreign {:?} pointer must be rejected even with chain checks off",
@@ -838,11 +843,33 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    validate_local_pointer_ownership(&d.view(), me),
+                    validate_local_pointer_ownership(&d.view(), &ItemChain::default(), me),
                     ValidationResponse::Ok
                 ),
                 "own/non-local {:?} pointer must pass the local gate",
                 d.entity.entity_type
+            );
+        }
+    }
+
+    #[test]
+    fn local_ownership_keeps_the_decentraland_profile_exceptions() {
+        let dcl = ItemChain {
+            grants: true,
+            ..ItemChain::default()
+        };
+        let me = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let default = ownership_deployment(EntityType::Profile, "default1");
+        let mut legacy = ownership_deployment(EntityType::Profile, "not-an-address");
+        legacy.entity.timestamp = adr_timestamps::LEGACY_CONTENT_MIGRATION;
+
+        assert!(validate_local_pointer_ownership(&default.view(), &dcl, me).is_ok());
+        assert!(validate_local_pointer_ownership(&legacy.view(), &dcl, me).is_ok());
+        for d in [&default, &legacy] {
+            assert!(
+                !validate_local_pointer_ownership(&d.view(), &ItemChain::default(), me).is_ok(),
+                "{:?} needs a Decentraland signer",
+                d.entity.pointers
             );
         }
     }

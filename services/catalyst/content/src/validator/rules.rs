@@ -857,7 +857,11 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         }
         if self.ignore_blockchain_access {
             let deployer = deployment.deployer();
-            let local = super::checker::validate_local_pointer_ownership(deployment, &deployer);
+            let local = super::checker::validate_local_pointer_ownership(
+                deployment,
+                self.blockchain_checker,
+                &deployer,
+            );
             if !matches!(local, ValidationResponse::Ok) {
                 return local;
             }
@@ -1490,15 +1494,58 @@ mod tests {
             };
             let own = format!("{OWNER}:outfits");
             assert!(access(vec![own.clone()]).await.is_ok());
+            let mixed_case = format!("0x{}:outfits", OWNER[2..].to_uppercase());
+            assert!(access(vec![mixed_case]).await.is_ok());
             for pointers in [
                 vec![own.clone(), format!("{other}:outfits")],
                 vec![format!("{other}:outfits")],
                 vec![format!("{OWNER}:profile")],
                 vec!["outfits".to_string()],
                 vec![format!("{OWNER}:outfits:extra")],
+                vec!["0xzz:outfits".to_string()],
             ] {
                 let response = access(pointers.clone()).await;
                 assert!(!response.is_ok(), "{pointers:?} must be refused");
+            }
+        }
+
+        #[tokio::test]
+        async fn profile_pointer_rule_holds_with_chain_checks_ignored() {
+            let other = "0xbbbb000000000000000000000000000000000002";
+            let validator = &ContentValidator {
+                external_calls: &Calls::new(Duration::ZERO),
+                blockchain_checker: &SlowChecker(Duration::ZERO, false),
+                ignore_blockchain_access: true,
+                synced: false,
+                access_passed: false,
+            };
+            let access = |pointers: Vec<String>, eth_address: &str| {
+                let mut d = profile();
+                d.entity.pointers = pointers;
+                d.entity.timestamp = adr_timestamps::PROFILE_IDENTITY;
+                d.entity.metadata.as_mut().unwrap()["avatars"][0]["ethAddress"] =
+                    eth_address.into();
+                async move {
+                    validator
+                        .validate_access(&d.view(), tokio::time::Instant::now() + ACCESS_DEADLINE)
+                        .await
+                }
+            };
+            assert!(access(vec![OWNER.into()], OWNER).await.is_ok());
+            let mixed_case = format!("0x{}", OWNER[2..].to_uppercase());
+            assert!(access(vec![mixed_case], OWNER).await.is_ok());
+            for (pointers, eth_address) in [
+                (vec![OWNER.to_string(), other.to_string()], OWNER),
+                (vec![other.to_string()], OWNER),
+                (vec!["default1".to_string()], OWNER),
+                (vec!["not-an-address".to_string()], OWNER),
+                (vec![OWNER.to_string()], other),
+            ] {
+                let response = access(pointers.clone(), eth_address).await;
+                assert!(
+                    !response.is_ok(),
+                    "{pointers:?} with ethAddress {eth_address} must be refused"
+                );
             }
         }
 
