@@ -97,10 +97,15 @@ export function decodeExecution(log: RawLog): ManaExecution {
 /** How long one chain read may take before it gives way: the watch reads again later. */
 export const EVIDENCE_READ_MS = 15_000
 
+/** What a wait that ran past its deadline rejects with. */
+export class DeadlineError extends Error {
+  override name = 'DeadlineError'
+}
+
 /** `promise`, or a rejection once `ms` passed: a stalled read never holds a later one up. */
-function deadline<T>(promise: Promise<T>, ms: number): Promise<T> {
+export function deadline<T>(promise: Promise<T>, ms: number, what = 'A chain read'): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('A chain read took too long')), ms)
+    const timer = setTimeout(() => reject(new DeadlineError(`${what} took too long`)), ms)
     promise.then(
       (v) => {
         clearTimeout(timer)
@@ -112,6 +117,19 @@ function deadline<T>(promise: Promise<T>, ms: number): Promise<T> {
       }
     )
   })
+}
+
+/**
+ * `reader` with each read bounded by `ms`: a read that stalls rejects, and whoever polls (the rails' receipt wait) reads
+ * again or gives up on its own deadline, instead of waiting on it forever.
+ */
+export function boundedReader(reader: ChainReader, ms: number): ChainReader {
+  return {
+    call: (chainId, to, data) => deadline(reader.call(chainId, to, data), ms),
+    receipt: (chainId, hash) => deadline(reader.receipt(chainId, hash), ms),
+    balance: (chainId, address) => deadline(reader.balance(chainId, address), ms),
+    code: (chainId, address) => deadline(reader.code(chainId, address), ms)
+  }
 }
 
 /** The chain reads over each chain's configured RPC, as the Shop's own reader reaches it, each within EVIDENCE_READ_MS. */

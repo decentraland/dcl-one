@@ -204,6 +204,23 @@ describe('a MANA purchase’s attempt', () => {
     expect(capped.handOff({ rail: 'relay', nonce: 3n, data: CALL })).toBe(false)
   })
 
+  it('takes a send unanswered past its deadline as a relay that didn’t answer, and keeps its late answer on that send alone', async () => {
+    const a = attempt(keeper(), { sendMs: 20 })
+    a.handOff({ rail: 'relay', nonce: 3n, data: CALL })
+    let answerFirst!: (res: Response) => void
+    const first = vi.fn(() => new Promise<Response>((r) => (answerFirst = r)))
+    await expect(a.relay(first as unknown as typeof fetch)('https://relay/transactions', post(STORE, PAYLOAD))).rejects.toThrow(TypeError)
+    expect(a.dispatched()).toBe(true)
+    // A retry goes and is answered; then the first one's late refusal comes back.
+    a.retry()
+    a.handOff({ rail: 'relay', nonce: 3n, data: CALL })
+    const second = '0x0c53c51c' + 'ef'.repeat(40)
+    await a.relay(sent() as unknown as typeof fetch)('https://relay/transactions', post(STORE, second))
+    answerFirst(new Response(JSON.stringify({ ok: false, not_sent: true }), { status: 400 }))
+    await vi.waitFor(() => expect(a.record.sends[0]).toMatchObject({ stage: 'refused', payload: keccak256(PAYLOAD as Hex) }))
+    expect(a.record.sends[1]).toMatchObject({ stage: 'dispatched', payload: keccak256(second as Hex), hash: HASH })
+  })
+
   it('takes a kept record up again for a retry, and only for the same sale', () => {
     const a = attempt()
     a.handOff({ rail: 'relay', nonce: 3n, data: CALL })

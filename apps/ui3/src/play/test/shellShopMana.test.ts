@@ -866,6 +866,78 @@ describe('the in-world purchase with MANA', () => {
       await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ operation: op, state: 'succeeded' }))
     })
 
+    it('offers RETRY after a send that never got an answer, at the same nonce, without waiting on that answer', async () => {
+      const w = world({ allowance: maxUint256 })
+      let n = 0
+      // The first sale request reaches the relay and its answer never comes back.
+      const stalled = (async (url: string, init?: RequestInit) => {
+        const first = ++n === 1
+        const res = await w.relay.fetchImpl(url, init)
+        if (first) await new Promise(() => {})
+        return res
+      }) as unknown as typeof fetch
+      const p = page(w, {
+        services: {
+          rail: () => ({ relayerUrl: 'https://node.test/transactions-api/v1', fetchImpl: stalled, gasless: true, wait: { timeoutMs: 30, pollMs: 10 } }),
+          manaTimeouts: () => ({ sendMs: 50, readMs: 50 })
+        }
+      })
+      w.relay.state.confirm = 'none'
+      await p.payMana()
+      const pending = await p.until('pending')
+      w.relay.state.confirm = 'success'
+      w.clock.now += RETRY_AFTER_MS
+      // The send gave way at its deadline: RETRY opens on CHECK AGAIN, the stalled answer still outstanding.
+      await new Promise((r) => setTimeout(r, 120))
+      pending.handlers.onCheckAgain?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'pending', retry: true }))
+      p.shown.at(-1)!.handlers.onRetry?.()
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'succeeded' }))
+      const nonces = signatures(w)
+        .map((q) => JSON.parse(String(q.params?.[1])) as { domain: { verifyingContract: string }; message: { nonce: string } })
+        .filter((t) => t.domain.verifyingContract.toLowerCase() === STORE)
+        .map((t) => t.message.nonce)
+      expect(nonces).toEqual(['0', '0'])
+      expect(w.relay.posts).toHaveLength(2)
+    })
+
+    it('keeps the relay’s late refusal on the dialog still up for it, with TRY AGAIN, however the watch wakes', async () => {
+      const w = world({ allowance: maxUint256 })
+      let release!: () => void
+      const held = new Promise<void>((r) => (release = r))
+      const slow = (async (url: string, init?: RequestInit) => {
+        const res = await w.relay.fetchImpl(url, init)
+        await held
+        return res
+      }) as unknown as typeof fetch
+      // The watch sleeps until woken.
+      const sleepers: (() => void)[] = []
+      const wake = () => sleepers.splice(0).forEach((r) => r())
+      w.relay.state.mode = 'refuse'
+      const p = page(w, {
+        services: {
+          rail: () => ({ relayerUrl: 'https://node.test/transactions-api/v1', fetchImpl: slow, gasless: true, wait: { timeoutMs: 30, pollMs: 10 } }),
+          sleep: () => new Promise<void>((r) => sleepers.push(r))
+        }
+      })
+      await p.payMana()
+      await p.until('pending')
+      const op = p.events.at(-1)!.operation
+      release()
+      const failed = await p.until('failed')
+      expect(failed.view).toMatchObject({ step: 'failed', retry: true })
+      wake()
+      await new Promise((r) => setTimeout(r, 30))
+      wake()
+      await new Promise((r) => setTimeout(r, 30))
+      expect(p.shown.at(-1)?.view).toMatchObject({ step: 'failed', retry: true })
+      expect(p.events.filter((e) => e.operation === op).map((e) => e.state)).not.toContain('cancelled')
+      // TRY AGAIN: a fresh attempt; and the refused one ends failed, once.
+      p.shown.at(-1)!.handlers.onRetry?.()
+      await p.until('method')
+      expect(p.events.filter((e) => e.operation === op && (e.state === 'failed' || e.state === 'cancelled')).map((e) => e.state)).toEqual(['failed'])
+    })
+
     it('keeps the relay’s late refusal with the purchase it answers: closed meanwhile, it ends unbought and frees the item', async () => {
       const w = world({ allowance: maxUint256 })
       let release!: () => void

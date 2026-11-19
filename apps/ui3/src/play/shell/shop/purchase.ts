@@ -58,10 +58,11 @@ import {
   manaFirstDispatch,
   manaHasRoom,
   manaSaleTerms,
+  SEND_MS,
   storedManaTerms,
   type ManaAttemptRecord
 } from './manaPurchase'
-import { createManaEvidence, resolveMana, verifiedVenue, type ManaEvidence } from './manaEvidence'
+import { boundedReader, createManaEvidence, EVIDENCE_READ_MS, resolveMana, verifiedVenue, type ManaEvidence } from './manaEvidence'
 import { relayMetaTransaction } from '../../../shop/checkout/chain/metatx'
 import { checkoutSiteUrl } from '../../lib/baseDomain'
 import {
@@ -230,6 +231,8 @@ export interface ShellShopServices {
   manaGuard(provider: Eip1193Provider, intent: ManaPurchaseIntent): Eip1193Provider
   /** What the chain says about a MANA sale (./manaEvidence). */
   manaEvidence(): ManaEvidence
+  /** How long a MANA sale's relay request (`sendMs`) and each of its chain reads (`readMs`) may take before they give way. */
+  manaTimeouts(): { sendMs: number; readMs: number }
 }
 
 export interface ShellShopDeps {
@@ -343,7 +346,8 @@ const LIVE: ShellShopServices = {
   manaInWorld: () => hostOr('manaInWorld', remoteFlag(REMOTE_FLAG.manaInWorld)) === true,
   manaBalance: (buyer, chainId) => readManaBalanceWei(buyer, chainId, shopChainReader()),
   manaGuard: manaGuardedProvider,
-  manaEvidence: () => createManaEvidence({ reader: shopChainReader() })
+  manaEvidence: () => createManaEvidence({ reader: shopChainReader() }),
+  manaTimeouts: () => ({ sendMs: SEND_MS, readMs: EVIDENCE_READ_MS })
 }
 
 /** A watcher signs nothing: the wallet is never asked while a purchase is only followed. */
@@ -815,6 +819,9 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
    * for it shows whether RETRY is open now.
    */
   const checkMana = async (op: Operation & { buyer: string }, record: ManaAttemptRecord): Promise<boolean> => {
+    // Back to reviewing: its sale provably didn't go (a marked refusal), and the dialog up for it says so with TRY AGAIN.
+    // That dialog ends it (failed, or a fresh attempt); the watch stops here.
+    if (op.state === 'reviewing') return true
     // Held here, with no send of it in flight on this page: a send left `signing` has no sender to finish it (the page
     // that signed it went, or its retry ended before its request), so what can't be evidence is dropped.
     let attempt = record
@@ -1575,10 +1582,12 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     store.restore(part.priced.map((p) => p.line))
     const keepAttempt = keeper(op)
     // The checkpoint is a finalized block: no reorg can move the sale below it.
+    const timeouts = svc.manaTimeouts()
     const attempt = createManaAttempt(terms, keepAttempt, {
       mana: registryFor({ chainId, sale: terms }).mana.address,
       checkpoint: () => svc.manaEvidence().finalized(chainId),
       now: svc.now,
+      sendMs: timeouts.sendMs,
       // Kept as gone: pending from here, closable, and followed by the watch, however long the relay and the executor take.
       onDispatch: () => {
         if (op.state === 'processing') move(op, 'pending')
@@ -1609,7 +1618,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     const rail = svc.rail()
     const relay = attempt.relay(rail.fetchImpl ?? ((...a: Parameters<typeof fetch>) => fetch(...a)))
     // Only through the relay: a sale whose answer is lost can then be retried at its nonce and land once.
-    const ctx: RailContext = { buyer: quote.buyer, provider, reader: svc.reader(), client: quote.client, walletKind: quote.kind, ...rail, fetchImpl: relay, relayOnly: true }
+    // Each read bounded too: a receipt read that stalls gives way, and the rails' own wait ends on its deadline.
+    const ctx: RailContext = { buyer: quote.buyer, provider, reader: boundedReader(svc.reader(), timeouts.readMs), client: quote.client, walletKind: quote.kind, ...rail, fetchImpl: relay, relayOnly: true }
     let unmirror = (): void => {}
     let result: GroupResult
     try {
@@ -1717,6 +1727,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         mana: book.mana.address,
         checkpoint: () => svc.manaEvidence().finalized(chainId),
         now: svc.now,
+        sendMs: svc.manaTimeouts().sendMs,
         from: record,
         // Kept as gone: in progress from here, closable, and followed by the watch, however long the relay takes.
         onDispatch: () => {
@@ -1755,7 +1766,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       await assertWalletAccount(wallet, op.buyer, true)
       const { txHash } = await relayMetaTransaction({
         provider,
-        reader: svc.reader(),
+        reader: boundedReader(svc.reader(), svc.manaTimeouts().readMs),
         target: { address: venue.address as `0x${string}`, chainId: chainId as Parameters<ChainReader['receipt']>[0], name: venue.name, version: venue.version, metaTx: venue.metaTx },
         from: op.buyer,
         functionData: record.data,

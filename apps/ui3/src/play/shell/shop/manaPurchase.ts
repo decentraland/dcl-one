@@ -32,6 +32,7 @@ import { encodeMarketplaceCall } from '../../../shop/checkout/purchase/encoding'
 import { manaSpenderFor } from '../../../shop/checkout/purchase/mana'
 import { tokenRefId } from '@shop/model/asset'
 import type { ManaHandOff, ManaSaleTerms } from './manaGuard'
+import { deadline, DeadlineError } from './manaEvidence'
 
 type SendStage = 'signing' | 'dispatched' | 'refused' | 'declined'
 
@@ -75,6 +76,8 @@ export interface ManaAttemptRecord {
  */
 export const MAX_SENDS = 8
 const STAGES: readonly SendStage[] = ['signing', 'dispatched', 'refused', 'declined']
+/** How long a relay request of the sale may go unanswered before it is taken as a relay that didn't answer. */
+export const SEND_MS = 30_000
 const ADDRESS = /^0x[0-9a-f]{40}$/
 const HASH = /^0x[0-9a-f]{64}$/
 const TX_HASH = /^0x[0-9a-fA-F]{64}$/
@@ -259,7 +262,7 @@ const isDecline = (e: unknown): boolean => (e as { code?: unknown } | null)?.cod
 export function createManaAttempt(
   terms: ManaSaleTerms,
   keep: (record: ManaAttemptRecord) => boolean,
-  opts: { mana: string; checkpoint: () => Promise<bigint>; now: () => number; from?: ManaAttemptRecord; onDispatch?: () => void }
+  opts: { mana: string; checkpoint: () => Promise<bigint>; now: () => number; from?: ManaAttemptRecord; onDispatch?: () => void; sendMs?: number }
 ): ManaAttempt {
   const record: ManaAttemptRecord = opts.from ? structuredClone(opts.from) : { venue: terms.venue.toLowerCase(), terms: storeTerms(terms), fingerprint: manaFingerprint(terms), sends: [] }
   if (record.fingerprint !== manaFingerprint(terms)) throw new Error('The kept attempt is for another sale')
@@ -285,6 +288,24 @@ export function createManaAttempt(
   const restage = (change: Partial<ManaSend>): boolean => {
     const send = last()
     return send ? move({ ...record, sends: [...record.sends.slice(0, -1), { ...send, ...change }] }) : false
+  }
+  /**
+   * The relay's answer for the send that carried `payload`, kept on that send alone (never on a later one, however late
+   * it comes): its evidence that nothing went (`refused`), or the hash it gave.
+   */
+  const answerFor = async (payload: string, res: Response): Promise<void> => {
+    const body = (await res
+      .clone()
+      .json()
+      .catch(() => null)) as { ok?: unknown; txHash?: unknown } | null
+    const at = record.sends.findIndex((x) => x.stage === 'dispatched' && x.payload === payload)
+    if (at < 0) return
+    const change: Partial<ManaSend> | null = refusedBeforeBroadcast(body)
+      ? { stage: 'refused' }
+      : body?.ok !== false && typeof body?.txHash === 'string' && TX_HASH.test(body.txHash)
+        ? { hash: body.txHash }
+        : null
+    if (change) move({ ...record, sends: record.sends.map((x, i) => (i === at ? { ...x, ...change } : x)) })
   }
   /** A wallet request for the sale's signature: the typed data's domain is the venue's. */
   const saleSignature = (args: { method: string; params?: unknown }): boolean => {
@@ -339,14 +360,29 @@ export function createManaAttempt(
         }
         // Kept as gone: whoever follows the purchase takes over from here, whatever the request and its answer take.
         opts.onDispatch?.()
-        const res = await send(input, init)
-        const body = (await res
-          .clone()
-          .json()
-          .catch(() => null)) as { ok?: unknown; txHash?: unknown } | null
-        // The relay's own evidence that nothing went; or the hash it gave for what went.
-        if (refusedBeforeBroadcast(body)) restage({ stage: 'refused' })
-        else if (body?.ok !== false && typeof body?.txHash === 'string' && TX_HASH.test(body.txHash)) restage({ hash: body.txHash })
+        const payload = keccak256(request.payload)
+        const sending = send(input, init)
+        // An answer past the deadline still lands on its own send.
+        let late = false
+        sending.then(
+          (res) => {
+            if (late) void answerFor(payload, res)
+          },
+          () => {}
+        )
+        let res: Response
+        try {
+          res = await deadline(sending, opts.sendMs ?? SEND_MS, 'The relay')
+        } catch (e) {
+          // No answer in time: the request may have reached the relay, so the send stays dispatched, and the rails take
+          // it as a relay that didn't answer (followed, never sent again from here).
+          if (e instanceof DeadlineError) {
+            late = true
+            throw new TypeError(e.message)
+          }
+          throw e
+        }
+        await answerFor(payload, res)
         return res
       }) as typeof fetch
     },
