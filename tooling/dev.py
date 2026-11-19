@@ -599,11 +599,11 @@ def runtime_env(config):
             'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/polygon',
         })
     if config['profile'] == 'testnet':
-        env.update(testnet_env())
+        env.update(testnet_env(config))
     return env
 
 
-def testnet_env():
+def testnet_env(config):
     """The mirror profile's upstreams on Decentraland's testnet: .zone services, Amoy and Sepolia.
 
     The Shop settles on Amoy (VITE_SHOP_CHAIN_ID, read by the Sites dev server), its order book is the
@@ -673,7 +673,7 @@ def testnet_env():
         # MANA only. This profile sets the mock card on Amoy alone, and the stack listens on 127.0.0.1.
         'CREDITS_MOCK_CARD': 'true',
         **credits_signer_env(),
-        **relayer_env(),
+        **relayer_env(config),
         **name_simulation_env(),
     }
 
@@ -683,11 +683,17 @@ def testnet_env():
 TESTNET_RELAYER_MAX_FEE_PER_GAS_WEI = '200000000000'
 
 
+# The free calls (approvals, cancels: no sale, no credits spend) the stack's own relayer pays for per day, across
+# every address (MAX_RELAYED_TRANSACTIONS_PER_DAY; the server's default is 20,000). Sales and credits purchases never
+# count against it: the per-address quota (MAX_TRANSACTIONS_PER_DAY, 10) is their only daily bound.
+TESTNET_RELAYER_FREE_CALLS_PER_DAY = '100'
+
+
 # The dApps' published contract map, whose `amoy` entry never carries dcl-one's own CreditsManager.
 PUBLISHED_CONTRACT_ADDRESSES_URL = 'https://contracts.decentraland.org/addresses.json'
 
 
-def relayer_env():
+def relayer_env(config):
     """Who pays the testnet relay's gas, and the contract list that goes with it (testnet only).
 
     Without a relayer key the relay forwards to the .zone transactions API and admits the published list, which
@@ -698,19 +704,52 @@ def relayer_env():
     direct signer takes every meta-transaction it admits (purchases, approvals, cancels) instead of the forward,
     capped at TESTNET_RELAYER_MAX_FEE_PER_GAS_WEI, and admits the bundled `amoy` entry, which carries the manager
     (CONTRACT_ADDRESSES_URL unset). The key signs on Amoy alone: NAMES_SIGNER_ENABLED=false keeps it off the NAMEs
-    chain, whose ETH_RPC_URL is Sepolia's here while NAMES_CHAIN_ID stays mainnet's."""
-    key = STATE / 'relayer.key'
-    # An empty file reads as no key on the server, so it must not turn the signer on.
-    if not key.is_file() or not key.read_text().strip():
+    chain, whose ETH_RPC_URL is Sepolia's here while NAMES_CHAIN_ID stays mainnet's.
+
+    The key is then the stack's direct signer elsewhere too, though little of it acts on Amoy, where the node knows
+    no Decentraland MANA or store contracts (DclContracts::for_chain is Polygon's alone): /v1/payments/config names
+    its address as `payTo` but answers disabled, with no MANA token; the broker buy refuses the chain before it
+    signs; the escrow release and reclaim also need the admin token and LANDILER_ESCROW_ADDRESS, which this profile
+    doesn't set. The broker reconciler starts, with no broker buys to reconcile.
+
+    Its spend is bounded per transaction by the fee cap, and per day by TESTNET_RELAYER_FREE_CALLS_PER_DAY for free
+    calls but only by the per-address quota for sales and credits purchases, and addresses cost nothing to make.
+    So the key belongs on a loopback stack: behind FOUNDATION_DEV_PUBLIC_ORIGIN the stack refuses to start with
+    it (refuse_an_exposed_relayer)."""
+    key = relayer_key()
+    if key is None:
         return {'CONTRACT_ADDRESSES_URL': PUBLISHED_CONTRACT_ADDRESSES_URL}
+    refuse_an_exposed_relayer(config, key)
     if key.stat().st_mode & 0o077:
         print(f'Warning: {key} is readable by other users; chmod 600 it.', file=sys.stderr)
     return {
         'META_TX_BROADCAST_ENABLED': 'true',
         'RELAYER_PRIVATE_KEY_FILE': str(key),
         'RELAYER_MAX_FEE_PER_GAS_WEI': TESTNET_RELAYER_MAX_FEE_PER_GAS_WEI,
+        'MAX_RELAYED_TRANSACTIONS_PER_DAY': TESTNET_RELAYER_FREE_CALLS_PER_DAY,
         'NAMES_SIGNER_ENABLED': 'false',
     }
+
+
+def relayer_key():
+    """The testnet relay's own key file, or None. An empty file reads as no key on the server, so it is none here."""
+    key = STATE / 'relayer.key'
+    return key if key.is_file() and key.read_text().strip() else None
+
+
+def refuse_an_exposed_relayer(config, key):
+    """A testnet stack behind a public origin never starts with a relayer key.
+
+    The key would pay the gas of whatever its relay admits, and only free calls have a daily cap: anyone who reaches
+    the origin could spend its POL through sales and credits purchases from fresh addresses. `up` checks it before
+    starting anything, and relayer_env again wherever the stack's environment is built, with the key (relayer_key)
+    each already read."""
+    if config.get('profile') == 'testnet' and config.get('public_origin') and key is not None:
+        raise SystemExit(
+            f"{key} would pay the gas of every transaction this stack relays, and the stack is "
+            f"served at {config['public_origin']}, where anyone who reaches it could spend the key's POL. Either "
+            'return the stack to loopback (foundation-dev origin local) or remove the key, and the relay forwards '
+            'to the .zone transactions API.')
 
 
 def name_simulation_env():
@@ -1133,6 +1172,8 @@ def stale_graph(config):
 def prepare_supervisor(postgres_only=False):
     """Write the process graph; returns the supervisor's `up` arguments and environment, or None if it runs."""
     config = settings(create=True)
+    # Here, before any process starts, so `up` fails with the reason rather than the API failing in its log.
+    refuse_an_exposed_relayer(config, relayer_key())
     if supervisor_running():
         running = json.loads((STATE / 'process-compose.json').read_text())['processes']
         if not postgres_only and set(running) == {'postgres'}:

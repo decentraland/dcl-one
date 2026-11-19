@@ -952,7 +952,8 @@ class DevTest(unittest.TestCase):
         self.assertNotIn('not a real key', '\n'.join(env.values()))
 
     def test_the_testnet_relay_signs_its_own_transactions_only_with_a_relayer_key(self):
-        relayer = ('META_TX_BROADCAST_ENABLED', 'RELAYER_PRIVATE_KEY_FILE', 'RELAYER_MAX_FEE_PER_GAS_WEI', 'NAMES_SIGNER_ENABLED')
+        relayer = ('META_TX_BROADCAST_ENABLED', 'RELAYER_PRIVATE_KEY_FILE', 'RELAYER_MAX_FEE_PER_GAS_WEI',
+                   'MAX_RELAYED_TRANSACTIONS_PER_DAY', 'NAMES_SIGNER_ENABLED')
         published = 'https://contracts.decentraland.org/addresses.json'
         # Without a key the relay forwards to the .zone transactions API over the published list, which lacks
         # dcl-one's manager, so the relay refuses that manager itself (marked not sent) instead of forwarding it.
@@ -974,11 +975,15 @@ class DevTest(unittest.TestCase):
             dev.runtime_env({**self.config, 'profile': 'testnet'})
         self.assertIn('chmod 600', warning.getvalue())
         key.chmod(0o600)
-        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        warning = io.StringIO()
+        with contextlib.redirect_stderr(warning):
+            env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        self.assertEqual(warning.getvalue(), '', 'a private key on a loopback stack warns of nothing')
         self.assertEqual(env['META_TX_BROADCAST_ENABLED'], 'true')
         self.assertEqual(env['RELAYER_PRIVATE_KEY_FILE'], str(key))
-        # Capped: 200 gwei at most per gas.
+        # Capped: 200 gwei at most per gas, and 100 free calls (approvals, cancels) a day across every address.
         self.assertEqual(env['RELAYER_MAX_FEE_PER_GAS_WEI'], '200000000000')
+        self.assertEqual(env['MAX_RELAYED_TRANSACTIONS_PER_DAY'], '100')
         # The bundled `amoy` entry, which carries dcl-one's manager, so the relay admits it.
         self.assertNotIn('CONTRACT_ADDRESSES_URL', env)
         # The key signs on Amoy alone: never on the NAMEs chain, whose ETH_RPC_URL is Sepolia's here.
@@ -990,6 +995,34 @@ class DevTest(unittest.TestCase):
         mirror = dev.runtime_env({**self.config, 'profile': 'mirror'})
         for name in relayer:
             self.assertNotIn(name, mirror, name)
+
+    def test_a_testnet_stack_behind_a_public_origin_never_starts_with_a_relayer_key(self):
+        exposed = {**self.config, 'profile': 'testnet', 'public_origin': 'https://dev.example.test'}
+        published = 'https://contracts.decentraland.org/addresses.json'
+        # Without a key, or with an empty one, a public testnet stack starts: the .zone transactions API pays.
+        key = self.state / 'relayer.key'
+        self.assertEqual(dev.runtime_env(exposed)['CONTRACT_ADDRESSES_URL'], published)
+        key.write_text('  \n')
+        self.assertEqual(dev.runtime_env(exposed)['CONTRACT_ADDRESSES_URL'], published)
+        # With one, anyone who reaches the origin could spend its POL: the stack's environment is refused,
+        # naming both ways out, and `up` refuses before it starts any process.
+        key.write_text('not a real key')
+        key.chmod(0o600)
+        with self.assertRaises(SystemExit) as refused:
+            dev.runtime_env(exposed)
+        why = str(refused.exception)
+        for part in ('https://dev.example.test', 'foundation-dev origin local', 'remove the key', '.zone'):
+            self.assertIn(part, why)
+        self.assertNotIn('not a real key', why)
+        with patch.object(dev, 'settings', return_value=exposed), \
+                patch.object(dev, 'supervisor_running', return_value=False), \
+                patch.object(dev, 'save_json') as written:
+            with self.assertRaises(SystemExit):
+                dev.prepare_supervisor()
+        written.assert_not_called()
+        # The same key on loopback starts, capped; another profile never reads it.
+        self.assertEqual(dev.runtime_env({**exposed, 'public_origin': None})['MAX_RELAYED_TRANSACTIONS_PER_DAY'], '100')
+        self.assertNotIn('RELAYER_PRIVATE_KEY_FILE', dev.runtime_env({**exposed, 'profile': 'mirror'}))
 
     def test_testnet_data_never_shares_a_database_with_another_profile(self):
         (self.state / 'postgres').mkdir()

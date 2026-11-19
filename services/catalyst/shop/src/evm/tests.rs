@@ -3529,6 +3529,9 @@ async fn a_trial_never_reuses_the_relayer_key_on_the_names_chain() {
     let trial = State::new(pool.clone(), Outbound::for_tests(), with_eth(trial_relay()))
         .expect("a complete trial relay starts");
     assert!(trial.eth_signer.is_none());
+    // The NAME routes' error and the startup log say the trial is why, not a missing key.
+    let why = trial.settings.names_signer_absence();
+    assert!(why.contains("CREDITS_TRIAL_MODE"), "{why}");
     let open = State::new(
         pool,
         Outbound::for_tests(),
@@ -3673,6 +3676,11 @@ async fn with_a_relayer_key_the_testnet_relay_signs_on_amoy_alone_and_admits_dcl
     assert_eq!(signer.chain_id(), 80_002);
     assert_eq!(signer.max_fee_per_gas(), Some(200_000_000_000));
     assert!(keyed.eth_signer.is_none(), "no NAMEs chain signer");
+    // An operator who hits a NAME route here is told the flag is why, not to set the key again.
+    assert_eq!(
+        keyed.settings.names_signer_absence(),
+        "off (NAMES_SIGNER_ENABLED=false)"
+    );
     assert_eq!(keyed.transaction.broadcast_route(), BroadcastRoute::Direct);
     let manager = format!("{:#x}", crate::policy_entry::DCL_ONE_AMOY_MANAGER);
     assert!(keyed.contracts.is_whitelisted(&manager).await.unwrap());
@@ -3680,6 +3688,16 @@ async fn with_a_relayer_key_the_testnet_relay_signs_on_amoy_alone_and_admits_dcl
     let named =
         State::new(lazy_pool(), Outbound::for_tests(), testnet(true)).expect("the relay starts");
     assert_eq!(named.eth_signer.as_ref().map(|s| s.chain_id()), Some(1));
+    // With the flag on and no key, the missing pieces are what it names.
+    let keyless = Settings {
+        relayer_private_key: None,
+        ..testnet(true)
+    };
+    let why = keyless.names_signer_absence();
+    assert!(
+        why.contains("RELAYER_PRIVATE_KEY_FILE") && why.contains("ETH_RPC_URL"),
+        "{why}"
+    );
 }
 
 /// Under a trial the MANA payment routes refuse before any work: `config` would hand a client the
