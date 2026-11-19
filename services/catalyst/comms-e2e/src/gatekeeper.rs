@@ -85,7 +85,8 @@ pub fn signed_path(route: &str) -> String {
 pub struct Gatekeeper {
     http: reqwest::Client,
     base: Url,
-    moderator_token_env: Option<String>,
+    /// The moderator token, or why there is none: asked for only when a ban is made or lifted.
+    moderator_token: Result<String, String>,
 }
 
 impl Gatekeeper {
@@ -101,7 +102,10 @@ impl Gatekeeper {
                 .timeout(REQUEST_TIMEOUT)
                 .build()?,
             base: api,
-            moderator_token_env: stack.moderator_token_env.clone(),
+            moderator_token: match stack.moderator_token_env.as_deref() {
+                Some(variable) => stack.secret(variable).map_err(|error| error.to_string()),
+                None => Err("the stack file names no moderator token".to_owned()),
+            },
         })
     }
 
@@ -142,11 +146,9 @@ impl Gatekeeper {
     }
 
     fn moderator_token(&self) -> Result<String, GatekeeperError> {
-        let variable = self.moderator_token_env.as_deref().ok_or_else(|| {
-            GatekeeperError::Unexpected("the stack file names no moderator token".to_owned())
-        })?;
-        crate::stack::Stack::secret(variable)
-            .map_err(|error| GatekeeperError::Unexpected(error.to_string()))
+        self.moderator_token
+            .clone()
+            .map_err(GatekeeperError::Unexpected)
     }
 
     fn ban_url(&self, address: &str) -> Result<Url, GatekeeperError> {

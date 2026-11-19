@@ -6,6 +6,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use catalyst_comms::archipelago::config::ClusterConfig;
 use catalyst_comms::pulse::hardening;
 use catalyst_comms::pulse::interest::{ParcelEncoder, ParcelEncoderOptions};
 use serde::Deserialize;
@@ -46,6 +47,20 @@ pub struct Stack {
     pub grid: Grid,
     #[serde(default)]
     pub limits: Limits,
+    /// Secrets given by name, in place of the environment variables that hold them.
+    #[serde(skip)]
+    given: GivenSecrets,
+}
+
+/// Values for secrets, each under the name of the environment variable that would hold it. It
+/// prints as the names alone.
+#[derive(Clone, Default)]
+struct GivenSecrets(std::collections::BTreeMap<String, String>);
+
+impl std::fmt::Debug for GivenSecrets {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_set().entries(self.0.keys()).finish()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -194,6 +209,8 @@ pub struct Limits {
     pub max_concurrent_pre_auth_per_ip: i64,
     pub replay_entries_per_source: usize,
     pub replay_entries_per_wallet: usize,
+    /// How often the archipelago connector sweeps its connected wallets for bans.
+    pub ban_sweep_interval_ms: u64,
 }
 
 impl Default for Limits {
@@ -209,6 +226,7 @@ impl Default for Limits {
             max_concurrent_pre_auth_per_ip: hardening::DEFAULT_MAX_CONCURRENT_PRE_AUTH_PER_IP,
             replay_entries_per_source: hardening::DEFAULT_REPLAY_ENTRIES_PER_SOURCE,
             replay_entries_per_wallet: hardening::DEFAULT_REPLAY_ENTRIES_PER_WALLET,
+            ban_sweep_interval_ms: ClusterConfig::default().ban_sweep_interval_ms,
         }
     }
 }
@@ -239,6 +257,7 @@ impl Stack {
             restart_command: None,
             grid: Grid::default(),
             limits: Limits::default(),
+            given: GivenSecrets::default(),
         }
     }
 
@@ -317,11 +336,26 @@ impl Stack {
         .collect()
     }
 
-    /// The value of a secret named by an environment variable.
-    pub fn secret(variable: &str) -> Result<String> {
-        std::env::var(variable)
-            .with_context(|| format!("the environment variable {variable} is not set"))
+    /// The value of a secret the stack file names by its environment variable.
+    pub fn secret(&self, variable: &str) -> Result<String> {
+        match self.given.0.get(variable) {
+            Some(value) => Ok(value.clone()),
+            None => secret_from_environment(variable),
+        }
     }
+
+    /// Gives the secret the variable `variable` would hold, so that nothing has to write the
+    /// environment: a program that embeds the tool, and the crate's own tests, where a write to
+    /// the environment races every thread that reads it.
+    pub fn give_secret(&mut self, variable: &str, value: &str) {
+        self.given.0.insert(variable.to_owned(), value.to_owned());
+    }
+}
+
+/// The value of the environment variable `variable`, which holds a secret.
+pub fn secret_from_environment(variable: &str) -> Result<String> {
+    std::env::var(variable)
+        .with_context(|| format!("the environment variable {variable} is not set"))
 }
 
 fn host_of(url: &Url) -> String {
@@ -376,6 +410,34 @@ mod tests {
         ] {
             stack_at(local).ensure_safe_for(true, &[]).unwrap();
         }
+    }
+
+    #[test]
+    fn a_given_secret_stands_in_for_its_variable_and_is_never_printed() {
+        let mut stack = stack_at("http://127.0.0.1:1");
+        assert!(stack.secret("CE2E_STACK_TEST_NEVER_SET").is_err());
+        stack.give_secret("CE2E_STACK_TEST_NEVER_SET", "a-given-secret-value");
+        assert_eq!(
+            stack.secret("CE2E_STACK_TEST_NEVER_SET").unwrap(),
+            "a-given-secret-value"
+        );
+        let shown = format!("{stack:?}");
+        assert!(shown.contains("CE2E_STACK_TEST_NEVER_SET"), "{shown}");
+        assert!(!shown.contains("a-given-secret-value"), "{shown}");
+    }
+
+    #[test]
+    fn the_ban_sweep_is_the_servers_unless_the_stack_file_says_otherwise() {
+        let default = stack_at("http://127.0.0.1:1");
+        assert_eq!(
+            default.limits.ban_sweep_interval_ms,
+            ClusterConfig::default().ban_sweep_interval_ms
+        );
+        let slower = Stack::parse(
+            "pulse_enet = \"127.0.0.1:9000\"\n[limits]\nban_sweep_interval_ms = 90000\n",
+        )
+        .unwrap();
+        assert_eq!(slower.limits.ban_sweep_interval_ms, 90_000);
     }
 
     #[test]

@@ -275,11 +275,10 @@ async fn a_child_that_never_opens_its_console_fails_at_the_deadline_and_is_gone(
     let dir = scratch("silent");
     let (cue, beat) = (dir.join("cue"), dir.join("beat"));
     let binary = stand_in_script(&dir, &cue, &beat);
-    // a port nothing listens on
-    let free = {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.local_addr().unwrap().port()
-    };
+    // a port nothing listens on: bound and held to the end, so no other test is given it
+    let held = tokio::net::TcpSocket::new_v4().unwrap();
+    held.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let free = held.local_addr().unwrap().port();
     let ctx = ctx(stack_with_binary(&binary), "silent-explorer");
     let started = Instant::now();
     let error = Explorer::start(

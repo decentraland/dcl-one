@@ -208,7 +208,8 @@ fn redact_jwts(text: &str) -> String {
     out
 }
 
-fn redact(value: serde_json::Value) -> serde_json::Value {
+/// A value with every string in it passed through [`redact_text`].
+pub(super) fn redact(value: serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::String(text) => serde_json::Value::String(redact_text(&text)),
         serde_json::Value::Array(items) => {

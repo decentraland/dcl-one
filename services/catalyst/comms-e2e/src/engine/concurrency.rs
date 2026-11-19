@@ -6,9 +6,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::Barrier;
+use tokio::task::JoinSet;
 
 /// Runs `count` steps released from one barrier, so they start in the same instant. Results come
-/// back in index order. A step that panics panics the caller.
+/// back in index order. A step that panics panics the caller. The steps live no longer than the
+/// call: when the caller is dropped (a scenario's deadline) or a step panics, the rest are ended.
 pub async fn together<T, F, Fut>(count: usize, step: F) -> Vec<T>
 where
     F: Fn(usize) -> Fut,
@@ -16,21 +18,25 @@ where
     T: Send + 'static,
 {
     let barrier = Arc::new(Barrier::new(count));
-    let tasks: Vec<_> = (0..count)
-        .map(|index| {
-            let barrier = barrier.clone();
-            let work = step(index);
-            tokio::spawn(async move {
-                barrier.wait().await;
-                work.await
-            })
-        })
-        .collect();
-    let mut results = Vec::with_capacity(count);
-    for task in tasks {
-        results.push(task.await.expect("a step of `together` panicked"));
+    // a set ends its tasks when it is dropped; a plain spawn would leave them running
+    let mut steps = JoinSet::new();
+    for index in 0..count {
+        let barrier = barrier.clone();
+        let work = step(index);
+        steps.spawn(async move {
+            barrier.wait().await;
+            (index, work.await)
+        });
+    }
+    let mut results: Vec<Option<T>> = (0..count).map(|_| None).collect();
+    while let Some(finished) = steps.join_next().await {
+        let (index, result) = finished.expect("a step of `together` panicked");
+        results[index] = Some(result);
     }
     results
+        .into_iter()
+        .map(|result| result.expect("every step of `together` finished"))
+        .collect()
 }
 
 /// A small deterministic generator: the same seed gives the same gaps, on every platform.
@@ -65,6 +71,8 @@ impl Seeded {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::FutureExt;
+    use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::Instant;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -87,6 +95,53 @@ mod tests {
             last - first < Duration::from_millis(50),
             "spread {:?}",
             last - first
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn steps_end_when_their_caller_is_dropped() {
+        let finished = Arc::new(AtomicU32::new(0));
+        let steps = together(4, |_| {
+            let finished = finished.clone();
+            async move {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                finished.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        // a scenario's deadline drops whatever the scenario was waiting on
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), steps)
+                .await
+                .is_err()
+        );
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert_eq!(
+            finished.load(Ordering::SeqCst),
+            0,
+            "steps ran on after their caller was gone"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_step_that_panics_ends_the_others() {
+        let finished = Arc::new(AtomicU32::new(0));
+        let steps = together(4, |index| {
+            let finished = finished.clone();
+            async move {
+                if index == 0 {
+                    panic!("the first step breaks");
+                }
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                finished.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        let outcome = std::panic::AssertUnwindSafe(steps).catch_unwind().await;
+        assert!(outcome.is_err(), "the caller must panic with its step");
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert_eq!(
+            finished.load(Ordering::SeqCst),
+            0,
+            "steps ran on after one of them panicked"
         );
     }
 

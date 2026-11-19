@@ -51,18 +51,20 @@ impl Check {
 
 const DIAL: Duration = Duration::from_secs(3);
 
+/// Every route the doctor asks answers 200 on a stack that is what the file says. Anything else,
+/// a 404 from some other server included, means the address is not that part of the stack.
 async fn http(client: &reqwest::Client, url: Url) -> Result<String, String> {
     match client.get(url.clone()).send().await {
-        Ok(response) if response.status().is_server_error() => {
-            Err(format!("{url} answered {}", response.status()))
+        Ok(response) if response.status().is_success() => {
+            Ok(format!("{url} answered {}", response.status()))
         }
-        Ok(response) => Ok(format!("{url} answered {}", response.status())),
+        Ok(response) => Err(format!("{url} answered {}", response.status())),
         Err(error) => Err(format!("{url} does not answer: {error}")),
     }
 }
 
-fn variable(name: &str) -> Result<String, String> {
-    match std::env::var(name) {
+fn variable(stack: &Stack, name: &str) -> Result<String, String> {
+    match stack.secret(name) {
         Ok(value) if !value.trim().is_empty() => Ok(format!("{name} is set")),
         _ => Err(format!("the environment variable {name} is not set")),
     }
@@ -168,8 +170,11 @@ pub async fn examine(stack: Arc<Stack>) -> Vec<Check> {
                 "LiveKit",
                 http(&client, target.url.clone()).await,
             ));
-            checks.push(Check::new("LiveKit key", variable(&target.key_env)));
-            checks.push(Check::new("LiveKit secret", variable(&target.secret_env)));
+            checks.push(Check::new("LiveKit key", variable(&stack, &target.key_env)));
+            checks.push(Check::new(
+                "LiveKit secret",
+                variable(&stack, &target.secret_env),
+            ));
             match &target.client {
                 Some(path) => checks.push(Check::new("LiveKit client", file(path))),
                 None => checks.push(Check::absent("LiveKit client", "livekit.client")),
@@ -179,11 +184,11 @@ pub async fn examine(stack: Arc<Stack>) -> Vec<Check> {
     }
 
     match &stack.moderator_token_env {
-        Some(name) => checks.push(Check::new("Moderator token", variable(name))),
+        Some(name) => checks.push(Check::new("Moderator token", variable(&stack, name))),
         None => checks.push(Check::absent("Moderator token", "moderator_token_env")),
     }
     match &stack.scene_listener_key_env {
-        Some(name) => checks.push(Check::new("Scene listener key", variable(name))),
+        Some(name) => checks.push(Check::new("Scene listener key", variable(&stack, name))),
         None => checks.push(Check::absent(
             "Scene listener key",
             "scene_listener_key_env",

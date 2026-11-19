@@ -160,6 +160,11 @@ const REASONS: [DisconnectReason; 19] = [
     DisconnectReason::InvalidSceneListenerField,
 ];
 
+/// Every disconnect code the server gives.
+pub fn codes() -> impl Iterator<Item = u32> {
+    REASONS.iter().map(|reason| reason.code())
+}
+
 /// A disconnect code as text: `11 (InvalidInputField)`. Code 0 is a drop with no reason given.
 pub fn reason(code: u32) -> String {
     match REASONS.iter().find(|reason| reason.code() == code) {

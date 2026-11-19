@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use catalyst_comms::pulse::PulseServer;
-use catalyst_comms::pulse::hardening::{GameplayRateLimiter, PreAuthAdmission};
+use catalyst_comms::pulse::hardening::{DisconnectReason, GameplayRateLimiter, PreAuthAdmission};
 use catalyst_comms_e2e::engine::{Outcome, RunOptions, Scenario, ScenarioResult, run_scenarios};
 use catalyst_comms_e2e::identity::Identity;
 use catalyst_comms_e2e::pulse::{HandshakeOutcome, PulseBot};
@@ -231,7 +231,38 @@ async fn emote_lifecycle_passes() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn resync_requests_pass() {
-    assert_passed(&run(PulseServer::new(), &RESYNC_REQUESTS, 2).await);
+    let result = run(PulseServer::new(), &RESYNC_REQUESTS, 2).await;
+    assert_passed(&result);
+    // this stack names no metrics address: the report says the server's count was not checked
+    let unchecked: Vec<_> = result
+        .notes
+        .iter()
+        .filter(|note| note.key == "resync_metric")
+        .collect();
+    assert_eq!(
+        unchecked.len(),
+        2,
+        "one for each repeat: {:?}",
+        result.notes
+    );
+    let said = unchecked[0].value.as_str().unwrap_or_default();
+    assert!(said.contains("not checked"), "{said}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn resync_requests_fail_when_the_metrics_the_stack_file_names_cannot_be_read() {
+    let nothing_serves_it = |stack: &mut Stack| {
+        stack.pulse_metrics = Some("http://127.0.0.1:9/metrics".parse().unwrap());
+    };
+    let result = run_on(
+        PulseServer::new(),
+        nothing_serves_it,
+        &RESYNC_REQUESTS,
+        options(1),
+    )
+    .await;
+    let failure = failure_of(&result);
+    assert!(failure.contains("pulse_metrics"), "{failure}");
 }
 
 /// A key for the scene listener wallet, derived from text so that no key is written down.
@@ -239,20 +270,16 @@ fn listener_key() -> String {
     hex::encode(Sha256::digest(b"comms-e2e test scene listener wallet"))
 }
 
-fn use_listener_key() -> String {
-    let key = listener_key();
-    // the variable is read by name when the scenario runs
-    unsafe { std::env::set_var(LISTENER_KEY_VARIABLE, &key) };
-    key
-}
-
+/// Names the variable of the scene listener key and gives its value, so no test writes the
+/// environment.
 fn name_listener_key(stack: &mut Stack) {
     stack.scene_listener_key_env = Some(LISTENER_KEY_VARIABLE.to_owned());
+    stack.give_secret(LISTENER_KEY_VARIABLE, &listener_key());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn scene_listener_passes_when_the_server_admits_its_wallet() {
-    let key = use_listener_key();
+    let key = listener_key();
     let wallet = Identity::from_wallet_key(&key, "test").unwrap().address();
     let mut server = PulseServer::new();
     server.scene_listener_wallets = Some(HashSet::from([wallet]));
@@ -272,7 +299,6 @@ async fn scene_listener_is_skipped_without_a_wallet_key_in_the_stack_file() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn scene_listener_fails_when_the_server_does_not_admit_the_wallet() {
-    use_listener_key();
     let mut server = PulseServer::new();
     server.scene_listener_wallets = Some(HashSet::from([
         "0x0000000000000000000000000000000000000001".to_owned(),
@@ -306,7 +332,9 @@ async fn a_wallet_the_server_does_not_admit_gets_no_listener() {
             .handshake_outcome(&ctx, Some(Duration::from_secs(5)))
             .await
             .unwrap(),
-        HandshakeOutcome::Disconnected { code: 3 }
+        HandshakeOutcome::Disconnected {
+            code: DisconnectReason::AuthFailed.code()
+        }
     );
     let admitted = PulseBot::dial(&ctx, "allowed", Default::default())
         .await
@@ -485,7 +513,7 @@ async fn webtransport_resync_requests_pass() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn webtransport_scene_listener_passes_when_the_server_admits_its_wallet() {
-    let key = use_listener_key();
+    let key = listener_key();
     let wallet = Identity::from_wallet_key(&key, "test").unwrap().address();
     let mut server = PulseServer::new();
     server.scene_listener_wallets = Some(HashSet::from([wallet]));

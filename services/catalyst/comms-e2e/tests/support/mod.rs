@@ -6,6 +6,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use catalyst_comms::pulse::PulseServer;
+use catalyst_comms::pulse::hardening::DisconnectReason;
 use catalyst_comms::pulse::server::ENET_CAPACITY;
 use catalyst_comms::pulse::transport::webtransport::{WtConfig, WtHost};
 use catalyst_comms::pulse::transport::{Host, HostConfig, Transports};
@@ -87,7 +88,7 @@ pub async fn serve_both(server: PulseServer) -> Pulse {
             max_datagram_bytes: 1200,
             max_message_bytes: 4096,
             service_timeout_ms: 1,
-            server_full_reason: 6,
+            server_full_reason: DisconnectReason::ServerFull.code(),
         })
     })
     .await

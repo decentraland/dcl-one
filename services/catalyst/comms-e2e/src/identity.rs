@@ -256,6 +256,7 @@ pub fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use catalyst_comms::pulse::handshake::MAX_TIMESTAMP_SKEW_MS;
     use catalyst_comms::pulse::verify_handshake;
 
     #[test]
@@ -337,7 +338,7 @@ mod tests {
         let now = now_ms();
         let ClientMessage {
             message: Some(client_message::Message::Handshake(request)),
-        } = identity.pulse_handshake(now - 10 * 60_000, None)
+        } = identity.pulse_handshake(now - 10 * MAX_TIMESTAMP_SKEW_MS, None)
         else {
             panic!("a handshake message");
         };

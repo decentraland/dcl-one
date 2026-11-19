@@ -210,10 +210,11 @@ impl Explorer {
         let token = console_token();
         let port = console_port(&options)?;
         let mut command = explorer_command(ctx.stack(), target, &options, port, &token);
+        let (output, errors) = log_handles(&log)?;
         command
             .stdin(Stdio::null())
-            .stdout(std::fs::File::create(&log)?)
-            .stderr(std::fs::OpenOptions::new().append(true).open(&log)?)
+            .stdout(output)
+            .stderr(errors)
             .current_dir(&work_dir)
             .kill_on_drop(true);
         ctx.record(
@@ -524,6 +525,13 @@ fn console_port(options: &ExplorerOptions) -> Result<u16> {
     Ok(listener.local_addr()?.port())
 }
 
+/// The handles the explorer's standard output and standard error write its log through: one
+/// open file, so both write at the same place in it and neither writes over the other.
+fn log_handles(log: &std::path::Path) -> std::io::Result<(std::fs::File, std::fs::File)> {
+    let file = std::fs::File::create(log)?;
+    Ok((file.try_clone()?, file))
+}
+
 /// A token for one explorer: random, from the operating system.
 fn console_token() -> String {
     let key = dcl_auth::Wallet::random()
@@ -554,6 +562,24 @@ mod tests {
             ..ExplorerOptions::default()
         };
         assert_eq!(console_port(&named).unwrap(), first);
+    }
+
+    #[test]
+    fn what_both_streams_write_stays_in_the_log() {
+        use std::io::Write;
+        let log = std::env::temp_dir().join(format!("comms-e2e-log-{}.log", std::process::id()));
+        let (mut output, mut errors) = log_handles(&log).unwrap();
+        // the explorer logs to standard error and now and then prints to standard output
+        errors.write_all(b"first on standard error\n").unwrap();
+        output.write_all(b"then on standard output\n").unwrap();
+        errors.write_all(b"last on standard error\n").unwrap();
+        drop((output, errors));
+        let text = std::fs::read_to_string(&log).unwrap();
+        let _ = std::fs::remove_file(&log);
+        assert_eq!(
+            text,
+            "first on standard error\nthen on standard output\nlast on standard error\n"
+        );
     }
 
     #[test]

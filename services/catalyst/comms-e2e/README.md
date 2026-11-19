@@ -35,7 +35,8 @@ comms-e2e console --stack-file <file> "/world_state" "/pulse_state"
 comms-e2e address --key-env <VARIABLE>
 ```
 
-- `doctor` dials every address the stack file names once, and checks the files and the
+- `doctor` dials every address the stack file names once (an HTTP address counts as there
+  only if it answers 2xx), and checks the files and the
   environment variables it names (set or not set, never the value). Run it first: what the file
   names and is not there is `FAILED` and the exit code is 1; what the file leaves out is `absent`
   and only skips the scenarios that need it.
@@ -99,7 +100,8 @@ api_front = "127.0.0.1:6210"
 pulse_front = "127.0.0.1:6217"
 livekit_signal = { front = "127.0.0.1:6214", real = "127.0.0.1:5214" }
 
-[limits]            # only what the servers run with other than their defaults
+[limits]            # only what the servers run with other than their defaults,
+                    # for example ban_sweep_interval_ms = 60000
 [grid]
 ```
 

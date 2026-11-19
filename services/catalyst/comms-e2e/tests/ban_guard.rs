@@ -53,13 +53,14 @@ async fn stand_in(unban_status: u16) -> (std::net::SocketAddr, Arc<Seen>) {
 }
 
 fn ctx_for(gatekeeper: std::net::SocketAddr) -> Ctx {
-    // the moderator token is read from an environment variable that always exists; the stand-in
-    // does not check it
     let text = format!(
-        "api = \"http://{gatekeeper}\"\npulse_enet = \"127.0.0.1:9\"\nmoderator_token_env = \"CARGO_PKG_NAME\"\n"
+        "api = \"http://{gatekeeper}\"\npulse_enet = \"127.0.0.1:9\"\nmoderator_token_env = \"CE2E_BAN_GUARD_TEST_TOKEN\"\n"
     );
+    let mut stack = Stack::parse(&text).unwrap();
+    // the token is given, not read from the environment; the stand-in does not check it
+    stack.give_secret("CE2E_BAN_GUARD_TEST_TOKEN", "a-moderator-token");
     Ctx::new(
-        Arc::new(Stack::parse(&text).unwrap()),
+        Arc::new(stack),
         &format!("t{}", std::process::id()),
         "ban-guard",
         0,

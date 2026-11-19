@@ -368,6 +368,56 @@ async fn tcp_passes_and_a_stall_holds_the_bytes_until_restore() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_tcp_delay_makes_everything_late_by_the_delay_and_no_slower() {
+    let ctx = ctx("tcp-delay");
+    let (server, _seen) = tcp_echo().await;
+    let link = FaultLink::tcp(&ctx, "link", ANY.parse().unwrap(), server)
+        .await
+        .unwrap();
+    let by = Duration::from_millis(300);
+    link.set(Direction::Uplink, Fault::Delay { by });
+
+    // far more than the relay reads at once: a relay that waited out the delay after every read
+    // would take it dozens of times over
+    let sent: Vec<u8> = (0..512 * 1024u32)
+        .map(|index| (index % 251) as u8)
+        .collect();
+    let stream = TcpStream::connect(link.address()).await.unwrap();
+    let (mut reading, mut writing) = stream.into_split();
+    let started = std::time::Instant::now();
+    let outgoing = sent.clone();
+    let writer = tokio::spawn(async move {
+        writing.write_all(&outgoing).await.unwrap();
+        // the connection stays open until the echo has been read
+        writing
+    });
+    let mut echoed = vec![0u8; sent.len()];
+    tokio::time::timeout(SOON, reading.read_exact(&mut echoed[..1]))
+        .await
+        .expect("nothing came back")
+        .unwrap();
+    let first_after = started.elapsed();
+    tokio::time::timeout(SOON, reading.read_exact(&mut echoed[1..]))
+        .await
+        .expect("the rest did not follow: the delay was taken more than once")
+        .unwrap();
+    let all_after = started.elapsed();
+    let _writing = writer.await.unwrap();
+    assert!(
+        first_after >= by,
+        "the first byte was back after {first_after:?}, before the delay"
+    );
+    assert!(
+        all_after < by + Duration::from_secs(3),
+        "everything was back only after {all_after:?}"
+    );
+    assert!(
+        echoed == sent,
+        "the bytes came back changed or out of order"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn half_open_keeps_the_tcp_socket_open_and_silent() {
     let ctx = ctx("tcp-half-open");
     let (server, mut seen) = tcp_echo().await;
@@ -792,15 +842,10 @@ async fn a_dropped_link_frees_its_port_for_the_next_one() {
     let ctx = ctx("ports");
     let (udp_server, _seen) = udp_echo().await;
     let (tcp_server, _events) = tcp_echo().await;
-    // fixed ports, as the fronts of an explorer have: the next scenario binds the same ones
-    let udp_port = {
-        let probe = UdpSocket::bind(ANY).await.unwrap();
-        probe.local_addr().unwrap()
-    };
-    let tcp_port = {
-        let probe = TcpListener::bind(ANY).await.unwrap();
-        probe.local_addr().unwrap()
-    };
+    // The first links take the ports the operating system gives them. The next ones bind those
+    // same ports, as the fronts of an explorer do from one scenario to the next.
+    let mut udp_port: SocketAddr = ANY.parse().unwrap();
+    let mut tcp_port: SocketAddr = ANY.parse().unwrap();
     for round in 0..3 {
         let udp = FaultLink::udp(&ctx, "udp", udp_port, udp_server)
             .await
@@ -808,6 +853,7 @@ async fn a_dropped_link_frees_its_port_for_the_next_one() {
         let tcp = FaultLink::tcp(&ctx, "tcp", tcp_port, tcp_server)
             .await
             .unwrap_or_else(|error| panic!("round {round}: {error:#}"));
+        (udp_port, tcp_port) = (udp.address(), tcp.address());
         // a live flow and a live connection: what a scenario leaves behind when it ends
         let client = UdpSocket::bind(ANY).await.unwrap();
         client.connect(udp.address()).await.unwrap();

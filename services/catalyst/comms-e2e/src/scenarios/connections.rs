@@ -45,9 +45,11 @@ const RESTART: Needs = Needs {
     ..API
 };
 
-/// The interval at which the connector sweeps for bans: 30 s unless the stack is configured
-/// otherwise (`ban_sweep_interval_ms`).
-const BAN_SWEEP: Duration = Duration::from_secs(30);
+/// The interval at which the connector sweeps for bans: the server's default unless the stack
+/// file says the stack runs with another (`limits.ban_sweep_interval_ms`).
+fn ban_sweep(ctx: &Ctx) -> Duration {
+    Duration::from_millis(ctx.stack().limits.ban_sweep_interval_ms)
+}
 
 pub static CONNECT_FULL_STACK: Scenario = Scenario {
     name: "connect-full-stack",
@@ -617,14 +619,14 @@ async fn ban_checks(
         .expect_disconnect_with(
             ctx,
             DisconnectReason::Banned,
-            BAN_SWEEP + Duration::from_secs(15),
+            ban_sweep(ctx) + Duration::from_secs(15),
         )
         .await?;
     ctx.note("Pulse eviction, ms", started.elapsed().as_millis() as u64);
     expect_or(
         ctx,
         "the archipelago socket is closed after the ban",
-        BAN_SWEEP + Duration::from_secs(15),
+        ban_sweep(ctx) + Duration::from_secs(15),
         || {
             let view = device.archipelago.view();
             if view.closed || view.kicked.is_some() {

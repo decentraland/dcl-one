@@ -238,7 +238,7 @@ pub async fn pulse_udp_address(ctx: &Ctx) -> Result<std::net::SocketAddr> {
 /// The disconnect code a failed dial names, if its message names one: a dial that ends with the
 /// server's refusal reports the code as text.
 pub fn refusal_code_in(message: &str) -> Option<u32> {
-    (1..=19).find(|code| message.contains(&messages::reason(*code)))
+    messages::codes().find(|code| message.contains(&messages::reason(*code)))
 }
 
 /// Sums the samples of the metric series `name` (every label set) on the Pulse metrics address,
@@ -282,7 +282,7 @@ pub fn listener_identity(ctx: &Ctx) -> Result<Identity> {
     let Some(variable) = ctx.stack().scene_listener_key_env.as_deref() else {
         bail!("the stack file names no scene listener key (`scene_listener_key_env`)");
     };
-    let key = crate::stack::Stack::secret(variable)?;
+    let key = ctx.stack().secret(variable)?;
     Identity::from_wallet_key(&key, &format!("{}/{}", ctx.run_id(), ctx.realm("listener")))
 }
 

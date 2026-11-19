@@ -1,11 +1,11 @@
 // from: catalyrst/third_party/web_transport/src/client.rs (decentraland/rust-web-transport c5416501; Apache-2.0)
-#![allow(dead_code)]
 //! WebTransport client: connects to a server, opens the reliable bidi stream, and pumps
 //! datagrams + stream bytes to/from a synchronously-polled event queue. A single session.
 //!
-//! Primarily for the .NET test client (`DCLPulseTestClient`) to exercise the Pulse WebTransport
-//! transport over loopback. Like the host, it is a generic byte pipe driven by
-//! repeated [`Client::service`] calls; framing/sequencing live in the C# layer.
+//! For tests and test tools that reach Pulse over WebTransport as a client does (the `comms-e2e`
+//! bots); it is compiled only with the `test-support` feature. Like the host, it is a generic
+//! byte pipe driven by repeated [`Client::service`] calls; framing and sequencing are the
+//! caller's ([`super::framing`]).
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;

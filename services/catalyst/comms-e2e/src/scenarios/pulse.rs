@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, Result, anyhow, bail};
 use catalyst_comms::pulse::decentraland::pulse::PlayerInitialState;
 use catalyst_comms::pulse::hardening::{DEFAULT_CORRUPT_BURST, DisconnectReason};
+use catalyst_comms::pulse::simulation::DEFAULT_PENDING_AUTH_CLEAN_TIMEOUT_MS;
 use futures::future::{join_all, try_join_all};
 use parking_lot::Mutex;
 
@@ -669,7 +670,11 @@ async fn refusal_codes(ctx: Ctx) -> Result<()> {
 // ---------------------------------------------------------------------------------------------
 // pulse-auth-timeout
 
-/// The server ends a connection without a handshake after 30 s; waiting for it takes up to 45 s.
+/// How long the server lets a connection go without a handshake before it ends it.
+const PENDING_AUTH_TIMEOUT: Duration =
+    Duration::from_millis(DEFAULT_PENDING_AUTH_CLEAN_TIMEOUT_MS as u64);
+
+/// The server ends a connection without a handshake at its timeout; the wait allows 15 s more.
 async fn auth_timeout(ctx: Ctx) -> Result<()> {
     let realm = ctx.realm("arena");
     let here = meeting_place(&ctx);
@@ -677,7 +682,11 @@ async fn auth_timeout(ctx: Ctx) -> Result<()> {
     let silent = dial(&ctx, "silent").await?;
     let started = Instant::now();
     silent
-        .expect_disconnect_with(&ctx, DisconnectReason::AuthTimeout, Duration::from_secs(45))
+        .expect_disconnect_with(
+            &ctx,
+            DisconnectReason::AuthTimeout,
+            PENDING_AUTH_TIMEOUT + Duration::from_secs(15),
+        )
         .await?;
     ctx.note("auth_timeout_ms", started.elapsed().as_millis() as u64);
     bystander.expect_alive()
@@ -1711,6 +1720,18 @@ async fn resync_requests(ctx: Ctx) -> Result<()> {
 
         let series = "pulse_resync_seq_gap_count";
         let before = metric_total(&ctx, series).await;
+        if before.is_none() {
+            if ctx.stack().pulse_metrics.is_some() {
+                bail!(
+                    "the stack file names `pulse_metrics`, and the series {series} could not be read from it"
+                );
+            }
+            // a pass must not be taken for a checked count
+            ctx.note(
+                "resync_metric",
+                "not checked: the stack file has no `pulse_metrics`",
+            );
+        }
 
         // the subject's id and the sequence the asker holds of it, then four claims about what the
         // asker knows, and one request for somebody who is not there
@@ -1764,7 +1785,10 @@ async fn resync_requests(ctx: Ctx) -> Result<()> {
             SOON,
         )
         .await?;
-        if let (Some(before), Some(after)) = (before, metric_total(&ctx, series).await) {
+        if let Some(before) = before {
+            let after = metric_total(&ctx, series).await.ok_or_else(|| {
+                anyhow!("the series {series} could not be read again from `pulse_metrics`")
+            })?;
             ctx.note("resync_metric_before", before);
             ctx.note("resync_metric_after", after);
             // The metric is the server's count of resync requests it answered, over every player

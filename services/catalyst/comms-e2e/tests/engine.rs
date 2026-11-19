@@ -358,6 +358,51 @@ async fn secrets_in_an_error_do_not_reach_the_report() {
 }
 
 #[tokio::test]
+async fn a_secret_in_a_note_does_not_reach_the_report() {
+    fn notes_a_connection_string(ctx: Ctx) -> ScenarioFuture {
+        Box::pin(async move {
+            ctx.note("connectivity", leaky_text("the note"));
+            ctx.note(
+                "nested",
+                serde_json::json!({ "adapter": [leaky_text("the nested note")] }),
+            );
+            Ok(())
+        })
+    }
+    let noting = scenario("leaky-notes", notes_a_connection_string);
+    let report = run_scenarios(stack(), &[&noting], &options()).await;
+
+    let rendered = report.render(50);
+    let file = std::env::temp_dir().join(format!("comms-e2e-notes-{}.json", std::process::id()));
+    report.write_json(&file).unwrap();
+    let json = std::fs::read_to_string(&file).unwrap();
+    let _ = std::fs::remove_file(&file);
+
+    assert_eq!(report.results[0].notes.len(), 2);
+    assert_clean(
+        report.results[0].notes[0].value.as_str().unwrap(),
+        "the note",
+    );
+    for secret in ["SECRETCONNECTION", "SECRETBEARER", SECRET_JWT] {
+        assert!(!rendered.contains(secret), "render leaked {secret}");
+        assert!(!json.contains(secret), "the JSON report leaked {secret}");
+    }
+    assert!(rendered.contains("0xabc123") && json.contains("0xabc123"));
+}
+
+#[test]
+fn the_order_of_two_actors_comes_from_the_seed_alone() {
+    let first = |repeat, seed| {
+        Ctx::new(stack(), "run", "order", repeat, seed, std::env::temp_dir()).first_of_two()
+    };
+    // a failure at repeat 3 of a run seeded 100 is replayed as repeat 0 of a run seeded 103
+    assert_eq!(first(3, 103), first(0, 103));
+    assert_eq!(first(1, 101), first(0, 101));
+    // one repeat after another still covers both orders
+    assert_ne!(first(0, 100), first(1, 101));
+}
+
+#[tokio::test]
 async fn notes_survive_a_pass() {
     fn notes(ctx: Ctx) -> ScenarioFuture {
         Box::pin(async move {

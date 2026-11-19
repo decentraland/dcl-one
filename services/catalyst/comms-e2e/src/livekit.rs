@@ -514,11 +514,25 @@ pub struct ParticipantTrack {
     pub muted: bool,
 }
 
+/// Where a LiveKit client dials for signalling, given the room service base: the same host and
+/// port, over TLS when the base is.
+fn signal_url(base: &url::Url) -> String {
+    let scheme = if base.scheme() == "https" {
+        "wss"
+    } else {
+        "ws"
+    };
+    // an IPv6 host already comes in its brackets
+    let host = base.host_str().unwrap_or("127.0.0.1");
+    let port = base.port_or_known_default().unwrap_or(80);
+    format!("{scheme}://{host}:{port}")
+}
+
 /// The LiveKit server's own word on who is in a room.
 pub struct RoomService {
     http: reqwest::Client,
     base: String,
-    signal_address: String,
+    signal_url: String,
     key: String,
     secret: String,
 }
@@ -529,22 +543,15 @@ impl RoomService {
             .livekit
             .as_ref()
             .ok_or_else(|| anyhow!("the stack file has no LiveKit (`livekit`)"))?;
-        let key = Stack::secret(&target.key_env)?;
-        let secret = Stack::secret(&target.secret_env)?;
+        let key = stack.secret(&target.key_env)?;
+        let secret = stack.secret(&target.secret_env)?;
         let base = target.url.as_str().trim_end_matches('/').to_owned();
-        let host = target.url.host_str().unwrap_or("127.0.0.1");
-        let port = target.url.port_or_known_default().unwrap_or(80);
-        let host = if host.contains(':') {
-            format!("[{host}]")
-        } else {
-            host.to_owned()
-        };
         Ok(RoomService {
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
                 .build()?,
             base,
-            signal_address: format!("{host}:{port}"),
+            signal_url: signal_url(&target.url),
             key,
             secret,
         })
@@ -557,10 +564,7 @@ impl RoomService {
             .with_ttl(Duration::from_secs(600))
             .to_jwt()
             .map_err(|error| anyhow!("minting a join token: {error}"))?;
-        Ok(format!(
-            "livekit:ws://{}?access_token={token}",
-            self.signal_address
-        ))
+        Ok(format!("livekit:{}?access_token={token}", self.signal_url))
     }
 
     async fn call(&self, method: &str, room: &str, body: Value) -> Result<Value> {
@@ -732,6 +736,20 @@ mod tests {
             1,
             std::env::temp_dir().join("comms-e2e-unit"),
         )
+    }
+
+    #[test]
+    fn the_signalling_address_follows_the_room_service_base() {
+        let signal = |base: &str| signal_url(&url::Url::parse(base).unwrap());
+        assert_eq!(signal("http://127.0.0.1:7880"), "ws://127.0.0.1:7880");
+        assert_eq!(signal("http://livekit.example/"), "ws://livekit.example:80");
+        // an IPv6 host keeps its one pair of brackets
+        assert_eq!(signal("http://[::1]:7880/"), "ws://[::1]:7880");
+        // a base over TLS is dialled over TLS
+        assert_eq!(
+            signal("https://livekit.example"),
+            "wss://livekit.example:443"
+        );
     }
 
     #[test]

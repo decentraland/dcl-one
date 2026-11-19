@@ -4,7 +4,7 @@ mod support;
 
 use std::time::Duration;
 
-use catalyst_comms::pulse::hardening::DisconnectReason;
+use catalyst_comms::pulse::hardening::{DEFAULT_MAX_EMOTE_DURATION_MS, DisconnectReason};
 use catalyst_comms_e2e::engine::{Transport, expect_or};
 use catalyst_comms_e2e::fault::{Direction, Fault, FaultLink};
 use catalyst_comms_e2e::pulse::{
@@ -101,7 +101,10 @@ async fn an_out_of_grid_input_is_refused_with_code_11(transport: Transport) {
     bot.expect_disconnect_with(&ctx, DisconnectReason::InvalidInputField, SOON)
         .await
         .unwrap();
-    assert_eq!(bot.view().disconnect, Some(11));
+    assert_eq!(
+        bot.view().disconnect,
+        Some(DisconnectReason::InvalidInputField.code())
+    );
 }
 
 async fn a_long_emote_is_refused_with_code_12(transport: Transport) {
@@ -114,14 +117,14 @@ async fn a_long_emote_is_refused_with_code_12(transport: Transport) {
     let state = messages::state_at(bot.grid(), HERE);
     // exactly the limit is fine
     bot.send(
-        messages::emote_start("wave", Some(60_000), state, None),
+        messages::emote_start("wave", Some(DEFAULT_MAX_EMOTE_DURATION_MS), state, None),
         Channel::Reliable,
     );
     tokio::time::sleep(Duration::from_millis(300)).await;
     bot.expect_alive().unwrap();
     // one millisecond more is not
     bot.send(
-        messages::emote_start("wave", Some(60_001), state, None),
+        messages::emote_start("wave", Some(DEFAULT_MAX_EMOTE_DURATION_MS + 1), state, None),
         Channel::Reliable,
     );
     bot.expect_disconnect_with(&ctx, DisconnectReason::InvalidEmoteField, SOON)
@@ -224,11 +227,9 @@ async fn a_replayed_handshake_is_refused(transport: Transport) {
 }
 
 async fn nothing_listening_is_a_failed_connect_not_a_hang(transport: Transport) {
-    // a port nothing serves
-    let dead = {
-        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        socket.local_addr().unwrap()
-    };
+    // a port something holds and never answers on: held to the end, so no other test is given it
+    let silent = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let dead = silent.local_addr().unwrap();
     let mut stack = support::Stack::pulse_only(dead);
     stack.pulse_webtransport = Some(support::WebTransportTarget {
         url: format!("https://127.0.0.1:{}/", dead.port())

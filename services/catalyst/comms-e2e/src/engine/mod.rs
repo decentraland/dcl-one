@@ -274,9 +274,11 @@ impl Ctx {
         self.inner.timeline.record(actor, kind, detail);
     }
 
-    /// A measurement worth keeping whether the scenario passes or fails.
+    /// A measurement worth keeping whether the scenario passes or fails. The report keeps it as
+    /// the timeline does: with every secret it can carry cut out.
     pub fn note(&self, key: &str, value: impl serde::Serialize) {
-        let value = serde_json::to_value(value).unwrap_or(serde_json::Value::Null);
+        let value =
+            timeline::redact(serde_json::to_value(value).unwrap_or(serde_json::Value::Null));
         self.record("note", key, &value);
         self.inner.notes.lock().push(Note {
             repeat: self.inner.repeat,
@@ -299,9 +301,11 @@ impl Ctx {
         self.inner.seeded.lock().below(bound)
     }
 
-    /// Which of two actors goes first in this repeat: both orders are covered across repeats.
+    /// Which of two actors goes first in this repeat. It comes from the seed alone, so a replay
+    /// with a failure's seed takes the same order; one repeat's seed follows the last one's, so
+    /// both orders are covered across repeats.
     pub fn first_of_two(&self) -> usize {
-        (self.inner.repeat % 2) as usize
+        (self.inner.seed % 2) as usize
     }
 }
 

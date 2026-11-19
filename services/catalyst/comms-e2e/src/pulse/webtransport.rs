@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
+use catalyst_comms::pulse::hardening::DisconnectReason;
 use catalyst_comms::pulse::transport::webtransport::client::{Client, ClientConfig, ClientEvent};
 use catalyst_comms::pulse::transport::webtransport::framing::{
     DatagramSequencer, StreamFrameReader, datagram_frame, stream_frame,
@@ -23,7 +24,7 @@ const SERVICE_TICK: Duration = Duration::from_millis(1);
 /// a corrupt length, which it refuses.
 const STREAM_MESSAGE_LIMIT: usize = 256 * 1024;
 /// Pulse's graceful close code, what the ENet driver also sends when a bot is stopped.
-const GRACEFUL: u32 = 1;
+const GRACEFUL: u32 = DisconnectReason::Graceful as u32;
 
 /// What to dial: the URL (host and port already replaced if a link is in front) and the
 /// SHA-256 of the server certificate, if it is self-signed.
