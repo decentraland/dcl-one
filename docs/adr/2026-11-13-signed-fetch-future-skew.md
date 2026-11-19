@@ -8,12 +8,14 @@
 A signed-fetch request carries `x-identity-timestamp`, and the payload binds
 the method, path, timestamp and metadata, not the body or host. The node has
 no replay cache; freshness is the only bound on how long a captured request
-stays usable. The pinned `@dcl/crypto-middleware` defaults to a 60-second
-expiration (`DEFAULT_EXPIRATION`, `1000 * 60`), which most signed services
-used, including events, shop, credits and the marketplace trades and coupons
+stays usable. `@dcl/platform-crypto-middleware` and the pinned
+`@dcl/crypto-middleware` both default to a 60-second expiration
+(`DEFAULT_EXPIRATION`, `1000 * 60`), which most signed services used,
+including events, shop, credits and the marketplace trades and coupons
 routes. A few services configured wider windows (marketplace favorites five
-minutes, builder 30 minutes). The middleware never refuses a future
-timestamp.
+minutes, builder 30 minutes). `@dcl/platform-crypto-middleware` never refuses
+a future timestamp; `@dcl/crypto-middleware` refuses one more than its
+expiration ahead.
 
 ## Decision
 
@@ -39,7 +41,8 @@ uses for its 60-second past-only window, applies the same future cap.
 - A client whose clock is more than 60 seconds off is refused with the
   surface's expired answer until its clock is corrected. Operators should
   watch the signed-fetch refusal rate after rollout.
-- The surfaces diverge from the reference middleware on the future side.
+- The future cap matches `@dcl/crypto-middleware` at its default expiration
+  and is stricter than `@dcl/platform-crypto-middleware`, which had none.
 - Outside this decision: the social RPC socket handshake reads its window from
   operator configuration (`AUTH_WINDOW_SECS`, default 300 s, which also sets
   its first-frame deadline, or `WS_AUTH_SIGNATURE_EXPIRATION_IN_MS`), and the
