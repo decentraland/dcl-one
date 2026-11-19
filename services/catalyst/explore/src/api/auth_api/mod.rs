@@ -734,17 +734,22 @@ async fn create_request(
         Ok(validated) => validated,
         Err(msg) => return bad_request(&msg),
     };
-    let sender =
-        match validate_auth_chain(validated.auth_chain, state.eip1654.get().map(|v| &**v)).await {
-            Ok(verified) => verified.sender.to_lowercase(),
-            Err(refusal) => return chain_refused(refusal),
-        };
     let now = now_micros();
     let source = request_source(
         &headers,
         peer.map(|Extension(ConnectInfo(p))| p),
         &state.settings.trusted_proxy_cidrs,
     );
+    // Before the chain: a contract-wallet link costs an RPC call.
+    match network_over_cap(&state, source.as_deref(), now).await {
+        Ok(false) => {}
+        Ok(true) => return too_many_from_network(),
+        Err(err) => return internal_error("auth-api: counting the network's requests", err),
+    }
+    let sender = match validate_auth_chain(validated.auth_chain, state.eip1654_validator()).await {
+        Ok(verified) => verified.sender.to_lowercase(),
+        Err(refusal) => return chain_refused(refusal),
+    };
 
     let request_id = Uuid::new_v4().to_string();
     let expiration = now + Duration::seconds(REQUEST_TTL_SECONDS);
@@ -782,6 +787,28 @@ async fn create_request(
         .into_response()
 }
 
+/// Whether `source` is at its cap of pending requests, checked before the
+/// chain and the admission lock: a flood from one network neither reaches the
+/// RPC nor queues on the lock every create takes, holding pool connections.
+async fn network_over_cap(
+    state: &AppState,
+    source: Option<&str>,
+    now: DateTime<Utc>,
+) -> sqlx::Result<bool> {
+    let Some(source) = source else {
+        return Ok(false);
+    };
+    let from_source: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM explore_api.auth_requests \
+         WHERE source = $1 AND expiration >= $2 AND status <> 'fulfilled'",
+    )
+    .bind(source)
+    .bind(naive(now))
+    .fetch_one(&state.pool)
+    .await?;
+    Ok(from_source >= MAX_REQUESTS_PER_SOURCE as i64)
+}
+
 /// The caps checked and the request stored in one transaction under the
 /// admission lock, so concurrent creates on any replica cannot overshoot.
 async fn admit_request(
@@ -789,22 +816,8 @@ async fn admit_request(
     record: &ChallengeRecord,
     now: DateTime<Utc>,
 ) -> sqlx::Result<Option<Response>> {
-    // A network over its cap is refused before the admission lock: a flood
-    // from one network does not queue on the lock every create takes, holding
-    // pool connections. Under the lock the count is taken again, exactly.
-    if let Some(source) = record.source.as_deref() {
-        let from_source: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM explore_api.auth_requests \
-             WHERE source = $1 AND expiration >= $2 AND status <> 'fulfilled'",
-        )
-        .bind(source)
-        .bind(naive(now))
-        .fetch_one(&state.pool)
-        .await?;
-        if from_source >= MAX_REQUESTS_PER_SOURCE as i64 {
-            return Ok(Some(too_many_from_network()));
-        }
-    }
+    // The caller already refused a network over its cap (`network_over_cap`);
+    // under the lock the count is taken again, exactly.
     let mut tx = state.pool.begin().await?;
     admission_lock(&mut tx, REQUEST_ADMISSION_LOCK).await?;
     if let Some(refusal) = request_capacity_refusal(&mut tx, record.source.as_deref(), now).await? {
@@ -940,12 +953,7 @@ async fn submit_outcome(
         return bad_request(&msg);
     }
 
-    if let Some(chain) = body.auth_chain.as_ref()
-        && let Err(refusal) = validate_auth_chain(chain, state.eip1654.get().map(|v| &**v)).await
-    {
-        return chain_refused(refusal);
-    }
-
+    // The pending request first: a chain for an unknown id reaches no RPC.
     let now = now_micros();
     let record = match found_request(&state, &id, now).await {
         Ok(record) => record,
@@ -953,6 +961,12 @@ async fn submit_outcome(
     };
     if record.status != ChallengeStatus::Pending {
         return already_answered(&id, record.status);
+    }
+
+    if let Some(chain) = body.auth_chain.as_ref()
+        && let Err(refusal) = validate_auth_chain(chain, state.eip1654_validator()).await
+    {
+        return chain_refused(refusal);
     }
 
     let outcome = OutcomeResponseMessage {
@@ -1452,6 +1466,19 @@ mod tests {
         .unwrap()
     }
 
+    fn contract_outcome(signature: &str) -> Vec<u8> {
+        let ephemeral = alloy_signer_local::PrivateKeySigner::random();
+        serde_json::to_vec(&json!({
+            "sender": validation::contract_wallet::CONTRACT,
+            "result": "0xsig",
+            "authChain": validation::contract_wallet::chain(
+                &format!("{:#x}", ephemeral.address()),
+                signature,
+            ),
+        }))
+        .unwrap()
+    }
+
     #[tokio::test]
     async fn contract_wallet_chains_need_the_validator() {
         use validation::contract_wallet::{SIGNATURE, Wallet};
@@ -1463,27 +1490,12 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
-        let ephemeral = alloy_signer_local::PrivateKeySigner::random();
-        let outcome = serde_json::to_vec(&json!({
-            "sender": validation::contract_wallet::CONTRACT,
-            "result": "0xsig",
-            "authChain": validation::contract_wallet::chain(
-                &format!("{:#x}", ephemeral.address()),
-                SIGNATURE,
-            ),
-        }))
-        .unwrap();
-        let (status, body) = call(
-            &app,
-            json_post(
-                "/auth-api/v2/requests/8c545b52-c08e-4c39-a854-46e2b5b03c48/outcome",
-                outcome,
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(
+            body["error"],
+            "Contract wallet signature verification unavailable"
+        );
 
-        assert!(state.attach_eip1654(Some(std::sync::Arc::new(Wallet))));
+        assert!(state.attach_eip1654(Some(std::sync::Arc::new(Wallet::default()))));
         let (status, body) = call(
             &app,
             json_post("/auth-api/requests", contract_request("0xbad0")),
@@ -1493,12 +1505,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_contract_wallet_identity_chain_needs_the_validator() {
+        use validation::contract_wallet::{SIGNATURE, Wallet, chain};
+        let state = crate::api::tests_support::state_without_db().await;
+        let app = Router::new().nest("/auth-api", routes().with_state(state.clone()));
+        let ephemeral = alloy_signer_local::PrivateKeySigner::random();
+        let eph_address = format!("{:#x}", ephemeral.address());
+        let identity = json!({
+            "ephemeralIdentity": { "address": eph_address, "privateKey": format!("0x{}", hex::encode(ephemeral.to_bytes())), "publicKey": "0x04" },
+            "expiration": "2100-01-01T00:00:00.000Z",
+            "authChain": chain(&eph_address, SIGNATURE),
+        });
+        let body = serde_json::to_vec(&json!({ "identity": identity })).unwrap();
+        let signed = || async {
+            let mut req = json_post("/auth-api/identities", body.clone());
+            req.headers_mut().extend(
+                crate::shared::signed_fetch::test_support::signed_headers(
+                    "post",
+                    "/auth-api/identities",
+                    "{}",
+                    true,
+                )
+                .await,
+            );
+            req
+        };
+        let (status, err) = call(&app, signed().await).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{err}");
+
+        assert!(state.attach_eip1654(Some(std::sync::Arc::new(Wallet::default()))));
+        let (status, err) = call(&app, signed().await).await;
+        assert_eq!(
+            (status, err["error"].as_str()),
+            (
+                StatusCode::FORBIDDEN,
+                Some("Request sender does not match identity owner")
+            ),
+            "the contract chain verified; the EOA signer does not own it"
+        );
+    }
+
+    #[tokio::test]
     async fn a_contract_wallet_request_is_created_with_the_contract_as_sender() {
         use validation::contract_wallet::{CONTRACT, SIGNATURE, Wallet};
-        let Some((_db, state)) = replica().await else {
+        let Some((db, state)) = replica().await else {
             return;
         };
-        assert!(state.attach_eip1654(Some(std::sync::Arc::new(Wallet))));
+        let wallet = std::sync::Arc::new(Wallet::default());
+        assert!(state.attach_eip1654(Some(wallet.clone())));
         let app = app(&state);
         let (status, created) = call(
             &app,
@@ -1510,6 +1564,48 @@ mod tests {
         let (status, recovered) = call(&app, get_req(&format!("/auth-api/v2/requests/{id}"))).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(recovered["sender"], CONTRACT);
+
+        let asked = wallet.calls();
+        let (status, _) = call(
+            &app,
+            json_post(
+                "/auth-api/v2/requests/8c545b52-c08e-4c39-a854-46e2b5b03c48/outcome",
+                contract_outcome(SIGNATURE),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(wallet.calls(), asked, "an unknown id reaches no validator");
+
+        let without_validator = self::app(&other_replica(&db).await);
+        let (status, body) = call(
+            &without_validator,
+            json_post(
+                &format!("/auth-api/v2/requests/{id}/outcome"),
+                contract_outcome(SIGNATURE),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        let (status, body) = call(
+            &app,
+            json_post(
+                &format!("/auth-api/v2/requests/{id}/outcome"),
+                contract_outcome("0xbad0"),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        let (status, body) = call(
+            &app,
+            json_post(
+                &format!("/auth-api/v2/requests/{id}/outcome"),
+                contract_outcome(SIGNATURE),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        db.teardown().await;
     }
 
     #[tokio::test]
@@ -1687,6 +1783,25 @@ mod tests {
         }
         let (status, _) = call(&app, post("203.0.113.5:4001")).await;
         assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        let wallet = std::sync::Arc::new(validation::contract_wallet::Wallet::default());
+        assert!(state.attach_eip1654(Some(wallet.clone())));
+        let (status, _) = call(
+            &app,
+            from_peer(
+                json_post(
+                    "/auth-api/requests",
+                    contract_request(validation::contract_wallet::SIGNATURE),
+                ),
+                "203.0.113.5:4001",
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            wallet.calls(),
+            0,
+            "a network over its cap reaches no validator"
+        );
         let (status, _) = call(&app, post("198.51.100.7:4000")).await;
         assert_eq!(
             status,

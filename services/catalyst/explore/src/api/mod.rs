@@ -819,6 +819,11 @@ impl State {
     ) -> bool {
         validator.is_some_and(|v| self.eip1654.set(v).is_ok())
     }
+
+    /// The attached EIP-1654 validator, if any.
+    pub fn eip1654_validator(&self) -> Option<&dyn crate::auth::eip1654::Eip1654Validator> {
+        self.eip1654.get().map(|v| &**v)
+    }
 }
 
 pub(crate) fn json_error(status: StatusCode, message: impl Into<String>) -> Response {

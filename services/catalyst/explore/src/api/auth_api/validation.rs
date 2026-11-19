@@ -141,7 +141,14 @@ async fn verify_chain(
 ) -> Result<(), ChainRefusal> {
     match verify_auth_chain_async(chain, final_authority, None, eip1654).await {
         Ok(()) => Ok(()),
-        Err(AuthError::Eip1654NotImplemented | AuthError::Eip1654ValidationFailed(_)) => {
+        Err(AuthError::Eip1654NotImplemented) => {
+            tracing::warn!(
+                "auth-api: contract-wallet chain refused, no EIP-1654 validator configured"
+            );
+            Err(ChainRefusal::Unavailable)
+        }
+        Err(AuthError::Eip1654ValidationFailed(detail)) => {
+            tracing::warn!(%detail, "auth-api: contract-wallet chain refused, EIP-1654 validation failed");
             Err(ChainRefusal::Unavailable)
         }
         Err(e) => Err(ChainRefusal::Invalid(e.to_string())),
@@ -153,7 +160,7 @@ pub(super) async fn validate_auth_chain(
     eip1654: Option<&dyn Eip1654Validator>,
 ) -> Result<VerifiedChain, ChainRefusal> {
     if chain.is_empty() {
-        return Err("Auth chain is required".to_string().into());
+        return Err(ChainRefusal::Invalid("Auth chain is required".into()));
     }
     assert_chain_structure(chain)?;
     let sender = chain
@@ -194,7 +201,7 @@ pub(super) async fn validate_identity_chain(
     eip1654: Option<&dyn Eip1654Validator>,
 ) -> Result<(String, String), ChainRefusal> {
     let (Some(first), Some(last)) = (chain.first(), chain.last()) else {
-        return Err("Auth chain is required".to_string().into());
+        return Err(ChainRefusal::Invalid("Auth chain is required".into()));
     };
     let (_, final_authority, _) = parse_ephemeral_payload(&last.payload)
         .map_err(|_| "Could not get final authority from auth chain".to_string())?;
@@ -227,14 +234,23 @@ fn derive_final_authority(chain: &AuthChain) -> Result<String, String> {
 
 #[cfg(test)]
 pub(super) mod contract_wallet {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use crate::auth::eip1654::Eip1654Validator;
     use crate::auth::{AuthChain, AuthError, AuthLink, AuthLinkType};
 
     pub const CONTRACT: &str = "0x00000000000000000000000000000000c0ffee00";
     pub const SIGNATURE: &str = "0xc0de";
 
-    /// Answers for [`CONTRACT`] alone, accepting only [`SIGNATURE`].
-    pub struct Wallet;
+    /// Answers for [`CONTRACT`] alone, accepting only [`SIGNATURE`]; counts its calls.
+    #[derive(Default)]
+    pub struct Wallet(AtomicUsize);
+
+    impl Wallet {
+        pub fn calls(&self) -> usize {
+            self.0.load(Ordering::SeqCst)
+        }
+    }
 
     #[async_trait::async_trait]
     impl Eip1654Validator for Wallet {
@@ -244,6 +260,7 @@ pub(super) mod contract_wallet {
             _hash: &[u8],
             signature: &[u8],
         ) -> Result<bool, AuthError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
             Ok(contract_address == CONTRACT && signature == [0xc0, 0xde])
         }
     }
@@ -678,13 +695,14 @@ mod tests {
     async fn contract_wallet_chains_are_asked_of_the_validator() {
         use super::contract_wallet::{CONTRACT, SIGNATURE, Unreachable, Wallet, chain};
         let ephemeral = address_of(EPHEMERAL_KEY);
+        let wallet = Wallet::default();
 
-        let verified = validate_auth_chain(&chain(&ephemeral, SIGNATURE), Some(&Wallet))
+        let verified = validate_auth_chain(&chain(&ephemeral, SIGNATURE), Some(&wallet))
             .await
             .unwrap();
         assert_eq!(verified.sender, CONTRACT);
         let (owner, final_authority) =
-            validate_identity_chain(&chain(&ephemeral, SIGNATURE), Some(&Wallet))
+            validate_identity_chain(&chain(&ephemeral, SIGNATURE), Some(&wallet))
                 .await
                 .unwrap();
         assert_eq!(
@@ -694,11 +712,11 @@ mod tests {
 
         let forged = chain(&ephemeral, "0xbad0");
         assert!(
-            invalid(validate_auth_chain(&forged, Some(&Wallet)).await).contains("rejected"),
+            invalid(validate_auth_chain(&forged, Some(&wallet)).await).contains("rejected"),
             "a signature the contract refuses is a bad request"
         );
         assert!(
-            validate_identity_chain(&forged, Some(&Wallet))
+            validate_identity_chain(&forged, Some(&wallet))
                 .await
                 .is_err()
         );

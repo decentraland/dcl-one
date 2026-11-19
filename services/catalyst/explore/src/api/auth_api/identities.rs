@@ -130,15 +130,11 @@ pub(super) async fn create_identity(
     if let Some(err) = identity_shape_error(&body.identity) {
         return bad_request(&format!("Invalid AuthIdentity: {err}"));
     }
-    let (owner, final_authority) = match validate_identity_chain(
-        &parsed.auth_chain,
-        state.eip1654.get().map(|v| &**v),
-    )
-    .await
-    {
-        Ok(authorities) => authorities,
-        Err(refusal) => return chain_refused(refusal),
-    };
+    let (owner, final_authority) =
+        match validate_identity_chain(&parsed.auth_chain, state.eip1654_validator()).await {
+            Ok(authorities) => authorities,
+            Err(refusal) => return chain_refused(refusal),
+        };
     if !parsed
         .ephemeral_identity
         .address
@@ -307,7 +303,7 @@ async fn verify_identity_post(
         "post",
         IDENTITY_SIGNED_PATH,
         PayloadPolicy::V6Only,
-        state.eip1654.get().map(|v| &**v),
+        state.eip1654_validator(),
     )
     .await
     .map_err(|err| {
