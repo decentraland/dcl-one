@@ -143,6 +143,22 @@
     left: 0;
   }
 
+  .dropdown[data-compact] {
+    min-width: 100%;
+    width: max-content;
+    background: var(--dcl-bg-surface-overlay);
+    box-shadow: 0 4px 16px color-mix(in srgb, var(--dcl-neutrals-black) 50%, transparent);
+    -webkit-backdrop-filter: blur(12.5px);
+    backdrop-filter: blur(12.5px);
+  }
+
+  /* Keep the pointer inside the disclosure while it crosses the visual gap. */
+  .dropdown::before {
+    content: '';
+    position: absolute;
+    inset: calc(-1 * var(--dcl-space-8) - 1px) 0 100%;
+  }
+
   .accountMenu {
     right: 0;
     min-width: 240px;
@@ -166,6 +182,16 @@
     text-align: left;
     text-decoration: none;
     cursor: pointer;
+  }
+
+  .dropdown[data-compact] .dropdownLink {
+    color: var(--dcl-text-secondary);
+  }
+
+  .tab:active,
+  .dropdownLink:active,
+  .drawerToggle:active {
+    background: var(--dcl-bg-pressed);
   }
 
   .dropdownLink[aria-current='page'],
@@ -449,6 +475,11 @@
     color: var(--dcl-text-primary);
   }
 
+  .drawer[data-compact] {
+    bottom: auto;
+    max-height: 100%;
+  }
+
   @keyframes drawerReveal {
     from {
       clip-path: inset(0 0 100% 0);
@@ -497,8 +528,13 @@
     padding-bottom: var(--dcl-space-12);
   }
 
+  .drawerItems[hidden] {
+    display: none;
+  }
+
   .drawerGroup,
-  .drawerLink {
+  .drawerLink,
+  .drawerToggle {
     composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
     color: var(--dcl-text-primary);
   }
@@ -514,6 +550,27 @@
     text-decoration: none;
   }
 
+  .drawerToggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: var(--dcl-space-24) var(--dcl-space-16);
+    border: 0;
+    border-radius: var(--dcl-radius-sm);
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .drawerSection[data-expanded] .drawerToggle {
+    padding-block: var(--dcl-space-12) var(--dcl-space-4);
+  }
+
+  .drawerToggle[aria-expanded='true'] .chevron {
+    transform: rotate(180deg);
+  }
+
   .drawerItemLink {
     composes: text626f64792f6d64 from '../../foundations/typography/text-styles.module.css';
     display: block;
@@ -521,6 +578,11 @@
     border-radius: var(--dcl-radius-sm);
     color: var(--dcl-text-primary);
     text-decoration: none;
+  }
+
+  .drawerSection[data-expanded] .drawerItemLink {
+    padding-block: var(--dcl-space-8);
+    color: var(--dcl-text-secondary);
   }
 
   .drawerAccount {
@@ -557,6 +619,7 @@
     .dropdownLink:hover,
     .menuItem:hover,
     .drawerLink:hover,
+    .drawerToggle:hover,
     .drawerItemLink:hover,
     .signIn:hover,
     .iconButton:hover,

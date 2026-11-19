@@ -80,14 +80,16 @@ beforeAll(async () => {
   await session.send('Page.enable')
 }, 300_000)
 afterAll(() => releaseHarness({ session, server, scratch }))
-async function openCase(id: string, width: number) {
+async function openCase(id: string, width: number, publicNavigation = false) {
   await session.send('Emulation.setDeviceMetricsOverride', {
     width,
     height: 900,
     deviceScaleFactor: 1,
     mobile: false
   })
-  await session.navigate(`${origin}${page}?case=${encodeURIComponent(id)}`)
+  const params = new URLSearchParams({ case: id })
+  if (publicNavigation) params.set('public', '')
+  await session.navigate(`${origin}${page}?${params}`)
   await evaluate(
     `new Promise((resolve,reject)=>{const start=Date.now();const poll=()=>{if(!document.querySelector('#native-bounds-root>div>nav'))return Date.now()-start>15000?reject(Error('Native NavBar missing')):setTimeout(poll,25);document.fonts.ready.then(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))};poll()})`
   )
@@ -209,5 +211,51 @@ describe('native public NavBar bounds, independently of captured Review selectio
       ).toBe(true)
     }
     expect(session.runtimeErrors).toEqual([])
+  }, 60_000)
+})
+
+describe('when the public Sites navigation runs with browser input', () => {
+  it('should hold Discover open across its visual gap and on pointer press', async () => {
+    await openCase('out-solid-0', 1440, true)
+    const points = await evaluate<{ x: number; y: number; bottom: number }>(
+      `(()=>{const button=[...document.querySelectorAll('nav button')].find(el=>el.textContent==='Discover');const b=button.getBoundingClientRect();return{x:b.x+b.width/2,y:b.y+b.height/2,bottom:b.bottom}})()`
+    )
+    for (const y of [points.y, points.bottom + 4, points.bottom + 24]) {
+      await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: points.x, y })
+      expect(
+        await evaluate(`!document.querySelector('nav a[href="/places"]').closest('ul').hidden`)
+      ).toBe(true)
+    }
+    await click('nav button[aria-expanded="true"]:not([aria-label])')
+    expect(
+      await evaluate(`!document.querySelector('nav a[href="/places"]').closest('ul').hidden`)
+    ).toBe(true)
+    await key('Escape', 27)
+    expect(
+      await evaluate(
+        `document.activeElement.textContent==='Discover'&&document.activeElement.getAttribute('aria-expanded')==='false'`
+      )
+    ).toBe(true)
+  }, 60_000)
+
+  it('should expand Discover on touch and keep the drawer within the viewport', async () => {
+    await openCase('out-solid-0', 390, true)
+    await click('button[aria-label="Open menu"]')
+    const control = await evaluate<{ x: number; y: number }>(
+      `(()=>{const b=[...document.querySelectorAll('[data-testid="navbar-panel"] button')].find(el=>el.textContent==='Discover').getBoundingClientRect();return{x:Math.round(b.x+b.width/2),y:Math.round(b.y+b.height/2)}})()`
+    )
+    await evaluate(
+      `Promise.all(document.querySelector('[data-testid="navbar-panel"]').getAnimations().map(animation=>animation.finished))`
+    )
+    await session.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [control]
+    })
+    await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    expect(
+      await evaluate(
+        `(()=>{const panel=document.querySelector('[data-testid="navbar-panel"]');const link=panel.querySelector('a[href="/places"]');return !link.closest('ul').hidden&&panel.getBoundingClientRect().bottom<=innerHeight})()`
+      )
+    ).toBe(true)
   }, 60_000)
 })
