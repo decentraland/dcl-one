@@ -227,6 +227,18 @@ impl Settings {
         }
     }
 
+    /// Why `State::eth_signer` is absent, in the order `State::new` decides it: the startup log and
+    /// the NAME routes' error name the setting to change.
+    pub fn names_signer_absence(&self) -> &'static str {
+        if self.trial_mode {
+            "off in a credits trial (CREDITS_TRIAL_MODE), where the relayer key signs on the collections chain alone"
+        } else if !self.names_signer_enabled {
+            "off (NAMES_SIGNER_ENABLED=false)"
+        } else {
+            "not provisioned (set META_TX_BROADCAST_ENABLED=true with RELAYER_PRIVATE_KEY_FILE + ETH_RPC_URL)"
+        }
+    }
+
     fn has(o: &Option<String>) -> bool {
         o.as_deref().is_some_and(|s| !s.trim().is_empty())
     }
@@ -479,7 +491,8 @@ impl State {
                 "economy: NAMEs chain signer enabled; ensure the relayer address holds ETH for gas and MANA on Ethereum"
             ),
             None => tracing::info!(
-                "economy: NAMEs chain signer not provisioned (ETH_RPC_URL + the key enable /v1/broker/names)"
+                "economy: NAMEs chain signer {}; /v1/broker/names broadcasts nothing",
+                settings.names_signer_absence()
             ),
         }
         let contracts = ContractsComponent::new(

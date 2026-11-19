@@ -1409,6 +1409,13 @@ impl PulseServer {
                                 tracing::info!(peer, "webtransport peer disconnected (corrupt budget)");
                             }
                         }
+                        Some(Event::Oversized { peer }) => {
+                            self.pre_auth_for(peer as u32).release_on_disconnect(peer as u32);
+                            transports
+                                .disconnect(peer as u32, DisconnectReason::PacketCorrupted.code())
+                                .await?;
+                            tracing::info!(peer, "webtransport peer disconnected (stream frame over twice the message cap)");
+                        }
                         Some(Event::Disconnect { peer }) => {
                             self.on_disconnect(&mut transports, peer as u32).await?;
                         }
