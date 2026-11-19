@@ -65,9 +65,10 @@ pub(crate) use lookup::{meta_str, participant_room, resolve_adapter_room, signed
 mod policy;
 pub(crate) use policy::try_get_lease_holders_for_parcels;
 pub use policy::{
-    SceneCaches, ensure_target_not_protected, get_extra_addresses, get_lease_holders_for_parcels,
-    has_world_access_permission, holds_extended_permission, names_for,
-    scene_owner_or_admin_decision, try_get_extra_addresses,
+    SceneCaches, WorldAccess, ensure_target_not_protected, get_extra_addresses,
+    get_lease_holders_for_parcels, has_world_access_permission, holds_extended_permission,
+    names_for, scene_manager_decision, scene_owner_or_admin_decision, try_get_extra_addresses,
+    world_access,
 };
 #[path = "scene_effects.rs"]
 mod effects;

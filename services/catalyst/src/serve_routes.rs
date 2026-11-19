@@ -180,12 +180,13 @@ pub(super) fn build_routes(
         // The scene workers' routing map and proxy (`scene_proxy`).
         .nest("/_scene", crate::scene_proxy::router(scene_proxy))
         // The gatekeeper's mounts, where `social::router` held them: the Pulse
-        // room authority, the world comms mints and the LiveKit webhook (the
+        // room authority, the message router's token route, the world comms mints and the LiveKit webhook (the
         // worlds content server's root path) at the root, the mints and the
         // webhook under `/worlds-content-server`, and the gatekeeper's routes
         // with social's MLS routes under `/comms-gatekeeper` behind the
         // social writes switch.
         .merge(comms::gatekeeper::room_authority_router(gatekeeper))
+        .merge(comms::gatekeeper::message_router_token_router(gatekeeper))
         .merge(comms::gatekeeper::admission::world_mint::router(
             gatekeeper.clone(),
         ))

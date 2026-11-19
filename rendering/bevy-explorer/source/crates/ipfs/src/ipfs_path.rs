@@ -119,10 +119,22 @@ pub enum IpfsType {
 }
 
 impl IpfsType {
+    /// The file part takes the content map's key form (relative and lowercase, as
+    /// `ContentMap::key` stores it), so every load of one deployed file gets one asset path
+    /// whatever case the caller spelled it in: a scene's `GltfContainer` may name
+    /// `models/Tree.glb` while the near LOD finds `models/tree.glb` in the content map, and two
+    /// paths would download and parse the file twice. The lookup is case-insensitive either way.
+    /// A url keeps its case: a content-map miss fetches it as written.
     pub fn new_content_file(content_hash: String, file_path: String) -> Self {
+        let file_path = content_file_path(&file_path);
+        let file_path = if is_url(&file_path) {
+            file_path.into_owned()
+        } else {
+            file_path.to_lowercase()
+        };
         Self::ContentFile {
             content_hash,
-            file_path: content_file_path(&file_path).into_owned(),
+            file_path,
         }
     }
 
@@ -413,13 +425,40 @@ pub enum IpfsKey {
     /// Names nothing to fetch: it gives one file a second asset path, for a load of it with
     /// other loader settings (see `IpfsResource::load_content_file_variant`).
     Variant,
+    /// What part of a file the load takes, when not all of it: [`COLLIDERS_PART`]. The file
+    /// resolves, downloads and caches as without it; only the asset path differs, so the part
+    /// loads with its own settings beside the whole file's asset.
+    Part,
 }
+
+/// The [`IpfsKey::Part`] of a glTF loaded for its colliders only (`scene_lod`).
+pub const COLLIDERS_PART: &str = "colliders";
+
+/// The file name every image a colliders-part glTF references by uri resolves to
+/// ([`ContentPathExt::resolve_content_uri`]), answered with [`COLLIDER_TEXTURE_PNG`] and never
+/// fetched.
+const COLLIDER_TEXTURE: &str = "collider-texture.png";
+
+/// A 1x1 white PNG.
+pub const COLLIDER_TEXTURE_PNG: [u8; 68] = [
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+    0x89, 0x00, 0x00, 0x00, 0x0b, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0x0f, 0x04, 0x00,
+    0x09, 0xfb, 0x03, 0xfd, 0xfb, 0x5e, 0x6b, 0x2b, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44,
+    0xae, 0x42, 0x60, 0x82,
+];
+
+/// Image extensions a glTF may reference by uri.
+const IMAGE_EXTENSIONS: [&str; 9] = [
+    "png", "jpg", "jpeg", "webp", "ktx2", "basis", "dds", "gif", "bmp",
+];
 
 impl AsRef<Path> for IpfsKey {
     fn as_ref(&self) -> &Path {
         match self {
             IpfsKey::BaseUrl => Path::new("&baseUrl"),
             IpfsKey::Variant => Path::new("&variant"),
+            IpfsKey::Part => Path::new("&part"),
         }
     }
 }
@@ -431,6 +470,7 @@ impl TryFrom<&str> for IpfsKey {
         match key {
             "&baseUrl" => Ok(Self::BaseUrl),
             "&variant" => Ok(Self::Variant),
+            "&part" => Ok(Self::Part),
             other => anyhow::bail!("unrecognised ipfs key `{other}`"),
         }
     }
@@ -669,6 +709,13 @@ impl IpfsPath {
     pub fn get(&self, key: &IpfsKey) -> Option<&str> {
         self.key_values.get(key).map(Deref::deref)
     }
+
+    /// An image a colliders-part glTF references: answered with [`COLLIDER_TEXTURE_PNG`], never
+    /// fetched.
+    pub fn is_collider_texture(&self) -> bool {
+        self.get(&IpfsKey::Part) == Some(COLLIDERS_PART)
+            && self.content_path() == Some(COLLIDER_TEXTURE)
+    }
 }
 
 impl From<&IpfsPath> for PathBuf {
@@ -783,6 +830,20 @@ impl ContentPathExt for Path {
             return self.join(uri);
         };
 
+        // a glTF loaded for its colliders samples no texture: every image it references by uri
+        // resolves to one placeholder the reader answers without a request. Images embedded in
+        // the file are the glTF loader's: empty material usages register them as placeholders
+        let prefix = &segments[..prefix_len];
+        if prefix
+            .windows(2)
+            .any(|pair| pair == ["&part", COLLIDERS_PART])
+            && is_image(uri)
+        {
+            let mut placeholder = prefix.to_vec();
+            placeholder.push(COLLIDER_TEXTURE);
+            return PathBuf::from(placeholder.join("/"));
+        }
+
         // force the uri relative first - an absolute one would otherwise discard the prefix
         let uri = content_file_path(uri);
 
@@ -808,6 +869,20 @@ impl ContentPathExt for Path {
     }
 }
 
+/// True when `uri`'s extension names an image ([`IMAGE_EXTENSIONS`]), ignoring case and any
+/// query or fragment.
+fn is_image(uri: &str) -> bool {
+    let path = uri.split(['?', '#']).next().unwrap_or_default();
+    Path::new(path)
+        .extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|ext| {
+            IMAGE_EXTENSIONS
+                .iter()
+                .any(|image| image.eq_ignore_ascii_case(ext))
+        })
+}
+
 /// Fn-pointer form of [`ContentPathExt::resolve_content_uri`], for
 /// [`bevy::gltf::GltfPlugin::with_uri_resolver`].
 pub fn resolve_content_uri(parent_path: &Path, uri: &str) -> PathBuf {
@@ -819,8 +894,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        content_file_path, is_http_url, resolve_content_uri, CacheKey, ContentPathExt, IpfsPath,
-        IpfsType,
+        content_file_path, is_http_url, resolve_content_uri, CacheKey, ContentPathExt, IpfsKey,
+        IpfsPath, IpfsType, COLLIDERS_PART,
     };
     use crate::{ContentMap, IpfsContext, IpfsEntity};
 
@@ -935,6 +1010,53 @@ mod tests {
             resolve_content_uri(parent, "../../optimized-textures/Image_2.png"),
             Path::new("$ipfs/$content_file/bafyhash/assets/optimized-textures/Image_2.png")
         );
+    }
+
+    /// A colliders-part glTF keeps its part in every uri it resolves, so its buffers download as
+    /// the whole file's do, while each image it references becomes the one placeholder the
+    /// reader answers.
+    #[test]
+    fn a_colliders_part_resolves_its_images_to_the_placeholder() {
+        let model = IpfsPath::new(IpfsType::new_content_file(
+            "bafyhash".to_owned(),
+            "models/Tree.gltf".to_owned(),
+        ))
+        .with_keyvalue(IpfsKey::Part, COLLIDERS_PART.to_owned());
+        let path = PathBuf::from(&model);
+        assert_eq!(
+            path,
+            Path::new("$ipfs/&part/colliders/$content_file/bafyhash/models/.tree.gltf")
+        );
+        assert_eq!(IpfsPath::new_from_path(&path).unwrap(), Some(model));
+
+        let parent = path.parent().unwrap();
+        assert_eq!(
+            resolve_content_uri(parent, "tree.bin"),
+            Path::new("$ipfs/&part/colliders/$content_file/bafyhash/models/tree.bin")
+        );
+        for image in ["bark.png", "../textures/Leaf.JPG", "leaf.ktx2?v=2"] {
+            let resolved = resolve_content_uri(parent, image);
+            assert_eq!(
+                resolved,
+                Path::new("$ipfs/&part/colliders/$content_file/bafyhash/collider-texture.png")
+            );
+            assert!(IpfsPath::new_from_path(&resolved)
+                .unwrap()
+                .unwrap()
+                .is_collider_texture());
+        }
+
+        // the whole file's images still resolve as before
+        let whole = Path::new("$ipfs/$content_file/bafyhash/models");
+        let resolved = resolve_content_uri(whole, "bark.png");
+        assert_eq!(
+            resolved,
+            Path::new("$ipfs/$content_file/bafyhash/models/bark.png")
+        );
+        assert!(!IpfsPath::new_from_path(&resolved)
+            .unwrap()
+            .unwrap()
+            .is_collider_texture());
     }
 
     #[test]
@@ -1065,6 +1187,22 @@ mod tests {
         assert_eq!(hash("scenehash", "dance"), None);
         assert!(hash("scenehash", "https://example.com/foo.glb").is_some());
         assert_eq!(hash("otherhash", "models/emotes/foo.glb"), None);
+    }
+
+    #[test]
+    fn content_files_share_one_path_across_case() {
+        let path = |file: &str| {
+            PathBuf::from(&IpfsPath::new(IpfsType::new_content_file(
+                "bafyscene".to_owned(),
+                file.to_owned(),
+            )))
+        };
+        assert_eq!(path("models/Tree.glb"), path("models/tree.glb"));
+        let url = "https://example.com/Tree.glb";
+        assert!(matches!(
+            IpfsType::new_content_file("bafyscene".to_owned(), url.to_owned()),
+            IpfsType::ContentFile { file_path, .. } if file_path == url
+        ));
     }
 
     #[test]

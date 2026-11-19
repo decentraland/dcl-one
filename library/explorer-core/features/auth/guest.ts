@@ -8,6 +8,7 @@ import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
 import { personalSign } from '../../shell/sign'
 import type { AuthIdentity, StoredLogin } from './sso'
 import { EmailLoginError, GUEST_SESSION_KEY, guestLogin, guestSign, type GuestWallet } from './thirdweb'
+import { THIRDWEB_GUEST_PARAM } from './guestWalletParam'
 
 /** An email account's sign-in from the HUD lasts 7 days; the Sites sign-in page's own lasts 30. */
 export const EMAIL_IDENTITY_LIFETIME_MS = 7 * 24 * 3600 * 1000
@@ -25,9 +26,12 @@ export interface GuestBackend {
 }
 
 export const webGuestBackend: GuestBackend = {
-  login(sessionId) {
+  // kept only once thirdweb has signed it in: a failed login (an origin thirdweb refuses) leaves no
+  // session behind to make the next PLAY AS GUEST pick thirdweb again
+  async login(sessionId) {
+    const wallet = await guestLogin(sessionId)
     localStorage.setItem(GUEST_SESSION_KEY, sessionId)
-    return guestLogin(sessionId)
+    return wallet
   },
   sign: guestSign,
   keptSessionId: () => localStorage.getItem(GUEST_SESSION_KEY)
@@ -49,9 +53,16 @@ export const localGuestBackend: GuestBackend = {
   sign: (token, message) => Promise.resolve(personalSign(token, message))
 }
 
-/** The guest wallet a web page on `hostname` can reach. */
-export function webGuestBackendFor(hostname: string): GuestBackend {
-  const thirdweb = THIRDWEB_DOMAINS.some((d) => hostname === d || hostname.endsWith(`.${d}`))
+
+/** The guest wallet a web page at `location` can reach: thirdweb on Decentraland's domains, when the
+ *  page asks for it, or when this browser already keeps a thirdweb guest session (so the guest comes
+ *  back on the same wallet without the parameter); a key made in this browser otherwise. */
+export function webGuestBackendFor(location: { hostname: string; search: string }): GuestBackend {
+  const { hostname, search } = location
+  const thirdweb =
+    THIRDWEB_DOMAINS.some((d) => hostname === d || hostname.endsWith(`.${d}`)) ||
+    new URLSearchParams(search).get(THIRDWEB_GUEST_PARAM) === 'thirdweb' ||
+    localStorage.getItem(GUEST_SESSION_KEY) != null
   return thirdweb ? webGuestBackend : localGuestBackend
 }
 

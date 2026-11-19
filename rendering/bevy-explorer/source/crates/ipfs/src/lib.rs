@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod batch_sizes;
 pub mod bevy_variants;
 pub mod cache_heal;
@@ -423,6 +425,24 @@ impl IpfsAssetServer<'_, '_> {
         Ok(self
             .server
             .load_with_settings(PathBuf::from(&ipfs_path), settings))
+    }
+
+    /// A content file loaded for its colliders only ([`ipfs_path::COLLIDERS_PART`]): the same
+    /// file, downloaded and cached once with the whole file's loads, under an asset path of its
+    /// own, so these settings never reach the whole file's asset.
+    pub fn load_content_file_colliders<T: Asset, S: Settings>(
+        &self,
+        file_path: &str,
+        content_hash: &str,
+        settings: impl Fn(&mut S) + Send + Sync + 'static,
+    ) -> Handle<T> {
+        let ipfs_path = IpfsPath::new(IpfsType::new_content_file(
+            content_hash.to_owned(),
+            file_path.to_owned(),
+        ))
+        .with_keyvalue(IpfsKey::Part, ipfs_path::COLLIDERS_PART.to_owned());
+        self.server
+            .load_with_settings(PathBuf::from(&ipfs_path), settings)
     }
 
     pub fn load_urn<T: IpfsAsset>(&self, urn: &str) -> Result<Handle<T>, anyhow::Error> {
@@ -2079,6 +2099,13 @@ impl IpfsIo {
                 }
             };
 
+            // an image a colliders-part glTF references is never sampled: no request
+            if ipfs_path.is_collider_texture() {
+                return Ok(Box::new(VecReader::new(
+                    ipfs_path::COLLIDER_TEXTURE_PNG.to_vec(),
+                )));
+            }
+
             #[cfg(target_arch = "wasm32")]
             if let Some(indexdb_path) = ipfs_path.to_indexdb() {
                 use futures_lite::io::AsyncReadExt;
@@ -2318,9 +2345,7 @@ where
         cx: &mut std::task::Context<'_>,
         offset: u64,
     ) -> std::task::Poll<std::io::Result<u64>> {
-        let mut pinned = unsafe { self.map_unchecked_mut(|slf| &mut slf.0) };
-        pinned
-            .as_mut()
+        std::pin::Pin::new(&mut self.get_mut().0)
             .poll_seek(cx, std::io::SeekFrom::Current(offset as i64))
     }
 }
@@ -2334,8 +2359,7 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        let mut pinned = unsafe { self.map_unchecked_mut(|slf| &mut slf.0) };
-        pinned.as_mut().poll_read(cx, buf)
+        std::pin::Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
     }
 }
 

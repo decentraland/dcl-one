@@ -129,6 +129,26 @@ impl Sources {
     }
 }
 
+/// The realm document's `comms.adapter`. `COMMS_ADAPTER` when it names one;
+/// left at its offline default while `COMMS_FIXED_ADAPTER` is set, the
+/// adapter this node's `/about` derives from that one setting
+/// (`content::about_comms::build_comms_config`), as upstream's realm provider
+/// derives its own from the connector URL alone. Otherwise the two documents
+/// of one node disagree and a client reading `adapter` first joins no room.
+fn realm_comms_adapter(adapter: &str, fixed_adapter: Option<&str>) -> String {
+    const OFFLINE: &str = "offline:offline";
+    let adapter = value_or(adapter, OFFLINE.into());
+    let fixed = value_or(fixed_adapter.unwrap_or_default(), String::new());
+    let fixed = fixed.as_str();
+    if adapter != OFFLINE || fixed.is_empty() || fixed == OFFLINE {
+        adapter
+    } else if fixed.starts_with("archipelago:") {
+        format!("archipelago:{fixed}")
+    } else {
+        format!("fixed-adapter:{fixed}")
+    }
+}
+
 fn value_or(value: &str, default: String) -> String {
     let v = value.trim().trim_end_matches('/');
     if v.is_empty() { default } else { v.to_string() }
@@ -231,7 +251,10 @@ impl Settings {
                 .unwrap_or("main")
                 .to_string(),
             network_id: network_id(&config.node.eth_network),
-            comms_adapter: value_or(&config.explore.comms_adapter, "offline:offline".into()),
+            comms_adapter: realm_comms_adapter(
+                &config.explore.comms_adapter,
+                config.explore.comms_fixed_adapter.as_deref(),
+            ),
             comms_fixed_adapter: value_or(
                 config.explore.comms_fixed_adapter.as_deref().unwrap_or(""),
                 "offline:offline".into(),
@@ -827,4 +850,35 @@ pub(crate) mod tests_support {
     }
 
     pub(crate) use super::tests::{ScratchDb, scratch_database};
+}
+
+#[cfg(test)]
+mod realm_comms_adapter_tests {
+    use super::realm_comms_adapter;
+
+    #[test]
+    fn the_realm_adapter_follows_the_fixed_adapter_when_only_that_is_set() {
+        let derived = |adapter, fixed| realm_comms_adapter(adapter, fixed);
+        assert_eq!(derived("offline:offline", None), "offline:offline");
+        assert_eq!(derived("", Some("  ")), "offline:offline");
+        assert_eq!(
+            derived("offline:offline", Some("archipelago:wss://node.example/ws")),
+            "archipelago:archipelago:wss://node.example/ws"
+        );
+        assert_eq!(
+            derived(
+                "offline:offline",
+                Some("livekit:wss://sfu.example?access_token=t")
+            ),
+            "fixed-adapter:livekit:wss://sfu.example?access_token=t"
+        );
+        // An adapter that names one is advertised as set.
+        assert_eq!(
+            derived(
+                "fixed-adapter:archipelago:wss://node.example/ws",
+                Some("archipelago:wss://node.example/ws")
+            ),
+            "fixed-adapter:archipelago:wss://node.example/ws"
+        );
+    }
 }

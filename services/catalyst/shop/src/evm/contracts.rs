@@ -40,6 +40,12 @@ const WHITELIST_BODY_CAP: usize = 4 * 1024 * 1024;
 /// (MarketplaceV5, the current CouponManager and CollectionDiscountCoupon): the
 /// testnet development profile relays through it when it signs with a relayer key
 /// of its own.
+///
+/// That entry is a snapshot. The same profile without a key reads the published
+/// list live, so once contracts.decentraland.org changes its `amoy` entry (a new
+/// CouponManager, say) the two admit different contracts until the snapshot is
+/// refreshed: replace `amoy` with the published entry, keep
+/// `CreditsManager_DCL_ONE`, and update the date above.
 pub const ADDRESSES_JSON: &[u8] = include_bytes!("addresses.json");
 const WHITELIST_TIMEOUT: Duration = Duration::from_secs(20);
 /// Anchors are stable by construction (a beacon upgrade repoints the beacon,
@@ -311,7 +317,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_served_contract_map_is_the_old_one_and_feeds_the_default_whitelist() {
+    fn the_served_contract_map_covers_every_network_and_feeds_the_default_whitelist() {
         let json: Value = serde_json::from_slice(ADDRESSES_JSON).unwrap();
         let keys: Vec<&str> = json
             .as_object()

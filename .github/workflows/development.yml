@@ -72,8 +72,8 @@ jobs:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:macos') && '["ubuntu-26.04"]' || '["ubuntu-26.04", "macos-15"]') }}
-        # Each shard compiles the tests and runs a third of the test executables, cut by their recorded
-        # times. One shard also runs the provisioned Archipelago tests beside them (CATALYST_TEST_PROVISIONED_SHARD).
+        # Each shard builds its assigned integration tests and runs the binaries selected by recorded times.
+        # One shard also runs the provisioned Archipelago tests (CATALYST_TEST_PROVISIONED_SHARD).
         shard: [1, 2, 3]
     runs-on: ${{ matrix.os == 'ubuntu-26.04' && (vars.RUNNER_LINUX_X86 || 'ubuntu-26.04')
       || matrix.os == 'macos-15' && (vars.RUNNER_MACOS || 'macos-15')
@@ -271,7 +271,9 @@ jobs:
       - name: Give unchanged sources the file times of the snapshot
         # Cargo compares file times, and a checkout gives every file the current time. Without this
         # step Cargo compiles every workspace crate again although the snapshot holds them.
-        run: python3 tooling/cargo-mtimes.py restore services/catalyst/target
+        run: |
+          if [ -d services/catalyst/target ]; then du -sh services/catalyst/target; fi
+          python3 tooling/cargo-mtimes.py restore services/catalyst/target
       - name: Restore the pnpm store
         id: pnpm-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -313,6 +315,9 @@ jobs:
         with:
           path: ${{ env.PNPM_STORE }}
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
+      - name: Prune superseded Rust libraries from the smoke snapshot
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.rust-cache.outputs.cache-hit != 'true'
+        run: nix develop --command python3 tooling/catalyst-smoke-cache.py
       - name: Record the source file times in the snapshot
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.rust-cache.outputs.cache-hit != 'true'
         run: python3 tooling/cargo-mtimes.py record services/catalyst/target

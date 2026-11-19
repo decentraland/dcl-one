@@ -107,7 +107,7 @@ export type LandingsEvents = {
   lp_creatorhub_download_clicked: {
     arch: string;
     file_name: null | string;
-    kind: string;
+    kind: "primary" | "secondary";
     os: "macos" | "windows";
   };
   lp_creatorhub_download_success: {

@@ -37,6 +37,9 @@ import { quoteNameCredits } from '@shop/names/api'
 import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
 import { primeRemoteFlags, readRemoteFlags } from '../../../shop/discovery/lib/remoteFlags'
 import { parseEvmAddress } from '@shop/model/address'
+import { chainLabel } from '@shop/model/chain'
+import { isRejection } from '../../../shop/checkout/lib/errors'
+import { requestChainSwitch } from '../../../shop/wallet/chain'
 import { itemAsset } from '@shop/model/asset'
 import { creditsCeil, creditsFloor, type UsdCents } from '@shop/model/money'
 import type { CartLine, GroupProgress, GroupStatus, PurchaseOffer, PurchaseState } from '@shop/model/purchase'
@@ -100,6 +103,8 @@ export interface ShellPurchaseHandlers {
   /** A simulated NAME's success: see it over the avatar. */
   onPreview?: () => void
   onRetry?: () => void
+  /** SWITCH TO … AND RETRY: move the wallet to the failed step's network, then try again. */
+  onSwitchNetwork?: () => void
   onSignIn?: () => void
 }
 
@@ -378,9 +383,10 @@ type PartOutcome =
   | { kind: 'pending' }
   /**
    * Nothing of the group was handed off, or its transaction reverted. `message` says it as a purchase of
-   * its own; `part`, as one transaction of a checkout. `retry`: how it may start again.
+   * its own; `part`, as one transaction of a checkout. `retry`: how it may start again. `switchTo`: the
+   * network the buyer's own wallet can send it from, once it is moved there.
    */
-  | { kind: 'failed'; message: string; part: string; retry: 'cancelled' | 'failed' | null; topUp?: number }
+  | { kind: 'failed'; message: string; part: string; retry: 'cancelled' | 'failed' | null; topUp?: number; switchTo?: number }
 
 const NOT_BOUGHT = "This purchase didn't go through. Nothing was bought."
 /** How a checkout says one of its transactions ended. */
@@ -390,6 +396,26 @@ const PART_FAILED = 'one of its transactions didn’t go through.'
 // checkout's own reverted failure says), so the copy never claims they were returned.
 const REVERTED_PART = 'one of its transactions failed on-chain; the Credits it held come back on their own.'
 const REVERTED_ALONE = 'The transaction failed on-chain. Nothing was bought; the Credits it held come back on their own.'
+/**
+ * The buyer's own wallet would send the purchase, on another network than the one it is on. A self-custody
+ * wallet holding the fee money is offered the switch: saying that the fee-free way is unavailable when it was
+ * tried first, plainly on a checkout that only sends from the wallet. Any other wallet is told the purchase didn't
+ * go out: a managed one, never told of networks or fees, and one short of the fee money, or whose balance can't be
+ * read in time.
+ */
+const switchAfterFeeFree = (chainId: number): string =>
+  `Fee-free checkout is unavailable right now. You can switch to ${chainLabel(chainId)} and pay the network fee with your wallet. Nothing was bought.`
+const switchDirect = (chainId: number): string => `Your wallet is on another network. Switch it to ${chainLabel(chainId)} to send this purchase. Nothing was bought.`
+const FEE_FREE_UNAVAILABLE = 'Fee-free checkout is unavailable right now. Nothing was bought. Try again later.'
+const NOT_SENT_LATER = 'This purchase couldn’t go out. Nothing was bought. Try again later.'
+/**
+ * The least of the network's own currency (0.05) a wallet holds to be offered the switch, as the web Shop offers its
+ * fee-paying fallback. A threshold for the offer, not an estimate of the fee, which varies: an estimate reverts for
+ * reasons that aren't the fee.
+ */
+const FEE_OFFER_FLOOR_WEI = 50_000_000_000_000_000n
+/** How long the balance read may take before the offer is left out: it decides an offer, never the purchase. */
+export const FEE_BALANCE_TIMEOUT_MS = 4000
 
 /**
  * A confirmed purchase of several groups, as its dialog shows them together: still in progress while any
@@ -513,6 +539,51 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   const fail = (op: Operation, message: string, retry?: () => void): void => {
     show(op, { step: 'failed', message, retry: retry != null }, { onClose: () => close(op, 'failed'), ...(retry ? { onRetry: retry } : {}) })
   }
+  /**
+   * A failure the buyer's own wallet gets past from `chainId`: SWITCH TO … AND RETRY moves the wallet there,
+   * from the buyer's own click (a wallet refuses a switch it can't tie to one), then tries again as TRY AGAIN
+   * does. A declined switch leaves the offer standing; a switch that fails says so.
+   */
+  const failSwitching = (op: Operation, message: string, chainId: number, wallet: Eip1193Provider, again: () => void): void => {
+    let switching = false
+    show(op, { step: 'failed', message, retry: true, switchTo: chainLabel(chainId) }, {
+      onClose: () => close(op, 'failed'),
+      onSwitchNetwork: () => {
+        if (switching) return
+        switching = true
+        requestChainSwitch(wallet, chainId)
+          // A wallet may add the network and stay on the one it was on (EIP-3085): only a wallet now on the
+          // purchase's network tries again, and any other keeps the offer for another press.
+          .then(() => wallet.request({ method: 'eth_chainId' }))
+          .then(
+            (current) => {
+              if (slot.holds(op) && Number(current) === chainId) again()
+              else switching = false
+            },
+            (e: unknown) => {
+              switching = false
+              if (!slot.holds(op) || isRejection(e)) return
+              fail(op, `Your wallet didn’t move to ${chainLabel(chainId)}. Switch it there yourself, then try again.`, again)
+            }
+          )
+      }
+    })
+  }
+  /** Whether `buyer` holds the fee money the switch is offered for on `chainId`: false on a failed or slow read. */
+  const feeMoney = (chainId: number, buyer: string): Promise<boolean> =>
+    new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), FEE_BALANCE_TIMEOUT_MS)
+      Promise.resolve()
+        .then(() => svc.reader().balance(chainId, buyer))
+        .then(
+          (wei) => wei >= FEE_OFFER_FLOOR_WEI,
+          () => false
+        )
+        .then((funded) => {
+          clearTimeout(timer)
+          resolve(funded)
+        })
+    })
   const showPending = (op: Operation): void => show(op, { step: 'pending' }, { onClose: () => hide(op) })
   /** The signed-in login that can buy here: its key held, and a wallet here that signs for its account. */
   const usable = (): { login: StoredLogin; buyer: string } | null => {
@@ -1107,6 +1178,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         }
         // Nothing of the checkout was handed off.
         if (outcome.topUp != null) present(op, req, { ...quote, balance: outcome.topUp })
+        else if (outcome.switchTo != null) failSwitching(op, outcome.message, outcome.switchTo, wallet, () => restart(op, req, 'failed'))
         else fail(op, outcome.message, outcome.retry === 'cancelled' ? again : outcome.retry === 'failed' ? () => restart(op, req, 'failed') : undefined)
         return
       }
@@ -1147,10 +1219,10 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     const manager = svc.manager(chainId)
     const call = group.key.call.kind
     if (!manager || call === 'one') return { kind: 'failed', message: "Buying with Credits isn't available here right now.", part: 'buying the rest with Credits isn’t available here right now.', retry: null }
-    const refused = (message: string, part: string, retry: 'cancelled' | 'failed' | null, topUp?: number): PartOutcome => {
+    const refused = (message: string, part: string, retry: 'cancelled' | 'failed' | null, topUp?: number, switchTo?: number): PartOutcome => {
       op.state = 'reviewing'
       publish(op)
-      return { kind: 'failed', message, part, retry, ...(topUp != null ? { topUp } : {}) }
+      return { kind: 'failed', message, part, retry, ...(topUp != null ? { topUp } : {}), ...(switchTo != null ? { switchTo } : {}) }
     }
     const intent: PurchaseIntent = {
       buyer: quote.buyer,
@@ -1229,11 +1301,23 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       case 'pending':
         move(op, 'pending', { txHash: result.txHash })
         return { kind: 'pending' }
-      case 'failed':
+      case 'failed': {
         // The balance fell short between the quote and the authorization: Insufficient Funds after all.
         if (result.topUp) return refused(result.failure.message, 'your Credits balance didn’t cover the rest of it.', null, creditsFloor(result.topUp.balanceCents as UsdCents))
+        // The wallet's own transaction found the wallet on another network. Only a self-custody wallet holding
+        // the fee money is offered the switch (a managed one's balance isn't even read).
+        const required = result.failure.switchTo
+        if (required != null) {
+          const feeFree = result.failure.feeFreeUnavailable === true
+          const funded = quote.kind === 'web3' && (await feeMoney(required, quote.buyer))
+          if (funded) {
+            return refused(feeFree ? switchAfterFeeFree(required) : switchDirect(required), `the rest of it needs your wallet on ${chainLabel(required)} to pay the network fee.`, 'failed', undefined, required)
+          }
+          return refused(feeFree ? FEE_FREE_UNAVAILABLE : NOT_SENT_LATER, NEVER_WENT, 'failed')
+        }
         // A failed group handed nothing off, or its transaction reverted: either way this attempt is over.
         return refused(result.failure.message, result.failure.kind === 'reverted' ? REVERTED_PART : result.failure.message, result.failure.kind !== 'refused' ? 'failed' : null)
+      }
       case 'skipped':
         return refused("This purchase couldn't run. Nothing was charged.", 'the rest of it couldn’t run.', 'cancelled')
     }

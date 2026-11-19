@@ -1,6 +1,6 @@
 import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import StatusPage from "@ui/components/StatusPage";
 import { ErrorBoundary } from "./root";
@@ -53,5 +53,17 @@ describe("root error boundary", () => {
     expect(html).toContain('data-status="500"');
     expect(html).toContain("assets/errors/crew.webp");
     expect(html).not.toContain("boom");
+  });
+});
+
+describe("when an English error replaces a localized route", () => {
+  let html: string;
+
+  beforeEach(() => {
+    html = renderBoundary(routeError(503, "Service Unavailable"));
+  });
+
+  it("should identify the language of the error content", () => {
+    expect(html).toMatch(/<div lang="en">[\s\S]*We&#x27;ll be right back/);
   });
 });

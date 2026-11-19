@@ -235,6 +235,31 @@ async fn an_accepted_call_is_never_swept_as_expired() {
     assert!(!callee_heard.contains(&expired), "{callee_heard:?}");
 }
 
+/// A callee that is not a wallet, or a wallet with padding the stored row
+/// would keep, is refused before any call is written.
+#[tokio::test]
+async fn a_callee_that_is_not_a_wallet_is_refused() {
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let _turn = VOICE_TABLE.lock().await;
+    let caller = addr("vb9a");
+    let mut refusals = Vec::new();
+    for callee in ["not-a-wallet".to_string(), format!(" {}", addr("vb9b"))] {
+        let outcome =
+            crate::rpc::service::ops::start_private_voice_chat(&rig.ctx, &caller, &callee).await;
+        refusals.push(
+            outcome
+                .map(|_| ())
+                .map_err(|refusal| refusal.message().to_string()),
+        );
+    }
+    rig.finish(&[&caller]).await;
+    for refusal in refusals {
+        assert_eq!(refusal, Err("Invalid Gatekeeper user address".to_string()));
+    }
+}
+
 /// An accepted call older than the pending TTL remains unavailable while its
 /// media presence is live. It is no longer part of the pending busy relation.
 #[tokio::test]

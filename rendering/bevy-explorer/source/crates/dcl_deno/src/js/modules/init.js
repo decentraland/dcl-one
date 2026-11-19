@@ -181,6 +181,7 @@ import * as timers from "ext:deno_web/02_timers.js";
 globalThis.setTimeout = timers.setTimeout;
 globalThis.setInterval = timers.setInterval;
 globalThis.clearTimeout = timers.clearTimeout;
+globalThis.clearInterval = timers.clearInterval;
 
 import * as websocket from "ext:deno_websocket/01_websocket.js";
 globalThis.WebSocket = websocket.WebSocket;

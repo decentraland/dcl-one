@@ -300,7 +300,7 @@ async fn validate_password(
         .map_err(|e| format!("bad comms address: {e}"))?;
     let origin = Uri::try_from(realm).map_err(|e| format!("bad realm address: {e}"))?;
     let meta =
-        SignedLoginMeta::new(wallet.is_guest(), origin).with_secret(Some(password.to_owned()));
+        SignedLoginMeta::new(wallet.is_any_guest(), origin).with_secret(Some(password.to_owned()));
     let meta = serde_json::to_string(&meta).map_err(|e| e.to_string())?;
     let headers = sign_service_request("post", &uri.to_string(), wallet, meta)
         .await

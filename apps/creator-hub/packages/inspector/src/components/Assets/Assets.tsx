@@ -296,145 +296,150 @@ function AssetsInner({ isAssetsPanelCollapsed, onToggleCollapse }: Props) {
   return (
     <div className="Assets">
       <div className="Assets-buttons">
-        {tab !== AssetsTab.DebugConsole && (
-          <div className="Assets-buttons-left">
-            <Button
-              variant="secondary"
-              size="sm"
-              className="import-button"
-              onClick={handleImportClick}
-            >
-              <HiOutlinePlus />
-              IMPORT ASSETS
-            </Button>
-            <InfoTooltip
-              text="Refresh assets"
-              trigger={
-                <RefreshIcon
-                  className="icon-item"
-                  onClick={handleRefreshClick}
+        {/* Rendered empty on the console too, so the tabs stay centred. */}
+        <div className="Assets-buttons-left">
+          {tab !== AssetsTab.DebugConsole && (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="import-button"
+                onClick={handleImportClick}
+              >
+                <HiOutlinePlus />
+                IMPORT ASSETS
+              </Button>
+              <InfoTooltip
+                text="Refresh assets"
+                trigger={
+                  <RefreshIcon
+                    className="icon-item"
+                    onClick={handleRefreshClick}
+                  />
+                }
+                openOnTriggerMouseEnter={true}
+                closeOnTriggerClick={true}
+                position="top center"
+              />
+              {showOpenInExplorerButton && (
+                <InfoTooltip
+                  text={openInExplorerTooltipText}
+                  trigger={
+                    <IoIosFolderOpen
+                      className="icon-item"
+                      onClick={handleOpenInExplorer}
+                    />
+                  }
+                  openOnTriggerMouseEnter={true}
+                  closeOnTriggerClick={true}
+                  position="top center"
                 />
-              }
-              openOnTriggerMouseEnter={true}
-              closeOnTriggerClick={true}
-              position="top center"
-            />
-            {showOpenInExplorerButton && (
-              <InfoTooltip
-                text={openInExplorerTooltipText}
-                trigger={
-                  <IoIosFolderOpen
-                    className="icon-item"
-                    onClick={handleOpenInExplorer}
-                  />
-                }
-                openOnTriggerMouseEnter={true}
-                closeOnTriggerClick={true}
-                position="top center"
-              />
-            )}
-            {showCleanAssetsButton && (
-              <InfoTooltip
-                text="Clean unused assets"
-                trigger={
-                  <button
-                    className="icon-item"
-                    onClick={handleCleanAssetsClick}
-                  >
-                    <CleanupIcon />
-                  </button>
-                }
-                openOnTriggerMouseEnter={true}
-                closeOnTriggerClick={true}
-                position="top center"
-              />
-            )}
-            {showOptimizeButton && (
-              <InfoTooltip
-                text="Optimize"
-                trigger={
-                  <button
-                    className="icon-item"
-                    onClick={handleOptimizeClick}
-                  >
-                    <OptimizeIcon />
-                  </button>
-                }
-                openOnTriggerMouseEnter={true}
-                closeOnTriggerClick={true}
-                position="top center"
-              />
-            )}
-            {showRecoverAssetsButton && (
-              <InfoTooltip
-                text="Recover assets removed"
-                trigger={
-                  <IoIosUndo
-                    className="icon-item"
-                    onClick={handleRecoverAssets}
-                  />
-                }
-                openOnTriggerMouseEnter={true}
-                closeOnTriggerClick={true}
-                position="top center"
-              />
-            )}
-          </div>
-        )}
-        <div
-          className="tab"
-          onClick={handleTabSelect(AssetsTab.FileSystem)}
-          data-test-id={AssetsTab.FileSystem}
-        >
-          <div className={cx({ underlined: tab === AssetsTab.FileSystem })}>
-            <LocalAssetsIcon />
-            <span>LOCAL ASSETS</span>
-          </div>
+              )}
+              {showCleanAssetsButton && (
+                <InfoTooltip
+                  text="Clean unused assets"
+                  trigger={
+                    <button
+                      className="icon-item"
+                      onClick={handleCleanAssetsClick}
+                    >
+                      <CleanupIcon />
+                    </button>
+                  }
+                  openOnTriggerMouseEnter={true}
+                  closeOnTriggerClick={true}
+                  position="top center"
+                />
+              )}
+              {showOptimizeButton && (
+                <InfoTooltip
+                  text="Optimize"
+                  trigger={
+                    <button
+                      className="icon-item"
+                      onClick={handleOptimizeClick}
+                    >
+                      <OptimizeIcon />
+                    </button>
+                  }
+                  openOnTriggerMouseEnter={true}
+                  closeOnTriggerClick={true}
+                  position="top center"
+                />
+              )}
+              {showRecoverAssetsButton && (
+                <InfoTooltip
+                  text="Recover assets removed"
+                  trigger={
+                    <IoIosUndo
+                      className="icon-item"
+                      onClick={handleRecoverAssets}
+                    />
+                  }
+                  openOnTriggerMouseEnter={true}
+                  closeOnTriggerClick={true}
+                  position="top center"
+                />
+              )}
+            </>
+          )}
         </div>
-        <div
-          className="tab"
-          onClick={handleTabSelect(AssetsTab.CustomAssets)}
-          data-test-id={AssetsTab.CustomAssets}
-        >
-          <div className={cx({ underlined: tab === AssetsTab.CustomAssets })}>
-            <CustomItemsIcon />
-            <span>CUSTOM ITEMS</span>
-          </div>
-        </div>
-        <div
-          className="tab"
-          onClick={handleTabSelect(AssetsTab.AssetsPack)}
-          data-test-id={AssetsTab.AssetsPack}
-        >
-          <div className={cx({ underlined: tab === AssetsTab.AssetsPack })}>
-            <AssetPacksIcon />
-            <span>ASSET PACKS</span>
-          </div>
-        </div>
-        {debugConsoleEnabled && (
+        <div className="Assets-tabs">
           <div
             className="tab"
-            onClick={handleTabSelect(AssetsTab.DebugConsole)}
-            data-test-id={AssetsTab.DebugConsole}
+            onClick={handleTabSelect(AssetsTab.FileSystem)}
+            data-test-id={AssetsTab.FileSystem}
           >
-            <div className={cx({ underlined: tab === AssetsTab.DebugConsole })}>
-              <VscTerminal />
-              <span>CONSOLE</span>
+            <div className={cx({ underlined: tab === AssetsTab.FileSystem })}>
+              <LocalAssetsIcon />
+              <span>LOCAL ASSETS</span>
             </div>
           </div>
-        )}
-        {mobileDebugSessionEnabled && (
           <div
             className="tab"
-            onClick={handleTabSelect(AssetsTab.MobileDebugSession)}
-            data-test-id={AssetsTab.MobileDebugSession}
+            onClick={handleTabSelect(AssetsTab.CustomAssets)}
+            data-test-id={AssetsTab.CustomAssets}
           >
-            <div className={cx({ underlined: tab === AssetsTab.MobileDebugSession })}>
-              <VscTerminal />
-              <span>MOBILE DEBUG SESSION</span>
+            <div className={cx({ underlined: tab === AssetsTab.CustomAssets })}>
+              <CustomItemsIcon />
+              <span>CUSTOM ITEMS</span>
             </div>
           </div>
-        )}
+          <div
+            className="tab"
+            onClick={handleTabSelect(AssetsTab.AssetsPack)}
+            data-test-id={AssetsTab.AssetsPack}
+          >
+            <div className={cx({ underlined: tab === AssetsTab.AssetsPack })}>
+              <AssetPacksIcon />
+              <span>ASSET PACKS</span>
+            </div>
+          </div>
+          {debugConsoleEnabled && (
+            <div
+              className="tab"
+              onClick={handleTabSelect(AssetsTab.DebugConsole)}
+              data-test-id={AssetsTab.DebugConsole}
+            >
+              <div className={cx({ underlined: tab === AssetsTab.DebugConsole })}>
+                <VscTerminal />
+                <span>CONSOLE</span>
+              </div>
+            </div>
+          )}
+          {mobileDebugSessionEnabled && (
+            <div
+              className="tab"
+              onClick={handleTabSelect(AssetsTab.MobileDebugSession)}
+              data-test-id={AssetsTab.MobileDebugSession}
+            >
+              <div className={cx({ underlined: tab === AssetsTab.MobileDebugSession })}>
+                <VscTerminal />
+                <span>MOBILE DEBUG SESSION</span>
+              </div>
+            </div>
+          )}
+        </div>
         <div className="Assets-buttons-right">
           {isBrowsing && !isAssetsPanelCollapsed && (
             <label className="Assets-size">
