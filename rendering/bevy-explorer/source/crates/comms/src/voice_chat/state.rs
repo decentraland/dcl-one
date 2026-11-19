@@ -190,6 +190,8 @@ pub enum Input {
     PromoteSpeaker(Address),
     DemoteSpeaker(Address),
     KickPlayer(Address),
+    /// A moderator marks a speaker muted or not.
+    MuteSpeaker(Address, bool),
     RejectSpeakRequest(Address),
     SetMic(bool),
     /// Clear a busy / error status.
@@ -510,6 +512,15 @@ impl CallState {
                     effects.push(Effect::Rpc(Rpc::KickPlayer {
                         community_id,
                         address,
+                    }));
+                }
+            }
+            Input::MuteSpeaker(address, muted) => {
+                if let Some(community_id) = self.in_community() {
+                    effects.push(Effect::Rpc(Rpc::MuteSpeaker {
+                        community_id,
+                        address,
+                        muted,
                     }));
                 }
             }
@@ -1465,6 +1476,32 @@ mod tests {
                 address: addr(5)
             })]
         );
+    }
+
+    #[test]
+    fn a_moderator_marks_a_speaker_muted_through_the_social_service() {
+        let mut s = state();
+        // outside a community stream there is no one to mute
+        assert!(s.apply(Input::MuteSpeaker(addr(5), true), 0.0).is_empty());
+        s.apply(Input::StartCommunity("c1".to_owned()), 0.0);
+        s.apply(
+            Input::Reply(Reply::StartCommunity(
+                "c1".to_owned(),
+                s.attempt,
+                Ok("livekit:c".to_owned()),
+            )),
+            0.0,
+        );
+        for muted in [true, false] {
+            assert_eq!(
+                s.apply(Input::MuteSpeaker(addr(5), muted), 0.0),
+                vec![Effect::Rpc(Rpc::MuteSpeaker {
+                    community_id: "c1".to_owned(),
+                    address: addr(5),
+                    muted,
+                })]
+            );
+        }
     }
 
     #[test]

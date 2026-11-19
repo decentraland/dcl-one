@@ -983,6 +983,9 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         case 'kickPlayer':
           pushVoice({ participants: voice.participants.filter((p) => p.address !== action.address) })
           break
+        case 'muteSpeaker':
+          pushVoice({ participants: voice.participants.map((p) => (p.address === action.address ? { ...p, isMuted: action.muted } : p)) })
+          break
         case 'setMic':
           pushVoice({ micEnabled: action.enabled && voice.localSpeaker })
           break

@@ -271,9 +271,11 @@ function ParticipantMenu({ p, me, moderator }: { p: VoiceChatParticipant; me: bo
       list.push(
         p.isSpeaker
           ? { label: 'Demote to listener', onClick: then(() => act({ op: 'demoteSpeaker', address: p.address })) }
-          : { label: 'Promote to speaker', onClick: then(() => act({ op: 'promoteSpeaker', address: p.address })) },
-        { label: 'Remove from stream', danger: true, onClick: then(() => act({ op: 'kickPlayer', address: p.address })) }
+          : { label: 'Promote to speaker', onClick: then(() => act({ op: 'promoteSpeaker', address: p.address })) }
       )
+      // marks the speaker muted, and its client takes the mic down; only the speaker raises it again
+      if (p.isSpeaker && !p.isMuted) list.push({ label: 'Mute', onClick: then(() => act({ op: 'muteSpeaker', address: p.address, muted: true })) })
+      list.push({ label: 'Remove from stream', danger: true, onClick: then(() => act({ op: 'kickPlayer', address: p.address })) })
     }
     return list
   }

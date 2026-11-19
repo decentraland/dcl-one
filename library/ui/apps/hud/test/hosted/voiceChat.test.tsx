@@ -178,6 +178,33 @@ describe('community stream panel', () => {
     expect(vi.mocked(s.voiceChat.act)).toHaveBeenLastCalledWith({ op: 'kickPlayer', address: PEER })
   })
 
+  it('a moderator mutes a speaker from the People view', async () => {
+    const s = renderPanel(inStream({ localRole: 'owner', localSpeaker: true }))
+    await userEvent.click(screen.getByRole('button', { name: 'People' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Options for Mojito' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Mute' }))
+    expect(vi.mocked(s.voiceChat.act)).toHaveBeenLastCalledWith({ op: 'muteSpeaker', address: PEER, muted: true })
+  })
+
+  it('a muted speaker or a listener offers no Mute', async () => {
+    renderPanel(inStream({
+      localRole: 'owner',
+      localSpeaker: true,
+      participants: [
+        participant(ME, 'Me', { isSpeaker: true, role: 'owner' }),
+        participant(PEER, 'Mojito', { isSpeaker: true, isMuted: true }),
+        participant('0x1e105bb213754519903788022b962fe2b9c4b263', 'Pravus')
+      ]
+    }))
+    await userEvent.click(screen.getByRole('button', { name: 'People' }))
+    for (const name of ['Mojito', 'Pravus']) {
+      await userEvent.click(screen.getByRole('button', { name: `Options for ${name}` }))
+      expect(screen.getByRole('menuitem', { name: 'Remove from stream' })).toBeInTheDocument()
+      expect(screen.queryByRole('menuitem', { name: 'Mute' })).toBeNull()
+      await userEvent.keyboard('{Escape}')
+    }
+  })
+
   it('a speaker who is not a moderator can leave the stage', async () => {
     const s = renderPanel(inStream({ localRole: 'user', localSpeaker: true }))
     await userEvent.click(screen.getByRole('button', { name: 'Leave stage' }))

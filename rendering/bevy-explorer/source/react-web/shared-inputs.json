@@ -6508,7 +6508,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "7bd5ec7d363aef8df713d284ebcdfb87a59fc15a7f627bd0327d1723a5934d92"
+      "sha256": "3d72022810eeb48aa2a381f61db6cca1dff550324083dd3514b30afd50b9aab6"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -10304,7 +10304,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
-      "sha256": "dee609b08c6bb0267561da36165e5f2fac843dbaab0aa27807d914c2820cef85"
+      "sha256": "5bbc39edabdcf87d6756f934c6155d7c3152336b84b02d8e0a943318ef14c1ea"
     },
     {
       "path": "library/ui/apps/hud/features/voiceChat/callGate.ts",
@@ -10832,7 +10832,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
-      "sha256": "f33f6ccb840dd127a1b323a4a50db9f08e60916da1d048ffeafee37ad0593ccc"
+      "sha256": "dbeb6a6ba0dc35e70050599a24b62e5dac1e8803da765a9dfb78a5a771dadcf5"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/voiceChatToasts.test.tsx",

@@ -470,6 +470,12 @@ pub enum VoiceChatAction {
     KickPlayer {
         address: String,
     },
+    /// Mark a speaker muted (`true`) or unmuted; the speaker's own client takes its mic down.
+    #[serde(rename_all = "camelCase")]
+    MuteSpeaker {
+        address: String,
+        muted: bool,
+    },
     #[serde(rename_all = "camelCase")]
     RejectSpeakRequest {
         address: String,

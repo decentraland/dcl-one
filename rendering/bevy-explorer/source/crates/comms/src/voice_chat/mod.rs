@@ -528,6 +528,9 @@ fn action_input(action: &VoiceChatAction) -> Result<Input, String> {
         VoiceChatAction::PromoteSpeaker { address: a } => Input::PromoteSpeaker(address(a)?),
         VoiceChatAction::DemoteSpeaker { address: a } => Input::DemoteSpeaker(address(a)?),
         VoiceChatAction::KickPlayer { address: a } => Input::KickPlayer(address(a)?),
+        VoiceChatAction::MuteSpeaker { address: a, muted } => {
+            Input::MuteSpeaker(address(a)?, *muted)
+        }
         VoiceChatAction::RejectSpeakRequest { address: a } => {
             Input::RejectSpeakRequest(address(a)?)
         }
@@ -1044,6 +1047,8 @@ enum VoiceSubcommand {
     Demote { address: String },
     /// Remove a participant from the stream.
     Kick { address: String },
+    /// Mark a speaker muted (`on`) or unmuted (`off`).
+    Mute { address: String, state: String },
     /// Turn down a request to speak.
     Deny { address: String },
 }
@@ -1090,6 +1095,9 @@ fn voice_command(mut input: ConsoleCommand<VoiceCommand>, mut events: EventWrite
         VoiceSubcommand::Kick { address: a } => {
             address(a).map(|address| VoiceChatAction::KickPlayer { address })
         }
+        VoiceSubcommand::Mute { address: a, state } => address(a).and_then(|address| {
+            switch(&state, "on", "off").map(|muted| VoiceChatAction::MuteSpeaker { address, muted })
+        }),
         VoiceSubcommand::Deny { address: a } => {
             address(a).map(|address| VoiceChatAction::RejectSpeakRequest { address })
         }
@@ -1242,6 +1250,23 @@ mod tests {
             .resource_mut::<Time>()
             .advance_by(Duration::from_secs_f64(secs));
         app.update();
+    }
+
+    #[test]
+    fn a_mute_speaker_action_names_the_speaker_and_the_flag() {
+        let speaker = "0x0000000000000000000000000000000000000005";
+        assert_eq!(
+            action_input(&VoiceChatAction::MuteSpeaker {
+                address: speaker.to_owned(),
+                muted: true,
+            }),
+            Ok(Input::MuteSpeaker(speaker.as_h160().unwrap(), true))
+        );
+        assert!(action_input(&VoiceChatAction::MuteSpeaker {
+            address: "nobody".to_owned(),
+            muted: false,
+        })
+        .is_err());
     }
 
     #[test]
