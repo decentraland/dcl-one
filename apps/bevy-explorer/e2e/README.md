@@ -114,13 +114,22 @@ pnpm run drive --scene <scene dir> [--scene <dir> ...] [--position x,y] [--repor
 It builds each scene folder with `buildScene` (`scene.json`, the `main` bundle, `main.crdt`,
 `assets/`), serves them with `serveRealm` on `DCL_E2E_REALM_PORT` and the web app (`--web-app`,
 else `DCL_E2E_WEB_APP`), signs in a guest and arrives at `--position` (the first scene's base
-parcel by default). Each stdin line is one console line; blank lines and `#` lines are skipped,
-and the lines run one after the other. stdout gets one JSON line per command, `{"line", "ok",
-"reply", "ms"}` (`ok:false` carries the command's error, and the run goes on); stderr gets the
-boot and a one-line summary of each reply. When stdin closes, `final.png` (the engine's frame)
-and `replies.jsonl` go to the report folder (`report/drive` by default), and the client and both
-servers close. An interrupt (SIGINT or SIGTERM) closes them too and keeps no report. The other
-variables of the table above apply as for a run.
+parcel by default). The paths of `--scene`, `--report` and `--web-app` are read from the folder
+the command was started in, as the shell reads `< commands.txt`. Each stdin line is one console
+line; blank lines and `#` lines are skipped, and the lines run one after the other. stdout gets
+one JSON line per command, `{"line", "ok", "reply", "ms"}` (`ok:false` carries the command's
+error, and the run goes on); stderr gets the boot and a one-line summary of each reply. A
+`/login_identity` or `/hud_login` payload is redacted in all of them, as in the suite's reports.
+When stdin closes, `final.png` (the engine's frame) and `replies.jsonl` go to the report folder
+(`report/drive` by default), and the client and both servers close. An interrupt (SIGINT or
+SIGTERM) or a reader that closes stdout closes them too, a boot in progress included, and keeps
+no report.
+
+Of the variables above, these apply: `DCL_E2E_WEB_APP`, `DCL_E2E_WEB_PORT` and
+`DCL_E2E_REALM_PORT`, `DCL_E2E_BASE_DOMAIN`, `CHROME_PATH` and `CHROME_EXTRA_ARGS`,
+`DCL_E2E_HEADLESS`, `DCL_E2E_WINDOW`, and `DCL_E2E_TRANSPORT` with the `DCL_E2E_NATIVE_*` ones.
+`DCL_E2E_WEB_URL` opens an already served app, and the tool refuses `--web-app` beside it. The
+realm and the parcel are the tool's own, and it uses no account key.
 
 The tool takes no wait or sleep lines. To pace a longer script, pipe in a feed script that writes
 each line when it is due and reads stdout to decide the next one, for example counting the reply

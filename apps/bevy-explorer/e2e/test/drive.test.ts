@@ -4,7 +4,7 @@ import { describe, test } from 'node:test'
 import { FakeConsole } from '../driver/console.ts'
 import { Explorer } from '../driver/explorer.ts'
 import { REPORT_DIR } from '../driver/paths.ts'
-import { baseParcel, closeOnSignal, commandLine, parseArgs, type Result, runLines, SIGNAL_EXIT } from '../scripts/drive.ts'
+import { baseParcel, closeOnSignal, commandLine, parseArgs, type Result, runLines, SIGNAL_EXIT, startFolder } from '../scripts/drive.ts'
 
 async function* from(lines: string[]): AsyncIterable<string> {
   yield* lines
@@ -97,7 +97,7 @@ describe('drive interruption', () => {
     const exits: number[] = []
     let finish!: () => void
     const exited = new Promise<void>((resolve) => (finish = resolve))
-    const release = closeOnSignal(
+    const ending = closeOnSignal(
       async () => {
         closed++
       },
@@ -107,7 +107,9 @@ describe('drive interruption', () => {
       }
     )
     try {
+      assert.equal(ending.ended, false)
       process.emit('SIGTERM')
+      assert.equal(ending.ended, true)
       await exited
       assert.equal(closed, 1)
       assert.deepEqual(exits, [SIGNAL_EXIT.SIGTERM])
@@ -116,8 +118,59 @@ describe('drive interruption', () => {
       assert.equal(closed, 1)
       assert.deepEqual(exits, [SIGNAL_EXIT.SIGTERM, SIGNAL_EXIT.SIGINT])
     } finally {
-      release()
+      ending.release()
     }
     assert.deepEqual({ SIGINT: process.listenerCount('SIGINT'), SIGTERM: process.listenerCount('SIGTERM') }, before)
+  })
+
+  test('ends on request with the code given, and still exits when the close fails', async () => {
+    const exits: number[] = []
+    let finish!: () => void
+    const exited = new Promise<void>((resolve) => (finish = resolve))
+    const ending = closeOnSignal(
+      async () => {
+        throw new Error('the browser is gone')
+      },
+      (code) => {
+        exits.push(code)
+        finish()
+      }
+    )
+    try {
+      ending.end(1, 'stdout closed')
+      await exited
+      assert.equal(ending.ended, true)
+      assert.deepEqual(exits, [1])
+    } finally {
+      ending.release()
+    }
+  })
+})
+
+describe('drive credentials', () => {
+  const identity = 'eyJwcml2YXRlS2V5IjoiMHhzZWNyZXQifQ=='
+
+  test('redacts a sign-in payload in the line and in the reply, passed or failed', async () => {
+    const console_ = new FakeConsole({ login_identity: (line) => `signed in from ${line}` })
+    const passed = await runLines(from([`/login_identity ${identity} --guest`]), new Explorer(console_), () => {})
+    assert.deepEqual(passed.map(({ line, ok, reply }) => ({ line, ok, reply })), [
+      { line: '/login_identity <redacted> --guest', ok: true, reply: 'signed in from /login_identity <redacted> --guest' }
+    ])
+    const failing = {
+      run: async (line: string) => {
+        throw new Error(`could not send ${line}`)
+      }
+    }
+    const failed = await runLines(from([`/hud_login ${identity}`]), failing, () => {})
+    assert.deepEqual(failed.map(({ line, ok, reply }) => ({ line, ok, reply })), [
+      { line: '/hud_login <redacted>', ok: false, reply: 'could not send /hud_login <redacted>' }
+    ])
+  })
+})
+
+describe('drive start folder', () => {
+  test('is where the package manager was started, else the working folder', () => {
+    assert.equal(startFolder({ INIT_CWD: '/work/scenes' }), '/work/scenes')
+    assert.equal(startFolder({}), process.cwd())
   })
 })
