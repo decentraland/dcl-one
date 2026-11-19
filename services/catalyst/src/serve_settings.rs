@@ -116,7 +116,8 @@ pub(super) fn comms_settings(config: &Config) -> anyhow::Result<comms::gatekeepe
         gatekeeper_auth_token: non_empty(&config.social.comms_gatekeeper_auth_token),
         land_operators_url: non_empty(&config.social.comms_land_operators_url),
         lease_authorizations_url: Some(config.social.lease_authorizations_url.clone()),
-        lease_dev_entries: config.node.eth_network.trim() != "mainnet",
+        lease_dev_entries: crate::chain_index::registries::land_network(&config.node.eth_network)
+            == Some(crate::chain_index::registries::LAND_SEPOLIA),
         voice_connection_interrupted_ttl_ms: config.social.voice_chat_connection_interrupted_ttl_ms,
         voice_initial_connection_ttl_ms: config.social.voice_chat_initial_connection_ttl_ms,
         community_voice_no_moderator_ttl_ms: config.social.community_voice_chat_no_moderator_ttl_ms,
@@ -190,11 +191,16 @@ mod tests {
     use crate::config::Config;
 
     #[test]
-    fn dev_only_lease_entries_count_only_off_mainnet() {
+    fn dev_only_lease_entries_count_only_on_a_test_network() {
         for (network, dev_entries) in [
             (None, false),
             (Some("mainnet"), false),
+            (Some("Mainnet"), false),
+            (Some("ethereum"), false),
+            (Some("ethereum-mainnet"), false),
+            (Some("polygon"), false),
             (Some("sepolia"), true),
+            (Some("Ethereum-Sepolia"), true),
         ] {
             let mut vars = vec![
                 ("DATABASE_URL", "postgres:///catalyst"),

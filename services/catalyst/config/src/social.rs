@@ -537,8 +537,8 @@ pub struct SocialConfig {
 
     /// The linker-server lease document (`[{addresses, plots, startDate?,
     /// endDate?, onlyDev?}]`) whose holders administer the scenes on their
-    /// plots while an entry is within its dates (`onlyDev` entries only off
-    /// `ETH_NETWORK=mainnet`; the mirror posture's: Decentraland's published
+    /// plots while an entry is within its dates (`onlyDev` entries only on a
+    /// Sepolia `ETH_NETWORK`; the mirror posture's: Decentraland's published
     /// list); empty lists no lease holder.
     #[arg(long, env = "LEASE_AUTHORIZATIONS_URL", default_value = "")]
     pub lease_authorizations_url: String,

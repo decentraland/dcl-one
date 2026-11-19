@@ -421,7 +421,8 @@ mod tests {
     }
 
     /// Only entries in force today count: expired, not yet started and unreadable dates never
-    /// do, and `onlyDev` entries only when the node takes development entries.
+    /// do, and `onlyDev` entries only when the node takes development entries. A malformed entry
+    /// is skipped without hiding the others.
     #[tokio::test]
     async fn lease_holders_skip_entries_out_of_their_dates_and_dev_only_entries() {
         let stub = axum::Router::new().route(
@@ -432,7 +433,10 @@ mod tests {
                     { "addresses": ["0x2222222222222222222222222222222222222222"], "plots": ["1,2"], "endDate": "2001-01-01" },
                     { "addresses": ["0x3333333333333333333333333333333333333333"], "plots": ["1,2"], "startDate": "2999-01-01" },
                     { "addresses": ["0x4444444444444444444444444444444444444444"], "plots": ["1,2"], "onlyDev": true },
-                    { "addresses": ["0x5555555555555555555555555555555555555555"], "plots": ["1,2"], "endDate": "soon" }
+                    { "addresses": ["0x5555555555555555555555555555555555555555"], "plots": ["1,2"], "endDate": "soon" },
+                    { "addresses": ["0x6666666666666666666666666666666666666666"], "plots": ["1,2"], "onlyDev": "true" },
+                    { "addresses": ["0x7777777777777777777777777777777777777777"], "plots": ["1,2"], "endDate": 20240101 },
+                    "not an entry"
                 ]))
             }),
         );

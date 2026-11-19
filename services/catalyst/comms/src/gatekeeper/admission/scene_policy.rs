@@ -143,6 +143,23 @@ impl LeaseAuthorization {
     }
 }
 
+/// The document's entries that read as lease entries; a malformed one is skipped (it grants
+/// nothing) instead of failing the whole document.
+fn lease_entries(entries: Vec<serde_json::Value>) -> Vec<LeaseAuthorization> {
+    let total = entries.len();
+    let parsed: Vec<LeaseAuthorization> = entries
+        .into_iter()
+        .filter_map(|entry| serde_json::from_value(entry).ok())
+        .collect();
+    if parsed.len() < total {
+        tracing::warn!(
+            skipped = total - parsed.len(),
+            "lease authorizations entries skipped as malformed"
+        );
+    }
+    parsed
+}
+
 /// A lease date as JavaScript's `Date` reads the published ones: `YYYY-MM-DD` is UTC midnight,
 /// otherwise an RFC 3339 timestamp.
 fn lease_date(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
@@ -310,9 +327,9 @@ pub(crate) async fn try_get_lease_holders_for_parcels(
             if !resp.status().is_success() {
                 return Err(format!("lease authorizations returned {}", resp.status()));
             }
-            resp.json::<Vec<LeaseAuthorization>>()
+            resp.json::<Vec<serde_json::Value>>()
                 .await
-                .map(Arc::new)
+                .map(|entries| Arc::new(lease_entries(entries)))
                 .map_err(|e| e.to_string())
         })
         .await;

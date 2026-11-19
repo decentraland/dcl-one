@@ -134,7 +134,7 @@ pub struct RawSettings {
     /// `LEASE_AUTHORIZATIONS_URL`: the linker-server lease document; unset
     /// lists no lease holder.
     pub lease_authorizations_url: Option<String>,
-    /// Whether lease entries marked `onlyDev` count (a node off `ETH_NETWORK=mainnet`).
+    /// Whether lease entries marked `onlyDev` count (only on a Sepolia `ETH_NETWORK`).
     pub lease_dev_entries: bool,
     /// `VOICE_CHAT_CONNECTION_INTERRUPTED_TTL` (ms, default 300000).
     pub voice_connection_interrupted_ttl_ms: i64,
