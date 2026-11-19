@@ -1,6 +1,6 @@
 # ADR: Spring bones are simulated on the ten nearest avatars, in fixed steps
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-16
 
 ## Context
