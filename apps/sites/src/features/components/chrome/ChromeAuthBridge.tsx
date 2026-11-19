@@ -34,7 +34,7 @@ export default function ChromeAuthBridge({ children }: { children: ReactNode }) 
 
   usePrivateQueryLifecycle(effSignedIn ? effAddress : null);
 
-  const { name, avatarUrl, avatarColor } = useProfileIdentity(effAddress || null, effSignedIn);
+  const { name, avatarUrl, avatarColor, bodyUrl } = useProfileIdentity(effAddress || null, effSignedIn);
 
   const fetchNotifications = useCallback(async (signal?: AbortSignal): Promise<unknown> => {
     const res = await signedFetch(`${catalystBase()}${NOTIFICATIONS_PREFIX}/notifications?limit=50`, {
@@ -56,13 +56,14 @@ export default function ChromeAuthBridge({ children }: { children: ReactNode }) 
       name,
       committee,
       avatarUrl: avatarUrl || undefined,
+      bodyUrl: bodyUrl || undefined,
       avatarColor: avatarColor || undefined,
       onSignIn: openSignIn,
       ...hubAccountActions(disconnect),
       fetchNotifications,
       notificationsReady: mounted && isConnected,
     }),
-    [mounted, isConnected, effSignedIn, effAddress, name, committee, avatarUrl, avatarColor, fetchNotifications, disconnect],
+    [mounted, isConnected, effSignedIn, effAddress, name, committee, avatarUrl, avatarColor, bodyUrl, fetchNotifications, disconnect],
   );
 
   return <ChromeAuthContext.Provider value={value}>{children}</ChromeAuthContext.Provider>;

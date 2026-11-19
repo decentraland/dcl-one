@@ -10,6 +10,7 @@
 // entry nobody has shown for a while is swept. The engine announces profile changes (the
 // `profileChanged` stream); an entry someone is still showing is re-read, the rest forget their copy.
 import { looksClaimed } from '@explorer-core/engine/mention'
+import { nextRequestId } from '@explorer-core/engine/requestIds'
 import { useCallback, useSyncExternalStore } from 'react'
 import type { Profile } from '@explorer-core/engine/protocol'
 import { userColor } from '@explorer-core/lib/identity'
@@ -36,12 +37,12 @@ interface Entry {
   extras: boolean
   /** When the engine last answered that it holds nothing for this address. */
   missingAt: number | undefined
-  /** The version the engine last announced (`profileChanged`): the engine already holds it, so a reply
-   *  below it was read before the announcement. Kept when the copy is forgotten. */
+  /** The last version announced by `profileChanged`. Kept when the copy is forgotten so untagged
+   *  replies and own-profile messages below it can still be recognised as stale. */
   announced: number | undefined
   /** The local player's profile only: set when the engine announces a version below `peak`. It put an
-   *  earlier profile back (an edit failed to deploy), so a copy above it was read before that, and is
-   *  not taken while the engine announces versions below the peak. Another player's profile can
+   *  earlier profile back (an edit failed to deploy), so untagged messages above it are stale while
+   *  the engine announces versions below the peak. Another player's profile can
    *  reach the engine's cache before their avatar announces an older version, which is no revert. */
   revertedTo: number | undefined
   /** The local player's profile only: the highest version the engine announced (or, before any, the
@@ -49,6 +50,9 @@ interface Entry {
    *  profile put back, even one above an earlier revert: an older edit that landed after a newer one
    *  failed. */
   peak: number | undefined
+  /** Matches replies to the latest read for this address. Kept after its first reply clears pending
+   *  so the same read can still supply badge tiers. Invalidation discards the ID. */
+  requestId: number | undefined
   pending: boolean
   subscribers: number
   /** When the last subscriber left, or a list last vouched for the address: the eviction clock. */
@@ -66,7 +70,7 @@ const EXTRAS = ['badges', 'equippedWearables', 'equippedEmotes'] as const
 
 const entries = new Map<string, Entry>()
 const listeners = new Map<string, Set<() => void>>()
-let request: (address: string, extras: boolean) => void = () => {}
+let request: (address: string, extras: boolean, requestId: number) => void = () => {}
 let lastSweep = 0
 /** The local player's address, the one profile the engine can put back to an earlier version. */
 let own: string | undefined
@@ -83,6 +87,7 @@ const blank = (): Entry => ({
   announced: undefined,
   revertedTo: undefined,
   peak: undefined,
+  requestId: undefined,
   pending: false,
   subscribers: 0,
   idleSince: Date.now()
@@ -101,13 +106,19 @@ function sweep(now: number): void {
   if (now - lastSweep < SWEEP_EVERY) return
   lastSweep = now
   for (const [key, e] of entries) {
-    // The local player's entry stays: it carries what was announced, which a read still in flight
-    // when the entry would go (a hung passport read, say) is checked against.
+    // Keep the local player's version history for the rollback guard on untagged messages.
     if (key !== own && e.subscribers === 0 && !e.pending && now - e.idleSince > IDLE_TTL) {
       entries.delete(key)
       listeners.delete(key)
     }
   }
+}
+
+function readProfile(key: string, e: Entry, extras: boolean): void {
+  e.requestId = nextRequestId()
+  e.pending = true
+  e.missingAt = undefined
+  request(key, extras, e.requestId)
 }
 
 /** Ask the engine for an address nobody has asked about yet (or whose "nothing" answer has aged out).
@@ -116,12 +127,11 @@ function ensureFetched(key: string, now: number): void {
   const e = entries.get(key)
   if (e == null || e.full || e.pending || !isAddress(key)) return
   if (e.missingAt != null && now - e.missingAt < MISSING_TTL) return
-  e.pending = true
-  request(key, false)
+  readProfile(key, e, false)
 }
 
 /** Where the store's requests go — the session installs the bridge once its driver is up. */
-export function setProfileRequester(fn: (address: string, extras: boolean) => void): void {
+export function setProfileRequester(fn: (address: string, extras: boolean, requestId: number) => void): void {
   request = fn
 }
 
@@ -182,22 +192,42 @@ export function seedProfiles(seeds: readonly ProfileSeed[]): void {
   sweep(now)
 }
 
-/** A `userProfile` reply (or the local player's own `profile`). `null`: the engine holds nothing. */
-export function receiveProfile(address: string, profile: Profile | null): void {
-  const key = profileKey(address)
-  const e = entry(key)
-  // Any reply settles the read in flight, even one dropped below, or the entry could never be swept.
-  e.pending = false
-  // A read made before the engine's last announcement but answered after it (a passport read also
-  // waits on other services) is out of date: below the announced version, or, after a revert, above
-  // the version put back. The re-read the announcement asked for brings what the engine holds now.
-  // Otherwise a copy above the announced version is ahead of its announcement, and is taken.
+// Older bridges' replies and the separate own-profile stream carry no read ID.
+function isStaleVersion(e: Entry, profile: Profile | null): boolean {
   const v = profile?.version
-  if (v != null && e.announced != null && (v < e.announced || (e.revertedTo != null && v > e.revertedTo))) return
+  return v != null && e.announced != null && (v < e.announced || (e.revertedTo != null && v > e.revertedTo))
+}
+
+/** A `userProfile` reply. `null` means the engine holds nothing. */
+export function receiveProfile(address: string, profile: Profile | null, requestId?: number): void {
+  const key = profileKey(address)
+  const e = requestId == null ? entry(key) : entries.get(key)
+  if (e == null || (requestId != null && e.requestId !== requestId)) return
+  e.pending = false
+  if (requestId == null && isStaleVersion(e, profile)) return
   if (profile == null) {
     e.missingAt = Date.now()
     return
   }
+  applyProfile(key, e, profile)
+}
+
+/** Retire the failed read so a later subscription or refresh can retry it. */
+export function profileReadFailed(address: string, requestId: number): void {
+  const e = entries.get(profileKey(address))
+  if (e?.requestId !== requestId) return
+  e.requestId = undefined
+  e.pending = false
+}
+
+/** An own-profile message also updates the passport while its separate read is in flight. */
+export function receiveOwnProfile(profile: Profile): void {
+  const key = profileKey(profile.address)
+  const e = entry(key)
+  if (!isStaleVersion(e, profile)) applyProfile(key, e, profile)
+}
+
+function applyProfile(key: string, e: Entry, profile: Profile): void {
   e.missingAt = undefined
   const prev = e.profile
   const next: Profile = { ...profile }
@@ -232,17 +262,14 @@ export function requestPassport(address: string): void {
   if (!isAddress(key)) return
   const e = entry(key)
   e.extras = true
-  e.pending = true
-  e.missingAt = undefined
-  request(key, true)
+  readProfile(key, e, true)
 }
 
 /** The engine's copy of a profile changed: a new version, server-filled fields (the snapshots) at
  *  the same one, or an earlier version put back after the local player's edit failed to deploy.
  *  Re-read it if someone is showing it, whatever the version: the engine's is the one to show. If
- *  nobody is, forget the copy (the next subscriber fetches fresh) but keep what was announced, so a
- *  revert announced while that subscriber's read is in flight is still recognised. Ignore an address
- *  never seen. */
+ *  nobody is, forget the copy and its pending read. Keep the announced version for untagged
+ *  replies. Ignore an address never seen. */
 export function profileChanged(address: string, version: number): void {
   const key = profileKey(address)
   const e = entries.get(key)
@@ -256,9 +283,7 @@ export function profileChanged(address: string, version: number): void {
     listeners.delete(key)
     return
   }
-  e.pending = true
-  e.missingAt = undefined
-  request(key, e.extras)
+  readProfile(key, e, e.extras)
 }
 
 /** Whose profile is the local player's: the session's own profile, or null once it signs out. What
@@ -272,6 +297,8 @@ export function setOwnProfile(address: string | null): void {
       e.announced = undefined
       e.revertedTo = undefined
       e.peak = undefined
+      e.requestId = undefined
+      e.pending = false
     }
   }
   own = next

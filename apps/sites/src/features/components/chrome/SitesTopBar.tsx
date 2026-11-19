@@ -9,15 +9,21 @@ import { useLocation } from "react-router";
 import {
   decentralandPublicNavSections,
   NavBar,
-  GeneralLock,
-  GeneralLogout,
+  GeneralMarketplace,
+  GeneralPlayers,
+  MenusLeave,
   GeneralWallet,
   GeneralSecondaryBarSettingsOutline,
   GeneralSecondaryBarWearables,
-  MenusEditProfile,
   type NavBarLinkProps,
 } from "@dcl/one-ui";
-import { useWalletAccount } from "@ui/shop/wallet/context";
+import { chainLabel } from "@shop/model/chain";
+import { browserProvider, web3Usable } from "@/data/lib/auth/shop-wallet";
+import { ethereumChainId, settlementChainId } from "@ui/shop/checkout/chain/config";
+import { manaWeiToNumber } from "@ui/shop/checkout/lib/mana-format";
+import { useManaBalance } from "@ui/shop/credits/hooks";
+import { useWalletAccount, useWalletChain } from "@ui/shop/wallet/context";
+import type { Eip1193Provider } from "@ui/data/auth/wallet";
 import type { DclTopBarProps } from "@ui/web/frames/DclTopBar";
 import { useChromeAuth } from "@ui/web/frames/chrome-auth";
 import ChromeLink from "@ui/web/frames/ChromeLink";
@@ -33,7 +39,6 @@ import SitesNotificationsDialog from "@dcl/one-ui/apps/sites/chrome/SitesNotific
 import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
 import wordmark from "@dcl/one-ui/apps/sites/assets/dcl_name.svg?url";
 import { SitesLocaleContext } from "@ui/web/frames/sites-locale";
-import { browserProvider } from "@/data/lib/auth/shop-wallet";
 import { useMarketplaceHere } from "@/data/lib/shop/marketplace-access";
 import { homeCopy } from "../../home/locale";
 import { useChromeNotifications } from "./useChromeNotifications";
@@ -87,6 +92,28 @@ const SITE_ICONS = {
   ),
 };
 
+function ProfileNetwork({ provider }: { provider: Eip1193Provider }) {
+  const { chainId, pendingChainId, switchTo } = useWalletChain(provider);
+  if (chainId === null) return null;
+  const ethereum = ethereumChainId();
+  const polygon = settlementChainId();
+  return (
+    <select
+      aria-label="Wallet network"
+      className={styles.profileNetwork}
+      value={pendingChainId ?? chainId}
+      disabled={pendingChainId !== null}
+      onChange={(event) => void switchTo(Number(event.currentTarget.value))}
+    >
+      {chainId !== ethereum && chainId !== polygon ? (
+        <option value={chainId} disabled>{chainLabel(chainId)}</option>
+      ) : null}
+      <option value={ethereum}>{chainLabel(ethereum)}</option>
+      <option value={polygon}>{chainLabel(polygon)}</option>
+    </select>
+  );
+}
+
 /** The Sites host adapts real chrome state; the shared component owns navigation UI. */
 export default function SitesTopBar({
   active,
@@ -119,22 +146,17 @@ export default function SitesTopBar({
   const address = account ?? auth.account;
   const signIn = onSignIn ?? auth.onSignIn;
   const signOut = onSignOut ?? auth.onSignOut;
-  const switchAccount =
-    auth.onSwitchAccount ??
-    (signOut && signIn
-      ? () => {
-          signOut();
-          signIn();
-        }
-      : undefined);
+  const switchAccount = auth.onSwitchAccount;
   const [notificationOwner, setNotificationOwner] = useState<{
     account: string;
     pathname: string;
   } | null>(null);
   const identity = isIn && address ? address.toLowerCase() : null;
-  const marketplaceWallet = marketplaceAvailable && identity ? browserProvider() : null;
-  const walletAccount = useWalletAccount(marketplaceWallet);
-  const marketplaceEligible = marketplaceWallet !== null && identity !== null && walletAccount === identity;
+  const profileWalletAvailable = identity !== null && web3Usable({ signer: identity });
+  const provider = identity && (marketplaceAvailable || profileWalletAvailable) ? browserProvider() : null;
+  const walletAccount = useWalletAccount(provider);
+  const matchingWallet = provider !== null && identity !== null && walletAccount === identity;
+  const marketplaceEligible = marketplaceAvailable && matchingWallet;
   const notificationsOpen =
     identity !== null &&
     notificationOwner?.account === identity &&
@@ -151,65 +173,58 @@ export default function SitesTopBar({
     landing && auth.notificationsReady !== false,
   );
   const rows = notifications.data;
+  const manaAccount = profileWalletAvailable && matchingWallet ? identity : null;
+  const mana = useManaBalance(manaAccount, ethereumChainId()).data;
+  const polygonMana = useManaBalance(manaAccount, settlementChainId()).data;
+  const menuBalances = manaAccount && (mana !== undefined || polygonMana !== undefined)
+    ? {
+        mana: mana === undefined ? undefined : manaWeiToNumber(mana),
+        polygonMana: polygonMana === undefined ? undefined : manaWeiToNumber(polygonMana),
+      }
+    : undefined;
   const actions = useMemo(
     () => [
       {
-        label: landing ? "View Profile" : "My profile",
-        icon: landing ? (
-          <MenusEditProfile size={24} aria-hidden="true" />
-        ) : undefined,
+        label: "View Profile",
+        icon: <GeneralPlayers size={20} aria-hidden="true" />,
         href: `/profile/${encodeURIComponent(address.toLowerCase())}`,
       },
       {
-        label: landing ? "My Assets" : "My assets",
+        label: "My Assets",
         href: "/shop/my-items",
-        icon: landing ? (
-          <GeneralSecondaryBarWearables size={24} aria-hidden="true" />
-        ) : undefined,
+        icon: <GeneralSecondaryBarWearables size={20} aria-hidden="true" />,
       },
-      ...(landing
-        ? [
-            {
-              label: "Marketplace Authorizations",
-              href: "/shop/authorizations",
-              icon: <GeneralLock size={24} aria-hidden="true" />,
-            },
-            {
-              label: "Account Settings",
-              href: "/account",
-              icon: (
-                <GeneralSecondaryBarSettingsOutline
-                  size={24}
-                  aria-hidden="true"
-                />
-              ),
-            },
-          ]
-        : []),
-      ...(switchAccount
-        ? [
-            {
-              label: "Switch account",
-              onSelect: switchAccount,
-              icon: landing ? (
-                <GeneralWallet size={24} aria-hidden="true" />
-              ) : undefined,
-            },
-          ]
-        : []),
+      {
+        label: "Account Settings",
+        href: "/account",
+        icon: <GeneralSecondaryBarSettingsOutline size={20} aria-hidden="true" />,
+      },
+      {
+        label: "Shop Authorizations",
+        href: "/shop/settings",
+        icon: <GeneralMarketplace size={20} aria-hidden="true" />,
+      },
       ...(signOut
         ? [
             {
-              label: "Log out",
+              label: "Logout",
               onSelect: signOut,
-              icon: landing ? (
-                <GeneralLogout size={24} aria-hidden="true" />
-              ) : undefined,
+              icon: <MenusLeave size={20} aria-hidden="true" />,
+              separated: true,
             },
           ]
-        : []),
+        : switchAccount
+          ? [
+              {
+                label: "Switch account",
+                onSelect: switchAccount,
+                icon: <GeneralWallet size={20} aria-hidden="true" />,
+                separated: true,
+              },
+            ]
+          : []),
     ],
-    [address, landing, switchAccount, signOut],
+    [address, switchAccount, signOut],
   );
   const panel = notificationsOpen ? (
     <SitesNotificationsDialog
@@ -279,6 +294,7 @@ export default function SitesTopBar({
             ? {
                 account: {
                   address,
+                  ...(profileMatches && auth.bodyUrl ? { bodyUrl: auth.bodyUrl } : {}),
                   ...(profileMatches && auth.name ? { name: auth.name } : {}),
                   ...(profileMatches && auth.avatarUrl
                     ? { avatarUrl: auth.avatarUrl }
@@ -289,7 +305,9 @@ export default function SitesTopBar({
           balanceAction={isIn ? balances : undefined}
           accountControl={accountControl}
           accountActions={actions}
-          accountMenuAppearance={landing ? "sites" : "default"}
+          accountMenuAppearance="profile"
+          accountMenuBalances={menuBalances}
+          accountMenuNetwork={manaAccount && provider ? <ProfileNetwork provider={provider} /> : undefined}
           labels={landing ? homeCopy[locale].account : undefined}
           mobileSecondaryNavigation={
             sections ? ({ closeDrawer }) => sections(closeDrawer) : undefined
