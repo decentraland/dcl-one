@@ -31,6 +31,7 @@
 }
 
 .Assets .Assets-buttons > .Assets-tabs {
+  cursor: default;
   flex-wrap: wrap;
   justify-content: center;
   align-self: stretch;

@@ -8,6 +8,7 @@ import { actions as workspaceActions } from '/@/modules/store/workspace';
 import type { Method, Params } from '/@/modules/rpc/storage';
 import type { RPCInfo } from '/@/modules/rpc';
 import { bufferToScene } from '/@/modules/buffer';
+import { getOpenProject } from '/@/lib/open-project';
 import { useInspector } from '/@/hooks/useInspector';
 import { useAuth } from '/@/hooks/useAuth';
 import { stripBase64ImagePrefix } from '/@/modules/image';
@@ -63,11 +64,11 @@ export const useEditor = () => {
   }, [editorApi.openCode, project]);
 
   // The inspector RPC keeps the handler it got when the iframe loaded, so it reads the open
-  // project from the store: a copy captured then would undo every later change (the world and
-  // deployments a publish recorded) on the next scene.json write, such as a rename.
+  // project from the store: a copy captured then would undo every later change (the world a
+  // publish recorded) on the next scene.json write, such as a rename.
   const updateScene = useCallback(
     async (_: RPCInfo, { path, content }: Params[Method.WRITE_FILE]) => {
-      const current = store.getState().editor.project;
+      const current = getOpenProject(store.getState());
       if (current && path === 'scene.json') {
         const scene = bufferToScene(content);
         dispatch(

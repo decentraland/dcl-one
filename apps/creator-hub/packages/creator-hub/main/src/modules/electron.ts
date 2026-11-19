@@ -88,10 +88,17 @@ export async function logDeployment(entry: DeploymentLogEntry): Promise<void> {
   }
 }
 
-export async function logRendererError({
-  boundary,
-  error,
-  componentStack,
-}: RendererErrorLogEntry): Promise<void> {
+/** Enough for a stack and a component stack; a renderer can't flood the log through it. */
+const RENDERER_ERROR_MAX_LENGTH = 8000;
+
+const cap = (text: string) =>
+  text.length > RENDERER_ERROR_MAX_LENGTH
+    ? `${text.slice(0, RENDERER_ERROR_MAX_LENGTH)}… [${text.length - RENDERER_ERROR_MAX_LENGTH} more characters]`
+    : text;
+
+export async function logRendererError(entry: RendererErrorLogEntry): Promise<void> {
+  const boundary = cap(String(entry.boundary));
+  const error = cap(String(entry.error));
+  const componentStack = entry.componentStack && cap(String(entry.componentStack));
   log.error(`[ErrorBoundary:${boundary}] ${error}${componentStack ? `\n${componentStack}` : ''}`);
 }

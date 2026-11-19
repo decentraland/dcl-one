@@ -32,6 +32,13 @@ const PROJECT: Project = {
   info: { id: 'test-project', skipPublishWarning: false },
 };
 
+const DEPLOYMENT = {
+  publishedAt: 1,
+  deploymentHash: 'bafy-test',
+  parcel: '0,0',
+  worldName: 'my-world.dcl.eth',
+};
+
 const sceneJson = (scene: object) => Buffer.from(JSON.stringify(scene));
 
 describe('when the editor writes scene.json after the project changed', () => {
@@ -39,6 +46,12 @@ describe('when the editor writes scene.json after the project changed', () => {
 
   beforeEach(async () => {
     store = createTestStore();
+    store.dispatch(
+      workspaceActions.getWorkspace.fulfilled(
+        { ...store.getState().workspace, projects: [PROJECT] },
+        'request-id',
+      ),
+    );
     store.dispatch(workspaceActions.runProject.fulfilled(PROJECT, 'request-id', PROJECT));
     const wrapper = ({ children }: { children: ReactNode }) => (
       <Provider store={store as never}>{children}</Provider>
@@ -54,6 +67,18 @@ describe('when the editor writes scene.json after the project changed', () => {
       }),
     );
 
+    // The publish's record reaches only the workspace entry.
+    store.dispatch(
+      workspaceActions.recordDeployment.fulfilled(
+        { 'world:my-world.dcl.eth:0,0': DEPLOYMENT },
+        'id',
+        {
+          path: PROJECT.path,
+          info: {} as never,
+        },
+      ),
+    );
+
     await updateScene({} as RPCInfo, {
       path: 'scene.json',
       content: sceneJson({
@@ -65,6 +90,15 @@ describe('when the editor writes scene.json after the project changed', () => {
 
   it('should take the new name', () => {
     expect(store.getState().editor.project?.title).toBe('New name');
+  });
+
+  it('should keep the deployment the publish recorded', () => {
+    expect(store.getState().editor.project?.info.deployments).toEqual({
+      'world:my-world.dcl.eth:0,0': DEPLOYMENT,
+    });
+    expect(store.getState().workspace.projects[0].info.deployments).toEqual({
+      'world:my-world.dcl.eth:0,0': DEPLOYMENT,
+    });
   });
 
   it('should keep the world the publish recorded', () => {
