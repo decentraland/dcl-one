@@ -7,6 +7,7 @@
 import { AUTH_RETURN_PARAM } from '@explorer-core/features/auth/authReturn'
 import type { AcceptedParam } from '@explorer-core/hostContract'
 import { WEB_PARAMS } from '@explorer-core/engine/generated'
+import { DEBUG_PANEL_PARAM } from '@explorer-core/lib/debugPanelLauncher'
 import { MOCK_SWITCHES } from '@explorer-core/engine/mockSwitches'
 import { ANALYTICS_SESSION_PARAM, isAttributionParam } from '@explorer-core/lib/analytics'
 
@@ -37,6 +38,7 @@ export function entryRealm(q: URLSearchParams): string | null {
 // warning, not advertised.
 const INTERNAL_PARAMS = [
   'native',
+  DEBUG_PANEL_PARAM,
   'hud',
   'mock',
   'showcase',

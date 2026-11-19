@@ -646,6 +646,10 @@
           "kind": "regular"
         },
         {
+          "name": "debugPanelLauncher.ts",
+          "kind": "regular"
+        },
+        {
           "name": "gpu.test.ts",
           "kind": "regular"
         },
@@ -6073,7 +6077,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
-      "sha256": "7791923ac47aae937b11fe83f7c102ac72fd5fff189a9ad6adef0f5b13ff7f9c"
+      "sha256": "9d04a5381b7629f27ac77176b8ecd9ec3fb39f8bf285bc6087c6731b6bc0b5e3"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/hudMainThreadCost.ts",
@@ -6849,6 +6853,10 @@
     {
       "path": "library/explorer-core/lib/color.ts",
       "sha256": "2d6fdf87314ce3c3bedbdb79d1c659c14f554fb9bfbdd3118dc3ef93be34bdf0"
+    },
+    {
+      "path": "library/explorer-core/lib/debugPanelLauncher.ts",
+      "sha256": "ee0e0a9c62e867993505d3390bc49b1fdaf4a03bdb2c7942036ba89dfaf37f95"
     },
     {
       "path": "library/explorer-core/lib/gpu.test.ts",
@@ -9272,11 +9280,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/debug/DebugPanel.module.css",
-      "sha256": "2867570f1facce523e0fa574b6523dec95a2d5f0ef60adb5a4cce0c84ad9540c"
+      "sha256": "54467bfff9358eb3e94c9aa6fa1474520b3e0f2d01e30bd606e05459f7515ed1"
     },
     {
       "path": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
-      "sha256": "aa3a4bb2933815ca25b398ca5ff6674de10611b7408bccf50455d3e29691a0be"
+      "sha256": "b4a6a7414d5e568d408b2c565dfad3cadd9a9205b564bec45d6b0826c557d25c"
     },
     {
       "path": "library/ui/apps/hud/features/debug/FpsMeter.module.css",
@@ -9288,7 +9296,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
-      "sha256": "578048ea90c89e982fbecf5972b33581201a0320aeb3e48c2c9b88cb7e4706ac"
+      "sha256": "61fe529fc474330809ec816d90cad07f35c1a0c2d06db1c1a12f69ae62a216b7"
     },
     {
       "path": "library/ui/apps/hud/features/donate/DonatePanel.module.css",
@@ -10108,11 +10116,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.module.css",
-      "sha256": "affb3ac23f65c520cb272d8f4f8e7dc5d07dbff27fe736a256964e52646b971c"
+      "sha256": "f0557bacca14f9e3b95b12f62e7e22aec76082f52ffa397947fdd1c5526b4396"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "sha256": "a74c6c292edffa0d6596b33182eab6ab9fdd7a41ad47d2b5a34579d218685192"
+      "sha256": "607772ceee3294cb0de927b30ed5e9b1a32983cb600670ae44155f7ff53ba2cb"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/inviteLink.ts",
@@ -10532,7 +10540,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/debugPanel.test.tsx",
-      "sha256": "cb5fd91c7a19bd88e9d7bdec197e45fad563acf717c1ad712696692809e22ae0"
+      "sha256": "d77b08e250b2ba864b1dc0acbc1e1052ecf91eb2445c13f848316fd1a70f7393"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/discoverPanel.test.tsx",
@@ -21675,6 +21683,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "to": "library/explorer-core/lib/debugPanelLauncher.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "to": "library/explorer-core/lib/debugPanelLauncher.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "to": "library/explorer-core/lib/debugPanelLauncher.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
       "to": "library/ui/apps/hud/design/Glyphs.tsx",
       "kind": "native:runtime"
     },
@@ -34316,6 +34339,21 @@
     {
       "from": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
       "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
+      "to": "library/explorer-core/lib/debugPanelLauncher.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
+      "to": "library/explorer-core/lib/debugPanelLauncher.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
+      "to": "library/explorer-core/lib/debugPanelLauncher.ts",
       "kind": "test:runtime"
     },
     {
@@ -44964,6 +45002,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
+      "to": "library/explorer-core/lib/debugPanelLauncher.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
+      "to": "library/explorer-core/lib/debugPanelLauncher.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
+      "to": "library/explorer-core/lib/debugPanelLauncher.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "rendering/bevy-explorer/source/react-web/src/lib/launchGate.ts",
       "to": "library/explorer-core/lib/webParams.ts",
       "kind": "native:runtime"
@@ -45986,6 +46039,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/lib/color.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/lib/debugPanelLauncher.ts",
       "kind": "type"
     },
     {

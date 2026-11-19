@@ -172,7 +172,8 @@ not the shell page: pick the app frame in the DevTools context selector first.
 
 ## Runtime debug panel
 
-In a development engine build, click the bug button in the lower-right corner of the in-world HUD to toggle the panel.
+Launch the desktop client with `--debug-panel` or open the web page with `?debugPanel=1`
+to show the lower-right bug button. Click it to toggle the panel.
 In any build, open **Sidebar settings (•••) → Debug panel** or enter `/debug` in chat.
 Use `/debug help` to list the sections available in this client and `/debug <section>`
 to open one directly. Search matches both section titles and controls. Expand the
