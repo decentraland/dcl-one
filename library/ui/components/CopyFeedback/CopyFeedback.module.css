@@ -7,6 +7,10 @@
     align-items: center;
   }
 
+  .inline {
+    column-gap: var(--dcl-space-8);
+  }
+
   .tooltip {
     composes: text626f64792f7873 from '../../foundations/typography/text-styles.module.css';
     position: absolute;
@@ -34,7 +38,8 @@
   }
 
   @media (prefers-reduced-motion: no-preference) {
-    .tooltip {
+    .tooltip,
+    .inlineSuccess {
       animation: reveal 150ms ease-out both;
     }
   }

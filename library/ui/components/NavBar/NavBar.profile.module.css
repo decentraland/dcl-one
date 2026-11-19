@@ -70,20 +70,18 @@
   .identity {
     composes: text626f64792f7873 from '../../foundations/typography/text-styles.module.css';
     display: grid;
-    grid-template-columns: auto 24px;
     align-items: center;
     justify-content: start;
-    column-gap: var(--dcl-space-8);
     margin-top: var(--dcl-space-4);
     color: var(--dcl-text-primary);
   }
 
   .identityLabel {
-    grid-column: 1 / -1;
     color: var(--dcl-text-secondary);
   }
 
   .identity button {
+    flex: none;
     width: 24px;
     height: 24px;
     padding: 0;

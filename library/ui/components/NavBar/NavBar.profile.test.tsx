@@ -40,13 +40,19 @@ describe('when the Sites profile panel is open', () => {
   })
 
   it('should copy the full user ID and announce success', async () => {
-    await user.click(screen.getByRole('button', { name: 'Copy user ID' }))
+    const button = screen.getByRole('button', { name: 'Copy user ID' })
+    expect(screen.getByText('0x1234...5678')).toBeVisible()
+    await user.click(button)
     expect(await navigator.clipboard.readText()).toBe('0x1234567890abcdef1234567890abcdef12345678')
     expect(screen.getByRole('status')).toHaveTextContent('User ID copied')
-    expect(screen.getByText('Copied')).toBeVisible()
+    expect(screen.getByText('Address copied!')).toBeVisible()
+    expect(screen.queryByText('0x1234...5678')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Copy user ID' })).toBe(button)
+    expect(screen.queryByText('Copied')).toBeNull()
     await user.keyboard('{Escape}')
     await user.click(trigger)
-    expect(screen.queryByText('Copied')).toBeNull()
+    expect(screen.queryByText('Address copied!')).toBeNull()
+    expect(screen.getByText('0x1234...5678')).toBeVisible()
   })
 
   it('should drop an unavailable body snapshot', () => {

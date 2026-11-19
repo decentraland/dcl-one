@@ -89,6 +89,7 @@ export type NavBarLabels = {
   account: (name: string) => string
   userId: string
   copyUserId: string
+  addressCopied?: string
   userIdCopied: string
   copyUserIdError: string
   openMenu: string
@@ -642,10 +643,16 @@ function AccountMenu({
               {sites ? (
                 <div className={profile ? profileStyles.identity : styles.accountIdentity}>
                   <span className={profile ? profileStyles.identityLabel : undefined}>{labels.userId}</span>
-                  <span title={account.address}>{shortAddress(account.address)}</span>
+                  {!profile ? (
+                    <span title={account.address}>{shortAddress(account.address)}</span>
+                  ) : null}
                   {open ? (
                     <CopyFeedback
                       value={account.address}
+                      inlineValue={profile ? (
+                        <span title={account.address}>{shortAddress(account.address)}</span>
+                      ) : undefined}
+                      copiedLabel={profile ? labels.addressCopied ?? 'Address copied!' : undefined}
                       successAnnouncement={labels.userIdCopied}
                       errorAnnouncement={labels.copyUserIdError}
                     >
