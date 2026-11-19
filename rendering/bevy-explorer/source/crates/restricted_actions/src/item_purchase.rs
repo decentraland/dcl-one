@@ -38,11 +38,7 @@ use system_bridge::{
     ItemPurchaseItem, ItemPurchaseRequest, ItemPurchaseState, SetItemPurchaseState, SystemApi,
 };
 
-use crate::explorer_ui::write_event;
-
-/// How long a request waits for the HUD to say whether it can show the confirmation. The HUD
-/// answers on receipt, so silence means no HUD is listening.
-const HUD_TIMEOUT_SECS: f32 = 2.0;
+use crate::explorer_ui::{recent_user_gesture, write_event};
 
 pub struct ItemPurchasePlugin;
 
@@ -81,7 +77,7 @@ impl Plugin for ItemPurchasePlugin {
 /// The collection item a scene's urn names: `urn:decentraland:{matic|amoy}:collections-v2:
 /// {contract}:{item id}`, and nothing else. A token id, a third-party collection or trailing
 /// text is refused, so what reaches the HUD is only ever a contract address and a number.
-pub fn parse_item_urn(urn: &str) -> Option<ItemPurchaseItem> {
+fn parse_item_urn(urn: &str) -> Option<ItemPurchaseItem> {
     let mut parts = urn.strip_prefix("urn:decentraland:")?.split(':');
     let (network, kind, contract, item_id) =
         (parts.next()?, parts.next()?, parts.next()?, parts.next()?);
@@ -92,8 +88,12 @@ pub fn parse_item_urn(urn: &str) -> Option<ItemPurchaseItem> {
     if hex.len() != 40 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    // a uint256 has at most 78 decimal digits
-    if item_id.is_empty() || item_id.len() > 78 || !item_id.bytes().all(|b| b.is_ascii_digit()) {
+    // a uint256 has at most 78 decimal digits; one spelling of each id, the one the Shop takes
+    if item_id.is_empty()
+        || item_id.len() > 78
+        || !item_id.bytes().all(|b| b.is_ascii_digit())
+        || (item_id.len() > 1 && item_id.starts_with('0'))
+    {
         return None;
     }
     Some(ItemPurchaseItem {
@@ -104,19 +104,21 @@ pub fn parse_item_urn(urn: &str) -> Option<ItemPurchaseItem> {
 
 /// What the scene asked for, kept to address its events.
 #[derive(Clone, Debug, PartialEq)]
-pub struct SceneRequest {
-    pub scene: Entity,
-    pub scene_hash: String,
+struct SceneRequest {
+    scene: Entity,
+    scene_hash: String,
     /// the urn as the scene gave it, echoed in the result
-    pub urn: String,
-    pub request_id: u32,
+    urn: String,
+    request_id: u32,
 }
 
 enum Phase {
-    /// sent to the HUD; the scene's call is unanswered
+    /// sent to the HUD; the scene's call is unanswered until the HUD says whether it can show
+    /// the confirmation. No deadline: the HUD opens the confirmation as it accepts, so a request
+    /// given up on here could still be bought there. It ends only with the HUD's answer or the
+    /// HUD itself.
     AwaitingHud {
         response: RpcResultSender<OpenExplorerUiResult>,
-        deadline: f32,
     },
     /// the HUD is showing the confirmation
     Open,
@@ -136,13 +138,13 @@ struct Ended {
 
 /// What a transition owes the requesting scene.
 #[derive(Debug, PartialEq)]
-pub enum Change {
+enum Change {
     Opened(SceneRequest),
     Closed(SceneRequest, ItemPurchaseState),
 }
 
 #[derive(Resource, Default)]
-pub struct ItemPurchases {
+struct ItemPurchases {
     streams: Vec<RpcStreamSender<ItemPurchaseRequest>>,
     last_id: u32,
     active: Option<Active>,
@@ -156,12 +158,7 @@ impl ItemPurchases {
     }
 
     /// Sends a permitted request to the HUD, or answers it when it cannot start.
-    fn begin(
-        &mut self,
-        request: SceneRequest,
-        response: RpcResultSender<OpenExplorerUiResult>,
-        now: f32,
-    ) {
+    fn begin(&mut self, request: SceneRequest, response: RpcResultSender<OpenExplorerUiResult>) {
         if self.active.is_some() {
             response.send(OpenExplorerUiResult::WasAlreadyOpen);
             return;
@@ -174,7 +171,6 @@ impl ItemPurchases {
         self.last_id = self.last_id.wrapping_add(1);
         let message = ItemPurchaseRequest {
             id: self.last_id,
-            scene: request.scene_hash.clone(),
             item: parse_item_urn(&request.urn),
         };
         for stream in &self.streams {
@@ -183,10 +179,7 @@ impl ItemPurchases {
         self.active = Some(Active {
             id: self.last_id,
             request,
-            phase: Phase::AwaitingHud {
-                response,
-                deadline: now + HUD_TIMEOUT_SECS,
-            },
+            phase: Phase::AwaitingHud { response },
         });
     }
 
@@ -222,24 +215,21 @@ impl ItemPurchases {
         }
     }
 
-    /// Ends a request the HUD will not finish: it never answered, or it went away with the
-    /// confirmation up. The latter reports `Dismissed`, which claims nothing about the purchase.
-    fn expire(&mut self, now: f32) -> Option<Change> {
-        let has_hud = self.has_hud();
+    /// Ends the request in flight once no HUD is listening: nothing is left to answer or finish
+    /// it. With the confirmation up it reports `Dismissed`, which claims nothing about the
+    /// purchase.
+    fn hud_gone(&mut self) -> Option<Change> {
+        if self.active.is_none() || self.has_hud() {
+            return None;
+        }
         let active = self.active.take()?;
         match active.phase {
-            Phase::AwaitingHud { response, deadline } if now > deadline || !has_hud => {
+            Phase::AwaitingHud { response } => {
                 response.send(OpenExplorerUiResult::RejectedFeatureDisabled);
-                self.end(active.request, "no answer from the HUD");
+                self.end(active.request, "the HUD went away");
                 None
             }
-            Phase::Open if !has_hud => {
-                Some(self.close(active.request, ItemPurchaseState::Dismissed))
-            }
-            phase => {
-                self.active = Some(Active { phase, ..active });
-                None
-            }
+            Phase::Open => Some(self.close(active.request, ItemPurchaseState::Dismissed)),
         }
     }
 
@@ -354,8 +344,7 @@ fn open_item_purchase(
             response.send(OpenExplorerUiResult::RejectedNotCurrentScene);
             continue;
         };
-        // same recent-pointer-action window as the eth / clipboard actions
-        if context.last_action_event.unwrap_or_default() < time.elapsed_secs_f64() - 1.0 {
+        if !recent_user_gesture(context, &time) {
             response.send(OpenExplorerUiResult::RejectedNoUserGesture);
             continue;
         }
@@ -371,18 +360,20 @@ fn open_item_purchase(
             urn: urn.unwrap_or_default(),
             request_id,
         };
+        // a prompt names what the scene asked to sell
+        let asked = Some(format!("Buy {}", request.urn));
         perms.check(
             PermissionType::OpenExplorerUi,
             scene,
             (request, response),
-            None,
+            asked,
             // the current-scene gate above already applied
             true,
         );
     }
 
     for (request, response) in perms.drain_success(PermissionType::OpenExplorerUi) {
-        purchases.begin(request, response, time.elapsed_secs());
+        purchases.begin(request, response);
     }
 
     for (_, response) in perms.drain_fail(PermissionType::OpenExplorerUi) {
@@ -394,7 +385,6 @@ fn track_item_purchase(
     mut events: EventReader<SystemApi>,
     mut purchases: ResMut<ItemPurchases>,
     mut scenes: Query<&mut RendererSceneContext>,
-    time: Res<Time>,
 ) {
     for ev in events.read() {
         match ev {
@@ -410,10 +400,8 @@ fn track_item_purchase(
         }
     }
 
-    if purchases.active.is_some() {
-        if let Some(change) = purchases.expire(time.elapsed_secs()) {
-            apply(&mut scenes, change);
-        }
+    if let Some(change) = purchases.hud_gone() {
+        apply(&mut scenes, change);
     }
 }
 
@@ -524,7 +512,7 @@ mod tests {
 
     fn begin(purchases: &mut ItemPurchases, urn: &str) -> RpcResultReceiver<OpenExplorerUiResult> {
         let (sender, receiver) = RpcResultSender::channel();
-        purchases.begin(request(urn), sender, 10.0);
+        purchases.begin(request(urn), sender);
         receiver
     }
 
@@ -552,6 +540,9 @@ mod tests {
             &URN.replace(":12", ":"),
             &URN.replace(":12", ":1&first=2"),
             &URN.replace(":12", ":-1"),
+            // one spelling of each id
+            &URN.replace(":12", ":012"),
+            &URN.replace(":12", ":00"),
             &format!("{URN}{}", "0".repeat(77)),
             &format!(" {URN}"),
         ] {
@@ -565,7 +556,6 @@ mod tests {
         let mut response = begin(&mut purchases, URN);
 
         let sent = hud.try_recv().unwrap();
-        assert_eq!(sent.scene, "hash");
         assert_eq!(sent.item, parse_item_urn(URN));
         // unanswered until the HUD says it is showing the confirmation
         assert!(response.try_recv().is_err());
@@ -630,20 +620,33 @@ mod tests {
     }
 
     #[test]
-    fn silent_hud_times_out_and_its_late_report_is_ignored() {
+    fn slow_hud_keeps_the_request_until_it_answers() {
         let (mut purchases, mut hud) = with_hud();
         let mut response = begin(&mut purchases, URN);
         let id = hud.try_recv().unwrap().id;
 
-        assert_eq!(purchases.expire(10.0 + HUD_TIMEOUT_SECS - 0.1), None);
+        // however long the answer takes, the request is neither answered nor freed: the HUD
+        // opens the confirmation as it accepts
+        assert_eq!(purchases.hud_gone(), None);
         assert!(response.try_recv().is_err());
-        assert_eq!(purchases.expire(10.0 + HUD_TIMEOUT_SECS + 0.1), None);
+        assert!(purchases.active.is_some());
+
+        assert!(purchases.report(id, ItemPurchaseState::Accepted).is_some());
+        assert_eq!(response.try_recv(), Ok(OpenExplorerUiResult::Opened));
+    }
+
+    #[test]
+    fn unanswered_request_ends_when_the_hud_goes_away() {
+        let (mut purchases, hud) = with_hud();
+        let mut response = begin(&mut purchases, URN);
+
+        drop(hud);
+        assert_eq!(purchases.hud_gone(), None);
         assert_eq!(
             response.try_recv(),
             Ok(OpenExplorerUiResult::RejectedFeatureDisabled)
         );
-        assert_eq!(purchases.report(id, ItemPurchaseState::Accepted), None);
-        assert_eq!(purchases.report(id, ItemPurchaseState::Purchased), None);
+        assert!(purchases.active.is_none());
     }
 
     #[test]
@@ -671,10 +674,10 @@ mod tests {
         let id = hud.try_recv().unwrap().id;
         purchases.report(id, ItemPurchaseState::Accepted);
 
-        assert_eq!(purchases.expire(1000.0), None);
+        assert_eq!(purchases.hud_gone(), None);
         drop(hud);
         assert_eq!(
-            purchases.expire(1000.0),
+            purchases.hud_gone(),
             Some(Change::Closed(request(URN), ItemPurchaseState::Dismissed))
         );
         assert!(purchases.active.is_none());

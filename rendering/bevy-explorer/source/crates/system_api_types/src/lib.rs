@@ -963,8 +963,6 @@ pub enum PermissionRequestEvent {
 #[ts(export)]
 pub struct ItemPurchaseRequest {
     pub id: u32,
-    /// hash of the requesting scene
-    pub scene: String,
     pub item: Option<ItemPurchaseItem>,
 }
 

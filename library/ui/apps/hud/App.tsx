@@ -38,7 +38,7 @@ import { openPermissionDialog } from './features/permissions/PermissionDialog'
 import { openWorldPasswordDialog } from './features/worldAccess/WorldPasswordDialog'
 import { PopupHost, ToastHost, showDialog } from './design'
 import { SessionProvider } from './features/session/SessionContext'
-import { answerItemPurchase, type PurchaseSceneItem } from './features/itemPurchase/answer'
+import type { PurchaseSceneItem } from './features/itemPurchase/answer'
 import { bootMode, hostEntryParams, isNativeHud, unrecognisedEntryParams, untrustedLaunchParams } from '@hud-host'
 import { FpsMeter } from './features/debug/FpsMeter'
 import { DebugPanelHost } from './features/debug/DebugPanel'
@@ -255,7 +255,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const session = useEngineSession(createDriver)
+  const session = useEngineSession(createDriver, { purchaseSceneItem: host.purchaseSceneItem })
   // The tip emote once the host says a tip was sent (Donate, where the host can sign one).
   useTipEmote(session.emotes.play)
   // The signed-in account the places discovery reads for its favourites, once the profile names it.
@@ -338,13 +338,6 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
     return openWorldPasswordDialog(worldPasswordPrompt, session.worldPassword.resolve)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-open only when the prompt changes
   }, [worldPasswordPrompt])
-
-  // A scene asked to open the purchase confirmation for an item: answered at once (./features/itemPurchase/answer).
-  const itemPurchase = session.itemPurchase.pending
-  useEffect(() => {
-    if (itemPurchase != null) answerItemPurchase(itemPurchase, session.itemPurchase.report, host.purchaseSceneItem)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- answer each request once
-  }, [itemPurchase])
 
   // A refused in-world travel (destination missing/unreachable): the player stays put and is told why.
   const travelError = session.travelError

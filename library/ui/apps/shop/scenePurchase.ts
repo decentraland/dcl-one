@@ -4,7 +4,9 @@
 // purchased, dismissed or failed. A purchase handed off and still settling is `dismissed`: the scene has no
 // later word, and `dismissed` claims nothing about whether the item was bought. A purchase the buyer
 // starts again from the dialog (a changed price) is a new operation, and the scene's request ended with
-// the first.
+// the first. When the shell answers with an earlier purchase of the item that is still settling, not one
+// this request opened, the request is `dismissed` at once: following it would hold every scene's next
+// request until that purchase settles, with its view already closed.
 
 import { onShellMessage, shellRequest } from '@explorer-core/lib/shell'
 import { parseOperationEvent, SHOP_EVENT, SHOP_METHODS, SHOP_PROTOCOL, type ShopBuyRequest, type ShopOperation, type ShopOperationState } from './shopProtocol'
@@ -64,8 +66,9 @@ export function purchaseSceneItem(item: { contract: string; itemId: string }, sh
       (opened) => {
         const parsed = opened != null && typeof opened === 'object' ? parseOperationEvent({ ...opened, type: SHOP_EVENT }) : null
         if (!parsed) return end('failed')
+        // A purchase this request opened starts in review; anything else is an earlier one of the item.
+        if (parsed.state !== 'reviewing') return end(sceneOutcome(parsed.state) ?? 'dismissed')
         operation = parsed.operation
-        follow(parsed)
         for (const op of early) follow(op)
       },
       (e: unknown) => {

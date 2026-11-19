@@ -2,7 +2,7 @@
 
 pub mod agent_commands;
 pub mod explorer_ui;
-pub mod item_purchase;
+mod item_purchase;
 mod map_pins;
 pub mod portables;
 pub mod smart_wearables;
@@ -49,7 +49,7 @@ use comms::{
 use console::DoAddConsoleCommand;
 use copypwasmta::{ClipboardContext, ClipboardProvider};
 use dcl_component::proto_components::kernel::comms::rfc4;
-use explorer_ui::{open_explorer_ui, track_explorer_ui, ExplorerUiState};
+use explorer_ui::{open_explorer_ui, track_explorer_ui, ExplorerUiState, USER_GESTURE_WINDOW_SECS};
 use http::Uri;
 use ipfs::{
     ipfs_path::{IpfsPath, IpfsType},
@@ -1952,7 +1952,7 @@ pub fn handle_eth_async(
             .ok()
             .and_then(|scene| scene.last_action_event)
             .unwrap_or_default();
-        if last_action_time < time.elapsed_secs_f64() - 1.0 {
+        if last_action_time < time.elapsed_secs_f64() - USER_GESTURE_WINDOW_SECS {
             response.send(Err(format!(
                 "no recent user activity (last action {}, time {}).",
                 last_action_time,
@@ -2039,7 +2039,7 @@ pub fn handle_copy_to_clipboard(
             .ok()
             .and_then(|scene| scene.last_action_event)
             .unwrap_or_default();
-        if last_action_time < time.elapsed_secs_f64() - 1.0 {
+        if last_action_time < time.elapsed_secs_f64() - USER_GESTURE_WINDOW_SECS {
             response.send(Err(format!(
                 "no recent user activity (last action {}, time {}).",
                 last_action_time,

@@ -444,7 +444,7 @@ module.exports.getPermissionUsedStream = async function() {
 }
 
 // stream of scene requests to open the item purchase confirmation:
-// { id, scene, item: { contract, itemId } | null }
+// { id, item: { contract, itemId } | null }
 module.exports.getItemPurchaseRequestStream = async function() {
   const rid = await Deno.core.ops.op_get_item_purchase_request_stream();
 

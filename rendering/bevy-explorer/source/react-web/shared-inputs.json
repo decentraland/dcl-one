@@ -7095,7 +7095,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "91033d9c3dfcc93d71e248a8f104244eaf35380b2f507712aa6616a0e13e02f8"
+      "sha256": "7895517f09780dbdd1694d3ba271d91fb2092daa06e4be4abe42a600df0c716c"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -9623,7 +9623,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/itemPurchase/answer.ts",
-      "sha256": "8f864ea1f04050ec74f3f8f533595a7e436e1d4000818f28315f46716d24ec17"
+      "sha256": "16991b00b990c521b95b322b6193e6a3afe2fab7682f3a34731cddb598048c70"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/ExploreSectionModal.module.css",
@@ -9887,7 +9887,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionDialog.tsx",
-      "sha256": "0cb79616b9cf2bafeb4294500f5392ce4510602df365652e30f064047455602e"
+      "sha256": "51d8e8f185d81cc1c9b1ed74d8a1f4d314a7fb76172d3e4fdf8d181c081ee1f7"
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionsPopover.module.css",
@@ -10059,7 +10059,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "f638ed874fa111a0ce85f1e2ae7838ec68805566155361bf05efffed8c4b9835"
+      "sha256": "026394f0a61de99b70b87da04248295bc7827e804e53f62dc7d1e488d8e155cc"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10395,7 +10395,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "e02de2f6847b120cbd5affe20fb6758b8597c941306dd997e653df56a4bf2d9d"
+      "sha256": "664bc666de657f93ee152591e6e2a0c1502622d5d68ee38fd3c54085d30a8a3f"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -10611,7 +10611,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/itemPurchase.test.tsx",
-      "sha256": "4a08ea67e792dcb517e22f5009900bf4f3e64afc59687996ff80172bf5ffb5ea"
+      "sha256": "f6c9b5e67d8b5428f272dfd96ed5ceecf7161e83dd480926c4d453071bc2176e"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/jumpToFriend.test.tsx",
@@ -14267,21 +14267,6 @@
     },
     {
       "from": "library/ui/apps/hud/App.tsx",
-      "to": "library/ui/apps/hud/features/itemPurchase/answer.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/App.tsx",
-      "to": "library/ui/apps/hud/features/itemPurchase/answer.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/App.tsx",
-      "to": "library/ui/apps/hud/features/itemPurchase/answer.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/App.tsx",
       "to": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
       "kind": "native:runtime"
     },
@@ -33733,6 +33718,21 @@
     {
       "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "to": "library/ui/apps/hud/features/gate/exitApplication.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/itemPurchase/answer.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/itemPurchase/answer.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/itemPurchase/answer.ts",
       "kind": "test:runtime"
     },
     {

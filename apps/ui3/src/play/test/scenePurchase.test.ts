@@ -65,6 +65,18 @@ describe('a purchase a scene asked for', () => {
   })
 
   it.each([
+    ['processing', 'dismissed'],
+    ['pending', 'dismissed'],
+    ['succeeded', 'purchased']
+  ])('does not follow an earlier purchase of the item the shell answers with (%s)', async (state, expected) => {
+    const s = fakeShell()
+    const outcome = purchaseSceneItem(ITEM, s.shell)
+    s.answer(operation(state))
+    expect(await outcome).toBe(expected)
+    expect(s.listening()).toBe(0)
+  })
+
+  it.each([
     ['the shell refuses', (s: ReturnType<typeof fakeShell>) => s.refuse(new Error('a purchase is already open'))],
     ['the shell answers nothing it can read', (s: ReturnType<typeof fakeShell>) => s.answer({ v: 2, operation: 'op-1' })],
     ['the shell answers nothing', (s: ReturnType<typeof fakeShell>) => s.answer(null)]

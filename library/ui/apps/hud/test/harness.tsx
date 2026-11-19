@@ -13,7 +13,7 @@ import type { AuthIdentity } from '@explorer-core/features/auth/sso'
 import type { PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
 import { GENESIS_SATELLITE_VIEW } from '@explorer-core/features/map/atlas'
 import { emptyEventsStore } from '../features/events/eventsStore'
-import { useEngineSession, type EngineSession, type ProfileState } from '../features/session/useEngineSession'
+import { useEngineSession, type EngineSession, type ProfileState, type SessionHost } from '../features/session/useEngineSession'
 
 export async function renderSettled(...args: Parameters<typeof render>): Promise<ReturnType<typeof render>> {
   let view!: ReturnType<typeof render>
@@ -137,10 +137,11 @@ export interface Harness {
 /** Render the real session hook wired to a FakeDriver (pass a subclass to simulate boot panics). */
 export function renderSession(
   previousLogin?: { userId: string | null },
-  driver: FakeDriver = new FakeDriver()
+  driver: FakeDriver = new FakeDriver(),
+  host: SessionHost = {}
 ): Harness {
   if (previousLogin) driver.previousLogin = previousLogin
-  const { result, unmount } = renderHook(() => useEngineSession(() => driver))
+  const { result, unmount } = renderHook(() => useEngineSession(() => driver, host))
   return { driver, result, session: () => result.current, unmount }
 }
 
@@ -247,7 +248,6 @@ export function fakeSession(): EngineSession {
     photoMode: { snapshot: null, active: false, capture: null, set: vi.fn(), take: vi.fn() },
     permissions: { pending: [], visit: [], triggered: [], unseenDenied: 0, markSeen: vi.fn(), rules: null, loadRules: vi.fn(), setRule: vi.fn(), clearRule: vi.fn(), resetDefaults: vi.fn(), resolve: vi.fn() },
     worldPassword: { pending: null, resolve: vi.fn() },
-    itemPurchase: { pending: null, report: vi.fn() },
     portables: { list: [], stop: vi.fn(), restart: vi.fn() },
     create: { open: false, toggle: vi.fn(), show: vi.fn() },
     editor: { mode: 'off', setMode: vi.fn() },

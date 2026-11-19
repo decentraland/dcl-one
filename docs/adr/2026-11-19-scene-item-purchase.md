@@ -25,10 +25,14 @@ A scene's item purchase reuses that path, in three parts with one owner each.
   last second; the scene is not a portable experience; the process is not a headless server and
   a HUD is listening; the `OpenExplorerUi` permission allows it. The scene's urn is parsed there
   to a collection contract and an item id (`urn:decentraland:{matic|amoy}:collections-v2:
-  {contract}:{id}`), so nothing else from the scene reaches the HUD. One request is in flight at
-  a time across all scenes; a second is `WAS_ALREADY_OPEN`.
+  {contract}:{id}`, the id in the one spelling the Shop takes, without leading zeros), so nothing
+  else from the scene reaches the HUD. One request is in flight at a time across all scenes; a
+  second is `WAS_ALREADY_OPEN`.
 - **The HUD owns availability.** The engine sends the request on a `SystemApi` stream and holds
-  the scene's call until the HUD answers `accepted` or `unavailable`, for at most two seconds.
+  the scene's call until the HUD answers `accepted` or `unavailable`. The session answers on
+  receipt. The engine sets no deadline on that answer: the HUD opens the confirmation as it
+  accepts, so a request the engine gave up on could still be bought there with no result for the
+  scene. An unanswered request ends only when no HUD is listening any more.
   A host that can buy gives the shared HUD a `purchaseSceneItem` function; the `/play` host does,
   inside the shell with the in-world Shop on. Every other host answers `unavailable`, which the
   scene receives as `REJECTED_FEATURE_DISABLED`.
@@ -48,8 +52,16 @@ The scene learns a verdict and nothing else: `Purchased`, `Dismissed` or `Failed
   buyer starts again from the dialog is a new operation the scene is not told about.
 - A request stays in flight until the HUD reports its end, even when the requesting scene has
   unloaded, because the confirmation is still on screen. Nothing is written to a scene that is
-  gone. `/item_purchase_cancel` frees a request the HUD never finishes.
+  gone. `/item_purchase_cancel` is a debugging action that frees a request the HUD never
+  finishes; it does not close a confirmation the HUD has open, whose later reports are ignored.
+- When the shell answers a request with an earlier purchase of the same item that is still
+  settling, the scene's request is `Dismissed` at once, so one slow purchase does not hold every
+  scene's next request.
 - A urn that names no collection item is `OPENED` then `Failed` where purchases run, with nothing
   shown, and `REJECTED_FEATURE_DISABLED` elsewhere.
+- The urn's network is checked for its form and not carried further: the shell buys on the chain
+  it was built for. A urn of the other network opens the shell's dialog, which finds no such item
+  to buy, and the scene reads `Failed` when it closes.
 - An item purchase shares the `OpenExplorerUi` permission with the menu pages; the purchase
-  dialog is the confirmation, so there is no second permission type.
+  dialog is the confirmation, so there is no second permission type. The permission's description
+  names the purchase confirmation, and a prompt for it shows the urn the scene asked to sell.

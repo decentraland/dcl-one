@@ -6,8 +6,4 @@ import type { ItemPurchaseItem } from "./ItemPurchaseItem";
  * gates and parsed the item from the scene's urn; `item` is None when the urn names no
  * purchasable collection item. The HUD answers each request with [`SetItemPurchaseState`].
  */
-export type ItemPurchaseRequest = { id: number, 
-/**
- * hash of the requesting scene
- */
-scene: string, item: ItemPurchaseItem | null, };
+export type ItemPurchaseRequest = { id: number, item: ItemPurchaseItem | null, };
