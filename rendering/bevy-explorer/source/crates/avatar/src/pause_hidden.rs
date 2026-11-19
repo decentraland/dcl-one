@@ -45,10 +45,7 @@ use bevy::{
         view::RenderLayers,
     },
 };
-use common::{
-    sets::SceneSets,
-    structs::{PlayerTeleported, PrimaryUser},
-};
+use common::structs::{PlayerTeleported, PrimaryUser};
 
 use crate::AvatarProcessed;
 
@@ -57,10 +54,12 @@ pub struct PauseHiddenAvatarsPlugin;
 impl Plugin for PauseHiddenAvatarsPlugin {
     fn build(&self, app: &mut App) {
         // comms registers the event in the Explorer; an app without comms still runs the system
+        // In `PostUpdate`, before the animation is evaluated: every `Update` system has run, so a
+        // teleport sent this frame is seen this frame, and the bones taken out or put back count
+        // in this frame's evaluation.
         app.add_event::<PlayerTeleported>().add_systems(
-            Update,
-            // after the systems that teleport the player, to see the event in its own frame
-            pause_hidden_avatar_animation.after(SceneSets::RestrictedActions),
+            PostUpdate,
+            pause_hidden_avatar_animation.before(bevy::app::Animation),
         );
     }
 }
