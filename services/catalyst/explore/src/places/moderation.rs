@@ -164,6 +164,21 @@ pub(super) struct Resolved {
 const RESOLVE_COLUMNS: &str = "id, world, disabled, raw->>'disabled_reason' AS disabled_reason, \
      title, base_position, world_name, content_rating";
 
+/// A world-scene place (`explore.world_scene_place`, which `find_by_id_for`
+/// prefers) as a world-backed row: its own overlay decides `disabled`, its
+/// rating is the one the scene projection serves, retired scenes included.
+const WORLD_SCENE_RESOLVE: &str = "SELECT p.identity::text AS id, true AS world, \
+     COALESCE(m.disabled, false) AS disabled, m.reason AS disabled_reason, \
+     COALESCE(NULLIF(btrim(s.entity #>> '{metadata,display,title}'), ''), w.title) AS title, \
+     COALESCE(s.entity #>> '{metadata,scene,base}', p.parcels[1]) AS base_position, \
+     p.world_name, COALESCE(m.content_rating, wm.content_rating, w.content_rating) AS content_rating \
+     FROM explore.world_scene_place p \
+     LEFT JOIN worlds.world_scenes s ON p.active AND s.world_name = p.world_name AND s.entity_id = p.entity_id \
+     LEFT JOIN worlds.worlds w ON w.name = p.world_name \
+     LEFT JOIN explore.place_moderation m ON m.place_id = p.identity::text \
+     LEFT JOIN explore.place_moderation wm ON wm.place_id = p.world_name \
+     WHERE p.identity = $1";
+
 /// The catalogue row `target` names, from either leg; `None` when none matches.
 /// A place target is any row by id, world-backed ones included
 /// (`findByIdWithAggregates`, `Place/model.ts:513-553`); a world target is a
@@ -175,6 +190,15 @@ pub(super) async fn resolve(
 ) -> Result<Option<Resolved>, ApiError> {
     let row = match target {
         Target::Place(id) => {
+            if let Ok(identity) = Uuid::parse_str(id) {
+                let scene = sqlx::query_as(WORLD_SCENE_RESOLVE)
+                    .bind(identity)
+                    .fetch_optional(pool)
+                    .await?;
+                if scene.is_some() {
+                    return Ok(scene);
+                }
+            }
             sqlx::query_as(sqlx::AssertSqlSafe(format!(
                 "SELECT {RESOLVE_COLUMNS} FROM explore.place_indexed WHERE id = $1 LIMIT 1"
             )))

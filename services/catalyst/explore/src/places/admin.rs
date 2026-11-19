@@ -714,7 +714,10 @@ async fn set_ranking(
         row.ranking = ranking;
         return Ok(());
     }
-    if is_admin_token(headers, admin) {
+    if row.scene_place {
+        // A world-scene place has no catalogue row: the overlay is the write.
+        ranking::set_ranking(&state.pool, &row.id, ranking, actor).await?;
+    } else if is_admin_token(headers, admin) {
         if ranking::set_ranking(&state.pool, &row.id, ranking, actor).await? == 0 {
             return Err(ApiError::service_unavailable(RANKING_NOT_WRITABLE));
         }
@@ -798,6 +801,7 @@ async fn set_exclusion(
     // `rankingExclusion.ts:46-57` through `updatePlace`: silent on a disabled place.
     if !silently_skipped(row, places_route)
         && ranking::set_exclusion(&state.pool, &row.id, exclude, ADMIN_TOKEN_ACTOR).await? == 0
+        && !row.scene_place
     {
         return Err(ApiError::service_unavailable(EXCLUSION_NOT_WRITABLE));
     }
@@ -2575,6 +2579,115 @@ mod tests {
                 "{body}"
             );
         }
+    }
+
+    /// A world-scene place (`explore.world_scene_place`) takes every admin
+    /// write on the places routes through its overlays, a disabled one
+    /// included, and the ranking writes answer their success.
+    #[tokio::test]
+    async fn world_scene_places_take_every_admin_write() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO worlds.worlds (name, content_rating) VALUES ('scenes.dcl.eth', 'E')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size) VALUES ('scenes.dcl.eth', 'scene', '[]', $1, '0xaa', ARRAY['1,1'], 1)")
+            .bind(json!({"metadata": {"scene": {"base": "1,1"}, "display": {"title": "Harbour"}}}))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO explore.world_scene_place (world_name, identity, parcels, entity_id) VALUES ('scenes.dcl.eth', $1::uuid, ARRAY['1,1'], 'scene')")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let app = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            Settings {
+                operator_writes_enabled: true,
+                user_writes_enabled: true,
+                places_admin_token: Some("admin".into()),
+                places_admin_addresses: vec![address()],
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        let place = format!("/api/places/{id}");
+        for (method, path, auth, body) in [
+            (
+                "PUT",
+                "rating",
+                "signed",
+                Some(json!({ "content_rating": "T" })),
+            ),
+            (
+                "PUT",
+                "highlight",
+                "signed",
+                Some(json!({ "highlighted": true })),
+            ),
+            ("PUT", "featured", "admin", None),
+            ("PUT", "ranking", "admin", Some(json!({ "ranking": 7 }))),
+            ("PUT", "ranking-exclusion", "admin", None),
+            (
+                "PUT",
+                "disable",
+                "signed",
+                Some(json!({ "disabled": true })),
+            ),
+        ] {
+            let (status, body) =
+                call(&app, method, &format!("{place}/{path}"), Some(auth), body).await;
+            assert_eq!(status, StatusCode::CREATED, "{path}: {body}");
+            assert_eq!(body["data"]["id"], id, "{path}");
+        }
+        let overlay = moderation::overlay(&pool, &id).await.unwrap().unwrap();
+        assert_eq!(
+            (
+                overlay["content_rating"].clone(),
+                overlay["highlighted"].clone(),
+                overlay["disabled"].clone()
+            ),
+            (json!("T"), json!(true), json!(true))
+        );
+        let ranking: Value =
+            sqlx::query_scalar("SELECT overlay FROM explore.place_ranking WHERE place_id = $1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            (
+                ranking["exclude_from_ranking"].clone(),
+                ranking["ranking"].clone()
+            ),
+            (json!(true), json!(0))
+        );
+        let (status, _) = call(&app, "GET", &place, None, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "a disabled scene is hidden");
+        let (status, body) = call(
+            &app,
+            "PATCH",
+            &format!("{place}/disable"),
+            Some("admin"),
+            Some(json!({ "disabled": false })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = call(&app, "GET", &place, None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            (
+                body["data"]["content_rating"].clone(),
+                body["data"]["highlighted"].clone()
+            ),
+            (json!("T"), json!(true))
+        );
     }
 
     #[tokio::test]
