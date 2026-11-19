@@ -73,18 +73,18 @@ export function hasDraft(): boolean {
   return draft != null
 }
 
-/** The welcome page's accept: the look (the draft, else the live one) under `name`, in one setAvatar
- *  that resolves once the deploy lands. A stale session drops its result. A failure in the
- *  current session rejects so the Welcome page can offer a retry. */
-export async function deployLookAs(name: string, session: AvatarSaveSession): Promise<void> {
+/** Deploy the Welcome look and apply a name only when Welcome supplies one. A stale session
+ *  drops its result. A failure in the current session rejects so Welcome can offer a retry. */
+export async function deployLookAs(name: string | undefined, session: AvatarSaveSession): Promise<void> {
   const look = currentLook()
   if (look == null) throw new Error('no player')
   const edited = draft
   try {
     await session.run(
       async () => await BevyApi.setAvatar({
+        ...(name == null && { preserveName: true }),
         base: {
-          name,
+          name: name ?? '',
           bodyShapeUrn: look.bodyShape,
           eyesColor: look.eyes,
           hairColor: look.hair,

@@ -400,9 +400,8 @@ export function registerProfile(ctx: Ctx): void {
     }
 
     try {
-      // setAvatar resolves only once the engine has deployed the new profile version (guests
-      // resolve immediately — they have no catalyst presence to deploy to), so a rejection here
-      // is a genuinely failed save and the HUD must not keep showing the edit as if it stuck.
+      // setAvatar confirms the deploy, or the local update for guests. A queue expiry or
+      // engine rejection rolls back the HUD's optimistic change so the player can retry.
       await session.run(async () => await BevyApi.setAvatar(data), 'passport')
     } catch (e) {
       if (signedOut()) return

@@ -72,7 +72,7 @@ export function registerWelcome(ctx: Ctx): void {
           await waitFrames(1)
         }
         if (!session.isCurrent()) return
-        await deployLookAs(msg.name ?? getPlayer()?.name ?? '', session)
+        await deployLookAs(msg.name, session)
       }
       if (session.isCurrent()) ctx.send({ kind: 'welcomeAccepted', ok: true })
     } catch (e) {

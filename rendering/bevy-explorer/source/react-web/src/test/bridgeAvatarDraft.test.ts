@@ -184,20 +184,65 @@ describe('Passport and Backpack deployments', () => {
     expect(replies().at(-1)).toEqual({ kind: 'profileSaved', ok: true })
   }, 1_000)
 
-  it('lets Welcome deploy its name after Passport settles', async () => {
+  it.each([
+    { kind: 'commitAvatar', failure: 'avatarSaveFailed' },
+    { kind: 'acceptWelcome', failure: 'welcomeAccepted' }
+  ] as const)('keeps the draft after $kind expires and deploys it on retry', async ({ kind, failure }) => {
     const { request, replies, draft } = await bridge()
     const passport = deferred()
+    const deadline = deferred<void>()
     setAvatar.mockReturnValueOnce(passport.promise).mockResolvedValueOnce(7)
+    waitMs.mockReturnValueOnce(deadline.promise)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
 
     const save = request({ kind: 'saveProfile', description: 'New' })
-    draft.editLook({ wearables: ['urn:hat'] })
-    const welcome = request({ kind: 'acceptWelcome', name: 'Welcome name' })
     await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
+    draft.editLook({ wearables: ['urn:hat'] })
+    const queued = request({ kind })
+    await vi.waitFor(() => expect(waitMs).toHaveBeenCalledTimes(1))
+    deadline.resolve()
+    await queued
+
+    expect(replies()[0]?.kind).toBe(failure)
+    expect(draft.hasDraft()).toBe(true)
+    expect(setAvatar).toHaveBeenCalledTimes(1)
+    passport.resolve(6)
+    await save
+    await request({ kind })
+    expect(setAvatar).toHaveBeenCalledTimes(2)
+    expect(setAvatar.mock.lastCall?.[0].equip?.wearableUrns).toEqual(['urn:hat'])
+    expect(draft.hasDraft()).toBe(false)
+  })
+
+  it.each([
+    { name: undefined, expected: 'Passport name' },
+    { name: 'Welcome name', expected: 'Welcome name' }
+  ])('deploys a queued Welcome draft under $expected', async ({ name, expected }) => {
+    const { request, replies, draft } = await bridge()
+    const passport = deferred()
+    let deployedName = player?.name
+    const applyName = (data: SetAvatarData): void => {
+      if (!data.preserveName && data.base != null) deployedName = data.base.name
+    }
+    setAvatar.mockImplementationOnce(async (data) => {
+      const version = await passport.promise
+      applyName(data)
+      return version
+    }).mockImplementationOnce(async (data) => {
+      applyName(data)
+      return 7
+    })
+
+    const save = request({ kind: 'saveProfile', name: 'Passport name' })
+    await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
+    draft.editLook({ wearables: ['urn:hat'] })
+    const welcome = request({ kind: 'acceptWelcome', name })
     expect(replies()).toEqual([])
     passport.resolve(6)
     await Promise.all([save, welcome])
 
-    expect(setAvatar.mock.lastCall?.[0].base?.name).toBe('Welcome name')
+    expect(setAvatar.mock.lastCall?.[0].equip?.wearableUrns).toEqual(['urn:hat'])
+    expect(deployedName).toBe(expected)
     expect(replies()).toEqual([{ kind: 'profileSaved', ok: true }, { kind: 'welcomeAccepted', ok: true }])
   })
 
@@ -221,15 +266,22 @@ describe('Passport and Backpack deployments', () => {
     expect(replies()).toEqual([{ kind: 'welcomeAccepted', ok: true }])
   })
 
-  it('drops the old queue when the same wallet signs in again after logout', async () => {
-    const { request, replies, draft } = await bridge()
+  it.each(['logout RPC', 'engine clearing the player'])('drops the old queue on %s even for the same wallet', async (signal) => {
+    const { request, replies, draft, frame } = await bridge()
     const old = deferred()
     setAvatar.mockReturnValueOnce(old.promise).mockResolvedValueOnce(7)
     const save = request({ kind: 'saveProfile', description: 'Before logout' })
     draft.editLook({ wearables: ['urn:hat'] })
     const close = request({ kind: 'commitAvatar' })
     await vi.waitFor(() => expect(setAvatar).toHaveBeenCalledTimes(1))
-    await request({ kind: 'rpc:req', id: 'logout', method: 'logout' })
+    if (signal === 'logout RPC') {
+      await request({ kind: 'rpc:req', id: 'logout', method: 'logout' })
+    } else {
+      player = null
+      frame()
+      player = account('0xabc')
+      frame()
+    }
     await request({ kind: 'saveProfile', description: 'After sign-in' })
     old.resolve(6)
     await Promise.all([save, close])
