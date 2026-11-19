@@ -119,6 +119,8 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_trade_events_index_enabled: bool,
 
+    /// Walk Polygon MANA transfers, which confirm tip forwards; while off and no
+    /// other process walks them on this database, tip forwards answer 503.
     #[arg(long, env = "MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_mana_transfers_index_enabled: bool,
 

@@ -19,6 +19,10 @@
 //! by /64) may send [`PREAUTH_PER_MINUTE`], an IPv6 /48
 //! [`PREAUTH_PER_MINUTE_PER_48`]; a private or loopback peer (an unlisted
 //! gateway) is not limited before it.
+//! Without a running index (`MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED` off here
+//! and no other process advancing or publishing the `mana_transfers` cursor
+//! within [`chain_walk::READY_WINDOW`]) a signed forward is answered 503 and
+//! nothing is stored, since its claim could only expire.
 //! A transfer below the minimum amount, or mined longer than the maximum age
 //! before its claim, is rejected (`TipSettings`). The notification id is a
 //! uuid v5 of the transaction hash.
@@ -309,6 +313,12 @@ async fn forward(
         Ok(tx) => tx,
         Err(message) => return error(StatusCode::BAD_REQUEST, message),
     };
+    if !index_runs(&state).await {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Tip confirmation is unavailable on this node",
+        );
+    }
     match claim(&state.pool, &state.settings.market.tips, &tx, &signer).await {
         Ok(Outcome::Notified) => StatusCode::NO_CONTENT.into_response(),
         Ok(Outcome::Pending) => (StatusCode::ACCEPTED, Json(json!({}))).into_response(),
@@ -324,6 +334,28 @@ async fn forward(
             )
         }
     }
+}
+
+/// Whether a MANA transfer index serves this database: walked here, or its
+/// cursor moved by another process within [`chain_walk::READY_WINDOW`].
+async fn index_runs(state: &SharedState) -> bool {
+    if state.settings.market.indexes.mana_transfers_enabled {
+        return true;
+    }
+    match chain_walk::cursor(&state.pool, INDEXER_MANA, NET).await {
+        Ok(cursor) => cursor.is_some_and(|c| walked_recently(&c, chrono::Utc::now())),
+        Err(e) => {
+            tracing::warn!(error = %e, "cannot read the MANA transfer cursor; refusing the tip forward");
+            false
+        }
+    }
+}
+
+/// Published recently, or advanced recently (a walk still catching up).
+fn walked_recently(c: &chain_walk::Cursor, now: chrono::DateTime<chrono::Utc>) -> bool {
+    let advanced = now.naive_utc().signed_duration_since(c.updated_at);
+    chain_walk::is_ready(c, now)
+        || (advanced >= chrono::Duration::zero() && advanced <= chain_walk::READY_WINDOW)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -688,7 +720,7 @@ pub fn spawn_job(state: &SharedState, jobs: &Jobs) {
     let settings = state.settings.market.tips.clone();
     if !state.settings.market.indexes.mana_transfers_enabled {
         tracing::warn!(
-            "MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED is off here: tip forwards wait for an index another process must walk, and expire unconfirmed without one"
+            "MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED is off here: tip forwards answer 503 unless another process walks the MANA transfer index on this database"
         );
     }
     let pool = state.pool.clone();
@@ -1422,6 +1454,135 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    fn cursor_at(
+        updated_ago: chrono::Duration,
+        folded_ago: Option<chrono::Duration>,
+    ) -> chain_walk::Cursor {
+        let now = chrono::Utc::now().naive_utc();
+        chain_walk::Cursor {
+            indexer: INDEXER_MANA.into(),
+            network: NET.db_name().into(),
+            start_block: 0,
+            last_block: 100,
+            last_block_hash: Some("0xabc".into()),
+            last_block_time: None,
+            fold_through: Some(100),
+            folded_block: folded_ago.map(|_| 100),
+            folded_at: folded_ago.map(|ago| now - ago),
+            full_history: folded_ago.is_some(),
+            reorg_rewinds: 0,
+            updated_at: now - updated_ago,
+        }
+    }
+
+    #[test]
+    fn an_index_runs_while_its_cursor_moves_or_publishes() {
+        let now = chrono::Utc::now();
+        let minutes = chrono::Duration::minutes;
+        assert!(
+            walked_recently(&cursor_at(minutes(1), None), now),
+            "catching up"
+        );
+        assert!(
+            walked_recently(&cursor_at(minutes(120), Some(minutes(1))), now),
+            "caught up and publishing"
+        );
+        assert!(
+            !walked_recently(&cursor_at(minutes(120), None), now),
+            "a walk that stopped"
+        );
+        assert!(
+            !walked_recently(&cursor_at(minutes(120), Some(minutes(90))), now),
+            "a publish that stopped"
+        );
+    }
+
+    async fn forward_tip(app: &Router, w: &crate::outfits::testkit::Wallet) -> Response {
+        use tower::ServiceExt;
+        let mut req = axum::http::Request::post(PATH);
+        for (k, v) in &crate::outfits::testkit::signed_headers(w, "post", PATH).await {
+            req = req.header(k, v);
+        }
+        let body = json!({ "type": "tip-received", "transactionHash": hash(7) }).to_string();
+        app.clone()
+            .oneshot(req.body(axum::body::Body::from(body)).unwrap())
+            .await
+            .unwrap()
+    }
+
+    /// Without an index walked here or elsewhere a forward is refused unstored;
+    /// with either it is kept as a claim as before.
+    #[tokio::test]
+    async fn a_forward_needs_a_running_index() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("tips_no_index").await else {
+            return;
+        };
+        let app_with = |enabled: bool| {
+            let mut settings = crate::market::Settings::for_tests();
+            settings.market.indexes.mana_transfers_enabled = enabled;
+            Router::new().nest(
+                "/events-notifier",
+                router(std::sync::Arc::new(crate::market::MarketplaceState::new(
+                    db.pool.clone(),
+                    crate::http::Outbound::for_tests(),
+                    settings,
+                ))),
+            )
+        };
+        let off = app_with(false);
+        let w = crate::outfits::testkit::scratch_wallet();
+
+        let res = forward_tip(&off, &w).await;
+        assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(res.headers().get(header::RETRY_AFTER).is_none());
+        let body = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap(),
+            json!({ "error": "Tip confirmation is unavailable on this node" })
+        );
+        assert_eq!(claim_count(&db.pool).await, 0, "nothing stored");
+
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, full_history, updated_at) \
+             VALUES ('mana_transfers', 'matic', 0, 10, false, timezone('UTC', now()) - interval '2 hours')",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            forward_tip(&off, &w).await.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "a walk that stopped"
+        );
+
+        assert_eq!(
+            forward_tip(&app_with(true), &w).await.status(),
+            StatusCode::ACCEPTED,
+            "walked here"
+        );
+        assert_eq!(claim_count(&db.pool).await, 1);
+
+        sqlx::query("UPDATE shop.chain_cursor SET updated_at = timezone('UTC', now())")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            forward_tip(&off, &crate::outfits::testkit::scratch_wallet())
+                .await
+                .status(),
+            StatusCode::ACCEPTED,
+            "walked by another process"
+        );
+        db.drop().await;
+    }
+
+    async fn claim_count(pool: &PgPool) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM shop.tip_claim")
+            .fetch_one(pool)
+            .await
+            .unwrap()
     }
 
     #[test]
